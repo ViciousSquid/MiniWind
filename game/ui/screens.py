@@ -12,12 +12,12 @@ they need nothing beyond a QPainter and the session. Selection lives in
 from __future__ import annotations
 
 from PyQt5.QtCore import QRect, Qt
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QPen
 
 from . import theme as T
 from ..rpg import (races, classes, birthsigns, attributes as attr, skills as sk,
                    items as rpg_items, inventory as inv, equipment as eq,
-                   magic as rpg_magic, guilds, quests)
+                   magic as rpg_magic, guilds, quests, heads)
 
 
 def _sel(session):
@@ -94,15 +94,35 @@ def _panel_rect(w, h, pw=0.8, ph=0.82):
 
 # ===========================================================================
 # Character creation
-# ===========================================================================
-_CC_STEPS = ["gender", "race", "class", "birthsign", "confirm"]
-_CC_GENDERS = ["male", "female"]
+_CC_STEPS = ["identity", "class", "birthsign", "confirm"]
+_DEFAULT_RACE = "imperial"          # simplified creator asks no race / gender
+_MAX_NAME = 18
+_HEAD_PIXMAP_CACHE = {}
 
 
 def _cc(session):
-    s = _sel(session).setdefault("cc", {"step": 0, "gender": 0, "race": 0,
-                                        "class": 0, "birthsign": 0})
-    return s
+    return _sel(session).setdefault("cc", {"step": 0, "name": "", "head": 0,
+                                           "class": 0, "birthsign": 0})
+
+
+def _head_pixmap(head_index):
+    import os
+    from PyQt5.QtGui import QPixmap
+    hid = heads.head_at(head_index)
+    if hid in _HEAD_PIXMAP_CACHE:
+        return _HEAD_PIXMAP_CACHE[hid]
+    pm = None
+    try:
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        p = os.path.join(root, heads.head_path(hid))
+        if os.path.exists(p):
+            q = QPixmap(p)
+            if not q.isNull():
+                pm = q
+    except Exception:
+        pm = None
+    _HEAD_PIXMAP_CACHE[hid] = pm
+    return pm
 
 
 def _draw_charcreate(painter, session, w, h):
@@ -110,59 +130,92 @@ def _draw_charcreate(painter, session, w, h):
     x, y, bw, bh = _panel_rect(w, h, 0.82, 0.86)
     inner = T.panel(painter, x, y, bw, bh)
     step = _CC_STEPS[s["step"]]
-    ty = T.heading(painter, inner, "Create Your Character",
-                   f"The Vale of Miniwind awaits — step {s['step']+1} of {len(_CC_STEPS)}")
+    ty = T.heading(painter, inner, "Create Character",
+                   f"Step {s['step'] + 1} of {len(_CC_STEPS)}")
 
-    col_x = inner.x()
-    list_w = int(inner.width() * 0.42)
-    detail_x = col_x + list_w + 24
-    detail_w = inner.width() - list_w - 24
-
-    if step == "gender":
-        _cc_list(painter, col_x, ty, list_w, _CC_GENDERS, s["gender"],
-                 lambda g: g.title())
-        _cc_detail(painter, detail_x, ty, detail_w,
-                   "Sex", "Choose your character's sex. It affects nothing but "
-                   "how the world addresses you.")
-    elif step == "race":
-        rid = races.RACE_IDS[s["race"]]
-        r = races.get(rid)
-        _cc_list(painter, col_x, ty, list_w, races.RACE_IDS, s["race"],
-                 lambda i: races.get(i).label)
-        bonuses = ", ".join(f"+{v} {attr.label(k)}" if v > 0 else f"{v} {attr.label(k)}"
-                            for k, v in r.attr_bonuses.items())
-        pw = r.power["name"] if r.power else "—"
-        _cc_detail(painter, detail_x, ty, detail_w, r.label,
-                   r.desc + "\n\nAttributes: " + (bonuses or "balanced") +
-                   f"\nPower: {pw}")
+    if step == "identity":
+        _draw_identity(painter, inner, ty, s)
+        hint = "Type a name    ←/→ choose head    Enter next"
     elif step == "class":
-        cid = classes.CLASS_IDS[s["class"]]
-        k = classes.get(cid)
-        _cc_list(painter, col_x, ty, list_w, classes.CLASS_IDS, s["class"],
+        ids = classes.CREATION_CLASS_IDS
+        k = classes.get(ids[s["class"]])
+        list_w = int(inner.width() * 0.42)
+        _cc_list(painter, inner.x(), ty, list_w, ids, s["class"],
                  lambda i: classes.get(i).label)
-        majors = ", ".join(sk.label(m) for m in k.major_skills)
         favs = ", ".join(attr.label(a) for a in k.favored_attrs)
-        _cc_detail(painter, detail_x, ty, detail_w, k.label,
-                   k.desc + f"\n\nSpecialisation: {k.specialisation}" +
+        majors = ", ".join(sk.label(m) for m in k.major_skills)
+        _cc_detail(painter, inner.x() + list_w + 24, ty, inner.width() - list_w - 24,
+                   k.label, k.desc + f"\n\nSpecialisation: {k.specialisation}"
                    f"\nFavoured: {favs}\nMajor skills: {majors}")
+        hint = "↑/↓ choose class    Enter next    Esc back"
     elif step == "birthsign":
-        bid = birthsigns.BIRTHSIGN_IDS[s["birthsign"]]
-        b = birthsigns.get(bid)
-        _cc_list(painter, col_x, ty, list_w, birthsigns.BIRTHSIGN_IDS, s["birthsign"],
+        ids = birthsigns.CREATION_BIRTHSIGN_IDS
+        b = birthsigns.get(ids[s["birthsign"]])
+        list_w = int(inner.width() * 0.42)
+        _cc_list(painter, inner.x(), ty, list_w, ids, s["birthsign"],
                  lambda i: birthsigns.get(i).label)
-        _cc_detail(painter, detail_x, ty, detail_w, b.label, b.desc)
-    elif step == "confirm":
-        r = races.get(races.RACE_IDS[s["race"]])
-        k = classes.get(classes.CLASS_IDS[s["class"]])
-        b = birthsigns.get(birthsigns.BIRTHSIGN_IDS[s["birthsign"]])
-        summary = (f"Sex: {_CC_GENDERS[s['gender']].title()}\n"
-                   f"Race: {r.label}\nClass: {k.label}\nBirthsign: {b.label}\n\n"
+        _cc_detail(painter, inner.x() + list_w + 24, ty, inner.width() - list_w - 24,
+                   b.label, b.desc)
+        hint = "↑/↓ choose birthsign    Enter next    Esc back"
+    else:  # confirm
+        name = " ".join(p.capitalize() for p in s["name"].split()) or "Adventurer"
+        k = classes.get(classes.CREATION_CLASS_IDS[s["class"]])
+        b = birthsigns.get(birthsigns.CREATION_BIRTHSIGN_IDS[s["birthsign"]])
+        pm = _head_pixmap(s["head"])
+        if pm is not None:
+            sz = min(140, inner.width() // 3)
+            painter.drawPixmap(QRect(inner.x(), ty + 6, sz, sz),
+                               pm.scaled(sz, sz, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            tx = inner.x() + (min(140, inner.width() // 3)) + 20
+        else:
+            tx = inner.x()
+        summary = (f"Name: {name}\nClass: {k.label}\nBirthsign: {b.label}\n\n"
                    "Press Enter to begin your adventure, or Esc to go back.")
-        _cc_detail(painter, col_x, ty, inner.width(), "Ready?", summary)
+        _cc_detail(painter, tx, ty, inner.right() - tx, "Ready?", summary)
+        hint = "Enter begin    Esc back"
 
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              "↑/↓ choose    Enter next    Esc back", size=9, color=T.DIM,
-              align=T.ALIGN_CENTER, family="Segoe UI")
+              hint, size=10, color=T.DIM, align=T.ALIGN_CENTER, family="Georgia")
+
+
+def _draw_identity(painter, inner, ty, s):
+    # Name field.
+    T.text(painter, inner.x(), ty + 20, "Name:", size=14, color=T.GOLD_BRIGHT, bold=True)
+    fx = inner.x() + 90
+    fw = inner.width() - 90
+    box = QRect(fx, ty + 2, fw, 30)
+    painter.setBrush(QColor(12, 12, 16))
+    painter.setPen(QPen(T.GILD, 1))
+    painter.drawRect(box)
+    caret = "_" if (int(__import__("time").time() * 2) % 2 == 0) else " "
+    T.text(painter, fx + 8, ty + 23, (s["name"] or "") + caret, size=13, color=T.PARCH,
+           family="Georgia")
+
+    # Head chooser: big preview with arrows, centred below the name.
+    hy = ty + 52
+    hh = inner.bottom() - 40 - hy
+    size = min(hh, int(inner.width() * 0.5))
+    cx = inner.x() + inner.width() // 2
+    box = QRect(cx - size // 2, hy, size, size)
+    painter.setBrush(QColor(18, 18, 24))
+    painter.setPen(QPen(T.GILD, 1))
+    painter.drawRect(box)
+    pm = _head_pixmap(s["head"])
+    if pm is not None:
+        painter.drawPixmap(box.adjusted(6, 6, -6, -6),
+                           pm.scaled(size - 12, size - 12, Qt.KeepAspectRatio,
+                                     Qt.SmoothTransformation))
+    else:
+        T.text_in(painter, box, heads.head_at(s["head"]), size=13, color=T.DIM,
+                  align=T.ALIGN_CENTER)
+    # Arrows.
+    painter.setFont(T.font(28, bold=True))
+    painter.setPen(T.GOLD_BRIGHT)
+    painter.drawText(QRect(box.x() - 56, box.y(), 44, size), T.ALIGN_CENTER, "<")
+    painter.drawText(QRect(box.right() + 12, box.y(), 44, size), T.ALIGN_CENTER, ">")
+    T.text_in(painter, QRect(box.x(), box.bottom() + 4, size, 18),
+              f"Head {s['head'] + 1} / {heads.HEAD_COUNT}", size=10,
+              color=T.DIM, align=T.ALIGN_CENTER)
 
 
 def _cc_list(painter, x, y, w, ids, sel, labeller):
@@ -174,35 +227,44 @@ def _cc_list(painter, x, y, w, ids, sel, labeller):
             painter.setPen(T.GILD)
             painter.drawRect(QRect(x, ry, w, row_h - 2))
         T.text_in(painter, QRect(x + 10, ry, w - 12, row_h - 2), labeller(item),
-                  size=11, color=T.GOLD_BRIGHT if i == sel else T.INK,
-                  align=T.ALIGN_LEFT)
+                  size=12, color=T.GOLD_BRIGHT if i == sel else T.INK, align=T.ALIGN_LEFT)
 
 
 def _cc_detail(painter, x, y, w, title, body):
-    T.text(painter, x, y + 12, title, size=15, color=T.GOLD_BRIGHT, bold=True)
-    T.text_in(painter, QRect(x, y + 24, w, 400), body, size=10, color=T.PARCH,
+    T.text(painter, x, y + 14, title, size=16, color=T.GOLD_BRIGHT, bold=True)
+    T.text_in(painter, QRect(x, y + 26, w, 400), body, size=11, color=T.PARCH,
               align=int(Qt.AlignTop | Qt.AlignLeft) | int(Qt.TextWordWrap),
-              family="Segoe UI")
+              family="Georgia")
 
 
 def _handle_charcreate(session, key):
     s = _cc(session)
     step = _CC_STEPS[s["step"]]
-    lists = {
-        "gender": (_CC_GENDERS, "gender"),
-        "race": (races.RACE_IDS, "race"),
-        "class": (classes.CLASS_IDS, "class"),
-        "birthsign": (birthsigns.BIRTHSIGN_IDS, "birthsign"),
-    }
-    if step in lists:
-        ids, field = lists[step]
+    if step == "identity":
+        if key == "left":
+            s["head"] = (s["head"] - 1) % heads.HEAD_COUNT; return True
+        if key == "right":
+            s["head"] = (s["head"] + 1) % heads.HEAD_COUNT; return True
+        if key == "backspace":
+            s["name"] = s["name"][:-1]; return True
+        if key == "space":
+            if len(s["name"]) < _MAX_NAME and s["name"]:
+                s["name"] += " "
+            return True
+        if len(key) == 1 and (key.isalpha() or key.isdigit()):
+            if len(s["name"]) < _MAX_NAME:
+                s["name"] += key
+            return True
+    elif step in ("class", "birthsign"):
+        ids = (classes.CREATION_CLASS_IDS if step == "class"
+               else birthsigns.CREATION_BIRTHSIGN_IDS)
         if key in ("up", "w"):
-            s[field] = (s[field] - 1) % len(ids)
-            return True
+            s[step] = (s[step] - 1) % len(ids); return True
         if key in ("down", "s"):
-            s[field] = (s[field] + 1) % len(ids)
-            return True
+            s[step] = (s[step] + 1) % len(ids); return True
     if key in ("return", "enter"):
+        if s["step"] == 0 and not s["name"].strip():
+            return True                       # a name is required
         if s["step"] < len(_CC_STEPS) - 1:
             s["step"] += 1
         else:
@@ -217,28 +279,12 @@ def _handle_charcreate(session, key):
 
 def _finish_charcreate(session):
     s = _cc(session)
-    gender = _CC_GENDERS[s["gender"]]
-    race = races.RACE_IDS[s["race"]]
-    klass = classes.CLASS_IDS[s["class"]]
-    sign = birthsigns.BIRTHSIGN_IDS[s["birthsign"]]
-    name = _default_name(race, gender)
-    session.begin_new_character(name, race, klass, sign, gender)
-
-
-def _default_name(race, gender):
-    names = {
-        ("nord", "male"): "Ragnar", ("nord", "female"): "Freya",
-        ("imperial", "male"): "Marcus", ("imperial", "female"): "Livia",
-        ("breton", "male"): "Alaric", ("breton", "female"): "Elowen",
-        ("dunmer", "male"): "Dral", ("dunmer", "female"): "Nadei",
-        ("bosmer", "male"): "Faelan", ("bosmer", "female"): "Aerin",
-        ("altmer", "male"): "Calen", ("altmer", "female"): "Ithil",
-        ("orc", "male"): "Grosh", ("orc", "female"): "Bura",
-        ("redguard", "male"): "Kesh", ("redguard", "female"): "Saeda",
-        ("khajiit", "male"): "Ra'zin", ("khajiit", "female"): "Sonatta",
-        ("argonian", "male"): "Keen-Eye", ("argonian", "female"): "Sees-Far",
-    }
-    return names.get((race, gender), "Adventurer")
+    name = " ".join(p.capitalize() for p in s["name"].split()) or "Adventurer"
+    klass = classes.CREATION_CLASS_IDS[s["class"]]
+    sign = birthsigns.CREATION_BIRTHSIGN_IDS[s["birthsign"]]
+    head = heads.head_at(s["head"])
+    # Gender is fixed internally and never asked (it changes nothing in play).
+    session.begin_new_character(name, _DEFAULT_RACE, klass, sign, "male", head=head)
 
 
 # ===========================================================================

@@ -39,6 +39,25 @@ def font(size, bold=False, italic=False, family="Georgia"):
     return QFont(family, size, QFont.Bold if bold else QFont.Normal, italic)
 
 
+#: Decorative "old RPG" family stack for titles — the same one the spell cards
+#: use. Whatever the OS has first wins (Papyrus/Palatino/Book Antiqua/Georgia…).
+FANCY_FAMILIES = ["Papyrus", "Luminari", "Palatino Linotype", "Book Antiqua",
+                  "Georgia", "Cambria", "serif"]
+
+
+def fancy_font(size, bold=False, italic=False):
+    f = QFont()
+    try:
+        f.setFamilies(FANCY_FAMILIES)
+    except Exception:
+        f.setFamily("Georgia")
+    f.setPointSize(int(size))
+    f.setBold(bool(bold))
+    f.setItalic(bool(italic))
+    f.setStyleHint(QFont.Serif)
+    return f
+
+
 def panel(painter, x, y, w, h, radius=12, shadow=True):
     """Draw a framed, gilded, gradient panel and return its inner rect."""
     painter.save()
@@ -112,7 +131,7 @@ def dim_screen(painter, w, h, alpha=170):
 
 def heading(painter, rect, title, subtitle=None):
     painter.save()
-    painter.setFont(font(20, bold=True))
+    painter.setFont(fancy_font(22, bold=True))   # titles use the RPG display face
     painter.setPen(GOLD_BRIGHT)
     painter.drawText(rect.x(), rect.y() + 22, title)
     painter.setPen(QPen(GILD, 1))

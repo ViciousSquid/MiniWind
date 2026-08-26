@@ -78,9 +78,9 @@ def _patch_editor_menu():
     def create_menu_bar(self, MainWindow):
         _orig_create_menu_bar(self, MainWindow)
         try:
-            _build_sessions_menu(MainWindow)
+            _build_session_menu(MainWindow)
         except Exception as exc:
-            _log(f"Sessions menu build failed: {exc}")
+            _log(f"Session menu build failed: {exc}")
         try:
             _add_tools_menu_entries(MainWindow)
         except Exception as exc:
@@ -115,38 +115,89 @@ def _open_spell_editor(MainWindow):
         _log(f"Spell Editor failed to open: {exc}")
 
 
-def _build_sessions_menu(MainWindow):
-    """Top-level **Sessions** menu — manage a playthrough's saved progress.
+def _build_session_menu(MainWindow):
+    """Top-level **Session** menu — save, load and reset a playthrough.
 
-    Replaces the old "MiniWind" menu; RPG entities are still placed from the
-    editor palette (MiniWind category) and the right-click "Add MiniWind Entity"
-    submenu."""
+    RPG entities are still placed from the editor palette (MiniWind category)
+    and the right-click "Add MiniWind Entity" submenu."""
     from PyQt5.QtWidgets import QMenu
 
     menubar = MainWindow.menuBar()
 
-    # Don't add a second copy if the menu bar is rebuilt.
+    # Don't add a second copy if the menu bar is rebuilt (accept the old name).
     for action in menubar.actions():
-        if action.text().replace("&", "") == "Sessions":
+        if action.text().replace("&", "") in ("Session", "Sessions"):
             return
 
-    # Insert Sessions immediately before Help (else append).
+    # Insert Session immediately before Help (else append).
     help_action = None
     for action in menubar.actions():
         if action.text().replace("&", "") == "Help":
             help_action = action
             break
 
-    menu = QMenu("Sessions", menubar)
+    menu = QMenu("Session", menubar)
     if help_action:
         menubar.insertMenu(help_action, menu)
     else:
         menubar.addMenu(menu)
 
+    save = menu.addAction("Save Game…")
+    save.setToolTip("Save the current playthrough to a slot (Play mode only).")
+    save.triggered.connect(lambda _checked=False: _save_game(MainWindow))
+
+    load = menu.addAction("Load Game…")
+    load.setToolTip("Load a saved playthrough.")
+    load.triggered.connect(lambda _checked=False: _load_game(MainWindow))
+
+    menu.addSeparator()
     reset = menu.addAction("Reset All Progress…")
     reset.setToolTip("Erase the saved MiniWind character, inventory, quests and "
                      "world state so the next Play starts a fresh game.")
     reset.triggered.connect(lambda _checked=False: _reset_all_progress(MainWindow))
+
+
+def _run_console_command(MainWindow, cmd):
+    """Run a debug-console command (reuses save/load/… command handling)."""
+    try:
+        from editor.debug_console import DebugConsole
+        dc = DebugConsole.get_instance()
+        dc.command_input.setText(cmd)
+        dc._on_command_entered()
+        return True
+    except Exception as exc:
+        _log(f"session command '{cmd}' failed: {exc}")
+        return False
+
+
+def _in_play(MainWindow):
+    view = getattr(MainWindow, "view_3d", None)
+    return bool(view is not None and getattr(view, "play_mode", False))
+
+
+def _save_game(MainWindow):
+    from PyQt5.QtWidgets import QInputDialog, QMessageBox
+    if not _in_play(MainWindow):
+        QMessageBox.information(
+            MainWindow, "Save Game",
+            "Enter Play mode first — there is nothing to save in the editor.")
+        return
+    name, ok = QInputDialog.getText(MainWindow, "Save Game", "Save slot name:",
+                                    text="save1")
+    if ok and name.strip():
+        _run_console_command(MainWindow, f"save {name.strip()}")
+
+
+def _load_game(MainWindow):
+    import os
+    from PyQt5.QtWidgets import QFileDialog
+    root = getattr(MainWindow, "root_dir", None) or os.getcwd()
+    saves = os.path.join(root, "saves")
+    path, _f = QFileDialog.getOpenFileName(MainWindow, "Load Game", saves,
+                                           "MiniWind saves (*.fiosave)")
+    if path:
+        name = os.path.splitext(os.path.basename(path))[0]
+        _run_console_command(MainWindow, f"load {name}")
 
 
 def _reset_all_progress(MainWindow):

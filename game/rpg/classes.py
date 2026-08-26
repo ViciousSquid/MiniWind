@@ -21,15 +21,21 @@ from . import skills as sk
 
 
 class CharClass:
-    __slots__ = ("id", "label", "desc", "specialisation", "favored_attrs", "major_skills")
+    __slots__ = ("id", "label", "desc", "specialisation", "favored_attrs",
+                 "major_skills", "starting_spells")
 
-    def __init__(self, cid, label, desc, spec, favored_attrs, major_skills):
+    def __init__(self, cid, label, desc, spec, favored_attrs, major_skills,
+                 starting_spells=None):
         self.id = cid
         self.label = label
         self.desc = desc
         self.specialisation = spec
         self.favored_attrs = list(favored_attrs)
         self.major_skills = list(major_skills)
+        # Spells a member of this class knows from the start. Spellcaster
+        # classes get a basic spell so a fresh mage is never empty-handed even
+        # if their race / birthsign granted nothing (see character.new_game).
+        self.starting_spells = list(starting_spells or [])
 
 
 CLASSES: Dict[str, CharClass] = {c.id: c for c in [
@@ -62,22 +68,26 @@ CLASSES: Dict[str, CharClass] = {c.id: c for c in [
               "A student of all the arcane arts, weak of arm but deep of magicka.",
               sk.MAGIC, [attr.INTELLIGENCE, attr.WILLPOWER],
               [sk.DESTRUCTION, sk.RESTORATION, sk.ALTERATION, sk.CONJURATION,
-               sk.ILLUSION, sk.MYSTICISM, sk.ALCHEMY]),
+               sk.ILLUSION, sk.MYSTICISM, sk.ALCHEMY],
+              starting_spells=["flare", "heal_minor"]),
     CharClass("sorcerer", "Sorcerer",
               "A battle-mage who binds armour and summoned blades to raw destruction.",
               sk.MAGIC, [attr.INTELLIGENCE, attr.ENDURANCE],
               [sk.DESTRUCTION, sk.CONJURATION, sk.ALTERATION, sk.MYSTICISM,
-               sk.HEAVY_ARMOR, sk.BLADE, sk.RESTORATION]),
+               sk.HEAVY_ARMOR, sk.BLADE, sk.RESTORATION],
+              starting_spells=["flare"]),
     CharClass("healer", "Healer",
               "A gentle spellcaster devoted to mending and warding.",
               sk.MAGIC, [attr.WILLPOWER, attr.PERSONALITY],
               [sk.RESTORATION, sk.ALTERATION, sk.ILLUSION, sk.ALCHEMY,
-               sk.SPEECHCRAFT, sk.MYSTICISM, sk.BLUNT]),
+               sk.SPEECHCRAFT, sk.MYSTICISM, sk.BLUNT],
+              starting_spells=["heal_minor", "flare"]),
     CharClass("nightblade", "Nightblade",
               "A shadow-mage who kills with spell and dagger, then vanishes.",
               sk.MAGIC, [attr.WILLPOWER, attr.SPEED],
               [sk.DESTRUCTION, sk.ILLUSION, sk.MYSTICISM, sk.BLADE,
-               sk.LIGHT_ARMOR, sk.SNEAK, sk.ALTERATION]),
+               sk.LIGHT_ARMOR, sk.SNEAK, sk.ALTERATION],
+              starting_spells=["flare"]),
     CharClass("thief", "Thief",
               "Light fingers, lighter feet: locks, pockets and a quick blade.",
               sk.STEALTH, [attr.AGILITY, attr.SPEED],
@@ -101,6 +111,11 @@ CLASSES: Dict[str, CharClass] = {c.id: c for c in [
 ]}
 
 CLASS_IDS: List[str] = list(CLASSES.keys())
+
+#: The curated, reduced set of classes offered in the simplified character
+#: creator (the full CLASSES table still backs saves, NPCs and custom classes).
+CREATION_CLASS_IDS: List[str] = ["warrior", "archer", "mage", "healer",
+                                 "nightblade", "thief"]
 
 #: Major skills start this much higher than minor skills.
 MAJOR_SKILL_START = 25

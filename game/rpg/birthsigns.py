@@ -60,6 +60,10 @@ BIRTHSIGNS: Dict[str, Birthsign] = {b.id: b for b in [
 
 BIRTHSIGN_IDS: List[str] = list(BIRTHSIGNS.keys())
 
+#: Half the birthsigns, for the simplified character creator (the full table is
+#: kept so existing saves / content that reference the others still resolve).
+CREATION_BIRTHSIGN_IDS: List[str] = ["warrior", "mage", "thief", "lord", "shadow"]
+
 
 def get(sign_id: str) -> Birthsign:
     return BIRTHSIGNS.get(str(sign_id).lower(), BIRTHSIGNS["none"])

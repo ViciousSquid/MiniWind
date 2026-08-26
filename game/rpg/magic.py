@@ -172,6 +172,10 @@ register(Spell("sp_commandcreature", "Command Creature", sk.ILLUSION, 26, TARGET
 register(Spell("summon_wolf", "Summon Wolf", sk.CONJURATION, 30, SELF,
                [{"kind": "summon", "magnitude": 1, "duration": 45, "creature": "wolf"}],
                "Call a spectral wolf to fight for you.", element="magic"))
+register(Spell("wisp", "Wisp", sk.CONJURATION, 15, SELF,
+               [{"kind": "wisp", "magnitude": 1, "duration": 120}],
+               "Conjure a wandering fairy light that flits about you, lighting "
+               "your way. Its hue is a whim of the moment.", element="magic"))
 register(Spell("bound_blade", "Bound Blade", sk.CONJURATION, 25, SELF,
                [{"kind": "bound_weapon", "magnitude": 18, "duration": 60}],
                "Summon a blade of pure magicka.", element="magic"))

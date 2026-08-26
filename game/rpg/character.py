@@ -71,6 +71,9 @@ class Character:
         self.known_spells: List[str] = []
         self.active_spell: Optional[str] = None
         self.active_weapon_kind = "unarmed"  # 'melee' | 'bow' | 'unarmed' | 'spell'
+        #: Chosen head id (e.g. "head07") — the player's whole appearance and a
+        #: future audio key. Set at character creation; no NPC reuses it.
+        self.head = ""
 
         # live magical/combat effects: list of dicts
         # {"kind": "shield"|"fire"|..., "magnitude": x, "remaining": secs}
@@ -119,10 +122,18 @@ class Character:
                 skills[sid] = min(100, skills[sid] + int(delta))
         c.skills = skills
 
-        # starting spells from race + sign
-        for sp in list(race.starting_spells) + list(sign.spells):
+        # starting spells from race + birthsign + class
+        for sp in (list(race.starting_spells) + list(sign.spells)
+                   + list(getattr(klass, "starting_spells", []))):
             if sp not in c.known_spells:
                 c.known_spells.append(sp)
+        # Safety net: a spellcasting class (Mage, Sorcerer, Healer, Nightblade,
+        # or a custom magic-specialised class) must never start with no spell.
+        if klass.specialisation == sk.MAGIC and not c.known_spells:
+            c.known_spells.append("flare")
+        # Ready the first known spell so right-mouse can cast immediately.
+        if c.known_spells and not c.active_spell:
+            c.active_spell = c.known_spells[0]
 
         c.recompute_derived(reset_current=True)
         # birthsign flat pool bonuses (after recompute so they stick as bonuses)
@@ -335,6 +346,7 @@ class Character:
             "equipment": dict(self.equipment), "known_spells": list(self.known_spells),
             "active_spell": self.active_spell,
             "active_weapon_kind": self.active_weapon_kind,
+            "head": self.head,
             "factions": dict(self.factions), "bounty": self.bounty,
             "sign_stat_bonuses": dict(getattr(self, "_sign_stat_bonuses", {})),
         }
@@ -367,6 +379,7 @@ class Character:
         c.known_spells = list(data.get("known_spells", []))
         c.active_spell = data.get("active_spell")
         c.active_weapon_kind = data.get("active_weapon_kind", "unarmed")
+        c.head = data.get("head", "")
         c.factions = dict(data.get("factions", {}))
         c.bounty = int(data.get("bounty", 0))
         c.recompute_derived(reset_current=False)

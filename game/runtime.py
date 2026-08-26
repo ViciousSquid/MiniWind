@@ -55,6 +55,16 @@ BOW_REACH = 2400.0
 #: Frontal cone (dot threshold) for auto-target selection.
 AIM_DOT = 0.55
 
+#: Wisp companion light — how far it may wander from the player, and its four
+#: possible hues (RGB 0-255). One is picked at cast time and never changes.
+WISP_LEASH = 150.0
+WISP_COLOURS = [
+    [220, 235, 255],   # cool white
+    [150, 190, 255],   # light blue
+    [250, 240, 170],   # pale yellow
+    [255, 180, 215],   # pink
+]
+
 
 class StateStore:
     """Adapter presenting a plugin ``GlobalStore`` as a string KV store."""
@@ -112,6 +122,12 @@ class MiniwindSession:
         )
         self.show_clock = bool(cfg.get("show_clock", True))
         self.difficulty = str(cfg.get("difficulty", "normal"))
+        #: Spell ids the map author grants the player at creation (Game Settings
+        #: → "Player Spells"). Accepts a list or a comma-separated string.
+        _ps = cfg.get("player_spells", [])
+        if isinstance(_ps, str):
+            _ps = [s.strip() for s in _ps.split(",") if s.strip()]
+        self._player_start_spells = list(_ps) if isinstance(_ps, list) else []
         self.region_name = str(cfg.get("region_name", "The Vale of Miniwind"))
         self.store = StateStore(globals_store, str(cfg.get("state_store", "miniwind")))
 
@@ -152,6 +168,8 @@ class MiniwindSession:
         self.floaters: List[Dict] = []         # floating combat text
         self._blocking = False
         self.merchant_npc = None
+        #: Active Wisp companion light, or None. See _spawn_wisp / _update_wisp.
+        self._wisp = None
 
     def reset_progress(self) -> None:
         """Erase all saved progress and return the session to a clean slate.
@@ -171,6 +189,7 @@ class MiniwindSession:
         self.dialogue_npc = None
         self.merchant_npc = None
         self.show_loadout = False
+        self._remove_wisp()
         self.notifications = []
         self.floaters = []
         self._deaths_seen = set()
@@ -198,6 +217,7 @@ class MiniwindSession:
         self._sync_engine_health(full=True)
 
     def uninstall(self) -> None:
+        self._remove_wisp()
         if getattr(self.logic, "_player_damage_filter", None) is self._mitigate_incoming:
             self.logic._player_damage_filter = None
         if getattr(self.logic, "_faction_hostile", None) is factions.is_hostile:
@@ -235,13 +255,78 @@ class MiniwindSession:
 
     # -- character creation result -----------------------------------------
     def begin_new_character(self, name, race_id, class_id, birthsign_id="none",
-                            gender="male", custom_class=None) -> None:
+                            gender="male", custom_class=None, head="") -> None:
         self.game = GameState.new_game(self.store, name, race_id, class_id,
-                                       birthsign_id, gender, custom_class, self.rng)
+                                       birthsign_id, gender, custom_class, self.rng,
+                                       head=head)
+        # Author-granted starting spells (Game Settings → Player Spells).
+        c = self.game.character
+        for sid in self._player_start_spells:
+            if rpg_magic.get(sid) and sid not in c.known_spells:
+                c.known_spells.append(sid)
+        if c.known_spells and not c.active_spell:
+            c.active_spell = c.known_spells[0]
+        # Record the chosen head so NPCs never reuse it (and force the player
+        # billboard to it).
+        if c.head:
+            try:
+                self.store.set("player_head", c.head)
+            except Exception:
+                pass
+            self._apply_player_head(c.head)
+        # Give every NPC/creature a head that is never the player's.
+        self._assign_npc_heads()
         self.needs_char_creation = False
         self.open_screen = None
         self._sync_engine_health(full=True)
         self.notify(f"Welcome to {self.region_name}, {name}.", 5.0)
+
+    def _assign_npc_heads(self) -> None:
+        """Give every NPC/creature a head sprite — a random one that is never the
+        player's. An editor-authored head is kept unless it clashes with the
+        player's; empty/invalid heads are filled in."""
+        from .rpg import heads
+        player_head = str(getattr(self.game.character, "head", "") or "")
+        things = getattr(self.logic, "things", None) or []
+        changed = False
+        for t in things:
+            p = getattr(t, "properties", None)
+            if not isinstance(p, dict):
+                continue
+            ttype = str(p.get("type", "")).replace("_", "").lower()
+            if ttype not in ("npc", "creature", "monster"):
+                continue
+            cur = str(p.get("head", "") or "")
+            # Keep a valid authored head unless it clashes with the player's;
+            # otherwise roll a random one that avoids the player.
+            head = cur if (cur in heads.HEAD_IDS and cur != player_head) \
+                else heads.random_head(self.rng, exclude={player_head})
+            path = heads.head_path(head)
+            if p.get("head") != head or p.get("custom_idle") != path:
+                p["head"] = head
+                p["custom_idle"] = path
+                # Leave custom_dead as the role's corpse/gore sprite so a killed
+                # (and especially a gibbed) NPC still shows gore, not the head.
+                p["custom_shoot"] = path
+                changed = True
+        if changed:
+            try:
+                from editor.things import Monster
+                Monster.clear_sprite_cache()
+            except Exception:
+                pass
+            self._rebuild_entity_caches()
+
+    def _apply_player_head(self, head_id) -> None:
+        """Force the player's overhead sprite to the chosen head image."""
+        try:
+            from .rpg import heads
+            path = heads.head_path(head_id)
+            # The viewport reads this to point its overhead sprite renderer at
+            # the head (a single static frame, no animation).
+            setattr(self.logic, "player_head_sprite", path)
+        except Exception:
+            pass
 
     # ================================================================= tick
     def tick(self, delta: float) -> None:
@@ -268,15 +353,115 @@ class MiniwindSession:
         # settlement consequences — cheap: it walks the same cached actor list.
         self._reap_dead()
 
-        # world placeables: item pickups and quest triggers (cheap proximity)
+        # world placeables: item pickups, spellbooks and quest triggers
         self._tick_pickups()
+        self._tick_spellbooks()
         self._tick_triggers()
 
         # keep the engine's health pool in step with the character
         self._sync_engine_health()
 
+        # the wandering Wisp companion light
+        self._update_wisp(delta)
+
         # age transient UI
         self._age_lists(delta)
+
+    # ------------------------------------------------------------------ wisp
+    def _spawn_wisp(self, spell) -> None:
+        """Conjure a fairy-light companion that flits about the player. Only one
+        exists at a time; its colour is chosen once here and never changes."""
+        try:
+            from editor.things import Light
+        except Exception:
+            self.notify("A wisp flickers, then fades")
+            return
+        self._remove_wisp()
+        ppos = self._player_pos()
+        if ppos is None:
+            return
+        colour = list(self.rng.choice(WISP_COLOURS))
+        light = Light(pos=[ppos[0] + 40.0, ppos[1] + 90.0, ppos[2] + 40.0],
+                      properties={
+                          "colour": colour,
+                          "intensity": 1.3,
+                          "radius": 360.0,
+                          "state": "on",
+                          "casts_shadows": False,
+                          "hidden_in_game": False,
+                          "_wisp": True,
+                      })
+        try:
+            self.logic.things.append(light)
+            self._rebuild_entity_caches()
+        except Exception:
+            return
+        dur = 120.0
+        for e in (spell.effects or []):
+            if e.get("kind") == "wisp":
+                dur = float(e.get("duration", 120) or 120)
+        # target = the point the wisp is drifting toward; retimer picks a new one.
+        self._wisp = {"light": light, "colour": colour, "life": dur,
+                      "tx": ppos[0], "tz": ppos[2], "retarget": 0.0, "t": 0.0}
+        self.notify("A wisp appears at your side")
+
+    def _update_wisp(self, delta: float) -> None:
+        w = self._wisp
+        if not w:
+            return
+        w["life"] -= delta
+        c = self.game.character
+        ppos = self._player_pos()
+        if w["life"] <= 0.0 or ppos is None or c.is_dead:
+            self._remove_wisp()
+            return
+        light = w["light"]
+        # Occasionally choose a new wander target — a random point near the
+        # player — so the wisp drifts about rather than tracking rigidly.
+        w["retarget"] -= delta
+        if w["retarget"] <= 0.0:
+            ang = self.rng.uniform(0.0, 2.0 * math.pi)
+            rad = self.rng.uniform(30.0, WISP_LEASH * 0.75)
+            w["tx"] = ppos[0] + math.cos(ang) * rad
+            w["tz"] = ppos[2] + math.sin(ang) * rad
+            w["retarget"] = self.rng.uniform(0.8, 2.2)
+        # Ease toward the target; keep a gentle vertical bob.
+        pos = light.pos
+        ease = min(1.0, delta * 2.2)
+        pos[0] += (w["tx"] - pos[0]) * ease
+        pos[2] += (w["tz"] - pos[2]) * ease
+        w["t"] += delta
+        pos[1] = ppos[1] + 90.0 + math.sin(w["t"] * 2.0) * 18.0
+        # Hard leash: never let it stray beyond WISP_LEASH of the player.
+        dx, dz = pos[0] - ppos[0], pos[2] - ppos[2]
+        dist = math.hypot(dx, dz)
+        if dist > WISP_LEASH and dist > 1e-3:
+            k = WISP_LEASH / dist
+            pos[0] = ppos[0] + dx * k
+            pos[2] = ppos[2] + dz * k
+            w["retarget"] = 0.0   # pick a fresh inward target next tick
+
+    def _remove_wisp(self) -> None:
+        w = self._wisp
+        self._wisp = None
+        if not w:
+            return
+        light = w.get("light")
+        try:
+            things = getattr(self.logic, "things", None)
+            if things is not None and light in things:
+                things.remove(light)
+                self._rebuild_entity_caches()
+        except Exception:
+            pass
+
+    def _rebuild_entity_caches(self) -> None:
+        rebuild = getattr(self.logic, "_build_entity_caches", None)
+        if callable(rebuild):
+            try:
+                rebuild()
+            except Exception:
+                pass
 
     # ---------------------------------------------------------- world placeables
     def _things_of_type(self, type_name):
@@ -393,6 +578,34 @@ class MiniwindSession:
                 stack = rpg_items.make(iid, qty) or inv.make_item(iid, qty=qty)
                 inv.add_item(self.game.character.inventory, stack)
                 self.notify(f"Picked up {stack.get('name', iid)}")
+                p["dead"] = True
+                p["hidden"] = True
+
+    def _tick_spellbooks(self) -> None:
+        """Reading a world Spellbook (walking over it) teaches its spell."""
+        ppos = self._player_pos()
+        if ppos is None:
+            return
+        c = self.game.character
+        for bk in self._things_of_type("spellbook"):
+            p = bk.properties
+            if p.get("dead"):
+                continue
+            if self._dist2d(ppos, bk.pos) > float(p.get("pickup_radius", 70.0)):
+                continue
+            spell_id = str(p.get("spell", "") or "")
+            spell = rpg_magic.get(spell_id)
+            title = p.get("title") or (spell.name if spell else spell_id)
+            if spell is None:
+                self.notify("The book's script is unreadable")
+            elif spell_id in c.known_spells:
+                self.notify(f"You already know {spell.name}")
+            else:
+                c.known_spells.append(spell_id)
+                if not c.active_spell:
+                    c.active_spell = spell_id
+                self.notify(f"Learned {spell.name} from {title}")
+            if not p.get("respawn"):
                 p["dead"] = True
                 p["hidden"] = True
 
@@ -1026,6 +1239,10 @@ class MiniwindSession:
             return False
         if spell is None:
             return True
+        # A "wisp" effect conjures the wandering companion light (a SELF spell).
+        if any(e.get("kind") == "wisp" for e in (spell.effects or [])):
+            self._spawn_wisp(spell)
+            return True
         if spell.delivery == rpg_magic.PROJECTILE:
             self._spawn_player_spell_projectile(spell)
             return True
@@ -1347,3 +1564,8 @@ class MiniwindSession:
         if self.game.load_from_store():
             self.needs_char_creation = False
             self._sync_engine_health(full=True)
+            # Re-apply the saved head so the player billboard matches on load.
+            head = getattr(self.game.character, "head", "") or self.store.get("player_head", "")
+            if head and head != "false":
+                self._apply_player_head(head)
+            self._assign_npc_heads()

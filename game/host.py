@@ -30,7 +30,7 @@ from .runtime import MiniwindSession, TALK_RADIUS
 # key vocabulary we translate raw Qt codes back into (for menu/dialogue nav)
 _NAV_NAMES = (list("abcdefghijklmnopqrstuvwxyz") + [str(d) for d in range(0, 10)] +
               ["up", "down", "left", "right", "return", "enter", "escape",
-               "space", "tab", "shift"])
+               "space", "tab", "shift", "backspace"])
 
 # action bindings (single-press unless noted)
 K_ATTACK = "f"
@@ -121,12 +121,14 @@ class MiniwindGame:
     def register(self, api):
         from .entities import (NPC, Creature, GameSettings, MiniwindSettings,
                                Marker, MARKER_KINDS, ItemPickup, CreatureSpawn,
-                               MiniwindTrigger)
+                               MiniwindTrigger, Spellbook, SPELLBOOK_COVERS)
         from .rpg import bestiary
         from .rpg import items as rpg_items
+        from .rpg import magic as rpg_magic
         api.register_entity(NPC, menu_label="NPC")
         api.register_entity(Creature, menu_label="Monster / Creature")
         api.register_entity(ItemPickup, menu_label="Item")
+        api.register_entity(Spellbook, menu_label="Spellbook")
         api.register_entity(MiniwindTrigger, menu_label="Trigger")
         api.register_entity(CreatureSpawn, menu_label="Spawn Point")
         api.register_entity(Marker, menu_label="Path / Schedule Marker")
@@ -152,6 +154,21 @@ class MiniwindGame:
                  max=100000.0, group="ITEM"),
             prop("respawn", "bool", "Respawns after taken", default=False,
                  group="ITEM"),
+        ])
+        spell_ids = sorted(rpg_magic.SPELLS.keys())
+        api.register_properties("spellbook", [
+            prop("spell", "enum", "Teaches spell", default="flare",
+                 choices=spell_ids, group="SPELLBOOK",
+                 help="The spell the player learns on reading this book."),
+            prop("cover", "enum", "Cover", default="red",
+                 choices=list(SPELLBOOK_COVERS), group="SPELLBOOK",
+                 help="Cover colour / sprite."),
+            prop("title", "string", "Title", default="", group="SPELLBOOK",
+                 help="Optional shown title (defaults to the spell's name)."),
+            prop("pickup_radius", "float", "Pickup radius", default=70.0,
+                 min=1.0, max=100000.0, group="SPELLBOOK"),
+            prop("respawn", "bool", "Respawns after read", default=False,
+                 group="SPELLBOOK"),
         ])
         # The spawn point's rich configuration (what to spawn, group faction and
         # per-member inventory) lives in a dedicated, guided "Spawn" tab
@@ -301,6 +318,8 @@ class MiniwindGame:
 
         try:
             from . import editor_ui
+            api.register_property_tab("Appearance", editor_ui.make_appearance_tab, entity_type="npc")
+            api.register_property_tab("Appearance", editor_ui.make_appearance_tab, entity_type="creature")
             api.register_property_tab("Inventory", editor_ui.make_inventory_tab, entity_type="npc")
             api.register_property_tab("Dialogue", editor_ui.make_dialogue_tab, entity_type="npc")
             api.register_property_tab("Schedule", editor_ui.make_schedule_tab, entity_type="npc")
@@ -308,6 +327,11 @@ class MiniwindGame:
             api.register_property_tab("Loot", editor_ui.make_inventory_tab, entity_type="creature")
             api.register_property_tab("Spells", editor_ui.make_spells_tab, entity_type="creature")
             api.register_property_tab("Quests", editor_ui.make_quests_tab,
+                                      entity_type="miniwindsettings")
+            # Assign starting spells to the player from a checklist of every
+            # spell (built-in and custom, from the Spell Editor).
+            api.register_property_tab("Player Spells",
+                                      editor_ui.make_player_spells_tab,
                                       entity_type="miniwindsettings")
             # The spawn point ('logicspawner') gets a guided Spawn tab that makes
             # the creature-vs-NPC choice explicit, filters the role list to the

@@ -44,6 +44,87 @@ def _hint_label(QtWidgets, text):
 # ===========================================================================
 # Inventory editor
 # ===========================================================================
+def make_appearance_tab(thing):
+    """Pick the head sprite an NPC/creature uses (a single billboard, no
+    animation). '(random)' lets the game assign a head never used by the player.
+    Setting a head updates the entity's sprite immediately."""
+    try:
+        QtWidgets, QtCore = _qt()
+    except Exception:  # pragma: no cover
+        return None
+    import os
+    from PyQt5 import QtGui
+    from .rpg import heads
+
+    class Tab(QtWidgets.QWidget):
+        def __init__(self):
+            super().__init__()
+            self.thing = thing
+            v = QtWidgets.QVBoxLayout(self)
+            v.addWidget(_hint_label(
+                QtWidgets, "This NPC's sprite is a single head image (no animation "
+                "frames). Choose one, or leave (random) to let the game assign a "
+                "head that is never the player's."))
+            row = QtWidgets.QHBoxLayout()
+            row.addWidget(QtWidgets.QLabel("Head:"))
+            self.combo = QtWidgets.QComboBox()
+            self.combo.addItem("(random)", "")
+            for hid in heads.HEAD_IDS:
+                self.combo.addItem(hid, hid)
+            cur = str(thing.properties.get("head", "") or "")
+            i = self.combo.findData(cur)
+            self.combo.setCurrentIndex(i if i >= 0 else 0)
+            self.combo.currentIndexChanged.connect(self._changed)
+            row.addWidget(self.combo, 1)
+            v.addLayout(row)
+            self.preview = QtWidgets.QLabel()
+            self.preview.setFixedSize(140, 140)
+            self.preview.setAlignment(QtCore.Qt.AlignCenter)
+            self.preview.setStyleSheet(
+                "background:#1f2124; border:1px solid #555; border-radius:6px; color:#9aa;")
+            v.addWidget(self.preview, 0, QtCore.Qt.AlignHCenter)
+            v.addStretch(1)
+            self._refresh()
+
+        def _repo_root(self):
+            return os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+
+        def _changed(self, *_):
+            hid = self.combo.currentData() or ""
+            self.thing.properties["head"] = hid
+            if hid in heads.HEAD_IDS:
+                path = heads.head_path(hid)
+                # Living/attacking sprite follow the head; custom_dead is left as
+                # the role's corpse/gore sprite so a killed or gibbed NPC shows
+                # gore, not the living head.
+                for k in ("custom_idle", "custom_shoot"):
+                    self.thing.properties[k] = path
+            # Drop cached sprites so the viewport shows the new head.
+            try:
+                from editor.things import Monster
+                Monster.clear_sprite_cache()
+            except Exception:
+                pass
+            self._refresh()
+
+        def _refresh(self):
+            hid = str(self.thing.properties.get("head", "") or "")
+            pm = None
+            if hid in heads.HEAD_IDS:
+                p = os.path.join(self._repo_root(), heads.head_path(hid))
+                if os.path.isfile(p):
+                    q = QtGui.QPixmap(p)
+                    if not q.isNull():
+                        pm = q.scaled(132, 132, QtCore.Qt.KeepAspectRatio,
+                                      QtCore.Qt.SmoothTransformation)
+            if pm is not None:
+                self.preview.setPixmap(pm)
+            else:
+                self.preview.setText(hid or "(random head\nassigned at play)")
+
+    return Tab()
+
+
 def make_inventory_tab(thing):
     try:
         QtWidgets, QtCore = _qt()
@@ -970,6 +1051,220 @@ def _castable_spells():
             out.append((sid, sp.name))
     out.sort(key=lambda t: t[1])
     return out
+
+
+# --- Player Spells tab: pastel, one-card-per-line, RPG-styled ----------------
+
+#: Pastel wash + dark ink per magic school (mirrors make_spell_icons).
+_SCHOOL_PASTEL = {
+    "destruction": ("#f6cdc8", "#7a3730"),
+    "restoration": ("#cdeed2", "#2f6f4a"),
+    "alteration":  ("#cee0f8", "#37628f"),
+    "conjuration": ("#e0d2f6", "#5f4296"),
+    "illusion":    ("#f7d6f0", "#8a4276"),
+    "mysticism":   ("#cdeeec", "#2e7674"),
+    "default":     ("#e4e2e8", "#5a5a66"),
+}
+
+
+def _school_pastel(school):
+    return _SCHOOL_PASTEL.get(str(school or "").lower(), _SCHOOL_PASTEL["default"])
+
+
+def _spell_icon_path(sid, school):
+    """The best 100x100 icon for a spell: its own art, else a per-school
+    placeholder, else the generic one (all under assets/sprites/spells)."""
+    import os
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    base = os.path.join(root, "assets", "sprites", "spells")
+    for name in (f"{sid}.png", f"_{str(school or '').lower()}.png", "_spell.png"):
+        p = os.path.join(base, name)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def _rpg_font(QtGui, size, bold=False):
+    """An old-looking serif/fantasy font, using whatever the OS provides
+    (Papyrus / Palatino / Book Antiqua / Georgia …)."""
+    f = QtGui.QFont()
+    try:
+        f.setFamilies(["Papyrus", "Luminari", "Palatino Linotype", "Book Antiqua",
+                       "Georgia", "Cambria", "serif"])
+    except Exception:
+        f.setFamily("Georgia")
+    f.setStyleHint(QtGui.QFont.Serif)
+    f.setPointSize(size)
+    f.setBold(bold)
+    return f
+
+
+def make_player_spells_tab(thing):
+    """A vertical list of spell *cards* — every spell (built-in + custom) the
+    player can start knowing, one per line, tinted by magic school, with a
+    100x100 icon (placeholder until real art is added) and an old-RPG typeface.
+    Click a card to grant/revoke it. Writes ``properties['player_spells']``."""
+    try:
+        QtWidgets, QtCore = _qt()
+    except Exception:  # pragma: no cover
+        return None
+    from PyQt5 import QtGui
+    from .rpg import magic
+
+    Qt = QtCore.Qt
+    _DELIV = {magic.SELF: "self", magic.TOUCH: "touch",
+              magic.TARGET: "target", magic.PROJECTILE: "bolt"}
+
+    class SpellCard(QtWidgets.QFrame):
+        H = 116
+
+        def __init__(self, sid, sp, selected, on_toggle):
+            super().__init__()
+            self.sid = sid
+            self.selected = selected
+            self._on_toggle = on_toggle
+            self.bg, self.ink = _school_pastel(sp.school)
+            self.setMinimumHeight(self.H)
+            self.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
+                               QtWidgets.QSizePolicy.Fixed)
+            self.setCursor(Qt.PointingHandCursor)
+            self.setToolTip(f"<b>{sp.name}</b> ({sid})<br>{getattr(sp,'desc','') or ''}")
+
+            lay = QtWidgets.QHBoxLayout(self)
+            lay.setContentsMargins(10, 8, 12, 8)
+            lay.setSpacing(12)
+
+            # 100x100 icon placeholder (its own art when present).
+            icon = QtWidgets.QLabel()
+            icon.setFixedSize(100, 100)
+            icon.setAlignment(Qt.AlignCenter)
+            icon.setStyleSheet("background:rgba(255,255,255,60); border:1px solid %s;"
+                               "border-radius:8px;" % self.ink)
+            path = _spell_icon_path(sid, sp.school)
+            if path:
+                pm = QtGui.QPixmap(path)
+                if not pm.isNull():
+                    icon.setPixmap(pm.scaled(96, 96, Qt.KeepAspectRatio,
+                                             Qt.SmoothTransformation))
+            lay.addWidget(icon)
+
+            mid = QtWidgets.QVBoxLayout(); mid.setSpacing(3)
+            name = QtWidgets.QLabel(sp.name)
+            name.setFont(_rpg_font(QtGui, 15, bold=True))
+            name.setStyleSheet("color:#241f18; border:none; background:transparent;")
+            mid.addWidget(name)
+            sub = QtWidgets.QLabel(f"{str(sp.school).title()}  ·  {_DELIV.get(sp.delivery, sp.delivery)}")
+            sf = _rpg_font(QtGui, 10); sf.setBold(False)
+            sub.setFont(sf)
+            sub.setStyleSheet("color:%s; border:none; background:transparent;" % self.ink)
+            mid.addWidget(sub)
+            bits = [f"{int(getattr(sp,'base_cost',0) or 0)} magicka"]
+            if getattr(sp, "damage", 0):
+                bits.append(f"{int(sp.damage)} damage")
+            desc = getattr(sp, "desc", "") or ""
+            stat = QtWidgets.QLabel("   ·   ".join(bits))
+            stat.setFont(_rpg_font(QtGui, 10))
+            stat.setStyleSheet("color:#4a4034; border:none; background:transparent;")
+            mid.addWidget(stat)
+            if desc:
+                dl = QtWidgets.QLabel(desc)
+                dl.setWordWrap(True)
+                df = _rpg_font(QtGui, 9); df.setItalic(True)
+                dl.setFont(df)
+                dl.setStyleSheet("color:#5a5045; border:none; background:transparent;")
+                mid.addWidget(dl)
+            mid.addStretch(1)
+            lay.addLayout(mid, 1)
+
+            self.tick = QtWidgets.QLabel("✓")
+            tf = _rpg_font(QtGui, 20, bold=True); self.tick.setFont(tf)
+            self.tick.setStyleSheet("color:#2f7a3a; border:none; background:transparent;")
+            self.tick.setFixedWidth(24)
+            self.tick.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+            lay.addWidget(self.tick)
+            self._restyle()
+
+        def _restyle(self):
+            self.tick.setVisible(self.selected)
+            border = ("3px solid %s" % self.ink) if self.selected else "1px solid #7a7a86"
+            self.setStyleSheet("QFrame { background:%s; border:%s; border-radius:10px; }"
+                               % (self.bg, border))
+
+        def set_selected(self, v):
+            self.selected = v; self._restyle()
+
+        def mousePressEvent(self, e):
+            if e.button() == Qt.LeftButton:
+                self.selected = not self.selected
+                self._restyle()
+                self._on_toggle(self.sid, self.selected)
+
+    class Tab(QtWidgets.QWidget):
+        def __init__(self):
+            super().__init__()
+            self.thing = thing
+            self.cards = {}
+            root = QtWidgets.QVBoxLayout(self)
+            root.addWidget(_hint_label(
+                QtWidgets, "Spells the player starts the game knowing (on top of "
+                "any from their race, birthsign or class). Click a card to grant "
+                "it. Create new spells in Tools ▸ Spell Editor — they appear here. "
+                "Drop a 100x100 PNG at assets/sprites/spells/<id>.png for real art."))
+            self.search = QtWidgets.QLineEdit()
+            self.search.setPlaceholderText("Filter spells…")
+            self.search.textChanged.connect(self._filter)
+            root.addWidget(self.search)
+
+            scroll = QtWidgets.QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+            holder = QtWidgets.QWidget()
+            col = QtWidgets.QVBoxLayout(holder)
+            col.setContentsMargins(2, 2, 2, 2)
+            col.setSpacing(8)
+            chosen = set(self._current())
+            for sid, sp in sorted(magic.SPELLS.items(),
+                                  key=lambda kv: (kv[1].school, kv[1].name)):
+                card = SpellCard(sid, sp, sid in chosen, self._toggle)
+                self.cards[sid] = card
+                col.addWidget(card)
+            col.addStretch(1)
+            scroll.setWidget(holder)
+            root.addWidget(scroll, 1)
+
+            self.summary = QtWidgets.QLabel("")
+            self.summary.setStyleSheet("color:#9aa;")
+            root.addWidget(self.summary)
+            self._update_summary()
+
+        def _current(self):
+            v = self.thing.properties.get("player_spells")
+            if isinstance(v, str):
+                v = [s.strip() for s in v.split(",") if s.strip()]
+            return list(v) if isinstance(v, list) else []
+
+        def _toggle(self, sid, selected):
+            chosen = self._current()
+            if selected and sid not in chosen:
+                chosen.append(sid)
+            elif not selected and sid in chosen:
+                chosen.remove(sid)
+            self.thing.properties["player_spells"] = chosen
+            self._update_summary()
+
+        def _filter(self, text):
+            from .rpg import magic as _m
+            t = text.strip().lower()
+            for sid, card in self.cards.items():
+                sp = _m.get(sid)
+                hay = f"{sid} {sp.name if sp else ''} {sp.school if sp else ''}".lower()
+                card.setVisible(not t or t in hay)
+
+        def _update_summary(self):
+            n = len(self.thing.properties.get("player_spells") or [])
+            self.summary.setText(f"{n} spell(s) granted to the player at start")
+
+    return Tab()
 
 
 def make_spells_tab(thing):

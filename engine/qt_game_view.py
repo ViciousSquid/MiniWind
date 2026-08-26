@@ -102,6 +102,7 @@ class QtGameView(QOpenGLWidget):
         self.overhead_sprite_facing_offset = 0.0
         self._overhead_sprite_ctrl = None
         self._overhead_sprite_renderer = None
+        self._overhead_head = None     # last player-head sprite the renderer used
         self.show_triggers_as_solid = False
         self.camera = Camera()
         self.camera.pos = glm.vec3(0, 150, 400)
@@ -502,6 +503,22 @@ class QtGameView(QOpenGLWidget):
             return
         if self._overhead_sprite_ctrl is None:
             self._overhead_sprite_ctrl = SpriteController(walk_fps=float(self.overhead_walk_fps))
+        # A built-in game (MiniWind) can force the player's appearance to a
+        # single chosen head sprite (no animation): map every frame to it and
+        # rebuild the renderer whenever the head changes.
+        head_rel = getattr(self.logic_thread, "player_head_sprite", None)
+        if head_rel and head_rel != getattr(self, "_overhead_head", None):
+            import os as _os
+            root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+            head_abs = _os.path.join(root, head_rel)
+            from engine.overhead_sprite import SpriteController as _SC
+            frames = {k: head_abs for k in (
+                _SC.IDLE, _SC.WALK_A, _SC.WALK_B, _SC.IDLE_G, _SC.WALK_A_G,
+                _SC.WALK_B_G, _SC.SHOOT)}
+            self._overhead_sprite_renderer = OverheadSpriteRenderer(
+                frame_files=frames, size=float(self.overhead_sprite_size),
+                facing_offset_deg=float(self.overhead_sprite_facing_offset))
+            self._overhead_head = head_rel
         if self._overhead_sprite_renderer is None:
             self._overhead_sprite_renderer = OverheadSpriteRenderer(
                 size=float(self.overhead_sprite_size),

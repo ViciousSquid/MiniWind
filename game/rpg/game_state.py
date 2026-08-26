@@ -65,8 +65,11 @@ class GameState:
     # ------------------------------------------------------------------ setup
     @classmethod
     def new_game(cls, store, name, race_id, class_id, birthsign_id="none",
-                 gender="male", custom_class=None, rng=None) -> "GameState":
+                 gender="male", custom_class=None, rng=None, head="") -> "GameState":
         char = Character.create(name, race_id, class_id, birthsign_id, gender, custom_class)
+        if head:
+            from . import heads
+            char.head = heads.normalise(head)
         gs = cls(store, char, rng)
         gs.grant_starter_kit()
         return gs

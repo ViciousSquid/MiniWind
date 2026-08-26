@@ -79,6 +79,19 @@ def portrait_for(role: str) -> str:
     return f"{_PORTRAIT_DIR}/{_art_role(role)}.png"
 
 
+def _apply_head_sprite(p: dict) -> None:
+    """If a ``head`` id is set, point the actor's billboard frames at that head
+    sprite (a single static image); otherwise leave the role art in place."""
+    from .rpg import heads
+    hid = str(p.get("head", "") or "")
+    if hid in heads.HEAD_IDS:
+        path = heads.head_path(hid)
+        p["custom_idle"] = path
+        p["custom_shoot"] = path
+        # Leave custom_dead as the role's corpse/gore sprite so a killed (and
+        # especially a gibbed) NPC still shows gore, not the living head.
+
+
 def _apply_actor_common(thing, entity_type, default_role, default_faction):
     """Fill the properties both actor entities share, from the bestiary template.
 
@@ -159,6 +172,11 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
     p.setdefault("custom_idle", sprite_for(role))
     p.setdefault("custom_dead", sprite_for(role))
     p.setdefault("custom_shoot", sprite_for(role))
+    # Head override: an NPC's whole appearance can be one of the 15 head sprites
+    # (a single billboard, no animation). Empty = use the role art; the runtime
+    # assigns a random head — never the player's — at play start.
+    p.setdefault("head", "")
+    _apply_head_sprite(p)
     p.setdefault("portrait", portrait_for(role))
     if not _authored_w:
         p["sprite_width"] = tmpl.scale if tmpl else 112
@@ -237,6 +255,10 @@ def _init_settings(self):
     p.setdefault("difficulty", "normal")        # easy | normal | hard
     p.setdefault("start_scenario", "prompt")    # prompt=char creation, or quick
     p.setdefault("region_name", "The Vale of Miniwind")
+    # Spell ids granted to the player at character creation (in addition to the
+    # ones their race / birthsign / class provide). Edited via the "Player
+    # Spells" tab on this entity.
+    p.setdefault("player_spells", [])
 
 
 if _HAVE_EDITOR:
@@ -414,6 +436,81 @@ def _make_thing_pair(init_fn, icon):
 
 ItemPickup = _make_thing_pair(_init_item_pickup, "assets/sprites/pickup.png")
 ItemPickup.__name__ = ItemPickup.__qualname__ = "ItemPickup"
+
+
+# ---------------------------------------------------------------------------
+# Spellbook — a world placeable (Tidy-plugin book art) that teaches its spell
+# to the player on pickup. Four cover colours; the sprite follows the cover.
+# ---------------------------------------------------------------------------
+SPELLBOOK_COVERS = ("red", "green", "brown", "purple")
+
+
+def spellbook_sprite(cover: str) -> str:
+    c = str(cover or "red").lower()
+    if c not in SPELLBOOK_COVERS:
+        c = "red"
+    return f"{_SPRITE_DIR}/spellbook_{c}.png"
+
+
+def _init_spellbook(self):
+    p = self.properties
+    p["type"] = "spellbook"
+    p.setdefault("spell", "flare")        # spell id taught when picked up
+    p.setdefault("cover", "red")
+    p.setdefault("pickup_radius", 70.0)
+    p.setdefault("respawn", False)
+    p.setdefault("title", "")             # optional display title
+    p["custom_idle"] = spellbook_sprite(p.get("cover", "red"))
+
+
+def _spellbook_pixmap(book):
+    """Load this book's cover sprite (per its ``cover``) for the 2D/3D views."""
+    from PyQt5.QtGui import QPixmap
+    cache = _MARKER_PIXMAP_CACHE
+    path = spellbook_sprite(book.properties.get("cover", "red"))
+    if path in cache:
+        return cache[path]
+    pix = None
+    try:
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+        abs_path = os.path.join(root, path)
+        if os.path.exists(abs_path):
+            loaded = QPixmap(abs_path)
+            if not loaded.isNull():
+                pix = loaded
+    except Exception:
+        pix = None
+    cache[path] = pix
+    return pix
+
+
+if _HAVE_EDITOR:
+    class Spellbook(Thing):
+        """A world spellbook that teaches its ``spell`` to the player on pickup."""
+        pixmap_path = "assets/sprites/miniwind/spellbook.png"
+
+        def __init__(self, pos=None, properties=None):
+            super().__init__(pos, properties)
+            _init_spellbook(self)
+
+        def get_instance_pixmap(self):
+            # Keep the sprite in step with the chosen cover colour.
+            self.properties["custom_idle"] = spellbook_sprite(
+                self.properties.get("cover", "red"))
+            pix = _spellbook_pixmap(self)
+            return pix if pix is not None else super().get_instance_pixmap()
+
+        def get_icon_pixmap(self):
+            pix = _spellbook_pixmap(self)
+            if pix is not None and not pix.isNull():
+                from PyQt5.QtCore import Qt
+                return pix.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            return super().get_icon_pixmap()
+else:  # pragma: no cover - headless player
+    class Spellbook(Thing):
+        def __init__(self, pos=None, properties=None):
+            super().__init__(pos, properties)
+            _init_spellbook(self)
 CreatureSpawn = _make_thing_pair(_init_creature_spawn, "assets/sprites/logic_spawner.png")
 CreatureSpawn.__name__ = CreatureSpawn.__qualname__ = "CreatureSpawn"
 # Named MiniwindTrigger (type 'miniwindtrigger') so it never collides with Fio's
