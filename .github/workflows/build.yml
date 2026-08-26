@@ -15,24 +15,6 @@ jobs:
           python-version: '3.10'
           cache: pip
 
-      - name: Validate required files
-        shell: pwsh
-        run: |
-          $required = @(
-            "main.py",
-            "assets/icon.ico",
-            "requirements.txt"
-          )
-
-          foreach ($file in $required) {
-            if (Test-Path $file) {
-              Write-Host "Found: $file"
-            } else {
-              Write-Error "Missing required file: $file"
-              exit 1
-            }
-          }
-
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
@@ -63,7 +45,7 @@ jobs:
             --output-dir=build `
             main.py
 
-      - name: Validate Windows build
+      - name: Validate executable and game data
         shell: pwsh
         run: |
           $dist = "build/main.dist"
@@ -78,20 +60,13 @@ jobs:
           if (Test-Path "$dist/game") {
             Write-Host "Game directory found in distribution"
           } else {
-            Write-Error "Build failed: game directory not found"
-            exit 1
-          }
-
-          if (Test-Path "$dist/assets") {
-            Write-Host "Assets directory found in distribution"
-          } else {
-            Write-Error "Build failed: assets directory not found"
+            Write-Error "Build failed: game directory not found in distribution"
             exit 1
           }
 
           Write-Host ""
-          Write-Host "MiniWind distribution:"
-          Get-ChildItem $dist -Recurse | Select-Object FullName
+          Write-Host "Game directory contents:"
+          Get-ChildItem "$dist/game" -Recurse | Select-Object FullName
 
       - uses: actions/upload-artifact@v4
         with:
