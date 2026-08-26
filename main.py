@@ -189,7 +189,6 @@ if __name__ == "__main__":
     except FileNotFoundError:
         print("Version file not found")
 
-    # ---------------------------------------------------------
     # Configure OpenGL BEFORE QApplication is created
     # ---------------------------------------------------------
     fmt = QSurfaceFormat()

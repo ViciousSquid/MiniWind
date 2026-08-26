@@ -78,9 +78,9 @@ def _patch_editor_menu():
     def create_menu_bar(self, MainWindow):
         _orig_create_menu_bar(self, MainWindow)
         try:
-            _build_miniwind_menu(MainWindow)
+            _build_sessions_menu(MainWindow)
         except Exception as exc:
-            _log(f"MiniWind menu build failed: {exc}")
+            _log(f"Sessions menu build failed: {exc}")
         try:
             _add_tools_menu_entries(MainWindow)
         except Exception as exc:
@@ -115,82 +115,107 @@ def _open_spell_editor(MainWindow):
         _log(f"Spell Editor failed to open: {exc}")
 
 
-def _build_miniwind_menu(MainWindow):
-    from PyQt5.QtWidgets import QMenu, QMessageBox
-    from plugins.manager import get_manager
+def _build_sessions_menu(MainWindow):
+    """Top-level **Sessions** menu — manage a playthrough's saved progress.
 
-    mgr = get_manager()
-    entries = mgr.builtin_menu_entries()
+    Replaces the old "MiniWind" menu; RPG entities are still placed from the
+    editor palette (MiniWind category) and the right-click "Add MiniWind Entity"
+    submenu."""
+    from PyQt5.QtWidgets import QMenu
 
     menubar = MainWindow.menuBar()
 
-    # Insert MiniWind immediately before Help (else append).
+    # Don't add a second copy if the menu bar is rebuilt.
+    for action in menubar.actions():
+        if action.text().replace("&", "") == "Sessions":
+            return
+
+    # Insert Sessions immediately before Help (else append).
     help_action = None
     for action in menubar.actions():
         if action.text().replace("&", "") == "Help":
             help_action = action
             break
 
-    menu = QMenu("MiniWind", menubar)
+    menu = QMenu("Sessions", menubar)
     if help_action:
         menubar.insertMenu(help_action, menu)
     else:
         menubar.addMenu(menu)
 
-    hdr = menu.addAction("Add RPG entity (at origin):")
-    hdr.setEnabled(False)
-    for _game, label, cls in entries:
-        act = menu.addAction(f"   {label}")
-        act.triggered.connect(
-            lambda _checked=False, c=cls, l=label: _place_entity(MainWindow, c, l))
-    menu.addSeparator()
-
-    about = menu.addAction("About MiniWind…")
-    about.triggered.connect(
-        lambda _checked=False: QMessageBox.information(
-            MainWindow, "MiniWind RPG",
-            "MiniWind — a small living fantasy RPG built into this Fio branch.\n\n"
-            "Place Creatures/NPCs and a Game Settings marker from this menu or "
-            "the editor palette (MiniWind category), then press Play to enter "
-            "the world. Game content lives in editable data files under "
-            "game/data/."))
+    reset = menu.addAction("Reset All Progress…")
+    reset.setToolTip("Erase the saved MiniWind character, inventory, quests and "
+                     "world state so the next Play starts a fresh game.")
+    reset.triggered.connect(lambda _checked=False: _reset_all_progress(MainWindow))
 
 
-def _place_entity(MainWindow, cls, label):
-    """Create a MiniWind entity at the origin and select it, running its
-    creation wizard first if one is registered (same behaviour as right-click)."""
-    try:
-        probe = cls(pos=[0, 40, 0])
-        ttype = probe.properties.get("type") if hasattr(probe, "properties") else None
-        # A map may hold at most one Game Settings marker — if one already
-        # exists, select it and abort rather than adding a duplicate.
+def _reset_all_progress(MainWindow):
+    """Confirm, then wipe all saved MiniWind progress for a fresh start."""
+    from PyQt5.QtWidgets import QMessageBox
+
+    reply = QMessageBox.question(
+        MainWindow, "Reset All Progress",
+        "This erases your MiniWind character, inventory, spells, quests and "
+        "world progress. This cannot be undone.\n\nReset all progress?",
+        QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+    if reply != QMessageBox.Yes:
+        return
+
+    _clear_miniwind_progress(MainWindow)
+
+    if hasattr(MainWindow, "show_toast"):
+        MainWindow.show_toast("MiniWind progress reset — next Play starts a new character")
+    _log("All MiniWind progress reset.")
+
+
+def _clear_miniwind_progress(MainWindow):
+    """Clear the persistent MiniWind key/value store and reset a live session."""
+    store_names = {"miniwind"}
+
+    # A live play session may use a map-specified store name; reset it too.
+    session = _active_session(MainWindow)
+    if session is not None:
         try:
-            from plugins.integration import _singleton_blocked
-            if _singleton_blocked(MainWindow, MainWindow.state, ttype):
-                return
+            store_names.add(session.store._name)
         except Exception:
             pass
-        wiz = None
+
+    # 1. Clear the persistent registry (editor) and the player fallback.
+    for reg in _progress_registries():
+        for name in store_names:
+            try:
+                if name in reg:
+                    reg[name].clear()
+            except Exception:
+                pass
+
+    # 2. Reset a session that is currently being played.
+    if session is not None and hasattr(session, "reset_progress"):
         try:
-            from plugins.manager import get_manager
-            wiz = get_manager().entity_wizard_for(ttype) if ttype else None
-        except Exception:
-            wiz = None
-        if wiz is not None:
-            authored = wiz(MainWindow)
-            if authored is None:
-                return   # cancelled
-            thing = cls(pos=[0, 40, 0], properties=dict(authored))
-        else:
-            thing = probe
-        if hasattr(MainWindow, "save_state"):
-            MainWindow.save_state()
-        MainWindow.state.things.append(thing)
-        if hasattr(MainWindow, "set_selected_object"):
-            MainWindow.set_selected_object(thing)
-        if hasattr(MainWindow, "update_views"):
-            MainWindow.update_views()
-        if hasattr(MainWindow, "show_toast"):
-            MainWindow.show_toast(f"Added {label} — drag it into place")
-    except Exception as exc:
-        _log(f"placement failed: {exc}")
+            session.reset_progress()
+        except Exception as exc:
+            _log(f"live session reset failed: {exc}")
+
+
+def _progress_registries():
+    """The dict-of-dicts KV registries MiniWind persists progress into."""
+    regs = []
+    try:
+        from editor.things import LogicKeyValueStore
+        regs.append(LogicKeyValueStore._persistent_registry)
+    except Exception:
+        pass
+    try:
+        from plugins.api import GlobalStore
+        regs.append(GlobalStore._fallback)
+    except Exception:
+        pass
+    return regs
+
+
+def _active_session(MainWindow):
+    """The live MiniWind session if a map is being played, else None."""
+    view = getattr(MainWindow, "view_3d", None)
+    lt = getattr(view, "logic_thread", None) if view is not None else None
+    return getattr(lt, "_miniwind", None) if lt is not None else None
+

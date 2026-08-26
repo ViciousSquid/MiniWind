@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QLineEdit, QSpinBox,
                              QHBoxLayout, QColorDialog, QFileDialog, QGridLayout,
                              QToolButton, QSlider, QTabWidget, QGroupBox, QScrollArea,
                              QFrame, QDoubleSpinBox, QSizePolicy,
-                             QTableWidget, QTableWidgetItem)
+                             QTableWidget, QTableWidgetItem, QTextEdit)
 from PyQt5.QtCore import Qt, QSize, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QIcon, QFont
 from editor.things import (Thing, Light, Pickup, Monster, Model, Speaker,
@@ -188,6 +188,51 @@ class ClickableLineEdit(QLineEdit):
         if event.button() == Qt.LeftButton and not self.text().strip():
             self.clicked_while_empty.emit()
         super().mousePressEvent(event)
+
+
+class CollapsibleSection(QWidget):
+    """A titled, click-to-collapse container — keeps the property panel from
+    being one long flat list. Add rows via :meth:`addLayout` / :meth:`addWidget`."""
+
+    # Palette matches the application-wide dark theme (main.dark_stylesheet:
+    # #3c3f41 controls, #555 borders, #e0e0e0 text) so the panel reads as one.
+    HEADER = ("QToolButton { background:#3c3f41; color:#e0e0e0; font-weight:bold; "
+              "border:1px solid #555; border-radius:4px; padding:6px 8px; text-align:left; }"
+              "QToolButton:hover { background:#4b4d4d; }")
+
+    def __init__(self, title, expanded=True, count=0, parent=None):
+        super().__init__(parent)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 4, 0, 0)
+        v.setSpacing(0)
+        self.toggle = QToolButton()
+        label = f"{title}" + (f"  ({count})" if count else "")
+        self.toggle.setText(label)
+        self.toggle.setCheckable(True)
+        self.toggle.setChecked(expanded)
+        self.toggle.setStyleSheet(self.HEADER)
+        self.toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+        self.toggle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.content = QWidget()
+        self.content_layout = QVBoxLayout(self.content)
+        self.content_layout.setContentsMargins(8, 6, 4, 4)
+        self.content_layout.setSpacing(4)
+        self.content.setVisible(expanded)
+        self.toggle.toggled.connect(self._on_toggled)
+        v.addWidget(self.toggle)
+        v.addWidget(self.content)
+
+    def _on_toggled(self, checked):
+        self.content.setVisible(checked)
+        self.toggle.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
+
+    def addLayout(self, lay):
+        self.content_layout.addLayout(lay)
+
+    def addWidget(self, w):
+        self.content_layout.addWidget(w)
+
 
 class PropertyEditor(QWidget):
     def __init__(self, editor):
@@ -1030,6 +1075,7 @@ class PropertyEditor(QWidget):
         tab_layout = QVBoxLayout(w)
         tab_layout.setContentsMargins(8, 8, 8, 8)
         tab_layout.setSpacing(4)
+
         form = QFormLayout()
 
         if isinstance(thing, Model):
@@ -1075,11 +1121,11 @@ class PropertyEditor(QWidget):
         if isinstance(thing, Pickup):
             self._build_pickup_ui(form, thing)
 
-        # Dynamic property iteration (excludes keys handled above)
-        self._iterate_thing_properties(form, thing)
+        # Primary/type-specific fields sit at the top, always visible.
+        if form.rowCount() > 0:
+            tab_layout.addLayout(form)
 
-        tab_layout.addLayout(form)
-
+        # Type-specific grouped editors (already visually grouped).
         if isinstance(thing, PathNode):
             self._build_pathnode_group(tab_layout, thing)
         if isinstance(thing, LogicCamera):
@@ -1090,6 +1136,18 @@ class PropertyEditor(QWidget):
             self._build_keyvalue_group(tab_layout, thing)
         if isinstance(thing, Monster):
             self._build_monster_groups(tab_layout, thing)
+
+        # Everything else — the long tail of generic fields — folds into a
+        # titled, collapsible card so the panel no longer opens as one flat list.
+        adv_form = QFormLayout()
+        adv_form.setSpacing(4)
+        self._iterate_thing_properties(adv_form, thing)
+        n = adv_form.rowCount()
+        if n > 0:
+            section = CollapsibleSection("Other Properties", expanded=(n <= 9),
+                                         count=n)
+            section.addLayout(adv_form)
+            tab_layout.addWidget(section)
 
         tab_layout.addStretch()
         return w

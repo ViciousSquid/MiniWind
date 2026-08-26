@@ -2790,7 +2790,9 @@ class LogicThread(threading.Thread):
             p_pos = glm.vec3(proj['pos'][0], proj['pos'][1], proj['pos'][2])
 
             # ---- Collision with player ----
-            if self.player and not self.god_mode and not self.player_dead:
+            # A player-cast projectile must not strike the player who fired it.
+            if (self.player and not self.god_mode and not self.player_dead
+                    and not proj.get('owner_is_player')):
                 player_pos = self.player.pos
                 # Simple sphere collision with player (radius ~32 units)
                 dist_to_player = glm.distance(p_pos, player_pos)

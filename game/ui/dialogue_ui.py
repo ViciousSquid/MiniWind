@@ -29,7 +29,43 @@ def _portrait(path):
     return _PORTRAIT_CACHE[path]
 
 
+PAD = 18
+
+
+def box_height(session):
+    """Pixel height the dialogue box needs for the current view."""
+    view = session.current_view()
+    n_resp = max(1, len(view["responses"])) if view else 1
+    content_h = 40 + 58 + n_resp * 24 + 22
+    return max(170, PAD * 2 + content_h)
+
+
+def window_body_size(session, width_hint=760):
+    """Suggested floating-window body size for the conversation."""
+    return (width_hint, box_height(session))
+
+
 def draw(painter, session, width, height):
+    """Legacy full-screen placement: a box across the lower third."""
+    if session.current_view() is None:
+        return
+    box_h = box_height(session)
+    margin = max(24, int(width * 0.06))
+    x = margin
+    y = height - box_h - int(margin * 0.6)
+    w = width - margin * 2
+    _draw_content(painter, session, x, y, w, box_h, framed=True)
+
+
+def draw_in_rect(painter, session, x, y, w, h):
+    """Draw the conversation inside a supplied rect (e.g. a floating window),
+    with no outer gilded frame — the window provides the chrome."""
+    if session.current_view() is None:
+        return
+    _draw_content(painter, session, x, y, w, h, framed=False)
+
+
+def _draw_content(painter, session, x, y, w, box_h, framed=True):
     view = session.current_view()
     if view is None:
         return
@@ -44,17 +80,14 @@ def draw(painter, session, width, height):
         mood = ("friendly" if disp >= 60 else "wary" if disp >= 35 else "hostile")
         subtitle = f"Disposition {disp} ({mood})"
 
-    margin = max(24, int(width * 0.06))
-    pad = 18
-    n_resp = max(1, len(view["responses"]))
-    content_h = 40 + 58 + n_resp * 24 + 22
-    box_h = max(170, pad * 2 + content_h)
-    x = margin
-    y = height - box_h - int(margin * 0.6)
-    w = width - margin * 2
-
-    inner = T.panel(painter, x, y, w, box_h, radius=14)
-    tx = inner.x()
+    pad = PAD
+    if framed:
+        inner = T.panel(painter, x, y, w, box_h, radius=14)
+        tx = inner.x()
+    else:
+        from PyQt5.QtCore import QRect as _QRect
+        inner = _QRect(int(x), int(y), int(w), int(box_h))
+        tx = inner.x()
 
     if portrait is not None:
         ps = box_h - pad * 2 - 8

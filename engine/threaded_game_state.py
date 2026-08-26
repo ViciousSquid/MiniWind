@@ -152,6 +152,9 @@ class ThreadedGameState:
         # Shot Queue — deque for O(1) popleft
         self._shot_lock = threading.Lock()
         self._shot_queue = deque()
+        # RPG combat intents (MiniWind): left mouse -> attack, right -> cast.
+        self._rpg_attack = False
+        self._rpg_cast = False
 
         # Use key — protected by its own lock
         self._use_key_lock = threading.Lock()
@@ -265,6 +268,38 @@ class ThreadedGameState:
         with self._shot_lock:
             if self._shot_queue:
                 self._shot_queue.popleft()
+                return True
+            return False
+
+    # --- RPG combat intents (MiniWind: left = attack, right = cast) ---
+    # Simple edge-triggered flags set from the UI thread and consumed on the
+    # logic thread, mirroring the shot queue. A built-in game reads these each
+    # tick to drive its own melee/spell combat (the stock shot queue stays for
+    # the engine's gun weapons).
+
+    def queue_rpg_attack(self):
+        with self._shot_lock:
+            self._rpg_attack = True
+
+    def consume_rpg_attack(self) -> bool:
+        if not getattr(self, "_rpg_attack", False):
+            return False
+        with self._shot_lock:
+            if self._rpg_attack:
+                self._rpg_attack = False
+                return True
+            return False
+
+    def queue_rpg_cast(self):
+        with self._shot_lock:
+            self._rpg_cast = True
+
+    def consume_rpg_cast(self) -> bool:
+        if not getattr(self, "_rpg_cast", False):
+            return False
+        with self._shot_lock:
+            if self._rpg_cast:
+                self._rpg_cast = False
                 return True
             return False
 

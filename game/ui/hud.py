@@ -206,8 +206,19 @@ def _draw_topleft(painter, session, c):
                color=QColor(120, 220, 130), bold=True, family="Segoe UI")
 
 
+def _weapon_icon_pixmap(weapon_def, size=26):
+    if weapon_def is None:
+        return None
+    try:
+        from .. import item_icons
+        return item_icons.icon_pixmap(weapon_def.id, None, size)
+    except Exception:
+        return None
+
+
 def _draw_active(painter, session, c, width, height):
-    """Bottom-right: active weapon and active spell chips."""
+    """Bottom-right: active weapon and active spell chips, each with an icon so
+    the equipped weapon and readied spell read at a glance."""
     w = eq.weapon(c)
     wname = w.name if w else "Unarmed"
     a = eq.ammo(c)
@@ -219,10 +230,30 @@ def _draw_active(painter, session, c, width, height):
 
     x = width - 250
     y = height - 64
-    inner = T.panel(painter, x, y, 232, 52, radius=8, shadow=False)
-    T.text(painter, x + 14, y + 20, "⚔ " + wname, size=10, color=T.INK, family="Segoe UI")
+    T.panel(painter, x, y, 232, 52, radius=8, shadow=False)
+
+    # Weapon row: icon + name (left mouse hint).
+    tx = x + 14
+    pm = _weapon_icon_pixmap(w, 22)
+    if pm is not None and not pm.isNull():
+        painter.drawPixmap(x + 12, y + 6, pm)
+        tx = x + 40
+    T.text(painter, tx, y + 21, wname, size=10,
+           color=T.GOLD_BRIGHT if w else T.DIM, family="Segoe UI")
+    T.text(painter, x + 210, y + 21, "L", size=8, color=T.DIM, family="Segoe UI")
+
+    # Spell row: element-coloured swatch + name (right mouse hint).
     scol = T.MAGICKA.lighter(140) if spell else T.DIM
-    T.text(painter, x + 14, y + 40, "✦ " + sname, size=10, color=scol, family="Segoe UI")
+    if spell is not None:
+        col = spell.color
+        painter.setBrush(QColor(col[0], col[1], col[2]))
+        painter.setPen(QPen(QColor(col[0], col[1], col[2]).darker(160), 1))
+        painter.drawEllipse(x + 14, y + 30, 16, 16)
+        tx = x + 40
+    else:
+        tx = x + 14
+    T.text(painter, tx, y + 44, sname, size=10, color=scol, family="Segoe UI")
+    T.text(painter, x + 210, y + 44, "R", size=8, color=T.DIM, family="Segoe UI")
 
 
 def _draw_status_flags(painter, session, c, width, height):

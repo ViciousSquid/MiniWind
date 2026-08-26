@@ -49,6 +49,50 @@ def _log(message: str):
         print(f"[Plugins] {message}")
 
 
+def _singleton_blocked(main_window, editor_state, ttype) -> bool:
+    """Enforce per-map singleton entity types (see ``register_singleton_entity``).
+
+    If *ttype* is a registered singleton and one already exists in the scene,
+    select the existing instance, toast, and return True so the caller aborts
+    placement. Otherwise returns False. Fully guarded — any error means "don't
+    block", so a normal entity is never affected."""
+    if not ttype:
+        return False
+    try:
+        from plugins.manager import get_manager
+        mgr = get_manager()
+        if not mgr.is_singleton_entity(ttype):
+            return False
+        norm = mgr._normalise_type(ttype)
+    except Exception:
+        return False
+    existing = None
+    for t in getattr(editor_state, "things", []) or []:
+        props = getattr(t, "properties", None)
+        if not isinstance(props, dict):
+            continue
+        try:
+            if mgr._normalise_type(props.get("type", "")) == norm:
+                existing = t
+                break
+        except Exception:
+            continue
+    if existing is None:
+        return False
+    try:
+        if hasattr(main_window, "set_selected_object"):
+            main_window.set_selected_object(existing)
+        if hasattr(main_window, "update_views"):
+            main_window.update_views()
+        if hasattr(main_window, "show_toast"):
+            main_window.show_toast(
+                "Only one of this entity is allowed per map — selected the existing one.",
+                is_error=True)
+    except Exception:
+        pass
+    return True
+
+
 def apply():
     """Install all plugin integration patches. Safe to call more than once."""
     global _applied
@@ -285,6 +329,10 @@ def _patch_view_2d():
             # derives the rest (sprite, stats) from them. Cancel -> no placement.
             probe = cls(pos=pos_3d)
             ttype = probe.properties.get("type") if hasattr(probe, "properties") else None
+            # Enforce per-map singletons (e.g. MiniWind's Game Settings): if one
+            # already exists, select it and abort instead of adding a duplicate.
+            if _singleton_blocked(self.main_window, self.editor.state, ttype):
+                return
             wiz = None
             try:
                 wiz = get_manager().entity_wizard_for(ttype) if ttype else None
@@ -461,9 +509,13 @@ def _place_plugin_entity(MainWindow, plugin, cls, label):
                                   is_error=True)
         return
     try:
+        probe = cls(pos=[0, 40, 0])
+        ttype = probe.properties.get("type") if hasattr(probe, "properties") else None
+        if _singleton_blocked(MainWindow, MainWindow.state, ttype):
+            return
         if hasattr(MainWindow, "save_state"):
             MainWindow.save_state()
-        thing = cls(pos=[0, 40, 0])
+        thing = probe
         MainWindow.state.things.append(thing)
         if hasattr(MainWindow, "set_selected_object"):
             MainWindow.set_selected_object(thing)

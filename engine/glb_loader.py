@@ -645,6 +645,18 @@ def render_glb_thumbnail(filepath: str, width: int, height: int):
     Generate a wireframe thumbnail from a GLB file for the asset browser.
     Falls back to bounding-box preview if mesh is too complex.
     """
+    try:
+        return _render_glb_thumbnail_impl(filepath, width, height)
+    except Exception as exc:
+        # Never let a thumbnail failure (a malformed mesh, a NumPy-2 scalar
+        # conversion, a GL edge case…) propagate — the asset browser would
+        # otherwise abort loading the rest of the folder. The caller falls back
+        # to a plain "GLB" placeholder.
+        print(f"[GLB] thumbnail skipped for {filepath}: {exc}")
+        return None
+
+
+def _render_glb_thumbnail_impl(filepath: str, width: int, height: int):
     from PyQt5.QtGui import QPixmap, QColor, QPainter, QFont, QPen, QPolygonF
     from PyQt5.QtCore import Qt, QRect, QPointF
     import math

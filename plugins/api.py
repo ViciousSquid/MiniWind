@@ -442,6 +442,30 @@ class EditorAPI:
         """
         self._manager.register_property_tab(label, factory, entity_type)
 
+    def register_singleton_entity(self, entity_type: str) -> None:
+        """Mark *entity_type* as a per-map singleton (at most one instance).
+
+        Placement paths refuse to add a second one and select the existing
+        instance instead. Used by the built-in game for its GameSettings marker.
+        """
+        self._manager.register_singleton_entity(entity_type)
+
+    def register_kv_suggestions(self, provider) -> None:
+        """Provide key/value quick-insert suggestions for the KeyValue editor.
+
+        ``provider() -> list[(label, key, default_value, tooltip)]``. Lets a game
+        surface the store keys it uses without the generic editor knowing them.
+        """
+        self._manager.register_kv_suggestion_provider(provider)
+
+    def register_entity_inspector(self, provider) -> None:
+        """Provide the live inspector snapshot for a monster/NPC debug popup.
+
+        ``provider(thing, monster_state, logic_thread) -> dict | None``. Lets a
+        game supply its own mental-state view without the engine importing it.
+        """
+        self._manager.register_inspector_provider(provider)
+
     def register_renderer(self, name: str, cls) -> bool:
         """Register a swappable renderer class under *name*.
 

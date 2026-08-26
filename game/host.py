@@ -466,6 +466,15 @@ class MiniwindGame:
     def _handle_gameplay_input(self, session, just, ctx):
         # held: block
         session.toggle_block(ctx.key_down(K_BLOCK))
+        # Mouse combat intents (left = attack, right = cast) posted from the UI
+        # thread and consumed here on the logic thread. Keyboard equivalents
+        # (K_ATTACK / K_CAST) still work.
+        gs = getattr(getattr(ctx, "logic", None), "game_state", None)
+        if gs is not None:
+            if gs.consume_rpg_attack():
+                session.do_attack()
+            if gs.consume_rpg_cast():
+                session.do_cast()
         # edge actions
         if K_ATTACK in just or "space" in just:
             session.do_attack()
@@ -477,9 +486,11 @@ class MiniwindGame:
             session.toggle_sneak()
         if K_HEAL in just:
             session.use_health_potion()
-        # screens
+        # The loadout popup (weapons + spells) toggles with I and stays open
+        # while you fight — it does not pause the world.
         if K_INVENTORY in just:
-            session.open_screen = "inventory"
+            session.show_loadout = not getattr(session, "show_loadout", False)
+        # screens
         elif K_CHARACTER in just:
             session.open_screen = "character"
         elif K_JOURNAL in just:
@@ -547,6 +558,15 @@ class MiniwindGame:
         w, h = ev.get("width", 0), ev.get("height", 0)
         try:
             from .ui import hud, dialogue_ui, screens
+            # Present dialogue / menu screens as draggable, collapsible, closable
+            # floating windows through the viewport's WindowManager (same chrome
+            # as SysMon and the NPC inspector). Falls back to the legacy
+            # full-screen draw where no window manager exists (e.g. headless).
+            windowed = self._sync_overlay_windows(session, viewport, w, h)
+            # The non-modal loadout popup (weapons + spells) lives alongside the
+            # modal popups; it stays open while the player fights.
+            self._sync_loadout_window(session, viewport, w, h)
+
             if not session.needs_char_creation and session.open_screen != "charcreate":
                 hud.draw_time_tint(painter, session, w, h)
                 hud.draw(painter, session, w, h)
@@ -555,15 +575,142 @@ class MiniwindGame:
                 if session.open_screen is None and session.dialogue is None \
                         and not session.game.character.is_dead:
                     hud.draw_bubbles(painter, session, viewport, w, h)
-            if session.dialogue is not None:
-                dialogue_ui.draw(painter, session, w, h)
-            if session.open_screen is not None:
-                screens.draw(painter, session, w, h)
+            if not windowed:
+                if session.dialogue is not None:
+                    dialogue_ui.draw(painter, session, w, h)
+                if session.open_screen is not None:
+                    screens.draw(painter, session, w, h)
             if session.game.character.is_dead:
                 self._draw_death(painter, w, h)
         except Exception:
             import traceback
             traceback.print_exc()
+
+    # -- floating-window overlay hosting ------------------------------------
+    _SCREEN_TITLES = {
+        "charcreate": "Create Your Character", "inventory": "Inventory",
+        "character": "Character", "journal": "Quest Journal",
+        "spells": "Spellbook", "levelup": "Level Up", "trade": "Trade",
+    }
+
+    def _close_overlay_screen(self, session, screen):
+        """Close-button handler for a menu-screen window (mirrors Esc)."""
+        if screen == "charcreate":
+            # Closing character creation commits the current picks (a valid
+            # character is always required before play resumes).
+            try:
+                from .ui import screens as _screens
+                _screens._finish_charcreate(session)
+            except Exception:
+                pass
+            session.needs_char_creation = False
+        session.open_screen = None
+
+    def _sync_loadout_window(self, session, viewport, w, h):
+        """Create / remove the non-modal loadout popup on the viewport's window
+        manager to follow ``session.show_loadout`` (toggled with the I key)."""
+        wm = getattr(viewport, "window_manager", None) if viewport is not None else None
+        if wm is None:
+            return
+        try:
+            from .ui.loadout_window import LoadoutWindow
+        except Exception:
+            return
+
+        # Purge any loadout window bound to a different (old) session — e.g. left
+        # over from a previous play run in the same viewport.
+        for existing in list(wm.windows):
+            if isinstance(existing, LoadoutWindow) and existing.session is not session:
+                existing.active = False
+                wm.remove(existing)
+
+        win = getattr(session, "_loadout_win", None)
+        # Closed via its [X]: reflect that back into the toggle state.
+        if win is not None and not getattr(win, "active", False):
+            wm.remove(win)
+            session._loadout_win = None
+            session.show_loadout = False
+            win = None
+
+        want = (bool(getattr(session, "show_loadout", False))
+                and not session.game.character.is_dead)
+        if want and win is None:
+            win = LoadoutWindow(session, x=max(20, w - 320), y=72)
+            wm.add(win)
+            session._loadout_win = win
+        elif not want and win is not None:
+            win.active = False
+            wm.remove(win)
+            session._loadout_win = None
+
+    def _sync_overlay_windows(self, session, viewport, w, h):
+        """Create / update / tear down the floating window that hosts the active
+        popup. Returns True when it owns the popup drawing this frame (so the
+        caller suppresses the legacy full-screen draw)."""
+        wm = getattr(viewport, "window_manager", None) if viewport is not None else None
+        if wm is None:
+            return False
+        try:
+            from engine.floating_windows import CallbackWindow
+            from .ui import dialogue_ui, screens
+        except Exception:
+            return False
+
+        if session.dialogue is not None:
+            key = "dialogue"
+        elif session.open_screen is not None:
+            key = f"screen:{session.open_screen}"
+        else:
+            key = None
+
+        cur = getattr(session, "_overlay_win", None)
+        cur_key = getattr(session, "_overlay_key", None)
+
+        # Tear down when nothing should show or the popup changed identity.
+        if cur is not None and (key is None or key != cur_key):
+            cur.active = False
+            try:
+                wm.remove(cur)
+            except Exception:
+                pass
+            session._overlay_win = None
+            session._overlay_key = None
+            cur = None
+
+        if key is None:
+            return True  # own the (empty) popup slot: suppress legacy draw
+
+        if cur is None:
+            if key == "dialogue":
+                npc = session.dialogue_npc
+                title = "Conversation"
+                if npc is not None:
+                    title = (npc.properties.get("display_name")
+                             or npc.properties.get("name") or title)
+                bw, bh = dialogue_ui.window_body_size(session)
+                draw_fn = (lambda p, x, y, ww, hh, s=session:
+                           dialogue_ui.draw_in_rect(p, s, x, y, ww, hh))
+                on_close = session.end_dialogue
+            else:
+                screen = session.open_screen
+                title = self._SCREEN_TITLES.get(screen, str(screen).title())
+                bw, bh = screens.window_body_size(screen)
+                draw_fn = (lambda p, x, y, ww, hh, s=session:
+                           screens.draw_in_rect(p, s, x, y, ww, hh))
+                on_close = (lambda s=session, sc=session.open_screen:
+                            self._close_overlay_screen(s, sc))
+            win = CallbackWindow(key, title, draw_fn, width=bw, body_height=bh,
+                                 x=max(20, (w - bw) // 2),
+                                 y=max(20, (h - bh) // 2 - 24),
+                                 on_close_cb=on_close)
+            wm.add(win)
+            session._overlay_win = win
+            session._overlay_key = key
+        elif key == "dialogue":
+            # The conversation box grows/shrinks with the number of responses.
+            bw, bh = dialogue_ui.window_body_size(session)
+            cur.set_body_size(bw, bh)
+        return True
 
     def _draw_death(self, painter, w, h):
         from PyQt5.QtCore import QRect

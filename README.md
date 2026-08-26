@@ -2,8 +2,7 @@
 # <img src="https://github.com/user-attachments/assets/83dc0282-4d1f-4c2c-90f9-7fdd571cabc3f" width="200">
 
 
-## A small living fantasy RPG, built on Fio
-#### RPG-oriented evolution of the Fio creation environment, with a game included as reference implementation
+# A small living fantasy RPG, built on Fio
 
 > # Early alpha work-in-progress
 
@@ -59,16 +58,22 @@ The starter settlement **Millbrook** is authored entirely as data
 python -m game.tools.make_settlement   # -> maps/village.json
 ```
 
-It contains six townsfolk with distinct roles (blacksmith, merchant, farmer,
-guard, beggar, villager), each with a persistent identity, a home, a job, a bed
-and a daily schedule anchored to authored **markers**; a guard post; and a
-bandit/wolf threat east of town. In play:
+It contains six **interconnected** townsfolk with distinct roles (blacksmith,
+merchant, farmer, guard, beggar, villager), each with a persistent identity, a
+home, a job, a bed, authored **relationships** (Thalen and Elowen are siblings;
+Bram is Mara's brother; Kestrel courts Mara; Wick owes Thalen coin) and a daily
+schedule anchored to authored **markers**; a guard who walks a real patrol
+circuit; and a bandit/wolf threat east of town. In play:
 
 ```
 Morning → NPCs wake → walk to work → merchant & blacksmith open → farmer works →
-guard patrols → player talks/trades → a hostile wanders near → guard fights →
+guard patrols the square → player talks/trades → a hostile threatens → guard fights →
 combat ends → NPCs resume their lives → evening → they go home → night → they sleep
 ```
+
+Actions leave a mark: an NPC's death — by the player's hand or a bandit's — is
+recorded as a persistent flag in the quest store, so survivors mourn their kin
+in dialogue and the town "remembers" the loss through save/load.
 
 High-level decisions run at a low frequency (`DECISION_INTERVAL`) or on events
 (hour change, combat start/end); only movement runs per tick. Off-screen NPCs
@@ -119,14 +124,18 @@ plugins/                  the generic plugin system + optional plugins (BigWorld
 ## Tests
 
 ```bash
-python -m pytest game/tests -q            # MiniWind: 58 headless tests
-python -m pytest game/tests engine/tests plugins/bigworld/tests -q   # full: 110
+python -m pytest game/tests -q            # MiniWind: 66 headless tests
+python -m pytest game/tests engine/tests plugins/bigworld/tests -q   # full: 118
 ```
 
 Covers factions, game time, schedules, inventory, dialogue, the session's
 schedule movement / combat override / dialogue item-grant / persist-restore, the
 living-settlement simulation (townsfolk work by day and sleep at night, walking
-to their markers), faction-aware combat with separated combat-capability and
-bounded civilian flee-to-refuge, speech-bubble cues, the editor authoring wiring
+to their markers), the guard's authored **patrol circuit** and its recovery back
+to patrol after a threat passes, faction-aware combat with separated
+combat-capability and bounded civilian flee-to-refuge, **persistent settlement
+consequences** (an NPC's death is recorded and survives save/load; a slain guard
+leaves the town "unprotected"), **authored NPC relationships** and dialogue that
+reflects a relative's death, speech-bubble cues, the editor authoring wiring
 (grouped schemas + creation wizards), and the world placeables (item pickup,
 quest trigger, creature spawn) — all headless, like the bigworld tests.

@@ -30,6 +30,8 @@ as a MiniWind RPG map and configures the clock + starting scenario.
 
 from __future__ import annotations
 
+import os
+
 try:
     from editor.things import Monster, Thing
     _HAVE_EDITOR = True

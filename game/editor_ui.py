@@ -53,72 +53,244 @@ def make_inventory_tab(thing):
 
 
 def _InventoryTab(thing, QtWidgets, QtCore):
-    COLS = ["id", "name", "qty", "type", "value", "weight"]
+    """A grid of item icons with drag-and-drop reordering, an icon-based item
+    picker, and an inline detail editor — replacing the old spreadsheet table."""
+    Qt = QtCore.Qt
+    try:
+        from game import item_icons
+    except Exception:  # pragma: no cover
+        item_icons = None
+    try:
+        from game.rpg import items as itemdb
+    except Exception:  # pragma: no cover
+        itemdb = None
+
+    ROLE_STACK = int(Qt.UserRole)
+    ICON = 56
+
+    def _badged_icon(stack):
+        """QIcon for a stack, with a small quantity badge when qty > 1."""
+        from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPen
+        pm = None
+        if item_icons is not None:
+            pm = item_icons.icon_pixmap(stack.get("id"), stack, ICON)
+        if pm is None:
+            pm = QPixmap(ICON, ICON)
+            pm.fill(QColor(70, 72, 82))
+        qty = int(stack.get("qty", 1) or 1)
+        # Rarity ring
+        rgb = None
+        if itemdb is not None:
+            try:
+                if itemdb.rarity_of(stack) != itemdb.COMMON:
+                    rgb = itemdb.rarity_rgb(stack)
+            except Exception:
+                rgb = None
+        if qty > 1 or rgb:
+            canvas = QPixmap(ICON, ICON)
+            canvas.fill(Qt.transparent)
+            p = QPainter(canvas)
+            p.setRenderHint(QPainter.Antialiasing, True)
+            if rgb:
+                p.setPen(QPen(QColor(*rgb), 2))
+                p.setBrush(Qt.NoBrush)
+                p.drawRoundedRect(1, 1, ICON - 2, ICON - 2, 6, 6)
+            p.drawPixmap((ICON - pm.width()) // 2, (ICON - pm.height()) // 2, pm)
+            if qty > 1:
+                txt = f"×{qty}"
+                f = QFont(); f.setPointSize(9); f.setBold(True); p.setFont(f)
+                fm = p.fontMetrics(); tw = fm.horizontalAdvance(txt) + 6
+                p.setBrush(QColor(20, 20, 26, 220)); p.setPen(Qt.NoPen)
+                p.drawRoundedRect(ICON - tw - 1, ICON - 17, tw, 15, 4, 4)
+                p.setPen(QColor(245, 224, 150))
+                p.drawText(ICON - tw + 2, ICON - 5, txt)
+            p.end()
+            return QIcon(canvas)
+        return QIcon(pm)
+
+    def _compact_font():
+        """A smaller-than-default font so item names stay readable and wrap to
+        two lines in the icon grids (the labels were oversized on high-DPI)."""
+        f = QtWidgets.QApplication.font()
+        pt = f.pointSizeF()
+        f.setPointSizeF(max(7.0, (pt if pt > 0 else 9.0) - 2.0))
+        return f
+
+    class InventoryGrid(QtWidgets.QListWidget):
+        orderChanged = QtCore.pyqtSignal()
+
+        def __init__(self):
+            super().__init__()
+            self.setFont(_compact_font())
+            self.setViewMode(QtWidgets.QListView.IconMode)
+            self.setIconSize(QtCore.QSize(ICON, ICON))
+            # Cell wide/tall enough for the icon + two wrapped lines of the name.
+            self.setGridSize(QtCore.QSize(96, ICON + 46))
+            self.setResizeMode(QtWidgets.QListView.Adjust)
+            self.setMovement(QtWidgets.QListView.Snap)
+            self.setDragDropMode(QtWidgets.QAbstractItemView.InternalMove)
+            self.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+            self.setSpacing(6)
+            self.setWordWrap(True)
+            self.setUniformItemSizes(True)
+            self.setStyleSheet(
+                "QListWidget { background:#2b2d33; border:1px solid #3a3d44; border-radius:6px; }"
+                "QListWidget::item { color:#d8dae0; padding:4px; border-radius:6px; }"
+                "QListWidget::item:selected { background:#3d5f5d; color:#fff; }")
+
+        def dropEvent(self, e):
+            super().dropEvent(e)
+            self.orderChanged.emit()
 
     class Tab(QtWidgets.QWidget):
         def __init__(self):
             super().__init__()
             self.thing = thing
-            layout = QtWidgets.QVBoxLayout(self)
-            self.table = QtWidgets.QTableWidget(0, len(COLS))
-            self.table.setHorizontalHeaderLabels([c.title() for c in COLS])
-            self.table.horizontalHeader().setStretchLastSection(True)
-            layout.addWidget(self.table)
+            self._loading = False
+            root = QtWidgets.QVBoxLayout(self)
+            root.setSpacing(6)
+
+            root.addWidget(_hint_label(
+                QtWidgets, "Drag icons to reorder. Add items from the catalogue; "
+                "select one to edit its quantity below."))
+
+            self.grid = InventoryGrid()
+            self.grid.orderChanged.connect(self._on_reordered)
+            self.grid.currentItemChanged.connect(lambda *_: self._sync_detail())
+            self.grid.itemDoubleClicked.connect(lambda *_: self._focus_qty())
+            root.addWidget(self.grid, 1)
+
             btns = QtWidgets.QHBoxLayout()
-            add = QtWidgets.QPushButton("Add Item")
-            rem = QtWidgets.QPushButton("Remove Selected")
-            add.clicked.connect(self._add)
+            add = QtWidgets.QPushButton("＋ Add Item…")
+            rem = QtWidgets.QPushButton("🗑 Remove")
+            add.clicked.connect(self._pick_item)
             rem.clicked.connect(self._remove)
             btns.addWidget(add); btns.addWidget(rem); btns.addStretch(1)
-            layout.addLayout(btns)
+            root.addLayout(btns)
+
+            # Inline detail editor for the selected stack.
+            self.detail = QtWidgets.QGroupBox("Selected item")
+            dl = QtWidgets.QFormLayout(self.detail)
+            self.d_name = QtWidgets.QLineEdit()
+            self.d_qty = QtWidgets.QSpinBox(); self.d_qty.setRange(1, 9999)
+            self.d_value = QtWidgets.QSpinBox(); self.d_value.setRange(0, 9_999_999)
+            self.d_name.editingFinished.connect(self._edit_name)
+            self.d_qty.valueChanged.connect(self._edit_qty)
+            self.d_value.valueChanged.connect(self._edit_value)
+            dl.addRow("Name", self.d_name)
+            dl.addRow("Quantity", self.d_qty)
+            dl.addRow("Value", self.d_value)
+            root.addWidget(self.detail)
+
             self.summary = QtWidgets.QLabel("")
-            layout.addWidget(self.summary)
-            self.table.itemChanged.connect(self._write_back)
-            self._loading = False
+            self.summary.setStyleSheet("color:#9aa; padding:2px;")
+            root.addWidget(self.summary)
+
             self._reload()
 
+        # -- data <-> view ------------------------------------------------
         def _reload(self):
             self._loading = True
-            items = inv.get_inventory(self.thing)
-            self.table.setRowCount(len(items))
-            for r, stack in enumerate(items):
-                for c, key in enumerate(COLS):
-                    self.table.setItem(r, c, QtWidgets.QTableWidgetItem(str(stack.get(key, ""))))
+            self.grid.clear()
+            for stack in inv.get_inventory(self.thing):
+                self._add_tile(stack)
             self._loading = False
+            self._sync_detail()
             self._update_summary()
 
-        def _add(self):
-            inv.get_inventory(self.thing).append(inv.make_item("new_item", name="New Item"))
-            self._reload()
+        def _add_tile(self, stack):
+            name = stack.get("name") or str(stack.get("id", "item")).replace("_", " ").title()
+            it = QtWidgets.QListWidgetItem(_badged_icon(stack), name)
+            it.setData(ROLE_STACK, stack)
+            it.setToolTip(self._tooltip(stack))
+            it.setTextAlignment(Qt.AlignHCenter | Qt.AlignTop)
+            # Explicit size hint so the name wraps at the cell width (IconMode
+            # otherwise wraps at the icon width and clips longer names).
+            it.setSizeHint(QtCore.QSize(90, ICON + 44))
+            self.grid.addItem(it)
+            return it
+
+        def _refresh_tile(self, it):
+            stack = it.data(ROLE_STACK)
+            it.setIcon(_badged_icon(stack))
+            it.setText(stack.get("name") or str(stack.get("id", "")).replace("_", " ").title())
+            it.setToolTip(self._tooltip(stack))
+
+        def _tooltip(self, stack):
+            return (f"<b>{stack.get('name','?')}</b><br>id: {stack.get('id','?')}<br>"
+                    f"type: {stack.get('type','?')} &nbsp; qty: {stack.get('qty',1)}<br>"
+                    f"value: {stack.get('value',0)} &nbsp; weight: {stack.get('weight',0)}")
+
+        def _on_reordered(self):
+            # Rebuild the backing list to match the on-screen tile order.
+            items = inv.get_inventory(self.thing)
+            items[:] = [self.grid.item(i).data(ROLE_STACK)
+                        for i in range(self.grid.count())]
+            self._update_summary()
+
+        # -- actions ------------------------------------------------------
+        def _pick_item(self):
+            stack = _ItemPicker(self, QtWidgets, QtCore, item_icons, itemdb, _badged_icon).choose()
+            if stack is not None:
+                inv.get_inventory(self.thing).append(stack)
+                it = self._add_tile(stack)
+                self.grid.setCurrentItem(it)
+                self._update_summary()
 
         def _remove(self):
-            row = self.table.currentRow()
+            it = self.grid.currentItem()
+            if it is None:
+                return
+            stack = it.data(ROLE_STACK)
             items = inv.get_inventory(self.thing)
-            if 0 <= row < len(items):
-                del items[row]; self._reload()
+            try:
+                items.remove(stack)
+            except ValueError:
+                pass
+            self.grid.takeItem(self.grid.row(it))
+            self._sync_detail()
+            self._update_summary()
 
-        def _write_back(self, *_):
+        def _sync_detail(self):
+            it = self.grid.currentItem()
+            self.detail.setEnabled(it is not None)
+            self._loading = True
+            if it is None:
+                self.d_name.clear(); self.d_qty.setValue(1); self.d_value.setValue(0)
+            else:
+                s = it.data(ROLE_STACK)
+                self.d_name.setText(str(s.get("name", "")))
+                self.d_qty.setValue(int(s.get("qty", 1) or 1))
+                self.d_value.setValue(int(s.get("value", 0) or 0))
+            self._loading = False
+
+        def _focus_qty(self):
+            self.d_qty.setFocus(); self.d_qty.selectAll()
+
+        def _cur_stack(self):
+            it = self.grid.currentItem()
+            return (it, it.data(ROLE_STACK)) if it else (None, None)
+
+        def _edit_name(self):
             if self._loading:
                 return
-            items = inv.get_inventory(self.thing)
-            for r in range(self.table.rowCount()):
-                if r >= len(items):
-                    break
-                stack = items[r]
-                for c, key in enumerate(COLS):
-                    cell = self.table.item(r, c)
-                    if cell is None:
-                        continue
-                    text = cell.text()
-                    if key in ("qty", "value"):
-                        try: stack[key] = int(float(text))
-                        except ValueError: stack[key] = 0
-                    elif key == "weight":
-                        try: stack[key] = float(text)
-                        except ValueError: stack[key] = 0.0
-                    else:
-                        stack[key] = text
-            self._update_summary()
+            it, s = self._cur_stack()
+            if s is not None:
+                s["name"] = self.d_name.text(); self._refresh_tile(it)
+
+        def _edit_qty(self, v):
+            if self._loading:
+                return
+            it, s = self._cur_stack()
+            if s is not None:
+                s["qty"] = int(v); self._refresh_tile(it); self._update_summary()
+
+        def _edit_value(self, v):
+            if self._loading:
+                return
+            it, s = self._cur_stack()
+            if s is not None:
+                s["value"] = int(v); self._refresh_tile(it); self._update_summary()
 
         def _update_summary(self):
             items = inv.get_inventory(self.thing)
@@ -127,6 +299,94 @@ def _InventoryTab(thing, QtWidgets, QtCore):
                 f"value {inv.total_value(items)}")
 
     return Tab()
+
+
+def _ItemPicker(parent, QtWidgets, QtCore, item_icons, itemdb, badged):
+    """A modal catalogue: every item from the DB shown as an icon grid with a
+    live filter box; returns a fresh stack dict for the chosen item (or None)."""
+    Qt = QtCore.Qt
+
+    class Picker(QtWidgets.QDialog):
+        def __init__(self):
+            super().__init__(parent)
+            self.setWindowTitle("Add Item")
+            self.resize(520, 440)
+            self.result_stack = None
+            v = QtWidgets.QVBoxLayout(self)
+            self.filter = QtWidgets.QLineEdit()
+            self.filter.setPlaceholderText("Filter by name, id or category…")
+            self.filter.textChanged.connect(self._apply_filter)
+            v.addWidget(self.filter)
+            self.grid = QtWidgets.QListWidget()
+            # A smaller-than-default font keeps the item names readable and lets
+            # them wrap onto two lines instead of being cut off (they were
+            # oversized, especially on high-DPI displays).
+            gf = QtWidgets.QApplication.font()
+            _pt = gf.pointSizeF()
+            gf.setPointSizeF(max(7.0, (_pt if _pt > 0 else 9.0) - 2.0))
+            self.grid.setFont(gf)
+            self.grid.setViewMode(QtWidgets.QListView.IconMode)
+            self.grid.setIconSize(QtCore.QSize(44, 44))
+            self.grid.setGridSize(QtCore.QSize(118, 100))
+            self.grid.setResizeMode(QtWidgets.QListView.Adjust)
+            self.grid.setMovement(QtWidgets.QListView.Static)
+            self.grid.setWordWrap(True)
+            self.grid.setUniformItemSizes(True)
+            self.grid.setSpacing(4)
+            self.grid.setStyleSheet(
+                "QListWidget { background:#2b2d33; border:1px solid #3a3d44; }"
+                "QListWidget::item { color:#d8dae0; padding:3px; }"
+                "QListWidget::item:selected { background:#3d5f5d; color:#fff; }")
+            self.grid.itemDoubleClicked.connect(lambda *_: self._accept())
+            v.addWidget(self.grid, 1)
+            row = QtWidgets.QHBoxLayout()
+            row.addStretch(1)
+            ok = QtWidgets.QPushButton("Add"); cancel = QtWidgets.QPushButton("Cancel")
+            ok.clicked.connect(self._accept); cancel.clicked.connect(self.reject)
+            row.addWidget(ok); row.addWidget(cancel)
+            v.addLayout(row)
+            self._populate()
+
+        def _catalogue(self):
+            if itemdb is not None and getattr(itemdb, "ITEMS", None):
+                for iid, d in sorted(itemdb.ITEMS.items(),
+                                     key=lambda kv: (kv[1].category, kv[1].name)):
+                    yield iid, d.name, d.category, d.make_stack(1)
+            else:  # DB unavailable — offer a blank
+                yield "new_item", "New Item", "misc", inv.make_item("new_item", name="New Item")
+
+        def _populate(self):
+            for iid, name, cat, stack in self._catalogue():
+                it = QtWidgets.QListWidgetItem(badged(stack), name)
+                it.setData(int(Qt.UserRole), stack)
+                it.setData(int(Qt.UserRole) + 1, f"{iid} {name} {cat}".lower())
+                it.setTextAlignment(Qt.AlignHCenter | Qt.AlignTop)
+                it.setToolTip(f"{name}  ({cat})\nid: {iid}")
+                # Explicit size hint so the name wraps at the cell width rather
+                # than being clipped to the icon width.
+                it.setSizeHint(QtCore.QSize(112, 96))
+                self.grid.addItem(it)
+            if self.grid.count():
+                self.grid.setCurrentRow(0)
+
+        def _apply_filter(self, text):
+            t = text.strip().lower()
+            for i in range(self.grid.count()):
+                it = self.grid.item(i)
+                hay = it.data(int(Qt.UserRole) + 1) or ""
+                it.setHidden(bool(t) and t not in hay)
+
+        def _accept(self):
+            it = self.grid.currentItem()
+            if it is not None and not it.isHidden():
+                # Return a copy so repeated adds don't share one dict.
+                self.result_stack = dict(it.data(int(Qt.UserRole)))
+            self.accept()
+
+        def choose(self):
+            return self.result_stack if self.exec_() == QtWidgets.QDialog.Accepted else None
+
+    return Picker()
 
 
 # ===========================================================================

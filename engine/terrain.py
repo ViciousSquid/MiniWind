@@ -469,6 +469,16 @@ class Terrain:
                 self.shader_program = 0
                 return
         except Exception as e:
+            msg = str(e)
+            # The Terrain can be constructed before the view's GL context is
+            # current (e.g. during map load), so glCreateShader isn't bound yet.
+            # That's harmless — update_and_render() recompiles the shader on the
+            # GL thread at first draw — so stay quiet instead of printing a
+            # scary ERROR. Only a genuine compile failure is worth reporting.
+            if ("glCreateShader" in msg or "undefined alternate function" in msg
+                    or "context" in msg.lower()):
+                self.shader_program = 0
+                return
             print(f"ERROR: Exception during terrain shader compilation: {e}")
             self.shader_program = 0
             return

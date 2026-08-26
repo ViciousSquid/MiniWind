@@ -82,6 +82,16 @@ class PluginManager:
         # register_entity_wizard). Used by the editor to configure an entity that
         # needs setup instead of dropping the user into raw properties.
         self._entity_wizards: dict = {}
+        # Normalised entity-type names that may exist at most once per map
+        # (e.g. the MiniWind GameSettings marker). Placement paths consult this.
+        self._singleton_types: set = set()
+        # Generic editor-extension providers, so game-specific editor behaviour
+        # lives in the owning built-in game (registered via the EditorAPI) rather
+        # than in generic Fio editor code:
+        #   * key/value quick-insert suggestions for the LogicKeyValueStore editor
+        #   * a live "inspector" snapshot for a monster/NPC (the debug popup)
+        self._kv_suggestion_providers: list = []
+        self._inspector_providers: list = []
         # Normalised entity-type name -> owning plugin (for package export).
         # Keyed the same way editor.things.from_dict matches: class name,
         # lowercased, underscores stripped.
@@ -317,6 +327,57 @@ class PluginManager:
     def entity_wizard_for(self, type_name: str):
         """The creation wizard registered for *type_name*, or None."""
         return self._entity_wizards.get(self._normalise_type(type_name))
+
+    def register_singleton_entity(self, type_name: str) -> None:
+        """Mark an entity type as a per-map singleton (at most one instance).
+
+        Generic mechanism; the built-in game marks its GameSettings entity so a
+        map can never carry two. Placement paths check :meth:`is_singleton_entity`
+        and refuse a second one."""
+        self._singleton_types.add(self._normalise_type(type_name))
+
+    def is_singleton_entity(self, type_name: str) -> bool:
+        return self._normalise_type(type_name) in self._singleton_types
+
+    # -- generic editor-extension providers ---------------------------------
+    def register_kv_suggestion_provider(self, provider) -> None:
+        """Register a key/value quick-insert provider for the KeyValue editor.
+
+        ``provider() -> list[(label, key, default_value, tooltip)]`` supplies the
+        store keys a built-in game uses (e.g. MiniWind quest flags), so the
+        generic LogicKeyValueStore editor carries no game-specific knowledge."""
+        if callable(provider):
+            self._kv_suggestion_providers.append(provider)
+
+    def kv_key_suggestions(self) -> list:
+        """Aggregate every registered game's key/value quick-insert suggestions."""
+        out: list = []
+        for provider in self._kv_suggestion_providers:
+            try:
+                out.extend(provider() or [])
+            except Exception:
+                continue
+        return out
+
+    def register_inspector_provider(self, provider) -> None:
+        """Register a monster/NPC *inspector* snapshot builder for the debug popup.
+
+        ``provider(thing, monster_state, logic_thread) -> dict | None`` returns a
+        display snapshot (see the debug inspector), letting the owning game supply
+        its own mental-state view without the engine importing the game."""
+        if callable(provider):
+            self._inspector_providers.append(provider)
+
+    def inspector_snapshot(self, thing, monster_state=None, logic_thread=None):
+        """First non-empty inspector snapshot from a registered provider, or None."""
+        for provider in self._inspector_providers:
+            try:
+                snap = provider(thing, monster_state, logic_thread)
+                if snap:
+                    return snap
+            except Exception:
+                continue
+        return None
 
     def _participants(self, hook: str) -> list:
         """Enabled plugins + built-in games that implement *hook*.

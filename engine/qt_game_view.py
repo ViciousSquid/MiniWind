@@ -124,6 +124,9 @@ class QtGameView(QOpenGLWidget):
         self.window_manager = WindowManager()
         self.inspect_mode = False          # 'inspect' console command armed a pick
         self._inspect_refresh_accum = 0.0
+        # True while an interactive floating window (e.g. the loadout popup) has
+        # freed the otherwise hidden, centre-locked play-mode cursor.
+        self._play_cursor_free = False
 
 
         self.sound_pool = {}
@@ -514,6 +517,16 @@ class QtGameView(QOpenGLWidget):
         angle = float(getattr(render_state, "player_angle", 0.0))
         armed = bool(getattr(render_state, "active_weapon", None))
         shooting = bool(getattr(render_state, "muzzle_flash_active", False))
+        # A built-in game (MiniWind) can drive the pose from its own loadout so
+        # the player sprite visibly reflects an equipped weapon / readied spell
+        # and an in-progress swing. Kept game-agnostic via a duck-typed hook.
+        sess = getattr(self.logic_thread, "_miniwind", None)
+        pose = getattr(sess, "overhead_pose", None) if sess is not None else None
+        if pose is not None:
+            try:
+                armed, shooting = pose()
+            except Exception:
+                pass
         self._overhead_sprite_ctrl.update(gpos, angle, time.perf_counter(),
                                           armed=armed, shooting=shooting)
         self._overhead_sprite_renderer.draw(
@@ -638,6 +651,8 @@ class QtGameView(QOpenGLWidget):
             self.last_fps_time = current_time
         self.sysmon.record_frame_time(delta * 1000.0)
         self._last_frame_dt = delta
+        if self.play_mode:
+            self._sync_play_cursor()
         self._process_sound_queue()
         self._process_console_command_queue()
         if self.use_threading and self.logic_thread:
@@ -1839,6 +1854,7 @@ class QtGameView(QOpenGLWidget):
             center_pos = self.mapToGlobal(self.rect().center())
             QCursor.setPos(center_pos)
             self.last_mouse_pos = self.mapFromGlobal(center_pos)
+            self._play_cursor_free = False   # start locked; windows free it
             QApplication.setOverrideCursor(Qt.BlankCursor)
 
             # Convert editor angle (0° = east) to game angle (0° = north) and flip 180°
@@ -1881,6 +1897,10 @@ class QtGameView(QOpenGLWidget):
                 self.console_overlay_active = False
             self.monster_debug_active = False
             self.show_spatial_grid = False
+            # Drop all floating popups (NPC inspector, dialogue / menu / loadout
+            # windows) so none linger into editor mode after play ends.
+            if getattr(self, 'window_manager', None) is not None:
+                self.window_manager.clear()
             if self.logic_thread:
                 self.logic_thread.monster_debug_active = False
             while QApplication.overrideCursor() is not None:
@@ -2161,10 +2181,58 @@ class QtGameView(QOpenGLWidget):
             pass
         self.update()
 
+    def _play_mode_wants_cursor(self):
+        """True if an interactive floating window (one with wants_cursor) is
+        open and needs the free play-mode cursor to be clicked."""
+        wm = getattr(self, 'window_manager', None)
+        if wm is None:
+            return False
+        for w in wm.windows:
+            if getattr(w, 'active', False) and getattr(w, 'wants_cursor', False):
+                return True
+        return False
+
+    def _sync_play_cursor(self):
+        """Free / re-lock the play-mode cursor as interactive windows open and
+        close. Inspect mode manages the cursor itself, so defer to it."""
+        if getattr(self, 'inspect_mode', False):
+            return
+        want = self._play_mode_wants_cursor()
+        if want == self._play_cursor_free:
+            return
+        self._play_cursor_free = want
+        try:
+            if want:
+                # Show a normal, free-moving cursor so the window can be clicked.
+                while QApplication.overrideCursor() is not None:
+                    QApplication.restoreOverrideCursor()
+                self.setCursor(Qt.ArrowCursor)
+            else:
+                # Back to mouselook: hide the cursor and centre-lock it.
+                while QApplication.overrideCursor() is not None:
+                    QApplication.restoreOverrideCursor()
+                QApplication.setOverrideCursor(Qt.BlankCursor)
+                center = self.mapToGlobal(self.rect().center())
+                QCursor.setPos(center)
+                self.last_mouse_pos = self.mapFromGlobal(center)
+        except Exception:
+            pass
+
     def _exit_inspect_mode(self):
         self.inspect_mode = False
         try:
-            self.setCursor(Qt.ArrowCursor if self.play_mode else Qt.ArrowCursor)
+            self.unsetCursor()
+            if self.play_mode:
+                # Restore the play-mode mouselook lock (hidden, centre-locked
+                # cursor) that inspect mode had temporarily released.
+                while QApplication.overrideCursor() is not None:
+                    QApplication.restoreOverrideCursor()
+                QApplication.setOverrideCursor(Qt.BlankCursor)
+                center = self.mapToGlobal(self.rect().center())
+                QCursor.setPos(center)
+                self.last_mouse_pos = self.mapFromGlobal(center)
+            else:
+                self.setCursor(Qt.ArrowCursor)
         except Exception:
             pass
 
@@ -2380,6 +2448,22 @@ class QtGameView(QOpenGLWidget):
                 self.editor.selected_face = face
                 self.update()
             return
+        # MiniWind RPG combat: when a built-in game session is live, the left
+        # mouse swings the equipped weapon and the right mouse casts the active
+        # spell. Posted as thread-safe intents the game host consumes each tick.
+        # (Clicks on a floating window were already consumed above.)
+        if (self.play_mode and not self.console_overlay_active
+                and getattr(self.logic_thread, '_miniwind', None) is not None):
+            render_state = self.game_state.get_render_state()
+            if getattr(render_state, 'player_dead', False):
+                return
+            if event.button() == Qt.LeftButton:
+                self.game_state.queue_rpg_attack()
+                return
+            if event.button() == Qt.RightButton:
+                self.game_state.queue_rpg_cast()
+                return
+
         if self.play_mode and event.button() == Qt.LeftButton:
             if self.console_overlay_active:
                 return
@@ -2454,6 +2538,12 @@ class QtGameView(QOpenGLWidget):
             return
         if self.play_mode:
             if self.console_overlay_active:
+                return
+            # While an inspect pick is armed, or an interactive window (loadout)
+            # has freed the cursor, the mouse must move freely so the user can
+            # aim / click. Skip the mouselook recentring that would otherwise
+            # snap the cursor back to screen centre every frame.
+            if getattr(self, 'inspect_mode', False) or self._play_cursor_free:
                 return
             cp = event.pos()
             dx, dy = cp.x() - self.last_mouse_pos.x(), cp.y() - self.last_mouse_pos.y()
@@ -2600,7 +2690,11 @@ class QtGameView(QOpenGLWidget):
         self._console_input.hide()
         self._console_input.clearFocus()
         self.setFocus()
-        if self.play_mode:
+        # A command may have armed inspect mode (e.g. 'inspect'/'mind'), which
+        # deliberately frees the cursor so the next click can land on an NPC.
+        # Don't re-hide or recentre the cursor in that case, or the pick becomes
+        # impossible (the cursor snaps to centre and stays invisible).
+        if self.play_mode and not getattr(self, 'inspect_mode', False):
             while QApplication.overrideCursor() is not None:
                 QApplication.restoreOverrideCursor()
             QApplication.setOverrideCursor(Qt.BlankCursor)

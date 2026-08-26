@@ -46,7 +46,48 @@ def handle_key(session, key):
     return False
 
 
+# When set (x, y, w, h), every screen draws its panel into this rect instead of a
+# centred full-screen panel — used when a screen is hosted inside a draggable
+# floating window (see ``draw_in_rect``). Kept as a module global so no screen
+# body needs to thread a rect through its layout: they all route through
+# ``_panel_rect``.
+_PANEL_OVERRIDE = None
+
+#: Suggested floating-window body size (px) per screen.
+_SCREEN_BODY_SIZE = {
+    "charcreate": (780, 540),
+    "inventory": (720, 500),
+    "character": (720, 520),
+    "journal": (700, 470),
+    "spells": (700, 470),
+    "levelup": (560, 430),
+    "trade": (760, 520),
+}
+
+
+def window_body_size(screen):
+    return _SCREEN_BODY_SIZE.get(screen, (700, 480))
+
+
+def draw_in_rect(painter, session, x, y, w, h):
+    """Draw the open screen's panel inside (x, y, w, h) with no full-screen dim.
+
+    Used when the screen is presented in a floating window; the window supplies
+    the chrome, so the screen fills the given body rect."""
+    global _PANEL_OVERRIDE
+    fn = _DRAW.get(session.open_screen)
+    if fn is None:
+        return
+    _PANEL_OVERRIDE = (int(x), int(y), int(w), int(h))
+    try:
+        fn(painter, session, int(w), int(h))
+    finally:
+        _PANEL_OVERRIDE = None
+
+
 def _panel_rect(w, h, pw=0.8, ph=0.82):
+    if _PANEL_OVERRIDE is not None:
+        return _PANEL_OVERRIDE
     bw, bh = int(w * pw), int(h * ph)
     return (w - bw) // 2, (h - bh) // 2, bw, bh
 

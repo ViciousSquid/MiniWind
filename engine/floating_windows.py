@@ -138,8 +138,19 @@ class FloatingWindow:
             self.dragging = True
             self.drag_offset = event.pos() - QPoint(rect.x(), rect.y())
             return True
-        # Body clicks are swallowed so they don't leak to the game.
+        # Body click: let a subclass act on it (tabs, list rows…), then swallow
+        # it so it never leaks to the game beneath.
+        if self.expanded:
+            try:
+                self.handle_body_click(event.x(), event.y())
+            except Exception:
+                pass
         return True
+
+    def handle_body_click(self, x, y):
+        """Hook: handle a click inside the body. Override in subclasses. (x, y)
+        are view-space pixels. Default: do nothing (the click is still swallowed)."""
+        return False
 
     def handle_mouse_move(self, event, view_w, view_h):
         if not self.dragging:
@@ -229,6 +240,44 @@ class WindowManager:
             if w.handle_mouse_release(event):
                 handled = True
         return handled
+
+
+class CallbackWindow(FloatingWindow):
+    """A floating window whose body is painted by a supplied callback.
+
+    Lets a game host present its own overlay popups (dialogue, character
+    creation, inventory…) as draggable / collapsible / closable windows through
+    the same :class:`WindowManager` that hosts the NPC inspector — the popup
+    keeps drawing with the live QPainter each frame, so it stays in sync with
+    game state, while the manager provides the chrome and mouse routing.
+
+    ``draw_fn(painter, x, y, w, h)`` paints the body (top-left ``x, y``).
+    ``on_close_cb`` (optional) is called when the window's [X] is clicked.
+    """
+
+    def __init__(self, key, title, draw_fn, width=520, body_height=360,
+                 x=80, y=60, on_close_cb=None):
+        super().__init__(title, x, y, width, body_height)
+        self.key = key
+        self._draw_fn = draw_fn
+        self._on_close_cb = on_close_cb
+
+    def set_body_size(self, width, body_height):
+        self.width = max(self.MIN_W, int(width))
+        self._body_height = int(body_height)
+
+    def draw_body(self, painter, x, y, w):
+        try:
+            self._draw_fn(painter, x, y, w, self.content_height())
+        except Exception:
+            pass
+
+    def on_close(self):
+        if self._on_close_cb is not None:
+            try:
+                self._on_close_cb()
+            except Exception:
+                pass
 
 
 class NpcDebugWindow(FloatingWindow):

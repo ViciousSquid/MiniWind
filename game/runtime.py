@@ -87,6 +87,16 @@ class StateStore:
         except Exception:
             return {}
 
+    def clear(self):
+        """Delete every key in this store (used by 'Reset All Progress')."""
+        if self._g is None:
+            return
+        try:
+            for k in list(self._g.all(store=self._name).keys()):
+                self._g.delete(k, store=self._name)
+        except Exception:
+            pass
+
 
 class MiniwindSession:
     """Owns the clock, the player character, NPC AI and dialogue state."""
@@ -142,6 +152,33 @@ class MiniwindSession:
         self.floaters: List[Dict] = []         # floating combat text
         self._blocking = False
         self.merchant_npc = None
+
+    def reset_progress(self) -> None:
+        """Erase all saved progress and return the session to a clean slate.
+
+        Wipes the persistent KV store (character, quests, inventory, world
+        flags), rebuilds a fresh game state, and re-arms character creation so
+        the next moment of play starts a brand-new game."""
+        try:
+            self.store.clear()
+        except Exception:
+            pass
+        self.rng = random.Random()
+        self.game = GameState(self.store, rng=self.rng)
+        self.needs_char_creation = True
+        self.open_screen = "charcreate"
+        self.dialogue = None
+        self.dialogue_npc = None
+        self.merchant_npc = None
+        self.show_loadout = False
+        self.notifications = []
+        self.floaters = []
+        self._deaths_seen = set()
+        if self.logic is not None:
+            try:
+                self.logic.gameplay_paused = True
+            except Exception:
+                pass
 
     # -- difficulty scaling -------------------------------------------------
     @property
@@ -971,7 +1008,10 @@ class MiniwindSession:
         return True
 
     def do_cast(self) -> bool:
-        """Cast the active spell; deliver damage spells at the aimed target."""
+        """Cast the active spell. PROJECTILE spells launch a visible bolt that
+        flies from the player and damages the first creature it strikes;
+        TARGET/TOUCH spells resolve instantly on the aimed creature; SELF spells
+        are applied to the caster by ``cast_active_spell``."""
         c = self.game.character
         if c.is_dead or self._cast_cooldown > 0 or not c.active_spell:
             return False
@@ -979,8 +1019,17 @@ class MiniwindSession:
         spell = rpg_magic.get(c.active_spell)
         res = self.game.cast_active_spell()
         if not res.cast:
+            if res.reason == "not enough magicka":
+                self.notify("Not enough magicka")
+            elif res.reason == "fizzle":
+                self.notify("The spell fizzles")
             return False
-        if spell and spell.delivery in (rpg_magic.PROJECTILE, rpg_magic.TARGET, rpg_magic.TOUCH):
+        if spell is None:
+            return True
+        if spell.delivery == rpg_magic.PROJECTILE:
+            self._spawn_player_spell_projectile(spell)
+            return True
+        if spell.delivery in (rpg_magic.TARGET, rpg_magic.TOUCH):
             target = self._acquire_target(BOW_REACH if spell.delivery != rpg_magic.TOUCH else MELEE_REACH)
             if target is not None:
                 r = self.game.resolve_spell_on_creature(spell, target.properties)
@@ -991,6 +1040,65 @@ class MiniwindSession:
                 if r.get("killed"):
                     self._on_creature_killed(target)
         return True
+
+    def _spawn_player_spell_projectile(self, spell) -> None:
+        """Launch a visible spell bolt from the player toward the aim point (a
+        creature in front, else straight ahead). It reuses the engine's
+        projectile pipeline — flagged as player-owned so it flies past the
+        caster and strikes creatures with the spell's damage and element tint."""
+        lt = self.logic
+        ppos = self._player_pos()
+        if lt is None or ppos is None:
+            return
+        try:
+            from engine.monster_constants import (
+                MONSTER_PROJECTILE_SPEED, MONSTER_PROJECTILE_MAX_DIST,
+                MONSTER_PROJECTILE_SPRITE_SIZE)
+        except Exception:
+            MONSTER_PROJECTILE_SPEED, MONSTER_PROJECTILE_MAX_DIST = 900.0, 4000.0
+            MONSTER_PROJECTILE_SPRITE_SIZE = (48, 48)
+
+        start = [ppos[0], ppos[1] + 48.0, ppos[2]]
+        target = self._acquire_target(BOW_REACH)
+        if target is not None:
+            tp = target.pos
+            aim = (float(tp[0]), float(tp[1]) + 64.0, float(tp[2]))
+        else:
+            fwd = self._player_forward()
+            aim = (start[0] + fwd[0] * 1500.0, start[1], start[2] + fwd[2] * 1500.0)
+
+        dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
+        dlen = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
+        speed = float(getattr(spell, "projectile_speed", 0) or MONSTER_PROJECTILE_SPEED)
+        vel = [dx / dlen * speed, dy / dlen * speed, dz / dlen * speed]
+        color = list(spell.color) if getattr(spell, "color", None) else None
+
+        proj = {
+            "pos": list(start),
+            "vel": vel,
+            "owner_id": id(getattr(lt, "player", None)),
+            "owner_is_player": True,
+            "sprite": "assets/sprites/miniwind/magicbolt.png",
+            "lifetime": MONSTER_PROJECTILE_MAX_DIST / speed,
+            "damage": int(getattr(spell, "damage", 0) or 0),
+            "size": MONSTER_PROJECTILE_SPRITE_SIZE,
+            "color": color,
+            "distance_travelled": 0.0,
+        }
+        if not hasattr(lt, "_monster_projectiles"):
+            lt._monster_projectiles = []
+        lt._monster_projectiles.append(proj)
+
+    def overhead_pose(self):
+        """(armed, attacking) for the player's overhead sprite, so it visibly
+        reflects the RPG loadout: 'armed' when a weapon is equipped or a spell is
+        readied, 'attacking' briefly after a swing/cast. Read by the engine's
+        overhead sprite renderer (which stays game-agnostic)."""
+        c = self.game.character
+        armed = bool(eq.equipped_id(c, "weapon")) or bool(c.active_spell)
+        attacking = (getattr(self, "_attack_cooldown", 0.0) > 0.05
+                     or getattr(self, "_cast_cooldown", 0.0) > 0.05)
+        return armed, attacking
 
     def _apply_nondamage_spell(self, spell, target):
         for e in spell.effects:
