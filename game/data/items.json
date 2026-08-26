@@ -1,0 +1,642 @@
+{
+  "iron_dagger": {
+    "name": "Iron Dagger",
+    "category": "weapon",
+    "value": 10,
+    "weight": 4.0,
+    "desc": "A iron iron dagger.",
+    "kind": "melee",
+    "skill": "blade",
+    "damage": 6,
+    "reach": 80,
+    "speed": 1.4,
+    "material": "iron",
+    "slot": "weapon"
+  },
+  "iron_shortsword": {
+    "name": "Iron Shortsword",
+    "category": "weapon",
+    "value": 25,
+    "weight": 8.0,
+    "desc": "A iron iron shortsword.",
+    "kind": "melee",
+    "skill": "blade",
+    "damage": 9,
+    "reach": 100,
+    "speed": 1.2,
+    "material": "iron",
+    "slot": "weapon"
+  },
+  "iron_longsword": {
+    "name": "Iron Longsword",
+    "category": "weapon",
+    "value": 40,
+    "weight": 14.0,
+    "desc": "A iron iron longsword.",
+    "kind": "melee",
+    "skill": "blade",
+    "damage": 12,
+    "reach": 120,
+    "speed": 1.0,
+    "material": "iron",
+    "slot": "weapon"
+  },
+  "steel_longsword": {
+    "name": "Steel Longsword",
+    "category": "weapon",
+    "value": 90,
+    "weight": 16.0,
+    "desc": "A steel steel longsword.",
+    "kind": "melee",
+    "skill": "blade",
+    "damage": 16,
+    "reach": 120,
+    "speed": 1.0,
+    "material": "steel",
+    "slot": "weapon"
+  },
+  "silver_sword": {
+    "name": "Silver Sword",
+    "category": "weapon",
+    "value": 220,
+    "weight": 13.0,
+    "desc": "Silvered steel; bites deep into the undead.",
+    "kind": "melee",
+    "skill": "blade",
+    "damage": 14,
+    "reach": 120,
+    "speed": 1.05,
+    "material": "silver",
+    "slot": "weapon"
+  },
+  "elven_saber": {
+    "name": "Elven Saber",
+    "category": "weapon",
+    "value": 480,
+    "weight": 12.0,
+    "desc": "A elven elven saber.",
+    "kind": "melee",
+    "skill": "blade",
+    "damage": 20,
+    "reach": 125,
+    "speed": 1.15,
+    "material": "elven",
+    "slot": "weapon"
+  },
+  "iron_mace": {
+    "name": "Iron Mace",
+    "category": "weapon",
+    "value": 35,
+    "weight": 18.0,
+    "desc": "A iron iron mace.",
+    "kind": "melee",
+    "skill": "blunt",
+    "damage": 13,
+    "reach": 105,
+    "speed": 0.85,
+    "material": "iron",
+    "slot": "weapon"
+  },
+  "iron_warhammer": {
+    "name": "Iron Warhammer",
+    "category": "weapon",
+    "value": 70,
+    "weight": 40.0,
+    "desc": "Slow, but it caves in armour.",
+    "kind": "melee",
+    "skill": "blunt",
+    "damage": 22,
+    "reach": 130,
+    "speed": 0.6,
+    "material": "iron",
+    "slot": "weapon"
+  },
+  "iron_battleaxe": {
+    "name": "Iron Battleaxe",
+    "category": "weapon",
+    "value": 60,
+    "weight": 30.0,
+    "desc": "A iron iron battleaxe.",
+    "kind": "melee",
+    "skill": "blunt",
+    "damage": 18,
+    "reach": 125,
+    "speed": 0.75,
+    "material": "iron",
+    "slot": "weapon"
+  },
+  "steel_mace": {
+    "name": "Steel Mace",
+    "category": "weapon",
+    "value": 95,
+    "weight": 20.0,
+    "desc": "A steel steel mace.",
+    "kind": "melee",
+    "skill": "blunt",
+    "damage": 17,
+    "reach": 105,
+    "speed": 0.85,
+    "material": "steel",
+    "slot": "weapon"
+  },
+  "club": {
+    "name": "Wooden Club",
+    "category": "weapon",
+    "value": 4,
+    "weight": 10.0,
+    "desc": "A wood wooden club.",
+    "kind": "melee",
+    "skill": "blunt",
+    "damage": 7,
+    "reach": 100,
+    "speed": 1.0,
+    "material": "wood",
+    "slot": "weapon"
+  },
+  "short_bow": {
+    "name": "Short Bow",
+    "category": "weapon",
+    "value": 30,
+    "weight": 6.0,
+    "desc": "A wood short bow.",
+    "kind": "bow",
+    "skill": "marksman",
+    "damage": 10,
+    "reach": 1600,
+    "speed": 1.2,
+    "material": "wood",
+    "slot": "weapon"
+  },
+  "long_bow": {
+    "name": "Long Bow",
+    "category": "weapon",
+    "value": 60,
+    "weight": 9.0,
+    "desc": "A wood long bow.",
+    "kind": "bow",
+    "skill": "marksman",
+    "damage": 14,
+    "reach": 2000,
+    "speed": 1.0,
+    "material": "wood",
+    "slot": "weapon"
+  },
+  "hunting_bow": {
+    "name": "Hunting Bow",
+    "category": "weapon",
+    "value": 45,
+    "weight": 7.0,
+    "desc": "A wood hunting bow.",
+    "kind": "bow",
+    "skill": "marksman",
+    "damage": 12,
+    "reach": 1800,
+    "speed": 1.1,
+    "material": "wood",
+    "slot": "weapon"
+  },
+  "elven_bow": {
+    "name": "Elven Bow",
+    "category": "weapon",
+    "value": 400,
+    "weight": 8.0,
+    "desc": "A elven elven bow.",
+    "kind": "bow",
+    "skill": "marksman",
+    "damage": 20,
+    "reach": 2200,
+    "speed": 1.15,
+    "material": "elven",
+    "slot": "weapon"
+  },
+  "apprentice_staff": {
+    "name": "Apprentice's Staff",
+    "category": "weapon",
+    "value": 120,
+    "weight": 6.0,
+    "desc": "A staff that channels a bolt of flame.",
+    "kind": "staff",
+    "skill": "destruction",
+    "damage": 8,
+    "reach": 1400,
+    "speed": 1.0,
+    "material": "wood",
+    "slot": "weapon",
+    "staff_spell": "flare"
+  },
+  "iron_arrow": {
+    "name": "Iron Arrow",
+    "category": "ammo",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "A plain iron-tipped arrow.",
+    "damage": 6,
+    "slot": "ammo",
+    "material": "iron"
+  },
+  "steel_arrow": {
+    "name": "Steel Arrow",
+    "category": "ammo",
+    "value": 2,
+    "weight": 0.1,
+    "desc": "A sharp steel arrow.",
+    "damage": 10,
+    "slot": "ammo",
+    "material": "steel"
+  },
+  "elven_arrow": {
+    "name": "Elven Arrow",
+    "category": "ammo",
+    "value": 4,
+    "weight": 0.1,
+    "desc": "A keen elven arrow that flies true.",
+    "damage": 16,
+    "slot": "ammo",
+    "material": "elven"
+  },
+  "iron_helmet": {
+    "name": "Iron Helmet",
+    "category": "armour",
+    "value": 30,
+    "weight": 5.0,
+    "desc": "Iron iron helmet.",
+    "slot": "head",
+    "armor_class": "heavy",
+    "armor_rating": 4,
+    "material": "iron"
+  },
+  "iron_cuirass": {
+    "name": "Iron Cuirass",
+    "category": "armour",
+    "value": 120,
+    "weight": 30.0,
+    "desc": "Iron iron cuirass.",
+    "slot": "chest",
+    "armor_class": "heavy",
+    "armor_rating": 12,
+    "material": "iron"
+  },
+  "iron_gauntlets": {
+    "name": "Iron Gauntlets",
+    "category": "armour",
+    "value": 25,
+    "weight": 6.0,
+    "desc": "Iron iron gauntlets.",
+    "slot": "hands",
+    "armor_class": "heavy",
+    "armor_rating": 3,
+    "material": "iron"
+  },
+  "iron_greaves": {
+    "name": "Iron Greaves",
+    "category": "armour",
+    "value": 60,
+    "weight": 18.0,
+    "desc": "Iron iron greaves.",
+    "slot": "legs",
+    "armor_class": "heavy",
+    "armor_rating": 6,
+    "material": "iron"
+  },
+  "iron_boots": {
+    "name": "Iron Boots",
+    "category": "armour",
+    "value": 30,
+    "weight": 12.0,
+    "desc": "Iron iron boots.",
+    "slot": "feet",
+    "armor_class": "heavy",
+    "armor_rating": 4,
+    "material": "iron"
+  },
+  "iron_shield": {
+    "name": "Iron Shield",
+    "category": "armour",
+    "value": 55,
+    "weight": 18.0,
+    "desc": "Iron iron shield.",
+    "slot": "shield",
+    "armor_class": "heavy",
+    "armor_rating": 8,
+    "material": "iron"
+  },
+  "steel_cuirass": {
+    "name": "Steel Cuirass",
+    "category": "armour",
+    "value": 260,
+    "weight": 32.0,
+    "desc": "Steel steel cuirass.",
+    "slot": "chest",
+    "armor_class": "heavy",
+    "armor_rating": 18,
+    "material": "steel"
+  },
+  "steel_helmet": {
+    "name": "Steel Helmet",
+    "category": "armour",
+    "value": 70,
+    "weight": 6.0,
+    "desc": "Steel steel helmet.",
+    "slot": "head",
+    "armor_class": "heavy",
+    "armor_rating": 6,
+    "material": "steel"
+  },
+  "steel_shield": {
+    "name": "Steel Shield",
+    "category": "armour",
+    "value": 130,
+    "weight": 20.0,
+    "desc": "Steel steel shield.",
+    "slot": "shield",
+    "armor_class": "heavy",
+    "armor_rating": 12,
+    "material": "steel"
+  },
+  "leather_helmet": {
+    "name": "Leather Helmet",
+    "category": "armour",
+    "value": 12,
+    "weight": 2.0,
+    "desc": "Leather leather helmet.",
+    "slot": "head",
+    "armor_class": "light",
+    "armor_rating": 2,
+    "material": "leather"
+  },
+  "leather_cuirass": {
+    "name": "Leather Cuirass",
+    "category": "armour",
+    "value": 40,
+    "weight": 8.0,
+    "desc": "Leather leather cuirass.",
+    "slot": "chest",
+    "armor_class": "light",
+    "armor_rating": 7,
+    "material": "leather"
+  },
+  "leather_gauntlets": {
+    "name": "Leather Bracers",
+    "category": "armour",
+    "value": 10,
+    "weight": 1.5,
+    "desc": "Leather leather bracers.",
+    "slot": "hands",
+    "armor_class": "light",
+    "armor_rating": 2,
+    "material": "leather"
+  },
+  "leather_greaves": {
+    "name": "Leather Greaves",
+    "category": "armour",
+    "value": 24,
+    "weight": 5.0,
+    "desc": "Leather leather greaves.",
+    "slot": "legs",
+    "armor_class": "light",
+    "armor_rating": 4,
+    "material": "leather"
+  },
+  "leather_boots": {
+    "name": "Leather Boots",
+    "category": "armour",
+    "value": 12,
+    "weight": 3.0,
+    "desc": "Leather leather boots.",
+    "slot": "feet",
+    "armor_class": "light",
+    "armor_rating": 2,
+    "material": "leather"
+  },
+  "fur_cuirass": {
+    "name": "Fur Armour",
+    "category": "armour",
+    "value": 28,
+    "weight": 6.0,
+    "desc": "Fur fur armour.",
+    "slot": "chest",
+    "armor_class": "light",
+    "armor_rating": 5,
+    "material": "fur"
+  },
+  "elven_cuirass": {
+    "name": "Elven Cuirass",
+    "category": "armour",
+    "value": 380,
+    "weight": 7.0,
+    "desc": "Elven elven cuirass.",
+    "slot": "chest",
+    "armor_class": "light",
+    "armor_rating": 14,
+    "material": "elven"
+  },
+  "potion_heal_minor": {
+    "name": "Minor Healing Potion",
+    "category": "potion",
+    "value": 15,
+    "weight": 0.5,
+    "desc": "Restores 30 health.",
+    "effects": [
+      {
+        "kind": "restore_health",
+        "magnitude": 30,
+        "duration": 0
+      }
+    ]
+  },
+  "potion_heal": {
+    "name": "Healing Potion",
+    "category": "potion",
+    "value": 40,
+    "weight": 0.5,
+    "desc": "Restores 75 health.",
+    "effects": [
+      {
+        "kind": "restore_health",
+        "magnitude": 75,
+        "duration": 0
+      }
+    ]
+  },
+  "potion_magicka": {
+    "name": "Potion of Magicka",
+    "category": "potion",
+    "value": 35,
+    "weight": 0.5,
+    "desc": "Restores 60 magicka.",
+    "effects": [
+      {
+        "kind": "restore_magicka",
+        "magnitude": 60,
+        "duration": 0
+      }
+    ]
+  },
+  "potion_stamina": {
+    "name": "Potion of Stamina",
+    "category": "potion",
+    "value": 20,
+    "weight": 0.5,
+    "desc": "Restores stamina.",
+    "effects": [
+      {
+        "kind": "restore_stamina",
+        "magnitude": 60,
+        "duration": 0
+      }
+    ]
+  },
+  "potion_cure": {
+    "name": "Cure Disease Potion",
+    "category": "potion",
+    "value": 30,
+    "weight": 0.5,
+    "desc": "Cures common disease.",
+    "effects": [
+      {
+        "kind": "cure_disease",
+        "magnitude": 1,
+        "duration": 0
+      }
+    ]
+  },
+  "potion_shield": {
+    "name": "Potion of Warding",
+    "category": "potion",
+    "value": 50,
+    "weight": 0.5,
+    "desc": "Grants 20 points of shield for 30 seconds.",
+    "effects": [
+      {
+        "kind": "shield",
+        "magnitude": 20,
+        "duration": 30
+      }
+    ]
+  },
+  "ingr_flax": {
+    "name": "Flax Flower",
+    "category": "ingredient",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "A pale flower.",
+    "effects": [
+      "restore_health",
+      "shield"
+    ]
+  },
+  "ingr_nightshade": {
+    "name": "Nightshade",
+    "category": "ingredient",
+    "value": 3,
+    "weight": 0.1,
+    "desc": "A poisonous purple bloom.",
+    "effects": [
+      "damage_health",
+      "damage_magicka"
+    ]
+  },
+  "ingr_mushroom": {
+    "name": "Cave Mushroom",
+    "category": "ingredient",
+    "value": 2,
+    "weight": 0.2,
+    "desc": "A glowing fungus.",
+    "effects": [
+      "restore_magicka",
+      "resist_fire"
+    ]
+  },
+  "ingr_bonemeal": {
+    "name": "Bone Meal",
+    "category": "ingredient",
+    "value": 2,
+    "weight": 0.5,
+    "desc": "Ground bone.",
+    "effects": [
+      "restore_stamina",
+      "shield"
+    ]
+  },
+  "ingr_wolf_pelt": {
+    "name": "Wolf Pelt",
+    "category": "ingredient",
+    "value": 6,
+    "weight": 2.0,
+    "desc": "A rough grey pelt worth a few coins.",
+    "effects": []
+  },
+  "book_marksman": {
+    "name": "A Hunter's Eye",
+    "category": "book",
+    "value": 50,
+    "weight": 1.0,
+    "desc": "Reading this treatise sharpens your aim.",
+    "teaches_skill": "marksman"
+  },
+  "book_blade": {
+    "name": "The Duellist's Companion",
+    "category": "book",
+    "value": 50,
+    "weight": 1.0,
+    "desc": "A manual of the blade.",
+    "teaches_skill": "blade"
+  },
+  "book_lore": {
+    "name": "The Chronicle of Miniwind",
+    "category": "book",
+    "value": 20,
+    "weight": 1.0,
+    "desc": "A history of the vale and its founding."
+  },
+  "bread": {
+    "name": "Bread",
+    "category": "potion",
+    "value": 1,
+    "weight": 0.2,
+    "desc": "A heel of bread. Restores a little health.",
+    "effects": [
+      {
+        "kind": "restore_health",
+        "magnitude": 8,
+        "duration": 0
+      }
+    ]
+  },
+  "silver_amulet": {
+    "name": "Silver Amulet",
+    "category": "misc",
+    "value": 60,
+    "weight": 0.2,
+    "desc": "An old silver amulet, warm to the touch. Elowen is looking for this.",
+    "slot": "amulet"
+  },
+  "torch": {
+    "name": "Torch",
+    "category": "misc",
+    "value": 2,
+    "weight": 1.0,
+    "desc": "Lights the dark."
+  },
+  "lockpick": {
+    "name": "Lockpick",
+    "category": "misc",
+    "value": 5,
+    "weight": 0.0,
+    "desc": "For coaxing open stubborn locks."
+  },
+  "repair_hammer": {
+    "name": "Repair Hammer",
+    "category": "misc",
+    "value": 10,
+    "weight": 2.0,
+    "desc": "Keeps gear in fighting shape."
+  },
+  "gold": {
+    "name": "Gold",
+    "category": "gold",
+    "value": 1,
+    "weight": 0.0,
+    "desc": "The coin of the realm."
+  }
+}

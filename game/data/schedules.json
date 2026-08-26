@@ -1,0 +1,119 @@
+{
+  "villager": [
+    {
+      "hour": 7,
+      "state": "IDLE",
+      "location": "home"
+    },
+    {
+      "hour": 9,
+      "state": "WORKING",
+      "location": "market"
+    },
+    {
+      "hour": 18,
+      "state": "GOING_HOME",
+      "location": "home"
+    },
+    {
+      "hour": 22,
+      "state": "SLEEPING",
+      "location": "home"
+    }
+  ],
+  "blacksmith": [
+    {
+      "hour": 6,
+      "state": "IDLE",
+      "location": "home"
+    },
+    {
+      "hour": 8,
+      "state": "GOING_TO_WORK",
+      "location": "work"
+    },
+    {
+      "hour": 9,
+      "state": "WORKING",
+      "location": "work"
+    },
+    {
+      "hour": 17,
+      "state": "GOING_HOME",
+      "location": "home"
+    },
+    {
+      "hour": 21,
+      "state": "SLEEPING",
+      "location": "home"
+    }
+  ],
+  "merchant": [
+    {
+      "hour": 7,
+      "state": "IDLE",
+      "location": "home"
+    },
+    {
+      "hour": 9,
+      "state": "WORKING",
+      "location": "work"
+    },
+    {
+      "hour": 19,
+      "state": "GOING_HOME",
+      "location": "home"
+    },
+    {
+      "hour": 23,
+      "state": "SLEEPING",
+      "location": "home"
+    }
+  ],
+  "guard": [
+    {
+      "hour": 6,
+      "state": "WORKING",
+      "location": "work"
+    },
+    {
+      "hour": 22,
+      "state": "IDLE",
+      "location": "work"
+    }
+  ],
+  "farmer": [
+    {
+      "hour": 5,
+      "state": "GOING_TO_WORK",
+      "location": "work"
+    },
+    {
+      "hour": 6,
+      "state": "WORKING",
+      "location": "work"
+    },
+    {
+      "hour": 19,
+      "state": "GOING_HOME",
+      "location": "home"
+    },
+    {
+      "hour": 21,
+      "state": "SLEEPING",
+      "location": "home"
+    }
+  ],
+  "beggar": [
+    {
+      "hour": 8,
+      "state": "IDLE",
+      "location": "market"
+    },
+    {
+      "hour": 20,
+      "state": "SLEEPING",
+      "location": "home"
+    }
+  ]
+}

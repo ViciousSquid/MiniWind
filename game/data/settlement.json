@@ -1,0 +1,256 @@
+{
+  "name": "Millbrook",
+  "description": "A small handcrafted settlement in the Vale of MiniWind, built to demonstrate the living-world architecture: NPCs with persistent identities, homes, jobs, schedules and reactions to a nearby threat.",
+  "world": {
+    "start_hour": 7.0,
+    "start_day": 1,
+    "minutes_per_day": 12.0,
+    "region_name": "The Vale of MiniWind",
+    "start_scenario": "quick",
+    "difficulty": "normal"
+  },
+  "player_start": { "pos": [300, 272, -400], "angle": 0.0 },
+  "markers": {
+    "village_square": { "kind": "social", "pos": [300, 272, -600] },
+    "thalen_forge":   { "kind": "forge",  "pos": [100, 272, -650] },
+    "thalen_home":    { "kind": "home",   "pos": [60, 272, -500] },
+    "thalen_bed":     { "kind": "bed",    "pos": [72, 272, -486] },
+    "elowen_shop":    { "kind": "shop",   "pos": [520, 272, -650] },
+    "elowen_home":    { "kind": "home",   "pos": [560, 272, -500] },
+    "elowen_bed":     { "kind": "bed",    "pos": [572, 272, -486] },
+    "bram_farm":      { "kind": "farm",   "pos": [770, 272, -770] },
+    "bram_home":      { "kind": "home",   "pos": [650, 272, -520] },
+    "bram_bed":       { "kind": "bed",    "pos": [662, 272, -506] },
+    "kestrel_post":   { "kind": "guardpost", "pos": [300, 272, -440] },
+    "patrol_west":    { "kind": "patrol", "pos": [150, 272, -520] },
+    "patrol_east":    { "kind": "patrol", "pos": [480, 272, -520] },
+    "wick_spot":      { "kind": "social", "pos": [340, 272, -560] },
+    "wick_sleep":     { "kind": "bed",    "pos": [200, 272, -630] },
+    "mara_home":      { "kind": "home",   "pos": [420, 272, -500] }
+  },
+  "npcs": [
+    {
+      "name": "Thalen",
+      "display_name": "Thalen the Smith",
+      "role": "blacksmith",
+      "home": "thalen_home",
+      "work": "thalen_forge",
+      "bed": "thalen_bed",
+      "merchant": true,
+      "gold": 250,
+      "relationships": { "Elowen": "sister", "Kestrel": "friend", "Wick": "debtor" },
+      "inventory": [
+        { "id": "iron_longsword", "qty": 1 },
+        { "id": "iron_mace", "qty": 1 },
+        { "id": "iron_cuirass", "qty": 1 },
+        { "id": "iron_helmet", "qty": 1 }
+      ],
+      "dialogue": {
+        "start": "greeting",
+        "nodes": {
+          "greeting": {
+            "text": "Well met. The forge is hot if you need steel.",
+            "responses": [
+              { "text": "Show me your wares.", "goto": "END", "actions": [ { "op": "open_trade" } ] },
+              { "text": "Trouble on the road?", "goto": "warn" },
+              { "text": "Any family in town?", "goto": "kin", "condition": { "key": "dead.Elowen", "equals": "false" } },
+              { "text": "I'm sorry about Elowen.", "goto": "grieve_elowen", "condition": { "key": "dead.Elowen", "is_true": true } },
+              { "text": "The town seems uneasy.", "goto": "mourn", "condition": { "key": "town.mourning", "is_true": true } },
+              { "text": "Good day.", "goto": "END" }
+            ]
+          },
+          "warn": {
+            "text": "Bandits camp east of the mill. Kestrel keeps them off us — buys his blades from me, so I've a stake in him coming home.",
+            "responses": [ { "text": "I'll be careful.", "goto": "greeting" } ]
+          },
+          "kin": {
+            "text": "Elowen the trader's my sister. She keeps the coin, I keep the coal. We do well enough between us.",
+            "responses": [ { "text": "Good to have kin close.", "goto": "greeting" } ]
+          },
+          "grieve_elowen": {
+            "text": "My sister. The shop's shuttered and the forge feels twice as cold. Whoever did it had best pray the guard finds them before I do.",
+            "responses": [ { "text": "I'm sorry for your loss.", "goto": "greeting" } ]
+          },
+          "mourn": {
+            "text": "We've buried one of our own lately. If you've a strong arm, the road east could use watching.",
+            "responses": [ { "text": "I'll keep an eye out.", "goto": "greeting" } ]
+          }
+        }
+      }
+    },
+    {
+      "name": "Elowen",
+      "display_name": "Elowen the Trader",
+      "role": "merchant",
+      "home": "elowen_home",
+      "work": "elowen_shop",
+      "bed": "elowen_bed",
+      "merchant": true,
+      "gold": 300,
+      "relationships": { "Thalen": "brother", "Bram": "supplier" },
+      "inventory": [
+        { "id": "potion_heal", "qty": 3 },
+        { "id": "potion_heal_minor", "qty": 5 },
+        { "id": "bread", "qty": 6 },
+        { "id": "short_bow", "qty": 1 },
+        { "id": "iron_arrow", "qty": 40 }
+      ],
+      "dialogue": {
+        "start": "greeting",
+        "nodes": {
+          "greeting": {
+            "text": "Coin for potions, potions for coin. What'll it be?",
+            "responses": [
+              { "text": "Let's trade.", "goto": "END", "actions": [ { "op": "open_trade" } ] },
+              { "text": "Where do your goods come from?", "goto": "supply", "condition": { "key": "dead.Bram", "equals": "false" } },
+              { "text": "I'm sorry about Thalen.", "goto": "grieve_thalen", "condition": { "key": "dead.Thalen", "is_true": true } },
+              { "text": "Just looking. Farewell.", "goto": "END" }
+            ]
+          },
+          "supply": {
+            "text": "Bram's farm keeps my shelves stocked — bread, flax, what have you. My brother Thalen forges the rest into something worth selling.",
+            "responses": [ { "text": "A tidy little trade.", "goto": "greeting" } ]
+          },
+          "grieve_thalen": {
+            "text": "My brother, gone. He was all bluster and hammer, but he was mine. Don't expect me to smile today.",
+            "responses": [ { "text": "Take care of yourself.", "goto": "greeting" } ]
+          }
+        }
+      }
+    },
+    {
+      "name": "Bram",
+      "display_name": "Bram the Farmer",
+      "role": "farmer",
+      "home": "bram_home",
+      "work": "bram_farm",
+      "bed": "bram_bed",
+      "relationships": { "Mara": "sister", "Elowen": "customer" },
+      "inventory": [ { "id": "bread", "qty": 3 }, { "id": "ingr_flax", "qty": 4 } ],
+      "dialogue": {
+        "start": "greeting",
+        "nodes": {
+          "greeting": {
+            "text": "Long day in the fields. The crop's good this year, thank the gods.",
+            "responses": [
+              { "text": "How's your sister?", "goto": "mara", "condition": { "key": "dead.Mara", "equals": "false" } },
+              { "text": "I'm sorry about Mara.", "goto": "grieve_mara", "condition": { "key": "dead.Mara", "is_true": true } },
+              { "text": "Keep at it.", "goto": "END" }
+            ]
+          },
+          "mara": {
+            "text": "Mara? Down at the square, most days. She fancies the guard, Kestrel — thinks I don't notice. Good lad, though. I'll allow it.",
+            "responses": [ { "text": "Ha. Good luck to them.", "goto": "greeting" } ]
+          },
+          "grieve_mara": {
+            "text": "My little sister. I keep looking up expecting her to come down the lane. The fields can rot for all I care today.",
+            "responses": [ { "text": "I'm so sorry.", "goto": "greeting" } ]
+          }
+        }
+      }
+    },
+    {
+      "name": "Kestrel",
+      "display_name": "Kestrel the Guard",
+      "role": "guard",
+      "home": "kestrel_post",
+      "work": "kestrel_post",
+      "patrol": [ "kestrel_post", "patrol_west", "village_square", "patrol_east" ],
+      "relationships": { "Mara": "sweetheart", "Thalen": "friend" },
+      "dialogue": {
+        "start": "greeting",
+        "nodes": {
+          "greeting": {
+            "text": "Move along, citizen. I've bandits to watch for.",
+            "responses": [
+              { "text": "Anyone you're watching over in particular?", "goto": "mara", "condition": { "key": "dead.Mara", "equals": "false" } },
+              { "text": "Mara's gone. I'm sorry.", "goto": "grieve_mara", "condition": { "key": "dead.Mara", "is_true": true } },
+              { "text": "Stay sharp.", "goto": "END" }
+            ]
+          },
+          "mara": {
+            "text": "The whole town. But... Mara, if you're asking. Don't you dare let anything happen to her while I'm out on the wall.",
+            "responses": [ { "text": "She's safe with you here.", "goto": "greeting" } ]
+          },
+          "grieve_mara": {
+            "text": "Say her name again and I'll not answer for what I do. I'll cut down every last bandit east of the mill, or die trying.",
+            "responses": [ { "text": "Steady, Kestrel.", "goto": "greeting" } ]
+          }
+        }
+      }
+    },
+    {
+      "name": "Wick",
+      "display_name": "Wick the Beggar",
+      "role": "beggar",
+      "home": "wick_sleep",
+      "work": "wick_spot",
+      "bed": "wick_sleep",
+      "relationships": { "Thalen": "creditor" },
+      "dialogue": {
+        "start": "greeting",
+        "nodes": {
+          "greeting": {
+            "text": "Spare a coin? A man's got to eat...",
+            "responses": [
+              { "text": "Here you go.", "goto": "END" },
+              { "text": "What's the word around town?", "goto": "gossip" },
+              { "text": "Not today.", "goto": "END" }
+            ]
+          },
+          "gossip": {
+            "text": "Me? I hear everything. Owe old Thalen three silver, mind — don't tell him you saw me. And that guard's sweet on Mara, if you didn't know.",
+            "responses": [
+              { "text": "Grim times, though.", "goto": "gossip_mourn", "condition": { "key": "town.mourning", "is_true": true } },
+              { "text": "Your secret's safe.", "goto": "greeting" }
+            ]
+          },
+          "gossip_mourn": {
+            "text": "Aye. A death in a place this small, everyone feels it. Even a beggar bows his head. Coin doesn't warm you the same after.",
+            "responses": [ { "text": "Stay safe, Wick.", "goto": "greeting" } ]
+          }
+        }
+      }
+    },
+    {
+      "name": "Mara",
+      "display_name": "Mara",
+      "role": "villager",
+      "home": "mara_home",
+      "work": "village_square",
+      "bed": "mara_home",
+      "relationships": { "Bram": "brother", "Kestrel": "sweetheart" },
+      "dialogue": {
+        "start": "greeting",
+        "nodes": {
+          "greeting": {
+            "text": "Millbrook's a quiet place, mostly. We like it that way.",
+            "responses": [
+              { "text": "Who keeps you company here?", "goto": "folk", "condition": { "key": "dead.Kestrel", "equals": "false" } },
+              { "text": "Kestrel fell defending the town. I'm sorry.", "goto": "grieve_kestrel", "condition": { "key": "dead.Kestrel", "is_true": true } },
+              { "text": "I'm sorry about Bram.", "goto": "grieve_bram", "condition": { "key": "dead.Bram", "is_true": true } },
+              { "text": "It's charming.", "goto": "END" }
+            ]
+          },
+          "folk": {
+            "text": "My brother Bram works the east fields. And Kestrel keeps the square — he pretends it's duty, but he lingers by me longer than the others.",
+            "responses": [ { "text": "Sounds like more than duty.", "goto": "greeting" } ]
+          },
+          "grieve_kestrel": {
+            "text": "He said he'd always come home from the wall. He lied. I don't know how to be here without him watching the square.",
+            "responses": [ { "text": "He died protecting you all.", "goto": "greeting" } ]
+          },
+          "grieve_bram": {
+            "text": "My brother. The farm's just dirt now, without him cursing at the crows. I've no one left but the memory of him.",
+            "responses": [ { "text": "I'm sorry, Mara.", "goto": "greeting" } ]
+          }
+        }
+      }
+    }
+  ],
+  "threats": [
+    { "name": "Bandit", "role": "bandit", "pos": [1320, 272, -600] },
+    { "name": "Bandit Archer", "role": "bandit_archer", "pos": [1380, 272, -560] },
+    { "name": "Grey Wolf", "role": "wolf", "pos": [1260, 272, -720] }
+  ]
+}

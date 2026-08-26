@@ -1,0 +1,24 @@
+"""
+Editor package initialiser.
+
+Bootstraps the Fio plugin system as early as possible — before any map is
+loaded or the main window is built — so plugin-provided entity types, I/O
+definitions and editor integration are available everywhere they are needed.
+
+This is deliberately tiny and fully guarded: a plugin (or the plugin system
+itself) failing must never stop the editor from starting.
+"""
+
+try:
+    from plugins.manager import load_plugins
+    load_plugins()                       # register plugin entity types + I/O defs
+    from plugins import integration as _fio_integration
+    _fio_integration.apply()             # wire generic plugin hooks into editor
+except Exception as _fio_plugin_exc:      # pragma: no cover - defensive
+    print(f"[Plugins] editor bootstrap skipped: {_fio_plugin_exc}")
+
+# MiniWind (the built-in game) is installed from editor.main_window once the
+# editor package is fully constructed — NOT here. Installing during package
+# import would re-enter this module while game.entities is still importing
+# editor.things, so the game-host registration is deferred to MainWindow.__init__
+# (see editor/main_window.py). It is still "always on"; only the timing moved.
