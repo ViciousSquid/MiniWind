@@ -291,7 +291,7 @@ MiniwindSettings = GameSettings
 #: Marker kinds an author can pick from (drives only the editor label/icon; the
 #: behaviour comes from what an NPC references, not the kind).
 MARKER_KINDS = ("home", "bed", "work", "forge", "shop", "farm", "guardpost",
-                "patrol", "social", "idle")
+                "patrol", "social", "idle", "location")
 
 
 def marker_sprite(kind: str) -> str:
@@ -416,6 +416,31 @@ def _init_trigger(self):
     p.setdefault("custom_idle", "assets/sprites/logic_relay.png")
 
 
+#: Container styles (drives the sprite; behaviour is identical).
+CONTAINER_KINDS = ("chest", "barrel", "crate", "sack", "urn")
+
+
+def container_sprite(kind: str) -> str:
+    """The per-kind container sprite (falls back to the generic chest)."""
+    k = str(kind or "chest").lower()
+    if k not in CONTAINER_KINDS:
+        return f"{_SPRITE_DIR}/container_chest.png"
+    return f"{_SPRITE_DIR}/container_{k}.png"
+
+
+def _init_container(self):
+    p = self.properties
+    p["type"] = "container"
+    p.setdefault("container_kind", "chest")
+    p.setdefault("display_name", "Chest")
+    # The container's OWN inventory — a list of item stacks, authored in the
+    # editor's Contents tab, separate from the player's inventory.
+    p.setdefault("inventory", [])
+    p.setdefault("use_radius", 120.0)
+    p.setdefault("locked", False)          # reserved: a future key/lockpick gate
+    p["custom_idle"] = container_sprite(p.get("container_kind", "chest"))
+
+
 def _make_thing_pair(init_fn, icon):
     """Build (editor, headless) Thing subclasses sharing one initialiser."""
     if _HAVE_EDITOR:
@@ -436,6 +461,60 @@ def _make_thing_pair(init_fn, icon):
 
 ItemPickup = _make_thing_pair(_init_item_pickup, "assets/sprites/pickup.png")
 ItemPickup.__name__ = ItemPickup.__qualname__ = "ItemPickup"
+
+
+# ---------------------------------------------------------------------------
+# Container — a world object the player USEs (E) to open a graphical inventory
+# holding its own item stacks (separate from the player's). See runtime and the
+# 'container' screen.
+# ---------------------------------------------------------------------------
+if _HAVE_EDITOR:
+    class Container(Thing):
+        """A usable world container with its own inventory."""
+        pixmap_path = "assets/sprites/miniwind/container_chest.png"
+
+        def __init__(self, pos=None, properties=None):
+            super().__init__(pos, properties)
+            _init_container(self)
+
+        def get_instance_pixmap(self):
+            self.properties["custom_idle"] = container_sprite(
+                self.properties.get("container_kind", "chest"))
+            pix = _container_pixmap(self)
+            return pix if pix is not None else super().get_instance_pixmap()
+
+        def get_icon_pixmap(self):
+            pix = _container_pixmap(self)
+            if pix is not None and not pix.isNull():
+                from PyQt5.QtCore import Qt
+                return pix.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            return super().get_icon_pixmap()
+else:  # pragma: no cover - headless player
+    class Container(Thing):
+        def __init__(self, pos=None, properties=None):
+            super().__init__(pos, properties)
+            _init_container(self)
+
+
+def _container_pixmap(cont):
+    """Load this container's sprite (per its ``container_kind``) for the views."""
+    from PyQt5.QtGui import QPixmap
+    cache = _MARKER_PIXMAP_CACHE
+    path = container_sprite(cont.properties.get("container_kind", "chest"))
+    if path in cache:
+        return cache[path]
+    pix = None
+    try:
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+        abs_path = os.path.join(root, path)
+        if os.path.exists(abs_path):
+            loaded = QPixmap(abs_path)
+            if not loaded.isNull():
+                pix = loaded
+    except Exception:
+        pix = None
+    cache[path] = pix
+    return pix
 
 
 # ---------------------------------------------------------------------------

@@ -546,9 +546,106 @@ class QtGameView(QOpenGLWidget):
                 pass
         self._overhead_sprite_ctrl.update(gpos, angle, time.perf_counter(),
                                           armed=armed, shooting=shooting)
+        # Brief red flash when the player has just taken damage.
+        flash = float(getattr(sess, "_player_flash", 0.0) or 0.0) if sess is not None else 0.0
+        tint = (1.0, 0.15, 0.1, min(0.8, flash * 4.0)) if flash > 0 else (0.0, 0.0, 0.0, 0.0)
         self._overhead_sprite_renderer.draw(
             self.projection_matrix, self.view_matrix, gpos,
-            self._overhead_sprite_ctrl.facing, self._overhead_sprite_ctrl.frame())
+            self._overhead_sprite_ctrl.facing, self._overhead_sprite_ctrl.frame(),
+            tint=tint)
+
+    @staticmethod
+    def _is_overhead_head_actor(thing) -> bool:
+        """True for an NPC/creature/monster whose idle sprite is a character
+        head — the actors that should rotate to face their heading in overhead
+        view (drawn as ground quads instead of camera-facing billboards)."""
+        props = getattr(thing, "properties", None)
+        if not isinstance(props, dict):
+            return False
+        ttype = str(props.get("type", "")).replace("_", "").lower()
+        if ttype not in ("npc", "creature", "monster"):
+            return False
+        idle = str(props.get("custom_idle", "")).replace("\\", "/")
+        base = idle.rsplit("/", 1)[-1]
+        return ("/heads/" in idle or idle.startswith("heads/")) and base.startswith("head")
+
+    def _draw_overhead_npcs(self, render_state):
+        """Draw head-wearing NPCs/creatures as rotating ground quads so they face
+        where they walk, mirroring the player's overhead sprite. Fully guarded:
+        on any error it disables itself (``_overhead_npc_ok``) so the next frame
+        falls back to the ordinary billboards and no actor is left invisible."""
+        actors = getattr(self, "_overhead_actor_things", None)
+        if not actors:
+            return
+        if not (self.play_mode and self.overhead_sprite_enabled and self._is_overhead()):
+            return
+        try:
+            import os as _os
+            from engine.overhead_sprite import (SpriteController, OverheadSpriteRenderer)
+            root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+            cache = getattr(self, "_overhead_npc_renderers", None)
+            if cache is None:
+                cache = self._overhead_npc_renderers = {}
+
+            def _renderer(sprite_rel, y_offset=2.0):
+                key = (sprite_rel, round(y_offset, 2))
+                r = cache.get(key)
+                if r is None:
+                    sabs = _os.path.join(root, sprite_rel)
+                    frames = {k: sabs for k in (
+                        SpriteController.IDLE, SpriteController.WALK_A,
+                        SpriteController.WALK_B, SpriteController.IDLE_G,
+                        SpriteController.WALK_A_G, SpriteController.WALK_B_G,
+                        SpriteController.SHOOT)}
+                    r = OverheadSpriteRenderer(
+                        frame_files=frames, size=float(self.overhead_sprite_size),
+                        y_offset=y_offset,
+                        facing_offset_deg=float(self.overhead_sprite_facing_offset))
+                    cache[key] = r
+                return r
+
+            dead_overlay_rel = "assets/sprites/heads/dead.png"
+            for thing in actors:
+                p = thing.properties
+                pos = thing.pos
+                gpos = (float(pos[0]), float(pos[1]), float(pos[2]))
+                facing = float(p.get("angle", 0.0) or 0.0)
+                # Brief red flash when the actor was just hit.
+                flash = float(p.get("_hit_flash", 0.0) or 0.0)
+                tint = (1.0, 0.15, 0.1, min(0.8, flash * 4.0)) if flash > 0 else \
+                    (0.0, 0.0, 0.0, 0.0)
+
+                idle_rel = str(p.get("custom_idle", ""))
+                is_head = self._is_overhead_head_actor(thing)
+                dead = bool(p.get("dead"))
+                gibbed = bool(p.get("gibbed"))
+                if dead and not gibbed and is_head:
+                    # Keep the identity: draw the living head, then paint the
+                    # shared dead.png overlay on top (a second, slightly-higher
+                    # ground quad) — no on-disk composite needed, so it always
+                    # matches the 2D view.
+                    _renderer(idle_rel).draw(self.projection_matrix,
+                                             self.view_matrix, gpos, facing,
+                                             SpriteController.IDLE, tint=tint)
+                    _renderer(dead_overlay_rel, y_offset=3.6).draw(
+                        self.projection_matrix, self.view_matrix, gpos, facing,
+                        SpriteController.IDLE)
+                    continue
+                # Alive / shooting (head) or gibbed (gore) — the state sprite.
+                try:
+                    sprite_rel = str(thing.get_sprite_path())
+                except Exception:
+                    sprite_rel = idle_rel
+                if not sprite_rel:
+                    continue
+                _renderer(sprite_rel).draw(self.projection_matrix, self.view_matrix,
+                                           gpos, facing, SpriteController.IDLE,
+                                           tint=tint)
+        except Exception as exc:
+            # Disable and fall back to billboards next frame.
+            self._overhead_npc_ok = False
+            self._overhead_actor_things = []
+            print(f"[Overhead NPC] disabled after error: {exc}")
 
 
     def initializeGL(self):
@@ -1061,6 +1158,25 @@ class QtGameView(QOpenGLWidget):
             self._render_config["all_things"] = render_state.all_things
         else:
             self._render_config["all_things"] = self.editor.state.things
+        # Overhead directional heads: in overhead play mode, actors wearing a
+        # head sprite are drawn as rotating ground quads (like the player) so
+        # they face where they move — so hold them out of the camera-facing
+        # billboard pass here and render them in _draw_overhead_npcs. Fully
+        # guarded and fail-safe: if the feature is unhealthy we leave the
+        # billboards in place so an actor is never invisible.
+        self._overhead_actor_things = []
+        if (self.play_mode and self.overhead_sprite_enabled and self._is_overhead()
+                and getattr(self, "_overhead_npc_ok", True)):
+            try:
+                kept, heads = [], []
+                for t in things_to_render:
+                    (heads if self._is_overhead_head_actor(t) else kept).append(t)
+                if heads:
+                    self._overhead_actor_things = heads
+                    things_to_render = kept
+            except Exception:
+                self._overhead_actor_things = []
+
         self.update_instance_textures(things_to_render)
 
         # Attach dynamic point lights to projectiles so they illuminate
@@ -1168,6 +1284,8 @@ class QtGameView(QOpenGLWidget):
             # Native overhead player sprite (top-down mode), depth-tested so
             # walls occlude it correctly.
             self._draw_overhead_sprite(render_state)
+            # Head-wearing NPCs as rotating ground quads (directional heads).
+            self._draw_overhead_npcs(render_state)
             # Collision visualization
             if getattr(self, '_collision_vis_mode', 'off') != 'off':
                 # Get collision brushes from logic thread

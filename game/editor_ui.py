@@ -1053,22 +1053,52 @@ def _castable_spells():
     return out
 
 
-# --- Player Spells tab: pastel, one-card-per-line, RPG-styled ----------------
+# --- Spell cards: dark-theme, one-card-per-line, RPG-styled ------------------
 
-#: Pastel wash + dark ink per magic school (mirrors make_spell_icons).
-_SCHOOL_PASTEL = {
-    "destruction": ("#f6cdc8", "#7a3730"),
-    "restoration": ("#cdeed2", "#2f6f4a"),
-    "alteration":  ("#cee0f8", "#37628f"),
-    "conjuration": ("#e0d2f6", "#5f4296"),
-    "illusion":    ("#f7d6f0", "#8a4276"),
-    "mysticism":   ("#cdeeec", "#2e7674"),
-    "default":     ("#e4e2e8", "#5a5a66"),
+#: Dark card palette shared by every spell card (assign pickers + Spell Editor)
+#: so cards sit on the editor's dark theme instead of clashing pastels.
+_CARD_BG = "#26232e"          # normal card background
+_CARD_BG_SEL = "#302b3d"      # selected card background
+_CARD_EDGE = "#4a4658"        # unselected border
+_CARD_INK = "#e8e4f0"         # primary (title) text — light
+_CARD_SUB = "#b9b4c6"         # secondary text — dim light
+_CARD_WELL = "rgba(255,255,255,22)"   # icon well fill
+
+#: Vivid per-school ACCENT (used for the border, school label and icon rim) —
+#: keeps cards distinguishable by school while staying readable on dark.
+_SCHOOL_ACCENT = {
+    "destruction": "#e8836f",
+    "restoration": "#7fd39b",
+    "alteration":  "#7fb2f0",
+    "conjuration": "#b79bf0",
+    "illusion":    "#f08fd6",
+    "mysticism":   "#6fd6cf",
+    "default":     "#b9b6c4",
 }
+
+#: Dark stylesheet for the input widgets that live inside a spell card, so their
+#: text — and a QComboBox's drop-down popup — is readable on the dark card.
+_CARD_INPUT_QSS = """
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+    background: #1e1b26; color: #e8e4f0;
+    border: 1px solid #4a4658; border-radius: 4px; padding: 2px;
+}
+QComboBox::drop-down { border: none; width: 16px; }
+QComboBox QAbstractItemView {
+    background: #26232e; color: #e8e4f0;
+    selection-background-color: #4a4270; selection-color: #ffffff;
+    border: 1px solid #4a4658;
+}
+"""
+
+
+def _school_accent(school):
+    return _SCHOOL_ACCENT.get(str(school or "").lower(), _SCHOOL_ACCENT["default"])
 
 
 def _school_pastel(school):
-    return _SCHOOL_PASTEL.get(str(school or "").lower(), _SCHOOL_PASTEL["default"])
+    """Back-compat shim: (card background, school accent) on the dark theme."""
+    return _CARD_BG, _school_accent(school)
 
 
 def _spell_icon_path(sid, school):
@@ -1134,11 +1164,20 @@ def make_player_spells_tab(thing):
             lay.setContentsMargins(10, 8, 12, 8)
             lay.setSpacing(12)
 
+            # Selection tick on the LEFT so it survives a narrow property panel
+            # (the right edge is clipped first).
+            self.tick = QtWidgets.QLabel("✓")
+            tf = _rpg_font(QtGui, 20, bold=True); self.tick.setFont(tf)
+            self.tick.setStyleSheet("color:#5fcf7a; border:none; background:transparent;")
+            self.tick.setFixedWidth(20)
+            self.tick.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+            lay.addWidget(self.tick)
+
             # 100x100 icon placeholder (its own art when present).
             icon = QtWidgets.QLabel()
             icon.setFixedSize(100, 100)
             icon.setAlignment(Qt.AlignCenter)
-            icon.setStyleSheet("background:rgba(255,255,255,60); border:1px solid %s;"
+            icon.setStyleSheet("background:rgba(255,255,255,22); border:1px solid %s;"
                                "border-radius:8px;" % self.ink)
             path = _spell_icon_path(sid, sp.school)
             if path:
@@ -1151,7 +1190,7 @@ def make_player_spells_tab(thing):
             mid = QtWidgets.QVBoxLayout(); mid.setSpacing(3)
             name = QtWidgets.QLabel(sp.name)
             name.setFont(_rpg_font(QtGui, 15, bold=True))
-            name.setStyleSheet("color:#241f18; border:none; background:transparent;")
+            name.setStyleSheet("color:#e8e4f0; border:none; background:transparent;")
             mid.addWidget(name)
             sub = QtWidgets.QLabel(f"{str(sp.school).title()}  ·  {_DELIV.get(sp.delivery, sp.delivery)}")
             sf = _rpg_font(QtGui, 10); sf.setBold(False)
@@ -1164,31 +1203,26 @@ def make_player_spells_tab(thing):
             desc = getattr(sp, "desc", "") or ""
             stat = QtWidgets.QLabel("   ·   ".join(bits))
             stat.setFont(_rpg_font(QtGui, 10))
-            stat.setStyleSheet("color:#4a4034; border:none; background:transparent;")
+            stat.setStyleSheet("color:#b9b4c6; border:none; background:transparent;")
             mid.addWidget(stat)
             if desc:
                 dl = QtWidgets.QLabel(desc)
                 dl.setWordWrap(True)
                 df = _rpg_font(QtGui, 9); df.setItalic(True)
                 dl.setFont(df)
-                dl.setStyleSheet("color:#5a5045; border:none; background:transparent;")
+                dl.setStyleSheet("color:#b9b4c6; border:none; background:transparent;")
                 mid.addWidget(dl)
             mid.addStretch(1)
             lay.addLayout(mid, 1)
-
-            self.tick = QtWidgets.QLabel("✓")
-            tf = _rpg_font(QtGui, 20, bold=True); self.tick.setFont(tf)
-            self.tick.setStyleSheet("color:#2f7a3a; border:none; background:transparent;")
-            self.tick.setFixedWidth(24)
-            self.tick.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
-            lay.addWidget(self.tick)
             self._restyle()
 
         def _restyle(self):
             self.tick.setVisible(self.selected)
-            border = ("3px solid %s" % self.ink) if self.selected else "1px solid #7a7a86"
-            self.setStyleSheet("QFrame { background:%s; border:%s; border-radius:10px; }"
-                               % (self.bg, border))
+            border = ("3px solid %s" % self.ink) if self.selected else ("1px solid %s" % _CARD_EDGE)
+            bg = _CARD_BG_SEL if self.selected else _CARD_BG
+            self.setStyleSheet(
+                "QFrame { background:%s; border:%s; border-radius:10px; } %s"
+                % (bg, border, _CARD_INPUT_QSS))
 
         def set_selected(self, v):
             self.selected = v; self._restyle()
@@ -1217,6 +1251,7 @@ def make_player_spells_tab(thing):
 
             scroll = QtWidgets.QScrollArea()
             scroll.setWidgetResizable(True)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
             holder = QtWidgets.QWidget()
             col = QtWidgets.QVBoxLayout(holder)
@@ -1276,45 +1311,205 @@ def make_spells_tab(thing):
 
 
 def _SpellsTab(thing, QtWidgets, QtCore):
+    """The NPC/creature spell picker — the *same* pastel spell cards the player's
+    starting-spell picker uses. Click a card to give the NPC that spell; a
+    selected card expands to show its per-bolt colour, damage and speed (an NPC
+    cycles through its chosen spells, one per shot)."""
     from PyQt5 import QtGui
     from .rpg import magic
 
-    COLS = ["Spell", "Colour", "Dmg/shot", "Speed"]
+    Qt = QtCore.Qt
+    _DELIV = {magic.SELF: "self", magic.TOUCH: "touch",
+              magic.TARGET: "target", magic.PROJECTILE: "bolt"}
+
+    def _defaults_for(sid):
+        sp = magic.get(sid)
+        if sp is None:
+            return {"color": [140, 160, 255], "damage": 0, "speed": 900.0}
+        return {"color": list(sp.color), "damage": int(sp.damage),
+                "speed": float(sp.projectile_speed)}
+
+    class NpcSpellCard(QtWidgets.QFrame):
+        """A pastel spell card that also edits the NPC's per-bolt settings."""
+
+        def __init__(self, sid, sp, entry, on_toggle, on_edit):
+            super().__init__()
+            self.sid = sid
+            self._on_toggle = on_toggle
+            self._on_edit = on_edit
+            self.selected = entry is not None
+            self.bg, self.ink = _school_pastel(sp.school)
+            self.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
+                               QtWidgets.QSizePolicy.Fixed)
+            self.setCursor(Qt.PointingHandCursor)
+            self.setToolTip(f"<b>{sp.name}</b> ({sid})<br>{getattr(sp,'desc','') or ''}")
+
+            root = QtWidgets.QVBoxLayout(self)
+            root.setContentsMargins(10, 8, 12, 8)
+            root.setSpacing(6)
+
+            top = QtWidgets.QHBoxLayout(); top.setSpacing(12)
+            # Selection tick on the LEFT so it is never clipped when the property
+            # panel is narrowed (the far-right edge is the first to be cut off).
+            self.tick = QtWidgets.QLabel("✓")
+            self.tick.setFont(_rpg_font(QtGui, 20, bold=True))
+            self.tick.setStyleSheet("color:#5fcf7a; border:none; background:transparent;")
+            self.tick.setFixedWidth(20)
+            self.tick.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+            top.addWidget(self.tick)
+
+            icon = QtWidgets.QLabel()
+            icon.setFixedSize(100, 100)
+            icon.setAlignment(Qt.AlignCenter)
+            icon.setStyleSheet("background:rgba(255,255,255,22); border:1px solid %s;"
+                               "border-radius:8px;" % self.ink)
+            path = _spell_icon_path(sid, sp.school)
+            if path:
+                pm = QtGui.QPixmap(path)
+                if not pm.isNull():
+                    icon.setPixmap(pm.scaled(96, 96, Qt.KeepAspectRatio,
+                                             Qt.SmoothTransformation))
+            top.addWidget(icon)
+
+            mid = QtWidgets.QVBoxLayout(); mid.setSpacing(3)
+            name = QtWidgets.QLabel(sp.name)
+            name.setFont(_rpg_font(QtGui, 15, bold=True))
+            name.setStyleSheet("color:#e8e4f0; border:none; background:transparent;")
+            mid.addWidget(name)
+            sub = QtWidgets.QLabel(f"{str(sp.school).title()}  ·  "
+                                   f"{_DELIV.get(sp.delivery, sp.delivery)}")
+            sf = _rpg_font(QtGui, 10); sf.setBold(False)
+            sub.setFont(sf)
+            sub.setStyleSheet("color:%s; border:none; background:transparent;" % self.ink)
+            mid.addWidget(sub)
+            desc = getattr(sp, "desc", "") or ""
+            if desc:
+                dl = QtWidgets.QLabel(desc); dl.setWordWrap(True)
+                df = _rpg_font(QtGui, 9); df.setItalic(True)
+                dl.setFont(df)
+                dl.setStyleSheet("color:#b9b4c6; border:none; background:transparent;")
+                mid.addWidget(dl)
+            mid.addStretch(1)
+            top.addLayout(mid, 1)
+            root.addLayout(top)
+
+            # --- per-bolt controls (only meaningful once the card is chosen) ---
+            self.controls = QtWidgets.QWidget()
+            crow = QtWidgets.QHBoxLayout(self.controls)
+            crow.setContentsMargins(0, 0, 0, 0); crow.setSpacing(8)
+            e = entry or _defaults_for(sid)
+
+            clab = QtWidgets.QLabel("Bolt:")
+            clab.setStyleSheet("color:#cfc9db; border:none; background:transparent;")
+            crow.addWidget(clab)
+            self.swatch = QtWidgets.QPushButton(); self.swatch.setFixedWidth(64)
+            self._paint_swatch(e.get("color") or [140, 160, 255])
+            self.swatch.clicked.connect(self._pick_colour)
+            crow.addWidget(self.swatch)
+
+            dl2 = QtWidgets.QLabel("Dmg")
+            dl2.setStyleSheet("color:#cfc9db; border:none; background:transparent;")
+            crow.addWidget(dl2)
+            self.dmg = QtWidgets.QSpinBox(); self.dmg.setRange(0, 100000)
+            self.dmg.setValue(int(e.get("damage", 0) or 0))
+            self.dmg.valueChanged.connect(lambda v: self._on_edit(self.sid, "damage", int(v)))
+            crow.addWidget(self.dmg)
+
+            sl2 = QtWidgets.QLabel("Speed")
+            sl2.setStyleSheet("color:#cfc9db; border:none; background:transparent;")
+            crow.addWidget(sl2)
+            self.spd = QtWidgets.QDoubleSpinBox(); self.spd.setRange(0.0, 100000.0)
+            self.spd.setDecimals(0); self.spd.setSingleStep(50.0)
+            self.spd.setValue(float(e.get("speed", 0) or 0))
+            self.spd.valueChanged.connect(lambda v: self._on_edit(self.sid, "speed", float(v)))
+            crow.addWidget(self.spd)
+            crow.addStretch(1)
+            root.addWidget(self.controls)
+
+            self._restyle()
+
+        def _paint_swatch(self, rgb):
+            r, g, b = int(rgb[0]), int(rgb[1]), int(rgb[2])
+            self.swatch.setStyleSheet(
+                f"background-color: rgb({r},{g},{b}); border:1px solid #222;")
+            self.swatch.setText(f"{r},{g},{b}")
+
+        def _pick_colour(self):
+            cur = [0, 0, 0]
+            try:
+                parts = self.swatch.text().split(",")
+                cur = [int(p) for p in parts]
+            except Exception:
+                cur = [140, 160, 255]
+            initial = QtGui.QColor(*cur)
+            chosen = QtWidgets.QColorDialog.getColor(initial, self, "Projectile colour")
+            if chosen.isValid():
+                rgb = [chosen.red(), chosen.green(), chosen.blue()]
+                self._paint_swatch(rgb)
+                self._on_edit(self.sid, "color", rgb)
+
+        def _restyle(self):
+            self.tick.setVisible(self.selected)
+            self.controls.setVisible(self.selected)
+            border = ("3px solid %s" % self.ink) if self.selected else ("1px solid %s" % _CARD_EDGE)
+            bg = _CARD_BG_SEL if self.selected else _CARD_BG
+            self.setStyleSheet(
+                "QFrame { background:%s; border:%s; border-radius:10px; } %s"
+                % (bg, border, _CARD_INPUT_QSS))
+
+        def mousePressEvent(self, e):
+            if e.button() == Qt.LeftButton:
+                self.selected = not self.selected
+                self._restyle()
+                self._on_toggle(self.sid, self.selected)
 
     class Tab(QtWidgets.QWidget):
         def __init__(self):
             super().__init__()
             self.thing = thing
-            self._loading = False
-            self._choices = _castable_spells()
-            layout = QtWidgets.QVBoxLayout(self)
-
-            # Add / Remove pinned to the very top of the tab.
-            btns = QtWidgets.QHBoxLayout()
-            add = QtWidgets.QPushButton("Add Spell")
-            rem = QtWidgets.QPushButton("Remove Selected")
-            add.clicked.connect(self._add)
-            rem.clicked.connect(self._remove)
-            btns.addWidget(add); btns.addWidget(rem); btns.addStretch(1)
-            layout.addLayout(btns)
-
-            layout.addWidget(_hint_label(
+            self.cards = {}
+            root = QtWidgets.QVBoxLayout(self)
+            root.addWidget(_hint_label(
                 QtWidgets,
-                "Spells this NPC casts. Each bolt uses its own colour, damage and "
-                "speed. A magic-armed NPC cycles through the list, one per shot."))
+                "Spells this NPC casts — click a card to give it the spell. A "
+                "magic-armed NPC cycles through its chosen spells, one per shot; "
+                "each selected card sets that bolt's colour, damage and speed."))
 
             # Casting only happens when the NPC's combat style is Magic.
             self.cast_cb = QtWidgets.QCheckBox("Casts spells (sets combat style to Magic)")
             self.cast_cb.setChecked(
                 str(thing.properties.get("attack_style", "")).lower() == "magic")
             self.cast_cb.stateChanged.connect(self._on_cast_toggle)
-            layout.addWidget(self.cast_cb)
+            root.addWidget(self.cast_cb)
 
-            self.table = QtWidgets.QTableWidget(0, len(COLS))
-            self.table.setHorizontalHeaderLabels(COLS)
-            self.table.horizontalHeader().setStretchLastSection(True)
-            layout.addWidget(self.table)
-            self._reload()
+            self.search = QtWidgets.QLineEdit()
+            self.search.setPlaceholderText("Filter spells…")
+            self.search.textChanged.connect(self._filter)
+            root.addWidget(self.search)
+
+            scroll = QtWidgets.QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+            holder = QtWidgets.QWidget()
+            col = QtWidgets.QVBoxLayout(holder)
+            col.setContentsMargins(2, 2, 2, 2); col.setSpacing(8)
+            for sid, _label in _castable_spells():
+                sp = magic.get(sid)
+                if sp is None:
+                    continue
+                card = NpcSpellCard(sid, sp, self._entry(sid),
+                                    self._toggle, self._edit)
+                self.cards[sid] = card
+                col.addWidget(card)
+            col.addStretch(1)
+            scroll.setWidget(holder)
+            root.addWidget(scroll, 1)
+
+            self.summary = QtWidgets.QLabel("")
+            self.summary.setStyleSheet("color:#9aa;")
+            root.addWidget(self.summary)
+            self._update_summary()
 
         # -- data ------------------------------------------------------
         def _spells(self):
@@ -1324,6 +1519,12 @@ def _SpellsTab(thing, QtWidgets, QtCore):
                 self.thing.properties["spells"] = s
             return s
 
+        def _entry(self, sid):
+            for e in self._spells():
+                if e.get("id") == sid:
+                    return e
+            return None
+
         def _on_cast_toggle(self, _state):
             if self.cast_cb.isChecked():
                 self.thing.properties["attack_style"] = "magic"
@@ -1331,110 +1532,32 @@ def _SpellsTab(thing, QtWidgets, QtCore):
             elif str(self.thing.properties.get("attack_style", "")).lower() == "magic":
                 self.thing.properties["attack_style"] = "melee"
 
-        def _reload(self):
-            self._loading = True
+        def _toggle(self, sid, selected):
             spells = self._spells()
-            self.table.setRowCount(len(spells))
-            for r, entry in enumerate(spells):
-                self._build_row(r, entry)
-            self._loading = False
+            if selected and self._entry(sid) is None:
+                d = _defaults_for(sid)
+                spells.append({"id": sid, "color": d["color"],
+                               "damage": d["damage"], "speed": d["speed"]})
+            elif not selected:
+                self.thing.properties["spells"] = [e for e in spells
+                                                   if e.get("id") != sid]
+            self._update_summary()
 
-        def _build_row(self, r, entry):
-            # Spell picker
-            combo = QtWidgets.QComboBox()
-            for sid, label in self._choices:
-                combo.addItem(label, sid)
-            idx = combo.findData(entry.get("id"))
-            if idx >= 0:
-                combo.setCurrentIndex(idx)
-            combo.currentIndexChanged.connect(lambda _i, row=r: self._on_spell_changed(row))
-            self.table.setCellWidget(r, 0, combo)
+        def _edit(self, sid, key, value):
+            e = self._entry(sid)
+            if e is not None:
+                e[key] = value
 
-            # Colour swatch button
-            btn = QtWidgets.QPushButton()
-            btn.setFixedWidth(60)
-            self._paint_swatch(btn, entry.get("color") or [140, 160, 255])
-            btn.clicked.connect(lambda _c, row=r: self._pick_colour(row))
-            self.table.setCellWidget(r, 1, btn)
+        def _filter(self, text):
+            t = text.strip().lower()
+            for sid, card in self.cards.items():
+                sp = magic.get(sid)
+                hay = f"{sid} {sp.name if sp else ''} {sp.school if sp else ''}".lower()
+                card.setVisible(not t or t in hay)
 
-            # Damage per shot
-            dmg = QtWidgets.QSpinBox()
-            dmg.setRange(0, 100000)
-            dmg.setValue(int(entry.get("damage", 0) or 0))
-            dmg.valueChanged.connect(lambda v, row=r: self._set(row, "damage", int(v)))
-            self.table.setCellWidget(r, 2, dmg)
-
-            # Projectile speed
-            spd = QtWidgets.QDoubleSpinBox()
-            spd.setRange(0.0, 100000.0)
-            spd.setDecimals(0)
-            spd.setSingleStep(50.0)
-            spd.setValue(float(entry.get("speed", 0) or 0))
-            spd.valueChanged.connect(lambda v, row=r: self._set(row, "speed", float(v)))
-            self.table.setCellWidget(r, 3, spd)
-
-        def _paint_swatch(self, btn, rgb):
-            r, g, b = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
-            btn.setStyleSheet(
-                f"background-color: rgb({r},{g},{b}); border: 1px solid #222;")
-            btn.setText(f"{r},{g},{b}")
-
-        def _defaults_for(self, sid):
-            sp = magic.get(sid)
-            if sp is None:
-                return {"color": [140, 160, 255], "damage": 0, "speed": 900.0}
-            return {"color": list(sp.color), "damage": int(sp.damage),
-                    "speed": float(sp.projectile_speed)}
-
-        # -- edits -----------------------------------------------------
-        def _add(self):
-            sid = self._choices[0][0] if self._choices else "flare"
-            d = self._defaults_for(sid)
-            self._spells().append({"id": sid, "color": d["color"],
-                                   "damage": d["damage"], "speed": d["speed"]})
-            self._reload()
-
-        def _remove(self):
-            row = self.table.currentRow()
-            spells = self._spells()
-            if 0 <= row < len(spells):
-                del spells[row]
-                self._reload()
-
-        def _on_spell_changed(self, row):
-            if self._loading:
-                return
-            spells = self._spells()
-            if not (0 <= row < len(spells)):
-                return
-            combo = self.table.cellWidget(row, 0)
-            sid = combo.currentData()
-            # Adopt the spell's own colour/damage/speed as sensible new defaults.
-            d = self._defaults_for(sid)
-            spells[row].update({"id": sid, "color": d["color"],
-                                "damage": d["damage"], "speed": d["speed"]})
-            self._reload()
-
-        def _set(self, row, key, value):
-            if self._loading:
-                return
-            spells = self._spells()
-            if 0 <= row < len(spells):
-                spells[row][key] = value
-
-        def _pick_colour(self, row):
-            spells = self._spells()
-            if not (0 <= row < len(spells)):
-                return
-            cur = spells[row].get("color") or [140, 160, 255]
-            initial = QtGui.QColor(int(cur[0]), int(cur[1]), int(cur[2]))
-            chosen = QtWidgets.QColorDialog.getColor(initial, self, "Projectile colour")
-            if chosen.isValid():
-                rgb = [chosen.red(), chosen.green(), chosen.blue()]
-                spells[row]["color"] = rgb
-                btn = self.table.cellWidget(row, 1)
-                if btn is not None:
-                    self._paint_swatch(btn, rgb)
+        def _update_summary(self):
+            n = len(self._spells())
+            self.summary.setText(f"{n} spell(s) in this NPC's rotation")
 
     return Tab()
 
@@ -1470,25 +1593,155 @@ def open_spell_editor(parent=None):
         d.setdefault("effects", []).append(
             {"kind": "damage_health", "magnitude": value, "duration": 0})
 
+    Qt = QtCore.Qt
+
+    class SpellDefCard(QtWidgets.QFrame):
+        """A pastel card editing one spell definition in place (writes into *d*)."""
+
+        def __init__(self, d, on_select):
+            super().__init__()
+            self.d = d
+            self._on_select = on_select
+            self.selected = False
+            self.bg, self.ink = _school_pastel(d.get("school", sk.DESTRUCTION))
+            self.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
+                               QtWidgets.QSizePolicy.Fixed)
+            self.setCursor(Qt.PointingHandCursor)
+
+            root = QtWidgets.QVBoxLayout(self)
+            root.setContentsMargins(10, 8, 12, 8); root.setSpacing(6)
+
+            top = QtWidgets.QHBoxLayout(); top.setSpacing(12)
+            icon = QtWidgets.QLabel(); icon.setFixedSize(72, 72)
+            icon.setAlignment(Qt.AlignCenter)
+            icon.setStyleSheet("background:rgba(255,255,255,22); border:1px solid %s;"
+                               "border-radius:8px;" % self.ink)
+            ip = _spell_icon_path(d.get("id"), d.get("school"))
+            if ip:
+                pm = QtGui.QPixmap(ip)
+                if not pm.isNull():
+                    icon.setPixmap(pm.scaled(68, 68, Qt.KeepAspectRatio,
+                                             Qt.SmoothTransformation))
+            top.addWidget(icon)
+
+            idcol = QtWidgets.QVBoxLayout(); idcol.setSpacing(3)
+            self.name = QtWidgets.QLineEdit(str(d.get("name", "")))
+            self.name.setFont(_rpg_font(QtGui, 14, bold=True))
+            self.name.setStyleSheet("background:#1e1b26; border:1px solid %s;"
+                                    "border-radius:4px; padding:2px; color:#e8e4f0;" % self.ink)
+            self.name.textChanged.connect(lambda t: self.d.__setitem__("name", t))
+            idcol.addWidget(self.name)
+            idrow = QtWidgets.QHBoxLayout(); idrow.setSpacing(6)
+            lab = QtWidgets.QLabel("id"); lab.setStyleSheet(
+                "color:%s; border:none; background:transparent;" % self.ink)
+            idrow.addWidget(lab)
+            self.id = QtWidgets.QLineEdit(str(d.get("id", "")))
+            self.id.setStyleSheet("background:#1e1b26; border:1px solid %s;"
+                                  "border-radius:4px; padding:1px; color:#cfc9db;" % self.ink)
+            self.id.textChanged.connect(lambda t: self.d.__setitem__("id", t.strip()))
+            idrow.addWidget(self.id, 1)
+            idcol.addLayout(idrow)
+            top.addLayout(idcol, 1)
+            root.addLayout(top)
+
+            grid = QtWidgets.QHBoxLayout(); grid.setSpacing(8)
+
+            def _lab(txt):
+                q = QtWidgets.QLabel(txt)
+                q.setStyleSheet("color:#cfc9db; border:none; background:transparent;")
+                return q
+
+            grid.addWidget(_lab("Element"))
+            self.elem = QtWidgets.QComboBox(); self.elem.addItems(ELEMENTS)
+            self.elem.setCurrentText(str(d.get("element", "magic")))
+            self.elem.currentTextChanged.connect(lambda t: self.d.__setitem__("element", t))
+            grid.addWidget(self.elem)
+
+            self.swatch = QtWidgets.QPushButton(); self.swatch.setFixedWidth(64)
+            self._paint(d.get("color") or magic.element_color(d.get("element")))
+            self.swatch.clicked.connect(self._pick)
+            grid.addWidget(self.swatch)
+
+            grid.addWidget(_lab("Delivery"))
+            self.dlv = QtWidgets.QComboBox(); self.dlv.addItems(DELIVERIES)
+            self.dlv.setCurrentText(str(d.get("delivery", magic.PROJECTILE)))
+            self.dlv.currentTextChanged.connect(lambda t: self.d.__setitem__("delivery", t))
+            grid.addWidget(self.dlv)
+            grid.addStretch(1)
+            root.addLayout(grid)
+
+            nums = QtWidgets.QHBoxLayout(); nums.setSpacing(8)
+            nums.addWidget(_lab("Damage"))
+            self.dmg = QtWidgets.QSpinBox(); self.dmg.setRange(0, 100000)
+            self.dmg.setValue(int(_damage_of(d)))
+            self.dmg.valueChanged.connect(lambda v: _set_damage(self.d, int(v)))
+            nums.addWidget(self.dmg)
+            nums.addWidget(_lab("Cost"))
+            self.cost = QtWidgets.QSpinBox(); self.cost.setRange(0, 100000)
+            self.cost.setValue(int(d.get("cost", 0)))
+            self.cost.valueChanged.connect(lambda v: self.d.__setitem__("cost", int(v)))
+            nums.addWidget(self.cost)
+            nums.addWidget(_lab("Speed"))
+            self.spd = QtWidgets.QDoubleSpinBox(); self.spd.setRange(0.0, 100000.0)
+            self.spd.setDecimals(0); self.spd.setSingleStep(50.0)
+            self.spd.setValue(float(d.get("projectile_speed", 900.0)))
+            self.spd.valueChanged.connect(lambda v: self.d.__setitem__("projectile_speed", float(v)))
+            nums.addWidget(self.spd)
+            nums.addStretch(1)
+            root.addLayout(nums)
+            self._restyle()
+
+        def _paint(self, rgb):
+            r, g, b = int(rgb[0]), int(rgb[1]), int(rgb[2])
+            self.swatch.setStyleSheet(
+                f"background-color: rgb({r},{g},{b}); border:1px solid #222;")
+            self.swatch.setText(f"{r},{g},{b}")
+
+        def _pick(self):
+            cur = self.d.get("color") or magic.element_color(self.d.get("element"))
+            initial = QtGui.QColor(int(cur[0]), int(cur[1]), int(cur[2]))
+            chosen = QtWidgets.QColorDialog.getColor(initial, self, "Projectile colour")
+            if chosen.isValid():
+                rgb = [chosen.red(), chosen.green(), chosen.blue()]
+                self.d["color"] = rgb
+                self._paint(rgb)
+
+        def _restyle(self):
+            border = ("3px solid %s" % self.ink) if self.selected else ("1px solid %s" % _CARD_EDGE)
+            bg = _CARD_BG_SEL if self.selected else _CARD_BG
+            self.setStyleSheet(
+                "QFrame { background:%s; border:%s; border-radius:10px; } %s"
+                % (bg, border, _CARD_INPUT_QSS))
+
+        def set_selected(self, v):
+            self.selected = v; self._restyle()
+
+        def mousePressEvent(self, e):
+            if e.button() == Qt.LeftButton:
+                self._on_select(self)
+
     class Dialog(QtWidgets.QDialog):
         def __init__(self):
             super().__init__(parent)
             self.setWindowTitle("Spell Editor")
-            self.resize(760, 460)
+            self.resize(720, 620)
             # Work on a copy of every current spell (built-ins + any custom).
             self.rows = [magic.get(sid).to_dict() for sid in sorted(magic.SPELLS)]
-            self._loading = False
+            self.cards = []
+            self.selected_card = None
 
             layout = QtWidgets.QVBoxLayout(self)
             layout.addWidget(_hint_label(
                 QtWidgets,
-                "Edit the spell definitions. Colour drives the projectile bolt and "
-                "its light. Saving writes game/data/spells.json and applies to the "
-                "live game."))
-            self.table = QtWidgets.QTableWidget(0, len(COLS))
-            self.table.setHorizontalHeaderLabels(COLS)
-            self.table.horizontalHeader().setStretchLastSection(True)
-            layout.addWidget(self.table)
+                "Edit the spell definitions as cards. Colour drives the projectile "
+                "bolt and its light. Click a card to select it for deletion. Saving "
+                "writes game/data/spells.json and applies to the live game."))
+
+            self.scroll = QtWidgets.QScrollArea()
+            self.scroll.setWidgetResizable(True)
+            self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+            layout.addWidget(self.scroll, 1)
 
             btns = QtWidgets.QHBoxLayout()
             add = QtWidgets.QPushButton("New Spell")
@@ -1506,70 +1759,22 @@ def open_spell_editor(parent=None):
             self._reload()
 
         def _reload(self):
-            self._loading = True
-            self.table.setRowCount(len(self.rows))
-            for r, d in enumerate(self.rows):
-                self.table.setItem(r, 0, QtWidgets.QTableWidgetItem(str(d.get("id", ""))))
-                self.table.setItem(r, 1, QtWidgets.QTableWidgetItem(str(d.get("name", ""))))
-                elem = QtWidgets.QComboBox(); elem.addItems(ELEMENTS)
-                elem.setCurrentText(str(d.get("element", "magic")))
-                elem.currentTextChanged.connect(lambda t, row=r: self._set(row, "element", t))
-                self.table.setCellWidget(r, 2, elem)
-                swatch = QtWidgets.QPushButton()
-                self._paint(swatch, d.get("color") or magic.element_color(d.get("element")))
-                swatch.clicked.connect(lambda _c, row=r: self._pick(row))
-                self.table.setCellWidget(r, 3, swatch)
-                dmg = QtWidgets.QSpinBox(); dmg.setRange(0, 100000)
-                dmg.setValue(int(_damage_of(d)))
-                dmg.valueChanged.connect(lambda v, row=r: self._set_dmg(row, v))
-                self.table.setCellWidget(r, 4, dmg)
-                cost = QtWidgets.QSpinBox(); cost.setRange(0, 100000)
-                cost.setValue(int(d.get("cost", 0)))
-                cost.valueChanged.connect(lambda v, row=r: self._set(row, "cost", int(v)))
-                self.table.setCellWidget(r, 5, cost)
-                spd = QtWidgets.QDoubleSpinBox(); spd.setRange(0.0, 100000.0)
-                spd.setDecimals(0); spd.setSingleStep(50.0)
-                spd.setValue(float(d.get("projectile_speed", 900.0)))
-                spd.valueChanged.connect(lambda v, row=r: self._set(row, "projectile_speed", float(v)))
-                self.table.setCellWidget(r, 6, spd)
-                dlv = QtWidgets.QComboBox(); dlv.addItems(DELIVERIES)
-                dlv.setCurrentText(str(d.get("delivery", magic.PROJECTILE)))
-                dlv.currentTextChanged.connect(lambda t, row=r: self._set(row, "delivery", t))
-                self.table.setCellWidget(r, 7, dlv)
-            self._loading = False
-            self.table.itemChanged.connect(self._on_item_changed)
+            self.cards = []
+            self.selected_card = None
+            holder = QtWidgets.QWidget()
+            col = QtWidgets.QVBoxLayout(holder)
+            col.setContentsMargins(2, 2, 2, 2); col.setSpacing(8)
+            for d in self.rows:
+                card = SpellDefCard(d, self._select)
+                self.cards.append(card)
+                col.addWidget(card)
+            col.addStretch(1)
+            self.scroll.setWidget(holder)
 
-        def _paint(self, btn, rgb):
-            r, g, b = int(rgb[0]), int(rgb[1]), int(rgb[2])
-            btn.setStyleSheet(f"background-color: rgb({r},{g},{b}); border: 1px solid #222;")
-            btn.setText(f"{r},{g},{b}")
-
-        def _on_item_changed(self, item):
-            if self._loading:
-                return
-            r, c = item.row(), item.column()
-            if 0 <= r < len(self.rows):
-                if c == 0:
-                    self.rows[r]["id"] = item.text().strip()
-                elif c == 1:
-                    self.rows[r]["name"] = item.text()
-
-        def _set(self, row, key, value):
-            if 0 <= row < len(self.rows):
-                self.rows[row][key] = value
-
-        def _set_dmg(self, row, value):
-            if 0 <= row < len(self.rows):
-                _set_damage(self.rows[row], int(value))
-
-        def _pick(self, row):
-            cur = self.rows[row].get("color") or magic.element_color(self.rows[row].get("element"))
-            initial = QtGui.QColor(int(cur[0]), int(cur[1]), int(cur[2]))
-            chosen = QtWidgets.QColorDialog.getColor(initial, self, "Projectile colour")
-            if chosen.isValid():
-                rgb = [chosen.red(), chosen.green(), chosen.blue()]
-                self.rows[row]["color"] = rgb
-                self._paint(self.table.cellWidget(row, 3), rgb)
+        def _select(self, card):
+            for c in self.cards:
+                c.set_selected(c is card)
+            self.selected_card = card
 
         def _add(self):
             base = {"id": "new_spell", "name": "New Spell", "school": sk.DESTRUCTION,
@@ -1579,12 +1784,16 @@ def open_spell_editor(parent=None):
                     "color": None}
             self.rows.append(base)
             self._reload()
+            if self.cards:
+                self._select(self.cards[-1])
+                self.scroll.ensureWidgetVisible(self.cards[-1])
 
         def _remove(self):
-            row = self.table.currentRow()
-            if 0 <= row < len(self.rows):
-                del self.rows[row]
-                self._reload()
+            if self.selected_card is None:
+                return
+            d = self.selected_card.d
+            self.rows = [r for r in self.rows if r is not d]
+            self._reload()
 
         def _save(self):
             # Drop rows without an id; de-dupe by id (last wins).
@@ -1610,11 +1819,22 @@ def open_spell_editor(parent=None):
 # ===========================================================================
 # Quest editor (on the GameSettings entity)
 # ===========================================================================
-_QUEST_STAGE_HELP = (
-    "Stages (one per line):  index | journal text | objective | finishes\n"
-    "  e.g.  0 | Clear the cave of goblins. | Clear the cave | no\n"
-    "        10 | The cave is clear. Return for your reward. | Return | no\n"
-    "        20 | Paid in full. | | yes")
+#: Human labels for the stage completion-condition kinds (mirrors quests.COND_*).
+_QUEST_COND_LABELS = [
+    ("none",  "Scripted (advance via dialogue)"),
+    ("talk",  "Talk to an NPC"),
+    ("fetch", "Fetch / hold an item"),
+    ("kill",  "Kill monsters"),
+    ("visit", "Visit a location"),
+]
+#: Placeholder guidance for the condition target box, per kind.
+_QUEST_COND_TARGET_HINT = {
+    "none":  "(no target — advanced by a dialogue 'advance_quest')",
+    "talk":  "NPC name or role, e.g. Bob  /  blacksmith",
+    "fetch": "item id, e.g. iron_sword  (count = how many)",
+    "kill":  "monster_type / npc_role / name, e.g. wolf  (count = how many)",
+    "visit": "location marker place-name, e.g. Old Cave",
+}
 
 
 def make_quests_tab(thing):
@@ -1626,15 +1846,32 @@ def make_quests_tab(thing):
 
 
 def _QuestsTab(thing, QtWidgets, QtCore):
+    """A proper quest editor on the Game Settings entity.
+
+    Author a quest's identity and giver, write paragraph journal text per stage,
+    and give each stage a completion *condition* (talk / fetch / kill / visit)
+    that the running game checks and auto-advances. Quests are stored on
+    ``properties['quests']`` and loaded when the map is played, so they are
+    fully testable in Play mode."""
+
     class Tab(QtWidgets.QWidget):
         def __init__(self):
             super().__init__()
             self.thing = thing
             self.thing.properties.setdefault("quests", [])
             self._loading = False
-            layout = QtWidgets.QVBoxLayout(self)
+            root = QtWidgets.QVBoxLayout(self)
+            root.addWidget(_hint_label(
+                QtWidgets,
+                "Create test quests here. Assign a giver, write each stage's "
+                "journal paragraph, and set how each stage completes (talk to an "
+                "NPC, fetch an item, kill monsters, or visit a location). Enter "
+                "Play mode to test — a stage auto-advances when its condition is "
+                "met, and finishing the last stage pays the rewards."))
 
-            body = QtWidgets.QHBoxLayout()
+            split = QtWidgets.QHBoxLayout()
+
+            # ---- left: quest list -------------------------------------
             left = QtWidgets.QVBoxLayout()
             left.addWidget(QtWidgets.QLabel("Quests:"))
             self.qlist = QtWidgets.QListWidget()
@@ -1645,27 +1882,32 @@ def _QuestsTab(thing, QtWidgets, QtCore):
             add.clicked.connect(self._add); rem.clicked.connect(self._remove)
             qb.addWidget(add); qb.addWidget(rem)
             left.addLayout(qb)
-            body.addLayout(left, 1)
+            lw = QtWidgets.QWidget(); lw.setLayout(left); lw.setMaximumWidth(220)
+            split.addWidget(lw)
 
+            # ---- right: quest detail (scrollable) ---------------------
+            detail = QtWidgets.QVBoxLayout()
             form = QtWidgets.QFormLayout()
             self.f_id = QtWidgets.QLineEdit()
             self.f_name = QtWidgets.QLineEdit()
             self.f_giver = QtWidgets.QLineEdit()
+            self.f_giver.setPlaceholderText("NPC who gives this quest")
             self.f_faction = QtWidgets.QLineEdit()
             self.f_xp = QtWidgets.QSpinBox(); self.f_xp.setRange(0, 100000)
-            self.f_desc = QtWidgets.QLineEdit()
+            self.f_desc = QtWidgets.QPlainTextEdit()
+            self.f_desc.setPlaceholderText("Quest summary / opening paragraph…")
+            self.f_desc.setMaximumHeight(70)
             self.f_gold = QtWidgets.QSpinBox(); self.f_gold.setRange(0, 1000000)
             self.f_items = QtWidgets.QLineEdit()
             self.f_items.setPlaceholderText("item_id,qty ; item_id,qty")
             self.f_rep = QtWidgets.QLineEdit()
             self.f_rep.setPlaceholderText("guild_id,amount")
-            self.f_stages = QtWidgets.QPlainTextEdit()
             for w in (self.f_id, self.f_name, self.f_giver, self.f_faction,
-                      self.f_desc, self.f_items, self.f_rep):
+                      self.f_items, self.f_rep):
                 w.editingFinished.connect(self._write)
             self.f_xp.valueChanged.connect(self._write)
             self.f_gold.valueChanged.connect(self._write)
-            self.f_stages.textChanged.connect(self._write)
+            self.f_desc.textChanged.connect(self._write)
             form.addRow("Id", self.f_id)
             form.addRow("Name", self.f_name)
             form.addRow("Giver", self.f_giver)
@@ -1675,17 +1917,73 @@ def _QuestsTab(thing, QtWidgets, QtCore):
             form.addRow("Reward gold", self.f_gold)
             form.addRow("Reward items", self.f_items)
             form.addRow("Reward rep", self.f_rep)
-            form.addRow("Stages", self.f_stages)
-            form.addRow(_hint_label(QtWidgets, _QUEST_STAGE_HELP))
-            body.addLayout(form, 2)
-            layout.addLayout(body)
+            detail.addLayout(form)
+
+            # ---- stages sub-editor ------------------------------------
+            detail.addWidget(QtWidgets.QLabel("Stages:"))
+            srow = QtWidgets.QHBoxLayout()
+            self.slist = QtWidgets.QListWidget()
+            self.slist.setMaximumWidth(200)
+            self.slist.currentRowChanged.connect(self._select_stage)
+            srow.addWidget(self.slist)
+
+            sform = QtWidgets.QFormLayout()
+            self.s_obj = QtWidgets.QLineEdit()
+            self.s_obj.setPlaceholderText("Short objective shown in the HUD tracker")
+            self.s_journal = QtWidgets.QPlainTextEdit()
+            self.s_journal.setPlaceholderText("Journal paragraph for this stage…")
+            self.s_journal.setMinimumHeight(80)
+            self.s_cond = QtWidgets.QComboBox()
+            for cid, label in _QUEST_COND_LABELS:
+                self.s_cond.addItem(label, cid)
+            self.s_target = QtWidgets.QLineEdit()
+            self.s_count = QtWidgets.QSpinBox(); self.s_count.setRange(1, 100000)
+            self.s_finishes = QtWidgets.QCheckBox("Finishing this stage completes the quest")
+            self.s_obj.editingFinished.connect(self._write_stage)
+            self.s_target.editingFinished.connect(self._write_stage)
+            self.s_journal.textChanged.connect(self._write_stage)
+            self.s_cond.currentIndexChanged.connect(self._on_cond_kind)
+            self.s_count.valueChanged.connect(self._write_stage)
+            self.s_finishes.stateChanged.connect(self._write_stage)
+            sform.addRow("Objective", self.s_obj)
+            sform.addRow("Journal", self.s_journal)
+            sform.addRow("Completes by", self.s_cond)
+            sform.addRow("Target", self.s_target)
+            sform.addRow("Count", self.s_count)
+            sform.addRow("", self.s_finishes)
+            srow.addLayout(sform, 1)
+            detail.addLayout(srow)
+
+            sb = QtWidgets.QHBoxLayout()
+            sadd = QtWidgets.QPushButton("Add stage")
+            srem = QtWidgets.QPushButton("Remove stage")
+            sup = QtWidgets.QPushButton("↑"); sdn = QtWidgets.QPushButton("↓")
+            sadd.clicked.connect(self._add_stage); srem.clicked.connect(self._remove_stage)
+            sup.clicked.connect(lambda: self._move_stage(-1))
+            sdn.clicked.connect(lambda: self._move_stage(1))
+            for b in (sadd, srem, sup, sdn):
+                sb.addWidget(b)
+            sb.addStretch(1)
+            detail.addLayout(sb)
+
+            dw = QtWidgets.QWidget(); dw.setLayout(detail)
+            scroll = QtWidgets.QScrollArea(); scroll.setWidgetResizable(True)
+            scroll.setWidget(dw)
+            split.addWidget(scroll, 1)
+            root.addLayout(split)
             self._reload()
 
+        # -- quest-level data --------------------------------------------------
         def _quests(self):
             q = self.thing.properties.get("quests")
             if not isinstance(q, list):
                 q = []; self.thing.properties["quests"] = q
             return q
+
+        def _current(self):
+            row = self.qlist.currentRow()
+            qs = self._quests()
+            return (row, qs[row]) if 0 <= row < len(qs) else (-1, None)
 
         def _reload(self):
             self._loading = True
@@ -1701,16 +1999,13 @@ def _QuestsTab(thing, QtWidgets, QtCore):
         def _clear_form(self):
             self._loading = True
             for w in (self.f_id, self.f_name, self.f_giver, self.f_faction,
-                      self.f_desc, self.f_items, self.f_rep):
+                      self.f_items, self.f_rep):
                 w.setText("")
+            self.f_desc.setPlainText("")
             self.f_xp.setValue(0); self.f_gold.setValue(0)
-            self.f_stages.setPlainText("")
+            self.slist.clear()
+            self._clear_stage_form()
             self._loading = False
-
-        def _current(self):
-            row = self.qlist.currentRow()
-            qs = self._quests()
-            return (row, qs[row]) if 0 <= row < len(qs) else (-1, None)
 
         def _select(self, _):
             row, q = self._current()
@@ -1722,30 +2017,27 @@ def _QuestsTab(thing, QtWidgets, QtCore):
             self.f_giver.setText(str(q.get("giver", "")))
             self.f_faction.setText(str(q.get("faction", "")))
             self.f_xp.setValue(int(q.get("xp", 0)))
-            self.f_desc.setText(str(q.get("desc", "")))
+            self.f_desc.setPlainText(str(q.get("desc", "")))
             rw = q.get("rewards", {}) or {}
             self.f_gold.setValue(int(rw.get("gold", 0)))
             self.f_items.setText(" ; ".join(f"{i[0]},{i[1]}" for i in rw.get("items", [])))
             rep = rw.get("rep")
             self.f_rep.setText(f"{rep[0]},{rep[1]}" if rep else "")
-            self.f_stages.setPlainText("\n".join(self._fmt_stage(s) for s in q.get("stages", [])))
+            self._reload_stages()
             self._loading = False
 
-        @staticmethod
-        def _fmt_stage(s):
-            return (f"{s.get('index',0)} | {s.get('journal','')} | "
-                    f"{s.get('objective','')} | {'yes' if s.get('finishes') else 'no'}")
-
         def _write(self, *_):
-            if self._loading: return
+            if self._loading:
+                return
             row, q = self._current()
-            if q is None: return
+            if q is None:
+                return
             q["id"] = self.f_id.text().strip()
             q["name"] = self.f_name.text().strip()
             q["giver"] = self.f_giver.text().strip()
             q["faction"] = self.f_faction.text().strip()
             q["xp"] = self.f_xp.value()
-            q["desc"] = self.f_desc.text().strip()
+            q["desc"] = self.f_desc.toPlainText().strip()
             rewards = {"gold": self.f_gold.value()}
             items = []
             for chunk in self.f_items.text().replace("\n", ";").split(";"):
@@ -1766,30 +2058,17 @@ def _QuestsTab(thing, QtWidgets, QtCore):
                 try: rewards["rep"] = [g.strip(), int(a.strip())]
                 except ValueError: pass
             q["rewards"] = rewards
-            stages = []
-            for line in self.f_stages.toPlainText().splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                parts = [p.strip() for p in line.split("|")]
-                try: idx = int(parts[0])
-                except (ValueError, IndexError): idx = len(stages) * 10
-                stages.append({
-                    "index": idx,
-                    "journal": parts[1] if len(parts) > 1 else "",
-                    "objective": parts[2] if len(parts) > 2 else "",
-                    "finishes": len(parts) > 3 and parts[3].lower() in ("yes", "true", "1"),
-                })
-            q["stages"] = stages
-            # refresh the list label without losing selection
             item = self.qlist.item(row)
             if item is not None:
                 item.setText(q.get("name") or q.get("id") or "(unnamed)")
 
         def _add(self):
-            self._quests().append({"id": f"quest_{len(self._quests())+1}",
-                                   "name": "New Quest", "stages": [
-                                       {"index": 0, "journal": "", "finishes": False}]})
+            self._quests().append({
+                "id": f"quest_{len(self._quests())+1}", "name": "New Quest",
+                "giver": "", "desc": "",
+                "stages": [{"index": 0, "journal": "", "objective": "",
+                            "finishes": False,
+                            "condition": {"kind": "none", "target": "", "count": 1}}]})
             self._reload()
             self.qlist.setCurrentRow(self.qlist.count() - 1)
 
@@ -1797,5 +2076,110 @@ def _QuestsTab(thing, QtWidgets, QtCore):
             row, q = self._current()
             if q is not None:
                 del self._quests()[row]; self._reload()
+
+        # -- stage-level data --------------------------------------------------
+        def _stages(self):
+            _row, q = self._current()
+            if q is None:
+                return []
+            s = q.get("stages")
+            if not isinstance(s, list):
+                s = []; q["stages"] = s
+            return s
+
+        def _cur_stage(self):
+            row = self.slist.currentRow()
+            st = self._stages()
+            return (row, st[row]) if 0 <= row < len(st) else (-1, None)
+
+        def _reload_stages(self):
+            self.slist.clear()
+            for s in self._stages():
+                label = f"{s.get('index',0)}: {s.get('objective') or s.get('journal') or '(stage)'}"
+                self.slist.addItem(label[:40])
+            if self.slist.count():
+                self.slist.setCurrentRow(0)
+            else:
+                self._clear_stage_form()
+
+        def _clear_stage_form(self):
+            self.s_obj.setText(""); self.s_journal.setPlainText("")
+            self.s_target.setText(""); self.s_count.setValue(1)
+            self.s_finishes.setChecked(False); self.s_cond.setCurrentIndex(0)
+            self._update_target_hint()
+
+        def _select_stage(self, _):
+            _r, s = self._cur_stage()
+            if s is None:
+                self._clear_stage_form(); return
+            self._loading = True
+            self.s_obj.setText(str(s.get("objective", "")))
+            self.s_journal.setPlainText(str(s.get("journal", "")))
+            self.s_finishes.setChecked(bool(s.get("finishes")))
+            cond = s.get("condition") or {}
+            idx = self.s_cond.findData(str(cond.get("kind", "none")))
+            self.s_cond.setCurrentIndex(idx if idx >= 0 else 0)
+            self.s_target.setText(str(cond.get("target", "")))
+            try:
+                self.s_count.setValue(max(1, int(cond.get("count", 1))))
+            except (TypeError, ValueError):
+                self.s_count.setValue(1)
+            self._update_target_hint()
+            self._loading = False
+
+        def _on_cond_kind(self, _):
+            self._update_target_hint()
+            self._write_stage()
+
+        def _update_target_hint(self):
+            kind = self.s_cond.currentData() or "none"
+            self.s_target.setPlaceholderText(_QUEST_COND_TARGET_HINT.get(kind, ""))
+            self.s_target.setEnabled(kind != "none")
+            self.s_count.setEnabled(kind in ("fetch", "kill"))
+
+        def _write_stage(self, *_):
+            if self._loading:
+                return
+            row, s = self._cur_stage()
+            if s is None:
+                return
+            s["objective"] = self.s_obj.text().strip()
+            s["journal"] = self.s_journal.toPlainText().strip()
+            s["finishes"] = self.s_finishes.isChecked()
+            s["condition"] = {"kind": self.s_cond.currentData() or "none",
+                              "target": self.s_target.text().strip(),
+                              "count": self.s_count.value()}
+            item = self.slist.item(row)
+            if item is not None:
+                label = f"{s.get('index',0)}: {s.get('objective') or s.get('journal') or '(stage)'}"
+                item.setText(label[:40])
+
+        def _add_stage(self):
+            st = self._stages()
+            if st is None:
+                return
+            nxt = (max((s.get("index", 0) for s in st), default=-10) + 10) if st else 0
+            st.append({"index": nxt, "journal": "", "objective": "",
+                       "finishes": False,
+                       "condition": {"kind": "none", "target": "", "count": 1}})
+            self._reload_stages()
+            self.slist.setCurrentRow(self.slist.count() - 1)
+
+        def _remove_stage(self):
+            row, s = self._cur_stage()
+            if s is not None:
+                del self._stages()[row]; self._reload_stages()
+
+        def _move_stage(self, delta):
+            row, s = self._cur_stage()
+            st = self._stages()
+            j = row + delta
+            if s is None or not (0 <= j < len(st)):
+                return
+            # Swap positions AND their index values so ordering stays coherent.
+            st[row]["index"], st[j]["index"] = st[j].get("index", 0), st[row].get("index", 0)
+            st[row], st[j] = st[j], st[row]
+            self._reload_stages()
+            self.slist.setCurrentRow(j)
 
     return Tab()

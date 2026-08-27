@@ -27,6 +27,10 @@ from typing import Dict
 #: per real-second. Tunable per map via the MiniwindSettings entity.
 DEFAULT_HOURS_PER_SECOND = 24.0 / (20.0 * 60.0)
 
+#: The seven day-names of the week (day 1 = the first). Evocative but readable.
+WEEKDAYS = ["Sundas", "Morndas", "Tirdas", "Middas",
+            "Turdas", "Fredas", "Loredas"]
+
 
 class GameClock:
     """A deterministic, saveable game clock measured in hours and days."""
@@ -58,11 +62,26 @@ class GameClock:
         return 6.0 <= self.hour < 20.0
 
     @property
-    def clock_text(self) -> str:
-        """A 'Day 3  14:30' style label for HUD display."""
+    def time_text(self) -> str:
+        """The 24-hour digital time, 'HH:MM'."""
         h = int(self.hour)
         m = int((self.hour - h) * 60.0)
-        return f"Day {self.day}  {h:02d}:{m:02d}"
+        return f"{h:02d}:{m:02d}"
+
+    @property
+    def weekday_index(self) -> int:
+        """0-6 index into :data:`WEEKDAYS` (day 1 is the first weekday)."""
+        return (int(self.day) - 1) % len(WEEKDAYS)
+
+    @property
+    def day_name(self) -> str:
+        """The name of the current day of the week."""
+        return WEEKDAYS[self.weekday_index]
+
+    @property
+    def clock_text(self) -> str:
+        """A 'Loredas, Day 3  14:30' style label for HUD display."""
+        return f"{self.day_name}, Day {self.day}  {self.time_text}"
 
     # --- persistence: plain-dict round-trip (§12) -------------------------
     def to_dict(self) -> Dict:

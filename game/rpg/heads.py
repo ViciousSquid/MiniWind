@@ -1,11 +1,15 @@
 """
-Character **heads** — the 15 portrait/billboard sprites under
-``assets/sprites/heads/head01.png`` … ``head15.png``.
+Character **heads** — the portrait/billboard sprites under
+``assets/sprites/heads/head00.png`` … ``head19.png``.
 
 A head is the player's whole visual identity (no gender, no animation frames):
 the player picks one at character creation, it becomes the player's overhead
 sprite, and it is recorded so no NPC ever spawns with the *same* head. The id is
 also the key a future audio layer will use to pick voice files.
+
+``assets/sprites/heads/dead.png`` is a shared overlay drawn on top of a head
+when its owner dies (see the renderers), so a corpse keeps its identity instead
+of switching to a generic role sprite.
 """
 
 from __future__ import annotations
@@ -13,9 +17,20 @@ from __future__ import annotations
 import random as _random
 from typing import Iterable, Optional
 
-HEAD_COUNT = 15
+#: Heads are numbered head00 … head19 (20 in total).
+HEAD_FIRST = 0
+HEAD_LAST = 19
+HEAD_COUNT = HEAD_LAST - HEAD_FIRST + 1
 HEAD_DIR = "assets/sprites/heads"
-HEAD_IDS = [f"head{n:02d}" for n in range(1, HEAD_COUNT + 1)]
+HEAD_IDS = [f"head{n:02d}" for n in range(HEAD_FIRST, HEAD_LAST + 1)]
+
+#: Overlay blended over a head sprite when its owner is dead.
+DEAD_OVERLAY = f"{HEAD_DIR}/dead.png"
+
+
+def dead_overlay_path() -> str:
+    """Repo-relative path to the shared 'dead' overlay drawn over a head."""
+    return DEAD_OVERLAY
 
 
 def is_head(head_id) -> bool:

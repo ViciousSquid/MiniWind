@@ -28,6 +28,7 @@ from .rpg import equipment as eq
 from .rpg import items as rpg_items
 from .rpg import magic as rpg_magic
 from .rpg import guilds
+from .rpg import quests as _quests
 from .rpg.gametime import GameClock
 from .rpg.dialogue import DialogueRunner
 from .rpg import inventory as inv
@@ -163,10 +164,12 @@ class MiniwindSession:
         self.dialogue: Optional[DialogueRunner] = None
         self.dialogue_npc = None
         self.dialogue_options = []      # for merchant/persuade extra options
-        self.open_screen = None         # None | 'inventory' | 'character' | 'journal' | 'spells' | 'charcreate' | 'map' | 'levelup'
+        self.container_thing = None     # the world Container the player has open
+        self.open_screen = None         # None | 'inventory' | 'character' | 'journal' | 'spells' | 'charcreate' | 'map' | 'levelup' | 'container'
         self.notifications: List[Dict] = []   # timed toast messages
         self.floaters: List[Dict] = []         # floating combat text
         self._blocking = False
+        self._player_flash = 0.0               # red-flash timer when hurt
         self.merchant_npc = None
         #: Active Wisp companion light, or None. See _spawn_wisp / _update_wisp.
         self._wisp = None
@@ -232,6 +235,8 @@ class MiniwindSession:
                                           blocking=self._blocking, rng=self.rng)
         final = res["final"]
         c.damage(final)
+        if final > 0:
+            self._player_flash = HIT_FLASH_TIME   # brief red flash on the head
         # armour training when actually hit
         ac = res["armor_class"]
         if ac == "heavy":
@@ -336,6 +341,8 @@ class MiniwindSession:
             self._attack_cooldown -= delta
         if self._cast_cooldown > 0:
             self._cast_cooldown -= delta
+        if self._player_flash > 0:
+            self._player_flash = max(0.0, self._player_flash - delta)
 
         # decisions (low frequency) + movement (every tick)
         hour_int = int(self.clock.hour)
@@ -357,6 +364,8 @@ class MiniwindSession:
         self._tick_pickups()
         self._tick_spellbooks()
         self._tick_triggers()
+        self._tick_locations()
+        self._tick_quests()
 
         # keep the engine's health pool in step with the character
         self._sync_engine_health()
@@ -626,6 +635,191 @@ class MiniwindSession:
                 if quest:
                     self.game.start_quest(quest)
                 p["_fired"] = True
+
+    # ---- discoverable locations & quest objectives -----------------------
+    def _tick_locations(self) -> None:
+        """Announce a place the first time the player walks into its marker.
+
+        A *location* Marker (``marker_kind == 'location'``) carries a place name
+        and a discovery radius; entering it once shows 'Location X discovered'
+        and records ``visited.<location>`` so a quest 'visit' objective can use
+        it. Locations also drive the quest compass (nearest active target)."""
+        ppos = self._player_pos()
+        if ppos is None:
+            return
+        for mk in self._things_of_type("marker"):
+            p = mk.properties
+            if str(p.get("marker_kind", "")).lower() != "location":
+                continue
+            name = str(p.get("place_name") or p.get("name") or "").strip()
+            if not name or p.get("_discovered"):
+                continue
+            if self._dist2d(ppos, mk.pos) <= float(p.get("discover_radius", 200.0)):
+                p["_discovered"] = True
+                self.store.set(f"visited.{self._slug(name)}", "1")
+                self.notify(f"{name} discovered", 4.0)
+
+    @staticmethod
+    def _slug(text) -> str:
+        return "".join(ch.lower() if ch.isalnum() else "_"
+                       for ch in str(text)).strip("_")
+
+    def record_talk(self, npc) -> None:
+        """Note that the player has spoken with *npc* (for quest 'talk' aims)."""
+        p = getattr(npc, "properties", {}) or {}
+        for field in ("name", "display_name", "npc_role"):
+            v = str(p.get(field, "") or "").strip()
+            if v:
+                self.store.set(f"talked.{self._slug(v)}", "1")
+
+    def record_kill(self, target) -> None:
+        """Bump per-identity kill counters (for quest 'kill' objectives)."""
+        p = getattr(target, "properties", {}) or {}
+        for field in ("name", "npc_role", "monster_type"):
+            v = str(p.get(field, "") or "").strip()
+            if not v:
+                continue
+            key = f"kills.{self._slug(v)}"
+            try:
+                n = int(self.store.get(key, "0"))
+            except (TypeError, ValueError):
+                n = 0
+            self.store.set(key, n + 1)
+
+    def _condition_met(self, stage) -> bool:
+        """True when *stage*'s completion condition is satisfied right now."""
+        kind = stage.condition_kind()
+        if kind == _quests.COND_NONE:
+            return False
+        target = self._slug(stage.condition_target())
+        if not target:
+            return False
+        count = stage.condition_count()
+        if kind == _quests.COND_FETCH:
+            raw = str(stage.condition_target()).strip()
+            return inv.has_item(self.game.character.inventory, raw, count)
+        if kind == _quests.COND_TALK:
+            return str(self.store.get(f"talked.{target}", "")) in ("1", "true")
+        if kind == _quests.COND_VISIT:
+            return str(self.store.get(f"visited.{target}", "")) in ("1", "true")
+        if kind == _quests.COND_KILL:
+            try:
+                return int(self.store.get(f"kills.{target}", "0")) >= count
+            except (TypeError, ValueError):
+                return False
+        return False
+
+    def quest_arrow_target(self):
+        """World position the quest compass arrow should point at, or None.
+
+        Resolves the *first active quest*'s current-stage objective to a world
+        position: the named location marker (visit), the named NPC (talk), the
+        nearest matching foe (kill) or the nearest matching item pickup (fetch).
+        Returns ``(pos, quest_name)`` or ``None``."""
+        log = self.game.quests
+        active = log.active_quests()
+        if not active:
+            return None
+        q = active[0]
+        st = q.stage(log.stage_of(q.id))
+        if st is None:
+            return None
+        kind = st.condition_kind()
+        target = self._slug(st.condition_target())
+        if kind == _quests.COND_NONE or not target:
+            return None
+        pos = None
+        if kind == _quests.COND_VISIT:
+            for mk in self._things_of_type("marker"):
+                nm = mk.properties.get("place_name") or mk.properties.get("name") or ""
+                if self._slug(nm) == target:
+                    pos = mk.pos
+                    break
+        elif kind == _quests.COND_TALK:
+            for npc in self.npcs():
+                p = npc.properties
+                if target in (self._slug(p.get("name", "")),
+                              self._slug(p.get("display_name", "")),
+                              self._slug(p.get("npc_role", ""))):
+                    pos = npc.pos
+                    break
+        elif kind == _quests.COND_KILL:
+            pos = self._nearest_matching_pos(target)
+        elif kind == _quests.COND_FETCH:
+            raw = self._slug(st.condition_target())
+            best = None
+            ppos = self._player_pos()
+            for it in self._things_of_type("itempickup"):
+                if it.properties.get("dead"):
+                    continue
+                if self._slug(it.properties.get("item_id", "")) == raw:
+                    if ppos is None:
+                        pos = it.pos
+                        break
+                    d = self._dist2d(ppos, it.pos)
+                    if best is None or d < best:
+                        best, pos = d, it.pos
+        if pos is None:
+            return None
+        return (list(pos), q.name)
+
+    def _nearest_matching_pos(self, target_slug):
+        """Nearest alive actor whose type/role/name matches *target_slug*."""
+        ppos = self._player_pos()
+        best, best_pos = None, None
+        for t in getattr(self.logic, "things", None) or []:
+            p = t.properties
+            if p.get("dead"):
+                continue
+            ttype = str(p.get("type", "")).replace("_", "").lower()
+            if ttype not in ("npc", "creature", "monster"):
+                continue
+            if target_slug not in (self._slug(p.get("name", "")),
+                                   self._slug(p.get("npc_role", "")),
+                                   self._slug(p.get("monster_type", ""))):
+                continue
+            if ppos is None:
+                return list(t.pos)
+            d = self._dist2d(ppos, t.pos)
+            if best is None or d < best:
+                best, best_pos = d, list(t.pos)
+        return best_pos
+
+    def _next_stage_index(self, q, cur: int):
+        """The index of the stage after *cur*, or None if *cur* is the last."""
+        for s in sorted(q.stages, key=lambda s: s.index):
+            if s.index > cur:
+                return s.index
+        return None
+
+    def _tick_quests(self) -> None:
+        """Auto-advance any active quest whose current stage's condition is met.
+
+        Meeting a stage's condition moves the quest to the next stage; if that
+        stage (or the current one, when it is the last) *finishes* the quest,
+        rewards are granted through the game so gold/items/rep are paid out."""
+        log = self.game.quests
+        for q in list(log.active_quests()):
+            cur = log.stage_of(q.id)
+            st = q.stage(cur)
+            if st is None or st.condition_kind() == _quests.COND_NONE:
+                continue
+            if not self._condition_met(st):
+                continue
+            nxt = self._next_stage_index(q, cur)
+            nxt_stage = q.stage(nxt) if nxt is not None else None
+            finishing = (nxt is None) or (nxt_stage is not None and nxt_stage.finishes) \
+                or st.finishes
+            if finishing:
+                # Grant rewards while still active, then move the journal pointer.
+                self.game.complete_quest(q.id)
+                if nxt is not None:
+                    log.set_stage(q.id, nxt)
+                self.notify(f"Quest complete: {q.name}", 5.0)
+            elif nxt is not None:
+                log.set_stage(q.id, nxt)
+                obj = log.current_objective(q.id)
+                self.notify(f"{q.name}: {obj}" if obj else f"{q.name} updated", 4.0)
 
     def tick_ui(self, delta: float) -> None:
         """Age only the transient HUD (toasts/floaters) while the world is paused
@@ -1106,6 +1300,9 @@ class MiniwindSession:
         nx = pos[0] + dx / dist * step
         nz = pos[2] + dz / dist * step
         npc.pos = [nx, pos[1], nz]
+        # Track a facing heading (engine convention: forward at 0 is +z) so the
+        # overhead view can rotate this actor's head to face where it walks.
+        p["angle"] = math.atan2(dx, dz)
 
     # ========================================================= player combat
     def _player_pos(self):
@@ -1230,6 +1427,11 @@ class MiniwindSession:
             return False
         self._cast_cooldown = 0.7
         spell = rpg_magic.get(c.active_spell)
+        # Resurrection is special: it targets a *fallen* character, drains all
+        # magicka and can be worked only once per in-game day.
+        if spell is not None and any(e.get("kind") == "resurrect"
+                                     for e in (spell.effects or [])):
+            return self._do_resurrect(spell)
         res = self.game.cast_active_spell()
         if not res.cast:
             if res.reason == "not enough magicka":
@@ -1257,6 +1459,87 @@ class MiniwindSession:
                 if r.get("killed"):
                     self._on_creature_killed(target)
         return True
+
+    def _resurrect_day(self) -> int:
+        """The current in-game day (for the once-per-day resurrection limit)."""
+        try:
+            return int(getattr(self.game.clock, "day", 0))
+        except Exception:
+            return 0
+
+    def _nearest_dead_actor(self, reach: float):
+        """The nearest slain (revivable) NPC/creature within *reach*."""
+        ppos = self._player_pos()
+        if ppos is None:
+            return None
+        best, best_d = None, reach
+        for t in getattr(self.logic, "things", None) or []:
+            tp = t.properties
+            if not tp.get("dead"):
+                continue
+            ttype = str(tp.get("type", "")).replace("_", "").lower()
+            if ttype not in ("npc", "creature", "monster"):
+                continue
+            d = self._dist2d(ppos, t.pos)
+            if d < best_d:
+                best_d = d
+                best = t
+        return best
+
+    def _do_resurrect(self, spell) -> bool:
+        """Cast Resurrection: revive the nearest fallen character.
+
+        Special rules (not the normal cast pipeline): it drains ALL of the
+        caster's magicka and may be worked only once per in-game day."""
+        c = self.game.character
+        # Once per day.
+        today = self._resurrect_day()
+        try:
+            last = int(self.store.get("resurrect.last_day", "-1"))
+        except (TypeError, ValueError):
+            last = -1
+        if last == today:
+            self.notify("You cannot resurrect again today")
+            return False
+        if c.magicka < 1.0:
+            self.notify("Not enough magicka to resurrect")
+            return False
+        target = self._nearest_dead_actor(BOW_REACH)
+        if target is None:
+            self.notify("No fallen soul is close enough to resurrect")
+            return False
+        # Drain all magicka and spend the day's single casting.
+        c.magicka = 0.0
+        self.store.set("resurrect.last_day", today)
+        c.use_skill(spell.school, 1.0 + spell.base_cost / 40.0)
+        self._revive_actor(target)
+        name = target.properties.get("name") or target.properties.get("npc_role") \
+            or target.properties.get("monster_type") or "The fallen"
+        self.notify(f"{name} rises again!")
+        self.add_floater("RAISED", kind="heal")
+        return True
+
+    def _revive_actor(self, thing) -> None:
+        """Bring a slain actor back to life: clear death flags, restore health
+        and its living (head) sprite, and rebuild the engine caches."""
+        p = thing.properties
+        p["dead"] = False
+        p["gibbed"] = False
+        p["hidden"] = False
+        p["is_shooting"] = False
+        p["_dead_overlay"] = False
+        try:
+            mh = float(p.get("max_health", p.get("health", 100)) or 100)
+        except (TypeError, ValueError):
+            mh = 100.0
+        p["health"] = mh
+        # Living sprite follows the head again (custom_idle set at spawn/authoring).
+        try:
+            from editor.things import Monster
+            Monster.clear_sprite_cache()
+        except Exception:
+            pass
+        self._rebuild_entity_caches()
 
     def _spawn_player_spell_projectile(self, spell) -> None:
         """Launch a visible spell bolt from the player toward the aim point (a
@@ -1343,6 +1626,8 @@ class MiniwindSession:
 
     def _on_creature_killed(self, target):
         self.add_floater("SLAIN", kind="kill")
+        # Count the kill so a quest 'kill' objective can complete.
+        self.record_kill(target)
         # guards react to murder of innocents nearby handled by faction hostility
 
     # ========================================================= interaction
@@ -1449,6 +1734,8 @@ class MiniwindSession:
         if view is None:
             self.end_dialogue()
             return False
+        # Note the conversation for any quest 'talk to X' objective.
+        self.record_talk(npc)
         return True
 
     def _default_tree(self, npc):
@@ -1493,6 +1780,74 @@ class MiniwindSession:
     def end_dialogue(self) -> None:
         self.dialogue = None
         self.dialogue_npc = None
+
+    # -- containers ---------------------------------------------------------
+    def nearest_container(self, player_pos, radius: float = TALK_RADIUS):
+        """The nearest usable container within its own use radius."""
+        best, best_d = None, None
+        for c in self._things_of_type("container"):
+            r = float(c.properties.get("use_radius", radius))
+            d = self._dist2d(player_pos, c.pos)
+            if d <= r and (best_d is None or d < best_d):
+                best, best_d = c, d
+        return best
+
+    def open_container(self, thing) -> bool:
+        """Open *thing*'s graphical inventory (a screen separate from the player)."""
+        if thing is None:
+            return False
+        p = thing.properties
+        inv_list = p.get("inventory")
+        if not isinstance(inv_list, list):
+            # Accept authored shorthand ("id:qty, ...") the spawner also accepts.
+            inv_list = self._spawn_inventory(inv_list)
+            p["inventory"] = inv_list
+        self.container_thing = thing
+        self.open_screen = "container"
+        return True
+
+    def container_inventory(self) -> list:
+        t = self.container_thing
+        if t is None:
+            return []
+        inv_list = t.properties.get("inventory")
+        if not isinstance(inv_list, list):
+            inv_list = []
+            t.properties["inventory"] = inv_list
+        return inv_list
+
+    def container_name(self) -> str:
+        t = self.container_thing
+        if t is None:
+            return "Container"
+        return str(t.properties.get("display_name") or "Container")
+
+    def take_from_container(self, index: int) -> bool:
+        """Move one stack from the open container into the player's inventory."""
+        items = self.container_inventory()
+        if not (0 <= index < len(items)):
+            return False
+        stack = items.pop(index)
+        inv.add_item(self.game.character.inventory, stack)
+        self.notify(f"Took {stack.get('name', stack.get('id',''))}")
+        return True
+
+    def store_in_container(self, index: int) -> bool:
+        """Move one stack from the player's inventory into the open container."""
+        if self.container_thing is None:
+            return False
+        pinv = self.game.character.inventory
+        if not (0 <= index < len(pinv)):
+            return False
+        stack = pinv.pop(index)
+        self.container_inventory().append(stack)
+        self.notify(f"Stored {stack.get('name', stack.get('id',''))}")
+        return True
+
+    def close_container(self) -> None:
+        self.container_thing = None
+        if self.open_screen == "container":
+            self.open_screen = None
 
     def current_view(self):
         return self.dialogue.view() if self.dialogue is not None else None

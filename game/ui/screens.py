@@ -62,6 +62,7 @@ _SCREEN_BODY_SIZE = {
     "spells": (700, 470),
     "levelup": (560, 430),
     "trade": (760, 520),
+    "container": (760, 500),
 }
 
 
@@ -760,14 +761,105 @@ def _handle_levelup(session, key):
     return True
 
 
+# ===========================================================================
+# Container — a graphical two-column "take / store" inventory for a world
+# Container the player opened with E. Separate from the player's own inventory.
+# ===========================================================================
+def _cont_state(session):
+    return _sel(session).setdefault("container",
+                                    {"side": 0, "row_c": 0, "row_p": 0})
+
+
+def _draw_container(painter, session, w, h):
+    c = session.game.character
+    st = _cont_state(session)
+    citems = session.container_inventory()
+    pitems = c.inventory
+    x, y, bw, bh = _panel_rect(w, h)
+    inner = T.panel(painter, x, y, bw, bh)
+    ty = T.heading(painter, inner, session.container_name(),
+                   f"{c.gold} gold    ·    Tab/←/→ switch side   ·   Enter take/store   ·   E/Esc close")
+
+    st["row_c"] = max(0, min(st["row_c"], max(0, len(citems) - 1)))
+    st["row_p"] = max(0, min(st["row_p"], max(0, len(pitems) - 1)))
+
+    col_w = int((inner.width() - 24) / 2)
+    list_y = ty + 26
+    row_h = 22
+
+    def _column(cx, title, items, sel_row, active):
+        head_col = T.GOLD_BRIGHT if active else T.DIM
+        T.text(painter, cx + 6, ty + 6, title, size=12, color=head_col, bold=True,
+               family="Segoe UI")
+        if not items:
+            T.text(painter, cx + 10, list_y + 16, "(empty)", size=10, color=T.DIM,
+                   family="Segoe UI")
+        for i, stack in enumerate(items):
+            ry = list_y + i * row_h
+            if ry > inner.bottom() - 24:
+                break
+            if i == sel_row and active:
+                painter.fillRect(QRect(cx, ry, col_w, row_h - 2), T.SELECT)
+            name = stack.get("name", stack.get("id"))
+            qty = f" ×{stack['qty']}" if stack.get("qty", 1) > 1 else ""
+            ncol = T.GOLD_BRIGHT if (i == sel_row and active) else T.INK
+            T.text(painter, cx + 8, ry + 15, name + qty, size=11, color=ncol,
+                   family="Segoe UI")
+
+    left_x = inner.x()
+    right_x = inner.x() + col_w + 24
+    _column(left_x, "Contents", citems, st["row_c"], st["side"] == 0)
+    _column(right_x, "Your inventory", pitems, st["row_p"], st["side"] == 1)
+
+    # divider
+    painter.setPen(T.GILD)
+    midx = inner.x() + col_w + 12
+    painter.drawLine(midx, list_y - 4, midx, inner.bottom() - 20)
+
+    hint = "Enter: take →" if st["side"] == 0 else "← Enter: store"
+    T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
+              hint, size=9, color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
+
+
+def _handle_container(session, key):
+    st = _cont_state(session)
+    citems = session.container_inventory()
+    pitems = session.game.character.inventory
+    if key in ("left", "a", "right", "d", "tab"):
+        st["side"] ^= 1
+        return True
+    if key in ("up", "w"):
+        k = "row_c" if st["side"] == 0 else "row_p"
+        n = len(citems) if st["side"] == 0 else len(pitems)
+        st[k] = (st[k] - 1) % max(1, n)
+        return True
+    if key in ("down", "s"):
+        k = "row_c" if st["side"] == 0 else "row_p"
+        n = len(citems) if st["side"] == 0 else len(pitems)
+        st[k] = (st[k] + 1) % max(1, n)
+        return True
+    if key in ("return", "enter"):
+        if st["side"] == 0:
+            session.take_from_container(st["row_c"])
+        else:
+            session.store_in_container(st["row_p"])
+        return True
+    if key in ("e", "escape", "esc", "i"):
+        session.close_container()
+        return True
+    return True
+
+
 # dispatch tables
 _DRAW = {
     "charcreate": _draw_charcreate, "inventory": _draw_inventory,
     "character": _draw_character, "journal": _draw_journal,
     "spells": _draw_spells, "trade": _draw_trade, "levelup": _draw_levelup,
+    "container": _draw_container,
 }
 _HANDLE = {
     "charcreate": _handle_charcreate, "inventory": _handle_inventory,
     "character": _handle_character, "journal": _handle_journal,
     "spells": _handle_spells, "trade": _handle_trade, "levelup": _handle_levelup,
+    "container": _handle_container,
 }

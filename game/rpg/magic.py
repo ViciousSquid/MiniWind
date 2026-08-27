@@ -179,6 +179,14 @@ register(Spell("wisp", "Wisp", sk.CONJURATION, 15, SELF,
 register(Spell("bound_blade", "Bound Blade", sk.CONJURATION, 25, SELF,
                [{"kind": "bound_weapon", "magnitude": 18, "duration": 60}],
                "Summon a blade of pure magicka.", element="magic"))
+# Resurrection — the Necromancer's signature. Cast near a fallen character to
+# call it back to life. Special rules enforced by the caster (game.runtime):
+# it drains ALL remaining magicka and can be worked only once per in-game day.
+register(Spell("resurrection", "Resurrection", sk.CONJURATION, 100, TARGET,
+               [{"kind": "resurrect", "magnitude": 1, "duration": 0}],
+               "Call a fallen soul back into its body. Drains all your magicka "
+               "and can be worked only once each day.",
+               element="magic", color=[120, 255, 170]))
 # Mysticism
 register(Spell("sp_detect", "Detect Life", sk.MYSTICISM, 16, SELF,
                [{"kind": "detect_life", "magnitude": 1, "duration": 30}],

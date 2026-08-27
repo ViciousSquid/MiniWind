@@ -121,7 +121,8 @@ class MiniwindGame:
     def register(self, api):
         from .entities import (NPC, Creature, GameSettings, MiniwindSettings,
                                Marker, MARKER_KINDS, ItemPickup, CreatureSpawn,
-                               MiniwindTrigger, Spellbook, SPELLBOOK_COVERS)
+                               MiniwindTrigger, Spellbook, SPELLBOOK_COVERS,
+                               Container, CONTAINER_KINDS)
         from .rpg import bestiary
         from .rpg import items as rpg_items
         from .rpg import magic as rpg_magic
@@ -132,6 +133,7 @@ class MiniwindGame:
         api.register_entity(MiniwindTrigger, menu_label="Trigger")
         api.register_entity(CreatureSpawn, menu_label="Spawn Point")
         api.register_entity(Marker, menu_label="Path / Schedule Marker")
+        api.register_entity(Container, menu_label="Container (chest / barrel)")
         api.register_entity(GameSettings, menu_label="Game Settings")
         # A map may hold at most one Game Settings marker — it configures the
         # single game clock / start scenario, so a second one is meaningless.
@@ -207,6 +209,23 @@ class MiniwindGame:
                  group="MARKER",
                  help="Markers are authoring aids: shown in the editor, hidden "
                       "when the game runs."),
+            prop("place_name", "string", "Place name", default="", group="LOCATION",
+                 help="For a 'location' marker: the name announced as "
+                      "'<name> discovered' when the player first enters, and the "
+                      "target a quest 'visit' objective checks."),
+            prop("discover_radius", "float", "Discover radius", default=200.0,
+                 group="LOCATION",
+                 help="How close the player must come to discover this location."),
+        ])
+
+        api.register_properties("container", [
+            prop("display_name", "string", "Name", default="Chest", group="CONTAINER",
+                 help="Shown in the '[E] to open <name>' prompt and window title."),
+            prop("container_kind", "enum", "Kind", default="chest",
+                 choices=list(CONTAINER_KINDS), group="CONTAINER",
+                 help="Drives the sprite (chest / barrel / crate / sack / urn)."),
+            prop("use_radius", "float", "Use radius", default=120.0, group="CONTAINER",
+                 help="How close the player must be to open it with E."),
         ])
 
         # NPC — a social/quest actor, organised into Aurora-style sections.
@@ -339,6 +358,10 @@ class MiniwindGame:
             # inventory as a proper item table (no one-line string).
             api.register_property_tab("Spawn", editor_ui.make_spawn_tab,
                                       entity_type="creaturespawn")
+            # A container edits its own item stacks with the same table the NPC
+            # inventory uses (a separate list from the player's).
+            api.register_property_tab("Contents", editor_ui.make_inventory_tab,
+                                      entity_type="container")
         except Exception:
             pass
 
@@ -559,6 +582,16 @@ class MiniwindGame:
             # honoured where a host wires it up).
             if K_INTERACT in just or ctx.use_pressed:
                 session.start_dialogue(npc, player)
+            return
+        # No NPC to talk to — offer a nearby container to open with the same key.
+        container = session.nearest_container(player.pos, TALK_RADIUS)
+        if container is not None:
+            cname = container.properties.get("display_name", "container")
+            prompt = f"[E] to open {cname}"
+            ctx.set_prompt(prompt, priority=5)
+            session.interact_prompt = prompt
+            if K_INTERACT in just or ctx.use_pressed:
+                session.open_container(container)
 
     # -------------------------------------------------------------- overlay
     def _on_overlay(self, ev):

@@ -113,10 +113,11 @@ _SPRITE_FRAG = """#version 330 core
 in vec2 TexCoords;
 out vec4 FragColor;
 uniform sampler2D tex;
+uniform vec4 tint;   // rgb = tint colour, a = strength (0 = no tint)
 void main() {
     vec4 c = texture(tex, TexCoords);
     if (c.a < 0.05) discard;
-    FragColor = c;
+    FragColor = vec4(mix(c.rgb, tint.rgb, clamp(tint.a, 0.0, 1.0)), c.a);
 }"""
 
 
@@ -221,6 +222,7 @@ class OverheadSpriteRenderer:
             self._prog = prog
             self._mvp_loc = gl.glGetUniformLocation(prog, "mvp")
             self._tex_loc = gl.glGetUniformLocation(prog, "tex")
+            self._tint_loc = gl.glGetUniformLocation(prog, "tint")
 
             quad = np.array([-0.5, -0.5, 0.5, -0.5, 0.5, 0.5,
                              -0.5, -0.5, 0.5, 0.5, -0.5, 0.5], dtype=np.float32)
@@ -263,8 +265,12 @@ class OverheadSpriteRenderer:
             return 0
 
     # -- per-frame draw -----------------------------------------------------
-    def draw(self, projection, view, pos, facing: float, frame_key: str) -> None:
-        """Draw *frame_key* at ground *pos*, turned to *facing* (radians)."""
+    def draw(self, projection, view, pos, facing: float, frame_key: str,
+             tint=(0.0, 0.0, 0.0, 0.0)) -> None:
+        """Draw *frame_key* at ground *pos*, turned to *facing* (radians).
+
+        *tint* is an (r, g, b, strength) colour mixed into the sprite (strength 0
+        = untouched) — used for the brief red flash when a character is hit."""
         if self._ok is False:
             return
         if self._ok is None:
@@ -287,6 +293,9 @@ class OverheadSpriteRenderer:
 
             gl.glUseProgram(self._prog)
             gl.glUniformMatrix4fv(self._mvp_loc, 1, gl.GL_FALSE, glm.value_ptr(mvp))
+            if getattr(self, "_tint_loc", -1) not in (-1, None):
+                gl.glUniform4f(self._tint_loc, float(tint[0]), float(tint[1]),
+                               float(tint[2]), float(tint[3]))
             gl.glActiveTexture(gl.GL_TEXTURE0)
             gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
             gl.glUniform1i(self._tex_loc, 0)

@@ -375,6 +375,14 @@ class Monster(Thing):
     _custom_path_exists_cache = {}
     # Cache the project_root lookup once per class; it never changes at runtime.
     _cached_project_root = None
+    # A head sprite's dead form is the *same head* with heads/dead.png overlaid
+    # (so a slain NPC keeps its identity instead of switching to a role sprite).
+    # Maps a head's repo-relative idle path -> the cached composite path (or
+    # None when the head / overlay art is missing). Composites are written under
+    # assets/sprites/heads/dead_cache/ (git-ignored — never real art).
+    _dead_head_cache = {}
+    HEADS_DIR = "assets/sprites/heads"
+    DEAD_OVERLAY = "assets/sprites/heads/dead.png"
 
     def __init__(self, pos=None, properties=None):
         super().__init__(pos, properties)
@@ -492,6 +500,56 @@ class Monster(Thing):
             print(f"[Monster] Custom sprite not found, using default: {custom_path}")
         return default_path
 
+    @classmethod
+    def _is_head_sprite(cls, rel_path: str) -> bool:
+        """True when *rel_path* is one of the character head sprites."""
+        rp = str(rel_path or "").replace("\\", "/")
+        base = os.path.basename(rp)
+        return ("/heads/" in rp or rp.startswith("heads/")) and base.startswith("head")
+
+    @classmethod
+    def _dead_head_composite(cls, idle_rel: str, project_root: str):
+        """Repo-relative path to *idle_rel* (a head) with heads/dead.png painted
+        over it — generated once and cached to disk. Returns ``None`` when
+        *idle_rel* is not a head, or when the head/overlay art is missing (so
+        the caller falls back to the normal corpse sprite).
+
+        The composite is a plain top-down PNG, so BOTH the 2D map icon and the
+        3D billboard pick it up through the ordinary sprite path with no other
+        changes."""
+        if not cls._is_head_sprite(idle_rel):
+            return None
+        # Only trust a cached HIT whose file is still on disk. Never cache a miss
+        # (the head/overlay art may be dropped in later — e.g. the artist adds
+        # dead.png after first launch), so a later call regenerates it.
+        cached = cls._dead_head_cache.get(idle_rel)
+        if cached and os.path.isfile(os.path.join(project_root, cached)):
+            return cached
+
+        result = None
+        try:
+            head_abs = os.path.join(project_root, idle_rel)
+            overlay_abs = os.path.join(project_root, cls.DEAD_OVERLAY)
+            if os.path.isfile(head_abs) and os.path.isfile(overlay_abs):
+                from PIL import Image
+                base = Image.open(head_abs).convert("RGBA")
+                over = Image.open(overlay_abs).convert("RGBA")
+                if over.size != base.size:
+                    over = over.resize(base.size, Image.LANCZOS)
+                base.alpha_composite(over)
+                out_dir = os.path.join(project_root, cls.HEADS_DIR, "dead_cache")
+                os.makedirs(out_dir, exist_ok=True)
+                name = os.path.splitext(os.path.basename(idle_rel))[0] + "__dead.png"
+                out_abs = os.path.join(out_dir, name)
+                base.save(out_abs)
+                result = f"{cls.HEADS_DIR}/dead_cache/{name}"
+        except Exception:
+            result = None
+
+        if result:
+            cls._dead_head_cache[idle_rel] = result
+        return result
+
     def get_render_snapshot(self):
         """Return a lightweight dictionary snapshot for the renderer."""
         return {
@@ -544,6 +602,14 @@ class Monster(Thing):
             # body reads as gore in both the 2D and 3D views.
             if self.properties.get('gibbed'):
                 return default_dead
+            # A head-wearing actor keeps its identity when slain: show the SAME
+            # head with heads/dead.png composited over it, instead of switching
+            # to a role/gore sprite. Falls through to the normal corpse when the
+            # actor has no head or the overlay art is unavailable.
+            idle = self.properties.get('custom_idle', '')
+            composite = Monster._dead_head_composite(idle, project_root)
+            if composite:
+                return composite
             return self._resolve_sprite(
                 self.properties.get('custom_dead', ''), default_dead, project_root)
         elif is_shooting:
@@ -590,22 +656,43 @@ class Monster(Thing):
 
         return super().get_instance_pixmap()
 
+    #: Edge length (px) of the 2D-view actor icon.
+    ICON_SIZE = 75
+
     def get_icon_pixmap(self):
-        """Return a generic small monster icon for 2D views."""
-        icon_path = "assets/sprites/monster.png"   # 60×60 icon
-        try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root = os.path.abspath(os.path.join(script_dir, os.pardir))
-            abs_path = os.path.join(project_root, icon_path)
-            if os.path.exists(abs_path):
-                pix = QPixmap(abs_path)
-                if not pix.isNull():
-                    return pix
-        except Exception:
-            pass
-        # Fallback: scale the full sprite down
-        # Use get_instance_pixmap() instead of super().get_icon_pixmap()
-        return self.get_instance_pixmap()
+        """Return a 75×75 top-down icon for 2D views.
+
+        Prefers the actor's *own* sprite — the head image an NPC/Monster is
+        wearing (``custom_idle``) or its role sprite — so the 2D map shows the
+        real head instead of a generic marker, matching the 3D view. Falls back
+        to the generic monster icon only when no sprite resolves. Cached in
+        ``_icon_cache`` keyed by the resolved sprite path so it is cheap."""
+        size = Monster.ICON_SIZE
+        sprite_path = self.get_sprite_path()
+        cache_key = (sprite_path, size)
+        cached = Monster._icon_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        project_root = Monster._get_project_root()
+
+        def _scaled(rel_path):
+            try:
+                abs_path = os.path.join(project_root, rel_path)
+                if os.path.exists(abs_path):
+                    raw = QPixmap(abs_path)
+                    if not raw.isNull():
+                        return raw.scaled(size, size, Qt.KeepAspectRatio,
+                                          Qt.SmoothTransformation)
+            except Exception:
+                pass
+            return None
+
+        pix = _scaled(sprite_path) or _scaled("assets/sprites/monster.png")
+        if pix is None:
+            pix = self.get_instance_pixmap()
+        Monster._icon_cache[cache_key] = pix
+        return pix
 
     @classmethod
     def clear_sprite_cache(cls):
@@ -613,6 +700,8 @@ class Monster(Thing):
         cls._subtype_sprites.clear()
         cls._default_path_cache.clear()
         cls._custom_path_exists_cache.clear()
+        cls._icon_cache.clear()   # 2D head icons follow the sprite
+        cls._dead_head_cache.clear()
         # Invalidate the base class cache for Monster’s default pixmap
         if cls.__name__ in Thing._pixmap_cache:
             del Thing._pixmap_cache[cls.__name__]

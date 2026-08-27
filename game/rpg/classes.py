@@ -82,12 +82,12 @@ CLASSES: Dict[str, CharClass] = {c.id: c for c in [
               [sk.RESTORATION, sk.ALTERATION, sk.ILLUSION, sk.ALCHEMY,
                sk.SPEECHCRAFT, sk.MYSTICISM, sk.BLUNT],
               starting_spells=["heal_minor", "flare"]),
-    CharClass("nightblade", "Nightblade",
-              "A shadow-mage who kills with spell and dagger, then vanishes.",
-              sk.MAGIC, [attr.WILLPOWER, attr.SPEED],
-              [sk.DESTRUCTION, sk.ILLUSION, sk.MYSTICISM, sk.BLADE,
-               sk.LIGHT_ARMOR, sk.SNEAK, sk.ALTERATION],
-              starting_spells=["flare"]),
+    CharClass("necromancer", "Necromancer",
+              "A death-mage who binds spirits and calls the fallen back to life.",
+              sk.MAGIC, [attr.WILLPOWER, attr.INTELLIGENCE],
+              [sk.CONJURATION, sk.MYSTICISM, sk.DESTRUCTION, sk.ALTERATION,
+               sk.RESTORATION, sk.SNEAK, sk.ALCHEMY],
+              starting_spells=["flare", "resurrection"]),
     CharClass("thief", "Thief",
               "Light fingers, lighter feet: locks, pockets and a quick blade.",
               sk.STEALTH, [attr.AGILITY, attr.SPEED],
@@ -115,7 +115,7 @@ CLASS_IDS: List[str] = list(CLASSES.keys())
 #: The curated, reduced set of classes offered in the simplified character
 #: creator (the full CLASSES table still backs saves, NPCs and custom classes).
 CREATION_CLASS_IDS: List[str] = ["warrior", "archer", "mage", "healer",
-                                 "nightblade", "thief"]
+                                 "necromancer", "thief"]
 
 #: Major skills start this much higher than minor skills.
 MAJOR_SKILL_START = 25

@@ -27,6 +27,7 @@ def draw(painter, session, width, height):
     _draw_topleft(painter, session, c)
     _draw_active(painter, session, c, width, height)
     _draw_quest_tracker(painter, session, width)
+    _draw_quest_arrow(painter, session, width, height)
     _draw_compass(painter, session, width, height)
     _draw_target(painter, session, width, height)
     _draw_status_flags(painter, session, c, width, height)
@@ -184,11 +185,15 @@ def _draw_clock(painter, session, width):
     painter.setBrush(T.GOLD_BRIGHT)
     painter.drawEllipse(QPointF(cx, cy), 3, 3)
 
-    # day label below clock
-    day_text = f"Day {clock.day}"
-    T.text_in(painter, QRect(int(cx - radius), int(cy + radius + 4),
-                             int(radius * 2), 16),
-              day_text, size=9, color=T.DIM, align=T.ALIGN_CENTER,
+    # digital time + weekday / day below the clock face
+    box = QRect(int(cx - radius - 20), int(cy + radius + 3), int(radius * 2 + 40), 34)
+    T.text_in(painter, QRect(box.x(), box.y(), box.width(), 16),
+              f"{h_int:02d}:{m_int:02d}", size=13, color=T.GOLD_BRIGHT,
+              align=T.ALIGN_CENTER, bold=True)
+    day_name = getattr(clock, "day_name", "")
+    day_line = f"{day_name} · Day {clock.day}" if day_name else f"Day {clock.day}"
+    T.text_in(painter, QRect(box.x(), box.y() + 16, box.width(), 14),
+              day_line, size=9, color=T.DIM, align=T.ALIGN_CENTER,
               family="Segoe UI")
     painter.restore()
 
@@ -284,6 +289,54 @@ def _draw_quest_tracker(painter, session, width):
     T.text(painter, x, y, "◈ " + q.name, size=11, color=T.GOLD_BRIGHT, bold=True)
     if obj:
         T.text(painter, x + 6, y + 18, "• " + obj, size=9, color=T.PARCH, family="Segoe UI")
+
+
+def _draw_quest_arrow(painter, session, width, height):
+    """A GTA1-style arrow orbiting the player's head, pointing at the current
+    active quest's objective (location / NPC / foe / item). The player billboard
+    sits at screen centre in the top-down view, so the arrow rings the head and
+    rotates to bear on the target relative to the player's heading."""
+    try:
+        target = session.quest_arrow_target()
+    except Exception:
+        target = None
+    if target is None:
+        return
+    pos, _qname = target
+    player = getattr(session.logic, "player", None)
+    ppos = getattr(player, "pos", None)
+    if ppos is None:
+        return
+    dx = float(pos[0]) - float(ppos[0])
+    dz = float(pos[2]) - float(ppos[2])
+    if abs(dx) < 1e-3 and abs(dz) < 1e-3:
+        return
+    # World bearing (engine convention: forward at heading 0 is +z), made
+    # relative to the player's heading so 'up' on screen is straight ahead.
+    bearing = math.atan2(dx, dz)
+    rel = _wrap(bearing - getattr(player, "angle", 0.0))
+
+    cx, cy = width // 2, height // 2
+    orbit = 58.0               # radius of the arrow's ring around the head
+    ax = cx + math.sin(rel) * orbit
+    ay = cy - math.cos(rel) * orbit
+
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    painter.translate(ax, ay)
+    painter.rotate(math.degrees(rel))   # 0 rad points up; +rel rotates clockwise
+    # A chunky chevron pointing 'up' (outward from the head toward the target).
+    tip, halfw, back = -14.0, 11.0, 6.0
+    arrow = QPolygon([
+        QPoint(0, int(tip)),
+        QPoint(int(halfw), int(back)),
+        QPoint(0, int(back - 5)),
+        QPoint(-int(halfw), int(back)),
+    ])
+    painter.setPen(QPen(QColor(60, 40, 0), 2))
+    painter.setBrush(QColor(255, 214, 130))
+    painter.drawPolygon(arrow)
+    painter.restore()
 
 
 def _draw_compass(painter, session, width, height):

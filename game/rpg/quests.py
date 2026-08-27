@@ -18,13 +18,41 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 
+#: Condition kinds a stage can require before it auto-advances. ``none`` means
+#: the stage advances only when scripted (dialogue ``advance_quest`` etc.).
+COND_NONE = "none"
+COND_FETCH = "fetch"     # target = item id, count = how many to hold
+COND_TALK = "talk"       # target = NPC name/role
+COND_KILL = "kill"       # target = monster_type / npc_role / name, count = how many
+COND_VISIT = "visit"     # target = location id/name (a discoverable Marker)
+COND_KINDS = [COND_NONE, COND_FETCH, COND_TALK, COND_KILL, COND_VISIT]
+
+
 class Stage:
     def __init__(self, index: int, journal: str, finishes: bool = False,
-                 objective: str = ""):
+                 objective: str = "", condition=None):
         self.index = index
         self.journal = journal
         self.finishes = finishes
         self.objective = objective or journal
+        # Optional completion condition: {"kind","target","count"}. When set and
+        # its kind is not ``none``, the runtime auto-advances this stage once the
+        # condition is met (see game.runtime._tick_quests).
+        self.condition = dict(condition) if isinstance(condition, dict) else None
+
+    def condition_kind(self) -> str:
+        c = self.condition or {}
+        k = str(c.get("kind", COND_NONE)).lower()
+        return k if k in COND_KINDS else COND_NONE
+
+    def condition_target(self) -> str:
+        return str((self.condition or {}).get("target", "")).strip()
+
+    def condition_count(self) -> int:
+        try:
+            return max(1, int((self.condition or {}).get("count", 1)))
+        except (TypeError, ValueError):
+            return 1
 
 
 class Quest:
@@ -79,7 +107,8 @@ def quest_from_dict(data: Dict) -> Optional[Quest]:
     stages = []
     for i, s in enumerate(data.get("stages", []) or []):
         stages.append(Stage(int(s.get("index", i * 10)), s.get("journal", ""),
-                            bool(s.get("finishes", False)), s.get("objective", "")))
+                            bool(s.get("finishes", False)), s.get("objective", ""),
+                            condition=s.get("condition")))
     if not stages:
         stages = [Stage(0, data.get("desc", "A new quest."))]
     rewards = dict(data.get("rewards", {}) or {})

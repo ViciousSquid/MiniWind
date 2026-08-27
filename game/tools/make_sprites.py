@@ -337,6 +337,7 @@ _MARKER_STYLE = {
     "patrol":    ((0, 188, 212),  "P"),
     "social":    ((156, 39, 176), "O"),
     "idle":      ((120, 120, 130), "•"),
+    "location":  ((198, 156, 74),  "★"),
 }
 
 
@@ -372,6 +373,48 @@ def draw_marker(kind: str, size: int = 48):
                fill=(255, 255, 255, 255), font=font)
     except Exception:
         d.text((cx - 4, top + r - 6), glyph, fill=(255, 255, 255, 255))
+    return img
+
+
+#: Per-kind container body colour (keep in sync with entities.CONTAINER_KINDS).
+_CONTAINER_STYLE = {
+    "chest":  (140, 94, 52),
+    "barrel": (120, 82, 46),
+    "crate":  (168, 130, 78),
+    "sack":   (170, 154, 110),
+    "urn":    (150, 120, 96),
+}
+
+
+def draw_container(kind: str = "chest", size: int = 64):
+    """A simple top-down-ish container icon (coloured body + lid/bands)."""
+    from PIL import ImageDraw
+    base = _CONTAINER_STYLE.get(kind, _CONTAINER_STYLE["chest"])
+    dark = tuple(max(0, c - 45) for c in base)
+    band = tuple(min(255, c + 40) for c in base)
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    m = size * 0.16
+    body = [m, size * 0.30, size - m, size - m]
+    if kind == "urn":
+        d.ellipse([m, m, size - m, size - m], fill=base + (255,), outline=dark + (255,), width=3)
+        d.ellipse([size * 0.34, m * 0.7, size * 0.66, m * 1.8], fill=dark + (255,))
+    elif kind == "sack":
+        d.ellipse(body, fill=base + (255,), outline=dark + (255,), width=3)
+        d.line([size * 0.34, size * 0.30, size * 0.66, size * 0.30], fill=dark + (255,), width=4)
+    else:
+        # lid
+        d.rounded_rectangle([m, size * 0.20, size - m, size * 0.42], radius=6,
+                            fill=band + (255,), outline=dark + (255,), width=3)
+        # body
+        d.rounded_rectangle(body, radius=6, fill=base + (255,), outline=dark + (255,), width=3)
+        # metal bands / staves
+        for fx in (0.34, 0.5, 0.66):
+            x = size * fx
+            d.line([x, size * 0.22, x, size - m], fill=dark + (255,), width=3)
+        # clasp
+        d.rectangle([size * 0.46, size * 0.36, size * 0.54, size * 0.48], fill=band + (255,),
+                    outline=dark + (255,))
     return img
 
 

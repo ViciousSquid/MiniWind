@@ -2588,9 +2588,9 @@
         {
             "type": "marker",
             "pos": [
-                576.0,
+                832.0,
                 272,
-                -48.0
+                -352.0
             ],
             "properties": {
                 "type": "marker",
@@ -3937,68 +3937,6 @@
             "io_connections": []
         },
         {
-            "type": "creature",
-            "pos": [
-                -416.0,
-                272,
-                -1424.0
-            ],
-            "properties": {
-                "type": "creature",
-                "name": "Grey Wolf",
-                "id": "bb3e9c2a-555b-4287-93a5-dd1457144173",
-                "display_name": "Grey Wolf",
-                "npc_role": "wolf",
-                "aggression": "hostile",
-                "sight_range": 520,
-                "custom_idle": "assets/sprites/miniwind/wolf.png",
-                "custom_dead": "assets/sprites/miniwind/wolf.png",
-                "custom_shoot": "assets/sprites/miniwind/wolf.png",
-                "portrait": "assets/portraits/miniwind/wolf.png",
-                "monster_type": "human",
-                "sprite_width": 96,
-                "sprite_height": 96,
-                "monster_id": 0,
-                "health": 40,
-                "damage": 8,
-                "triggered": false,
-                "wake_on_sight": true,
-                "awake": false,
-                "patrol": false,
-                "patrol_target": "",
-                "patrol_mode": "loop",
-                "variant": "<None>",
-                "entity_type": "creature",
-                "faction": "wildlife",
-                "team": "wildlife",
-                "attack_style": "melee",
-                "loot": "wolf",
-                "creature_level": 1,
-                "xp_value": 8,
-                "move_speed": 140.0,
-                "combatant": true,
-                "inventory": [],
-                "persistent": true,
-                "respawn": false,
-                "roam": false,
-                "roam_radius": 300.0,
-                "home": [
-                    1060,
-                    272,
-                    -720
-                ],
-                "sight": 512,
-                "can_hear": false,
-                "non_hostile": false,
-                "max_health": 40,
-                "courage": 0.3,
-                "dead": false,
-                "spells": [],
-                "head": ""
-            },
-            "io_connections": []
-        },
-        {
             "type": "light",
             "pos": [
                 1152,
@@ -4478,6 +4416,36 @@
                 "non_hostile": false,
                 "spells": [],
                 "head": ""
+            },
+            "io_connections": []
+        },
+        {
+            "type": "container",
+            "pos": [
+                1056,
+                240,
+                -688
+            ],
+            "properties": {
+                "type": "container",
+                "name": "Container_1",
+                "id": "7524e34d-2566-4940-9da5-da258f929873",
+                "container_kind": "crate",
+                "display_name": "Crate",
+                "inventory": [
+                    {
+                        "description": "A iron iron mace.",
+                        "id": "iron_mace",
+                        "name": "Iron Mace",
+                        "qty": 1,
+                        "type": "weapon",
+                        "value": 35,
+                        "weight": 18.0
+                    }
+                ],
+                "use_radius": 128.0,
+                "locked": false,
+                "custom_idle": "assets/sprites/miniwind/container_chest.png"
             },
             "io_connections": []
         }
