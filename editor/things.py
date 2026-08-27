@@ -390,10 +390,14 @@ class Monster(Thing):
         self.properties.setdefault('monster_type', 'human')  # 'human' or 'flying'
         self.properties.setdefault('monster_id', 0)
         self.properties.setdefault('health', 100)
-        # Record the full-health baseline so the gib rule can tell an oversized
-        # killing blow from an ordinary one (see engine.gore).
         self.properties.setdefault('max_health', self.properties.get('health', 100))
         self.properties.setdefault('damage', 10)
+        # Custom death sprites and the gib/gore mechanic were removed: a slain
+        # actor always shows its head + heads/dead.png overlay (or its type's
+        # default dead.png). Shed any legacy keys so they never persist or show
+        # in the property editor.
+        self.properties.pop('custom_dead', None)
+        self.properties.pop('gibbed', None)
 
         # --- Wake / AI behaviour ---
         self.properties.setdefault('triggered', False)
@@ -562,8 +566,6 @@ class Monster(Thing):
             'sprite_height': self.properties.get('sprite_height', 128),
             'custom_idle': self.properties.get('custom_idle', ''),
             'custom_shoot': self.properties.get('custom_shoot', ''),
-            'custom_dead': self.properties.get('custom_dead', ''),
-            'gibbed': self.properties.get('gibbed', False),
             'hit_flash': self.properties.get('_hit_flash', 0.0),
         }
 
@@ -597,21 +599,14 @@ class Monster(Thing):
         default_idle, default_dead, default_shoot = Monster._get_default_paths(mtype, variant)
 
         if is_dead:
-            # Gibbed (killed by an oversized hit): show the universal gore sprite
-            # for this monster type, overriding any clean per-role corpse so the
-            # body reads as gore in both the 2D and 3D views.
-            if self.properties.get('gibbed'):
-                return default_dead
-            # A head-wearing actor keeps its identity when slain: show the SAME
-            # head with heads/dead.png composited over it, instead of switching
-            # to a role/gore sprite. Falls through to the normal corpse when the
-            # actor has no head or the overlay art is unavailable.
+            # A slain actor keeps its identity: show its head with heads/dead.png
+            # composited over it (never a custom death sprite — those are gone).
+            # A non-head actor falls back to its monster-type's default dead.png.
             idle = self.properties.get('custom_idle', '')
             composite = Monster._dead_head_composite(idle, project_root)
             if composite:
                 return composite
-            return self._resolve_sprite(
-                self.properties.get('custom_dead', ''), default_dead, project_root)
+            return default_dead
         elif is_shooting:
             return self._resolve_sprite(
                 self.properties.get('custom_shoot', ''), default_shoot, project_root)

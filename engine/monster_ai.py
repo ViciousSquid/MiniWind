@@ -697,9 +697,6 @@ class MonsterAI:
             victim.properties['dead'] = True
             victim.properties.pop('is_shooting', None)
             victim.properties.pop('_aggro_target', None)
-            # Overkill from a heavy infighting blow gibs the victim.
-            from engine.gore import mark_gibbed
-            mark_gibbed(victim.properties, damage, new_health)
             if self.lt.io_manager:
                 self.lt.io_manager.fire_output(victim, 'OnDeath')
             if self.monster_debug_active:

@@ -94,6 +94,10 @@ class ConsoleCommandHandler:
             'saves': self.cmd_list_saves,
             'listsaves': self.cmd_list_saves,
 
+            # Quest testing
+            'quest': self.cmd_quest,
+            'quests': self.cmd_quest,
+
             'r_list': self.cmd_render_list,
             'r_wireframe': self.cmd_render_wireframe,
             'r_shadows': self.cmd_render_shadows,
@@ -1681,6 +1685,75 @@ class ConsoleCommandHandler:
         debug_log("Info" if ok else "Error", msg)
         if ok:
             self.main_window.show_toast(f"Saved: {os.path.basename(path)}")
+
+    def cmd_quest(self, args):
+        """quest [list | start <id> | advance <id> | complete <id> | reset <id>]
+
+        Test MiniWind quests in Play Mode. With no argument (or 'list') it prints
+        every authored quest and its live state. 'start' makes a quest active on
+        the player so its stage conditions begin tracking; 'advance' bumps it to
+        the next stage; 'complete' finishes it and pays the rewards; 'reset'
+        clears its state so you can run it again.
+        """
+        if not self._in_play_mode():
+            debug_log("Error", "quest: enter Play Mode first.")
+            return
+        lt = self._logic_thread()
+        session = getattr(lt, "_miniwind", None) if lt is not None else None
+        if session is None:
+            debug_log("Error", "quest: no active MiniWind session.")
+            return
+        try:
+            from game.rpg import quests as _q
+        except Exception as exc:
+            debug_log("Error", f"quest: {exc}")
+            return
+
+        parts = args.split()
+        sub = parts[0].lower() if parts else "list"
+        qid = parts[1] if len(parts) > 1 else ""
+        log = session.game.quests
+
+        if sub in ("list", "ls", ""):
+            if not _q.QUESTS:
+                debug_log("Info", "No quests are defined on this map "
+                                  "(author them on Game Settings ▸ Quests).")
+                return
+            for q in _q.QUESTS.values():
+                state = log.state_of(q.id) or "inactive"
+                obj = log.current_objective(q.id)
+                line = f"{q.id}  [{state}]"
+                if state == "active" and obj:
+                    line += f"  — {obj}"
+                debug_log("Info", line)
+            return
+
+        if not qid:
+            debug_log("Error", f"quest {sub}: needs a quest id (see 'quest list').")
+            return
+        if _q.get(qid) is None:
+            debug_log("Error", f"quest: unknown quest '{qid}' (see 'quest list').")
+            return
+
+        if sub == "start":
+            if session.game.start_quest(qid):
+                session.notify(f"Quest started: {_q.get(qid).name}")
+                debug_log("Info", f"Started quest '{qid}'.")
+            else:
+                debug_log("Info", f"Quest '{qid}' is already active or complete "
+                                  f"(use 'quest reset {qid}' first).")
+        elif sub == "advance":
+            log.advance(qid)
+            debug_log("Info", f"Advanced '{qid}' to stage {log.stage_of(qid)}.")
+        elif sub == "complete":
+            session.game.complete_quest(qid)
+            debug_log("Info", f"Completed quest '{qid}' (rewards paid).")
+        elif sub == "reset":
+            session.store.set(f"quest.{qid}.state", "")
+            session.store.set(f"quest.{qid}.stage", "-1")
+            debug_log("Info", f"Reset quest '{qid}'.")
+        else:
+            debug_log("Error", "quest: use list | start | advance | complete | reset.")
 
     def cmd_quicksave(self, args):
         """quicksave — Save to the quicksave slot (saves/quicksave.fiosave)."""

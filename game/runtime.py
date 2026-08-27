@@ -310,9 +310,8 @@ class MiniwindSession:
             if p.get("head") != head or p.get("custom_idle") != path:
                 p["head"] = head
                 p["custom_idle"] = path
-                # Leave custom_dead as the role's corpse/gore sprite so a killed
-                # (and especially a gibbed) NPC still shows gore, not the head.
                 p["custom_shoot"] = path
+                p.pop("custom_dead", None)   # no custom death sprite (removed)
                 changed = True
         if changed:
             try:
@@ -1524,10 +1523,9 @@ class MiniwindSession:
         and its living (head) sprite, and rebuild the engine caches."""
         p = thing.properties
         p["dead"] = False
-        p["gibbed"] = False
+        p.pop("gibbed", None)
         p["hidden"] = False
         p["is_shooting"] = False
-        p["_dead_overlay"] = False
         try:
             mh = float(p.get("max_health", p.get("health", 100)) or 100)
         except (TypeError, ValueError):

@@ -28,18 +28,6 @@ from . import bestiary
 from .character import Character
 
 
-def _mark_gibbed(target_props, damage, new_health):
-    """Flag a slain creature as gibbed on an oversized hit (engine.gore).
-
-    The gib rule is shared with the engine's combat paths. Imported lazily and
-    guarded so the engine-free/headless player never hard-depends on it."""
-    try:
-        from engine.gore import mark_gibbed
-        return mark_gibbed(target_props, damage, new_health)
-    except Exception:
-        return False
-
-
 #: Starting gear by class specialisation, granted at character creation.
 STARTER_KITS = {
     "Combat": [("iron_longsword", 1), ("iron_shield", 1), ("leather_cuirass", 1),
@@ -200,7 +188,6 @@ class GameState:
             res["killed"] = True
             target_props["health"] = 0
             target_props["dead"] = True
-            _mark_gibbed(target_props, res["damage"], hp)
             self.on_kill(target_props)
         return res
 
@@ -240,7 +227,6 @@ class GameState:
                     target_props["health"] = 0
                     target_props["dead"] = True
                     result["killed"] = True
-                    _mark_gibbed(target_props, dealt, hp)
                     self.on_kill(target_props)
         return result
 

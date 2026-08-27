@@ -19,8 +19,8 @@ class PackageExporter:
     
     # Asset path patterns to scan for in map JSON
     ASSET_KEYS = {
-        'textures': ['textures', 'texture', 'texture_path', 'sprite_2d', 'custom_idle', 
-                     'custom_shoot', 'custom_dead'],
+        'textures': ['textures', 'texture', 'texture_path', 'sprite_2d', 'custom_idle',
+                     'custom_shoot'],
         'models': ['model_path', 'mesh'],
         'sounds': ['sound_file', 'sound', 'audio']
     }

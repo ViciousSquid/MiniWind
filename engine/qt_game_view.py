@@ -618,8 +618,7 @@ class QtGameView(QOpenGLWidget):
                 idle_rel = str(p.get("custom_idle", ""))
                 is_head = self._is_overhead_head_actor(thing)
                 dead = bool(p.get("dead"))
-                gibbed = bool(p.get("gibbed"))
-                if dead and not gibbed and is_head:
+                if dead and is_head:
                     # Keep the identity: draw the living head, then paint the
                     # shared dead.png overlay on top (a second, slightly-higher
                     # ground quad) — no on-disk composite needed, so it always
@@ -631,7 +630,7 @@ class QtGameView(QOpenGLWidget):
                         self.projection_matrix, self.view_matrix, gpos, facing,
                         SpriteController.IDLE)
                     continue
-                # Alive / shooting (head) or gibbed (gore) — the state sprite.
+                # Alive / shooting head, or a non-head actor's state sprite.
                 try:
                     sprite_rel = str(thing.get_sprite_path())
                 except Exception:

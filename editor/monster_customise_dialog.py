@@ -73,11 +73,11 @@ class MonsterCustomiseDialog(QDialog):
 
         self._idle_edit  = self._make_edit("Default  (monster_type / idle.png)")
         self._shoot_edit = self._make_edit("Default  (monster_type / shoot.png)")
-        self._dead_edit  = self._make_edit("Default  (monster_type / dead.png)")
 
         sprite_form.addRow("Idle PNG:",  self._make_row(self._idle_edit,  "idle"))
         sprite_form.addRow("Shoot PNG:", self._make_row(self._shoot_edit, "shoot"))
-        sprite_form.addRow("Dead PNG:",  self._make_row(self._dead_edit,  "dead"))
+        # No "Dead PNG" row — custom death sprites were removed. A slain actor
+        # always shows its head with the shared heads/dead.png overlay.
 
         root.addWidget(sprite_group)
 
@@ -193,7 +193,6 @@ class MonsterCustomiseDialog(QDialog):
         p = self.thing.properties
         self._idle_edit.setText(p.get("custom_idle", ""))
         self._shoot_edit.setText(p.get("custom_shoot", ""))
-        self._dead_edit.setText(p.get("custom_dead", ""))
         self._sprite_2d_edit.setText(p.get("sprite_2d", ""))
         # Use the subtype default from monster_constants when no override is stored
         mtype = p.get("monster_type", "human")
@@ -207,7 +206,6 @@ class MonsterCustomiseDialog(QDialog):
         slots = [
             ("custom_idle",  self._idle_edit),
             ("custom_shoot", self._shoot_edit),
-            ("custom_dead",  self._dead_edit),
             ("sprite_2d",    self._sprite_2d_edit),
         ]
 
@@ -255,7 +253,6 @@ class MonsterCustomiseDialog(QDialog):
         """Clear all custom overrides and restore subtype default sizes."""
         self._idle_edit.clear()
         self._shoot_edit.clear()
-        self._dead_edit.clear()
         self._sprite_2d_edit.clear()
         mtype = self.thing.properties.get("monster_type", "human")
         default_w, default_h = MONSTER_SPRITE_SIZES.get(mtype, MONSTER_SPRITE_SIZE_DEFAULT)
@@ -325,13 +322,12 @@ class MonsterCustomiseDialog(QDialog):
 
         edit = {"idle": self._idle_edit,
                 "shoot": self._shoot_edit,
-                "dead": self._dead_edit}[slot]
+                "dead": self._idle_edit}[slot]
         edit.setText(rel.replace("\\", "/"))
 
     def _clear(self, slot: str):
         edit = {"idle":     self._idle_edit,
                 "shoot":    self._shoot_edit,
-                "dead":     self._dead_edit,
                 "sprite_2d": self._sprite_2d_edit}[slot]
         edit.clear()
 

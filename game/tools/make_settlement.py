@@ -38,7 +38,6 @@ def _art(props, role):
     without relying on entity construction defaults at load time."""
     tmpl = bestiary.get(role)
     props.setdefault("custom_idle", sprite_for(role))
-    props.setdefault("custom_dead", sprite_for(role))
     props.setdefault("custom_shoot", sprite_for(role))
     props.setdefault("portrait", portrait_for(role))
     props.setdefault("monster_type", "human")

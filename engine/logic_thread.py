@@ -2693,9 +2693,6 @@ class LogicThread(threading.Thread):
                 if new_health <= 0:
                     closest_monster.properties['dead'] = True
                     closest_monster.properties.pop('is_shooting', None)
-                    # A big enough single hit gibs (universal gore sprite).
-                    from engine.gore import mark_gibbed
-                    mark_gibbed(closest_monster.properties, damage, new_health)
                     if self.io_manager:
                         self.io_manager.fire_output(closest_monster, 'OnDeath')
                     if self.monster_ai.monster_debug_active:

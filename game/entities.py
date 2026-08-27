@@ -88,8 +88,9 @@ def _apply_head_sprite(p: dict) -> None:
         path = heads.head_path(hid)
         p["custom_idle"] = path
         p["custom_shoot"] = path
-        # Leave custom_dead as the role's corpse/gore sprite so a killed (and
-        # especially a gibbed) NPC still shows gore, not the living head.
+        # No custom death sprite: a slain head-wearing actor shows its head with
+        # the shared heads/dead.png overlay (see Monster.get_sprite_path).
+    p.pop("custom_dead", None)
 
 
 def _apply_actor_common(thing, entity_type, default_role, default_faction):
@@ -127,8 +128,7 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
     aggression = p["aggression"]
     if "health" not in _authored:
         p["health"] = tmpl.health if tmpl else 60
-    # Full-health baseline for the gib rule (engine.gore): an oversized killing
-    # blow relative to this shows the universal gore sprite instead of a corpse.
+    # Full-health baseline (used by health bars / balance).
     p.setdefault("max_health", p["health"])
     if "damage" not in _authored:
         p["damage"] = tmpl.damage if tmpl else 6
@@ -167,10 +167,10 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
     }
     p.setdefault("courage", _COURAGE_DEFAULTS.get(role, 0.3))
 
-    # top-down art: idle, dead and the attack ('shoot') frame all use the role's
-    # own billboard, so an attacking NPC never flips to the stock human sprite.
+    # top-down art: the idle and the attack ('shoot') frame use the role's own
+    # billboard, so an attacking NPC never flips to the stock human sprite. There
+    # is no custom death sprite — a slain actor shows its head + dead.png overlay.
     p.setdefault("custom_idle", sprite_for(role))
-    p.setdefault("custom_dead", sprite_for(role))
     p.setdefault("custom_shoot", sprite_for(role))
     # Head override: an NPC's whole appearance can be one of the 15 head sprites
     # (a single billboard, no animation). Empty = use the role art; the runtime

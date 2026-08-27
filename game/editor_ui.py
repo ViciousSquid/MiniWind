@@ -94,11 +94,11 @@ def make_appearance_tab(thing):
             self.thing.properties["head"] = hid
             if hid in heads.HEAD_IDS:
                 path = heads.head_path(hid)
-                # Living/attacking sprite follow the head; custom_dead is left as
-                # the role's corpse/gore sprite so a killed or gibbed NPC shows
-                # gore, not the living head.
+                # Living/attacking sprites follow the head; there is no custom
+                # death sprite (a slain actor shows its head + dead.png overlay).
                 for k in ("custom_idle", "custom_shoot"):
                     self.thing.properties[k] = path
+            self.thing.properties.pop("custom_dead", None)
             # Drop cached sprites so the viewport shows the new head.
             try:
                 from editor.things import Monster

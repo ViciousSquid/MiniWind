@@ -970,10 +970,10 @@ class BaseRenderer:
             # Monster snapshot dict
             if isinstance(thing, dict) and 'dead' in thing:
                 if thing.get('dead'):
-                    # Gibbed: force the universal gore sprite
-                    # (sprites/monsters/<type>/dead.png) by ignoring any clean
-                    # per-role corpse, so overkill reads as gore in 3D too.
-                    custom = '' if thing.get('gibbed') else thing.get('custom_dead', '')
+                    # Custom death sprites and gibs were removed: a dead actor
+                    # uses its monster-type's default dead.png (headed MiniWind
+                    # actors get their head+overlay via the instance-texture path).
+                    custom = ''
                     sprite_type = 'dead'
                 elif thing.get('is_shooting'):
                     custom = thing.get('custom_shoot', '')
