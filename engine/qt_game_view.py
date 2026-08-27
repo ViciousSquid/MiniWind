@@ -609,7 +609,7 @@ class QtGameView(QOpenGLWidget):
                 p = thing.properties
                 pos = thing.pos
                 gpos = (float(pos[0]), float(pos[1]), float(pos[2]))
-                facing = float(p.get("angle", 0.0) or 0.0)
+                facing = float(p.get("_facing", p.get("angle", 0.0)) or 0.0)
                 # Brief red flash when the actor was just hit.
                 flash = float(p.get("_hit_flash", 0.0) or 0.0)
                 tint = (1.0, 0.15, 0.1, min(0.8, flash * 4.0)) if flash > 0 else \

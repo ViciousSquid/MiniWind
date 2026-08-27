@@ -49,6 +49,13 @@ except ImportError:
     GLB = None
 
 
+# Extra in-plane rotation (radians) applied to head billboards so their art's
+# "forward" lines up with the actor heading. The head sprites point up in their
+# art, so 0 is correct; kept as a single tunable knob if the art convention
+# changes (mirrors OverheadSpriteRenderer.facing_offset_deg for the player).
+HEAD_FACING_OFFSET = 0.0
+
+
 # ---------- Utility classes ----------
 class UniformCache:
     __slots__ = ('program', '_cache')
@@ -958,55 +965,95 @@ class BaseRenderer:
         gl.glUniform1i(uniforms['sprite_texture'], 0)
         pos_loc, size_loc = uniforms['sprite_pos_world'], uniforms['sprite_size']
         tint_loc = uniforms['sprite_tint']
+        rot_loc = uniforms['sprite_rot']   # -1 if the shader lacks it (safe no-op)
         gl.glUniform4f(tint_loc, 0.0, 0.0, 0.0, 0.0)   # no tint by default
+        gl.glUniform1f(rot_loc, 0.0)                   # upright by default
         gl.glBindVertexArray(self.vaos['sprite'])
+
+        # Billboard right/up basis (world space) — the plane a sprite rotates in.
+        # Used to turn a head sprite so its "up" points along the actor's heading.
+        _cam_right = (view[0][0], view[1][0], view[2][0])
+        _cam_up = (view[0][1], view[1][1], view[2][1])
+
+        def _head_billboard_rot(angle):
+            """In-plane billboard rotation (radians) that makes a head sprite face
+            its heading. Heading world dir is (sin a, 0, cos a) — the engine's
+            forward convention. Projected onto the billboard basis, then the
+            sprite's up axis is turned to match."""
+            ha = math.sin(angle); hz = math.cos(angle)
+            a = ha * _cam_right[0] + hz * _cam_right[2]
+            b = ha * _cam_up[0] + hz * _cam_up[2]
+            if (a * a + b * b) < 1e-8:
+                return 0.0
+            return math.atan2(-a, b) + HEAD_FACING_OFFSET
 
         current_tex = None
         _tinted = False   # whether the last draw left a non-zero tint set
+        _rotated = False  # whether the last draw left a non-zero rotation set
         for thing in things_to_draw:
             if Portal is not None and isinstance(thing, Portal):
                 continue
 
             # Monster snapshot dict
             if isinstance(thing, dict) and 'dead' in thing:
-                if thing.get('dead'):
-                    # Custom death sprites and gibs were removed: a dead actor
-                    # uses its monster-type's default dead.png (headed MiniWind
-                    # actors get their head+overlay via the instance-texture path).
-                    custom = ''
-                    sprite_type = 'dead'
-                elif thing.get('is_shooting'):
-                    custom = thing.get('custom_shoot', '')
-                    sprite_type = 'shoot'
-                else:
-                    custom = thing.get('custom_idle', '')
-                    sprite_type = 'idle'
-
-                mtype = thing.get('monster_type', 'human')
-                variant = thing.get('variant', '<None>')
-                key_tuple = (mtype, variant, sprite_type, custom)
-                tex_key = self._sprite_tex_key_cache.get(key_tuple)
-                if tex_key is None:
-                    tex_key = f"msprite_{mtype}_{variant}_{sprite_type}_{custom}"
-                    self._sprite_tex_key_cache[key_tuple] = tex_key
-                tex_id = sprite_textures.get(tex_key)
-                if tex_id is None:
-                    if custom:
-                        custom_clean = custom.replace('assets/', '', 1)
-                        subfolder = os.path.dirname(custom_clean)
-                        filename = os.path.basename(custom_clean)
-                    else:
-                        if variant and variant != '<None>':
-                            subfolder = f"sprites/monsters/{mtype}/{variant}"
-                        else:
-                            subfolder = f"sprites/monsters/{mtype}"
-                        filename = f"{sprite_type}.png"
-                    tex_id = self.load_texture(filename, subfolder)
-                    if not tex_id and variant and variant != '<None>':
-                        subfolder = f"sprites/monsters/{mtype}"
+                # Prefer the fully-resolved sprite path from the snapshot: it
+                # already folds in the dead-head composite (head + heads/dead.png
+                # overlay), so a slain head actor shows its head with the X in the
+                # 3D view exactly as in the 2D view — no plain dead.png fallback.
+                sprite_path = thing.get('sprite_path')
+                tex_id = None
+                if sprite_path:
+                    tex_key = self._sprite_tex_key_cache.get(sprite_path)
+                    if tex_key is None:
+                        tex_key = f"mpath_{sprite_path}"
+                        self._sprite_tex_key_cache[sprite_path] = tex_key
+                    tex_id = sprite_textures.get(tex_key)
+                    if tex_id is None:
+                        rel = sprite_path.replace('assets/', '', 1)
+                        subfolder = os.path.dirname(rel)
+                        filename = os.path.basename(rel)
                         tex_id = self.load_texture(filename, subfolder)
-                    if tex_id:
-                        self.sprite_textures[tex_key] = tex_id
+                        if tex_id:
+                            self.sprite_textures[tex_key] = tex_id
+
+                if tex_id is None:
+                    # Legacy fallback: derive the path from state (older snapshots
+                    # without 'sprite_path').
+                    if thing.get('dead'):
+                        custom = ''
+                        sprite_type = 'dead'
+                    elif thing.get('is_shooting'):
+                        custom = thing.get('custom_shoot', '')
+                        sprite_type = 'shoot'
+                    else:
+                        custom = thing.get('custom_idle', '')
+                        sprite_type = 'idle'
+
+                    mtype = thing.get('monster_type', 'human')
+                    variant = thing.get('variant', '<None>')
+                    key_tuple = (mtype, variant, sprite_type, custom)
+                    tex_key = self._sprite_tex_key_cache.get(key_tuple)
+                    if tex_key is None:
+                        tex_key = f"msprite_{mtype}_{variant}_{sprite_type}_{custom}"
+                        self._sprite_tex_key_cache[key_tuple] = tex_key
+                    tex_id = sprite_textures.get(tex_key)
+                    if tex_id is None:
+                        if custom:
+                            custom_clean = custom.replace('assets/', '', 1)
+                            subfolder = os.path.dirname(custom_clean)
+                            filename = os.path.basename(custom_clean)
+                        else:
+                            if variant and variant != '<None>':
+                                subfolder = f"sprites/monsters/{mtype}/{variant}"
+                            else:
+                                subfolder = f"sprites/monsters/{mtype}"
+                            filename = f"{sprite_type}.png"
+                        tex_id = self.load_texture(filename, subfolder)
+                        if not tex_id and variant and variant != '<None>':
+                            subfolder = f"sprites/monsters/{mtype}"
+                            tex_id = self.load_texture(filename, subfolder)
+                        if tex_id:
+                            self.sprite_textures[tex_key] = tex_id
 
                 if tex_id and tex_id != current_tex:
                     gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
@@ -1016,6 +1063,15 @@ class BaseRenderer:
                 w = thing.get('sprite_width', 128)
                 h = thing.get('sprite_height', 128)
                 gl.glUniform2f(size_loc, float(w), float(h))
+                # Head actors turn to face where they're heading (like the player
+                # and the 2D map). Non-head sprites stay upright.
+                if thing.get('is_head'):
+                    rot = _head_billboard_rot(float(thing.get('angle', 0.0) or 0.0))
+                    gl.glUniform1f(rot_loc, rot)
+                    _rotated = (rot != 0.0)
+                elif _rotated:
+                    gl.glUniform1f(rot_loc, 0.0)
+                    _rotated = False
                 # Red damage flash: mix toward red by the remaining flash time.
                 flash = thing.get('hit_flash', 0.0) or 0.0
                 if flash > 0.0:
@@ -1027,10 +1083,14 @@ class BaseRenderer:
                 gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
                 continue
 
-            # Any non-monster sprite below must not inherit a monster's flash.
+            # Any non-monster sprite below must not inherit a monster's flash or
+            # rotation.
             if _tinted:
                 gl.glUniform4f(tint_loc, 0.0, 0.0, 0.0, 0.0)
                 _tinted = False
+            if _rotated:
+                gl.glUniform1f(rot_loc, 0.0)
+                _rotated = False
 
             tex_id = None
             if instance_textures:

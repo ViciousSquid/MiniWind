@@ -567,6 +567,16 @@ class Monster(Thing):
             'custom_idle': self.properties.get('custom_idle', ''),
             'custom_shoot': self.properties.get('custom_shoot', ''),
             'hit_flash': self.properties.get('_hit_flash', 0.0),
+            # Facing angle (radians) so the 3D billboard can rotate a head sprite
+            # to point where the actor is heading (mirrors the player). Sourced
+            # from the transient runtime heading set by the monster AI.
+            'angle': float(self.properties.get('_facing', 0.0) or 0.0),
+            # Fully-resolved sprite path for the CURRENT state. This already folds
+            # in the dead-head composite (head + heads/dead.png overlay), so the
+            # 3D view matches the 2D view for slain head actors instead of falling
+            # back to the monster-type's plain dead.png.
+            'sprite_path': self.get_sprite_path(),
+            'is_head': Monster._is_head_sprite(self.properties.get('custom_idle', '')),
         }
 
     def get_sprite_path(self) -> str:

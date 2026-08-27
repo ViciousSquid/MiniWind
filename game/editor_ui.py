@@ -1838,6 +1838,16 @@ _QUEST_COND_TARGET_HINT = {
 
 
 def make_quests_tab(thing):
+    # Quests are a first-class feature: the property tab now hosts a compact
+    # launcher for the large, card-based Quest Editor (with a guided Wizard).
+    # Falls back to the legacy in-panel editor if that module can't load.
+    try:
+        from . import quest_editor
+        launcher = quest_editor.make_quests_launcher(thing)
+        if launcher is not None:
+            return launcher
+    except Exception:
+        pass
     try:
         QtWidgets, QtCore = _qt()
     except Exception:  # pragma: no cover
