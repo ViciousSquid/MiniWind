@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+
+# Generated head death-overlay composites (never real art)
+assets/sprites/heads/dead_cache/
