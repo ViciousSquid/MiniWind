@@ -2503,9 +2503,9 @@
         {
             "type": "marker",
             "pos": [
-                560,
+                64.0,
                 272,
-                -500
+                832.0
             ],
             "properties": {
                 "type": "marker",
@@ -2554,9 +2554,9 @@
         {
             "type": "marker",
             "pos": [
-                650,
+                -416.0,
                 272,
-                -520
+                848.0
             ],
             "properties": {
                 "type": "marker",
@@ -2571,9 +2571,9 @@
         {
             "type": "marker",
             "pos": [
-                662,
+                864.0,
                 272,
-                -506
+                256.0
             ],
             "properties": {
                 "type": "marker",
@@ -2639,9 +2639,9 @@
         {
             "type": "marker",
             "pos": [
-                340,
+                208.0,
                 272,
-                -560
+                608.0
             ],
             "properties": {
                 "type": "marker",
@@ -2894,7 +2894,8 @@
                     -650
                 ],
                 "dead": false,
-                "spells": []
+                "spells": [],
+                "head": ""
             },
             "io_connections": []
         },
@@ -3102,7 +3103,8 @@
                 "_death_noted": true,
                 "_flee": true,
                 "dead": true,
-                "spells": []
+                "spells": [],
+                "head": ""
             },
             "io_connections": []
         },
@@ -3216,7 +3218,7 @@
                     }
                 },
                 "custom_idle": "assets/sprites/miniwind/farmer.png",
-                "custom_dead": "assets/sprites/miniwind/farmer.png",
+                "custom_dead": "",
                 "custom_shoot": "assets/sprites/miniwind/farmer.png",
                 "portrait": "assets/portraits/miniwind/farmer.png",
                 "monster_type": "human",
@@ -3263,7 +3265,13 @@
                     272,
                     -770
                 ],
-                "_death_noted": true
+                "_death_noted": true,
+                "head": "",
+                "sight": 512,
+                "can_hear": false,
+                "dead": false,
+                "non_hostile": false,
+                "spells": []
             },
             "io_connections": []
         },
@@ -3361,7 +3369,7 @@
                 "sprite_height": 120,
                 "monster_id": 0,
                 "health": 100,
-                "damage": 14,
+                "damage": 24,
                 "triggered": true,
                 "wake_on_sight": true,
                 "awake": false,
@@ -3376,12 +3384,67 @@
                 "attack_style": "melee",
                 "sight_range": 1024,
                 "loot": "",
-                "creature_level": 1,
+                "creature_level": 3,
                 "xp_value": 0,
                 "move_speed": 90.0,
                 "can_defend": true,
                 "combatant": true,
-                "inventory": [],
+                "inventory": [
+                    {
+                        "description": "Iron iron cuirass.",
+                        "id": "iron_cuirass",
+                        "name": "Iron Cuirass",
+                        "qty": 1,
+                        "type": "armour",
+                        "value": 120,
+                        "weight": 30.0
+                    },
+                    {
+                        "description": "Iron iron boots.",
+                        "id": "iron_boots",
+                        "name": "Iron Boots",
+                        "qty": 1,
+                        "type": "armour",
+                        "value": 30,
+                        "weight": 12.0
+                    },
+                    {
+                        "description": "Iron iron gauntlets.",
+                        "id": "iron_gauntlets",
+                        "name": "Iron Gauntlets",
+                        "qty": 1,
+                        "type": "armour",
+                        "value": 25,
+                        "weight": 6.0
+                    },
+                    {
+                        "description": "Iron iron greaves.",
+                        "id": "iron_greaves",
+                        "name": "Iron Greaves",
+                        "qty": 1,
+                        "type": "armour",
+                        "value": 60,
+                        "weight": 18.0
+                    },
+                    {
+                        "description": "Iron iron helmet.",
+                        "id": "iron_helmet",
+                        "name": "Iron Helmet",
+                        "qty": 1,
+                        "type": "armour",
+                        "value": 30,
+                        "weight": 5.0
+                    },
+                    {
+                        "description": "A steel steel mace.",
+                        "id": "steel_mace",
+                        "name": "Steel Mace",
+                        "qty": 1,
+                        "type": "weapon",
+                        "value": 95,
+                        "weight": 20.0
+                    }
+                ],
                 "persistent": true,
                 "sched_state": "COMBAT",
                 "autonomy": true,
@@ -3420,7 +3483,8 @@
                 "sight": 512,
                 "can_hear": false,
                 "non_hostile": false,
-                "spells": []
+                "spells": [],
+                "head": ""
             },
             "io_connections": []
         },
@@ -3567,7 +3631,8 @@
                 "sight": 512,
                 "can_hear": false,
                 "non_hostile": false,
-                "spells": []
+                "spells": [],
+                "head": ""
             },
             "io_connections": []
         },
@@ -3742,7 +3807,8 @@
                 "sight": 512,
                 "can_hear": false,
                 "non_hostile": false,
-                "spells": []
+                "spells": [],
+                "head": ""
             },
             "io_connections": []
         },
@@ -3762,7 +3828,7 @@
                 "aggression": "hostile",
                 "sight_range": 520,
                 "custom_idle": "assets/sprites/miniwind/bandit.png",
-                "custom_dead": "assets/sprites/miniwind/bandit.png",
+                "custom_dead": "",
                 "custom_shoot": "assets/sprites/miniwind/bandit.png",
                 "portrait": "assets/portraits/miniwind/bandit.png",
                 "monster_type": "human",
@@ -3802,8 +3868,9 @@
                 "non_hostile": false,
                 "max_health": -102,
                 "courage": 0.3,
-                "dead": true,
-                "spells": []
+                "dead": false,
+                "spells": [],
+                "head": ""
             },
             "io_connections": []
         },
@@ -3823,7 +3890,7 @@
                 "aggression": "hostile",
                 "sight_range": 520,
                 "custom_idle": "assets/sprites/miniwind/bandit.png",
-                "custom_dead": "assets/sprites/miniwind/bandit.png",
+                "custom_dead": "",
                 "custom_shoot": "assets/sprites/miniwind/bandit.png",
                 "portrait": "assets/portraits/miniwind/bandit.png",
                 "monster_type": "human",
@@ -3863,8 +3930,9 @@
                 "non_hostile": false,
                 "max_health": -42,
                 "courage": 0.3,
-                "dead": true,
-                "spells": []
+                "dead": false,
+                "spells": [],
+                "head": ""
             },
             "io_connections": []
         },
@@ -3925,7 +3993,8 @@
                 "max_health": 40,
                 "courage": 0.3,
                 "dead": false,
-                "spells": []
+                "spells": [],
+                "head": ""
             },
             "io_connections": []
         },
@@ -3975,14 +4044,14 @@
                 "aggression": "hostile",
                 "sight_range": 520,
                 "custom_idle": "assets/sprites/miniwind/bandit.png",
-                "custom_dead": "assets/sprites/miniwind/bandit.png",
+                "custom_dead": "",
                 "custom_shoot": "assets/sprites/miniwind/bandit.png",
                 "portrait": "assets/portraits/miniwind/bandit.png",
                 "monster_type": "human",
                 "sprite_width": 120,
                 "sprite_height": 120,
                 "monster_id": 0,
-                "health": -99,
+                "health": 1,
                 "damage": 9,
                 "triggered": false,
                 "wake_on_sight": true,
@@ -4015,8 +4084,9 @@
                 "non_hostile": false,
                 "max_health": -42,
                 "courage": 0.3,
-                "dead": true,
-                "spells": []
+                "dead": false,
+                "spells": [],
+                "head": ""
             },
             "io_connections": []
         },
@@ -4211,7 +4281,8 @@
                         "damage": 99999,
                         "speed": 1400.0
                     }
-                ]
+                ],
+                "head": ""
             },
             "io_connections": []
         },
@@ -4237,7 +4308,7 @@
                 "id": "77fdc4e4-3803-4a72-8a26-05ba5ec21fd2",
                 "monster_type": "human",
                 "monster_id": 0,
-                "health": 91,
+                "health": 100,
                 "max_health": 100,
                 "damage": 24,
                 "triggered": true,
@@ -4253,16 +4324,44 @@
                 "team": "guards",
                 "sight_range": 1600,
                 "loot": "",
-                "creature_level": 1,
+                "creature_level": 4,
                 "xp_value": 0,
                 "move_speed": 90.0,
                 "can_defend": true,
                 "courage": 0.9,
                 "custom_idle": "assets/sprites/miniwind/guard.png",
-                "custom_dead": "assets/sprites/miniwind/guard.png",
+                "custom_dead": "",
                 "custom_shoot": "assets/sprites/miniwind/guard.png",
                 "portrait": "assets/portraits/miniwind/guard.png",
-                "inventory": [],
+                "inventory": [
+                    {
+                        "description": "A sharp steel arrow.",
+                        "id": "steel_arrow",
+                        "name": "Steel Arrow",
+                        "qty": 1,
+                        "type": "ammo",
+                        "value": 2,
+                        "weight": 0.1
+                    },
+                    {
+                        "description": "A wood short bow.",
+                        "id": "short_bow",
+                        "name": "Short Bow",
+                        "qty": 1,
+                        "type": "weapon",
+                        "value": 30,
+                        "weight": 6.0
+                    },
+                    {
+                        "description": "A iron iron shortsword.",
+                        "id": "iron_shortsword",
+                        "name": "Iron Shortsword",
+                        "qty": 1,
+                        "type": "weapon",
+                        "value": 25,
+                        "weight": 8.0
+                    }
+                ],
                 "persistent": true,
                 "schedule": [],
                 "sched_state": "IDLE",
@@ -4284,7 +4383,8 @@
                 "can_hear": false,
                 "dead": false,
                 "non_hostile": false,
-                "spells": []
+                "spells": [],
+                "head": ""
             },
             "io_connections": []
         },
@@ -4335,7 +4435,26 @@
                 "custom_dead": "assets/sprites/miniwind/guard.png",
                 "custom_shoot": "assets/sprites/miniwind/guard.png",
                 "portrait": "assets/portraits/miniwind/guard.png",
-                "inventory": [],
+                "inventory": [
+                    {
+                        "description": "A wood long bow.",
+                        "id": "long_bow",
+                        "name": "Long Bow",
+                        "qty": 1,
+                        "type": "weapon",
+                        "value": 60,
+                        "weight": 9.0
+                    },
+                    {
+                        "description": "A plain iron-tipped arrow.",
+                        "id": "iron_arrow",
+                        "name": "Iron Arrow",
+                        "qty": 1,
+                        "type": "ammo",
+                        "value": 1,
+                        "weight": 0.1
+                    }
+                ],
                 "persistent": true,
                 "schedule": [],
                 "sched_state": "IDLE",
@@ -4357,7 +4476,8 @@
                 "can_hear": false,
                 "dead": false,
                 "non_hostile": false,
-                "spells": []
+                "spells": [],
+                "head": ""
             },
             "io_connections": []
         }
