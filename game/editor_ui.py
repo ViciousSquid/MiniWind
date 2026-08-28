@@ -1724,7 +1724,7 @@ def open_spell_editor(parent=None):
         def __init__(self):
             super().__init__(parent)
             self.setWindowTitle("Spell Editor")
-            self.resize(720, 620)
+            self.resize(800, 900)
             # Work on a copy of every current spell (built-ins + any custom).
             self.rows = [magic.get(sid).to_dict() for sid in sorted(magic.SPELLS)]
             self.cards = []
