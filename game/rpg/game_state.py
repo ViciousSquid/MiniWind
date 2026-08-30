@@ -13,7 +13,14 @@ from __future__ import annotations
 
 import json
 import random
+from html import escape
 from typing import Dict, List, Optional
+
+try:
+    from editor.debug_console import debug_log
+except ImportError:
+    def debug_log(_category, _message):
+        pass
 
 from . import items
 from . import inventory as inv
@@ -26,6 +33,7 @@ from . import quests_content
 from . import guilds
 from . import bestiary
 from .character import Character
+from ..diceroll import DiceRoller
 
 
 #: Starting gear by class specialisation, granted at character creation.
@@ -47,6 +55,7 @@ class GameState:
         self.character = character or Character()
         self.quests = quests.QuestLog(store)
         self.rng = rng or random.Random()
+        self.dice = DiceRoller(rng=self.rng)
         self.log: List[str] = []          # recent game messages (for the HUD log)
         self.sneaking = False
 
@@ -136,6 +145,52 @@ class GameState:
     def drop(self, item_id: str, qty: int = 1) -> int:
         return inv.remove_item(self.character.inventory, item_id, qty)
 
+    def add_roll_listener(self, listener) -> None:
+        """Subscribe to every dice result produced by this game state."""
+        self.dice.add_roll_listener(listener)
+
+    def remove_roll_listener(self, listener) -> None:
+        """Remove a game-state dice result listener."""
+        self.dice.remove_roll_listener(listener)
+
+    def request_roll(self, dice_notation: str, target: Optional[int] = None,
+                     source: str = "gameplay", context: Optional[Dict] = None) -> Dict:
+        """Request a roll from the session-owned dice service."""
+        result = self.dice.request_roll(dice_notation, target=target,
+                                         source=source, context=context)
+        details = ", ".join(str(value) for value in result["roll_details"])
+        self.message(f"{result['dice_notation']}: {result['roll_result']} [{details}]")
+        return result
+
+    def roll_for_event(self, dice_notation: str, target: Optional[int] = None,
+                       event: str = "gameplay", context: Optional[Dict] = None) -> Dict:
+        """Roll for a named gameplay event and return the complete result."""
+        return self.request_roll(dice_notation, target=target, source=event,
+                                  context=context)
+
+    def roll_for_quest(self, qid: str, dice_notation: Optional[str] = None,
+                       target: Optional[int] = None) -> Dict:
+        """Roll for an active quest and persist the result for its stage."""
+        if not self.quests.is_active(qid):
+            raise ValueError(f"Quest is not active: {qid}")
+        stage_index = self.quests.stage_of(qid)
+        quest = quests.get(qid)
+        stage = quest.stage(stage_index) if quest is not None else None
+        if stage is None or stage.condition_kind() != quests.COND_ROLL:
+            raise ValueError(f"Quest stage is not a dice objective: {qid}:{stage_index}")
+        notation = dice_notation or stage.condition_notation()
+        if target is None and stage is not None:
+            target = stage.condition_target_value()
+        result = self.request_roll(notation, target=target,
+                                   source=f"quest:{qid}",
+                                   context={"quest_id": str(qid), "stage": stage_index})
+        self.quests.record_roll(qid, stage_index, result)
+        return result
+
+    def roll_dice(self, dice_notation: str, target: Optional[int] = None) -> Dict:
+        """Roll a tabletop expression through the session-owned dice service."""
+        return self.request_roll(dice_notation, target=target, source="hud")
+
     # ----------------------------------------------------------------- combat
     def select_next_spell(self) -> Optional[str]:
         known = self.character.known_spells
@@ -160,7 +215,7 @@ class GameState:
         char = self.character
         w = eq.weapon(char)
         res = combat.player_attack(char, target_props, sneaking=self.sneaking,
-                                   draw=draw, rng=self.rng)
+                                   draw=draw, rng=self.rng, dice=self.dice)
         if res.get("no_ammo"):
             self.message("Out of arrows!")
             return res
@@ -195,7 +250,7 @@ class GameState:
         char = self.character
         if not char.active_spell:
             return magic.CastResult(False, "no spell selected")
-        res = magic.try_cast(char, char.active_spell, self.rng)
+        res = magic.try_cast(char, char.active_spell, self.rng, dice=self.dice)
         spell = res.spell
         if res.cast:
             if spell and spell.delivery == magic.SELF:
@@ -207,7 +262,25 @@ class GameState:
         elif res.reason == "not enough magicka":
             self.message("Not enough magicka")
         elif res.reason == "fizzle":
-            self.message(f"{spell.name if spell else 'Spell'} fizzles!")
+            spell_name = spell.name if spell else "Spell"
+            roll = res.roll or {}
+            if roll:
+                notation = escape(str(roll.get("dice_notation", "1d100")))
+                rolled = escape(str(roll.get("roll_result", "?")))
+                target = escape(str(roll.get("target", "?")))
+                debug_log(
+                    "Magic",
+                    f'<span style="color: #42A5F5; font-weight: bold;">'
+                    f'{escape(str(spell_name))}</span> '
+                    f'<span style="color: #FF7043; font-weight: bold;">fizzled</span>: '
+                    f'dice roll too low — '
+                    f'<span style="color: #FFFFFF;">{notation}</span> = '
+                    f'<span style="color: #69F0AE; font-weight: bold;">{rolled}</span> '
+                    f'(target ≥ <span style="color: #FFEE58; font-weight: bold;">'
+                    f'{target}</span>)')
+                self.message(f"{spell_name} fizzles: rolled {rolled}; target {target}.")
+            else:
+                self.message(f"{spell_name} fizzles!")
         return res
 
     def resolve_spell_on_creature(self, spell: magic.Spell, target_props: Dict) -> Dict:
@@ -240,7 +313,8 @@ class GameState:
         table = target_props.get("loot") or (creature.loot if creature else "")
         if table:
             stacks, gold = loot_mod.roll(table, self.character.level, self.rng,
-                                         self.character.attrs.get("luck", 40))
+                                         self.character.attrs.get("luck", 40),
+                                         dice=self.dice)
             for s in stacks:
                 inv.add_item(self.character.inventory, s)
             if stacks:

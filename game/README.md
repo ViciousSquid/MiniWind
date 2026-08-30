@@ -38,7 +38,7 @@ Guild.
 | Key | Action | Key | Action |
 |-----|--------|-----|--------|
 | **WASD** | Move | **E** (use) | Talk / interact |
-| **F** / Space | Attack (melee swing / loose an arrow) | **R** | Cast active spell |
+| **Y** | Cycle die type | **D** | Roll selected die |
 | **X** | Cycle active spell | **B** (hold) | Block |
 | **V** | Toggle sneak | **H** | Quick-drink a healing potion |
 | **I** | Inventory & equipment | **C** | Character sheet |
@@ -101,7 +101,7 @@ game/
   entities.py       the NPC/creature entity + GameSettings + Marker (reads the bestiary)
   runtime.py        the play session: NPC AI, player combat/cast/interact verbs
   editor_ui.py      Property-Manager Inventory / Dialogue / Quests tabs (Qt)
-  rpg/              THE GAME (pure Python, engine-agnostic, fully unit-tested)
+  diceroll.py    headless dice service (d4–d20, modifiers, history, probabilities)
     attributes, skills, races, classes, birthsigns, character, (leveling in character)
     items, equipment, combat, magic, quests, quests_content, guilds, loot, bestiary
     authoring.py    the dialogue condition/action grammar (editor <-> runtime)

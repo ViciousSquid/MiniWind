@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Callable, Optional, Set
 from enum import Enum
 import time
+import json
 
 # Import debug logger - with fallback to print if not available
 try:
@@ -192,6 +193,8 @@ class IOManager:
         
         self._logic_thread = None
         self._game_state = None
+        self._dice_roller = None
+        self.last_dice_result = None
     
     def set_logic_thread(self, logic_thread):
         """Set reference to logic thread."""
@@ -201,10 +204,34 @@ class IOManager:
         """Set reference to game state for sound queue access."""
         self._game_state = game_state
     
-    def get_game_state(self):
-        """Get the game state reference."""
-        return self._game_state
-    
+    def set_dice_roller(self, dice_roller) -> None:
+        """Bind the session-owned dice service used by authored I/O events."""
+        self._dice_roller = dice_roller
+
+    def request_dice_roll(self, dice_notation: str, target: Optional[int] = None,
+                          source_entity=None, output_name: str = "OnDiceRolled",
+                          context: Optional[Dict] = None):
+        """Roll through the bound service and route the result through I/O.
+
+        The result is returned to the caller and, when ``source_entity`` is set,
+        serialized as the dynamic output value for parameter pass-through.
+        """
+        roller = self._dice_roller or getattr(self._game_state, "dice", None)
+        if roller is None:
+            debug_log("Error", "I/O: No dice service is bound")
+            return None
+        source_name = self._get_entity_name(source_entity) if source_entity is not None else "io"
+        result = roller.request_roll(dice_notation, target=target,
+                                     source=f"io:{source_name}", context=context)
+        self.last_dice_result = result
+        if source_entity is not None:
+            value = json.dumps(result, separators=(",", ":"), sort_keys=True)
+            self.fire_output(source_entity, output_name, value)
+            if target is not None:
+                follow_up = "OnDiceSuccess" if result.get("success") else "OnDiceFailure"
+                self.fire_output(source_entity, follow_up, value)
+        return result
+
     def set_entity_finder(self, finder: Callable):
         """
         Set the function used to find entities by name.
@@ -233,6 +260,7 @@ class IOManager:
         """Reset for new play session."""
         self.pending_events.clear()
         self.current_time = 0.0
+        self.last_dice_result = None
     
     def fire_output(self, source_entity, output_name: str, value: str = None):
         """
@@ -326,7 +354,7 @@ class IOManager:
         
         if handler:
             try:
-                handler(target, parameter, self._logic_thread)
+                return handler(target, parameter, self._logic_thread)
             except Exception as e:
                 debug_log("Error", f"{entity_type}.{input_name} handler failed: {e}")
                 import traceback
@@ -337,7 +365,23 @@ class IOManager:
     def _try_generic_input(self, entity, input_name: str, parameter: str):
         """Try generic input handling for common patterns."""
         input_lower = input_name.lower()
-        
+
+        if input_lower in ('rolldice', 'requestroll'):
+            parts = [part.strip() for part in str(parameter or '').split(',', 1)]
+            notation = parts[0] or '1d20'
+            target = None
+            if len(parts) > 1 and parts[1]:
+                try:
+                    target = int(parts[1])
+                except ValueError:
+                    io_log(f"Invalid dice target: {parts[1]}")
+                    return
+            try:
+                self.request_dice_roll(notation, target=target, source_entity=entity)
+            except (ValueError, TypeError) as exc:
+                io_log(f"Dice roll rejected: {exc}")
+            return
+
         # Generic enable/disable
         if input_lower == 'enable':
             if isinstance(entity, dict):
@@ -842,11 +886,25 @@ def register_default_io():
             IODef('OnCompareFalse','Fired when TestValue comparison fails (param: actual value)'),
         ]
     )
+    # === DICE ROLLING -------------------------------------------------------
+    # Every authored entity can request a roll.  The runtime binds the active
+    # game's DiceRoller to IOManager, so this remains engine-level plumbing.
+    dice_input = IODef('RollDice', 'Roll dice (parameter: notation[,target])', 'string')
+    dice_outputs = [
+        IODef('OnDiceRolled', 'Fired with the JSON dice result'),
+        IODef('OnDiceSuccess', 'Fired when a targeted roll succeeds'),
+        IODef('OnDiceFailure', 'Fired when a targeted roll fails'),
+    ]
+    for io_defs in IO_REGISTRY.values():
+        if not any(item.name.lower() == 'rolldice' for item in io_defs['inputs']):
+            io_defs['inputs'].append(dice_input)
+        existing = {item.name.lower() for item in io_defs['outputs']}
+        io_defs['outputs'].extend(item for item in dice_outputs
+                                  if item.name.lower() not in existing)
 
 
-# =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
+# Register the stock definitions during import, as before.
+
 
 def add_connection(entity, connection: OutputConnection):
     """Add an output connection to an entity."""

@@ -91,18 +91,26 @@ def _patch_editor_menu():
 
 
 def _add_tools_menu_entries(MainWindow):
-    """Add MiniWind's Spell Editor to the editor's existing Tools menu."""
+    """Add MiniWind's spell editor and dice test tool to the Tools menu."""
     tools = getattr(MainWindow, "tools_menu", None)
     if tools is None:
         return
-    if getattr(tools, "_miniwind_spell_editor_added", False):
-        return
-    tools.addSeparator()
-    act = tools.addAction("Spell Editor…")
-    act.setToolTip("Edit MiniWind spell definitions — name, element, projectile "
-                   "colour, damage, cost and speed.")
-    act.triggered.connect(lambda _checked=False: _open_spell_editor(MainWindow))
-    tools._miniwind_spell_editor_added = True
+
+    if not getattr(tools, "_miniwind_spell_editor_added", False):
+        tools.addSeparator()
+        spell_action = tools.addAction("Spell Editor…")
+        spell_action.setToolTip("Edit MiniWind spell definitions — name, element, projectile "
+                                "colour, damage, cost and speed.")
+        spell_action.triggered.connect(lambda _checked=False: _open_spell_editor(MainWindow))
+        tools._miniwind_spell_editor_added = True
+
+    if not getattr(tools, "_miniwind_dice_test_added", False):
+        dice_action = tools.addAction("Dice Roll Test…")
+        dice_action.setToolTip("Roll a tabletop dice expression and print the result in "
+                               "the Debug Console.")
+        dice_action.triggered.connect(lambda _checked=False: _open_dice_test(MainWindow))
+        tools._miniwind_dice_test_added = True
+
 
 
 def _open_spell_editor(MainWindow):
@@ -113,6 +121,59 @@ def _open_spell_editor(MainWindow):
             MainWindow.show_toast("Spells saved to game/data/spells.json")
     except Exception as exc:
         _log(f"Spell Editor failed to open: {exc}")
+
+def _open_dice_test(MainWindow):
+    """Open the dice test dialog and route each roll through the Debug Console."""
+    from PyQt5.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
+
+    dialog = QDialog(MainWindow)
+    dialog.setWindowTitle("Dice Roll Test")
+    dialog.setMinimumWidth(360)
+    layout = QVBoxLayout(dialog)
+
+    layout.addWidget(QLabel("Dice notation (for example: 1d20+2d6+3):"))
+    notation_edit = QLineEdit("1d20")
+    notation_edit.selectAll()
+    layout.addWidget(notation_edit)
+
+    options = QHBoxLayout()
+    animate_check = QCheckBox("Animate")
+    animate_check.setChecked(True)
+    animate_check.setToolTip("Show the shake / roll / fade presentation in the game HUD.")
+    options.addWidget(animate_check)
+    options.addStretch()
+    layout.addLayout(options)
+
+    buttons = QDialogButtonBox(QDialogButtonBox.Close)
+    roll_button = QPushButton("Roll")
+    buttons.addButton(roll_button, QDialogButtonBox.AcceptRole)
+    buttons.rejected.connect(dialog.reject)
+    roll_button.clicked.connect(lambda: _run_dice_test(MainWindow, notation_edit, animate_check))
+    notation_edit.returnPressed.connect(roll_button.click)
+    layout.addWidget(buttons)
+
+    MainWindow._dice_test_dialog = dialog
+    dialog.finished.connect(lambda _result: setattr(MainWindow, "_dice_test_dialog", None))
+    dialog.show()
+    dialog.raise_()
+    dialog.activateWindow()
+
+
+def _run_dice_test(MainWindow, notation_edit, animate_check):
+    """Submit one dice test to the normal console command dispatcher."""
+    notation = notation_edit.text().strip() or "1d20"
+    command = f"diceroll {notation}"
+    if animate_check.isChecked():
+        command += " --animate"
+    _run_console_command(MainWindow, command)
+    try:
+        tab = MainWindow.properties_tab_widget
+        console = MainWindow.debug_console
+        index = tab.indexOf(console)
+        if index >= 0:
+            tab.setCurrentIndex(index)
+    except Exception:
+        pass
 
 
 def _build_session_menu(MainWindow):

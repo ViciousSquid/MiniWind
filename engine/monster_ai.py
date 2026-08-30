@@ -9,9 +9,11 @@ import threading
 import time
 import glm
 import math
+import json
+from html import escape
 from typing import Dict, List, Any, Optional, Tuple
 from editor.debug_console import debug_log
-from .constants import is_water_brush
+from game.diceroll import DICE_TYPES
 from .monster_constants import (
     MONSTER_SIGHT_RANGE,
     MONSTER_SHOOT_INTERVAL,
@@ -61,6 +63,42 @@ class MonsterAI:
     def set_spatial_grid(self, grid):
         """Called by LogicThread after populating the grid."""
         self._grid = grid
+
+    @staticmethod
+    def _attack_damage_notation(maximum: int) -> str:
+        """Return a supported dice expression whose maximum covers *maximum*."""
+        maximum = max(1, int(maximum))
+        best = None
+        for sides in DICE_TYPES:
+            count = max(1, math.ceil(maximum / sides))
+            candidate = (count * sides, count, -sides, sides)
+            if best is None or candidate[:3] < best[:3]:
+                best = candidate
+        return f"{best[1]}d{best[3]}"
+
+    def _roll_attack_damage(self, attacker, maximum: int, attack_style: str):
+        """Roll an actor's damage through MiniWind's shared dice service."""
+        maximum = int(maximum)
+        if maximum < 2:
+            return max(0, maximum), None
+        session = getattr(self.lt, "_miniwind", None)
+        dice = getattr(getattr(session, "game", None), "dice", None)
+        if dice is None:
+            return maximum, None
+        name = str(attacker.properties.get("name", "monster"))
+        notation = self._attack_damage_notation(maximum)
+        result = dice.request_roll(
+            notation, source="monster.attack",
+            context={"attacker": name, "attack_style": attack_style})
+        return int(result["roll_result"]), result
+
+    @staticmethod
+    def _attack_target_name(aggro_monster):
+        """Return a readable target label for combat logging."""
+        if aggro_monster is not None:
+            return str(aggro_monster.properties.get("name", "monster"))
+        return "player"
+
 
     @staticmethod
     def _face_dir(thing, direction) -> None:
@@ -348,13 +386,19 @@ class MonsterAI:
                     self._update_monster_patrol(thing, state, mtype, delta)
                 continue
 
-            # ---- Line of sight check ----
+            # Distance is needed for the sight-range decision regardless of LOS.
+            # Avoid a spatial ray query for targets that cannot be engaged; debug
+            # visualization deliberately retains the full LOS check.
+            _dist_diff = thing_pos - target_pos
+            distance_sq = glm.dot(_dist_diff, _dist_diff)
+            in_sight_range = distance_sq <= sight * sight
+
             monster_eye = glm.vec3(thing_pos.x, thing_pos.y + 64.0, thing_pos.z)
             if aggro_monster is not None:
                 target_eye = glm.vec3(target_pos.x, target_pos.y + 64.0, target_pos.z)
             else:
                 target_eye = glm.vec3(player_pos.x, player_pos.y + self.lt.player.camera_height, player_pos.z)
-            has_los = self._has_line_of_sight(monster_eye, target_eye)
+            has_los = self._has_line_of_sight(monster_eye, target_eye) if (in_sight_range or self.monster_debug_active) else False
 
             if self.monster_debug_active:
                 self._debug_rays.append({
@@ -363,11 +407,7 @@ class MonsterAI:
                     'color': 'green' if has_los else 'red',
                 })
 
-            # PERF: squared distance — every use below is a threshold compare.
-            _dist_diff = thing_pos - target_pos
-            distance_sq = glm.dot(_dist_diff, _dist_diff)
-
-            if distance_sq <= sight * sight:
+            if in_sight_range:
                 # ---- Entered sight range ----
                 if not state['in_sight']:
                     state['in_sight'] = True
@@ -436,7 +476,9 @@ class MonsterAI:
                     state['shoot_timer'] = MONSTER_SHOOT_INTERVAL
                     state['anim_timer'] = MONSTER_SHOOT_ANIM_TIME
 
-                    damage = int(thing.properties.get('damage', 20))
+                    authored_damage = int(thing.properties.get('damage', 20))
+                    damage, attack_roll = self._roll_attack_damage(
+                        thing, authored_damage, attack_style or mtype)
                     sound_file = MONSTER_SHOOT_SOUNDS.get(mtype, MONSTER_SHOOT_SOUND_DEFAULT)
 
                     if attack_style == 'melee':
@@ -495,6 +537,38 @@ class MonsterAI:
                             else:
                                 self.lt._apply_player_damage(damage)
 
+                    target_name = self._attack_target_name(aggro_monster)
+                    attack_payload = {
+                        'attacker': thing.properties.get('name', 'monster'),
+                        'target': target_name,
+                        'damage': damage,
+                        'attack_style': attack_style or mtype,
+                    }
+                    if attack_roll is not None:
+                        attack_payload['dice'] = attack_roll
+                        attack_payload['damage_roll'] = attack_roll
+                    attacker_label = escape(str(attack_payload['attacker']))
+                    target_label = escape(str(target_name))
+                    if attack_roll is not None:
+                        dice_label = escape(str(attack_roll['dice_notation']))
+                        result_label = escape(str(attack_roll['roll_result']))
+                        attack_message = (
+                            f'<span style="color: #42A5F5; font-weight: bold;">'
+                            f'{attacker_label}</span> attacked {target_label} for '
+                            f'<span style="color: #FF7043; font-weight: bold;">'
+                            f'{damage} damage</span> '
+                            f'(<span style="color: #FFFFFF;">{dice_label}</span> = '
+                            f'<span style="color: #69F0AE; font-weight: bold;">'
+                            f'{result_label}</span>)')
+                    else:
+                        attack_message = (
+                            f'<span style="color: #42A5F5; font-weight: bold;">'
+                            f'{attacker_label}</span> attacked {target_label} for '
+                            f'<span style="color: #FF7043; font-weight: bold;">'
+                            f'{damage} damage</span>')
+                    debug_log("Roll" if attack_roll is not None else "IO", attack_message)
+
+
                     self.lt.game_state.queue_sound({
                         'file': sound_file,
                         'volume': 0.6,
@@ -502,7 +576,9 @@ class MonsterAI:
                     })
 
                     if self.lt.io_manager:
-                        self.lt.io_manager.fire_output(thing, 'OnAttack')
+                        self.lt.io_manager.fire_output(
+                            thing, 'OnAttack',
+                            json.dumps(attack_payload, separators=(',', ':')))
 
                     if self.monster_debug_active:
                         name = thing.properties.get('name', '?')

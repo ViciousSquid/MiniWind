@@ -209,7 +209,7 @@ def normalize_color(rgb, default=None):
 
 # ---------- Base Renderer ----------
 class BaseRenderer:
-    MAX_LIGHTS = 32
+    MAX_LIGHTS = 8
     MAX_PORTALS = 4      # maximum portal apertures rendered per frame
 
     # How many times a portal may be seen recursively through another portal.
@@ -226,7 +226,7 @@ class BaseRenderer:
     PORTAL_NEAR_STRADDLE = 24.0
 
     # --- Depth cube-map shadow mapping (omnidirectional point-light shadows) ---
-    MAX_SHADOW_LIGHTS = 8          # number of point lights that can cast shadows at once
+    MAX_SHADOW_LIGHTS = 4          # must match the GLSL sampler-array capacity
     SHADOW_MAP_SIZE = 384         # per-face resolution of each depth cube-map
     SHADOW_TEXTURE_UNIT_BASE = 4   # shadow cube-maps bind to units 4..(4+MAX_SHADOW_LIGHTS-1)
 

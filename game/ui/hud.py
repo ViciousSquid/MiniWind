@@ -7,15 +7,20 @@ floating combat text. Drawn every frame via the plugin's ``render.overlay`` hook
 from __future__ import annotations
 
 import math
+import os
+from types import SimpleNamespace
 
 from PyQt5.QtCore import QRect, QRectF, Qt
-from PyQt5.QtGui import QColor, QPolygon, QPen, QConicalGradient
+from PyQt5.QtGui import QColor, QPixmap, QPolygon, QPen, QConicalGradient
 from PyQt5.QtCore import QPoint, QPointF
 
 from . import theme as T
 from ..rpg import equipment as eq
 from ..rpg import items as rpg_items
 from ..rpg import magic as rpg_magic
+from ..runtime import DICE_ANIMATION_SHAKE, DICE_ANIMATION_ROLL, DICE_ANIMATION_FADE
+
+DICE_RESULT_HOLD_DURATION = 1.0
 
 
 def draw(painter, session, width, height):
@@ -31,6 +36,7 @@ def draw(painter, session, width, height):
     _draw_compass(painter, session, width, height)
     _draw_target(painter, session, width, height)
     _draw_status_flags(painter, session, c, width, height)
+    _draw_dice_roll(painter, session, width, height)
     _draw_notifications(painter, session, width, height)
     _draw_floaters(painter, session, width, height)
     _draw_interact_prompt(painter, session, width, height)
@@ -401,6 +407,191 @@ def _draw_target(painter, session, width, height):
     T.text_in(painter, QRect(cx - 150, y, 300, 18), name, size=12,
               color=T.GOLD_BRIGHT, align=T.ALIGN_CENTER, bold=True)
     T.bar(painter, cx - 110, y + 20, 220, 10, hp / maxhp if maxhp else 0, T.HEALTH)
+
+def draw_dice_preview(painter, animation, width, height):
+    """Draw the dice panel for an editor-side preview animation."""
+    _draw_dice_roll(painter, SimpleNamespace(dice_animation=animation), width, height)
+
+
+_DICE_IMAGE_CACHE = {}
+_DICE_MAX_COLUMNS = 6
+
+
+def _dice_image(filename):
+    """Load and cache one dice image from the project's dice asset folder."""
+    cached = _DICE_IMAGE_CACHE.get(filename)
+    if cached is not None:
+        return cached
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    path = os.path.join(root, "assets", "dice_imgs", filename)
+    image = QPixmap(path)
+    if image.isNull():
+        return None
+    _DICE_IMAGE_CACHE[filename] = image
+    return image
+
+
+def _dice_face_image(value):
+    """Return a valid d6 face image, falling back to a known face asset."""
+    value = max(1, min(6, int(value)))
+    image = _dice_image(f"d6_{value}.png")
+    if image is not None:
+        return image
+    return _dice_image("d6_1.png")
+
+
+def _dice_entries(result):
+    """Expand result components into one visual entry per physical die."""
+    entries = []
+    for component in result.get("components", []) or []:
+        notation = str(component.get("notation", "")).lower().replace(" ", "")
+        if "d" not in notation:
+            continue
+        try:
+            sides = int(notation.split("d", 1)[1])
+        except (TypeError, ValueError):
+            continue
+        values = component.get("roll_details") or []
+        for value in values:
+            entries.append({"sides": max(2, sides), "value": int(value)})
+    if entries:
+        return entries
+    return [{"sides": 20, "value": int(value)}
+            for value in result.get("roll_details", [])]
+
+
+def _prepare_dice_animation(animation, result):
+    """Create independent timing and motion data for every displayed die."""
+    if "dice_visuals" in animation:
+        return animation["dice_visuals"]
+    visuals = []
+    for index, entry in enumerate(_dice_entries(result)):
+        seed = index * 47 + entry["sides"] * 13 + entry["value"] * 7
+        visuals.append({
+            "sides": entry["sides"],
+            "value": entry["value"],
+            "delay": 0.04 * index + (seed % 9) * 0.012,
+            "roll_duration": 0.78 + (seed % 19) * 0.018,
+            "phase": (seed % 31) * 0.37,
+            "tilt": -7.0 + (seed % 15),
+            "x_offset": -3.0 + (seed % 7),
+            "y_offset": -2.0 + (seed % 5),
+        })
+    animation["dice_visuals"] = visuals
+    return visuals
+
+
+def _draw_dice_image(painter, image, center_x, center_y, size, angle, alpha):
+    """Draw a scaled, independently rotated dice image."""
+    if image is None or image.isNull():
+        return
+    scaled = image.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    painter.save()
+    painter.setOpacity(max(0.0, min(1.0, alpha / 255.0)))
+    painter.translate(center_x, center_y)
+    painter.rotate(angle)
+    painter.drawPixmap(-scaled.width() // 2, -scaled.height() // 2, scaled)
+    painter.restore()
+
+
+def _draw_dice_roll(painter, session, width, height):
+    """Draw asset-backed dice with staggered timing and independent motion."""
+    animation = getattr(session, "dice_animation", None)
+    if not animation:
+        return
+    result = animation.get("result") or {}
+    visuals = _prepare_dice_animation(animation, result)
+    if not visuals:
+        return
+
+    elapsed = float(animation.get("elapsed", 0.0))
+    duration = max(0.1, float(animation.get(
+        "duration", DICE_ANIMATION_SHAKE + DICE_ANIMATION_ROLL +
+        DICE_ANIMATION_FADE + DICE_RESULT_HOLD_DURATION)))
+    settle_time = max((d["delay"] + d["roll_duration"] for d in visuals), default=0.0)
+    fade_start = max(DICE_ANIMATION_SHAKE + DICE_ANIMATION_ROLL, settle_time) + DICE_RESULT_HOLD_DURATION
+    alpha = 255
+    if elapsed > fade_start:
+        alpha = max(0, int((fade_start + DICE_ANIMATION_FADE - elapsed) /
+                           DICE_ANIMATION_FADE * 255))
+    if alpha <= 0:
+        return
+
+    notation = str(result.get("dice_notation", "1d20"))
+    count = len(visuals)
+    columns = min(_DICE_MAX_COLUMNS, max(1, count))
+    rows = (count + columns - 1) // columns
+    die_size = 86 if count <= 4 else 72
+    gap = 12
+    panel_w = max(340, columns * die_size + (columns - 1) * gap + 40)
+    panel_h = 76 + rows * (die_size + gap) + 34
+    panel_x = (width - panel_w) // 2
+    panel_y = max(58, height - panel_h - 34)
+
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    panel_col = QColor(16, 15, 24, min(244, alpha))
+    painter.setPen(QPen(QColor(150, 122, 64, alpha), 2))
+    painter.setBrush(panel_col)
+    painter.drawRoundedRect(QRect(panel_x, panel_y, panel_w, panel_h), 10, 10)
+    T.text_in(painter, QRect(panel_x + 12, panel_y + 10, panel_w - 24, 20),
+              f"DICE  {notation}", size=10,
+              color=QColor(226, 224, 236, alpha), align=T.ALIGN_CENTER,
+              bold=True, family="Segoe UI")
+
+    settled = True
+    start_y = panel_y + 68
+    for index, die in enumerate(visuals):
+        row, column = divmod(index, columns)
+        center_x = panel_x + 20 + die_size // 2 + column * (die_size + gap)
+        center_y = start_y + die_size // 2 + row * (die_size + gap)
+        local = elapsed - die["delay"]
+        rolling = local < die["roll_duration"]
+        if rolling:
+            settled = False
+            frame = int(max(0.0, local) * 19.0 + die["phase"])
+            shown_value = frame % die["sides"] + 1
+            wobble = math.sin(max(0.0, local) * 24.0 + die["phase"])
+            angle = die["tilt"] * wobble
+            motion = math.sin(max(0.0, local) * 17.0 + die["phase"])
+            draw_alpha = alpha
+        else:
+            shown_value = die["value"]
+            settle = min(1.0, max(0.0, (local - die["roll_duration"]) / 0.24))
+            wobble = math.sin(local * 13.0 + die["phase"]) * (1.0 - settle)
+            angle = die["tilt"] * wobble
+            motion = math.sin(local * 11.0 + die["phase"]) * (1.0 - settle)
+            draw_alpha = alpha
+        x = int(center_x + die["x_offset"] * wobble)
+        y = int(center_y + die["y_offset"] * motion)
+        if die["sides"] == 6:
+            image = _dice_face_image(shown_value)
+        else:
+            image = _dice_image(f"blank_d{die['sides']}.png")
+        if image is None:
+            painter.save()
+            painter.setOpacity(max(0.0, min(1.0, alpha / 255.0)))
+            painter.setPen(QPen(QColor(80, 140, 210, alpha), 2))
+            painter.setBrush(QColor(35, 85, 150, alpha))
+            painter.drawRoundedRect(QRect(x - die_size // 2, y - die_size // 2,
+                                          die_size, die_size), 10, 10)
+            painter.restore()
+        _draw_dice_image(painter, image, x, y, die_size, angle, draw_alpha)
+        if image is None or die["sides"] != 6:
+            T.text_in(painter, QRect(x - die_size // 3, y - 15, 2 * die_size // 3, 30),
+                      str(shown_value), size=20 if count <= 4 else 17,
+                      color=QColor(255, 248, 230, alpha), align=T.ALIGN_CENTER,
+                      bold=True, family="Segoe UI")
+
+    if settled:
+        T.text_in(painter, QRect(panel_x + 12, panel_y + panel_h - 30,
+                                panel_w - 24, 22),
+                  f"TOTAL  {result.get('roll_result', 0)}", size=12,
+                  color=QColor(255, 214, 130, alpha), align=T.ALIGN_CENTER,
+                  bold=True, family="Segoe UI")
+    painter.restore()
+
+
 
 
 def _draw_notifications(painter, session, width, height):

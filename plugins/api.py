@@ -54,7 +54,7 @@ from __future__ import annotations
 import math
 import time as _time
 from dataclasses import dataclass, field
-from typing import Any, Callable, List, Optional, Tuple, Type
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
 
 #: Version of the plugin API surface this module implements. Compare against
@@ -545,10 +545,15 @@ class RuntimeAPI:
 
         self.io_manager.register_input_handler(entity_type, input_name, gated)
 
-    def fire_output(self, entity, output_name: str, value: Optional[str] = None):
-        """Fire an output from *entity* through the I/O system (if available)."""
-        if self.io_manager is not None:
-            self.io_manager.fire_output(entity, output_name, value)
+    def request_dice_roll(self, dice_notation: str, target: Optional[int] = None,
+                          source_entity=None, output_name: str = "OnDiceRolled",
+                          context: Optional[Dict] = None):
+        """Request a shared gameplay roll and optionally route it through I/O."""
+        if self.io_manager is None:
+            return None
+        return self.io_manager.request_dice_roll(
+            dice_notation, target=target, source_entity=source_entity,
+            output_name=output_name, context=context)
 
     # -- scene queries ------------------------------------------------------
     def _things(self):

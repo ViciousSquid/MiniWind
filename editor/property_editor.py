@@ -1,4 +1,4 @@
-import os
+from typing import Optional
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QLineEdit, QSpinBox,
                              QFormLayout, QCheckBox, QComboBox, QPushButton,
                              QHBoxLayout, QColorDialog, QFileDialog, QGridLayout,
@@ -1060,6 +1060,10 @@ class PropertyEditor(QWidget):
         props_tab = self._create_thing_properties_tab(thing)
         self.tab_widget.addTab(props_tab, "Properties")
 
+        advanced_tab = self._create_thing_advanced_tab(thing)
+        if advanced_tab is not None:
+            self.tab_widget.addTab(advanced_tab, "Advanced")
+
         if IO_AVAILABLE:
             etype = get_entity_type_for_io(thing)
             if etype and etype in IO_REGISTRY:
@@ -1137,18 +1141,26 @@ class PropertyEditor(QWidget):
         if isinstance(thing, Monster):
             self._build_monster_groups(tab_layout, thing)
 
-        # Everything else — the long tail of generic fields — folds into a
-        # titled, collapsible card so the panel no longer opens as one flat list.
+        tab_layout.addStretch()
+        return w
+
+    def _create_thing_advanced_tab(self, thing) -> Optional[QWidget]:
+        """Build the dedicated tab for generic and less frequently used fields."""
         adv_form = QFormLayout()
         adv_form.setSpacing(4)
         self._iterate_thing_properties(adv_form, thing)
         n = adv_form.rowCount()
-        if n > 0:
-            section = CollapsibleSection("Other Properties", expanded=(n <= 9),
-                                         count=n)
-            section.addLayout(adv_form)
-            tab_layout.addWidget(section)
+        if n == 0:
+            return None
 
+        w = QWidget()
+        tab_layout = QVBoxLayout(w)
+        tab_layout.setContentsMargins(8, 8, 8, 8)
+        tab_layout.setSpacing(4)
+
+        section = CollapsibleSection("Other Properties", expanded=(n <= 9), count=n)
+        section.addLayout(adv_form)
+        tab_layout.addWidget(section)
         tab_layout.addStretch()
         return w
 

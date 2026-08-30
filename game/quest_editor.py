@@ -37,6 +37,9 @@ GOAL_KINDS = [
                                  "of a type/role are slain.", "⚔️"),
     ("visit", "Visit a place",   "The stage completes when the player reaches "
                                  "a location marker on the map.", "📍"),
+    ("roll",  "Pass a dice check", "The stage completes when the shared dice "
+                                  "service meets a target total.", "🎲"),
+
     ("none",  "Scripted",        "The stage only advances when your dialogue "
                                  "runs 'advance_quest'.", "📜"),
 ]
@@ -48,6 +51,8 @@ GOAL_DESC = {k: d for k, _l, d, _e in GOAL_KINDS}
 GOAL_TARGET_HINT = {
     "none":  "(no target — advanced by a dialogue 'advance_quest')",
     "talk":  "NPC name or role, e.g. Bob  /  blacksmith",
+    "roll":  "dice notation, e.g. 1d20  (minimum target is set below)",
+
     "fetch": "item id, e.g. iron_sword",
     "kill":  "monster_type / npc_role / name, e.g. wolf",
     "visit": "location name, e.g. Old Cave",
@@ -177,9 +182,9 @@ def _cond_phrase(cond):
         return f"🎒 Fetch {cnt}× {tgt or '?'}"
     if kind == "talk":
         return f"💬 Talk to {tgt or '?'}"
-    if kind == "visit":
-        return f"📍 Visit {tgt or '?'}"
-    return ""
+    if kind == "roll":
+        notation = (cond or {}).get("notation", "1d20")
+        return f"🎲 Roll {notation} ≥ {tgt or '?'}"
 
 
 def goal_summary(quest):
@@ -201,7 +206,8 @@ def goal_summary(quest):
 
 
 def build_wizard_quest(existing, *, name, giver, desc, goal_kind, target,
-                       count, gold, xp, item, item_qty, faction=""):
+                       count, gold, xp, item, item_qty, faction="",
+                       roll_notation="1d20", roll_target=10):
     """Assemble a complete quest dict (identity + two staged journal entries +
     completion condition + rewards) from the wizard's plain answers. Pure — no
     Qt, no scene side effects — so it's easy to test."""
@@ -217,15 +223,19 @@ def build_wizard_quest(existing, *, name, giver, desc, goal_kind, target,
     q["rewards"] = rewards
 
     kind = goal_kind if goal_kind in GOAL_LABEL else "none"
-    obj = _default_objective(kind, target, count)
+    obj = _default_objective(kind, target, count, roll_notation)
     start_journal = desc or f"{name}."
+    condition = {"kind": kind, "target": str(target or ""),
+                 "count": int(count or 1)}
+    if kind == "roll":
+        condition["notation"] = str(roll_notation or "1d20").strip()
+        condition["target"] = int(roll_target or 1)
     do_stage = {
         "index": 0,
         "journal": start_journal,
         "objective": obj,
         "finishes": False,
-        "condition": {"kind": kind, "target": str(target or ""),
-                      "count": int(count or 1)},
+        "condition": condition,
     }
     done_stage = {
         "index": 10,
@@ -240,7 +250,7 @@ def build_wizard_quest(existing, *, name, giver, desc, goal_kind, target,
     return q
 
 
-def _default_objective(kind, target, count):
+def _default_objective(kind, target, count, notation="1d20"):
     if kind == "kill":
         return f"Kill {count} {target}".strip()
     if kind == "fetch":
@@ -249,6 +259,8 @@ def _default_objective(kind, target, count):
         return f"Speak with {target}".strip()
     if kind == "visit":
         return f"Travel to {target}".strip()
+    if kind == "roll":
+        return f"Pass a dice check ({notation or '1d20'})"
     return "Follow the quest"
 
 
@@ -472,8 +484,11 @@ def _classes():
             bf = QtWidgets.QFormLayout(box)
             self.w_target = QtWidgets.QLineEdit()
             self.w_count = QtWidgets.QSpinBox(); self.w_count.setRange(1, 100000)
+            self.w_roll_target = QtWidgets.QSpinBox(); self.w_roll_target.setRange(1, 100000)
+            self.w_roll_target.setValue(10)
             bf.addRow("Target", self.w_target)
             bf.addRow("How many", self.w_count)
+            bf.addRow("Dice minimum", self.w_roll_target)
             v.addWidget(box)
             self._target_box = box
             self._pick_goal("kill")
@@ -484,8 +499,9 @@ def _classes():
             for k, card in self._goal_cards.items():
                 card.set_selected(k == kind)
             self.w_target.setPlaceholderText(GOAL_TARGET_HINT.get(kind, ""))
-            self.w_target.setEnabled(kind != "none")
+            self.w_target.setEnabled(kind not in ("none",))
             self.w_count.setEnabled(kind in ("kill", "fetch"))
+            self.w_roll_target.setEnabled(kind == "roll")
 
         # -- page 3: rewards -------------------------------------------------
         def _page_reward(self):
@@ -566,6 +582,8 @@ def _classes():
                 xp=self.w_xp.value(),
                 item=self.w_item.text().strip(),
                 item_qty=self.w_item_qty.value(),
+                roll_notation=self.w_target.text().strip(),
+                roll_target=self.w_roll_target.value(),
             )
             # Scene side-effects (guarded — never block quest creation).
             if (self._goal_kind == "visit" and self.w_make_marker.isChecked()

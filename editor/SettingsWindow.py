@@ -24,6 +24,7 @@ class SettingsWindow(QDialog):
         self.tabs = QTabWidget()
         self.layout.addWidget(self.tabs)
         
+        self._create_game_tab()
         self._create_editor_tab()
         self._create_display_tab()
         self._create_play_modes_tab()
@@ -66,6 +67,24 @@ class SettingsWindow(QDialog):
         
         self.load_settings()
         self._apply_stylesheet()
+    def _create_game_tab(self):
+        """Create settings shared by the MiniWind gameplay systems."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        self.tabs.addTab(widget, "GAME")
+
+        dice_group = QGroupBox("Dice")
+        dice_layout = QVBoxLayout(dice_group)
+        self.visualise_dice_rolls_checkbox = QCheckBox("Visualise dice rolls")
+        self.visualise_dice_rolls_checkbox.setToolTip(
+            "Show the dice visualisation for every dice roll during gameplay, "
+            "including combat, magic, quests, loot, and I/O events."
+        )
+        dice_layout.addWidget(self.visualise_dice_rolls_checkbox)
+        layout.addWidget(dice_group)
+        layout.addStretch()
+
+
 
     def _create_editor_tab(self):
         widget = QWidget()
@@ -525,7 +544,9 @@ class SettingsWindow(QDialog):
             QCheckBox::indicator:checked:hover {
                 background-color: #b52316;
                 image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'><path fill='white' d='M6 12.5l-4-4 1.4-1.4L6 9.7l6.6-6.6L14 4.5z'/></svg>");
-                image-position: center;
+                         
+                 image-position: center;
+
             }
             QCheckBox::indicator:unchecked:hover {
                 background-color: #4A6B73;
@@ -545,6 +566,9 @@ class SettingsWindow(QDialog):
         """)
 
     def load_settings(self):
+        self.visualise_dice_rolls_checkbox.setChecked(
+            self.config.getboolean('GAME', 'visualise_dice_rolls', fallback=False)
+        )
         self.show_caulk_checkbox.setChecked(self.config.getboolean('Display', 'show_caulk', fallback=True))
         self.sync_selection_checkbox.setChecked(self.config.getboolean('Display', 'sync_selection', fallback=True))
         self.click_select_3d_checkbox.setChecked(self.config.getboolean('Display', 'click_select_3d', fallback=False))
@@ -655,6 +679,11 @@ class SettingsWindow(QDialog):
         self._restart_application()
 
     def _save_settings(self):
+        if not self.config.has_section('GAME'):
+            self.config.add_section('GAME')
+        self.config.set('GAME', 'visualise_dice_rolls',
+                        str(self.visualise_dice_rolls_checkbox.isChecked()))
+
         if not self.config.has_section('Display'): 
             self.config.add_section('Display')
         

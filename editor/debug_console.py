@@ -167,7 +167,8 @@ class DebugConsole(QWidget):
         'Info': '#FFFFFF',      # White
         'MonsterAI': '#FF7043', # Deep orange — monster combat / sight / attack
         'Pathfinding': '#26A69A', # Teal — monster patrol / navigation
-        'Plugins': '#42A5F5',   # Blue — plugin debug / init (default; loads/errors recoloured per-message)
+        'Roll': '#FFD54F',     # Combat and tabletop roll output
+        'Dice': '#FFD54F',     # Legacy tabletop roll category
     }
 
     # Per-message colours for the 'Plugins' category. All plugin messages share

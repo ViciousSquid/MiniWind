@@ -78,18 +78,19 @@ class SpatialGrid:
         min_z = int(math.floor(player_min.z / self.cell_size))
         max_z = int(math.floor(player_max.z / self.cell_size))
 
+        cells = self.cells
+        if min_x == max_x and min_z == max_z:
+            return list(cells.get((min_x, min_z), ()))
+
         colliders = []
         seen = set()
-
         for x in range(min_x, max_x + 1):
             for z in range(min_z, max_z + 1):
-                cell = (x, z)
-                if cell in self.cells:
-                    for brush in self.cells[cell]:
-                        bid = id(brush)
-                        if bid not in seen:
-                            seen.add(bid)
-                            colliders.append(brush)
+                for brush in cells.get((x, z), ()):
+                    bid = id(brush)
+                    if bid not in seen:
+                        seen.add(bid)
+                        colliders.append(brush)
 
         return colliders
 
@@ -104,17 +105,19 @@ class SpatialGrid:
         min_cz = int(math.floor((z - radius) / self.cell_size))
         max_cz = int(math.floor((z + radius) / self.cell_size))
 
+        cells = self.cells
+        if min_cx == max_cx and min_cz == max_cz:
+            return list(cells.get((min_cx, min_cz), ()))
+
         result = []
         seen = set()
         for cx in range(min_cx, max_cx + 1):
             for cz in range(min_cz, max_cz + 1):
-                cell = (cx, cz)
-                if cell in self.cells:
-                    for brush in self.cells[cell]:
-                        bid = id(brush)
-                        if bid not in seen:
-                            seen.add(bid)
-                            result.append(brush)
+                for brush in cells.get((cx, cz), ()):
+                    bid = id(brush)
+                    if bid not in seen:
+                        seen.add(bid)
+                        result.append(brush)
         return result
 
     def overlaps_wall(self, mx, my, mz, margin):
@@ -132,13 +135,28 @@ class SpatialGrid:
         min_cz = int(math.floor(m_zmin / self.cell_size))
         max_cz = int(math.floor(m_zmax / self.cell_size))
 
+        cells = self.cells
+        if min_cx == max_cx and min_cz == max_cz:
+            brushes = cells.get((min_cx, min_cz), ())
+            for brush in brushes:
+                pos = brush['pos']
+                size = brush['size']
+                bx_min = pos[0] - size[0] * 0.5
+                bx_max = pos[0] + size[0] * 0.5
+                by_min = pos[1] - size[1] * 0.5
+                by_max = pos[1] + size[1] * 0.5
+                bz_min = pos[2] - size[2] * 0.5
+                bz_max = pos[2] + size[2] * 0.5
+                if (m_xmax > bx_min and m_xmin < bx_max and
+                        m_ymax > by_min and m_ymin < by_max and
+                        m_zmax > bz_min and m_zmin < bz_max):
+                    return True
+            return False
+
         seen = set()
         for cx in range(min_cx, max_cx + 1):
             for cz in range(min_cz, max_cz + 1):
-                cell = (cx, cz)
-                if cell not in self.cells:
-                    continue
-                for brush in self.cells[cell]:
+                for brush in cells.get((cx, cz), ()):
                     bid = id(brush)
                     if bid in seen:
                         continue
@@ -195,33 +213,30 @@ class SpatialGrid:
             return True
         ray_dir = ray_dir / ray_len
 
-        # Gather cells along the ray path + neighbours
+        # Gather cells along the ray path + neighbours. Test each unique brush
+        # immediately so no temporary candidate list or second traversal is needed.
         steps = max(1, int(ray_len / self.cell_size) + 2)
+        cells = self.cells
         seen = set()
-        candidates = []
         for i in range(steps + 1):
             t = min(i / float(steps), 1.0) * ray_len
             pt = start + ray_dir * t
             cx = int(math.floor(pt.x / self.cell_size))
             cz = int(math.floor(pt.z / self.cell_size))
             # FIX#11: Check the cell AND its 8 neighbours to catch brushes
-            # that straddle cell boundaries on diagonal rays
+            # that straddle cell boundaries on diagonal rays.
             for dx in (-1, 0, 1):
                 for dz in (-1, 0, 1):
-                    cell = (cx + dx, cz + dz)
-                    if cell in self.cells:
-                        for brush in self.cells[cell]:
-                            bid = id(brush)
-                            if bid not in seen:
-                                seen.add(bid)
-                                candidates.append(brush)
-
-        for brush in candidates:
-            pos = glm.vec3(brush['pos'])
-            size = glm.vec3(brush['size'])
-            b_min = pos - size * 0.5
-            b_max = pos + size * 0.5
-            hit, dist = intersect_ray_aabb_fn(start, ray_dir, b_min, b_max)
-            if hit and dist < ray_len - 0.1:
-                return False
+                    for brush in cells.get((cx + dx, cz + dz), ()):
+                        bid = id(brush)
+                        if bid in seen:
+                            continue
+                        seen.add(bid)
+                        pos = glm.vec3(brush['pos'])
+                        size = glm.vec3(brush['size'])
+                        b_min = pos - size * 0.5
+                        b_max = pos + size * 0.5
+                        hit, dist = intersect_ray_aabb_fn(start, ray_dir, b_min, b_max)
+                        if hit and dist < ray_len - 0.1:
+                            return False
         return True

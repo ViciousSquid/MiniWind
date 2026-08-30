@@ -1,4 +1,4 @@
-import os
+import time
 import json
 from PyQt5.QtWidgets import QMessageBox
 
@@ -17,7 +17,7 @@ except ImportError:
     # debug_log("Warning", "I/O system not fully loaded in console")
 
 # For spawn command
-from editor.things import Pickup, Light, PlayerStart, LevelChanger
+from game.diceroll import DiceRoller
 
 
 class ConsoleCommandHandler:
@@ -26,7 +26,7 @@ class ConsoleCommandHandler:
     """
     def __init__(self, main_window):
         self.main_window = main_window
-        self.editor_state = main_window.state
+        self._console_dice = DiceRoller()
 
         self.commands = {
             'bind': self.cmd_bind,
@@ -79,7 +79,8 @@ class ConsoleCommandHandler:
             'god': self.cmd_god,
             'buddha': self.cmd_buddha,
             'clear': self.cmd_clear,
-            'fps': self.cmd_fps,
+            'diceroll': self.cmd_diceroll,
+            'dice': self.cmd_diceroll,
             'map': self.cmd_map,
 
             # Save / load a play session
@@ -723,7 +724,7 @@ class ConsoleCommandHandler:
 
 <b style="color:orange;">clear</b> — Clear console<br>
 <b style="color:orange;">help</b> — Show this help<br>
-<b style="color:orange;">fps</b> — Toggle FPS display<br>
+<b style="color:orange;">diceroll</b> [NdM[+/-modifier]…] [--animate] — Roll dice in Editor or Play mode<br>
 <b style="color:orange;">map</b> &lt;name&gt; — Load a different map<br>
 <b style="color:cyan;">=== Save / Load (Play Session) ===</b><br>
 <b style="color:orange;">save</b> [name] — Save the current play session (Play Mode only)<br>
@@ -797,8 +798,58 @@ class ConsoleCommandHandler:
                 help_text += f'<b style="color:orange;">{name}</b>{suffix}<br>'
         debug_log("Info", help_text)
 
-    # ===================================================================
-    # HELPER: Get renderer safely
+    def cmd_diceroll(self, args):
+        """Roll a dice expression and optionally show the native HUD animation."""
+        tokens = str(args or "").split()
+        animate = any(token.lower() in ("--animate", "animate") for token in tokens)
+        notation_tokens = [token for token in tokens
+                           if token.lower() not in ("--animate", "animate")]
+        notation = "".join(notation_tokens) or "1d20"
+
+        try:
+            visualise = animate
+            if not visualise:
+                try:
+                    visualise = self.main_window.config.getboolean(
+                        "GAME", "visualise_dice_rolls", fallback=False)
+                except (AttributeError, TypeError, ValueError):
+                    visualise = False
+            view_3d = getattr(self.main_window, "view_3d", None)
+            logic = getattr(view_3d, "logic_thread", None) if view_3d else None
+            session = getattr(logic, "_miniwind", None) if logic is not None else None
+            if session is not None:
+                if not animate:
+                    session.dice_animation = None
+                    result = session.game.request_roll(notation, source="console")
+                else:
+                    result = session.roll_dice(notation)
+                source_label = "play session"
+            else:
+                view_3d = getattr(self.main_window, "view_3d", None)
+                if view_3d is not None and not visualise:
+                    view_3d._editor_dice_animation = None
+                result = self._console_dice.request_roll(notation, source="console")
+                source_label = "editor"
+                if visualise:
+                    view_3d = getattr(self.main_window, "view_3d", None)
+                    if view_3d is not None:
+                        view_3d._editor_dice_animation = {
+                            "result": result,
+                            "started_at": time.monotonic(),
+                        }
+                        view_3d.update()
+                    if not animate:
+                        debug_log("Info", "Dice roll completed; showing editor preview from GAME settings.")
+                    else:
+                        debug_log("Info", "Dice roll completed; showing editor preview.")
+
+            details = ", ".join(str(value) for value in result.get("roll_details", []))
+            debug_log("Roll", f"{result['dice_notation']} => total {result['roll_result']} "
+                               f"(rolls: [{details}], source: {source_label}"
+                               f"{', animated' if visualise else ''})")
+        except (ValueError, TypeError) as exc:
+            debug_log("Error", f"Dice roll failed: {exc}")
+
     # ===================================================================
     def _get_renderer(self):
         """Safely retrieve the active renderer from the 3D view."""

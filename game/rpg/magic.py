@@ -14,7 +14,10 @@ so one applier serves both.
 from __future__ import annotations
 
 import random
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..diceroll import DiceRoller
 
 from . import attributes as attr
 from . import skills as sk
@@ -285,27 +288,43 @@ def cast_cost(character, spell: Spell) -> float:
     return round(spell.base_cost * factor, 1)
 
 
-def cast_success(character, spell: Spell, rng: Optional[random.Random] = None) -> bool:
-    """Roll whether the cast succeeds (skill + willpower + luck vs difficulty)."""
+def cast_check(character, spell: Spell, rng: Optional[random.Random] = None,
+               dice: Optional["DiceRoller"] = None):
+    """Resolve a cast check and return ``(success, dice_result)``."""
     rng = rng or random
     if spell.base_cost <= 0:
-        return True  # powers never fizzle
+        return True, None  # powers never fizzle
     skill = character.skill(spell.school)
     wil = character.attrs.get(attr.WILLPOWER, 40)
     luck = character.attrs.get(attr.LUCK, 40)
     chance = (skill * 1.2 + wil * 0.2 + luck * 0.1 - spell.base_cost * 0.4) / 100.0
-    return rng.random() <= max(0.05, min(0.98, chance))
+    chance = max(0.05, min(0.98, chance))
+    target = min(100, max(1, int((1.0 - chance) * 100.0) + 1))
+    if dice is not None:
+        result = dice.request_roll(
+            "1d100", target=target, source="magic.cast",
+            context={"spell_id": spell.id, "school": spell.school})
+        return bool(result.get("success")), result
+    return rng.random() <= chance, None
+
+
+def cast_success(character, spell: Spell, rng: Optional[random.Random] = None,
+                 dice: Optional["DiceRoller"] = None) -> bool:
+    """Roll whether a cast succeeds (skill + willpower + luck vs difficulty)."""
+    return cast_check(character, spell, rng=rng, dice=dice)[0]
 
 
 class CastResult:
-    def __init__(self, cast=False, reason="", spell=None, magnitude=0.0):
+    def __init__(self, cast=False, reason="", spell=None, magnitude=0.0, roll=None):
         self.cast = cast
         self.reason = reason
         self.spell = spell
         self.magnitude = magnitude
+        self.roll = roll
 
 
-def try_cast(character, spell_id: str, rng: Optional[random.Random] = None) -> CastResult:
+def try_cast(character, spell_id: str, rng: Optional[random.Random] = None,
+             dice: Optional["DiceRoller"] = None) -> CastResult:
     """Attempt to cast a known spell.
 
     Spends magicka, rolls success, and — for SELF spells — applies effects to the
@@ -320,9 +339,10 @@ def try_cast(character, spell_id: str, rng: Optional[random.Random] = None) -> C
     cost = cast_cost(character, spell)
     if not character.spend_magicka(cost):
         return CastResult(False, "not enough magicka", spell)
-    if not cast_success(character, spell, rng):
+    success, roll = cast_check(character, spell, rng=rng, dice=dice)
+    if not success:
         character.use_skill(spell.school, 1.0)
-        return CastResult(False, "fizzle", spell)
+        return CastResult(False, "fizzle", spell, roll=roll)
 
     character.use_skill(spell.school, 1.0 + spell.base_cost / 40.0)
 
@@ -330,7 +350,7 @@ def try_cast(character, spell_id: str, rng: Optional[random.Random] = None) -> C
         apply_effects_to_character(character, spell.effects)
     mag = sum(float(e.get("magnitude", 0)) for e in spell.effects
               if e.get("kind", "").startswith("damage"))
-    return CastResult(True, "", spell, mag)
+    return CastResult(True, "", spell, mag, roll=roll)
 
 
 def apply_effects_to_character(character, effects: List[Dict]) -> None:

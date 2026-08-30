@@ -161,7 +161,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("MiniWind")
         self.setWindowIcon(QIcon(os.path.join(self.root_dir, 'assets', 'icon.ico')))
-        self.setGeometry(100, 100, 1600, 900)
+        self.setGeometry(50, 50, 1600, 900)
         self.setMinimumSize(1280, 800)
         self.state = EditorState()
         self.load_recent_files()

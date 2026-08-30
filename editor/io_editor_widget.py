@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QComboBox, QLineEdit,
     QDoubleSpinBox, QCheckBox, QHeaderView, QAbstractItemView,
     QDialog, QDialogButtonBox, QFormLayout, QCompleter, QGroupBox,
-    QMessageBox, QMenu, QAction
+    QMessageBox, QMenu, QAction, QSizePolicy
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QFont
@@ -543,6 +543,10 @@ class IOEditorWidget(QWidget):
         self.table.setShowGrid(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setWordWrap(False)
+        self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.table.verticalHeader().setDefaultSectionSize(self.table.fontMetrics().height() + 12)
+        self.table.verticalHeader().setMinimumSectionSize(self.table.fontMetrics().height() + 12)
         
         # === FIX: enforce readable header contrast ===
         self.table.setStyleSheet("""
@@ -556,6 +560,7 @@ class IOEditorWidget(QWidget):
             QTableWidget::item {
                 background-color: #2A2A2A;
                 color: #E6E6E6;
+                padding: 4px 6px;
             }
             QTableWidget::item:alternate {
                 background-color: #252525;
@@ -602,10 +607,21 @@ class IOEditorWidget(QWidget):
         self.current_entity = entity
         self._refresh_table()
     
+    def _update_table_height(self):
+        """Keep the output list compact while showing every connection row."""
+        header_height = self.table.horizontalHeader().height()
+        frame_height = self.table.frameWidth() * 2
+        _row_height = self.table.fontMetrics().height() + 12
+        self.table.verticalHeader().setDefaultSectionSize(_row_height)
+        self.table.verticalHeader().setMinimumSectionSize(_row_height)
+        table_height = header_height + frame_height + (self.table.rowCount() * _row_height)
+        self.table.setFixedHeight(table_height)
+
     def _refresh_table(self):
         self.table.setRowCount(0)
         
         if not self.current_entity:
+            self._update_table_height()
             return
         
         connections = get_connections(self.current_entity)
@@ -643,7 +659,8 @@ class IOEditorWidget(QWidget):
             if conn.fire_once:
                 delay_text += " (once)"
             self.table.setItem(row, 4, QTableWidgetItem(delay_text))
-        
+
+        self._update_table_height()
         self._update_button_states()
     
     @staticmethod

@@ -33,6 +33,7 @@ from .rpg.gametime import GameClock
 from .rpg.dialogue import DialogueRunner
 from .rpg import inventory as inv
 from .rpg.game_state import GameState
+from .diceroll_anim import SHAKE_DURATION, ROLL_DURATION, FADE_DURATION
 
 DECISION_INTERVAL = 0.4
 NPC_WALK_SPEED = 90.0
@@ -55,6 +56,12 @@ MELEE_REACH = 170.0
 BOW_REACH = 2400.0
 #: Frontal cone (dot threshold) for auto-target selection.
 AIM_DOT = 0.55
+
+DICE_ANIMATION_SHAKE = SHAKE_DURATION
+DICE_ANIMATION_ROLL = ROLL_DURATION
+DICE_ANIMATION_FADE = FADE_DURATION
+DICE_DISPLAY_DURATION = DICE_ANIMATION_SHAKE + DICE_ANIMATION_ROLL + DICE_ANIMATION_FADE + 1.0
+DICE_TYPES = ("d4", "d6", "d8", "d10", "d12", "d20")
 
 #: Wisp companion light — how far it may wander from the player, and its four
 #: possible hues (RGB 0-255). One is picked at cast time and never changes.
@@ -173,6 +180,33 @@ class MiniwindSession:
         self.merchant_npc = None
         #: Active Wisp companion light, or None. See _spawn_wisp / _update_wisp.
         self._wisp = None
+        self.dice_type_index = len(DICE_TYPES) - 1
+        self.dice_animation: Optional[Dict] = None
+        self.game.add_roll_listener(self._on_dice_roll)
+
+    def _visualise_dice_rolls_enabled(self) -> bool:
+        """Read the live editor setting controlling automatic dice visuals."""
+        try:
+            config = getattr(self.logic, "editor_config", None)
+            if config is None:
+                editor_state = getattr(self.logic, "editor_state", None)
+                config = getattr(editor_state, "config", None)
+            if config is None:
+                return False
+            return config.getboolean("GAME", "visualise_dice_rolls", fallback=False)
+        except (AttributeError, TypeError, ValueError):
+            return False
+
+    def _on_dice_roll(self, result: Dict, _source: str, _context: Dict) -> None:
+        """Start the HUD presentation for every roll when visualisation is enabled."""
+        if not self._visualise_dice_rolls_enabled():
+            return
+        self.dice_animation = {
+            "result": result,
+            "elapsed": 0.0,
+            "duration": DICE_DISPLAY_DURATION,
+        }
+        return
 
     def reset_progress(self) -> None:
         """Erase all saved progress and return the session to a clean slate.
@@ -186,6 +220,8 @@ class MiniwindSession:
             pass
         self.rng = random.Random()
         self.game = GameState(self.store, rng=self.rng)
+        self.game.add_roll_listener(self._on_dice_roll)
+        self._bind_dice_service()
         self.needs_char_creation = True
         self.open_screen = "charcreate"
         self.dialogue = None
@@ -195,6 +231,7 @@ class MiniwindSession:
         self._remove_wisp()
         self.notifications = []
         self.floaters = []
+        self.dice_animation = None
         self._deaths_seen = set()
         if self.logic is not None:
             try:
@@ -208,6 +245,15 @@ class MiniwindSession:
         return {"easy": 0.6, "normal": 1.0, "hard": 1.5}.get(self.difficulty, 1.0)
 
     # ================================================================= setup
+    def _bind_dice_service(self) -> None:
+        """Expose this session's dice service to the engine I/O manager."""
+        io_manager = getattr(self.logic, "io_manager", None)
+        if io_manager is not None:
+            try:
+                io_manager.set_dice_roller(self.game.dice)
+            except AttributeError:
+                pass
+
     def install(self) -> None:
         """Attach the RPG to the logic thread (damage filter, faction model)."""
         logic = self.logic
@@ -216,11 +262,18 @@ class MiniwindSession:
         # so wild animals stay neutral to villagers while bandits are hostile to
         # both — instead of "every different team is an enemy".
         logic._faction_hostile = factions.is_hostile
+        self._bind_dice_service()
         self.spawn_creature_points()   # materialise CreatureSpawn points once
         self._sync_engine_health(full=True)
 
     def uninstall(self) -> None:
         self._remove_wisp()
+        io_manager = getattr(self.logic, "io_manager", None)
+        if io_manager is not None:
+            try:
+                io_manager.set_dice_roller(None)
+            except AttributeError:
+                pass
         if getattr(self.logic, "_player_damage_filter", None) is self._mitigate_incoming:
             self.logic._player_damage_filter = None
         if getattr(self.logic, "_faction_hostile", None) is factions.is_hostile:
@@ -264,6 +317,8 @@ class MiniwindSession:
         self.game = GameState.new_game(self.store, name, race_id, class_id,
                                        birthsign_id, gender, custom_class, self.rng,
                                        head=head)
+        self.game.add_roll_listener(self._on_dice_roll)
+        self._bind_dice_service()
         # Author-granted starting spells (Game Settings → Player Spells).
         c = self.game.character
         for sid in self._player_start_spells:
@@ -685,12 +740,32 @@ class MiniwindSession:
                 n = 0
             self.store.set(key, n + 1)
 
-    def _condition_met(self, stage) -> bool:
+    def _condition_met(self, stage, qid: Optional[str] = None) -> bool:
         """True when *stage*'s completion condition is satisfied right now."""
         kind = stage.condition_kind()
         if kind == _quests.COND_NONE:
             return False
         target = self._slug(stage.condition_target())
+        if kind == _quests.COND_ROLL:
+            if not qid:
+                return False
+            saved = self.game.quests.last_roll(qid)
+            try:
+                saved_stage = int(saved.get("stage", -1)) if saved else -1
+            except (TypeError, ValueError):
+                return False
+            if not saved or saved_stage != self.game.quests.stage_of(qid):
+                return False
+            result = saved.get("result") or {}
+            if str(result.get("dice_notation", "")).strip() != stage.condition_notation():
+                return False
+            threshold = stage.condition_target_value()
+            if threshold is None:
+                return bool(result.get("success", False))
+            try:
+                return int(result.get("roll_result", 0)) >= threshold
+            except (TypeError, ValueError):
+                return False
         if not target:
             return False
         count = stage.condition_count()
@@ -803,7 +878,7 @@ class MiniwindSession:
             st = q.stage(cur)
             if st is None or st.condition_kind() == _quests.COND_NONE:
                 continue
-            if not self._condition_met(st):
+            if not self._condition_met(st, q.id):
                 continue
             nxt = self._next_stage_index(q, cur)
             nxt_stage = q.stage(nxt) if nxt is not None else None
@@ -820,6 +895,43 @@ class MiniwindSession:
                 obj = log.current_objective(q.id)
                 self.notify(f"{q.name}: {obj}" if obj else f"{q.name} updated", 4.0)
 
+    @property
+    def selected_dice_type(self) -> str:
+        """Return the die type selected for the next keyboard roll."""
+        return DICE_TYPES[self.dice_type_index]
+
+    def cycle_dice_type(self) -> str:
+        """Advance the keyboard dice selector and announce the new die type."""
+        self.dice_type_index = (self.dice_type_index + 1) % len(DICE_TYPES)
+        selected = self.selected_dice_type
+        self.notify(f"Selected {selected}", 1.5)
+        return selected
+
+    def request_roll(self, dice_notation: str, target: Optional[int] = None,
+                     event: str = "gameplay", context: Optional[Dict] = None) -> Dict:
+        """Request a gameplay roll from the session's shared dice service."""
+        return self.game.roll_for_event(dice_notation, target=target,
+                                         event=event, context=context)
+
+    def roll_dice(self, dice_notation: Optional[str] = None) -> Dict:
+        """Roll dice and start the native HUD shake/roll/fade presentation."""
+        notation = dice_notation or f"1{self.selected_dice_type}"
+        result = self.game.roll_dice(notation)
+        self.dice_animation = {
+            "result": result,
+            "elapsed": 0.0,
+            "duration": DICE_DISPLAY_DURATION,
+        }
+        return result
+
+    def _tick_dice_animation(self, delta: float) -> None:
+        """Advance and expire the transient dice presentation."""
+        if self.dice_animation is None:
+            return
+        self.dice_animation["elapsed"] += max(0.0, float(delta))
+        if self.dice_animation["elapsed"] >= self.dice_animation["duration"]:
+            self.dice_animation = None
+
     def tick_ui(self, delta: float) -> None:
         """Age only the transient HUD (toasts/floaters) while the world is paused
         (a menu or character creation is open). No clock, NPC or combat sim."""
@@ -833,6 +945,7 @@ class MiniwindSession:
             f["t"] -= delta
             f["y"] -= 30 * delta
         self.floaters = [f for f in self.floaters if f["t"] > 0]
+        self._tick_dice_animation(delta)
 
     def notify(self, text, seconds=3.0):
         self.notifications.append({"text": text, "t": seconds})
@@ -1436,7 +1549,14 @@ class MiniwindSession:
             if res.reason == "not enough magicka":
                 self.notify("Not enough magicka")
             elif res.reason == "fizzle":
-                self.notify("The spell fizzles")
+                roll = res.roll or {}
+                if roll:
+                    self.notify(
+                        f"{spell.name if spell else 'Spell'} fizzles: "
+                        f"rolled {roll.get('roll_result', '?')} "
+                        f"(need {roll.get('target', '?')} or higher)")
+                else:
+                    self.notify("The spell fizzles")
             return False
         if spell is None:
             return True

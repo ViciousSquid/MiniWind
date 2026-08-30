@@ -15,6 +15,7 @@ Keys used per quest ``q``:
 
 from __future__ import annotations
 
+import json
 from typing import Dict, List, Optional
 
 
@@ -25,7 +26,8 @@ COND_FETCH = "fetch"     # target = item id, count = how many to hold
 COND_TALK = "talk"       # target = NPC name/role
 COND_KILL = "kill"       # target = monster_type / npc_role / name, count = how many
 COND_VISIT = "visit"     # target = location id/name (a discoverable Marker)
-COND_KINDS = [COND_NONE, COND_FETCH, COND_TALK, COND_KILL, COND_VISIT]
+COND_ROLL = "roll"       # notation = dice expression, target = minimum total
+COND_KINDS = [COND_NONE, COND_FETCH, COND_TALK, COND_KILL, COND_VISIT, COND_ROLL]
 
 
 class Stage:
@@ -53,6 +55,18 @@ class Stage:
             return max(1, int((self.condition or {}).get("count", 1)))
         except (TypeError, ValueError):
             return 1
+
+    def condition_notation(self) -> str:
+        """Return the dice expression required by a roll objective."""
+        return str((self.condition or {}).get("notation", "1d20")).strip() or "1d20"
+
+    def condition_target_value(self) -> Optional[int]:
+        """Return a roll objective's threshold, when one is authored."""
+        try:
+            value = (self.condition or {}).get("target")
+            return None if value in (None, "") else int(value)
+        except (TypeError, ValueError):
+            return None
 
 
 class Quest:
@@ -204,6 +218,22 @@ class QuestLog:
 
     def fail(self, qid: str) -> None:
         self.store.set(self._key(qid, "state"), "failed")
+
+    def record_roll(self, qid: str, stage: int, result: Dict) -> None:
+        """Persist the latest dice result for a quest stage."""
+        self.store.set(self._key(qid, "roll"), json.dumps({
+            "stage": int(stage),
+            "result": dict(result),
+        }, separators=(",", ":")))
+
+    def last_roll(self, qid: str) -> Optional[Dict]:
+        """Return the persisted latest quest roll, or ``None`` if absent."""
+        raw = self.store.get(self._key(qid, "roll"), "")
+        try:
+            value = json.loads(raw)
+            return value if isinstance(value, dict) else None
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
 
     def current_objective(self, qid: str) -> str:
         q = get(qid)

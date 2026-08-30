@@ -18,14 +18,14 @@ it. Every rule and every stat lives in the engine-agnostic :mod:`game.rpg` core
 and the :mod:`game.ui` screens; this file is just the seam.
 """
 
-from __future__ import annotations
+import time
 
 # Generic Fio API helpers (entity-I/O and property descriptors, the per-tick
 # context type, and key-name translation). These are engine-side utilities, not
 # the plugin lifecycle: MiniWind uses them the way any native game layer would.
 from plugins.api import TickContext, io_def, prop, key_code
 
-from .runtime import MiniwindSession, TALK_RADIUS
+from .runtime import MiniwindSession, TALK_RADIUS, DICE_DISPLAY_DURATION
 
 # key vocabulary we translate raw Qt codes back into (for menu/dialogue nav)
 _NAV_NAMES = (list("abcdefghijklmnopqrstuvwxyz") + [str(d) for d in range(0, 10)] +
@@ -46,6 +46,8 @@ K_JOURNAL = "j"
 K_SPELLS = "p"
 K_LEVELUP = "l"
 K_MAP = "m"
+K_DICE_ROLL = "d"
+K_DICE_TYPE = "y"
 
 
 # ---------------------------------------------------------------------------
@@ -324,11 +326,16 @@ class MiniwindGame:
                 io_def("StartQuest", "Start a quest by id", "string"),
                 io_def("Kill", "Kill this NPC"),
                 io_def("Wake", "Un-park for combat"),
+                io_def("RollDice", "Roll dice (notation[,target])", "string"),
             ],
             outputs=[
                 io_def("OnTalked", "Fired when the player opens this dialogue"),
                 io_def("OnDialogueEnd", "Fired when the conversation closes"),
                 io_def("OnDied", "Fired when this NPC dies"),
+                io_def("OnAttack", "Fired when this actor attacks; parameter is JSON combat data"),
+                io_def("OnDiceRolled", "Fired with the JSON dice result"),
+                io_def("OnDiceSuccess", "Fired when a targeted roll succeeds"),
+                io_def("OnDiceFailure", "Fired when a targeted roll fails"),
             ],
         )
         api.register_io("npc", **npc_io)
@@ -448,6 +455,7 @@ class MiniwindGame:
         if host is not None:
             try:
                 host.provide("miniwind", session)
+                host.provide("diceroll", session.game.dice)
             except Exception:
                 pass
 
@@ -461,6 +469,7 @@ class MiniwindGame:
         if host is not None:
             try:
                 host.provide("miniwind", None)
+                host.provide("diceroll", None)
             except Exception:
                 pass
 
@@ -527,6 +536,10 @@ class MiniwindGame:
             session.do_attack()
         if K_CAST in just:
             session.do_cast()
+        if K_DICE_TYPE in just:
+            session.cycle_dice_type()
+        if K_DICE_ROLL in just:
+            session.roll_dice()
         if K_NEXT_SPELL in just:
             session.next_spell()
         if K_SNEAK in just:
@@ -595,10 +608,45 @@ class MiniwindGame:
 
     # -------------------------------------------------------------- overlay
     def _on_overlay(self, ev):
-        if not ev.get("play_mode"):
-            return
         host = getattr(self, "_host", None)
         logic = host.logic if host is not None else None
+        painter = ev.get("painter")
+        viewport = ev.get("viewport")
+        if painter is None:
+            return
+        if not ev.get("play_mode"):
+            preview = getattr(viewport, "_editor_dice_animation", None)
+            session = getattr(logic, "_miniwind", None)
+            if preview is None and session is not None:
+                preview = session.dice_animation
+                if preview is not None and "started_at" not in preview:
+                    preview = dict(preview)
+                    preview["started_at"] = time.monotonic()
+                    session.dice_animation = preview
+            if preview is not None:
+                started_at = float(preview.get("started_at", time.monotonic()))
+                elapsed = max(0.0, time.monotonic() - started_at)
+                animation = {
+                    "result": preview.get("result"),
+                    "elapsed": elapsed,
+                    "duration": DICE_DISPLAY_DURATION,
+                }
+                try:
+                    from .ui import hud
+                    hud.draw_dice_preview(
+                        painter, animation, ev.get("width", 0), ev.get("height", 0))
+                except Exception:
+                    import traceback
+                    traceback.print_exc()
+                if elapsed >= DICE_DISPLAY_DURATION:
+                    try:
+                        if viewport is not None:
+                            viewport._editor_dice_animation = None
+                        if session is not None:
+                            session.dice_animation = None
+                    except Exception:
+                        pass
+            return
         session = getattr(logic, "_miniwind", None)
         if session is None:
             return

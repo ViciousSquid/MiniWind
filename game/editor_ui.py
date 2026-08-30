@@ -1826,6 +1826,7 @@ _QUEST_COND_LABELS = [
     ("fetch", "Fetch / hold an item"),
     ("kill",  "Kill monsters"),
     ("visit", "Visit a location"),
+    ("roll",  "Pass a dice check"),
 ]
 #: Placeholder guidance for the condition target box, per kind.
 _QUEST_COND_TARGET_HINT = {
@@ -1834,6 +1835,7 @@ _QUEST_COND_TARGET_HINT = {
     "fetch": "item id, e.g. iron_sword  (count = how many)",
     "kill":  "monster_type / npc_role / name, e.g. wolf  (count = how many)",
     "visit": "location marker place-name, e.g. Old Cave",
+    "roll": "dice notation is entered below; target is the minimum total",
 }
 
 
@@ -1947,10 +1949,13 @@ def _QuestsTab(thing, QtWidgets, QtCore):
             for cid, label in _QUEST_COND_LABELS:
                 self.s_cond.addItem(label, cid)
             self.s_target = QtWidgets.QLineEdit()
+            self.s_notation = QtWidgets.QLineEdit()
+            self.s_notation.setPlaceholderText("Dice notation, e.g. 1d20")
             self.s_count = QtWidgets.QSpinBox(); self.s_count.setRange(1, 100000)
             self.s_finishes = QtWidgets.QCheckBox("Finishing this stage completes the quest")
             self.s_obj.editingFinished.connect(self._write_stage)
             self.s_target.editingFinished.connect(self._write_stage)
+            self.s_notation.editingFinished.connect(self._write_stage)
             self.s_journal.textChanged.connect(self._write_stage)
             self.s_cond.currentIndexChanged.connect(self._on_cond_kind)
             self.s_count.valueChanged.connect(self._write_stage)
@@ -1959,6 +1964,7 @@ def _QuestsTab(thing, QtWidgets, QtCore):
             sform.addRow("Journal", self.s_journal)
             sform.addRow("Completes by", self.s_cond)
             sform.addRow("Target", self.s_target)
+            sform.addRow("Dice notation", self.s_notation)
             sform.addRow("Count", self.s_count)
             sform.addRow("", self.s_finishes)
             srow.addLayout(sform, 1)
@@ -2114,7 +2120,7 @@ def _QuestsTab(thing, QtWidgets, QtCore):
 
         def _clear_stage_form(self):
             self.s_obj.setText(""); self.s_journal.setPlainText("")
-            self.s_target.setText(""); self.s_count.setValue(1)
+            self.s_target.setText(""); self.s_notation.setText(""); self.s_count.setValue(1)
             self.s_finishes.setChecked(False); self.s_cond.setCurrentIndex(0)
             self._update_target_hint()
 
@@ -2130,6 +2136,7 @@ def _QuestsTab(thing, QtWidgets, QtCore):
             idx = self.s_cond.findData(str(cond.get("kind", "none")))
             self.s_cond.setCurrentIndex(idx if idx >= 0 else 0)
             self.s_target.setText(str(cond.get("target", "")))
+            self.s_notation.setText(str(cond.get("notation", "1d20")))
             try:
                 self.s_count.setValue(max(1, int(cond.get("count", 1))))
             except (TypeError, ValueError):
@@ -2145,6 +2152,7 @@ def _QuestsTab(thing, QtWidgets, QtCore):
             kind = self.s_cond.currentData() or "none"
             self.s_target.setPlaceholderText(_QUEST_COND_TARGET_HINT.get(kind, ""))
             self.s_target.setEnabled(kind != "none")
+            self.s_notation.setEnabled(kind == "roll")
             self.s_count.setEnabled(kind in ("fetch", "kill"))
 
         def _write_stage(self, *_):
@@ -2156,9 +2164,14 @@ def _QuestsTab(thing, QtWidgets, QtCore):
             s["objective"] = self.s_obj.text().strip()
             s["journal"] = self.s_journal.toPlainText().strip()
             s["finishes"] = self.s_finishes.isChecked()
-            s["condition"] = {"kind": self.s_cond.currentData() or "none",
+            condition = {"kind": self.s_cond.currentData() or "none",
                               "target": self.s_target.text().strip(),
+            
+
                               "count": self.s_count.value()}
+            if condition["kind"] == "roll":
+                condition["notation"] = self.s_notation.text().strip() or "1d20"
+            s["condition"] = condition
             item = self.slist.item(row)
             if item is not None:
                 label = f"{s.get('index',0)}: {s.get('objective') or s.get('journal') or '(stage)'}"

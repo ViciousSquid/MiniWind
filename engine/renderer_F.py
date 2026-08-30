@@ -283,6 +283,7 @@ class Renderer_F(BaseRenderer):
         self._portal_begin_cull(is_geo=False)
 
         current_tex = None
+        brush_uniform_ptrs = {}
         for tex_id, items in batches.items():
             if tex_id != current_tex:
                 gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
@@ -290,11 +291,19 @@ class Renderer_F(BaseRenderer):
                 self.render_stats.batched_draws += 1
             for brush, face_idx, face_key in items:
                 self.render_stats.visible_tris += 2
-                model_matrix = self._brush_model_matrix(brush)
-                gl.glUniformMatrix4fv(model_loc, 1, gl.GL_FALSE, glm.value_ptr(model_matrix))
+                brush_id = id(brush)
+                uniform_ptrs = brush_uniform_ptrs.get(brush_id)
+                if uniform_ptrs is None:
+                    model_matrix = self._brush_model_matrix(brush)
+                    model_ptr = glm.value_ptr(model_matrix)
+                    normal_ptr = None
+                    if normal_mat_loc > 0:
+                        normal_ptr = glm.value_ptr(self._compute_normal_matrix(model_matrix, brush))
+                    uniform_ptrs = (model_ptr, normal_ptr)
+                    brush_uniform_ptrs[brush_id] = uniform_ptrs
+                gl.glUniformMatrix4fv(model_loc, 1, gl.GL_FALSE, uniform_ptrs[0])
                 if normal_mat_loc > 0:
-                    nmat = self._compute_normal_matrix(model_matrix, brush)
-                    gl.glUniformMatrix3fv(normal_mat_loc, 1, gl.GL_FALSE, glm.value_ptr(nmat))
+                    gl.glUniformMatrix3fv(normal_mat_loc, 1, gl.GL_FALSE, uniform_ptrs[1])
                 # Per-face surface-inspector transform: free rotation + shift.
                 if tex_angle_loc != -1:
                     angle = brush.get('uv_angle', {}).get(face_key, 0.0)

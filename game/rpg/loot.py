@@ -10,7 +10,10 @@ and drop chances are per entry.
 from __future__ import annotations
 
 import random
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..diceroll import DiceRoller
 
 from . import items
 
@@ -31,33 +34,58 @@ class LootTable:
         self.gold_range = gold_range
 
     def roll(self, player_level: int = 1, rng: Optional[random.Random] = None,
-             luck: int = 40) -> Tuple[List[Dict], int]:
-        """Return (item_stacks, gold) produced by this table."""
+             luck: int = 40, dice: Optional["DiceRoller"] = None) -> Tuple[List[Dict], int]:
+        """Return (item_stacks, gold), using the shared dice service when bound."""
         rng = rng or random
         stacks: List[Dict] = []
         luck_bonus = (luck - 40) * 0.002
         for e in self.entries:
             if player_level < e.min_level:
                 continue
-            if rng.random() > min(1.0, e.chance + luck_bonus):
+            if dice is not None:
+                chance_roll = dice.request_roll(
+                    "1d100", source="loot.drop",
+                    context={"table": self.id, "item_id": e.item_id})
+                if chance_roll["roll_result"] > min(100.0, (e.chance + luck_bonus) * 100.0):
+                    continue
+            elif rng.random() > min(1.0, e.chance + luck_bonus):
                 continue
-            qty = rng.randint(e.qty[0], e.qty[1])
+            qty = _roll_range(e.qty[0], e.qty[1], rng, dice, self.id, e.item_id)
             stack = items.make(e.item_id, qty)
             if stack:
-                _roll_rarity(stack, player_level, rng, luck)
+                _roll_rarity(stack, player_level, rng, luck, dice=dice, table_id=self.id)
                 stacks.append(stack)
         lo, hi = self.gold_range
-        gold = rng.randint(lo, hi) if hi > 0 else 0
+        gold = _roll_range(lo, hi, rng, dice, self.id, "gold") if hi > 0 else 0
         return stacks, gold
 
 
-def _roll_rarity(stack, player_level, rng, luck):
+def _roll_range(lo: int, hi: int, rng, dice, table_id: str, item_id: str) -> int:
+    """Roll an inclusive integer range through the shared service."""
+    lo, hi = int(lo), int(hi)
+    if hi <= lo:
+        return lo
+    if dice is not None:
+        result = dice.request_roll(
+            f"1d{hi - lo + 1}", source="loot.quantity",
+            context={"table": table_id, "item_id": item_id})
+        return lo + result["roll_result"] - 1
+    return rng.randint(lo, hi)
+
+
+def _roll_rarity(stack, player_level, rng, luck, dice=None, table_id=""):
     """Give weapons/armour a small, level- and luck-scaled chance to be special."""
     d = items.get(stack.get("id"))
     if not d or d.category not in (items.WEAPON, items.ARMOUR):
         return
     chance = 0.06 + player_level * 0.01 + (luck - 40) * 0.001
-    roll = rng.random()
+    if dice is not None:
+        rarity_roll = dice.request_roll(
+            "1d100", source="loot.rarity",
+            context={"table": table_id, "item_id": stack.get("id")})
+        roll = rarity_roll["roll_result"] / 100.0
+    else:
+        roll = rng.random()
     if roll < chance * 0.15:
         items.apply_rarity(stack, items.EPIC)
     elif roll < chance * 0.5:
@@ -78,11 +106,11 @@ def get(table_id: str) -> Optional[LootTable]:
     return TABLES.get(str(table_id))
 
 
-def roll(table_id: str, player_level: int = 1, rng=None, luck: int = 40):
+def roll(table_id: str, player_level: int = 1, rng=None, luck: int = 40, dice=None):
     t = get(table_id)
     if t is None:
         return [], 0
-    return t.roll(player_level, rng, luck)
+    return t.roll(player_level, rng, luck, dice=dice)
 
 
 # ---------------------------------------------------------------------------

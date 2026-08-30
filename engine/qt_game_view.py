@@ -715,6 +715,7 @@ class QtGameView(QOpenGLWidget):
         if self._thread_started:
             return
         self.logic_thread = LogicThread(self.game_state, self.editor.state, self.visibility_system)
+        self.logic_thread.editor_config = self.editor.config
         self.logic_thread.set_editor_camera(self.camera.pos, self.camera.yaw, self.camera.pitch, self.camera.fov)
         if hasattr(self.logic_thread, "set_camera_mode"):
             self.logic_thread.set_camera_mode(getattr(self, "camera_mode", "First Person"))

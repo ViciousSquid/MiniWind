@@ -25,6 +25,7 @@ from . import attributes as attr
 from . import skills as sk
 from . import items
 from . import equipment as eq
+from ..diceroll import DiceRoller
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +51,8 @@ def hit_chance(character, weapon_skill: int, target_agility: int = 30,
 # Player outgoing damage
 # ---------------------------------------------------------------------------
 def player_attack(character, target_props: Dict, *, sneaking: bool = False,
-                  draw: float = 1.0, rng: Optional[random.Random] = None) -> Dict:
+                  draw: float = 1.0, rng: Optional[random.Random] = None,
+                  dice: Optional[DiceRoller] = None) -> Dict:
     """Resolve a player attack against a creature's ``properties`` dict.
 
     Returns a result dict::
@@ -86,7 +88,16 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         result["no_ammo"] = True
         return result
 
-    if rng.random() > hit_chance(character, skill, target_agi, fatigue_frac):
+    hit_probability = hit_chance(character, skill, target_agi, fatigue_frac)
+    if dice is not None:
+        hit_roll = dice.request_roll(
+            "1d100", source="combat.hit",
+            context={"skill": skill_id, "target": target_props.get("name", "")})
+        result["hit_roll"] = hit_roll
+        hit_value = hit_roll["roll_result"]
+        if hit_value > hit_probability * 100.0:
+            return result
+    elif rng.random() > hit_probability:
         return result  # miss
     result["hit"] = True
 
@@ -114,7 +125,15 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
 
     # --- critical (luck-weighted) ---
     crit_chance = 0.05 + character.attrs.get(attr.LUCK, 40) * 0.0015
-    if rng.random() < crit_chance:
+    if dice is not None:
+        crit_roll = dice.request_roll(
+            "1d100", source="combat.critical",
+            context={"skill": skill_id, "target": target_props.get("name", "")})
+        result["critical_roll"] = crit_roll
+        is_critical = crit_roll["roll_result"] <= crit_chance * 100.0
+    else:
+        is_critical = rng.random() < crit_chance
+    if is_critical:
         dmg *= 1.5
         result["crit"] = True
 
