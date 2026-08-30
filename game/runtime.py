@@ -198,6 +198,7 @@ class MiniwindSession:
         self.dice_type_index = len(DICE_TYPES) - 1
         self.dice_animation: Optional[Dict] = None
         self.game.add_roll_listener(self._on_dice_roll)
+        self._attack_anim_time = 0.0   # player stab animation remaining (seconds)
 
     def _visualise_dice_rolls_enabled(self) -> bool:
         """Read the live editor setting controlling automatic dice visuals."""
@@ -439,6 +440,25 @@ class MiniwindSession:
         self._tick_triggers()
         self._tick_locations()
         self._tick_quests()
+
+        # Decay player stab animation
+        if self._attack_anim_time > 0:
+            self._attack_anim_time = max(0.0, self._attack_anim_time - delta)
+
+        # Detect NPC/creature attacks by watching the engine's is_shooting flag.
+        # When it flips from False -> True we start a 0.2 s stab animation.
+        for t in getattr(self.logic, "things", None) or []:
+            tp = t.properties
+            ttype = str(tp.get("type", "")).replace("_", "").lower()
+            if ttype not in ("npc", "creature", "monster"):
+                continue
+            was = tp.get("_was_shooting", False)
+            now = tp.get("is_shooting", False)
+            if now and not was:
+                tp["_attack_anim"] = 0.2
+            if tp.get("_attack_anim", 0.0) > 0:
+                tp["_attack_anim"] = max(0.0, tp["_attack_anim"] - delta)
+            tp["_was_shooting"] = now
 
         # keep the engine's health pool in step with the character
         self._sync_engine_health()
@@ -1757,6 +1777,7 @@ class MiniwindSession:
             # a staff channels its bound spell
             return self._staff_attack(w)
         self._attack_cooldown = max(0.25, 1.0 / max(0.4, speed))
+        self._attack_anim_time = 0.2   # quick forward stab, independent of cooldown
         if c.stamina < 4:
             self.notify("Too exhausted to attack")
             return False
@@ -1980,15 +2001,48 @@ class MiniwindSession:
         lt._monster_projectiles.append(proj)
 
     def overhead_pose(self):
-        """(armed, attacking) for the player's overhead sprite, so it visibly
-        reflects the RPG loadout: 'armed' when a weapon is equipped or a spell is
-        readied, 'attacking' briefly after a swing/cast. Read by the engine's
-        overhead sprite renderer (which stays game-agnostic)."""
         c = self.game.character
         armed = bool(eq.equipped_id(c, "weapon")) or bool(c.active_spell)
-        attacking = (getattr(self, "_attack_cooldown", 0.0) > 0.05
+        attacking = (getattr(self, "_attack_anim_time", 0.0) > 0.0
                      or getattr(self, "_cast_cooldown", 0.0) > 0.05)
         return armed, attacking
+
+    def on_actor_attack(self, actor) -> None:
+        """Explicit hook for the engine to call when any actor begins an attack."""
+        p = getattr(actor, "properties", None)
+        if p is not None:
+            p["_attack_anim"] = 0.2
+
+    def get_actor_attack_anim(self, actor):
+        """Return (is_attacking, progress) for any actor.
+        
+        progress is 0.0 at rest, rises to 1.0 at full thrust, then falls back
+        to 0.0 — a single quick stab. The overhead renderer should sample this
+        every frame to offset the weapon sprite forward from the head.
+        """
+        # Player
+        player = getattr(self.logic, "player", None)
+        if actor is player:
+            t = getattr(self, "_attack_anim_time", 0.0)
+            if t > 0:
+                prog = 1.0 - (t / 0.2)
+                # 0.0 -> 1.0 in first half of window, 1.0 -> 0.0 in second half
+                if prog < 0.5:
+                    return True, prog * 2.0
+                else:
+                    return True, 2.0 - prog * 2.0
+            return False, 0.0
+
+        # NPC / creature
+        p = getattr(actor, "properties", {})
+        t = p.get("_attack_anim", 0.0)
+        if t > 0:
+            prog = 1.0 - (t / 0.2)
+            if prog < 0.5:
+                return True, prog * 2.0
+            else:
+                return True, 2.0 - prog * 2.0
+        return False, 0.0
 
     def _apply_nondamage_spell(self, spell, target):
         for e in spell.effects:

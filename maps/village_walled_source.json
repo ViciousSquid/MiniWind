@@ -2871,7 +2871,7 @@
                 "move_speed": 90.0,
                 "combatant": false,
                 "persistent": true,
-                "sched_state": "WORKING",
+                "sched_state": "GOING_TO_WORK",
                 "autonomy": true,
                 "wander_radius": 220.0,
                 "respawn": false,
@@ -2893,16 +2893,19 @@
                     -650
                 ],
                 "spells": [],
-                "head": "head17"
+                "head": "head17",
+                "equipped_weapon": "iron_shortsword",
+                "hidden": false,
+                "_was_shooting": false
             },
             "io_connections": []
         },
         {
             "type": "npc",
             "pos": [
-                509.6890374745053,
+                562.416708770331,
                 264.0,
-                -604.5391698405369
+                -548.0045514032691
             ],
             "properties": {
                 "type": "npc",
@@ -3072,7 +3075,7 @@
                 "move_speed": 90.0,
                 "combatant": false,
                 "persistent": true,
-                "sched_state": "WORKING",
+                "sched_state": "WANDER",
                 "autonomy": true,
                 "wander_radius": 220.0,
                 "respawn": false,
@@ -3093,23 +3096,32 @@
                 "max_health": 42,
                 "courage": 0.2,
                 "_dest": [
-                    520,
-                    272,
-                    -650
+                    563.4545957364352,
+                    264.0,
+                    -613.5866491755195
                 ],
                 "_death_noted": true,
                 "spells": [],
                 "head": "head02",
-                "angle": 2.918556271384732
+                "angle": 3.125768208102046,
+                "equipped_weapon": "iron_shortsword",
+                "hidden": false,
+                "_wander_dest": [
+                    563.4545957364352,
+                    264.0,
+                    -613.5866491755195
+                ],
+                "_was_shooting": false,
+                "dead": false
             },
             "io_connections": []
         },
         {
             "type": "npc",
             "pos": [
-                800.1959324943699,
+                725.8991594354496,
                 264.0,
-                -806.9909098446972
+                -752.5556675100215
             ],
             "properties": {
                 "type": "npc",
@@ -3220,7 +3232,7 @@
                 "sprite_width": 112,
                 "sprite_height": 112,
                 "monster_id": 0,
-                "health": -6,
+                "health": 100,
                 "damage": 6,
                 "triggered": true,
                 "wake_on_sight": true,
@@ -3265,7 +3277,11 @@
                 "sight": 512,
                 "can_hear": false,
                 "non_hostile": false,
-                "spells": []
+                "spells": [],
+                "equipped_weapon": "iron_shortsword",
+                "hidden": false,
+                "angle": 1.9474654241998441,
+                "_was_shooting": false
             },
             "io_connections": []
         },
@@ -3354,8 +3370,8 @@
                     "village_square",
                     "patrol_east"
                 ],
-                "custom_idle": "assets/sprites/heads/head13.png",
-                "custom_shoot": "assets/sprites/heads/head13.png",
+                "custom_idle": "assets/sprites/heads/head08.png",
+                "custom_shoot": "assets/sprites/heads/head08.png",
                 "portrait": "assets/portraits/miniwind/guard.png",
                 "monster_type": "human",
                 "sprite_width": 120,
@@ -3471,18 +3487,21 @@
                 "can_hear": false,
                 "non_hostile": false,
                 "spells": [],
-                "head": "head13",
+                "head": "head08",
                 "angle": 1.295191850475558,
-                "_facing": -1.045041151243314
+                "_facing": -1.045041151243314,
+                "equipped_weapon": "iron_shortsword",
+                "hidden": false,
+                "_was_shooting": false
             },
             "io_connections": []
         },
         {
             "type": "npc",
             "pos": [
-                153.85547199144145,
-                260.0,
-                492.35270251526356
+                225.5052318769467,
+                288,
+                628.7073583203041
             ],
             "properties": {
                 "type": "npc",
@@ -3599,9 +3618,9 @@
                     608.0
                 ],
                 "_wander_dest": [
-                    67.85489405022545,
-                    260.0,
-                    545.7588718665578
+                    184.40623763336296,
+                    288,
+                    678.506002541066
                 ],
                 "relationships": {
                     "Thalen": "creditor"
@@ -3609,9 +3628,9 @@
                 "max_health": 8,
                 "courage": 0.2,
                 "_dest": [
-                    67.85489405022545,
-                    260.0,
-                    545.7588718665578
+                    184.40623763336296,
+                    288,
+                    678.506002541066
                 ],
                 "_death_noted": true,
                 "sight": 512,
@@ -3619,7 +3638,10 @@
                 "non_hostile": false,
                 "spells": [],
                 "head": "head09",
-                "angle": -1.0150801789897799
+                "angle": -0.6899805919472033,
+                "equipped_weapon": "iron_shortsword",
+                "hidden": false,
+                "_was_shooting": false
             },
             "io_connections": []
         },
@@ -3736,7 +3758,7 @@
                 "sprite_width": 112,
                 "sprite_height": 112,
                 "monster_id": 0,
-                "health": -20,
+                "health": 100,
                 "damage": 5,
                 "triggered": false,
                 "wake_on_sight": true,
@@ -3795,7 +3817,9 @@
                 "head": "head14",
                 "angle": -1.5699589245770278,
                 "_facing": 1.4413584090393041,
-                "dead": true
+                "equipped_weapon": "iron_shortsword",
+                "hidden": false,
+                "_was_shooting": false
             },
             "io_connections": []
         },
@@ -3821,7 +3845,7 @@
                 "sprite_width": 120,
                 "sprite_height": 120,
                 "monster_id": 0,
-                "health": -154,
+                "health": 100,
                 "damage": 10,
                 "triggered": false,
                 "wake_on_sight": true,
@@ -3856,7 +3880,9 @@
                 "courage": 0.3,
                 "spells": [],
                 "head": "head07",
-                "dead": true
+                "equipped_weapon": "iron_shortsword",
+                "hidden": false,
+                "_was_shooting": false
             },
             "io_connections": []
         },
@@ -3882,7 +3908,7 @@
                 "sprite_width": 120,
                 "sprite_height": 120,
                 "monster_id": 0,
-                "health": -107,
+                "health": 100,
                 "damage": 9,
                 "triggered": false,
                 "wake_on_sight": true,
@@ -3917,7 +3943,9 @@
                 "courage": 0.3,
                 "spells": [],
                 "head": "head18",
-                "dead": true
+                "equipped_weapon": "hunting_bow",
+                "hidden": false,
+                "_was_shooting": false
             },
             "io_connections": []
         },
@@ -3973,7 +4001,7 @@
                 "sprite_width": 120,
                 "sprite_height": 120,
                 "monster_id": 0,
-                "health": -19,
+                "health": 100,
                 "damage": 9,
                 "triggered": false,
                 "wake_on_sight": true,
@@ -4008,7 +4036,9 @@
                 "courage": 0.3,
                 "spells": [],
                 "head": "head04",
-                "dead": true
+                "equipped_weapon": "hunting_bow",
+                "hidden": false,
+                "_was_shooting": false
             },
             "io_connections": []
         },
@@ -4105,9 +4135,9 @@
         {
             "type": "npc",
             "pos": [
-                -133.51089460903205,
+                -60.18737388717839,
                 320,
-                574.4268112677861
+                647.5283494462012
             ],
             "properties": {
                 "dialogue": {
@@ -4172,7 +4202,7 @@
                         "location": "home"
                     }
                 ],
-                "sched_state": "WORKING",
+                "sched_state": "WANDER",
                 "home": [
                     -128.0,
                     40,
@@ -4209,11 +4239,19 @@
                     528.0
                 ],
                 "_dest": [
-                    -128.0,
-                    40,
-                    528.0
+                    -43.14047354836369,
+                    320,
+                    692.8332095544624
                 ],
-                "angle": 3.023444787674729
+                "angle": 0.3598844152798904,
+                "equipped_weapon": "apprentice_staff",
+                "hidden": false,
+                "_wander_dest": [
+                    -43.14047354836369,
+                    320,
+                    692.8332095544624
+                ],
+                "_was_shooting": false
             },
             "io_connections": []
         },
@@ -4235,7 +4273,7 @@
                 "attack_style": "bow",
                 "combatant": true,
                 "type": "npc",
-                "name": "NPC_4",
+                "name": "guard",
                 "id": "77fdc4e4-3803-4a72-8a26-05ba5ec21fd2",
                 "monster_type": "human",
                 "monster_id": 0,
@@ -4260,8 +4298,8 @@
                 "move_speed": 90.0,
                 "can_defend": true,
                 "courage": 0.9,
-                "custom_idle": "assets/sprites/heads/head13.png",
-                "custom_shoot": "assets/sprites/heads/head13.png",
+                "custom_idle": "assets/sprites/heads/head19.png",
+                "custom_shoot": "assets/sprites/heads/head19.png",
                 "portrait": "assets/portraits/miniwind/guard.png",
                 "inventory": [
                     {
@@ -4313,7 +4351,7 @@
                 "can_hear": false,
                 "non_hostile": false,
                 "spells": [],
-                "head": "head13",
+                "head": "head19",
                 "_facing": 2.6702487282320324,
                 "_wander_dest": [
                     731.2860367158967,
@@ -4321,6 +4359,9 @@
                     -454.68736058081686
                 ],
                 "angle": 2.6524823486578057,
+                "equipped_weapon": "hunting_bow",
+                "hidden": false,
+                "_was_shooting": false,
                 "dead": false
             },
             "io_connections": []
@@ -4419,7 +4460,10 @@
                     -198.3431508298714
                 ],
                 "angle": -1.8892416192892452,
-                "_facing": -1.3755466270524042
+                "_facing": -1.3755466270524042,
+                "equipped_weapon": "hunting_bow",
+                "hidden": false,
+                "_was_shooting": false
             },
             "io_connections": []
         },
@@ -4466,7 +4510,7 @@
                 "id": "ef7313cb-efeb-4b06-ad9e-fdf8273ec6d8",
                 "marker_kind": "prison",
                 "hidden_in_game": true,
-                "custom_idle": "assets/sprites/miniwind/marker_idle.png",
+                "custom_idle": "assets/sprites/miniwind/marker_prison.png",
                 "discover_radius": 2048.0,
                 "place_name": "Prison"
             },
@@ -4485,7 +4529,7 @@
                 "id": "7146636d-fe30-4d69-bf9b-2b1a2ac61e6a",
                 "marker_kind": "location",
                 "hidden_in_game": true,
-                "custom_idle": "assets/sprites/miniwind/marker_idle.png",
+                "custom_idle": "assets/sprites/miniwind/marker_location.png",
                 "discover_radius": 1024.0,
                 "place_name": "Millbrook",
                 "_discovered": true

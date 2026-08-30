@@ -63,6 +63,15 @@ _ART_ALIAS = {
 _SPRITE_DIR = "assets/sprites/miniwind"
 _PORTRAIT_DIR = "assets/portraits/miniwind"
 
+# Default weapons by attack style for humanoid actors
+_DEFAULT_WEAPON = {
+    "melee": "iron_shortsword",
+    "bow": "hunting_bow",
+    "magic": "apprentice_staff",
+}
+# Creature roles that should NOT receive a default metal weapon
+_ANIMAL_ROLES = {"wolf", "bear", "boar", "mudcrab"}
+
 
 def _art_role(role: str) -> str:
     r = str(role or "villager").lower()
@@ -188,7 +197,19 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
 
     p.setdefault("inventory", [])
     p.setdefault("persistent", True)
+
+    # Equip a default weapon matching attack style so every humanoid combatant
+    # shows one in overhead mode. Authoring still wins if a weapon was set.
+    if "equipped_weapon" not in _authored:
+        if role not in _ANIMAL_ROLES:
+            style = str(p.get("attack_style", "melee")).lower()
+            p["equipped_weapon"] = _DEFAULT_WEAPON.get(style, "")
+        else:
+            p["equipped_weapon"] = ""
+    p.setdefault("inventory", [])
+    p.setdefault("persistent", True)
     return role, tmpl, aggression, faction
+
 
 
 class NPC(Monster):

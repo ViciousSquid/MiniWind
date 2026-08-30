@@ -1,25 +1,10 @@
 """
-Native overhead (top-down) player sprite: animation controller + ground renderer.
+MiniWind overhead sprite renderer.
 
-Used by the engine's Overhead camera mode (the editor's "Camera" dropdown) to
-draw the player as a sprite lying flat on the ground that rotates to face the
-player's heading, animating between an idle pose and a two-frame walk cycle.
-
-Two pieces, split so the decision-making is testable without a GPU:
-
-* :class:`SpriteController` — pure logic. Fed the player's ground position,
-  facing angle and a clock each frame, it decides which frame to show (an *idle*
-  pose when standing still; two *walk* poses alternating at ``walk_fps`` while
-  moving) and carries the facing through. No GL/glm/Pillow imports.
-
-* :class:`OverheadSpriteRenderer` — draws the chosen frame as a textured quad on
-  the ground, rotated about the vertical axis to face the heading (a billboard
-  can't turn within the ground plane, so this is a real rotated quad). All
-  OpenGL/glm/Pillow imports are lazy and guarded; the renderer self-disables on
-  any missing asset or GL error, so a missing sprite never breaks a frame.
-
-Frames live under ``assets/sprites/topdown/`` — ``player1.png`` (idle),
-``player2.png`` / ``player3.png`` (walk).
+Weapons are rendered as a separate transparent ground quad:
+- resting position is offset to the actor's right, close to the head;
+- attacks make the weapon thrust forward rapidly and return;
+- the same draw_weapon() path is used by player, NPC and monster actors.
 """
 
 from __future__ import annotations
@@ -29,31 +14,18 @@ import os
 from typing import Optional
 
 
-# Equipped weapon tuning. Distances use the same logical world-space units as
-# OverheadSpriteRenderer.size. Attack angles are degrees here for easy tuning.
 WEAPON_SIZE_MULTIPLIER = 2.0
-WEAPON_FORWARD_GAP = 18.0
-WEAPON_IDLE_SWAY_DEGREES = 4.0
-WEAPON_ATTACK_SWEEP_DEGREES = 18.0
-WEAPON_ATTACK_SWEEP_SPEED = 14.0
-WEAPON_IDLE_SWAY_SPEED = 2.5
 
+# Fixed resting offset from the actor centre.
+# Positive right_offset means the actor's local right-hand side.
+WEAPON_RIGHT_OFFSET = 42.0
 
-# ---------------------------------------------------------------------------
-# Animation state machine (pure, testable)
-# ---------------------------------------------------------------------------
+# Forward movement during a stab.
+WEAPON_STAB_DISTANCE = 72.0
+WEAPON_STAB_DURATION = 0.14
+
 
 class SpriteController:
-    """Chooses the current animation frame and tracks facing.
-
-    Frame keys, unarmed: ``"idle"``, ``"walk_a"``, ``"walk_b"``; the
-    weapon-held ("_g") variants: ``"idle_g"``, ``"walk_a_g"``, ``"walk_b_g"``;
-    and ``"shoot"`` for firing. ``update`` takes the player's ground position
-    ``(x, y, z)``, facing (radians, engine convention: forward =
-    ``(sin a, ·, cos a)``), a monotonic ``now``, and the current
-    ``armed`` / ``shooting`` state.
-    """
-
     IDLE = "idle"
     WALK_A = "walk_a"
     WALK_B = "walk_b"
@@ -62,12 +34,14 @@ class SpriteController:
     WALK_B_G = "walk_b_g"
     SHOOT = "shoot"
 
-    def __init__(self, walk_fps: float = 6.0, move_epsilon: float = 0.75,
-                 shoot_hold: float = 0.18):
+    def __init__(
+        self,
+        walk_fps: float = 6.0,
+        move_epsilon: float = 0.75,
+        shoot_hold: float = 0.18,
+    ):
         self.walk_fps = float(walk_fps)
         self.move_epsilon = float(move_epsilon)
-        #: How long (seconds) the shoot pose is held after a shot, so a
-        #: one-frame muzzle flash still reads as a visible firing pose.
         self.shoot_hold = float(shoot_hold)
         self.facing = 0.0
         self.moving = False
@@ -77,45 +51,59 @@ class SpriteController:
         self._now = 0.0
         self._shoot_until = -1.0
 
-    def update(self, pos, facing: float, now: float,
-               armed: bool = False, shooting: bool = False) -> None:
+    def update(
+        self,
+        pos,
+        facing: float,
+        now: float,
+        armed: bool = False,
+        shooting: bool = False,
+    ) -> None:
         self.facing = float(facing)
         self._now = float(now)
         self.armed = bool(armed)
+
         p = (float(pos[0]), float(pos[1]), float(pos[2]))
+
         if self._last_pos is not None:
             dx = p[0] - self._last_pos[0]
             dz = p[2] - self._last_pos[2]
-            self.moving = (dx * dx + dz * dz) > (self.move_epsilon * self.move_epsilon)
+            self.moving = (
+                dx * dx + dz * dz
+            ) > (self.move_epsilon * self.move_epsilon)
         else:
             self.moving = False
+
         if self.moving:
             self._anim_t = float(now)
+
         if shooting:
             self._shoot_until = float(now) + self.shoot_hold
+
         self._last_pos = p
 
     def frame(self) -> str:
-        # Firing (only meaningful while armed) latches the shoot pose briefly.
         if self.armed and self._now < self._shoot_until:
             return self.SHOOT
+
         if not self.moving:
             base = self.IDLE
         else:
-            base = self.WALK_A if int(self._anim_t * self.walk_fps) % 2 == 0 else self.WALK_B
+            base = (
+                self.WALK_A
+                if int(self._anim_t * self.walk_fps) % 2 == 0
+                else self.WALK_B
+            )
+
         return (base + "_g") if self.armed else base
 
 
-# ---------------------------------------------------------------------------
-# Ground-plane sprite renderer (OpenGL; lazy + guarded)
-# ---------------------------------------------------------------------------
-
 _SPRITE_VERT = """#version 330 core
-layout (location = 0) in vec2 aPos;   // unit quad corners in [-0.5, 0.5]
+layout (location = 0) in vec2 aPos;
 out vec2 TexCoords;
 uniform mat4 mvp;
 void main() {
-    TexCoords = vec2(aPos.x + 0.5, 0.5 - aPos.y);   // flip V so image top = +forward
+    TexCoords = vec2(aPos.x + 0.5, 0.5 - aPos.y);
     gl_Position = mvp * vec4(aPos.x, 0.0, aPos.y, 1.0);
 }"""
 
@@ -123,86 +111,116 @@ _SPRITE_FRAG = """#version 330 core
 in vec2 TexCoords;
 out vec4 FragColor;
 uniform sampler2D tex;
-uniform vec4 tint;   // rgb = tint colour, a = strength (0 = no tint)
+uniform vec4 tint;
 void main() {
     vec4 c = texture(tex, TexCoords);
     if (c.a < 0.05) discard;
-    FragColor = vec4(mix(c.rgb, tint.rgb, clamp(tint.a, 0.0, 1.0)), c.a);
+    FragColor = vec4(
+        mix(c.rgb, tint.rgb, clamp(tint.a, 0.0, 1.0)),
+        c.a
+    );
 }"""
 
 
 def _assets_root() -> str:
-    """``<repo>/assets`` resolved from this module's location."""
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "assets",
+    )
 
 
 class OverheadSpriteRenderer:
-    """Draws the player sprite as a ground quad that faces the player's heading.
+    """Draw overhead actors and their equipped weapons."""
 
-    GL resources are created lazily on first :meth:`draw` (must run on the render
-    thread, in the live context) and cached. Any failure disables the renderer
-    for the session rather than raising into the frame loop.
-    """
+    def __init__(
+        self,
+        frame_files: Optional[dict] = None,
+        size: float = 128.0,
+        y_offset: float = 2.0,
+        facing_offset_deg: float = 0.0,
+    ):
+        directory = os.path.join(
+            _assets_root(), "sprites", "topdown"
+        )
 
-    def __init__(self, frame_files: Optional[dict] = None, size: float = 128.0,
-                 y_offset: float = 2.0, facing_offset_deg: float = 0.0):
-        # Defaults match the supplied art. Unarmed: player1 = idle, player2/3 =
-        # walk. Weapon-held ("_g"): player1_g/2_g/3_g. Firing: player_shoot_g.
-        _d = os.path.join(_assets_root(), "sprites", "topdown")
         self.frame_files = frame_files or {
-            SpriteController.IDLE: os.path.join(_d, "player1.png"),
-            SpriteController.WALK_A: os.path.join(_d, "player2.png"),
-            SpriteController.WALK_B: os.path.join(_d, "player3.png"),
-            SpriteController.IDLE_G: os.path.join(_d, "player1_g.png"),
-            SpriteController.WALK_A_G: os.path.join(_d, "player2_g.png"),
-            SpriteController.WALK_B_G: os.path.join(_d, "player3_g.png"),
-            SpriteController.SHOOT: os.path.join(_d, "player_shoot_g.png"),
+            SpriteController.IDLE:
+                os.path.join(directory, "player1.png"),
+            SpriteController.WALK_A:
+                os.path.join(directory, "player2.png"),
+            SpriteController.WALK_B:
+                os.path.join(directory, "player3.png"),
+            SpriteController.IDLE_G:
+                os.path.join(directory, "player1_g.png"),
+            SpriteController.WALK_A_G:
+                os.path.join(directory, "player2_g.png"),
+            SpriteController.WALK_B_G:
+                os.path.join(directory, "player3_g.png"),
+            SpriteController.SHOOT:
+                os.path.join(directory, "player_shoot_g.png"),
         }
+
         self.size = float(size)
         self.y_offset = float(y_offset)
         self.facing_offset_deg = float(facing_offset_deg)
 
-        self._ok = None          # None=untried, True=ready, False=disabled
+        self._ok = None
         self._prog = None
         self._vao = None
         self._vbo = None
         self._mvp_loc = -1
         self._tex_loc = -1
-        self._textures: dict = {}
-        # Cached module handles (bound in _init_gl) so the per-frame draw path
-        # does not re-run `import` on every frame.
+        self._tint_loc = -1
+        self._textures = {}
         self._gl = None
         self._glm = None
 
-    # -- angle convention (pure, testable) ----------------------------------
     def facing_theta(self, facing: float) -> float:
-        """Ground-plane rotation (radians) for a player *facing* angle.
-
-        The sprite faces the player's heading when this is ``facing`` directly
-        (+ a user trim). Determined empirically against the running game.
-        """
         return float(facing) + math.radians(self.facing_offset_deg)
 
-    # Graceful fallback: if a weapon-held or shoot frame is missing, fall back to
-    # the closest available frame so the animation degrades instead of vanishing.
     _FALLBACKS = {
-        SpriteController.SHOOT: (SpriteController.SHOOT, SpriteController.IDLE_G, SpriteController.IDLE),
-        SpriteController.IDLE_G: (SpriteController.IDLE_G, SpriteController.IDLE),
-        SpriteController.WALK_A_G: (SpriteController.WALK_A_G, SpriteController.WALK_A, SpriteController.IDLE_G, SpriteController.IDLE),
-        SpriteController.WALK_B_G: (SpriteController.WALK_B_G, SpriteController.WALK_B, SpriteController.IDLE_G, SpriteController.IDLE),
-        SpriteController.WALK_A: (SpriteController.WALK_A, SpriteController.IDLE),
-        SpriteController.WALK_B: (SpriteController.WALK_B, SpriteController.IDLE),
+        SpriteController.SHOOT: (
+            SpriteController.SHOOT,
+            SpriteController.IDLE_G,
+            SpriteController.IDLE,
+        ),
+        SpriteController.IDLE_G: (
+            SpriteController.IDLE_G,
+            SpriteController.IDLE,
+        ),
+        SpriteController.WALK_A_G: (
+            SpriteController.WALK_A_G,
+            SpriteController.WALK_A,
+            SpriteController.IDLE_G,
+            SpriteController.IDLE,
+        ),
+        SpriteController.WALK_B_G: (
+            SpriteController.WALK_B_G,
+            SpriteController.WALK_B,
+            SpriteController.IDLE_G,
+            SpriteController.IDLE,
+        ),
+        SpriteController.WALK_A: (
+            SpriteController.WALK_A,
+            SpriteController.IDLE,
+        ),
+        SpriteController.WALK_B: (
+            SpriteController.WALK_B,
+            SpriteController.IDLE,
+        ),
         SpriteController.IDLE: (SpriteController.IDLE,),
     }
 
     def _texture_for(self, frame_key):
-        for key in self._FALLBACKS.get(frame_key, (frame_key, SpriteController.IDLE)):
-            tex = self._textures.get(key)
-            if tex:
-                return tex
+        for key in self._FALLBACKS.get(
+            frame_key,
+            (frame_key, SpriteController.IDLE),
+        ):
+            texture = self._textures.get(key)
+            if texture:
+                return texture
         return 0
 
-    # -- setup --------------------------------------------------------------
     def _init_gl(self) -> bool:
         try:
             import numpy as np
@@ -210,44 +228,72 @@ class OverheadSpriteRenderer:
             import glm
         except Exception:
             return False
-        # Cache for the per-frame draw path (see draw()).
+
         self._gl = gl
         self._glm = glm
-        try:
-            def _compile(src, kind):
-                s = gl.glCreateShader(kind)
-                gl.glShaderSource(s, src)
-                gl.glCompileShader(s)
-                if not gl.glGetShaderiv(s, gl.GL_COMPILE_STATUS):
-                    raise RuntimeError(gl.glGetShaderInfoLog(s))
-                return s
-            vs = _compile(_SPRITE_VERT, gl.GL_VERTEX_SHADER)
-            fs = _compile(_SPRITE_FRAG, gl.GL_FRAGMENT_SHADER)
-            prog = gl.glCreateProgram()
-            gl.glAttachShader(prog, vs); gl.glAttachShader(prog, fs)
-            gl.glLinkProgram(prog)
-            if not gl.glGetProgramiv(prog, gl.GL_LINK_STATUS):
-                raise RuntimeError(gl.glGetProgramInfoLog(prog))
-            gl.glDeleteShader(vs); gl.glDeleteShader(fs)
-            self._prog = prog
-            self._mvp_loc = gl.glGetUniformLocation(prog, "mvp")
-            self._tex_loc = gl.glGetUniformLocation(prog, "tex")
-            self._tint_loc = gl.glGetUniformLocation(prog, "tint")
 
-            quad = np.array([-0.5, -0.5, 0.5, -0.5, 0.5, 0.5,
-                             -0.5, -0.5, 0.5, 0.5, -0.5, 0.5], dtype=np.float32)
+        try:
+            def compile_shader(source, kind):
+                shader = gl.glCreateShader(kind)
+                gl.glShaderSource(shader, source)
+                gl.glCompileShader(shader)
+                if not gl.glGetShaderiv(shader, gl.GL_COMPILE_STATUS):
+                    raise RuntimeError(gl.glGetShaderInfoLog(shader))
+                return shader
+
+            vertex = compile_shader(_SPRITE_VERT, gl.GL_VERTEX_SHADER)
+            fragment = compile_shader(_SPRITE_FRAG, gl.GL_FRAGMENT_SHADER)
+
+            program = gl.glCreateProgram()
+            gl.glAttachShader(program, vertex)
+            gl.glAttachShader(program, fragment)
+            gl.glLinkProgram(program)
+
+            if not gl.glGetProgramiv(program, gl.GL_LINK_STATUS):
+                raise RuntimeError(gl.glGetProgramInfoLog(program))
+
+            gl.glDeleteShader(vertex)
+            gl.glDeleteShader(fragment)
+
+            self._prog = program
+            self._mvp_loc = gl.glGetUniformLocation(program, "mvp")
+            self._tex_loc = gl.glGetUniformLocation(program, "tex")
+            self._tint_loc = gl.glGetUniformLocation(program, "tint")
+
+            quad = np.array(
+                [
+                    -0.5, -0.5,
+                     0.5, -0.5,
+                     0.5,  0.5,
+                    -0.5, -0.5,
+                     0.5,  0.5,
+                    -0.5,  0.5,
+                ],
+                dtype=np.float32,
+            )
+
             self._vao = gl.glGenVertexArrays(1)
             self._vbo = gl.glGenBuffers(1)
+
             gl.glBindVertexArray(self._vao)
             gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._vbo)
-            gl.glBufferData(gl.GL_ARRAY_BUFFER, quad.nbytes, quad, gl.GL_STATIC_DRAW)
+            gl.glBufferData(
+                gl.GL_ARRAY_BUFFER,
+                quad.nbytes,
+                quad,
+                gl.GL_STATIC_DRAW,
+            )
             gl.glEnableVertexAttribArray(0)
-            gl.glVertexAttribPointer(0, 2, gl.GL_FLOAT, gl.GL_FALSE, 0, None)
+            gl.glVertexAttribPointer(
+                0, 2, gl.GL_FLOAT, gl.GL_FALSE, 0, None
+            )
             gl.glBindVertexArray(0)
 
             for key, path in self.frame_files.items():
                 self._textures[key] = self._load_texture(path)
+
             return any(self._textures.values())
+
         except Exception:
             return False
 
@@ -258,113 +304,260 @@ class OverheadSpriteRenderer:
             from PIL import Image
         except Exception:
             return 0
+
         try:
-            img = Image.open(path).convert("RGBA")
-            data = np.array(img, dtype=np.uint8)
-            tex = gl.glGenTextures(1)
-            gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
-            gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, img.width, img.height,
-                            0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, data)
+            image = Image.open(path).convert("RGBA")
+            data = np.array(image, dtype=np.uint8)
+
+            texture = gl.glGenTextures(1)
+            gl.glBindTexture(gl.GL_TEXTURE_2D, texture)
+
+            gl.glTexParameteri(
+                gl.GL_TEXTURE_2D,
+                gl.GL_TEXTURE_MIN_FILTER,
+                gl.GL_LINEAR,
+            )
+            gl.glTexParameteri(
+                gl.GL_TEXTURE_2D,
+                gl.GL_TEXTURE_MAG_FILTER,
+                gl.GL_LINEAR,
+            )
+            gl.glTexParameteri(
+                gl.GL_TEXTURE_2D,
+                gl.GL_TEXTURE_WRAP_S,
+                gl.GL_CLAMP_TO_EDGE,
+            )
+            gl.glTexParameteri(
+                gl.GL_TEXTURE_2D,
+                gl.GL_TEXTURE_WRAP_T,
+                gl.GL_CLAMP_TO_EDGE,
+            )
+
+            gl.glTexImage2D(
+                gl.GL_TEXTURE_2D,
+                0,
+                gl.GL_RGBA,
+                image.width,
+                image.height,
+                0,
+                gl.GL_RGBA,
+                gl.GL_UNSIGNED_BYTE,
+                data,
+            )
+
             gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
-            return int(tex)
+            return int(texture)
+
         except Exception:
             return 0
 
-    # -- per-frame draw -----------------------------------------------------
-    def _draw_texture(self, projection, view, pos, facing: float, texture: int,
-                      size: float, y_offset: float, rotation_offset: float = 0.0,
-                      tint=(0.0, 0.0, 0.0, 0.0)) -> None:
-        """Draw one textured ground quad using logical world-space metrics."""
+    def _draw_texture(
+        self,
+        projection,
+        view,
+        pos,
+        facing: float,
+        texture: int,
+        size: float,
+        y_offset: float,
+        rotation_offset: float = 0.0,
+        tint=(0.0, 0.0, 0.0, 0.0),
+    ) -> None:
         try:
             gl = self._gl
             glm = self._glm
-            theta = self.facing_theta(facing) + float(rotation_offset)
-            m = glm.translate(glm.mat4(1.0), glm.vec3(
-                float(pos[0]), float(pos[1]) + float(y_offset), float(pos[2])))
-            m = glm.rotate(m, theta, glm.vec3(0.0, 1.0, 0.0))
-            m = glm.scale(m, glm.vec3(float(size), 1.0, float(size)))
-            mvp = projection * view * m
+
+            theta = (
+                self.facing_theta(facing)
+                + float(rotation_offset)
+            )
+
+            model = glm.translate(
+                glm.mat4(1.0),
+                glm.vec3(
+                    float(pos[0]),
+                    float(pos[1]) + float(y_offset),
+                    float(pos[2]),
+                ),
+            )
+
+            model = glm.rotate(
+                model,
+                theta,
+                glm.vec3(0.0, 1.0, 0.0),
+            )
+
+            model = glm.scale(
+                model,
+                glm.vec3(float(size), 1.0, float(size)),
+            )
+
+            mvp = projection * view * model
 
             gl.glUseProgram(self._prog)
-            gl.glUniformMatrix4fv(self._mvp_loc, 1, gl.GL_FALSE, glm.value_ptr(mvp))
-            if getattr(self, "_tint_loc", -1) not in (-1, None):
-                gl.glUniform4f(self._tint_loc, float(tint[0]), float(tint[1]),
-                               float(tint[2]), float(tint[3]))
+            gl.glUniformMatrix4fv(
+                self._mvp_loc,
+                1,
+                gl.GL_FALSE,
+                glm.value_ptr(mvp),
+            )
+
+            if self._tint_loc not in (-1, None):
+                gl.glUniform4f(
+                    self._tint_loc,
+                    float(tint[0]),
+                    float(tint[1]),
+                    float(tint[2]),
+                    float(tint[3]),
+                )
+
             gl.glActiveTexture(gl.GL_TEXTURE0)
             gl.glBindTexture(gl.GL_TEXTURE_2D, texture)
             gl.glUniform1i(self._tex_loc, 0)
+
             gl.glEnable(gl.GL_BLEND)
-            gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+            gl.glBlendFunc(
+                gl.GL_SRC_ALPHA,
+                gl.GL_ONE_MINUS_SRC_ALPHA,
+            )
             gl.glDisable(gl.GL_CULL_FACE)
+
             gl.glBindVertexArray(self._vao)
             gl.glDrawArrays(gl.GL_TRIANGLES, 0, 6)
             gl.glBindVertexArray(0)
             gl.glUseProgram(0)
+
         except Exception:
             self._ok = False
 
     def _ready(self) -> bool:
         if self._ok is False:
             return False
+
         if self._ok is None:
             self._ok = self._init_gl()
+
         return bool(self._ok)
 
-    def draw(self, projection, view, pos, facing: float, frame_key: str,
-             tint=(0.0, 0.0, 0.0, 0.0)) -> None:
-        """Draw *frame_key* at ground *pos*, turned to *facing* (radians)."""
+    def draw(
+        self,
+        projection,
+        view,
+        pos,
+        facing: float,
+        frame_key: str,
+        tint=(0.0, 0.0, 0.0, 0.0),
+    ) -> None:
         if not self._ready():
             return
-        tex = self._texture_for(frame_key)
-        if tex:
-            self._draw_texture(projection, view, pos, facing, tex, self.size,
-                               self.y_offset, tint=tint)
 
-    def draw_weapon(self, projection, view, pos, facing: float, weapon_path: str,
-                    now: float, attacking: bool = False, animate: bool = False,
-                    size: Optional[float] = None) -> None:
-        """Draw an equipped weapon ahead of an actor and animate blade swings.
+        texture = self._texture_for(frame_key)
 
-        The weapon is a separate transparent ground quad, so it remains visible
-        in front of the actor's head while following the same facing rotation.
+        if texture:
+            self._draw_texture(
+                projection,
+                view,
+                pos,
+                facing,
+                texture,
+                self.size,
+                self.y_offset,
+                tint=tint,
+            )
+
+    def draw_weapon(
+        self,
+        projection,
+        view,
+        pos,
+        facing: float,
+        weapon_path: str,
+        now: float,
+        attacking: bool = False,
+        animate: bool = False,
+        size: Optional[float] = None,
+    ) -> None:
+        """Draw an equipped weapon to the actor's right.
+
+        The resting position is offset to the actor's local right-hand side.
+        Because the offset is calculated from ``facing``, the weapon remains on
+        the character's right regardless of which direction the actor faces.
+
+        During an attack the weapon keeps that right-side origin and performs
+        a short, rapid forward thrust before returning to its resting position.
+        Player, NPC and monster callers therefore receive identical behaviour.
         """
+
         if not weapon_path or not self._ready():
             return
+
         key = "weapon:" + str(weapon_path)
-        tex = self._textures.get(key)
-        if not tex:
-            tex = self._load_texture(weapon_path)
-            if tex:
-                self._textures[key] = tex
-        if not tex:
+        texture = self._textures.get(key)
+
+        if not texture:
+            texture = self._load_texture(weapon_path)
+            if texture:
+                self._textures[key] = texture
+
+        if not texture:
             return
+
         actor_size = max(1.0, float(self.size))
+
         weapon_size = max(
             1.0,
-            (float(size) if size is not None else actor_size * 0.55)
-            * WEAPON_SIZE_MULTIPLIER,
+            (
+                float(size)
+                if size is not None
+                else actor_size * 0.55
+            ) * WEAPON_SIZE_MULTIPLIER,
         )
 
-        # Keep the weapon outside the actor quad so it visibly floats in front
-        # of the head instead of touching or overlapping it.
-        forward_distance = actor_size * 0.5 + weapon_size * 0.5 + WEAPON_FORWARD_GAP
-        orbit_degrees = math.sin(float(now) * WEAPON_IDLE_SWAY_SPEED) * \
-            WEAPON_IDLE_SWAY_DEGREES
-        if animate and attacking:
-            orbit_degrees = math.sin(float(now) * WEAPON_ATTACK_SWEEP_SPEED) * \
-                WEAPON_ATTACK_SWEEP_DEGREES
-        orbit_angle = math.radians(orbit_degrees)
-        weapon_facing = float(facing) + orbit_angle
-        forward = (math.sin(weapon_facing), 0.0, math.cos(weapon_facing))
-        weapon_pos = (
-            float(pos[0]) + forward[0] * forward_distance,
-            float(pos[1]),
-            float(pos[2]) + forward[2] * forward_distance,
+        facing = float(facing)
+
+        # Engine forward = (sin(facing), cos(facing)).
+        forward_x = math.sin(facing)
+        forward_z = math.cos(facing)
+
+        # Character's local right = forward rotated clockwise 90 degrees.
+        # This is deliberately tied to facing rather than screen coordinates.
+        right_x = forward_z
+        right_z = -forward_x
+
+        # The weapon's normal resting position: beside the right side of
+        # the head, rather than floating in front of the actor.
+        weapon_x = (
+            float(pos[0])
+            + right_x * WEAPON_RIGHT_OFFSET
         )
-        self._draw_texture(projection, view, weapon_pos, facing, tex,
-                           weapon_size, self.y_offset + 0.6,
-                           rotation_offset=orbit_angle)
+        weapon_z = (
+            float(pos[2])
+            + right_z * WEAPON_RIGHT_OFFSET
+        )
+
+        thrust = 0.0
+
+        if animate and attacking:
+            # One short stab cycle. The sine rises rapidly from the resting
+            # position to maximum extension and then returns.
+            phase = (
+                float(now) % WEAPON_STAB_DURATION
+            ) / WEAPON_STAB_DURATION
+
+            thrust = (
+                math.sin(math.pi * phase)
+                * WEAPON_STAB_DISTANCE
+            )
+
+        weapon_x += forward_x * thrust
+        weapon_z += forward_z * thrust
+
+        self._draw_texture(
+            projection,
+            view,
+            (weapon_x, float(pos[1]), weapon_z),
+            facing,
+            texture,
+            weapon_size,
+            self.y_offset + 0.6,
+        )
