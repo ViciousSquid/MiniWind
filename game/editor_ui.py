@@ -47,7 +47,11 @@ def _hint_label(QtWidgets, text):
 def make_appearance_tab(thing):
     """Pick the head sprite an NPC/creature uses (a single billboard, no
     animation). '(random)' lets the game assign a head never used by the player.
-    Setting a head updates the entity's sprite immediately."""
+    Setting a head updates the entity's sprite immediately.
+
+    NPCs whose ``name`` contains "guard" (case-insensitive) also get an extra
+    "Guard heads" section offering the special guard01…guard04 sprites, plus a
+    Browse… button to pick any PNG directly from assets/sprites/heads/."""
     try:
         QtWidgets, QtCore = _qt()
     except Exception:  # pragma: no cover
@@ -71,11 +75,20 @@ def make_appearance_tab(thing):
             self.combo.addItem("(random)", "")
             for hid in heads.HEAD_IDS:
                 self.combo.addItem(hid, hid)
+            if self._is_guard_named():
+                self.combo.insertSeparator(self.combo.count())
+                for hid in heads.GUARD_HEAD_IDS:
+                    self.combo.addItem(f"{hid} (guard)", hid)
             cur = str(thing.properties.get("head", "") or "")
+            self._ensure_combo_entry(cur)
             i = self.combo.findData(cur)
             self.combo.setCurrentIndex(i if i >= 0 else 0)
             self.combo.currentIndexChanged.connect(self._changed)
             row.addWidget(self.combo, 1)
+            browse_btn = QtWidgets.QPushButton("Browse…")
+            browse_btn.setToolTip("Pick any PNG from assets/sprites/heads/")
+            browse_btn.clicked.connect(self._browse)
+            row.addWidget(browse_btn)
             v.addLayout(row)
             self.preview = QtWidgets.QLabel()
             self.preview.setFixedSize(140, 140)
@@ -86,14 +99,29 @@ def make_appearance_tab(thing):
             v.addStretch(1)
             self._refresh()
 
+        def _is_guard_named(self) -> bool:
+            name = str(self.thing.properties.get("name", "") or
+                        self.thing.properties.get("display_name", "") or "")
+            return "guard" in name.lower()
+
         def _repo_root(self):
             return os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 
+        def _ensure_combo_entry(self, hid: str) -> None:
+            """Add a combo entry for *hid* if it isn't one already (e.g. a
+            head picked via Browse… that isn't head00-19 or guard01-04)."""
+            if not hid or self.combo.findData(hid) >= 0:
+                return
+            self.combo.addItem(hid, hid)
+
         def _changed(self, *_):
             hid = self.combo.currentData() or ""
+            self._apply_head(hid)
+
+        def _apply_head(self, hid: str) -> None:
             self.thing.properties["head"] = hid
-            if hid in heads.HEAD_IDS:
-                path = heads.head_path(hid)
+            if heads.is_any_head(hid):
+                path = heads.any_head_path(hid)
                 # Living/attacking sprites follow the head; there is no custom
                 # death sprite (a slain actor shows its head + dead.png overlay).
                 for k in ("custom_idle", "custom_shoot"):
@@ -107,11 +135,35 @@ def make_appearance_tab(thing):
                 pass
             self._refresh()
 
+        def _browse(self):
+            start_dir = os.path.join(self._repo_root(), heads.HEAD_DIR)
+            os.makedirs(start_dir, exist_ok=True)
+            path, _ = QtWidgets.QFileDialog.getOpenFileName(
+                self, "Select a head PNG  (must be inside assets/sprites/heads/)",
+                start_dir, "PNG Images (*.png)")
+            if not path:
+                return
+            norm_base = os.path.normcase(os.path.normpath(start_dir))
+            norm_path = os.path.normcase(os.path.normpath(path))
+            if not norm_path.startswith(norm_base):
+                QtWidgets.QMessageBox.warning(
+                    self, "Wrong Directory",
+                    "Head sprites must be inside:\n  assets/sprites/heads/\n\n"
+                    "Please select a file within that folder.")
+                return
+            hid = os.path.splitext(os.path.basename(path))[0]
+            self._ensure_combo_entry(hid)
+            i = self.combo.findData(hid)
+            if i >= 0:
+                self.combo.setCurrentIndex(i)   # triggers _changed -> _apply_head
+            else:
+                self._apply_head(hid)
+
         def _refresh(self):
             hid = str(self.thing.properties.get("head", "") or "")
             pm = None
-            if hid in heads.HEAD_IDS:
-                p = os.path.join(self._repo_root(), heads.head_path(hid))
+            if heads.is_any_head(hid):
+                p = os.path.join(self._repo_root(), heads.any_head_path(hid))
                 if os.path.isfile(p):
                     q = QtGui.QPixmap(p)
                     if not q.isNull():

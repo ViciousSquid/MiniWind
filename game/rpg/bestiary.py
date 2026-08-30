@@ -29,7 +29,7 @@ class Creature:
     def __init__(self, role, name, health, damage, attack_style=MELEE,
                  faction="monsters", loot="", scale=112, aggression="hostile",
                  sight=1024, speed=90.0, level=1, xp=10, resistances=None,
-                 kind=CREATURE):
+                 kind=CREATURE, weapon=""):
         self.role = role
         self.name = name
         self.health = health
@@ -44,6 +44,7 @@ class Creature:
         self.level = level
         self.xp = xp
         self.resistances = resistances or {}
+        self.weapon = weapon
         #: 'npc' (townsperson/quest actor) or 'creature' (monster/animal).
         self.kind = kind
 
@@ -74,6 +75,8 @@ def _load_bestiary() -> Dict[str, Creature]:
             xp=row.pop("xp", 10),
             resistances=row.pop("resistances", None),
             kind=row.pop("kind", CREATURE),
+            weapon=row.pop("weapon", ""),
+
         )
     return out
 

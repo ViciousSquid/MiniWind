@@ -144,6 +144,9 @@ class MiniwindGame:
         except Exception:
             pass
         item_ids = sorted(rpg_items.ITEMS.keys())
+
+        weapon_ids = sorted(item_id for item_id, item_def in rpg_items.ITEMS.items()
+                            if item_def.category == rpg_items.WEAPON)
         factions = ["player", "villagers", "guards", "bandits", "cultists",
                     "wildlife", "monsters"]
         styles = ["melee", "bow", "magic"]
@@ -265,6 +268,9 @@ class MiniwindGame:
                  group="SCHEDULE", help="Name of a World Marker this NPC works at."),
             prop("wander_radius", "float", "Wander radius", default=220.0, min=0.0,
                  max=100000.0, group="SCHEDULE"),
+             prop("equipped_weapon", "enum", "Equipped weapon", default="", choices=[""] + weapon_ids,
+                  group="INVENTORY", help="Weapon drawn in front of this actor in overhead mode."),
+
             prop("merchant", "bool", "Is a merchant", default=False, group="INVENTORY"),
             prop("merchant_gold", "int", "Merchant gold", default=0, min=0, max=1000000,
                  group="INVENTORY"),
@@ -288,6 +294,8 @@ class MiniwindGame:
                  choices=["passive", "defensive", "hostile"], group="BEHAVIOUR"),
             prop("attack_style", "enum", "Combat style", default="melee",
                  choices=styles, group="BEHAVIOUR"),
+            prop("equipped_weapon", "enum", "Equipped weapon", default="", choices=[""] + weapon_ids,
+                 group="BEHAVIOUR", help="Weapon drawn in front of this actor in overhead mode."),
             prop("sight_range", "int", "Sight range", default=1024, min=0, max=100000,
                  group="BEHAVIOUR", help="How far it perceives enemies before engaging."),
             prop("move_speed", "float", "Movement speed", default=90.0, min=0.0,
@@ -582,6 +590,16 @@ class MiniwindGame:
         player = getattr(logic, "player", None)
         if player is None or session.game.character.is_dead:
             return
+        arrest_guard = session.nearest_arrest_guard(player.pos, TALK_RADIUS)
+        if arrest_guard is not None:
+            name = arrest_guard.properties.get("display_name") or arrest_guard.properties.get("name", "Guard")
+            prompt = f"Press E to answer {name}'s arrest order"
+            ctx.set_prompt(prompt, priority=6)
+            session.interact_prompt = prompt
+            if K_INTERACT in just or ctx.use_pressed:
+                session.start_dialogue(arrest_guard, player)
+            return
+
         npc = session.nearest_talkable(player.pos, TALK_RADIUS)
         if npc is not None:
             name = npc.properties.get("display_name") or npc.properties.get("name", "NPC")

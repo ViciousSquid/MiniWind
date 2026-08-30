@@ -81,11 +81,13 @@ def portrait_for(role: str) -> str:
 
 def _apply_head_sprite(p: dict) -> None:
     """If a ``head`` id is set, point the actor's billboard frames at that head
-    sprite (a single static image); otherwise leave the role art in place."""
+    sprite (a single static image); otherwise leave the role art in place.
+    Accepts either a regular head (headNN) or, for guard-named NPCs, one of
+    the special guard heads (guard01…guard04)."""
     from .rpg import heads
     hid = str(p.get("head", "") or "")
-    if hid in heads.HEAD_IDS:
-        path = heads.head_path(hid)
+    if heads.is_any_head(hid):
+        path = heads.any_head_path(hid)
         p["custom_idle"] = path
         p["custom_shoot"] = path
         # No custom death sprite: a slain head-wearing actor shows its head with
@@ -172,9 +174,10 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
     # is no custom death sprite — a slain actor shows its head + dead.png overlay.
     p.setdefault("custom_idle", sprite_for(role))
     p.setdefault("custom_shoot", sprite_for(role))
-    # Head override: an NPC's whole appearance can be one of the 15 head sprites
-    # (a single billboard, no animation). Empty = use the role art; the runtime
-    # assigns a random head — never the player's — at play start.
+    # Head override: an NPC's whole appearance can be one of the head sprites
+    # (a single billboard, no animation) — or, for a guard-named NPC, one of
+    # the special guardNN heads. Empty = use the role art; the runtime assigns
+    # a random (non-guard) head — never the player's — at play start.
     p.setdefault("head", "")
     _apply_head_sprite(p)
     p.setdefault("portrait", portrait_for(role))
@@ -291,7 +294,7 @@ MiniwindSettings = GameSettings
 #: Marker kinds an author can pick from (drives only the editor label/icon; the
 #: behaviour comes from what an NPC references, not the kind).
 MARKER_KINDS = ("home", "bed", "work", "forge", "shop", "farm", "guardpost",
-                "patrol", "social", "idle", "location")
+                "patrol", "social", "idle", "location", "prison", "quest")
 
 
 def marker_sprite(kind: str) -> str:

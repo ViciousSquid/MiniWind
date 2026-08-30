@@ -576,7 +576,10 @@ class Monster(Thing):
             # 3D view matches the 2D view for slain head actors instead of falling
             # back to the monster-type's plain dead.png.
             'sprite_path': self.get_sprite_path(),
-            'is_head': Monster._is_head_sprite(self.properties.get('custom_idle', '')),
+            'weapon_id': self.properties.get(
+                'equipped_weapon',
+                (self.properties.get('equipment') or {}).get('weapon', '')
+                if isinstance(self.properties.get('equipment'), dict) else ''),
         }
 
     def get_sprite_path(self) -> str:

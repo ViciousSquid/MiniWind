@@ -45,6 +45,17 @@ TALK_RADIUS = 140.0
 #: cue at a wider range than the interaction range above.
 BUBBLE_RADIUS = 280.0
 DEFEND_SIGHT = 700.0
+#: A bounty below this value can be resolved by paying gold instead of serving jail time.
+BOUNTY_FINE_THRESHOLD = 1000
+#: Guards notice a wanted player when the player enters this radius.
+BOUNTY_NOTICE_RADIUS = 700.0
+#: Maximum distance the player may get from the escort guard before resisting arrest.
+ESCORT_BREAKAWAY_DISTANCE = 320.0
+#: Nearby guards who join the pursuit after an escort escape.
+GUARD_PURSUIT_RADIUS = 1200.0
+#: A surrendered player is considered delivered when close to the prison marker.
+PRISON_ARRIVE_RADIUS = 96.0
+PRISON_MARKER_NAME = "prison"
 #: How close a hostile must be before a non-combatant NPC breaks off and flees.
 FLEE_SIGHT = 480.0
 _RALLY_THRESHOLD = 0.5
@@ -178,6 +189,10 @@ class MiniwindSession:
         self._blocking = False
         self._player_flash = 0.0               # red-flash timer when hurt
         self.merchant_npc = None
+        #: Active arrest flow: one guard approaches, escorts, or starts pursuit.
+        self._arrest_guard = None
+        self._arrest_state = ""
+        self._arrest_notice_sent = False
         #: Active Wisp companion light, or None. See _spawn_wisp / _update_wisp.
         self._wisp = None
         self.dice_type_index = len(DICE_TYPES) - 1
@@ -397,6 +412,10 @@ class MiniwindSession:
             self._cast_cooldown -= delta
         if self._player_flash > 0:
             self._player_flash = max(0.0, self._player_flash - delta)
+
+        # Bounty enforcement runs independently of normal NPC schedules so a guard
+        # can approach, arrest, escort, or pursue the player immediately.
+        self._update_arrest()
 
         # decisions (low frequency) + movement (every tick)
         hour_int = int(self.clock.hour)
@@ -1024,8 +1043,251 @@ class MiniwindSession:
         if str(p.get("npc_role", "")).lower().startswith("guard"):
             self.store.set("town.unprotected", "1")
 
+    def _is_arrest_guard(self, thing) -> bool:
+        """Return whether *thing* is a living, non-hostile guard available for arrest duty."""
+        if thing is None:
+            return False
+        p = getattr(thing, "properties", {})
+        return (self._is_guard(thing) and not p.get("dead")
+                and str(p.get("aggression", "")) != "hostile")
+
+    def _prison_position(self):
+        """Resolve the authored prison marker, or fall back to the guard post."""
+        prison = self._find_named(PRISON_MARKER_NAME)
+        if prison is not None:
+            return list(prison.pos)
+        post = self._nearest_of(self._arrest_guard, lambda t:
+                                self._marker_kind(t) == "guardpost") \
+            if self._arrest_guard is not None else None
+        return list(post.pos) if post is not None else None
+
+    def _update_arrest(self) -> None:
+        """Drive bounty detection, guard approach, escort delivery, and escape."""
+        player_pos = self._player_pos()
+        if player_pos is None or self.game.character.is_dead:
+            return
+
+        # Resolve prison marker once; bail out if the map has none.
+        prison_pos = None
+        for mk in self._things_of_type("marker"):
+            if str(mk.properties.get("marker_kind", "")).lower() == "prison":
+                prison_pos = mk.pos
+                break
+        if prison_pos is None:
+            # No prison on this map — clear any stale arrest state and skip.
+            if self._arrest_state:
+                self._clear_arrest()
+            return
+
+        guard = self._arrest_guard
+        state = self._arrest_state
+        if state == "escorting":
+            if not self._is_arrest_guard(guard):
+                self._start_arrest_pursuit()
+                return
+            distance = self._dist2d(guard.pos, player_pos)
+            if distance > ESCORT_BREAKAWAY_DISTANCE:
+                self._start_arrest_pursuit()
+                return
+            prison_distance = self._dist2d(guard.pos, prison_pos)
+            if prison_distance <= PRISON_ARRIVE_RADIUS:
+                if self._dist2d(player_pos, prison_pos) <= PRISON_ARRIVE_RADIUS:
+                    self._complete_escort(prison_pos)
+                else:
+                    self._start_arrest_pursuit()
+            return
+
+        bounty = int(getattr(self.game.character, "bounty", 0) or 0)
+        if bounty <= 0:
+            if state:
+                self._clear_arrest()
+            return
+
+        if state in ("approach", "ready") and self._is_arrest_guard(guard):
+            if state == "approach" and self._dist2d(guard.pos, player_pos) <= TALK_RADIUS:
+                self._arrest_state = "ready"
+                guard.properties["_arrest_state"] = "ready"
+                guard.properties.pop("_dest", None)
+                self.notify("The guard stops you: you are wanted for a crime.", 4.0)
+                player = getattr(self.logic, "player", None)
+                if player is not None:
+                    self.start_dialogue(guard, player)
+            return
+
+        self._arrest_guard = None
+        self._arrest_state = ""
+        candidates = []
+        radius2 = BOUNTY_NOTICE_RADIUS * BOUNTY_NOTICE_RADIUS
+        for candidate in self.npcs():
+            if not self._is_arrest_guard(candidate):
+                continue
+            dx = candidate.pos[0] - player_pos[0]
+            dz = candidate.pos[2] - player_pos[2]
+            d = dx * dx + dz * dz
+            if d <= radius2:
+                candidates.append((d, candidate))
+        if candidates:
+            _, guard = min(candidates, key=lambda item: item[0])
+            self._arrest_guard = guard
+            self._arrest_state = "approach"
+            guard.properties["_arrest_state"] = "approach"
+            guard.properties["triggered"] = True
+            guard.properties["awake"]
+
+    def nearest_arrest_guard(self, player_pos, radius: float = TALK_RADIUS):
+        """Return the guard currently waiting to discuss the player's arrest."""
+        guard = self._arrest_guard
+        if self._arrest_state != "ready" or not self._is_arrest_guard(guard):
+            return None
+        if self._dist2d(guard.pos, player_pos) <= radius:
+            return guard
+        return None
+
+    def _arrest_tree(self, guard):
+        """Build the short guard conversation for the current bounty."""
+        bounty = max(1, int(self.game.character.bounty))
+        name = guard.properties.get("display_name", "Guard")
+        if bounty < BOUNTY_FINE_THRESHOLD:
+            responses = []
+            if self.game.character.gold >= bounty:
+                responses.append({
+                    "text": f"Pay the {bounty} gold fine.",
+                    "goto": "END",
+                    "actions": [{"op": "pay_bounty"}],
+                })
+            else:
+                responses.append({
+                    "text": "I cannot pay. Take me to prison.",
+                    "goto": "END",
+                    "actions": [{"op": "begin_escort"}],
+                })
+            responses.extend([
+                {"text": "I surrender. Take me to prison.", "goto": "END",
+                 "actions": [{"op": "begin_escort"}]},
+                {"text": "I refuse and run.", "goto": "END",
+                 "actions": [{"op": "resist_arrest"}]},
+            ])
+        else:
+            responses = [
+                {"text": "I surrender. Take me to prison.", "goto": "END",
+                 "actions": [{"op": "begin_escort"}]},
+                {"text": "I refuse and run.", "goto": "END",
+                 "actions": [{"op": "resist_arrest"}]},
+            ]
+        return {
+            "start": "arrest",
+            "nodes": {
+                "arrest": {
+                    "text": f"{name}: You have an outstanding bounty of {bounty} gold. "
+                            "Surrender and answer for your crimes.",
+                    "responses": responses,
+                },
+            },
+        }
+
+    def _clear_arrest(self) -> None:
+        """Release the arrest guard back to normal settlement AI."""
+        guard = self._arrest_guard
+        if guard is not None:
+            p = guard.properties
+            p.pop("_arrest_state", None)
+            p.pop("_dest", None)
+            if str(p.get("aggression", "")) != "hostile":
+                p["triggered"] = True
+                p["awake"] = False
+        self._arrest_guard = None
+        self._arrest_state = ""
+        self._arrest_notice_sent = False
+
+    def _pay_bounty(self) -> None:
+        """Pay a low bounty in gold and end the arrest."""
+        amount = max(1, int(self.game.character.bounty))
+        if self.game.character.gold < amount:
+            self.notify("You cannot afford the fine. You will be escorted to prison.")
+            self._begin_escort()
+            return
+        self.game.add_gold(-amount)
+        self.game.character.bounty = 0
+        self.notify(f"You paid the {amount} gold fine.", 4.0)
+        self._clear_arrest()
+
+    def _begin_escort(self) -> None:
+        """Put the active guard into the authored prison escort state."""
+        guard = self._arrest_guard
+        if not self._is_arrest_guard(guard):
+            return
+        if self._prison_position() is None:
+            self.notify("No prison marker is placed in this settlement.")
+            return
+        self._arrest_state = "escorting"
+        guard.properties["_arrest_state"] = "escorting"
+        guard.properties["triggered"] = True
+        guard.properties["awake"] = False
+        guard.properties["sched_state"] = "ESCORT"
+        self.notify("You are being escorted to prison. Stay with the guard.", 5.0)
+
+    def _start_arrest_pursuit(self) -> None:
+        """Make nearby guards hostile when the player breaks away from an escort."""
+        player_pos = self._player_pos()
+        if player_pos is None:
+            return
+        radius2 = GUARD_PURSUIT_RADIUS * GUARD_PURSUIT_RADIUS
+        for guard in self.npcs():
+            if not self._is_guard(guard) or guard.properties.get("dead"):
+                continue
+            dx = guard.pos[0] - player_pos[0]
+            dz = guard.pos[2] - player_pos[2]
+            if dx * dx + dz * dz > radius2:
+                continue
+            p = guard.properties
+            p.pop("_arrest_state", None)
+            p.pop("_dest", None)
+            p["aggression"] = "hostile"
+            p["triggered"] = False
+            p["awake"] = True
+            p["wake_on_sight"] = True
+        self._arrest_guard = None
+        self._arrest_state = ""
+        self._arrest_notice_sent = False
+        self.notify("You broke away from the escort. The guards attack!", 5.0)
+
+    def _complete_escort(self, prison_pos) -> None:
+        """Deliver a player who stayed with the guard to the prison marker."""
+        player = getattr(self.logic, "player", None)
+        if player is not None:
+            try:
+                player.pos.x = float(prison_pos[0])
+                player.pos.y = float(prison_pos[1])
+                player.pos.z = float(prison_pos[2])
+            except Exception:
+                pass
+        self.game.character.bounty = 0
+        self.notify("You have been escorted to prison. Your bounty is cleared.", 5.0)
+        self._clear_arrest()
+
     def _decide(self, npc) -> None:
         p = npc.properties
+
+        # Arrest movement is owned by the runtime, not the normal schedule or
+        # MonsterAI. The guard remains visible and walks to the player/prison.
+        arrest_state = p.get("_arrest_state")
+        if arrest_state in ("approach", "ready", "escorting"):
+            p["triggered"] = True
+            p["awake"] = False
+            p["sched_state"] = ("ARREST_APPROACH" if arrest_state == "approach"
+                                  else "ARREST_READY" if arrest_state == "ready"
+                                  else "ESCORT")
+            if arrest_state == "approach":
+                player_pos = self._player_pos()
+                if player_pos is not None:
+                    p["_dest"] = player_pos
+            elif arrest_state == "ready":
+                p.pop("_dest", None)
+            else:
+                prison_pos = self._prison_position()
+                if prison_pos is not None:
+                    p["_dest"] = prison_pos
+            return
 
         # (a) FACTION + COMBAT CAPABILITY: an actively hostile combatant is the
         #     engine MonsterAI's job (it is live), so leave it be.
@@ -1038,14 +1300,24 @@ class MiniwindSession:
         # (b) A defending combatant (e.g. a guard) un-parks into the core AI when
         #     a faction-hostile enemy is near, and re-parks to its post after.
         if combatant:
-            enemy = self._nearest_hostile(npc, DEFEND_SIGHT)
+            try:
+                defend_sight = max(DEFEND_SIGHT, float(
+                    p.get("sight_range", DEFEND_SIGHT)))
+            except (TypeError, ValueError):
+                defend_sight = DEFEND_SIGHT
+            enemy = self._nearest_hostile(npc, defend_sight)
             if enemy is not None:
+                # Give the core MonsterAI the exact intruder found by the
+                # settlement scan. This avoids waiting for a second perception
+                # pass and makes a returning bandit immediately actionable.
+                p["_aggro_target"] = id(enemy)
                 p["triggered"] = False
                 p["awake"] = True
                 p["sched_state"] = sched.COMBAT
                 p.pop("_flee", None)
                 return
             elif p.get("sched_state") == sched.COMBAT:
+                p.pop("_aggro_target", None)
                 p["triggered"] = True
                 p["awake"] = False
         else:
@@ -1836,6 +2108,9 @@ class MiniwindSession:
     def start_dialogue(self, npc, player) -> bool:
         tree = npc.properties.get("dialogue")
         self.dialogue_npc = npc
+        if (npc is self._arrest_guard and self._arrest_state == "ready"
+                and int(self.game.character.bounty or 0) > 0):
+            tree = self._arrest_tree(npc)
         if npc.properties.get("merchant"):
             self.merchant_npc = npc
         if not tree:
@@ -1871,7 +2146,13 @@ class MiniwindSession:
 
     def _dialogue_action(self, npc, action):
         op = action.get("op")
-        if op == "open_trade":
+        if op == "pay_bounty":
+            self._pay_bounty()
+        elif op == "begin_escort":
+            self._begin_escort()
+        elif op == "resist_arrest":
+            self._start_arrest_pursuit()
+        elif op == "open_trade":
             self.merchant_npc = npc
             self.end_dialogue()
             self.open_screen = "trade"

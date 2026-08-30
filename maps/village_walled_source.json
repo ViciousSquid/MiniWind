@@ -2843,9 +2843,8 @@
                         }
                     }
                 },
-                "custom_idle": "assets/sprites/miniwind/blacksmith.png",
-                "custom_dead": "assets/sprites/miniwind/blacksmith.png",
-                "custom_shoot": "assets/sprites/miniwind/blacksmith.png",
+                "custom_idle": "assets/sprites/heads/head17.png",
+                "custom_shoot": "assets/sprites/heads/head17.png",
                 "portrait": "assets/portraits/miniwind/blacksmith.png",
                 "monster_type": "human",
                 "sprite_width": 112,
@@ -2872,7 +2871,7 @@
                 "move_speed": 90.0,
                 "combatant": false,
                 "persistent": true,
-                "sched_state": "GOING_TO_WORK",
+                "sched_state": "WORKING",
                 "autonomy": true,
                 "wander_radius": 220.0,
                 "respawn": false,
@@ -2893,18 +2892,17 @@
                     272,
                     -650
                 ],
-                "dead": false,
                 "spells": [],
-                "head": ""
+                "head": "head17"
             },
             "io_connections": []
         },
         {
             "type": "npc",
             "pos": [
-                564.3338659189769,
+                509.6890374745053,
                 264.0,
-                -172.6309221989962
+                -604.5391698405369
             ],
             "properties": {
                 "type": "npc",
@@ -3046,9 +3044,8 @@
                         }
                     }
                 },
-                "custom_idle": "assets/sprites/miniwind/merchant.png",
-                "custom_dead": "assets/sprites/miniwind/merchant.png",
-                "custom_shoot": "assets/sprites/miniwind/merchant.png",
+                "custom_idle": "assets/sprites/heads/head02.png",
+                "custom_shoot": "assets/sprites/heads/head02.png",
                 "portrait": "assets/portraits/miniwind/merchant.png",
                 "monster_type": "human",
                 "sprite_width": 112,
@@ -3075,7 +3072,7 @@
                 "move_speed": 90.0,
                 "combatant": false,
                 "persistent": true,
-                "sched_state": "FLEE",
+                "sched_state": "WORKING",
                 "autonomy": true,
                 "wander_radius": 220.0,
                 "respawn": false,
@@ -3096,15 +3093,14 @@
                 "max_health": 42,
                 "courage": 0.2,
                 "_dest": [
-                    576.0,
-                    264.0,
-                    -48.0
+                    520,
+                    272,
+                    -650
                 ],
                 "_death_noted": true,
-                "_flee": true,
-                "dead": true,
                 "spells": [],
-                "head": ""
+                "head": "head02",
+                "angle": 2.918556271384732
             },
             "io_connections": []
         },
@@ -3217,9 +3213,8 @@
                         }
                     }
                 },
-                "custom_idle": "assets/sprites/miniwind/farmer.png",
-                "custom_dead": "",
-                "custom_shoot": "assets/sprites/miniwind/farmer.png",
+                "custom_idle": "assets/sprites/heads/head17.png",
+                "custom_shoot": "assets/sprites/heads/head17.png",
                 "portrait": "assets/portraits/miniwind/farmer.png",
                 "monster_type": "human",
                 "sprite_width": 112,
@@ -3266,10 +3261,9 @@
                     -770
                 ],
                 "_death_noted": true,
-                "head": "",
+                "head": "head17",
                 "sight": 512,
                 "can_hear": false,
-                "dead": false,
                 "non_hostile": false,
                 "spells": []
             },
@@ -3278,9 +3272,9 @@
         {
             "type": "npc",
             "pos": [
-                497.3435974121094,
+                727.7332763671875,
                 268.6666564941406,
-                -392.96551513671875
+                -323.1553955078125
             ],
             "properties": {
                 "type": "npc",
@@ -3360,9 +3354,8 @@
                     "village_square",
                     "patrol_east"
                 ],
-                "custom_idle": "assets/sprites/miniwind/guard.png",
-                "custom_dead": "assets/sprites/miniwind/guard.png",
-                "custom_shoot": "assets/sprites/miniwind/guard.png",
+                "custom_idle": "assets/sprites/heads/head13.png",
+                "custom_shoot": "assets/sprites/heads/head13.png",
                 "portrait": "assets/portraits/miniwind/guard.png",
                 "monster_type": "human",
                 "sprite_width": 120,
@@ -3370,7 +3363,7 @@
                 "monster_id": 0,
                 "health": 100,
                 "damage": 24,
-                "triggered": true,
+                "triggered": false,
                 "wake_on_sight": true,
                 "awake": false,
                 "patrol": false,
@@ -3380,7 +3373,7 @@
                 "entity_type": "npc",
                 "faction": "guards",
                 "team": "guards",
-                "aggression": "defensive",
+                "aggression": "hostile",
                 "attack_style": "melee",
                 "sight_range": 1024,
                 "loot": "",
@@ -3454,11 +3447,6 @@
                 "respawn": false,
                 "quest_flags": {},
                 "disposition_base": 45,
-                "_dest": [
-                    480,
-                    268.6666564941406,
-                    -520
-                ],
                 "relationships": {
                     "Mara": "sweetheart",
                     "Thalen": "friend"
@@ -3475,25 +3463,26 @@
                         -520
                     ]
                 ],
-                "_patrol_i": 1,
+                "_patrol_i": 0,
                 "_death_noted": true,
                 "max_health": -20,
                 "courage": 0.8,
-                "dead": true,
                 "sight": 512,
                 "can_hear": false,
                 "non_hostile": false,
                 "spells": [],
-                "head": ""
+                "head": "head13",
+                "angle": 1.295191850475558,
+                "_facing": -1.045041151243314
             },
             "io_connections": []
         },
         {
             "type": "npc",
             "pos": [
-                300.8839385125513,
+                153.85547199144145,
                 260.0,
-                -485.55211196127436
+                492.35270251526356
             ],
             "properties": {
                 "type": "npc",
@@ -3567,9 +3556,8 @@
                         }
                     }
                 },
-                "custom_idle": "assets/sprites/miniwind/beggar.png",
-                "custom_dead": "assets/sprites/miniwind/beggar.png",
-                "custom_shoot": "assets/sprites/miniwind/beggar.png",
+                "custom_idle": "assets/sprites/heads/head09.png",
+                "custom_shoot": "assets/sprites/heads/head09.png",
                 "portrait": "assets/portraits/miniwind/beggar.png",
                 "monster_type": "human",
                 "sprite_width": 104,
@@ -3597,7 +3585,7 @@
                 "combatant": false,
                 "inventory": [],
                 "persistent": true,
-                "sched_state": "FLEE",
+                "sched_state": "WANDER",
                 "autonomy": true,
                 "wander_radius": 220.0,
                 "merchant": false,
@@ -3606,14 +3594,14 @@
                 "quest_flags": {},
                 "disposition_base": 45,
                 "_anchor": [
-                    340,
+                    208.0,
                     272,
-                    -560
+                    608.0
                 ],
                 "_wander_dest": [
-                    153.4690529975595,
+                    67.85489405022545,
                     260.0,
-                    -671.7279711953911
+                    545.7588718665578
                 ],
                 "relationships": {
                     "Thalen": "creditor"
@@ -3621,27 +3609,26 @@
                 "max_health": 8,
                 "courage": 0.2,
                 "_dest": [
-                    576.0,
+                    67.85489405022545,
                     260.0,
-                    -48.0
+                    545.7588718665578
                 ],
-                "_flee": true,
-                "dead": true,
                 "_death_noted": true,
                 "sight": 512,
                 "can_hear": false,
                 "non_hostile": false,
                 "spells": [],
-                "head": ""
+                "head": "head09",
+                "angle": -1.0150801789897799
             },
             "io_connections": []
         },
         {
             "type": "npc",
             "pos": [
-                439.40909245862895,
+                -82.8051986694336,
                 264.77777099609375,
-                -315.6110310709885
+                285.5375061035156
             ],
             "properties": {
                 "type": "npc",
@@ -3742,17 +3729,16 @@
                         }
                     }
                 },
-                "custom_idle": "assets/sprites/miniwind/villager.png",
-                "custom_dead": "assets/sprites/miniwind/villager.png",
-                "custom_shoot": "assets/sprites/miniwind/villager.png",
+                "custom_idle": "assets/sprites/heads/head14.png",
+                "custom_shoot": "assets/sprites/heads/head14.png",
                 "portrait": "assets/portraits/miniwind/villager.png",
                 "monster_type": "human",
                 "sprite_width": 112,
                 "sprite_height": 112,
                 "monster_id": 0,
-                "health": 100,
+                "health": -20,
                 "damage": 5,
-                "triggered": true,
+                "triggered": false,
                 "wake_on_sight": true,
                 "awake": false,
                 "patrol": false,
@@ -3762,7 +3748,7 @@
                 "entity_type": "npc",
                 "faction": "villagers",
                 "team": "villagers",
-                "aggression": "passive",
+                "aggression": "hostile",
                 "attack_style": "melee",
                 "sight_range": 1024,
                 "loot": "",
@@ -3772,7 +3758,7 @@
                 "combatant": false,
                 "inventory": [],
                 "persistent": true,
-                "sched_state": "FLEE",
+                "sched_state": "COMBAT",
                 "autonomy": true,
                 "wander_radius": 220.0,
                 "merchant": false,
@@ -3792,23 +3778,24 @@
                 "max_health": 33,
                 "courage": 0.3,
                 "_dest": [
-                    576.0,
+                    200.01633636604663,
                     264.77777099609375,
-                    -48.0
+                    -500.2175842924304
                 ],
                 "_wander_dest": [
-                    420.5404233363812,
+                    200.01633636604663,
                     264.77777099609375,
-                    -625.84324141945
+                    -500.2175842924304
                 ],
-                "_flee": true,
-                "dead": true,
-                "_death_noted": false,
+                "_death_noted": true,
                 "sight": 512,
                 "can_hear": false,
                 "non_hostile": false,
                 "spells": [],
-                "head": ""
+                "head": "head14",
+                "angle": -1.5699589245770278,
+                "_facing": 1.4413584090393041,
+                "dead": true
             },
             "io_connections": []
         },
@@ -3816,7 +3803,7 @@
             "type": "creature",
             "pos": [
                 1600.0,
-                268.0,
+                236.0,
                 -1840.0
             ],
             "properties": {
@@ -3827,15 +3814,14 @@
                 "npc_role": "bandit",
                 "aggression": "hostile",
                 "sight_range": 520,
-                "custom_idle": "assets/sprites/miniwind/bandit.png",
-                "custom_dead": "",
-                "custom_shoot": "assets/sprites/miniwind/bandit.png",
+                "custom_idle": "assets/sprites/heads/head07.png",
+                "custom_shoot": "assets/sprites/heads/head07.png",
                 "portrait": "assets/portraits/miniwind/bandit.png",
                 "monster_type": "human",
                 "sprite_width": 120,
                 "sprite_height": 120,
                 "monster_id": 0,
-                "health": -140,
+                "health": -154,
                 "damage": 10,
                 "triggered": false,
                 "wake_on_sight": true,
@@ -3868,9 +3854,9 @@
                 "non_hostile": false,
                 "max_health": -102,
                 "courage": 0.3,
-                "dead": false,
                 "spells": [],
-                "head": ""
+                "head": "head07",
+                "dead": true
             },
             "io_connections": []
         },
@@ -3878,7 +3864,7 @@
             "type": "creature",
             "pos": [
                 1248.0,
-                268.0,
+                236.0,
                 -1792.0
             ],
             "properties": {
@@ -3889,15 +3875,14 @@
                 "npc_role": "bandit_archer",
                 "aggression": "hostile",
                 "sight_range": 520,
-                "custom_idle": "assets/sprites/miniwind/bandit.png",
-                "custom_dead": "",
-                "custom_shoot": "assets/sprites/miniwind/bandit.png",
+                "custom_idle": "assets/sprites/heads/head18.png",
+                "custom_shoot": "assets/sprites/heads/head18.png",
                 "portrait": "assets/portraits/miniwind/bandit.png",
                 "monster_type": "human",
                 "sprite_width": 120,
                 "sprite_height": 120,
                 "monster_id": 0,
-                "health": -99,
+                "health": -107,
                 "damage": 9,
                 "triggered": false,
                 "wake_on_sight": true,
@@ -3930,9 +3915,9 @@
                 "non_hostile": false,
                 "max_health": -42,
                 "courage": 0.3,
-                "dead": false,
                 "spells": [],
-                "head": ""
+                "head": "head18",
+                "dead": true
             },
             "io_connections": []
         },
@@ -3970,7 +3955,7 @@
             "type": "creature",
             "pos": [
                 1456.0,
-                268.0,
+                236.0,
                 -1680.0
             ],
             "properties": {
@@ -3981,15 +3966,14 @@
                 "npc_role": "bandit_archer",
                 "aggression": "hostile",
                 "sight_range": 520,
-                "custom_idle": "assets/sprites/miniwind/bandit.png",
-                "custom_dead": "",
-                "custom_shoot": "assets/sprites/miniwind/bandit.png",
+                "custom_idle": "assets/sprites/heads/head04.png",
+                "custom_shoot": "assets/sprites/heads/head04.png",
                 "portrait": "assets/portraits/miniwind/bandit.png",
                 "monster_type": "human",
                 "sprite_width": 120,
                 "sprite_height": 120,
                 "monster_id": 0,
-                "health": 1,
+                "health": -19,
                 "damage": 9,
                 "triggered": false,
                 "wake_on_sight": true,
@@ -4022,9 +4006,9 @@
                 "non_hostile": false,
                 "max_health": -42,
                 "courage": 0.3,
-                "dead": false,
                 "spells": [],
-                "head": ""
+                "head": "head04",
+                "dead": true
             },
             "io_connections": []
         },
@@ -4121,9 +4105,9 @@
         {
             "type": "npc",
             "pos": [
-                -128,
+                -133.51089460903205,
                 320,
-                528
+                574.4268112677861
             ],
             "properties": {
                 "dialogue": {
@@ -4161,9 +4145,8 @@
                 "move_speed": 90.0,
                 "can_defend": true,
                 "courage": 0.6,
-                "custom_idle": "assets/sprites/miniwind/villager.png",
-                "custom_dead": "assets/sprites/miniwind/villager.png",
-                "custom_shoot": "assets/sprites/miniwind/villager.png",
+                "custom_idle": "assets/sprites/heads/head16.png",
+                "custom_shoot": "assets/sprites/heads/head16.png",
                 "portrait": "assets/portraits/miniwind/villager.png",
                 "inventory": [],
                 "persistent": true,
@@ -4189,7 +4172,7 @@
                         "location": "home"
                     }
                 ],
-                "sched_state": "IDLE",
+                "sched_state": "WORKING",
                 "home": [
                     -128.0,
                     40,
@@ -4206,7 +4189,6 @@
                 "disposition_base": 45,
                 "sight": 1024,
                 "can_hear": true,
-                "dead": false,
                 "non_hostile": true,
                 "spells": [
                     {
@@ -4220,16 +4202,27 @@
                         "speed": 1400.0
                     }
                 ],
-                "head": ""
+                "head": "head16",
+                "_anchor": [
+                    -128.0,
+                    40,
+                    528.0
+                ],
+                "_dest": [
+                    -128.0,
+                    40,
+                    528.0
+                ],
+                "angle": 3.023444787674729
             },
             "io_connections": []
         },
         {
             "type": "npc",
             "pos": [
-                656,
-                288,
-                -352
+                72.08827209472656,
+                268.0,
+                90.07613372802734
             ],
             "properties": {
                 "dialogue": {
@@ -4238,7 +4231,7 @@
                 "display_name": "Town Archer",
                 "npc_role": "guard_archer",
                 "faction": "guards",
-                "aggression": "defensive",
+                "aggression": "hostile",
                 "attack_style": "bow",
                 "combatant": true,
                 "type": "npc",
@@ -4246,10 +4239,10 @@
                 "id": "77fdc4e4-3803-4a72-8a26-05ba5ec21fd2",
                 "monster_type": "human",
                 "monster_id": 0,
-                "health": 100,
+                "health": 89,
                 "max_health": 100,
                 "damage": 24,
-                "triggered": true,
+                "triggered": false,
                 "wake_on_sight": true,
                 "awake": false,
                 "patrol": false,
@@ -4267,9 +4260,8 @@
                 "move_speed": 90.0,
                 "can_defend": true,
                 "courage": 0.9,
-                "custom_idle": "assets/sprites/miniwind/guard.png",
-                "custom_dead": "",
-                "custom_shoot": "assets/sprites/miniwind/guard.png",
+                "custom_idle": "assets/sprites/heads/head13.png",
+                "custom_shoot": "assets/sprites/heads/head13.png",
                 "portrait": "assets/portraits/miniwind/guard.png",
                 "inventory": [
                     {
@@ -4302,7 +4294,7 @@
                 ],
                 "persistent": true,
                 "schedule": [],
-                "sched_state": "IDLE",
+                "sched_state": "COMBAT",
                 "home": [
                     656.0,
                     40,
@@ -4319,19 +4311,26 @@
                 "disposition_base": 45,
                 "sight": 512,
                 "can_hear": false,
-                "dead": false,
                 "non_hostile": false,
                 "spells": [],
-                "head": ""
+                "head": "head13",
+                "_facing": 2.6702487282320324,
+                "_wander_dest": [
+                    731.2860367158967,
+                    264.2352941176472,
+                    -454.68736058081686
+                ],
+                "angle": 2.6524823486578057,
+                "dead": false
             },
             "io_connections": []
         },
         {
             "type": "npc",
             "pos": [
-                896,
-                288,
-                -64
+                953.2186279296875,
+                272.44445461697046,
+                -126.0716323852539
             ],
             "properties": {
                 "dialogue": {
@@ -4340,7 +4339,7 @@
                 "display_name": "Town Archer",
                 "npc_role": "guard_archer",
                 "faction": "guards",
-                "aggression": "defensive",
+                "aggression": "hostile",
                 "attack_style": "bow",
                 "combatant": true,
                 "type": "npc",
@@ -4351,7 +4350,7 @@
                 "health": 90,
                 "max_health": 100,
                 "damage": 12,
-                "triggered": true,
+                "triggered": false,
                 "wake_on_sight": true,
                 "awake": false,
                 "patrol": false,
@@ -4369,9 +4368,8 @@
                 "move_speed": 90.0,
                 "can_defend": true,
                 "courage": 0.8,
-                "custom_idle": "assets/sprites/miniwind/guard.png",
-                "custom_dead": "assets/sprites/miniwind/guard.png",
-                "custom_shoot": "assets/sprites/miniwind/guard.png",
+                "custom_idle": "assets/sprites/heads/head03.png",
+                "custom_shoot": "assets/sprites/heads/head03.png",
                 "portrait": "assets/portraits/miniwind/guard.png",
                 "inventory": [
                     {
@@ -4395,7 +4393,7 @@
                 ],
                 "persistent": true,
                 "schedule": [],
-                "sched_state": "IDLE",
+                "sched_state": "COMBAT",
                 "home": [
                     896.0,
                     40,
@@ -4412,10 +4410,16 @@
                 "disposition_base": 45,
                 "sight": 512,
                 "can_hear": false,
-                "dead": false,
                 "non_hostile": false,
                 "spells": [],
-                "head": ""
+                "head": "head03",
+                "_wander_dest": [
+                    733.9914007660359,
+                    288,
+                    -198.3431508298714
+                ],
+                "angle": -1.8892416192892452,
+                "_facing": -1.3755466270524042
             },
             "io_connections": []
         },
@@ -4445,7 +4449,46 @@
                 ],
                 "use_radius": 128.0,
                 "locked": false,
-                "custom_idle": "assets/sprites/miniwind/container_chest.png"
+                "custom_idle": "assets/sprites/miniwind/container_crate.png"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "marker",
+            "pos": [
+                -832,
+                256,
+                256
+            ],
+            "properties": {
+                "type": "marker",
+                "name": "Marker_1",
+                "id": "ef7313cb-efeb-4b06-ad9e-fdf8273ec6d8",
+                "marker_kind": "prison",
+                "hidden_in_game": true,
+                "custom_idle": "assets/sprites/miniwind/marker_idle.png",
+                "discover_radius": 2048.0,
+                "place_name": "Prison"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "marker",
+            "pos": [
+                192,
+                320,
+                0
+            ],
+            "properties": {
+                "type": "marker",
+                "name": "Marker_2",
+                "id": "7146636d-fe30-4d69-bf9b-2b1a2ac61e6a",
+                "marker_kind": "location",
+                "hidden_in_game": true,
+                "custom_idle": "assets/sprites/miniwind/marker_idle.png",
+                "discover_radius": 1024.0,
+                "place_name": "Millbrook",
+                "_discovered": true
             },
             "io_connections": []
         }

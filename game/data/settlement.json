@@ -22,6 +22,7 @@
     "bram_home":      { "kind": "home",   "pos": [650, 272, -520] },
     "bram_bed":       { "kind": "bed",    "pos": [662, 272, -506] },
     "kestrel_post":   { "kind": "guardpost", "pos": [300, 272, -440] },
+    "prison":         { "kind": "prison", "pos": [460, 272, -440] },
     "patrol_west":    { "kind": "patrol", "pos": [150, 272, -520] },
     "patrol_east":    { "kind": "patrol", "pos": [480, 272, -520] },
     "wick_spot":      { "kind": "social", "pos": [340, 272, -560] },

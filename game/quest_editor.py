@@ -101,14 +101,15 @@ def _scene_things(editor):
 
 
 def _npc_names(editor):
-    """Names of NPCs (quest-giver candidates) currently in the scene."""
-    names = []
+    """Names of NPCs and monsters that can give a quest in the scene."""
+    names = set()
     for t in _scene_things(editor):
         props = getattr(t, "properties", None)
-        if isinstance(props, dict) and str(props.get("type", "")).lower() == "npc":
-            n = props.get("name", "")
+        kind = str(props.get("type", "")).lower() if isinstance(props, dict) else ""
+        if kind in ("npc", "monster", "creature"):
+            n = str(props.get("name", "")).strip()
             if n:
-                names.append(n)
+                names.add(n)
     return sorted(names)
 
 
@@ -318,6 +319,14 @@ def wire_giver_dialogue(giver_thing, quest):
     return True
 
 
+# Quest Wizard window sizing. Change these four values to tune its default and
+# smallest allowed size without searching through the widget-building code.
+QUEST_WIZARD_DEFAULT_WIDTH = 1270
+QUEST_WIZARD_DEFAULT_HEIGHT = 1055
+QUEST_WIZARD_MIN_WIDTH = 995
+QUEST_WIZARD_MIN_HEIGHT = 1013
+
+
 # ---------------------------------------------------------------------------
 # Widgets (lazy-built so PyQt is only needed inside the editor)
 # ---------------------------------------------------------------------------
@@ -409,6 +418,20 @@ def _classes():
             lay.addWidget(title)
             lay.addWidget(desc)
 
+    class _LinearWizardPage(QtWidgets.QWizardPage):
+        """Wizard page with deterministic sequential navigation."""
+
+        def nextId(self):
+            wizard = self.wizard()
+            if wizard is None:
+                return -1
+            page_ids = wizard.pageIds()
+            try:
+                next_index = page_ids.index(wizard.currentId()) + 1
+            except ValueError:
+                return -1
+            return page_ids[next_index] if next_index < len(page_ids) else -1
+
     # ===================================================================
     # The Quest Wizard
     # ===================================================================
@@ -422,7 +445,8 @@ def _classes():
             self.setWizardStyle(QtWidgets.QWizard.ModernStyle)
             self.setOption(QtWidgets.QWizard.NoBackButtonOnStartPage, True)
             self.setOption(QtWidgets.QWizard.HaveHelpButton, False)
-            self.setMinimumSize(640, 560)
+            self.setMinimumSize(QUEST_WIZARD_MIN_WIDTH, QUEST_WIZARD_MIN_HEIGHT)
+            self.resize(QUEST_WIZARD_DEFAULT_WIDTH, QUEST_WIZARD_DEFAULT_HEIGHT)
             self.setStyleSheet(STYLE + """
                 QWizard { background: #1b1b21; }
                 QWizardPage { background: #1b1b21; color: #e6e6e6; }
@@ -443,30 +467,54 @@ def _classes():
 
         # -- page 1: basics --------------------------------------------------
         def _page_basics(self):
-            p = QtWidgets.QWizardPage()
+            p = _LinearWizardPage()
             p.setTitle("Who and what")
             p.setSubTitle("Name the quest and choose who hands it out.")
             f = QtWidgets.QFormLayout(p)
             self.w_name = QtWidgets.QLineEdit("A New Errand")
+            self._giver_names = _npc_names(self.editor)
             self.w_giver = QtWidgets.QComboBox()
             self.w_giver.setEditable(True)
-            self.w_giver.addItem("")
-            for n in _npc_names(self.editor):
-                self.w_giver.addItem(n)
-            self.w_giver.setToolTip("The NPC who offers the quest. Pick one from "
+            self.w_giver.addItem("", "")
+            for n in self._giver_names:
+                self.w_giver.addItem(n, n)
+            self.w_giver.setToolTip("The NPC or monster who offers the quest. Pick one from "
                                     "the scene or type a name.")
+            self.w_giver.currentTextChanged.connect(
+                lambda _text: self._refresh_plan() if hasattr(self, "w_make_marker") else None)
+
+            self.w_giver_button = QtWidgets.QPushButton("Choose…")
+            self.w_giver_button.setToolTip("Choose an available NPC or monster from the scene.")
+            self._giver_menu = QtWidgets.QMenu(self.w_giver_button)
+            self.w_giver_button.setMenu(self._giver_menu)
+            clear_action = self._giver_menu.addAction("(none)")
+            clear_action.triggered.connect(lambda: self.w_giver.setEditText(""))
+            if self._giver_names:
+                self._giver_menu.addSeparator()
+                for name in self._giver_names:
+                    action = self._giver_menu.addAction(name)
+                    action.triggered.connect(
+                        lambda _checked=False, selected=name:
+                        self.w_giver.setEditText(selected))
+            else:
+                empty_action = self._giver_menu.addAction("No NPCs or monsters found")
+                empty_action.setEnabled(False)
+
+            giver_row = QtWidgets.QHBoxLayout()
+            giver_row.setContentsMargins(0, 0, 0, 0)
+            giver_row.addWidget(self.w_giver, 1)
+            giver_row.addWidget(self.w_giver_button)
             self.w_desc = QtWidgets.QPlainTextEdit()
             self.w_desc.setPlaceholderText("What the giver tells the player…")
             self.w_desc.setMaximumHeight(90)
             f.addRow("Quest name", self.w_name)
-            f.addRow("Given by", self.w_giver)
+            f.addRow("Given by", giver_row)
             f.addRow("Opening text", self.w_desc)
-            p.registerField("name*", self.w_name)
             return p
 
         # -- page 2: goal ----------------------------------------------------
         def _page_goal(self):
-            p = QtWidgets.QWizardPage()
+            p = _LinearWizardPage()
             p.setTitle("The goal")
             p.setSubTitle("How does the player complete this quest?")
             v = QtWidgets.QVBoxLayout(p)
@@ -505,7 +553,7 @@ def _classes():
 
         # -- page 3: rewards -------------------------------------------------
         def _page_reward(self):
-            p = QtWidgets.QWizardPage()
+            p = _LinearWizardPage()
             p.setTitle("The reward")
             p.setSubTitle("What the player earns for finishing (all optional).")
             f = QtWidgets.QFormLayout(p)
@@ -524,7 +572,7 @@ def _classes():
 
         # -- page 4: wiring --------------------------------------------------
         def _page_wiring(self):
-            p = QtWidgets.QWizardPage()
+            p = _LinearWizardPage()
             p.setTitle("Build the logic")
             p.setSubTitle("The wizard can create the supporting map pieces for you.")
             v = QtWidgets.QVBoxLayout(p)

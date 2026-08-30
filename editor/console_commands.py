@@ -28,8 +28,7 @@ class ConsoleCommandHandler:
         self.main_window = main_window
         self._console_dice = DiceRoller()
 
-        self.commands = {
-            'bind': self.cmd_bind,
+        self.commands = {            'bind': self.cmd_bind,
             'help': self.cmd_help,
             'list': self.cmd_list_entities,
             'entities': self.cmd_list_entities,
@@ -193,6 +192,11 @@ class ConsoleCommandHandler:
             return get_manager()
         except Exception:
             return None
+
+    @property
+    def editor_state(self):
+        """EditorState instance. MainWindow stores this as `.state`, not `.editor_state`."""
+        return self.main_window.state
 
     def cmd_bind(self, args):
         """bind <key> <command>   or   bind (opens dialog)"""

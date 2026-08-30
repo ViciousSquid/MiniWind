@@ -29,6 +29,16 @@ import os
 from typing import Optional
 
 
+# Equipped weapon tuning. Distances use the same logical world-space units as
+# OverheadSpriteRenderer.size. Attack angles are degrees here for easy tuning.
+WEAPON_SIZE_MULTIPLIER = 2.0
+WEAPON_FORWARD_GAP = 18.0
+WEAPON_IDLE_SWAY_DEGREES = 4.0
+WEAPON_ATTACK_SWEEP_DEGREES = 18.0
+WEAPON_ATTACK_SWEEP_SPEED = 14.0
+WEAPON_IDLE_SWAY_SPEED = 2.5
+
+
 # ---------------------------------------------------------------------------
 # Animation state machine (pure, testable)
 # ---------------------------------------------------------------------------
@@ -265,30 +275,18 @@ class OverheadSpriteRenderer:
             return 0
 
     # -- per-frame draw -----------------------------------------------------
-    def draw(self, projection, view, pos, facing: float, frame_key: str,
-             tint=(0.0, 0.0, 0.0, 0.0)) -> None:
-        """Draw *frame_key* at ground *pos*, turned to *facing* (radians).
-
-        *tint* is an (r, g, b, strength) colour mixed into the sprite (strength 0
-        = untouched) — used for the brief red flash when a character is hit."""
-        if self._ok is False:
-            return
-        if self._ok is None:
-            self._ok = self._init_gl()
-            if not self._ok:
-                return
-        tex = self._texture_for(frame_key)
-        if not tex:
-            return
+    def _draw_texture(self, projection, view, pos, facing: float, texture: int,
+                      size: float, y_offset: float, rotation_offset: float = 0.0,
+                      tint=(0.0, 0.0, 0.0, 0.0)) -> None:
+        """Draw one textured ground quad using logical world-space metrics."""
         try:
             gl = self._gl
             glm = self._glm
-
-            theta = self.facing_theta(facing)
-            m = glm.translate(glm.mat4(1.0),
-                              glm.vec3(float(pos[0]), float(pos[1]) + self.y_offset, float(pos[2])))
+            theta = self.facing_theta(facing) + float(rotation_offset)
+            m = glm.translate(glm.mat4(1.0), glm.vec3(
+                float(pos[0]), float(pos[1]) + float(y_offset), float(pos[2])))
             m = glm.rotate(m, theta, glm.vec3(0.0, 1.0, 0.0))
-            m = glm.scale(m, glm.vec3(self.size, 1.0, self.size))
+            m = glm.scale(m, glm.vec3(float(size), 1.0, float(size)))
             mvp = projection * view * m
 
             gl.glUseProgram(self._prog)
@@ -297,9 +295,8 @@ class OverheadSpriteRenderer:
                 gl.glUniform4f(self._tint_loc, float(tint[0]), float(tint[1]),
                                float(tint[2]), float(tint[3]))
             gl.glActiveTexture(gl.GL_TEXTURE0)
-            gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
+            gl.glBindTexture(gl.GL_TEXTURE_2D, texture)
             gl.glUniform1i(self._tex_loc, 0)
-
             gl.glEnable(gl.GL_BLEND)
             gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
             gl.glDisable(gl.GL_CULL_FACE)
@@ -309,3 +306,65 @@ class OverheadSpriteRenderer:
             gl.glUseProgram(0)
         except Exception:
             self._ok = False
+
+    def _ready(self) -> bool:
+        if self._ok is False:
+            return False
+        if self._ok is None:
+            self._ok = self._init_gl()
+        return bool(self._ok)
+
+    def draw(self, projection, view, pos, facing: float, frame_key: str,
+             tint=(0.0, 0.0, 0.0, 0.0)) -> None:
+        """Draw *frame_key* at ground *pos*, turned to *facing* (radians)."""
+        if not self._ready():
+            return
+        tex = self._texture_for(frame_key)
+        if tex:
+            self._draw_texture(projection, view, pos, facing, tex, self.size,
+                               self.y_offset, tint=tint)
+
+    def draw_weapon(self, projection, view, pos, facing: float, weapon_path: str,
+                    now: float, attacking: bool = False, animate: bool = False,
+                    size: Optional[float] = None) -> None:
+        """Draw an equipped weapon ahead of an actor and animate blade swings.
+
+        The weapon is a separate transparent ground quad, so it remains visible
+        in front of the actor's head while following the same facing rotation.
+        """
+        if not weapon_path or not self._ready():
+            return
+        key = "weapon:" + str(weapon_path)
+        tex = self._textures.get(key)
+        if not tex:
+            tex = self._load_texture(weapon_path)
+            if tex:
+                self._textures[key] = tex
+        if not tex:
+            return
+        actor_size = max(1.0, float(self.size))
+        weapon_size = max(
+            1.0,
+            (float(size) if size is not None else actor_size * 0.55)
+            * WEAPON_SIZE_MULTIPLIER,
+        )
+
+        # Keep the weapon outside the actor quad so it visibly floats in front
+        # of the head instead of touching or overlapping it.
+        forward_distance = actor_size * 0.5 + weapon_size * 0.5 + WEAPON_FORWARD_GAP
+        orbit_degrees = math.sin(float(now) * WEAPON_IDLE_SWAY_SPEED) * \
+            WEAPON_IDLE_SWAY_DEGREES
+        if animate and attacking:
+            orbit_degrees = math.sin(float(now) * WEAPON_ATTACK_SWEEP_SPEED) * \
+                WEAPON_ATTACK_SWEEP_DEGREES
+        orbit_angle = math.radians(orbit_degrees)
+        weapon_facing = float(facing) + orbit_angle
+        forward = (math.sin(weapon_facing), 0.0, math.cos(weapon_facing))
+        weapon_pos = (
+            float(pos[0]) + forward[0] * forward_distance,
+            float(pos[1]),
+            float(pos[2]) + forward[2] * forward_distance,
+        )
+        self._draw_texture(projection, view, weapon_pos, facing, tex,
+                           weapon_size, self.y_offset + 0.6,
+                           rotation_offset=orbit_angle)

@@ -553,23 +553,71 @@ class QtGameView(QOpenGLWidget):
             self.projection_matrix, self.view_matrix, gpos,
             self._overhead_sprite_ctrl.facing, self._overhead_sprite_ctrl.frame(),
             tint=tint)
+        weapon_id = ""
+        if sess is not None:
+            try:
+                from game.rpg import equipment as _equipment
+                weapon_id = _equipment.equipped_id(sess.game.character, "weapon") or ""
+            except Exception:
+                weapon_id = ""
+        weapon_path = self._weapon_asset_path(weapon_id)
+        if weapon_path:
+            self._overhead_sprite_renderer.draw_weapon(
+                self.projection_matrix, self.view_matrix, gpos,
+                self._overhead_sprite_ctrl.facing, weapon_path,
+                time.perf_counter(), attacking=shooting,
+                animate=self._weapon_is_blade(weapon_id))
 
     @staticmethod
     def _is_overhead_head_actor(thing) -> bool:
         """True for an NPC/creature/monster whose idle sprite is a character
         head — the actors that should rotate to face their heading in overhead
         view (drawn as ground quads instead of camera-facing billboards)."""
+        if isinstance(thing, dict):
+            return bool(thing.get("is_head"))
         props = getattr(thing, "properties", None)
         if not isinstance(props, dict):
             return False
-        ttype = str(props.get("type", "")).replace("_", "").lower()
+        ttype = str(props.get("type", "")).lower()
         if ttype not in ("npc", "creature", "monster"):
             return False
         idle = str(props.get("custom_idle", "")).replace("\\", "/")
         base = idle.rsplit("/", 1)[-1]
         return ("/heads/" in idle or idle.startswith("heads/")) and base.startswith("head")
 
+    @staticmethod
+    def _actor_weapon_id(actor_or_snapshot):
+        """Read an actor's optional equipped weapon without coupling the renderer to RPG data."""
+        if isinstance(actor_or_snapshot, dict):
+            direct_id = actor_or_snapshot.get("weapon_id", "")
+            if direct_id:
+                return str(direct_id)
+            props = actor_or_snapshot.get("properties", {})
+        else:
+            props = getattr(actor_or_snapshot, "properties", {})
+        if not isinstance(props, dict):
+            return ""
+        equipment = props.get("equipment")
+        if isinstance(equipment, dict) and equipment.get("weapon"):
+            return str(equipment["weapon"])
+        return str(props.get("equipped_weapon", props.get("weapon", "")) or "")
+
+    @staticmethod
+    def _weapon_asset_path(weapon_id):
+        """Resolve a MiniWind weapon id to its transparent overhead icon."""
+        if not weapon_id:
+            return ""
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "assets", "sprites", "items", f"{weapon_id}.png")
+        return path if os.path.isfile(path) else ""
+
+    @staticmethod
+    def _weapon_is_blade(weapon_id):
+        return any(token in str(weapon_id).lower()
+                   for token in ("sword", "saber", "dagger"))
+
     def _draw_overhead_npcs(self, render_state):
+
         """Draw head-wearing NPCs/creatures as rotating ground quads so they face
         where they walk, mirroring the player's overhead sprite. Fully guarded:
         on any error it disables itself (``_overhead_npc_ok``) so the next frame
@@ -606,17 +654,20 @@ class QtGameView(QOpenGLWidget):
 
             dead_overlay_rel = "assets/sprites/heads/dead.png"
             for thing in actors:
-                p = thing.properties
-                pos = thing.pos
+                snapshot = isinstance(thing, dict)
+                p = thing if snapshot else thing.properties
+                pos = p.get("pos", [0.0, 0.0, 0.0]) if snapshot else thing.pos
                 gpos = (float(pos[0]), float(pos[1]), float(pos[2]))
-                facing = float(p.get("_facing", p.get("angle", 0.0)) or 0.0)
+                facing = float(p.get("angle", 0.0) if snapshot else
+                               p.get("_facing", p.get("angle", 0.0)) or 0.0)
                 # Brief red flash when the actor was just hit.
-                flash = float(p.get("_hit_flash", 0.0) or 0.0)
+                flash = float(p.get("hit_flash", 0.0) if snapshot else
+                              p.get("_hit_flash", 0.0) or 0.0)
                 tint = (1.0, 0.15, 0.1, min(0.8, flash * 4.0)) if flash > 0 else \
                     (0.0, 0.0, 0.0, 0.0)
 
                 idle_rel = str(p.get("custom_idle", ""))
-                is_head = self._is_overhead_head_actor(thing)
+                is_head = bool(p.get("is_head")) if snapshot else self._is_overhead_head_actor(thing)
                 dead = bool(p.get("dead"))
                 if dead and is_head:
                     # Keep the identity: draw the living head, then paint the
@@ -632,14 +683,24 @@ class QtGameView(QOpenGLWidget):
                     continue
                 # Alive / shooting head, or a non-head actor's state sprite.
                 try:
-                    sprite_rel = str(thing.get_sprite_path())
+                    sprite_rel = str(p.get("sprite_path", "") if snapshot
+                                    else thing.get_sprite_path())
                 except Exception:
                     sprite_rel = idle_rel
                 if not sprite_rel:
                     continue
-                _renderer(sprite_rel).draw(self.projection_matrix, self.view_matrix,
-                                           gpos, facing, SpriteController.IDLE,
-                                           tint=tint)
+                renderer = _renderer(sprite_rel)
+                renderer.draw(self.projection_matrix, self.view_matrix,
+                              gpos, facing, SpriteController.IDLE, tint=tint)
+                weapon_id = self._actor_weapon_id(thing)
+                weapon_path = self._weapon_asset_path(weapon_id)
+                if weapon_path and not dead:
+                    renderer.draw_weapon(
+                        self.projection_matrix, self.view_matrix, gpos, facing,
+                        weapon_path, time.perf_counter(),
+                        attacking=bool(p.get("is_shooting", False)),
+                        animate=self._weapon_is_blade(weapon_id))
+
         except Exception as exc:
             # Disable and fall back to billboards next frame.
             self._overhead_npc_ok = False
