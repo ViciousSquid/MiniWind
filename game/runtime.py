@@ -35,6 +35,8 @@ from .rpg import inventory as inv
 from .rpg.game_state import GameState
 from .diceroll_anim import SHAKE_DURATION, ROLL_DURATION, FADE_DURATION
 
+_current_session = None
+
 DECISION_INTERVAL = 0.4
 NPC_WALK_SPEED = 90.0
 ARRIVE_RADIUS = 48.0
@@ -272,6 +274,8 @@ class MiniwindSession:
 
     def install(self) -> None:
         """Attach the RPG to the logic thread (damage filter, faction model)."""
+        global _current_session
+        _current_session = self
         logic = self.logic
         logic._player_damage_filter = self._mitigate_incoming
         # Teach the engine's team-aware MonsterAI MiniWind's faction relationships
@@ -283,6 +287,8 @@ class MiniwindSession:
         self._sync_engine_health(full=True)
 
     def uninstall(self) -> None:
+        global _current_session
+        _current_session = None
         self._remove_wisp()
         io_manager = getattr(self.logic, "io_manager", None)
         if io_manager is not None:
@@ -2043,6 +2049,49 @@ class MiniwindSession:
             else:
                 return True, 2.0 - prog * 2.0
         return False, 0.0
+
+
+    def get_actor_weapon_draw_info(self, actor):
+        """
+        For a given actor (NPC/Creature), find the first weapon in its inventory
+        and return (sprite_path, is_attacking, thrust_progress).
+        Returns (None, False, 0.0) if no weapon.
+        """
+        # Get the inventory list; for players, we could handle separately, but we focus on NPCs/creatures.
+        inv = actor.properties.get("inventory", [])
+        if not inv:
+            return None, False, 0.0
+
+        # Resolve the first weapon
+        from .rpg import items as rpg_items
+        import os
+
+        for stack in inv:
+            item_id = stack.get("id")
+            if not item_id:
+                continue
+            item_def = rpg_items.get(item_id)
+            if not item_def:
+                continue
+            # Check if it's a weapon
+            if item_def.category != rpg_items.WEAPON:
+                continue
+            kind = item_def.get("kind", "melee")
+            kind_to_filename = {
+                "melee": "sword.png",
+                "bow": "bow.png",
+                "staff": "staff.png",
+            }
+            filename = kind_to_filename.get(kind)
+            if not filename:
+                continue
+            # Build absolute path
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            path = os.path.join(base_dir, "assets", "sprites", "items", filename)
+            # Check attack state for this actor
+            is_attacking, progress = self.get_actor_attack_anim(actor)
+            return path, is_attacking, progress
+        return None, False, 0.0
 
     def _apply_nondamage_spell(self, spell, target):
         for e in spell.effects:

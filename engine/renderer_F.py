@@ -13,6 +13,7 @@ from .renderer_core import BaseRenderer, normalize_color
 from engine.brush_geometry import brush_has_geometry, geometry_signature
 from engine.constants import RENDER_MODE_LIT, RENDER_MODE_UNLIT, RENDER_MODE_WIREFRAME, RENDER_MODE_VERTEX
 from editor.things import Thing, Light, PathNode, Portal, Pickup, Monster, LogicGate, LogicRelay, LogicTimer, LevelChanger
+from game.runtime import _current_session as miniwind_session
 
 # Beyond this distance from the camera a portal's virtual view is not rendered
 # (the aperture just shows its fade/rim). Portals are still discovered for I/O
@@ -41,6 +42,7 @@ class Renderer_F(BaseRenderer):
         super().__init__(texture_loader, initial_grid_size, initial_world_size, config)
         self._current_shader = None
         self._frame_lights_uploaded = {}
+        self._weapon_textures = {}
 
         # Texture batch cache for draw_textured_brushes_optimized.
         # Key: tuple of (brush_id, sorted_tex_items) per brush.
@@ -118,6 +120,102 @@ class Renderer_F(BaseRenderer):
             return glm.transpose(glm.inverse(glm.mat3(model_matrix)))
         except Exception:
             return self._identity_mat3
+
+    def _draw_actor_weapons(self, projection, view, actors, now):
+        session = miniwind_session
+        if session is None:
+            return
+
+        shader = self.shaders.get('sprite')
+        if shader is None:
+            return
+        uniforms = self.uniforms['sprite']
+
+        gl.glUseProgram(shader)
+        proj_ptr = glm.value_ptr(projection)
+        view_ptr = glm.value_ptr(view)
+        gl.glUniformMatrix4fv(uniforms['projection'], 1, gl.GL_FALSE, proj_ptr)
+        gl.glUniformMatrix4fv(uniforms['view'], 1, gl.GL_FALSE, view_ptr)
+        gl.glActiveTexture(gl.GL_TEXTURE0)
+        gl.glUniform1i(uniforms['sprite_texture'], 0)
+        gl.glUniform4f(uniforms['sprite_tint'], 0.0, 0.0, 0.0, 0.0)
+        gl.glUniform1f(uniforms['sprite_rot'], 0.0)  # weapons are upright
+
+        gl.glBindVertexArray(self.vaos['sprite'])
+
+        current_tex = None
+
+        for actor in actors:
+            # Skip if not a Thing with NPC/Creature type
+            if not isinstance(actor, Thing):
+                continue
+            ttype = str(actor.properties.get('type', '')).replace('_', '').lower()
+            if ttype not in ('npc', 'creature'):
+                continue
+
+            weapon_path, attacking, progress = session.get_actor_weapon_draw_info(actor)
+            if weapon_path is None:
+                continue
+
+            # Load texture
+            tex_id = self._weapon_textures.get(weapon_path)
+            if tex_id is None:
+                # Load from assets/sprites/items/
+                # weapon_path already absolute path, but we can load via load_texture
+                # However, load_texture expects a filename and subfolder; we'll handle manually.
+                try:
+                    from PIL import Image
+                    img = Image.open(weapon_path).convert("RGBA")
+                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
+                    tex_id = gl.glGenTextures(1)
+                    gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
+                    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
+                    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
+                    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
+                    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
+                    gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, img.width, img.height, 0,
+                                    gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, img.tobytes())
+                    self._weapon_textures[weapon_path] = tex_id
+                except Exception as e:
+                    continue
+
+            if tex_id != current_tex:
+                gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
+                current_tex = tex_id
+
+            # Position: above head, offset to the right
+            pos = actor.pos
+            facing = actor.properties.get('angle', 0.0)  # angle in radians
+            forward_x = math.sin(facing)
+            forward_z = math.cos(facing)
+            right_x = forward_z
+            right_z = -forward_x
+
+            # Resting offset: 42 units to the right, 28 units above head (adjust as needed)
+            right_offset = 42.0
+            up_offset = 28.0  # above the actor's base
+
+            weapon_x = pos[0] + right_x * right_offset
+            weapon_z = pos[2] + right_z * right_offset
+            weapon_y = pos[1] + up_offset
+
+            # Attack thrust: push forward by up to 72 units based on progress
+            if attacking:
+                thrust = progress * 72.0
+                weapon_x += forward_x * thrust
+                weapon_z += forward_z * thrust
+
+            # Set shader uniforms
+            gl.glUniform3f(uniforms['sprite_pos_world'], weapon_x, weapon_y, weapon_z)
+            # Weapon size: adjust to your sprites (e.g., 32x32)
+            weapon_size = 32.0
+            gl.glUniform2f(uniforms['sprite_size'], weapon_size, weapon_size)
+
+            gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+            self.render_stats.draw_calls += 1
+
+        gl.glBindVertexArray(0)
+        gl.glUseProgram(0)
 
     # ------------------------------------------------------------------
 
@@ -562,6 +660,11 @@ class Renderer_F(BaseRenderer):
         gl.glEnable(gl.GL_BLEND)
         gl.glDepthMask(gl.GL_FALSE)
         self.draw_sprites(projection, view, final_sprites, self.sprite_textures, self.instance_textures)
+
+        # ---- Draw weapons ----
+        session = miniwind_session
+        if session is not None and final_sprites:
+            self._draw_actor_weapons(projection, view, final_sprites, config.get('time', 0.0))
         if current_mode == RENDER_MODE_UNLIT:
             self.draw_textured_brushes_optimized(projection, view, camera_pos, transparent_brushes, lights, config)
         elif current_mode == RENDER_MODE_LIT:
