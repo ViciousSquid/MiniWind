@@ -566,7 +566,7 @@ class QtGameView(QOpenGLWidget):
                 self.projection_matrix, self.view_matrix, gpos,
                 self._overhead_sprite_ctrl.facing, weapon_path,
                 time.perf_counter(), attacking=shooting,
-                animate=self._weapon_is_blade(weapon_id))
+                weapon_kind=self._weapon_kind(weapon_id))
 
     @staticmethod
     def _is_overhead_head_actor(thing) -> bool:
@@ -612,9 +612,36 @@ class QtGameView(QOpenGLWidget):
         return path if os.path.isfile(path) else ""
 
     @staticmethod
-    def _weapon_is_blade(weapon_id):
-        return any(token in str(weapon_id).lower()
-                   for token in ("sword", "saber", "dagger"))
+    def _weapon_kind(weapon_id):
+        """Classify an equipped weapon id as ``"melee"``, ``"bow"`` or
+        ``"staff"`` for the overhead weapon-overlay attack animation.
+
+        Prefers the authoritative ``kind`` field from the RPG item catalog
+        (``game.rpg.items``) — the same data ``game/entities.py`` and
+        ``game/runtime.py`` use to decide weapon behaviour — so every melee
+        weapon (sword, dagger, mace, warhammer, battleaxe, club, ...) is
+        recognised, not just blades. Falls back to a name heuristic when the
+        RPG item catalog is unavailable or the id is a custom/non-RPG one, so
+        non-RPG maps still animate sensibly. Never couples the renderer to
+        RPG data structures beyond this optional, guarded lookup.
+        """
+        wid = str(weapon_id or "").lower()
+        if not wid:
+            return "melee"
+        try:
+            from game.rpg import items as _items
+            item_def = _items.get(weapon_id)
+            if item_def is not None:
+                kind = str(item_def.get("kind", "") or "").lower()
+                if kind in ("melee", "bow", "staff"):
+                    return kind
+        except Exception:
+            pass
+        if "bow" in wid:
+            return "bow"
+        if "staff" in wid or "wand" in wid:
+            return "staff"
+        return "melee"
 
     def _draw_overhead_npcs(self, render_state):
 
@@ -699,7 +726,7 @@ class QtGameView(QOpenGLWidget):
                         self.projection_matrix, self.view_matrix, gpos, facing,
                         weapon_path, time.perf_counter(),
                         attacking=bool(p.get("is_shooting", False)),
-                        animate=self._weapon_is_blade(weapon_id))
+                        weapon_kind=self._weapon_kind(weapon_id))
 
         except Exception as exc:
             # Disable and fall back to billboards next frame.

@@ -555,7 +555,28 @@ class Monster(Thing):
         return result
 
     def get_render_snapshot(self):
-        """Return a lightweight dictionary snapshot for the renderer."""
+        """Return a lightweight dictionary snapshot for the renderer.
+
+        In threaded play mode the render thread draws from these snapshots
+        (``LogicThread._update_render_state`` -> ``write_state.visible_things``),
+        never from the live ``Thing`` objects, so every field the renderer
+        needs to make a per-frame decision about this actor must be included
+        here — there is no live object to fall back on.
+        """
+        idle = str(self.properties.get('custom_idle', '')).replace('\\', '/')
+        base = idle.rsplit('/', 1)[-1]
+        ttype = str(self.properties.get('type', '')).lower()
+        # Whether this actor's idle sprite is a character head — the actors
+        # that should rotate to face their heading in overhead view (drawn as
+        # ground quads, with their equipped weapon overlaid, instead of
+        # camera-facing billboards). Mirrors
+        # QtGameView._is_overhead_head_actor's live-object branch exactly, so
+        # the snapshot and live-object paths agree on the same actors.
+        is_head = (
+            ttype in ('npc', 'creature', 'monster')
+            and ('/heads/' in idle or idle.startswith('heads/'))
+            and base.startswith('head')
+        )
         return {
             'pos': list(self.pos),                         # copy list
             'dead': self.properties.get('dead', False),
@@ -580,6 +601,7 @@ class Monster(Thing):
                 'equipped_weapon',
                 (self.properties.get('equipment') or {}).get('weapon', '')
                 if isinstance(self.properties.get('equipment'), dict) else ''),
+            'is_head': is_head,
         }
 
     def get_sprite_path(self) -> str:

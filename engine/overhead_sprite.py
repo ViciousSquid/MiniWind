@@ -20,9 +20,18 @@ WEAPON_SIZE_MULTIPLIER = 2.0
 # Positive right_offset means the actor's local right-hand side.
 WEAPON_RIGHT_OFFSET = 42.0
 
-# Forward movement during a stab.
+# Forward movement during a melee stab.
 WEAPON_STAB_DISTANCE = 72.0
 WEAPON_STAB_DURATION = 0.14
+
+# Backward "draw" movement during a bow (or staff) firing animation. Shorter
+# than the stab distance/duration and moves the opposite way (toward the
+# actor) so a bow reads as being drawn and released rather than thrust
+# forward like a blade. Kept well under the shortest attacking-window used
+# by any caller (the player's 0.2s attack pose) so the motion always
+# completes a full draw-and-release cycle instead of snapping mid-pull.
+WEAPON_BOW_PULL_DISTANCE = 24.0
+WEAPON_BOW_DURATION = 0.18
 
 
 class SpriteController:
@@ -474,7 +483,7 @@ class OverheadSpriteRenderer:
         weapon_path: str,
         now: float,
         attacking: bool = False,
-        animate: bool = False,
+        weapon_kind: str = "melee",
         size: Optional[float] = None,
     ) -> None:
         """Draw an equipped weapon to the actor's right.
@@ -484,8 +493,16 @@ class OverheadSpriteRenderer:
         the character's right regardless of which direction the actor faces.
 
         During an attack the weapon keeps that right-side origin and performs
-        a short, rapid forward thrust before returning to its resting position.
-        Player, NPC and monster callers therefore receive identical behaviour.
+        a short, rapid motion before returning to its resting position. Which
+        motion depends on ``weapon_kind``:
+          - ``"melee"`` (default, covers every non-ranged weapon: swords,
+            daggers, maces, axes, warhammers, clubs, ...): a forward stab.
+          - ``"bow"`` / ``"staff"``: a shorter pull *back* toward the actor
+            (drawing the string / channelling) before snapping back to rest,
+            so a ranged weapon visibly moves without lunging forward like a
+            blade.
+        Player, NPC and monster callers all go through this one path and
+        therefore receive identical behaviour for a given weapon kind.
         """
 
         if not weapon_path or not self._ready():
@@ -537,17 +554,32 @@ class OverheadSpriteRenderer:
 
         thrust = 0.0
 
-        if animate and attacking:
-            # One short stab cycle. The sine rises rapidly from the resting
-            # position to maximum extension and then returns.
-            phase = (
-                float(now) % WEAPON_STAB_DURATION
-            ) / WEAPON_STAB_DURATION
+        if attacking:
+            kind = str(weapon_kind or "melee").lower()
 
-            thrust = (
-                math.sin(math.pi * phase)
-                * WEAPON_STAB_DISTANCE
-            )
+            if kind in ("bow", "staff"):
+                # One short draw-and-release cycle: the sine pulls the
+                # weapon *back* toward the actor and returns, instead of
+                # lunging forward.
+                phase = (
+                    float(now) % WEAPON_BOW_DURATION
+                ) / WEAPON_BOW_DURATION
+
+                thrust = (
+                    -math.sin(math.pi * phase)
+                    * WEAPON_BOW_PULL_DISTANCE
+                )
+            else:
+                # One short stab cycle. The sine rises rapidly from the
+                # resting position to maximum extension and then returns.
+                phase = (
+                    float(now) % WEAPON_STAB_DURATION
+                ) / WEAPON_STAB_DURATION
+
+                thrust = (
+                    math.sin(math.pi * phase)
+                    * WEAPON_STAB_DISTANCE
+                )
 
         weapon_x += forward_x * thrust
         weapon_z += forward_z * thrust
