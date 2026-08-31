@@ -698,6 +698,8 @@ class MiniwindGame:
                 if session.open_screen is None and session.dialogue is None \
                         and not session.game.character.is_dead:
                     hud.draw_bubbles(painter, session, viewport, w, h)
+                # The "stay near the guard" ring during a prison escort.
+                hud.draw_escort_ring(painter, session, viewport, w, h)
             if not windowed:
                 if session.dialogue is not None:
                     dialogue_ui.draw(painter, session, w, h)
@@ -705,6 +707,9 @@ class MiniwindGame:
                     screens.draw(painter, session, w, h)
             if session.game.character.is_dead:
                 self._draw_death(painter, w, h)
+            # The fade-to-black transition (e.g. paying off a bounty) sits on
+            # top of everything else, including dialogue and the death screen.
+            hud.draw_fade(painter, session, w, h)
         except Exception:
             import traceback
             traceback.print_exc()

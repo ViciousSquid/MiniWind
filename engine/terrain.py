@@ -1051,6 +1051,20 @@ class Terrain:
         
         gl.glUniform1i(self.uniforms['active_lights'], active_lights_count)
         shadow_index_map = shadow_index_map or {}
+
+        # Terrain shader only supports 8 lights — send the closest ones
+        MAX_TERRAIN_LIGHTS = 8
+        if active_lights_count > MAX_TERRAIN_LIGHTS:
+            cx, cy, cz = float(camera_pos[0]), float(camera_pos[1]), float(camera_pos[2])
+            lights = sorted(
+                lights[:active_lights_count],
+                key=lambda l: (
+                    (float(l.pos[0]) - cx) ** 2 +
+                    (float(l.pos[1]) - cy) ** 2 +
+                    (float(l.pos[2]) - cz) ** 2
+                )
+            )
+            active_lights_count = MAX_TERRAIN_LIGHTS
         for i in range(active_lights_count):
             light = lights[i]
             base = f'lights[{i}]'

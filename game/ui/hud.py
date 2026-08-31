@@ -18,7 +18,8 @@ from . import theme as T
 from ..rpg import equipment as eq
 from ..rpg import items as rpg_items
 from ..rpg import magic as rpg_magic
-from ..runtime import DICE_ANIMATION_SHAKE, DICE_ANIMATION_ROLL, DICE_ANIMATION_FADE
+from ..runtime import (DICE_ANIMATION_SHAKE, DICE_ANIMATION_ROLL, DICE_ANIMATION_FADE,
+                        ESCORT_BREAKAWAY_DISTANCE)
 
 DICE_RESULT_HOLD_DURATION = 1.0
 
@@ -96,6 +97,56 @@ def draw_bubbles(painter, session, viewport, width, height):
         sp = _world_to_screen(glm, proj, view, npc.pos[0], head_y, npc.pos[2], width, height)
         if sp is not None:
             _draw_bubble(painter, int(sp[0]), int(sp[1]), kind)
+
+
+def draw_escort_ring(painter, session, viewport, width, height):
+    """While the player is being escorted to prison, ring the escort guard on
+    the ground at the breakaway radius, so it's visually obvious how far the
+    player may stray before the guard turns hostile."""
+    if viewport is None or getattr(session, "_arrest_state", "") != "escorting":
+        return
+    guard = getattr(session, "_arrest_guard", None)
+    if guard is None:
+        return
+    try:
+        import glm
+        proj = viewport.projection_matrix
+        view = viewport.view_matrix
+    except Exception:
+        return
+    gx, gy, gz = guard.pos[0], guard.pos[1], guard.pos[2]
+    segments = 48
+    screen_pts = []
+    for i in range(segments + 1):
+        ang = (i / segments) * 2.0 * math.pi
+        wx = gx + math.cos(ang) * ESCORT_BREAKAWAY_DISTANCE
+        wz = gz + math.sin(ang) * ESCORT_BREAKAWAY_DISTANCE
+        screen_pts.append(_world_to_screen(glm, proj, view, wx, gy, wz, width, height))
+    painter.save()
+    pen = QPen(QColor(250, 210, 90, 190))
+    pen.setWidth(2)
+    painter.setPen(pen)
+    prev = None
+    for sp in screen_pts:
+        if sp is not None and prev is not None:
+            painter.drawLine(QPointF(prev[0], prev[1]), QPointF(sp[0], sp[1]))
+        prev = sp
+    painter.restore()
+
+
+def draw_fade(painter, session, width, height):
+    """Full-screen fade-to-black overlay, driven by session.fade_alpha() —
+    used to mask a hard teleport cut (e.g. paying off a bounty)."""
+    alpha = 0.0
+    fade_alpha = getattr(session, "fade_alpha", None)
+    if callable(fade_alpha):
+        alpha = fade_alpha()
+    if alpha <= 0.0:
+        return
+    painter.save()
+    painter.fillRect(QRect(0, 0, int(width), int(height)),
+                      QColor(0, 0, 0, int(min(255.0, max(0.0, alpha)))))
+    painter.restore()
 
 
 def _draw_bubble(painter, cx, cy, kind):
