@@ -1,4 +1,5 @@
 from typing import Optional
+import os
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QLineEdit, QSpinBox,
                              QFormLayout, QCheckBox, QComboBox, QPushButton,
                              QHBoxLayout, QColorDialog, QFileDialog, QGridLayout,

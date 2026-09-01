@@ -56,7 +56,8 @@
             "uv_angle": {
                 "top": 0.0
             },
-            "lock": true
+            "lock": true,
+            "hidden": false
         },
         {
             "pos": [
@@ -842,12 +843,12 @@
             "pos": [
                 1288.0,
                 200.0,
-                -560.0
+                -552.0
             ],
             "size": [
                 112.0,
                 528.0,
-                672.0
+                688.0
             ],
             "textures": {
                 "north": "gregory-ligman-brickwall.jpg",
@@ -878,7 +879,7 @@
             "pos": [
                 1360.0,
                 200.0,
-                -192.0
+                -176.0
             ],
             "size": [
                 352.0,
@@ -932,12 +933,12 @@
         },
         {
             "pos": [
-                1152.0,
+                864.0,
                 200.0,
-                352.0
+                416.0
             ],
             "size": [
-                768.0,
+                576.0,
                 528.0,
                 64.0
             ],
@@ -990,12 +991,12 @@
             "pos": [
                 736.0,
                 200.0,
-                80.0
+                88.0
             ],
             "size": [
                 64.0,
                 528.0,
-                608.0
+                592.0
             ],
             "textures": {
                 "north": "gregory-ligman-brickwall.jpg",
@@ -1051,12 +1052,12 @@
             "pos": [
                 1568.0,
                 200.0,
-                80.0
+                88.0
             ],
             "size": [
                 64.0,
                 528.0,
-                608.0
+                592.0
             ],
             "textures": {
                 "north": "default.png",
@@ -1087,7 +1088,7 @@
             "pos": [
                 880.0,
                 200.0,
-                -192.0
+                -176.0
             ],
             "size": [
                 224.0,
@@ -1143,12 +1144,12 @@
             "pos": [
                 1152.0,
                 74.0,
-                80.0
+                128.0
             ],
             "size": [
                 768.0,
                 276.0,
-                480.0
+                576.0
             ],
             "textures": {
                 "north": "nodraw.jpg",
@@ -1173,7 +1174,8 @@
             "uv_angle": {
                 "top": 0.0
             },
-            "id": "152ab78b-0137-4938-b094-21c3cdfcb547"
+            "id": "152ab78b-0137-4938-b094-21c3cdfcb547",
+            "lock": true
         },
         {
             "pos": [
@@ -1927,61 +1929,13 @@
         },
         {
             "pos": [
-                -200.0,
-                216.0,
-                416.0
-            ],
-            "size": [
-                880.0,
-                560.0,
-                64.0
-            ],
-            "textures": {
-                "north": "gregory-ligman-brickwall.jpg",
-                "south": "gregory-ligman-brickwall.jpg",
-                "east": "gregory-ligman-brickwall.jpg",
-                "west": "gregory-ligman-brickwall.jpg",
-                "top": "gregory-ligman-brickwall.jpg",
-                "down": "gregory-ligman-brickwall.jpg"
-            },
-            "id": "fa038ba1-b838-4f6e-8791-ca45f72fb576",
-            "uv_scale": {
-                "north": [
-                    1.71875,
-                    1.09375
-                ],
-                "south": [
-                    1.71875,
-                    1.09375
-                ],
-                "east": [
-                    0.125,
-                    1.09375
-                ],
-                "west": [
-                    0.125,
-                    1.09375
-                ],
-                "top": [
-                    1.71875,
-                    0.125
-                ],
-                "down": [
-                    1.71875,
-                    0.125
-                ]
-            },
-            "hidden": false
-        },
-        {
-            "pos": [
-                -64.0,
-                88.0,
+                400,
+                92.0,
                 784.0
             ],
             "size": [
-                1152.0,
-                304.0,
+                2080.0,
+                296.0,
                 736.0
             ],
             "textures": {
@@ -1994,11 +1948,11 @@
             },
             "uv_scale": {
                 "north": [
-                    4.5,
+                    8.125,
                     1.1875
                 ],
                 "south": [
-                    4.5,
+                    8.125,
                     1.1875
                 ],
                 "east": [
@@ -2010,11 +1964,11 @@
                     1.1875
                 ],
                 "top": [
-                    4.5,
+                    8.125,
                     2.875
                 ],
                 "down": [
-                    4.5,
+                    8.125,
                     2.875
                 ]
             },
@@ -2027,13 +1981,15 @@
             },
             "uv_angle": {
                 "top": 0.0
-            }
+            },
+            "hidden": false,
+            "lock": true
         },
         {
             "pos": [
-                752.0,
-                56.0,
-                -208.0
+                752,
+                80,
+                -208
             ],
             "size": [
                 6368.0,
@@ -2054,12 +2010,12 @@
         },
         {
             "pos": [
-                376.0,
+                504.0,
                 80.0,
                 400.0
             ],
             "size": [
-                272.0,
+                528.0,
                 288.0,
                 32.0
             ],
@@ -2073,11 +2029,11 @@
             },
             "uv_scale": {
                 "north": [
-                    0.375,
+                    1.03125,
                     0.5625
                 ],
                 "south": [
-                    0.375,
+                    1.03125,
                     0.5625
                 ],
                 "east": [
@@ -2089,11 +2045,11 @@
                     0.5625
                 ],
                 "top": [
-                    0.375,
+                    1.03125,
                     0.0625
                 ],
                 "down": [
-                    0.375,
+                    1.03125,
                     0.0625
                 ]
             },
@@ -2157,57 +2113,12 @@
         },
         {
             "pos": [
-                -616.0,
-                288.0,
-                532.0
-            ],
-            "size": [
-                48.0,
-                256.0,
-                248.0
-            ],
-            "textures": {
-                "north": "gregory-ligman-brickwall.jpg",
-                "south": "gregory-ligman-brickwall.jpg",
-                "east": "gregory-ligman-brickwall.jpg",
-                "west": "gregory-ligman-brickwall.jpg",
-                "top": "gregory-ligman-brickwall.jpg",
-                "down": "gregory-ligman-brickwall.jpg"
-            },
-            "uv_scale": {
-                "west": [
-                    1.0,
-                    1.0
-                ],
-                "east": [
-                    1.0,
-                    1.0
-                ]
-            },
-            "uv_shift": {
-                "west": [
-                    0.0,
-                    0.0
-                ],
-                "east": [
-                    0.0,
-                    0.0
-                ]
-            },
-            "uv_angle": {
-                "west": 90.0,
-                "east": 90.0
-            },
-            "id": "1b74acdf-442b-4cb0-82b5-a11d525192ba"
-        },
-        {
-            "pos": [
-                -256.0,
+                208.0,
                 224.0,
                 1208.0
             ],
             "size": [
-                1536.0,
+                2464.0,
                 576.0,
                 112.0
             ],
@@ -2221,11 +2132,11 @@
             },
             "uv_scale": {
                 "north": [
-                    2.21875,
+                    4.8125,
                     1.125
                 ],
                 "south": [
-                    2.21875,
+                    4.8125,
                     1.125
                 ],
                 "east": [
@@ -2237,11 +2148,11 @@
                     1.125
                 ],
                 "top": [
-                    2.21875,
+                    4.8125,
                     0.21875
                 ],
                 "down": [
-                    2.21875,
+                    4.8125,
                     0.21875
                 ]
             },
@@ -2250,30 +2161,134 @@
         {
             "pos": [
                 -128,
-                240,
-                672
+                248,
+                656
             ],
             "size": [
                 880.0,
                 4.0,
-                432.0
+                464.0
             ],
             "textures": {
-                "north": "bar01.png",
-                "south": "bar01.png",
-                "east": "bar01.png",
-                "west": "bar01.png",
-                "top": "bar01.png",
-                "down": "bar01.png"
+                "north": "nodraw.jpg",
+                "south": "nodraw.jpg",
+                "east": "nodraw.jpg",
+                "west": "nodraw.jpg",
+                "top": "bar02.png",
+                "down": "nodraw.jpg"
             },
             "uv_scale": {},
-            "id": "eb84304e-aca3-40bb-bcbd-9719ac24df81"
+            "id": "eb84304e-aca3-40bb-bcbd-9719ac24df81",
+            "lock": true
         },
         {
             "pos": [
-                384,
-                240,
-                1056
+                312,
+                256,
+                1088
+            ],
+            "size": [
+                240.0,
+                16.0,
+                192.0
+            ],
+            "textures": {
+                "north": "nodraw.jpg",
+                "south": "nodraw.jpg",
+                "east": "nodraw.jpg",
+                "west": "nodraw.jpg",
+                "top": "table01.png",
+                "down": "nodraw.jpg"
+            },
+            "uv_scale": {
+                "north": [
+                    1.0,
+                    0.125
+                ],
+                "south": [
+                    1.0,
+                    0.125
+                ],
+                "east": [
+                    1.0,
+                    0.125
+                ],
+                "west": [
+                    1.0,
+                    0.125
+                ],
+                "top": [
+                    1.0,
+                    1.0
+                ],
+                "down": [
+                    1.0,
+                    1.0
+                ]
+            },
+            "id": "4dd6bd14-7650-4360-ab38-11b066d98373"
+        },
+        {
+            "pos": [
+                1488.0,
+                304.0,
+                824.0
+            ],
+            "size": [
+                96.0,
+                320.0,
+                880.0
+            ],
+            "textures": {
+                "north": "gregory-ligman-brickwall.jpg",
+                "south": "gregory-ligman-brickwall.jpg",
+                "east": "gregory-ligman-brickwall.jpg",
+                "west": "gregory-ligman-brickwall.jpg",
+                "top": "gregory-ligman-brickwall.jpg",
+                "down": "gregory-ligman-brickwall.jpg"
+            },
+            "uv_scale": {
+                "north": [
+                    0.1875,
+                    0.625
+                ],
+                "south": [
+                    0.1875,
+                    0.625
+                ],
+                "east": [
+                    1.71875,
+                    0.625
+                ],
+                "west": [
+                    1.71875,
+                    0.625
+                ],
+                "top": [
+                    0.1875,
+                    1.71875
+                ],
+                "down": [
+                    0.1875,
+                    1.71875
+                ]
+            },
+            "uv_shift": {
+                "west": [
+                    0.0,
+                    0.0
+                ]
+            },
+            "uv_angle": {
+                "west": 90.0
+            },
+            "id": "b01e2226-9f9a-4ef5-8a5d-ba3e39e15ad1"
+        },
+        {
+            "pos": [
+                896.0,
+                242,
+                560.0
             ],
             "size": [
                 192.0,
@@ -2318,14 +2333,375 @@
         },
         {
             "pos": [
-                560.0,
-                336.0,
-                824.0
+                -320.0,
+                408.0,
+                1152.0
             ],
             "size": [
-                96.0,
+                160.0,
+                176.0,
+                32.0
+            ],
+            "textures": {
+                "north": "nodraw.jpg",
+                "south": "window1.jpg",
+                "east": "nodraw.jpg",
+                "west": "nodraw.jpg",
+                "top": "nodraw.jpg",
+                "down": "nodraw.jpg"
+            },
+            "uv_scale": {},
+            "id": "e61f6543-fa4a-4bfd-8988-8b65a13633b2"
+        },
+        {
+            "pos": [
+                320.0,
+                408.0,
+                1152.0
+            ],
+            "size": [
+                160.0,
+                176.0,
+                32.0
+            ],
+            "textures": {
+                "north": "nodraw.jpg",
+                "south": "window1.jpg",
+                "east": "nodraw.jpg",
+                "west": "nodraw.jpg",
+                "top": "nodraw.jpg",
+                "down": "nodraw.jpg"
+            },
+            "uv_scale": {},
+            "id": "d5061909-58f9-45d9-b970-8ff7af678da0"
+        },
+        {
+            "pos": [
+                1296.0,
+                200.0,
+                400.0
+            ],
+            "size": [
                 288.0,
-                880.0
+                48.0,
+                32.0
+            ],
+            "textures": {
+                "north": "nodraw.jpg",
+                "south": "nodraw.jpg",
+                "east": "nodraw.jpg",
+                "west": "nodraw.jpg",
+                "top": "nodraw.jpg",
+                "down": "nodraw.jpg"
+            },
+            "uv_scale": {
+                "north": [
+                    2.25,
+                    0.375
+                ],
+                "south": [
+                    2.25,
+                    0.375
+                ],
+                "east": [
+                    0.25,
+                    0.375
+                ],
+                "west": [
+                    0.25,
+                    0.375
+                ],
+                "top": [
+                    2.25,
+                    0.25
+                ],
+                "down": [
+                    2.25,
+                    0.25
+                ]
+            },
+            "id": "45dd64e5-79c0-4a5c-9e04-2aab9c1d23b9"
+        },
+        {
+            "pos": [
+                1088,
+                336,
+                -176
+            ],
+            "size": [
+                192.0,
+                256.0,
+                32.0
+            ],
+            "textures": {
+                "north": "window1.jpg",
+                "south": "window1.jpg",
+                "east": "window1.jpg",
+                "west": "window1.jpg",
+                "top": "window1.jpg",
+                "down": "window1.jpg"
+            },
+            "id": "008a3a4a-b38a-4444-b8a2-042d0720d5b8"
+        },
+        {
+            "pos": [
+                -112.0,
+                208,
+                704.0
+            ],
+            "size": [
+                736.0,
+                112.0,
+                144.0
+            ],
+            "textures": {
+                "north": "nodraw.jpg",
+                "south": "nodraw.jpg",
+                "east": "nodraw.jpg",
+                "west": "nodraw.jpg",
+                "top": "nodraw.jpg",
+                "down": "nodraw.jpg"
+            },
+            "uv_scale": {
+                "north": [
+                    5.75,
+                    0.875
+                ],
+                "south": [
+                    5.75,
+                    0.875
+                ],
+                "east": [
+                    1.125,
+                    0.875
+                ],
+                "west": [
+                    1.125,
+                    0.875
+                ],
+                "top": [
+                    5.75,
+                    1.125
+                ],
+                "down": [
+                    5.75,
+                    1.125
+                ]
+            },
+            "id": "eb1f24a9-83e1-480e-878d-5a7628fa5a68",
+            "lock": true
+        },
+        {
+            "pos": [
+                -424.0,
+                210.0,
+                536.0
+            ],
+            "size": [
+                112.0,
+                108.0,
+                192.0
+            ],
+            "textures": {
+                "north": "nodraw.jpg",
+                "south": "nodraw.jpg",
+                "east": "nodraw.jpg",
+                "west": "nodraw.jpg",
+                "top": "nodraw.jpg",
+                "down": "nodraw.jpg"
+            },
+            "uv_scale": {
+                "north": [
+                    0.875,
+                    0.84375
+                ],
+                "south": [
+                    0.875,
+                    0.84375
+                ],
+                "east": [
+                    1.5,
+                    0.84375
+                ],
+                "west": [
+                    1.5,
+                    0.84375
+                ],
+                "top": [
+                    0.875,
+                    1.5
+                ],
+                "down": [
+                    0.875,
+                    1.5
+                ]
+            },
+            "id": "61f9809b-914c-4a61-bd86-760e7d72625b",
+            "lock": true
+        },
+        {
+            "pos": [
+                624,
+                336,
+                -56
+            ],
+            "size": [
+                120.0,
+                16.0,
+                288.0
+            ],
+            "textures": {
+                "north": "roof01.png",
+                "south": "roof01.png",
+                "east": "roof01.png",
+                "west": "roof01.png",
+                "top": "roof01.png",
+                "down": "nodraw.jpg"
+            },
+            "uv_scale": {
+                "north": [
+                    0.234375,
+                    0.03125
+                ],
+                "south": [
+                    0.234375,
+                    0.03125
+                ],
+                "east": [
+                    0.34375,
+                    0.03125
+                ],
+                "west": [
+                    0.34375,
+                    0.03125
+                ],
+                "top": [
+                    0.8,
+                    0.8
+                ],
+                "down": [
+                    0.234375,
+                    0.34375
+                ]
+            },
+            "uv_shift": {
+                "top": [
+                    0.0,
+                    0.0
+                ]
+            },
+            "uv_angle": {
+                "top": 90.0
+            },
+            "id": "f7a15e13-d82b-4443-84fb-ab237859ba11"
+        },
+        {
+            "pos": [
+                608,
+                224,
+                32
+            ],
+            "size": [
+                80.0,
+                48.0,
+                80.0
+            ],
+            "textures": {
+                "north": "cfc5c7a445516540bcbe7d72d246a881.jpg",
+                "south": "cfc5c7a445516540bcbe7d72d246a881.jpg",
+                "east": "cfc5c7a445516540bcbe7d72d246a881.jpg",
+                "west": "cfc5c7a445516540bcbe7d72d246a881.jpg",
+                "top": "dec01.jpg",
+                "down": "nodraw.jpg"
+            },
+            "uv_scale": {},
+            "id": "6b5e0d90-faf7-412c-93b4-1fa81ae22812"
+        },
+        {
+            "pos": [
+                608,
+                224,
+                -56
+            ],
+            "size": [
+                80.0,
+                48.0,
+                80.0
+            ],
+            "textures": {
+                "north": "cfc5c7a445516540bcbe7d72d246a881.jpg",
+                "south": "cfc5c7a445516540bcbe7d72d246a881.jpg",
+                "east": "cfc5c7a445516540bcbe7d72d246a881.jpg",
+                "west": "cfc5c7a445516540bcbe7d72d246a881.jpg",
+                "top": "dec05.jpg",
+                "down": "nodraw.jpg"
+            },
+            "uv_scale": {},
+            "id": "6b5e0d90-faf7-412c-93b4-1fa81ae22812"
+        },
+        {
+            "pos": [
+                608,
+                224,
+                -144
+            ],
+            "size": [
+                80.0,
+                48.0,
+                80.0
+            ],
+            "textures": {
+                "north": "cfc5c7a445516540bcbe7d72d246a881.jpg",
+                "south": "cfc5c7a445516540bcbe7d72d246a881.jpg",
+                "east": "cfc5c7a445516540bcbe7d72d246a881.jpg",
+                "west": "cfc5c7a445516540bcbe7d72d246a881.jpg",
+                "top": "dec02.jpg",
+                "down": "nodraw.jpg"
+            },
+            "uv_scale": {},
+            "id": "6b5e0d90-faf7-412c-93b4-1fa81ae22812"
+        },
+        {
+            "pos": [
+                288,
+                208,
+                -128
+            ],
+            "size": [
+                248.0,
+                80.0,
+                256.0
+            ],
+            "textures": {
+                "north": "nodraw.jpg",
+                "south": "nodraw.jpg",
+                "east": "nodraw.jpg",
+                "west": "nodraw.jpg",
+                "top": "market001.png",
+                "down": "nodraw.jpg"
+            },
+            "uv_shift": {
+                "top": [
+                    0.0,
+                    0.0
+                ]
+            },
+            "uv_scale": {},
+            "uv_angle": {
+                "top": 270.0
+            },
+            "id": "5988c35c-f2e5-4cc2-a5ca-8e0235abc030"
+        },
+        {
+            "pos": [
+                -616.0,
+                312.0,
+                800.0
+            ],
+            "size": [
+                48.0,
+                304.0,
+                704.0
             ],
             "textures": {
                 "north": "gregory-ligman-brickwall.jpg",
@@ -2336,9 +2712,215 @@
                 "down": "gregory-ligman-brickwall.jpg"
             },
             "uv_scale": {
+                "north": [
+                    0.09375,
+                    0.59375
+                ],
+                "south": [
+                    0.09375,
+                    0.59375
+                ],
+                "east": [
+                    1.375,
+                    0.59375
+                ],
+                "west": [
+                    1.375,
+                    0.59375
+                ],
+                "top": [
+                    0.09375,
+                    1.375
+                ],
+                "down": [
+                    0.09375,
+                    1.375
+                ]
+            },
+            "uv_shift": {
+                "west": [
+                    0.0,
+                    0.0
+                ],
+                "east": [
+                    0.0,
+                    0.0
+                ]
+            },
+            "uv_angle": {
+                "west": 90.0,
+                "east": 90.0
+            },
+            "id": "1b74acdf-442b-4cb0-82b5-a11d525192ba"
+        },
+        {
+            "pos": [
+                -384,
+                256,
+                1088
+            ],
+            "size": [
+                240.0,
+                16.0,
+                192.0
+            ],
+            "textures": {
+                "north": "nodraw.jpg",
+                "south": "nodraw.jpg",
+                "east": "nodraw.jpg",
+                "west": "nodraw.jpg",
+                "top": "table01.png",
+                "down": "nodraw.jpg"
+            },
+            "uv_scale": {
+                "north": [
+                    1.0,
+                    0.125
+                ],
+                "south": [
+                    1.0,
+                    0.125
+                ],
+                "east": [
+                    1.0,
+                    0.125
+                ],
                 "west": [
                     1.0,
+                    0.125
+                ],
+                "top": [
+                    1.0,
                     1.0
+                ],
+                "down": [
+                    1.0,
+                    1.0
+                ]
+            },
+            "id": "4dd6bd14-7650-4360-ab38-11b066d98373"
+        },
+        {
+            "pos": [
+                0,
+                240,
+                1096
+            ],
+            "size": [
+                192.0,
+                16.0,
+                192.0
+            ],
+            "textures": {
+                "north": "nodraw.jpg",
+                "south": "nodraw.jpg",
+                "east": "nodraw.jpg",
+                "west": "nodraw.jpg",
+                "top": "table03.png",
+                "down": "nodraw.jpg"
+            },
+            "uv_scale": {
+                "north": [
+                    1.0,
+                    0.125
+                ],
+                "south": [
+                    1.0,
+                    0.125
+                ],
+                "east": [
+                    1.0,
+                    0.125
+                ],
+                "west": [
+                    1.0,
+                    0.125
+                ],
+                "top": [
+                    1.0,
+                    1.0
+                ],
+                "down": [
+                    1.0,
+                    1.0
+                ]
+            },
+            "id": "4dd6bd14-7650-4360-ab38-11b066d98373"
+        },
+        {
+            "pos": [
+                272,
+                208,
+                -384
+            ],
+            "size": [
+                248.0,
+                80.0,
+                256.0
+            ],
+            "textures": {
+                "north": "nodraw.jpg",
+                "south": "nodraw.jpg",
+                "east": "nodraw.jpg",
+                "west": "nodraw.jpg",
+                "top": "market002.png",
+                "down": "nodraw.jpg"
+            },
+            "uv_shift": {
+                "top": [
+                    0.0,
+                    0.0
+                ]
+            },
+            "uv_scale": {},
+            "uv_angle": {
+                "top": 270.0
+            },
+            "id": "5988c35c-f2e5-4cc2-a5ca-8e0235abc030"
+        },
+        {
+            "pos": [
+                -200.0,
+                200.0,
+                416.0
+            ],
+            "size": [
+                880.0,
+                528.0,
+                64.0
+            ],
+            "textures": {
+                "north": "gregory-ligman-brickwall.jpg",
+                "south": "gregory-ligman-brickwall.jpg",
+                "east": "gregory-ligman-brickwall.jpg",
+                "west": "gregory-ligman-brickwall.jpg",
+                "top": "gregory-ligman-brickwall.jpg",
+                "down": "gregory-ligman-brickwall.jpg"
+            },
+            "uv_scale": {
+                "north": [
+                    1.5,
+                    1.03125
+                ],
+                "south": [
+                    1.5,
+                    1.03125
+                ],
+                "east": [
+                    0.9375,
+                    1.03125
+                ],
+                "west": [
+                    0.938,
+                    1.031
+                ],
+                "top": [
+                    1.5,
+                    0.9375
+                ],
+                "down": [
+                    1.5,
+                    0.9375
                 ]
             },
             "uv_shift": {
@@ -2350,7 +2932,222 @@
             "uv_angle": {
                 "west": 90.0
             },
-            "id": "b01e2226-9f9a-4ef5-8a5d-ba3e39e15ad1"
+            "id": "cc6d7217-d714-43e7-8ed4-5dd8585624d4"
+        },
+        {
+            "pos": [
+                1488,
+                352,
+                -1360
+            ],
+            "size": [
+                512.0,
+                16.0,
+                544.0
+            ],
+            "textures": {
+                "north": "nodraw.jpg",
+                "south": "nodraw.jpg",
+                "east": "nodraw.jpg",
+                "west": "nodraw.jpg",
+                "top": "trees0.png",
+                "down": "nodraw.jpg"
+            },
+            "uv_scale": {
+                "north": [
+                    4.0,
+                    0.125
+                ],
+                "south": [
+                    4.0,
+                    0.125
+                ],
+                "east": [
+                    4.25,
+                    0.125
+                ],
+                "west": [
+                    4.25,
+                    0.125
+                ],
+                "top": [
+                    1.0,
+                    1.0
+                ],
+                "down": [
+                    4.0,
+                    4.25
+                ]
+            },
+            "uv_shift": {
+                "top": [
+                    0.0,
+                    0.0
+                ]
+            },
+            "uv_angle": {
+                "top": 0.0
+            },
+            "id": "be2caa72-093d-4e14-80df-b470e9bf5641"
+        },
+        {
+            "pos": [
+                1664,
+                368,
+                -1072
+            ],
+            "size": [
+                1040.0,
+                16.0,
+                544.0
+            ],
+            "textures": {
+                "north": "nodraw.jpg",
+                "south": "nodraw.jpg",
+                "east": "nodraw.jpg",
+                "west": "nodraw.jpg",
+                "top": "trees0.png",
+                "down": "nodraw.jpg"
+            },
+            "uv_scale": {
+                "north": [
+                    4.0,
+                    0.125
+                ],
+                "south": [
+                    4.0,
+                    0.125
+                ],
+                "east": [
+                    4.25,
+                    0.125
+                ],
+                "west": [
+                    4.25,
+                    0.125
+                ],
+                "top": [
+                    1.0,
+                    1.0
+                ],
+                "down": [
+                    4.0,
+                    4.25
+                ]
+            },
+            "uv_shift": {
+                "top": [
+                    0.0,
+                    0.0
+                ]
+            },
+            "uv_angle": {
+                "top": 0.0
+            },
+            "id": "be2caa72-093d-4e14-80df-b470e9bf5641"
+        },
+        {
+            "pos": [
+                752.0,
+                328.0,
+                -1200.0
+            ],
+            "size": [
+                128.0,
+                16.0,
+                128.0
+            ],
+            "textures": {
+                "north": "nodraw.jpg",
+                "south": "nodraw.jpg",
+                "east": "nodraw.jpg",
+                "west": "nodraw.jpg",
+                "top": "tree05.png",
+                "down": "nodraw.jpg"
+            },
+            "uv_scale": {
+                "north": [
+                    1.0,
+                    0.125
+                ],
+                "south": [
+                    1.0,
+                    0.125
+                ],
+                "east": [
+                    1.0,
+                    0.125
+                ],
+                "west": [
+                    1.0,
+                    0.125
+                ],
+                "top": [
+                    1.0,
+                    1.0
+                ],
+                "down": [
+                    1.0,
+                    1.0
+                ]
+            },
+            "id": "4dd6bd14-7650-4360-ab38-11b066d98373"
+        },
+        {
+            "pos": [
+                -128.0,
+                368,
+                -2128.0
+            ],
+            "size": [
+                1040.0,
+                16.0,
+                544.0
+            ],
+            "textures": {
+                "north": "nodraw.jpg",
+                "south": "nodraw.jpg",
+                "east": "nodraw.jpg",
+                "west": "nodraw.jpg",
+                "top": "trees0.png",
+                "down": "nodraw.jpg"
+            },
+            "uv_scale": {
+                "north": [
+                    4.0,
+                    0.125
+                ],
+                "south": [
+                    4.0,
+                    0.125
+                ],
+                "east": [
+                    4.25,
+                    0.125
+                ],
+                "west": [
+                    4.25,
+                    0.125
+                ],
+                "top": [
+                    1.0,
+                    1.0
+                ],
+                "down": [
+                    4.0,
+                    4.25
+                ]
+            },
+            "uv_shift": {
+                "top": [
+                    0.0,
+                    0.0
+                ]
+            },
+            "uv_angle": {
+                "top": 0.0
+            },
+            "id": "be2caa72-093d-4e14-80df-b470e9bf5641"
         }
     ],
     "things": [
@@ -2413,7 +3210,17 @@
                 "id": "3e3ac47f-e994-47ee-8f2b-2f4582b36d13",
                 "angle": 0.0
             },
-            "io_connections": []
+            "io_connections": [
+                {
+                    "output": "OnPlayerSpawn",
+                    "target": "Speaker_villagee_market",
+                    "input": "PlaySound",
+                    "parameter": "",
+                    "delay": 0.0,
+                    "fire_once": false,
+                    "target_id": "21d10c03-d229-4d23-91be-a3a254f4c773"
+                }
+            ]
         },
         {
             "type": "marker",
@@ -2520,9 +3327,9 @@
         {
             "type": "marker",
             "pos": [
-                976.0,
+                960.0,
                 272,
-                176.0
+                240.0
             ],
             "properties": {
                 "type": "marker",
@@ -2843,9 +3650,8 @@
                         }
                     }
                 },
-                "custom_idle": "assets/sprites/miniwind/blacksmith.png",
-                "custom_dead": "assets/sprites/miniwind/blacksmith.png",
-                "custom_shoot": "assets/sprites/miniwind/blacksmith.png",
+                "custom_idle": "assets/sprites/heads/head17.png",
+                "custom_shoot": "assets/sprites/heads/head17.png",
                 "portrait": "assets/portraits/miniwind/blacksmith.png",
                 "monster_type": "human",
                 "sprite_width": 112,
@@ -2872,7 +3678,7 @@
                 "move_speed": 90.0,
                 "combatant": false,
                 "persistent": true,
-                "sched_state": "GOING_TO_WORK",
+                "sched_state": "WORKING",
                 "autonomy": true,
                 "wander_radius": 220.0,
                 "respawn": false,
@@ -2893,18 +3699,21 @@
                     272,
                     -650
                 ],
-                "dead": false,
                 "spells": [],
-                "head": ""
+                "head": "head17",
+                "equipped_weapon": "iron_shortsword",
+                "hidden": false,
+                "_was_shooting": false,
+                "dead": false
             },
             "io_connections": []
         },
         {
             "type": "npc",
             "pos": [
-                564.3338659189769,
+                564.8035317722594,
                 264.0,
-                -172.6309221989962
+                -635.7657448257268
             ],
             "properties": {
                 "type": "npc",
@@ -3046,9 +3855,8 @@
                         }
                     }
                 },
-                "custom_idle": "assets/sprites/miniwind/merchant.png",
-                "custom_dead": "assets/sprites/miniwind/merchant.png",
-                "custom_shoot": "assets/sprites/miniwind/merchant.png",
+                "custom_idle": "assets/sprites/heads/head02.png",
+                "custom_shoot": "assets/sprites/heads/head02.png",
                 "portrait": "assets/portraits/miniwind/merchant.png",
                 "monster_type": "human",
                 "sprite_width": 112,
@@ -3075,7 +3883,7 @@
                 "move_speed": 90.0,
                 "combatant": false,
                 "persistent": true,
-                "sched_state": "FLEE",
+                "sched_state": "WORKING",
                 "autonomy": true,
                 "wander_radius": 220.0,
                 "respawn": false,
@@ -3096,15 +3904,18 @@
                 "max_health": 42,
                 "courage": 0.2,
                 "_dest": [
-                    576.0,
-                    264.0,
-                    -48.0
+                    520,
+                    272,
+                    -650
                 ],
                 "_death_noted": true,
-                "_flee": true,
-                "dead": true,
                 "spells": [],
-                "head": ""
+                "head": "head02",
+                "angle": -1.8784150334131335,
+                "equipped_weapon": "iron_shortsword",
+                "hidden": false,
+                "_was_shooting": false,
+                "dead": false
             },
             "io_connections": []
         },
@@ -3217,15 +4028,14 @@
                         }
                     }
                 },
-                "custom_idle": "assets/sprites/miniwind/farmer.png",
-                "custom_dead": "",
-                "custom_shoot": "assets/sprites/miniwind/farmer.png",
+                "custom_idle": "assets/sprites/heads/head17.png",
+                "custom_shoot": "assets/sprites/heads/head17.png",
                 "portrait": "assets/portraits/miniwind/farmer.png",
                 "monster_type": "human",
                 "sprite_width": 112,
                 "sprite_height": 112,
                 "monster_id": 0,
-                "health": -6,
+                "health": 100,
                 "damage": 6,
                 "triggered": true,
                 "wake_on_sight": true,
@@ -3266,21 +4076,24 @@
                     -770
                 ],
                 "_death_noted": true,
-                "head": "",
+                "head": "head17",
                 "sight": 512,
                 "can_hear": false,
-                "dead": false,
                 "non_hostile": false,
-                "spells": []
+                "spells": [],
+                "equipped_weapon": "iron_shortsword",
+                "hidden": false,
+                "_was_shooting": false,
+                "dead": false
             },
             "io_connections": []
         },
         {
             "type": "npc",
             "pos": [
-                497.3435974121094,
+                727.7332763671875,
                 268.6666564941406,
-                -392.96551513671875
+                -323.1553955078125
             ],
             "properties": {
                 "type": "npc",
@@ -3360,9 +4173,8 @@
                     "village_square",
                     "patrol_east"
                 ],
-                "custom_idle": "assets/sprites/miniwind/guard.png",
-                "custom_dead": "assets/sprites/miniwind/guard.png",
-                "custom_shoot": "assets/sprites/miniwind/guard.png",
+                "custom_idle": "assets/sprites/heads/guard04.png",
+                "custom_shoot": "assets/sprites/heads/guard04.png",
                 "portrait": "assets/portraits/miniwind/guard.png",
                 "monster_type": "human",
                 "sprite_width": 120,
@@ -3370,7 +4182,7 @@
                 "monster_id": 0,
                 "health": 100,
                 "damage": 24,
-                "triggered": true,
+                "triggered": false,
                 "wake_on_sight": true,
                 "awake": false,
                 "patrol": false,
@@ -3380,7 +4192,7 @@
                 "entity_type": "npc",
                 "faction": "guards",
                 "team": "guards",
-                "aggression": "defensive",
+                "aggression": "hostile",
                 "attack_style": "melee",
                 "sight_range": 1024,
                 "loot": "",
@@ -3454,11 +4266,6 @@
                 "respawn": false,
                 "quest_flags": {},
                 "disposition_base": 45,
-                "_dest": [
-                    480,
-                    268.6666564941406,
-                    -520
-                ],
                 "relationships": {
                     "Mara": "sweetheart",
                     "Thalen": "friend"
@@ -3475,25 +4282,30 @@
                         -520
                     ]
                 ],
-                "_patrol_i": 1,
+                "_patrol_i": 0,
                 "_death_noted": true,
                 "max_health": -20,
                 "courage": 0.8,
-                "dead": true,
                 "sight": 512,
                 "can_hear": false,
                 "non_hostile": false,
                 "spells": [],
-                "head": ""
+                "head": "guard04",
+                "angle": 1.295191850475558,
+                "_facing": -1.045041151243314,
+                "equipped_weapon": "iron_shortsword",
+                "hidden": false,
+                "_was_shooting": false,
+                "dead": false
             },
             "io_connections": []
         },
         {
             "type": "npc",
             "pos": [
-                300.8839385125513,
-                260.0,
-                -485.55211196127436
+                238.06462087555204,
+                288,
+                501.76324549826336
             ],
             "properties": {
                 "type": "npc",
@@ -3567,9 +4379,8 @@
                         }
                     }
                 },
-                "custom_idle": "assets/sprites/miniwind/beggar.png",
-                "custom_dead": "assets/sprites/miniwind/beggar.png",
-                "custom_shoot": "assets/sprites/miniwind/beggar.png",
+                "custom_idle": "assets/sprites/heads/head09.png",
+                "custom_shoot": "assets/sprites/heads/head09.png",
                 "portrait": "assets/portraits/miniwind/beggar.png",
                 "monster_type": "human",
                 "sprite_width": 104,
@@ -3597,7 +4408,7 @@
                 "combatant": false,
                 "inventory": [],
                 "persistent": true,
-                "sched_state": "FLEE",
+                "sched_state": "WANDER",
                 "autonomy": true,
                 "wander_radius": 220.0,
                 "merchant": false,
@@ -3606,14 +4417,14 @@
                 "quest_flags": {},
                 "disposition_base": 45,
                 "_anchor": [
-                    340,
+                    208.0,
                     272,
-                    -560
+                    608.0
                 ],
                 "_wander_dest": [
-                    153.4690529975595,
-                    260.0,
-                    -671.7279711953911
+                    179.54239435414976,
+                    288,
+                    719.2311032485374
                 ],
                 "relationships": {
                     "Thalen": "creditor"
@@ -3621,27 +4432,30 @@
                 "max_health": 8,
                 "courage": 0.2,
                 "_dest": [
-                    576.0,
-                    260.0,
-                    -48.0
+                    179.54239435414976,
+                    288,
+                    719.2311032485374
                 ],
-                "_flee": true,
-                "dead": true,
                 "_death_noted": true,
                 "sight": 512,
                 "can_hear": false,
                 "non_hostile": false,
                 "spells": [],
-                "head": ""
+                "head": "head09",
+                "angle": -0.2628797687193935,
+                "equipped_weapon": "iron_shortsword",
+                "hidden": false,
+                "_was_shooting": false,
+                "dead": false
             },
             "io_connections": []
         },
         {
             "type": "npc",
             "pos": [
-                439.40909245862895,
+                -82.8051986694336,
                 264.77777099609375,
-                -315.6110310709885
+                285.5375061035156
             ],
             "properties": {
                 "type": "npc",
@@ -3742,9 +4556,8 @@
                         }
                     }
                 },
-                "custom_idle": "assets/sprites/miniwind/villager.png",
-                "custom_dead": "assets/sprites/miniwind/villager.png",
-                "custom_shoot": "assets/sprites/miniwind/villager.png",
+                "custom_idle": "assets/sprites/heads/head14.png",
+                "custom_shoot": "assets/sprites/heads/head14.png",
                 "portrait": "assets/portraits/miniwind/villager.png",
                 "monster_type": "human",
                 "sprite_width": 112,
@@ -3752,7 +4565,7 @@
                 "monster_id": 0,
                 "health": 100,
                 "damage": 5,
-                "triggered": true,
+                "triggered": false,
                 "wake_on_sight": true,
                 "awake": false,
                 "patrol": false,
@@ -3762,7 +4575,7 @@
                 "entity_type": "npc",
                 "faction": "villagers",
                 "team": "villagers",
-                "aggression": "passive",
+                "aggression": "hostile",
                 "attack_style": "melee",
                 "sight_range": 1024,
                 "loot": "",
@@ -3772,7 +4585,7 @@
                 "combatant": false,
                 "inventory": [],
                 "persistent": true,
-                "sched_state": "FLEE",
+                "sched_state": "COMBAT",
                 "autonomy": true,
                 "wander_radius": 220.0,
                 "merchant": false,
@@ -3792,32 +4605,36 @@
                 "max_health": 33,
                 "courage": 0.3,
                 "_dest": [
-                    576.0,
+                    200.01633636604663,
                     264.77777099609375,
-                    -48.0
+                    -500.2175842924304
                 ],
                 "_wander_dest": [
-                    420.5404233363812,
+                    200.01633636604663,
                     264.77777099609375,
-                    -625.84324141945
+                    -500.2175842924304
                 ],
-                "_flee": true,
-                "dead": true,
-                "_death_noted": false,
+                "_death_noted": true,
                 "sight": 512,
                 "can_hear": false,
                 "non_hostile": false,
                 "spells": [],
-                "head": ""
+                "head": "head14",
+                "angle": -1.5699589245770278,
+                "_facing": 1.4413584090393041,
+                "equipped_weapon": "iron_shortsword",
+                "hidden": false,
+                "_was_shooting": false,
+                "dead": false
             },
             "io_connections": []
         },
         {
             "type": "creature",
             "pos": [
-                1600.0,
-                268.0,
-                -1840.0
+                1392.0,
+                292.0,
+                -1648.0
             ],
             "properties": {
                 "type": "creature",
@@ -3827,15 +4644,14 @@
                 "npc_role": "bandit",
                 "aggression": "hostile",
                 "sight_range": 520,
-                "custom_idle": "assets/sprites/miniwind/bandit.png",
-                "custom_dead": "",
-                "custom_shoot": "assets/sprites/miniwind/bandit.png",
+                "custom_idle": "assets/sprites/heads/head07.png",
+                "custom_shoot": "assets/sprites/heads/head07.png",
                 "portrait": "assets/portraits/miniwind/bandit.png",
                 "monster_type": "human",
                 "sprite_width": 120,
                 "sprite_height": 120,
                 "monster_id": 0,
-                "health": -140,
+                "health": 100,
                 "damage": 10,
                 "triggered": false,
                 "wake_on_sight": true,
@@ -3868,18 +4684,22 @@
                 "non_hostile": false,
                 "max_health": -102,
                 "courage": 0.3,
-                "dead": false,
                 "spells": [],
-                "head": ""
+                "head": "head07",
+                "equipped_weapon": "iron_shortsword",
+                "hidden": false,
+                "_was_shooting": false,
+                "_facing": -0.5436787268088318,
+                "dead": false
             },
             "io_connections": []
         },
         {
             "type": "creature",
             "pos": [
-                1248.0,
-                268.0,
-                -1792.0
+                1232.0,
+                292.0,
+                -1648.0
             ],
             "properties": {
                 "type": "creature",
@@ -3889,15 +4709,14 @@
                 "npc_role": "bandit_archer",
                 "aggression": "hostile",
                 "sight_range": 520,
-                "custom_idle": "assets/sprites/miniwind/bandit.png",
-                "custom_dead": "",
-                "custom_shoot": "assets/sprites/miniwind/bandit.png",
+                "custom_idle": "assets/sprites/heads/head18.png",
+                "custom_shoot": "assets/sprites/heads/head18.png",
                 "portrait": "assets/portraits/miniwind/bandit.png",
                 "monster_type": "human",
                 "sprite_width": 120,
                 "sprite_height": 120,
                 "monster_id": 0,
-                "health": -99,
+                "health": 100,
                 "damage": 9,
                 "triggered": false,
                 "wake_on_sight": true,
@@ -3930,9 +4749,14 @@
                 "non_hostile": false,
                 "max_health": -42,
                 "courage": 0.3,
-                "dead": false,
                 "spells": [],
-                "head": ""
+                "head": "head18",
+                "equipped_weapon": "hunting_bow",
+                "hidden": false,
+                "_was_shooting": false,
+                "_facing": -0.2881289764758657,
+                "_attack_anim": 0.0,
+                "dead": false
             },
             "io_connections": []
         },
@@ -3969,9 +4793,9 @@
         {
             "type": "creature",
             "pos": [
-                1456.0,
-                268.0,
-                -1680.0
+                1440.0,
+                292.0,
+                -1648.0
             ],
             "properties": {
                 "type": "creature",
@@ -3981,15 +4805,14 @@
                 "npc_role": "bandit_archer",
                 "aggression": "hostile",
                 "sight_range": 520,
-                "custom_idle": "assets/sprites/miniwind/bandit.png",
-                "custom_dead": "",
-                "custom_shoot": "assets/sprites/miniwind/bandit.png",
+                "custom_idle": "assets/sprites/heads/head04.png",
+                "custom_shoot": "assets/sprites/heads/head04.png",
                 "portrait": "assets/portraits/miniwind/bandit.png",
                 "monster_type": "human",
                 "sprite_width": 120,
                 "sprite_height": 120,
                 "monster_id": 0,
-                "health": 1,
+                "health": 100,
                 "damage": 9,
                 "triggered": false,
                 "wake_on_sight": true,
@@ -4022,9 +4845,14 @@
                 "non_hostile": false,
                 "max_health": -42,
                 "courage": 0.3,
-                "dead": false,
                 "spells": [],
-                "head": ""
+                "head": "head04",
+                "equipped_weapon": "hunting_bow",
+                "hidden": false,
+                "_was_shooting": false,
+                "_facing": -0.6186918499916017,
+                "_attack_anim": 0.0,
+                "dead": false
             },
             "io_connections": []
         },
@@ -4121,9 +4949,9 @@
         {
             "type": "npc",
             "pos": [
-                -128,
+                -173.6246279074254,
                 320,
-                528
+                518.2146923016325
             ],
             "properties": {
                 "dialogue": {
@@ -4136,7 +4964,7 @@
                 "attack_style": "magic",
                 "combatant": true,
                 "type": "npc",
-                "name": "NPC_2",
+                "name": "Head chef",
                 "id": "e1671896-d2df-4e04-9d09-7cf9ee2036ff",
                 "monster_type": "human",
                 "monster_id": 0,
@@ -4161,9 +4989,8 @@
                 "move_speed": 90.0,
                 "can_defend": true,
                 "courage": 0.6,
-                "custom_idle": "assets/sprites/miniwind/villager.png",
-                "custom_dead": "assets/sprites/miniwind/villager.png",
-                "custom_shoot": "assets/sprites/miniwind/villager.png",
+                "custom_idle": "assets/sprites/heads/head11.png",
+                "custom_shoot": "assets/sprites/heads/head11.png",
                 "portrait": "assets/portraits/miniwind/villager.png",
                 "inventory": [],
                 "persistent": true,
@@ -4189,7 +5016,7 @@
                         "location": "home"
                     }
                 ],
-                "sched_state": "IDLE",
+                "sched_state": "WORKING",
                 "home": [
                     -128.0,
                     40,
@@ -4206,7 +5033,6 @@
                 "disposition_base": 45,
                 "sight": 1024,
                 "can_hear": true,
-                "dead": false,
                 "non_hostile": true,
                 "spells": [
                     {
@@ -4220,16 +5046,31 @@
                         "speed": 1400.0
                     }
                 ],
-                "head": ""
+                "head": "head11",
+                "_anchor": [
+                    -128.0,
+                    40,
+                    528.0
+                ],
+                "_dest": [
+                    -128.0,
+                    40,
+                    528.0
+                ],
+                "angle": 1.3595227452187528,
+                "equipped_weapon": "apprentice_staff",
+                "hidden": false,
+                "_was_shooting": false,
+                "dead": false
             },
             "io_connections": []
         },
         {
             "type": "npc",
             "pos": [
-                656,
-                288,
-                -352
+                72.08827209472656,
+                268.0,
+                90.07613372802734
             ],
             "properties": {
                 "dialogue": {
@@ -4238,18 +5079,18 @@
                 "display_name": "Town Archer",
                 "npc_role": "guard_archer",
                 "faction": "guards",
-                "aggression": "defensive",
+                "aggression": "hostile",
                 "attack_style": "bow",
                 "combatant": true,
                 "type": "npc",
-                "name": "NPC_4",
+                "name": "Guard",
                 "id": "77fdc4e4-3803-4a72-8a26-05ba5ec21fd2",
                 "monster_type": "human",
                 "monster_id": 0,
-                "health": 100,
+                "health": 89,
                 "max_health": 100,
                 "damage": 24,
-                "triggered": true,
+                "triggered": false,
                 "wake_on_sight": true,
                 "awake": false,
                 "patrol": false,
@@ -4267,9 +5108,8 @@
                 "move_speed": 90.0,
                 "can_defend": true,
                 "courage": 0.9,
-                "custom_idle": "assets/sprites/miniwind/guard.png",
-                "custom_dead": "",
-                "custom_shoot": "assets/sprites/miniwind/guard.png",
+                "custom_idle": "assets/sprites/heads/guard01.png",
+                "custom_shoot": "assets/sprites/heads/guard01.png",
                 "portrait": "assets/portraits/miniwind/guard.png",
                 "inventory": [
                     {
@@ -4302,7 +5142,7 @@
                 ],
                 "persistent": true,
                 "schedule": [],
-                "sched_state": "IDLE",
+                "sched_state": "COMBAT",
                 "home": [
                     656.0,
                     40,
@@ -4318,20 +5158,30 @@
                 "relationships": {},
                 "disposition_base": 45,
                 "sight": 512,
-                "can_hear": false,
-                "dead": false,
+                "can_hear": true,
                 "non_hostile": false,
                 "spells": [],
-                "head": ""
+                "head": "guard01",
+                "_facing": 2.6702487282320324,
+                "_wander_dest": [
+                    731.2860367158967,
+                    264.2352941176472,
+                    -454.68736058081686
+                ],
+                "angle": 2.6524823486578057,
+                "equipped_weapon": "hunting_bow",
+                "hidden": false,
+                "_was_shooting": false,
+                "dead": false
             },
             "io_connections": []
         },
         {
             "type": "npc",
             "pos": [
-                896,
-                288,
-                -64
+                432.0,
+                292.0,
+                240.0
             ],
             "properties": {
                 "dialogue": {
@@ -4344,14 +5194,14 @@
                 "attack_style": "bow",
                 "combatant": true,
                 "type": "npc",
-                "name": "NPC_6",
+                "name": "Guard",
                 "id": "04277618-db24-4ced-994f-706e0baf33b3",
                 "monster_type": "human",
                 "monster_id": 0,
                 "health": 90,
                 "max_health": 100,
                 "damage": 12,
-                "triggered": true,
+                "triggered": false,
                 "wake_on_sight": true,
                 "awake": false,
                 "patrol": false,
@@ -4369,9 +5219,8 @@
                 "move_speed": 90.0,
                 "can_defend": true,
                 "courage": 0.8,
-                "custom_idle": "assets/sprites/miniwind/guard.png",
-                "custom_dead": "assets/sprites/miniwind/guard.png",
-                "custom_shoot": "assets/sprites/miniwind/guard.png",
+                "custom_idle": "assets/sprites/heads/guard02.png",
+                "custom_shoot": "assets/sprites/heads/guard02.png",
                 "portrait": "assets/portraits/miniwind/guard.png",
                 "inventory": [
                     {
@@ -4395,13 +5244,13 @@
                 ],
                 "persistent": true,
                 "schedule": [],
-                "sched_state": "IDLE",
+                "sched_state": "COMBAT",
                 "home": [
                     896.0,
                     40,
                     -64.0
                 ],
-                "work_location": "",
+                "work_location": "guardpost",
                 "autonomy": true,
                 "wander_radius": 220.0,
                 "merchant": false,
@@ -4411,11 +5260,27 @@
                 "relationships": {},
                 "disposition_base": 45,
                 "sight": 512,
-                "can_hear": false,
-                "dead": false,
+                "can_hear": true,
                 "non_hostile": false,
                 "spells": [],
-                "head": ""
+                "head": "guard02",
+                "_wander_dest": [
+                    968.3757938391079,
+                    272,
+                    -202.81052656678193
+                ],
+                "angle": 2.8634995471445635,
+                "_facing": 2.9545847426989647,
+                "equipped_weapon": "hunting_bow",
+                "hidden": false,
+                "_was_shooting": false,
+                "_dest": [
+                    968.3757938391079,
+                    272,
+                    -202.81052656678193
+                ],
+                "_aggro_target": 1581338596112,
+                "dead": false
             },
             "io_connections": []
         },
@@ -4445,7 +5310,291 @@
                 ],
                 "use_radius": 128.0,
                 "locked": false,
-                "custom_idle": "assets/sprites/miniwind/container_chest.png"
+                "custom_idle": "assets/sprites/miniwind/container_crate.png"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "marker",
+            "pos": [
+                -832,
+                256,
+                256
+            ],
+            "properties": {
+                "type": "marker",
+                "name": "Marker_1",
+                "id": "ef7313cb-efeb-4b06-ad9e-fdf8273ec6d8",
+                "marker_kind": "prison",
+                "hidden_in_game": true,
+                "custom_idle": "assets/sprites/miniwind/marker_prison.png",
+                "discover_radius": 2048.0,
+                "place_name": "Prison"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "marker",
+            "pos": [
+                192,
+                320,
+                0
+            ],
+            "properties": {
+                "type": "marker",
+                "name": "Marker_2",
+                "id": "7146636d-fe30-4d69-bf9b-2b1a2ac61e6a",
+                "marker_kind": "location",
+                "hidden_in_game": true,
+                "custom_idle": "assets/sprites/miniwind/marker_location.png",
+                "discover_radius": 1024.0,
+                "place_name": "Millbrook",
+                "_discovered": true
+            },
+            "io_connections": []
+        },
+        {
+            "type": "path_node",
+            "pos": [
+                1280,
+                288,
+                96
+            ],
+            "properties": {
+                "type": "path_node",
+                "name": "PathNode_1",
+                "id": "fc0b721e-4075-4572-b8e8-cb0985c22e2e",
+                "radius": 256.0,
+                "show_radius": false,
+                "affects_type": "both",
+                "next_node": "",
+                "wait_time": 0.0,
+                "speed": 1.0
+            },
+            "io_connections": []
+        },
+        {
+            "type": "path_node",
+            "pos": [
+                1280,
+                288,
+                688
+            ],
+            "properties": {
+                "type": "path_node",
+                "name": "PathNode_2",
+                "id": "d58a2c7b-8556-44a6-beff-0b141a659b7e",
+                "radius": 256.0,
+                "show_radius": false,
+                "affects_type": "both",
+                "next_node": "",
+                "wait_time": 0.0,
+                "speed": 1.0
+            },
+            "io_connections": []
+        },
+        {
+            "type": "path_node",
+            "pos": [
+                416,
+                288,
+                672
+            ],
+            "properties": {
+                "type": "path_node",
+                "name": "PathNode_3",
+                "id": "cda4aba3-418d-4156-b024-4855e16948da",
+                "radius": 256.0,
+                "show_radius": false,
+                "affects_type": "both",
+                "next_node": "",
+                "wait_time": 0.0,
+                "speed": 1.0
+            },
+            "io_connections": []
+        },
+        {
+            "type": "path_node",
+            "pos": [
+                400,
+                288,
+                96
+            ],
+            "properties": {
+                "type": "path_node",
+                "name": "PathNode_4",
+                "id": "ecc13674-329f-4443-9908-60e245403bfb",
+                "radius": 256.0,
+                "show_radius": false,
+                "affects_type": "both",
+                "next_node": "",
+                "wait_time": 0.0,
+                "speed": 1.0
+            },
+            "io_connections": []
+        },
+        {
+            "type": "speaker",
+            "pos": [
+                240,
+                336,
+                -400
+            ],
+            "properties": {
+                "type": "speaker",
+                "name": "Speaker_villagee_market",
+                "id": "21d10c03-d229-4d23-91be-a3a254f4c773",
+                "sound_file": "assets/sounds/Ambient_market02.mp3",
+                "radius": 768.0,
+                "global": false,
+                "show_radius": false,
+                "volume": 1.0,
+                "looping": true,
+                "play_on_start": true,
+                "state": "on"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "marker",
+            "pos": [
+                432.0,
+                40,
+                288.0
+            ],
+            "properties": {
+                "type": "marker",
+                "name": "guardpost",
+                "id": "75ab65f4-c11b-4925-b590-eaf9afe6600e",
+                "marker_kind": "guardpost",
+                "hidden_in_game": true,
+                "custom_idle": "assets/sprites/miniwind/marker_idle.png"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "creature",
+            "pos": [
+                -544,
+                256,
+                -1776
+            ],
+            "properties": {
+                "display_name": "Skeleton",
+                "npc_role": "skeleton",
+                "faction": "monsters",
+                "aggression": "hostile",
+                "attack_style": "magic",
+                "health": 80,
+                "loot": "skeleton",
+                "respawn": false,
+                "type": "creature",
+                "name": "Creature_2",
+                "id": "3e946732-607b-4b2f-b875-1709486da541",
+                "monster_type": "human",
+                "monster_id": 0,
+                "max_health": 80,
+                "damage": 10,
+                "triggered": false,
+                "wake_on_sight": true,
+                "awake": false,
+                "patrol": false,
+                "patrol_target": "",
+                "patrol_mode": "loop",
+                "variant": "<None>",
+                "sprite_width": 120,
+                "sprite_height": 120,
+                "entity_type": "creature",
+                "team": "monsters",
+                "sight_range": 1024,
+                "creature_level": 1,
+                "xp_value": 16,
+                "move_speed": 90.0,
+                "resist_frost": 0.5,
+                "resist_poison": 1.0,
+                "combatant": true,
+                "courage": 0.3,
+                "custom_idle": "assets/sprites/heads/skel01.png",
+                "custom_shoot": "assets/sprites/heads/skel01.png",
+                "head": "skel01",
+                "portrait": "assets/portraits/miniwind/monster.png",
+                "inventory": [],
+                "persistent": true,
+                "equipped_weapon": "iron_shortsword",
+                "roam": false,
+                "roam_radius": 300.0,
+                "home": [
+                    -544.0,
+                    40,
+                    -1776.0
+                ],
+                "sight": 512,
+                "can_hear": false,
+                "dead": false,
+                "non_hostile": false,
+                "spells": [
+                    {
+                        "id": "frostbite",
+                        "color": [
+                            150,
+                            210,
+                            255
+                        ],
+                        "damage": 18,
+                        "speed": 950.0
+                    }
+                ]
+            },
+            "io_connections": []
+        },
+        {
+            "type": "creaturespawn",
+            "pos": [
+                -352,
+                240,
+                -1696
+            ],
+            "properties": {
+                "type": "creaturespawn",
+                "name": "CreatureSpawn_1",
+                "id": "0ee42360-1eeb-4982-bd83-326d0c79bd4f",
+                "spawn_kind": "creature",
+                "creature_role": "monster",
+                "faction": "monsters",
+                "count": 2,
+                "spawn_radius": 128.0,
+                "inventory": [
+                    {
+                        "description": "A plain iron-tipped arrow.",
+                        "id": "iron_arrow",
+                        "name": "Iron Arrow",
+                        "qty": 1,
+                        "type": "ammo",
+                        "value": 1,
+                        "weight": 0.1
+                    },
+                    {
+                        "description": "A wood short bow.",
+                        "id": "short_bow",
+                        "name": "Short Bow",
+                        "qty": 1,
+                        "type": "weapon",
+                        "value": 30,
+                        "weight": 6.0
+                    },
+                    {
+                        "description": "A iron iron shortsword.",
+                        "id": "iron_shortsword",
+                        "name": "Iron Shortsword",
+                        "qty": 1,
+                        "type": "weapon",
+                        "value": 25,
+                        "weight": 8.0
+                    }
+                ],
+                "respawn": false,
+                "hidden_in_game": true,
+                "custom_idle": "assets/sprites/logic_spawner.png"
             },
             "io_connections": []
         }

@@ -419,7 +419,7 @@ class BaseRenderer:
             fs_src = DEFAULT_SHADERS.get('sprite.frag', '')
             self.shaders['sprite'] = self.shader_loader.compile_from_source(vs_src, fs_src)
             self.uniforms['sprite'] = UniformCache(self.shaders['sprite'])
-            self.uniforms['sprite'].preload(['projection', 'view', 'sprite_texture', 'sprite_pos_world', 'sprite_size', 'sprite_tint'])
+            self.uniforms['sprite'].preload(['projection', 'view', 'sprite_texture', 'sprite_pos_world', 'sprite_size', 'sprite_tint', 'sprite_rot'])
 
             # depth_cube – renders scene depth into a point light's cube-map for
             # omnidirectional shadow mapping (replaces the old projected shadows).

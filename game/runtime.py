@@ -1892,6 +1892,9 @@ class MiniwindSession:
         if not hasattr(lt, "_monster_projectiles"):
             lt._monster_projectiles = []
         lt._monster_projectiles.append(proj)
+
+    def _staff_attack(self, w) -> bool:
+        """Channel a staff's bound spell (called from do_attack for KIND_STAFF)."""
         c = self.game.character
         spell_id = w.get("staff_spell", "flare")
         spell = rpg_magic.get(spell_id)

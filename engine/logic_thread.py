@@ -1429,7 +1429,16 @@ class LogicThread(threading.Thread):
             accumulator += frame_time
             
             while accumulator >= self.TICK_DURATION:
-                self._tick(self.TICK_DURATION)
+                try:
+                    self._tick(self.TICK_DURATION)
+                except Exception:
+                    # A single bad tick (e.g. a broken gameplay handler) must
+                    # not silently kill the whole logic thread — that freezes
+                    # the game and stops every other system (monster AI,
+                    # projectiles, etc.) with no visible error. Log and keep
+                    # ticking instead.
+                    import traceback
+                    debug_log("LogicThread", "Unhandled exception in _tick:\n" + traceback.format_exc())
                 accumulator -= self.TICK_DURATION
                 self._update_tps_counter()
                 
