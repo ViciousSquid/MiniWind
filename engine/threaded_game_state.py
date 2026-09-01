@@ -67,6 +67,8 @@ class RenderState:
             #     'damage': int,
             #     'size': (w, h),       # billboard size
             # }
+        self.stuck_arrows = []  # list of {'pos': [x,y,z], 'yaw': deg, 'pitch': deg}
+            # — arrows embedded in a wall or a monster after landing
 
         # Muzzle flash — True for one frame after the player fires
         self.muzzle_flash_active = False
@@ -122,6 +124,7 @@ class RenderState:
         self.hud_message = ""
         self.bullet_marks = []
         self.projectiles = []
+        self.stuck_arrows = []
         self.muzzle_flash_active = False
         self.camera_transition_active = False
         self.monster_debug_active = False

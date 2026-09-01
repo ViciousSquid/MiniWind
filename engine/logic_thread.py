@@ -13,6 +13,7 @@ This thread runs game logic at a fixed timestep (60 Hz), handling:
 
 import threading
 import time
+import random
 import numpy as np
 from typing import List, Dict, Any, Optional
 import glm
@@ -97,6 +98,8 @@ from .monster_constants import (
     MONSTER_PROJECTILE_SPEED,
     MONSTER_PROJECTILE_MAX_DIST,
     MONSTER_PROJECTILE_SPRITE_SIZE,
+    MAX_STUCK_ARROWS,
+    STUCK_ARROW_SPRITE_SIZE,
 )
 
 # Import the extracted MonsterAI class and new thread
@@ -367,6 +370,10 @@ class LogicThread(threading.Thread):
 
         # Monster projectiles (flying monster ranged attacks)
         self._monster_projectiles: list = []
+
+        # Player arrows embedded in the world (walls, monster hitboxes) once
+        # a bow shot lands — persistent physical props, not transient FX.
+        self.stuck_arrows: list = []
 
         # Gunfire sound events for AI hearing (list of dicts with pos, time, source)
         self._gunfire_events: list = []
@@ -929,6 +936,7 @@ class LogicThread(threading.Thread):
 
             # Clear monster projectiles
             self._monster_projectiles.clear()
+            self.stuck_arrows.clear()
 
             # Clear gunfire events
             self._gunfire_events.clear()
@@ -996,6 +1004,7 @@ class LogicThread(threading.Thread):
 
             # Clear monster projectiles
             self._monster_projectiles.clear()
+            self.stuck_arrows.clear()
 
             # Clear gunfire events
             self._gunfire_events.clear()
@@ -1617,6 +1626,7 @@ class LogicThread(threading.Thread):
         # Update monster projectiles (flying monster ranged attacks)
         # NOTE: Monster AI itself now runs in MonsterAIThread
         self._update_monster_projectiles(delta)
+        self._update_stuck_arrows()
 
         # ── Player 2 physics (split-screen) ──────────────────────────────────
         if self.player2 and not self.player2_dead:
@@ -2778,7 +2788,7 @@ class LogicThread(threading.Thread):
             proj['lifetime'] -= delta
 
             # Check max distance
-            if proj['distance_travelled'] >= MONSTER_PROJECTILE_MAX_DIST:
+            if proj['distance_travelled'] >= proj.get('max_dist', MONSTER_PROJECTILE_MAX_DIST):
                 continue  # Expired
 
             if proj['lifetime'] <= 0.0:
@@ -2826,11 +2836,26 @@ class LogicThread(threading.Thread):
                         break
 
                 if hit_monster is not None:
-                    damage = proj['damage']
-                    self.monster_ai._apply_monster_damage(hit_monster, damage, attacker=None)
-                    if self.monster_ai.monster_debug_active:
-                        name = hit_monster.properties.get('name', '?')
-                        debug_log("MonsterAI", f"Projectile hit {name} for {damage} dmg")
+                    on_hit = proj.get('on_hit')
+                    if callable(on_hit):
+                        # The spawner (e.g. a player bow shot) resolves its own
+                        # damage/skill/crit math at the moment of impact rather
+                        # than a flat number — see game/runtime.py.
+                        try:
+                            on_hit(hit_monster)
+                        except Exception:
+                            pass
+                        if self.monster_ai.monster_debug_active:
+                            name = hit_monster.properties.get('name', '?')
+                            debug_log("MonsterAI", f"Projectile hit {name}")
+                    else:
+                        damage = proj['damage']
+                        self.monster_ai._apply_monster_damage(hit_monster, damage, attacker=None)
+                        if self.monster_ai.monster_debug_active:
+                            name = hit_monster.properties.get('name', '?')
+                            debug_log("MonsterAI", f"Projectile hit {name} for {damage} dmg")
+                    if proj.get('embeds'):
+                        self._embed_projectile(proj, p_pos, hit_monster=hit_monster)
                     continue  # Projectile consumed
 
             # ---- Collision with solid brushes (walls) ----
@@ -2863,6 +2888,8 @@ class LogicThread(threading.Thread):
                     break
 
             if hit_wall:
+                if proj.get('embeds'):
+                    self._embed_projectile(proj, p_pos, hit_wall=True)
                 continue  # Projectile consumed
 
             # Projectile survived this tick
@@ -2881,6 +2908,96 @@ class LogicThread(threading.Thread):
             }
             for proj in remaining
         ]
+        write_state.stuck_arrows = [
+            {'pos': list(e['pos']), 'yaw': e['yaw'], 'pitch': e['pitch'],
+             'visible_frac': e.get('visible_frac', 1.0)}
+            for e in self.stuck_arrows
+        ]
+
+    def _embed_projectile(self, proj, pos, *, hit_wall: bool = False, hit_monster=None):
+        """Leave a persistent, physical arrow shaft where a player arrow
+        struck a wall or a creature.
+
+        Only a random trailing fraction of the shaft is left visible
+        (``visible_frac``) — the "head" end is treated as buried in whatever
+        it struck, so the render position is pulled back from the exact
+        impact point along the reversed flight path by however much got
+        trimmed off, and the renderer draws a proportionally shorter sprite.
+        This is what makes it read as embedded rather than just floating flat
+        against the surface.
+
+        Purely a world prop — the damage itself is resolved separately (via
+        the projectile's ``on_hit`` callback for creature hits). If it struck
+        a monster, the arrow is parented to that monster's position so it
+        rides along as the monster moves (or falls with a corpse); if it
+        struck a wall, it stays fixed at the impact point. The list is capped
+        (``MAX_STUCK_ARROWS``) so a long fight doesn't accumulate unbounded
+        props — oldest arrows are dropped first.
+        """
+        vel = proj.get('vel') or (0.0, 0.0, -1.0)
+        vlen = math.sqrt(vel[0] ** 2 + vel[1] ** 2 + vel[2] ** 2) or 1.0
+        dirn = (vel[0] / vlen, vel[1] / vlen, vel[2] / vlen)
+        yaw = math.degrees(math.atan2(dirn[0], dirn[2]))
+        pitch = math.degrees(math.asin(max(-1.0, min(1.0, dirn[1]))))
+
+        # Random trim: only this fraction of the shaft stays visible, pulled
+        # back from the impact point by the trimmed-off length so the
+        # remaining piece's leading edge sits right at the surface.
+        visible_frac = random.uniform(0.35, 0.8)
+        full_len = STUCK_ARROW_SPRITE_SIZE[1]
+        pullback = full_len * (1.0 - visible_frac) * 0.5
+        embed_pos = [
+            float(pos.x) - dirn[0] * pullback,
+            float(pos.y) - dirn[1] * pullback,
+            float(pos.z) - dirn[2] * pullback,
+        ]
+
+        entry = {
+            'pos': embed_pos,
+            'yaw': yaw,
+            'pitch': pitch,
+            'visible_frac': visible_frac,
+            'time': time.perf_counter(),
+            'attached_id': None,
+            'local_offset': None,
+        }
+        if hit_monster is not None:
+            entry['attached_id'] = id(hit_monster)
+            m_pos = hit_monster.pos
+            entry['local_offset'] = [embed_pos[0] - m_pos[0],
+                                      embed_pos[1] - m_pos[1],
+                                      embed_pos[2] - m_pos[2]]
+        self.stuck_arrows.append(entry)
+        overflow = len(self.stuck_arrows) - MAX_STUCK_ARROWS
+        if overflow > 0:
+            del self.stuck_arrows[:overflow]
+
+    def _update_stuck_arrows(self):
+        """Keep arrows embedded in monsters riding along as those monsters
+        move, and drop arrows whose monster has despawned entirely."""
+        if not self.stuck_arrows:
+            return
+        attached = [e for e in self.stuck_arrows if e.get('attached_id') is not None]
+        if not attached:
+            return
+        live_ids = {}
+        with self._monster_lock:
+            for t in self.things:
+                if isinstance(t, MonsterThing):
+                    live_ids[id(t)] = t.pos
+        kept = []
+        for e in self.stuck_arrows:
+            aid = e.get('attached_id')
+            if aid is None:
+                kept.append(e)
+                continue
+            m_pos = live_ids.get(aid)
+            if m_pos is None:
+                continue  # monster thing no longer exists — drop the arrow with it
+            off = e['local_offset']
+            e['pos'] = [m_pos[0] + off[0], m_pos[1] + off[1], m_pos[2] + off[2]]
+            kept.append(e)
+        self.stuck_arrows = kept
 
 
     # =========================================================================

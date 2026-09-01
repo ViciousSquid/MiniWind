@@ -1096,6 +1096,65 @@ class QtGameView(QOpenGLWidget):
         gl.glBindVertexArray(0)
         gl.glDisable(gl.GL_BLEND)
 
+    def _render_stuck_arrows(self, arrows, proj_matrix, view_matrix):
+        """Draw arrows embedded in walls/monsters — small billboards using the
+        real arrow sprite (as opposed to the glowing generic bolt texture
+        used for in-flight projectiles), so they read as physical shafts left
+        behind rather than active effects.
+
+        Each arrow is rotated in-plane to (approximately) match its landing
+        yaw, and drawn at a shortened length (``visible_frac``, baked into
+        ``pos`` and the size here) so it reads as a shaft with its head
+        buried in the surface rather than a full arrow floating on top of it.
+        """
+        if not arrows or 'sprite' not in self.renderer.shaders:
+            return
+        tex_id = self.sprite_textures.get('arrow') or self.sprite_textures.get('projectile')
+        if not tex_id:
+            return
+        from engine.monster_constants import STUCK_ARROW_SPRITE_SIZE
+        pw, ph = STUCK_ARROW_SPRITE_SIZE
+        shader = self.renderer.shaders['sprite']
+        uniforms = self.renderer.uniforms['sprite']
+        gl.glUseProgram(shader)
+        gl.glUniformMatrix4fv(uniforms['projection'], 1, gl.GL_FALSE, glm.value_ptr(proj_matrix))
+        gl.glUniformMatrix4fv(uniforms['view'], 1, gl.GL_FALSE, glm.value_ptr(view_matrix))
+        gl.glActiveTexture(gl.GL_TEXTURE0)
+        gl.glUniform1i(uniforms['sprite_texture'], 0)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
+        gl.glBindVertexArray(self.renderer.vaos['sprite'])
+        gl.glEnable(gl.GL_BLEND)
+        gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+        gl.glUniform4f(uniforms['sprite_tint'], 0.0, 0.0, 0.0, 0.0)
+        pos_loc = uniforms['sprite_pos_world']
+        size_loc = uniforms['sprite_size']
+        rot_loc = uniforms.get('sprite_rot', -1)   # -1 if the shader lacks it (safe no-op)
+
+        # Same world-yaw -> in-plane-billboard-rotation projection the engine
+        # already uses for overhead actor heads (see renderer_core.draw_sprites
+        # / _head_billboard_rot) — keeps this consistent with how everything
+        # else in the top-down view turns to face a heading.
+        cam_right = (view_matrix[0][0], view_matrix[1][0], view_matrix[2][0])
+        cam_up = (view_matrix[0][1], view_matrix[1][1], view_matrix[2][1])
+
+        for arrow in arrows:
+            pos = arrow['pos']
+            gl.glUniform3f(pos_loc, pos[0], pos[1], pos[2])
+            frac = max(0.15, min(1.0, arrow.get('visible_frac', 1.0)))
+            gl.glUniform2f(size_loc, pw, ph * frac)
+            if rot_loc >= 0:
+                yaw = math.radians(arrow.get('yaw', 0.0))
+                ha, hz = math.sin(yaw), math.cos(yaw)
+                a = ha * cam_right[0] + hz * cam_right[2]
+                b = ha * cam_up[0] + hz * cam_up[2]
+                rot = math.atan2(-a, b) if (a * a + b * b) > 1e-8 else 0.0
+                gl.glUniform1f(rot_loc, rot)
+            gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
+        if rot_loc >= 0:
+            gl.glUniform1f(rot_loc, 0.0)   # reset so later sprite draws aren't left rotated
+        gl.glBindVertexArray(0)
+        gl.glDisable(gl.GL_BLEND)
+
     def _render_monster_debug_rays(self, rays, proj_matrix, view_matrix):
         if not rays or not self.debug_shader:
             return
@@ -1327,6 +1386,8 @@ class QtGameView(QOpenGLWidget):
                 self._render_bullet_marks(render_state.bullet_marks, _split_proj, self.view_matrix)
             if render_state and hasattr(render_state, 'projectiles') and render_state.projectiles:
                 self._render_projectiles(render_state.projectiles, _split_proj, self.view_matrix)
+            if render_state and getattr(render_state, 'stuck_arrows', None):
+                self._render_stuck_arrows(render_state.stuck_arrows, _split_proj, self.view_matrix)
             if render_state and getattr(render_state, 'monster_debug_active', False):
                 self._render_monster_debug_rays(getattr(render_state, 'monster_debug_rays', []),
                                                 _split_proj, self.view_matrix)
@@ -1355,6 +1416,8 @@ class QtGameView(QOpenGLWidget):
                 self._render_bullet_marks(render_state.bullet_marks, _split_proj, _p2_view)
             if render_state and hasattr(render_state, 'projectiles') and render_state.projectiles:
                 self._render_projectiles(render_state.projectiles, _split_proj, _p2_view)
+            if render_state and getattr(render_state, 'stuck_arrows', None):
+                self._render_stuck_arrows(render_state.stuck_arrows, _split_proj, _p2_view)
             if render_state and getattr(render_state, 'monster_debug_active', False):
                 self._render_monster_debug_rays(getattr(render_state, 'monster_debug_rays', []),
                                                 _split_proj, _p2_view)
@@ -1403,6 +1466,8 @@ class QtGameView(QOpenGLWidget):
                 self._render_bullet_marks(render_state.bullet_marks, self.projection_matrix, self.view_matrix)
             if render_state and hasattr(render_state, 'projectiles') and render_state.projectiles:
                 self._render_projectiles(render_state.projectiles, self.projection_matrix, self.view_matrix)
+            if render_state and getattr(render_state, 'stuck_arrows', None):
+                self._render_stuck_arrows(render_state.stuck_arrows, self.projection_matrix, self.view_matrix)
             if render_state and getattr(render_state, 'monster_debug_active', False):
                 self._render_monster_debug_rays(getattr(render_state, 'monster_debug_rays', []),
                                                 self.projection_matrix, self.view_matrix)
@@ -1940,6 +2005,9 @@ class QtGameView(QOpenGLWidget):
         proj_tid = self.load_texture('projectile.png', 'sprites')
         if proj_tid:
             self.sprite_textures['projectile'] = proj_tid
+        arrow_tid = self.load_texture('arrow.png', 'sprites/monsters')
+        if arrow_tid:
+            self.sprite_textures['arrow'] = arrow_tid
         if self.renderer:
             self.renderer.set_sprite_textures(self.sprite_textures)
 

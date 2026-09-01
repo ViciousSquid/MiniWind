@@ -52,7 +52,8 @@ def hit_chance(character, weapon_skill: int, target_agility: int = 30,
 # ---------------------------------------------------------------------------
 def player_attack(character, target_props: Dict, *, sneaking: bool = False,
                   draw: float = 1.0, rng: Optional[random.Random] = None,
-                  dice: Optional[DiceRoller] = None) -> Dict:
+                  dice: Optional[DiceRoller] = None,
+                  guaranteed_hit: bool = False) -> Dict:
     """Resolve a player attack against a creature's ``properties`` dict.
 
     Returns a result dict::
@@ -63,6 +64,11 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     The caller applies ``damage`` to the target's ``health`` and reports
     ``skill``/``difficulty`` back to :meth:`Character.use_skill` so combat
     trains the weapon skill.
+
+    ``guaranteed_hit`` skips the hit-chance roll for melee swings only (bows
+    and staves still roll normally). The caller sets this when the target was
+    already confirmed to be in melee range and squarely faced — camera pitch
+    plays no part in that check, so a close, faced target should never whiff.
     """
     rng = rng or random
     w = eq.weapon(character)
@@ -89,7 +95,10 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         return result
 
     hit_probability = hit_chance(character, skill, target_agi, fatigue_frac)
-    if dice is not None:
+    if guaranteed_hit and kind == items.KIND_MELEE:
+        # Near + facing, confirmed by the caller: always connects.
+        result["hit_probability"] = hit_probability
+    elif dice is not None:
         hit_roll = dice.request_roll(
             "1d100", source="combat.hit",
             context={"skill": skill_id, "target": target_props.get("name", "")})

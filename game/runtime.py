@@ -52,13 +52,9 @@ BOUNTY_FINE_THRESHOLD = 1000
 #: Guards notice a wanted player when the player enters this radius.
 BOUNTY_NOTICE_RADIUS = 700.0
 #: Maximum distance the player may get from the escort guard before resisting arrest.
-ESCORT_BREAKAWAY_DISTANCE = 512.0
-#: Grace period (seconds) the player may spend outside the escort radius
-#: before the escorting guard turns hostile.
-ESCORT_BREAKAWAY_GRACE = 1.0
-#: Nearby guards who join the pursuit after an outright refusal ("I refuse
-#: and run"). A mid-escort breakaway does *not* use this — see _break_escort.
-GUARD_PURSUIT_RADIUS = 2048.0
+ESCORT_BREAKAWAY_DISTANCE = 320.0
+#: Nearby guards who join the pursuit after an escort escape.
+GUARD_PURSUIT_RADIUS = 1200.0
 #: A surrendered player is considered delivered when close to the prison marker.
 PRISON_ARRIVE_RADIUS = 96.0
 PRISON_MARKER_NAME = "prison"
@@ -73,6 +69,9 @@ MELEE_REACH = 170.0
 BOW_REACH = 2400.0
 #: Frontal cone (dot threshold) for auto-target selection.
 AIM_DOT = 0.55
+# Melee is close-quarters and forgives a wider stance than ranged aiming —
+# ~106 degrees full cone vs the ~67 degrees ranged weapons get.
+MELEE_AIM_DOT = 0.30
 
 DICE_ANIMATION_SHAKE = SHAKE_DURATION
 DICE_ANIMATION_ROLL = ROLL_DURATION
@@ -199,17 +198,6 @@ class MiniwindSession:
         self._arrest_guard = None
         self._arrest_state = ""
         self._arrest_notice_sent = False
-        #: Seconds the player has continuously spent outside the escort radius;
-        #: reset whenever back in range. See ESCORT_BREAKAWAY_GRACE.
-        self._escort_breakaway_timer = 0.0
-        #: Full-screen fade ("out" -> black -> "in"), used to mask a hard cut
-        #: like the "pay the fine" teleport to the prison marker. See
-        #: start_fade_teleport / fade_alpha.
-        self._fade_state = None
-        self._fade_t = 0.0
-        self._fade_out_time = 0.4
-        self._fade_in_time = 0.6
-        self._fade_pos = None
         #: Active Wisp companion light, or None. See _spawn_wisp / _update_wisp.
         self._wisp = None
         self.dice_type_index = len(DICE_TYPES) - 1
@@ -437,11 +425,7 @@ class MiniwindSession:
 
         # Bounty enforcement runs independently of normal NPC schedules so a guard
         # can approach, arrest, escort, or pursue the player immediately.
-        self._update_arrest(delta)
-
-        # A pending fade (e.g. the "pay the fine" teleport to prison) advances
-        # every tick regardless of what else is happening.
-        self._update_fade(delta)
+        self._update_arrest()
 
         # decisions (low frequency) + movement (every tick)
         hour_int = int(self.clock.hour)
@@ -1000,7 +984,6 @@ class MiniwindSession:
         """Age only the transient HUD (toasts/floaters) while the world is paused
         (a menu or character creation is open). No clock, NPC or combat sim."""
         self._age_lists(delta)
-        self._update_fade(delta)
 
     def _age_lists(self, delta):
         for n in self.notifications:
@@ -1097,20 +1080,9 @@ class MiniwindSession:
         return (self._is_guard(thing) and not p.get("dead")
                 and str(p.get("aggression", "")) != "hostile")
 
-    def _find_prison_marker(self):
-        """The authored prison marker: a ``marker`` entity with its
-        ``marker_kind`` property set to "prison" (the dropdown the level
-        editor exposes for markers) — *not* a marker merely named "prison".
-        A marker literally named "prison" is still honoured as a fallback for
-        older maps authored before ``marker_kind`` existed."""
-        for mk in self._things_of_type("marker"):
-            if str(mk.properties.get("marker_kind", "")).lower() == "prison":
-                return mk
-        return self._find_named(PRISON_MARKER_NAME)
-
     def _prison_position(self):
         """Resolve the authored prison marker, or fall back to the guard post."""
-        prison = self._find_prison_marker()
+        prison = self._find_named(PRISON_MARKER_NAME)
         if prison is not None:
             return list(prison.pos)
         post = self._nearest_of(self._arrest_guard, lambda t:
@@ -1118,15 +1090,18 @@ class MiniwindSession:
             if self._arrest_guard is not None else None
         return list(post.pos) if post is not None else None
 
-    def _update_arrest(self, delta: float = 0.0) -> None:
+    def _update_arrest(self) -> None:
         """Drive bounty detection, guard approach, escort delivery, and escape."""
         player_pos = self._player_pos()
         if player_pos is None or self.game.character.is_dead:
             return
 
         # Resolve prison marker once; bail out if the map has none.
-        prison_marker = self._find_prison_marker()
-        prison_pos = list(prison_marker.pos) if prison_marker is not None else None
+        prison_pos = None
+        for mk in self._things_of_type("marker"):
+            if str(mk.properties.get("marker_kind", "")).lower() == "prison":
+                prison_pos = mk.pos
+                break
         if prison_pos is None:
             # No prison on this map — clear any stale arrest state and skip.
             if self._arrest_state:
@@ -1137,23 +1112,18 @@ class MiniwindSession:
         state = self._arrest_state
         if state == "escorting":
             if not self._is_arrest_guard(guard):
-                self._break_escort()
+                self._start_arrest_pursuit()
                 return
             distance = self._dist2d(guard.pos, player_pos)
             if distance > ESCORT_BREAKAWAY_DISTANCE:
-                # A brief grace period so a moment's lag behind the guard
-                # doesn't instantly turn them hostile.
-                self._escort_breakaway_timer += max(0.0, float(delta))
-                if self._escort_breakaway_timer >= ESCORT_BREAKAWAY_GRACE:
-                    self._break_escort()
+                self._start_arrest_pursuit()
                 return
-            self._escort_breakaway_timer = 0.0
             prison_distance = self._dist2d(guard.pos, prison_pos)
             if prison_distance <= PRISON_ARRIVE_RADIUS:
                 if self._dist2d(player_pos, prison_pos) <= PRISON_ARRIVE_RADIUS:
                     self._complete_escort(prison_pos)
                 else:
-                    self._break_escort()
+                    self._start_arrest_pursuit()
             return
 
         bounty = int(getattr(self.game.character, "bounty", 0) or 0)
@@ -1191,7 +1161,7 @@ class MiniwindSession:
             self._arrest_state = "approach"
             guard.properties["_arrest_state"] = "approach"
             guard.properties["triggered"] = True
-            guard.properties["awake"] = False
+            guard.properties["awake"]
 
     def nearest_arrest_guard(self, player_pos, radius: float = TALK_RADIUS):
         """Return the guard currently waiting to discuss the player's arrest."""
@@ -1257,77 +1227,18 @@ class MiniwindSession:
         self._arrest_guard = None
         self._arrest_state = ""
         self._arrest_notice_sent = False
-        self._escort_breakaway_timer = 0.0
 
     def _pay_bounty(self) -> None:
-        """Pay the fine: fade to black, teleport to the prison marker, deduct
-        the gold, and clear the bounty. The fade masks the hard teleport cut;
-        the actual move happens once the screen is fully black (see
-        _update_fade)."""
+        """Pay a low bounty in gold and end the arrest."""
         amount = max(1, int(self.game.character.bounty))
         if self.game.character.gold < amount:
             self.notify("You cannot afford the fine. You will be escorted to prison.")
             self._begin_escort()
             return
-        prison_pos = self._prison_position()
-        if prison_pos is None:
-            self.notify("No prison marker is placed in this settlement.")
-            return
         self.game.add_gold(-amount)
         self.game.character.bounty = 0
         self.notify(f"You paid the {amount} gold fine.", 4.0)
         self._clear_arrest()
-        self.start_fade_teleport(prison_pos)
-
-    # ------------------------------------------------------------- fade/cut
-    def start_fade_teleport(self, pos, out_time: float = 0.4, in_time: float = 0.6) -> None:
-        """Fade the screen to black, teleport the player to *pos* once fully
-        black, then fade back in. See fade_alpha() for the HUD-side draw."""
-        self._fade_state = "out"
-        self._fade_t = 0.0
-        self._fade_out_time = max(0.05, float(out_time))
-        self._fade_in_time = max(0.05, float(in_time))
-        self._fade_pos = list(pos)
-
-    def _update_fade(self, delta: float) -> None:
-        if self._fade_state == "out":
-            self._fade_t += delta
-            if self._fade_t >= self._fade_out_time:
-                if self._fade_pos is not None:
-                    self._apply_player_teleport(self._fade_pos)
-                    self._fade_pos = None
-                self._fade_state = "in"
-                self._fade_t = 0.0
-        elif self._fade_state == "in":
-            self._fade_t += delta
-            if self._fade_t >= self._fade_in_time:
-                self._fade_state = None
-                self._fade_t = 0.0
-
-    def fade_alpha(self) -> float:
-        """Current full-screen fade alpha (0..255) for the HUD to draw."""
-        if self._fade_state == "out" and self._fade_out_time > 0:
-            return min(255.0, 255.0 * (self._fade_t / self._fade_out_time))
-        if self._fade_state == "in" and self._fade_in_time > 0:
-            return max(0.0, 255.0 * (1.0 - self._fade_t / self._fade_in_time))
-        return 0.0
-
-    def _apply_player_teleport(self, pos) -> None:
-        player = getattr(self.logic, "player", None)
-        if player is None:
-            return
-        try:
-            player.pos.x = float(pos[0])
-            player.pos.y = float(pos[1])
-            player.pos.z = float(pos[2])
-        except Exception:
-            pass
-        try:
-            player.velocity.x = 0.0
-            player.velocity.y = 0.0
-            player.velocity.z = 0.0
-        except Exception:
-            pass
 
     def _begin_escort(self) -> None:
         """Put the active guard into the authored prison escort state."""
@@ -1338,19 +1249,14 @@ class MiniwindSession:
             self.notify("No prison marker is placed in this settlement.")
             return
         self._arrest_state = "escorting"
-        self._escort_breakaway_timer = 0.0
         guard.properties["_arrest_state"] = "escorting"
         guard.properties["triggered"] = True
         guard.properties["awake"] = False
         guard.properties["sched_state"] = "ESCORT"
-        self.notify("You are being escorted to prison. Stay within range of the guard.", 5.0)
+        self.notify("You are being escorted to prison. Stay with the guard.", 5.0)
 
-    def _start_arrest_pursuit(self, message: str = "You refused arrest. The guards attack!") -> None:
-        """"I refuse and run": an outright refusal to answer for a bounty
-        alerts every guard in the settlement, not just the one who caught the
-        player. Every living guard within GUARD_PURSUIT_RADIUS turns hostile.
-        Also used by _break_escort for a high-bounty escape, with its own
-        *message*."""
+    def _start_arrest_pursuit(self) -> None:
+        """Make nearby guards hostile when the player breaks away from an escort."""
         player_pos = self._player_pos()
         if player_pos is None:
             return
@@ -1372,76 +1278,24 @@ class MiniwindSession:
         self._arrest_guard = None
         self._arrest_state = ""
         self._arrest_notice_sent = False
-        self._escort_breakaway_timer = 0.0
-        self.notify(message, 5.0)
-
-    def _break_escort(self) -> None:
-        """The player strayed outside the escort radius for too long, or the
-        prison hand-off otherwise failed. Normally this only turns the
-        *escorting* guard hostile — the rest of the settlement isn't alerted
-        just because the player lagged behind. But a bounty at/over the
-        fine threshold (BOUNTY_FINE_THRESHOLD — the same cutoff that removes
-        the "pay" option from the arrest dialogue) is a serious enough crime
-        that breaking the escort is treated as a full escape: it calls every
-        guard in GUARD_PURSUIT_RADIUS, same as an outright refusal."""
-        bounty = int(getattr(self.game.character, "bounty", 0) or 0)
-        if bounty >= BOUNTY_FINE_THRESHOLD:
-            self._start_arrest_pursuit(
-                "You broke away from the escort. Every guard in earshot turns on you!")
-            return
-        guard = self._arrest_guard
-        if guard is not None and self._is_arrest_guard(guard):
-            p = guard.properties
-            p.pop("_arrest_state", None)
-            p.pop("_dest", None)
-            p["aggression"] = "hostile"
-            p["triggered"] = False
-            p["awake"] = True
-            p["wake_on_sight"] = True
-        self._arrest_guard = None
-        self._arrest_state = ""
-        self._arrest_notice_sent = False
-        self._escort_breakaway_timer = 0.0
-        self.notify("You broke away from the escort. The guard turns on you!", 5.0)
+        self.notify("You broke away from the escort. The guards attack!", 5.0)
 
     def _complete_escort(self, prison_pos) -> None:
         """Deliver a player who stayed with the guard to the prison marker."""
-        self._apply_player_teleport(prison_pos)
+        player = getattr(self.logic, "player", None)
+        if player is not None:
+            try:
+                player.pos.x = float(prison_pos[0])
+                player.pos.y = float(prison_pos[1])
+                player.pos.z = float(prison_pos[2])
+            except Exception:
+                pass
         self.game.character.bounty = 0
         self.notify("You have been escorted to prison. Your bounty is cleared.", 5.0)
         self._clear_arrest()
 
     def _decide(self, npc) -> None:
         p = npc.properties
-
-        # A civilian personally attacked by the player doesn't fight back — it
-        # flees toward whichever guard offers the most protection, re-checked
-        # every decision tick so it keeps running (or re-routes) as the guard
-        # moves. Only when no guard is left standing nearby does it turn and
-        # fight, cornered. The grudge only matters while the bounty that earned
-        # it is still outstanding; once paid off/served, this falls through to
-        # normal schedule behaviour below.
-        if p.get("_civilian_grudge"):
-            if (not self._is_combatant(npc)
-                    and int(getattr(self.game.character, "bounty", 0) or 0) > 0):
-                guard = self._nearest_of(npc, lambda t: self._is_guard(t))
-                player = getattr(self.logic, "player", None)
-                if guard is not None and player is not None:
-                    p["sched_state"] = sched.FLEE
-                    p["triggered"] = True
-                    p["awake"] = False
-                    p["_flee"] = True
-                    p["_dest"] = self._refuge_point(npc, player)
-                    return
-                # Cornered: no guard anywhere nearby to run to, so fight back.
-                p.pop("_civilian_grudge", None)
-                p["aggression"] = "hostile"
-                p["triggered"] = False
-                p["awake"] = True
-                p["wake_on_sight"] = True
-                return
-            p.pop("_civilian_grudge", None)
-            p.pop("_flee", None)
 
         # Arrest movement is owned by the runtime, not the normal schedule or
         # MonsterAI. The guard remains visible and walks to the player/prison.
@@ -1891,8 +1745,13 @@ class MiniwindSession:
             return True
         return True
 
-    def _acquire_target(self, reach: float):
-        """Nearest attackable creature within *reach* and the frontal cone."""
+    def _acquire_target(self, reach: float, aim_dot: float = AIM_DOT):
+        """Nearest attackable creature within *reach* and the frontal cone.
+
+        Deliberately ground-plane only: distance and facing are both computed
+        from (x, z) alone. Camera pitch (looking up/down) never enters this
+        check, so tilting the view can't affect who is targetable.
+        """
         ppos = self._player_pos()
         if ppos is None:
             return None
@@ -1906,9 +1765,9 @@ class MiniwindSession:
             dist = math.hypot(dx, dz)
             if dist < 1e-3 or dist > reach:
                 continue
-            # frontal cone
+            # frontal cone (horizontal only — see docstring)
             dot = (fwd[0] * dx + fwd[2] * dz) / dist
-            if dot < AIM_DOT:
+            if dot < aim_dot:
                 continue
             # rank by distance, tighter cone breaks ties toward the aim
             score = dist * (1.2 - dot * 0.2)
@@ -1936,27 +1795,103 @@ class MiniwindSession:
         if c.stamina < 4:
             self.notify("Too exhausted to attack")
             return False
-        target = self._acquire_target(reach)
+
+        if kind == rpg_items.KIND_BOW:
+            # A bow looses a real, physical arrow (see
+            # _spawn_player_arrow_projectile) rather than resolving instantly —
+            # it flies, can miss by sailing past a moving target, gets stopped
+            # by walls, and lands (and its damage is rolled) only once it
+            # actually strikes something.
+            target = self._acquire_target(reach, aim_dot=AIM_DOT)
+            if not self.game.fire_arrow():
+                return False   # out of arrows — fire_arrow already notified
+            self._spawn_player_arrow_projectile(target)
+            return True
+
+        # Melee gets a more forgiving cone than ranged weapons: close-quarters
+        # aiming is fiddly (especially while adjusting camera pitch), so being
+        # near an enemy and roughly facing them should be enough to engage.
+        target = self._acquire_target(reach, aim_dot=MELEE_AIM_DOT)
         if target is None:
             # a swing at nothing still trains the weapon a touch (and costs stamina)
             c.spend_stamina(4.0)
-            if w and kind == rpg_items.KIND_BOW and eq.ammo(c) is None:
-                self.notify("Out of arrows!")
             return True
-        res = self.game.attack_creature(target.properties)
+        # Target acquisition already confirmed "near + facing" on the ground
+        # plane, so a melee swing is guaranteed to connect — no separate miss
+        # roll to be foiled by camera pitch or anything else.
+        res = self.game.attack_creature(target.properties, guaranteed=True)
         if res.get("hit"):
             tag = "sneak" if res.get("sneak") else ("crit" if res.get("crit") else "dmg")
             self.add_floater(f"-{int(res['damage'])}", kind=tag)
             self._provoke(target)
             if res.get("killed"):
                 self._on_creature_killed(target)
-        elif res.get("no_ammo"):
-            self.notify("Out of arrows!")
         else:
             self.add_floater("miss", kind="miss")
         return True
 
-    def _staff_attack(self, w) -> bool:
+    def _spawn_player_arrow_projectile(self, target=None) -> None:
+        """Loose a physical arrow toward *target* (or straight ahead if none
+        was locked on). Travels and collides through the same engine
+        projectile pipeline a spell bolt uses, but — unlike a spell bolt —
+        embeds where it lands (``embeds=True``) and resolves its own RPG
+        damage on impact via an ``on_hit`` callback instead of a flat number
+        baked in at fire time, so the roll happens at the moment of the
+        actual physical hit."""
+        lt = self.logic
+        ppos = self._player_pos()
+        if lt is None or ppos is None:
+            return
+        try:
+            from engine.monster_constants import (
+                ARROW_SPEED, ARROW_MAX_DIST, ARROW_SPRITE_SIZE)
+        except Exception:
+            ARROW_SPEED, ARROW_MAX_DIST, ARROW_SPRITE_SIZE = 1600.0, 3000.0, (40.0, 40.0)
+
+        start = [ppos[0], ppos[1] + 48.0, ppos[2]]
+        if target is not None:
+            tp = target.pos
+            aim = (float(tp[0]), float(tp[1]) + 64.0, float(tp[2]))
+        else:
+            fwd = self._player_forward()
+            aim = (start[0] + fwd[0] * 1500.0, start[1], start[2] + fwd[2] * 1500.0)
+
+        dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
+        dlen = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
+        vel = [dx / dlen * ARROW_SPEED, dy / dlen * ARROW_SPEED, dz / dlen * ARROW_SPEED]
+
+        game = self.game
+
+        def _on_hit(hit_monster):
+            res = game.resolve_arrow_hit(hit_monster.properties)
+            if res.get("hit"):
+                tag = "sneak" if res.get("sneak") else ("crit" if res.get("crit") else "dmg")
+                self.add_floater(f"-{int(res['damage'])}", kind=tag)
+                self._provoke(hit_monster)
+                if res.get("killed"):
+                    self._on_creature_killed(hit_monster)
+            else:
+                self.add_floater("miss", kind="miss")
+
+        proj = {
+            "pos": list(start),
+            "vel": vel,
+            "owner_id": id(getattr(lt, "player", None)),
+            "owner_is_player": True,
+            "sprite": "assets/sprites/monsters/arrow.png",
+            "lifetime": ARROW_MAX_DIST / ARROW_SPEED,
+            "damage": 0,   # unused for player arrows — on_hit resolves real damage
+            "size": ARROW_SPRITE_SIZE,
+            "color": [214, 175, 105],   # warm wood/fletching tint
+            "distance_travelled": 0.0,
+            "max_dist": ARROW_MAX_DIST,
+            "kind": "arrow",
+            "embeds": True,
+            "on_hit": _on_hit,
+        }
+        if not hasattr(lt, "_monster_projectiles"):
+            lt._monster_projectiles = []
+        lt._monster_projectiles.append(proj)
         c = self.game.character
         spell_id = w.get("staff_spell", "flare")
         spell = rpg_magic.get(spell_id)
@@ -2253,23 +2188,14 @@ class MiniwindSession:
                 target.properties["faction"] = "player"
 
     def _provoke(self, target):
-        """A struck NPC reacts. A combatant (a guard, or anyone already able to
-        fight) turns hostile and fights back immediately, same as ever. A
-        struck civilian is different: it does *not* fight back — it panics and
-        runs for the nearest guard's protection (handled every decision tick in
-        _decide, keyed off ``_civilian_grudge`` below). Only if no guard is left
-        anywhere nearby does a cornered civilian turn and fight."""
+        """A struck NPC (and its nearby allies) turns hostile and fights back."""
         tp = target.properties
         tp["_hit_flash"] = HIT_FLASH_TIME    # red flash on a landed player hit
         team = tp.get("team") or tp.get("faction")
-        innocent = factions.is_friendly("player", team) and str(tp.get("aggression")) != "hostile"
-        if innocent:
+        if factions.is_friendly("player", team) and str(tp.get("aggression")) != "hostile":
             # attacking innocents earns a bounty and their wrath
             self.game.character.bounty += 40
             self.notify("Your bounty has increased!")
-            if not self._is_combatant(target):
-                tp["_civilian_grudge"] = True
-                return
         tp["aggression"] = "hostile"
         tp["triggered"] = False
         tp["awake"] = True

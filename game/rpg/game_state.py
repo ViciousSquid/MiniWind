@@ -205,31 +205,73 @@ class GameState:
         return self.character.active_spell
 
     def attack_creature(self, target_props: Dict, distance: float = 0.0,
-                        draw: float = 1.0) -> Dict:
-        """Resolve a melee/bow attack on a creature. Returns the combat result.
+                        draw: float = 1.0, guaranteed: bool = False) -> Dict:
+        """Resolve a melee attack on a creature. Returns the combat result.
 
-        Consumes an arrow for bows, spends stamina, applies damage to the target's
-        ``health`` property, trains the weapon skill and handles the kill (XP +
-        loot) if it dies.
+        Spends stamina, applies damage to the target's ``health`` property,
+        trains the weapon skill and handles the kill (XP + loot) if it dies.
+
+        ``guaranteed`` forces a melee swing to connect (see
+        :func:`combat.player_attack`) — set by the caller once it has already
+        confirmed the target is in range and faced.
+
+        Bow shots go through :meth:`fire_arrow` / :meth:`resolve_arrow_hit`
+        instead, since a real flying arrow's damage is resolved when it
+        physically lands, not the instant the string is released.
         """
         char = self.character
-        w = eq.weapon(char)
         res = combat.player_attack(char, target_props, sneaking=self.sneaking,
-                                   draw=draw, rng=self.rng, dice=self.dice)
+                                   draw=draw, rng=self.rng, dice=self.dice,
+                                   guaranteed_hit=guaranteed)
         if res.get("no_ammo"):
             self.message("Out of arrows!")
             return res
-        # bows consume ammo on release
-        if w and w.get("kind") == items.KIND_BOW:
-            a = eq.ammo(char)
-            if a:
-                inv.remove_item(char.inventory, a.id, 1)
-                if inv.quantity(char.inventory, a.id) <= 0:
-                    eq.unequip(char, items.SLOT_AMMO)
         char.spend_stamina(6.0)
+        return self._apply_hit(target_props, res)
+
+    def fire_arrow(self, draw: float = 1.0) -> bool:
+        """Loose a nocked arrow right now: spends stamina and consumes the
+        arrow from inventory. Returns False (and messages "Out of arrows!")
+        if there's nothing nocked.
+
+        The shot's actual outcome — hit chance, damage, crit/sneak, skill
+        training and any kill — is resolved later by :meth:`resolve_arrow_hit`,
+        at the moment the physical arrow projectile actually lands. This
+        split lets the arrow travel as a real object that can miss by flying
+        past a target, get blocked by a wall, or land a beat after the shot
+        was loosed, rather than resolving instantly on release.
+        """
+        char = self.character
+        if eq.ammo(char) is None:
+            self.message("Out of arrows!")
+            return False
+        a = eq.ammo(char)
+        inv.remove_item(char.inventory, a.id, 1)
+        if inv.quantity(char.inventory, a.id) <= 0:
+            eq.unequip(char, items.SLOT_AMMO)
+        char.spend_stamina(6.0)
+        return True
+
+    def resolve_arrow_hit(self, target_props: Dict, draw: float = 1.0) -> Dict:
+        """Resolve an already-fired arrow's impact on a creature.
+
+        Mirrors :meth:`attack_creature` but assumes :meth:`fire_arrow` already
+        spent the stamina and consumed the ammo when the shot was loosed —
+        this only rolls the hit/damage/crit/sneak outcome and applies it.
+        """
+        char = self.character
+        res = combat.player_attack(char, target_props, sneaking=self.sneaking,
+                                   draw=draw, rng=self.rng, dice=self.dice)
+        return self._apply_hit(target_props, res)
+
+    def _apply_hit(self, target_props: Dict, res: Dict) -> Dict:
+        """Shared tail end of a resolved player attack: apply damage, train
+        the weapon skill, message the hit, and handle a kill. ``res`` is a
+        :func:`combat.player_attack` result; a miss (``res["hit"]`` false) is
+        returned unchanged."""
+        char = self.character
         if not res["hit"]:
             return res
-        # apply damage
         hp = int(target_props.get("health", 30))
         hp -= int(round(res["damage"]))
         target_props["health"] = hp

@@ -73,6 +73,19 @@ MONSTER_PROJECTILE_MAX_DIST = 2048  # despawn after travelling this far
 MONSTER_PROJECTILE_SPRITE_SIZE = (40.0, 40.0)   # billboard size in world units
 
 # ---------------------------------------------------------------------------
+# Player arrow constants (bow attacks — a real flying/physical projectile,
+# distinct from monster projectiles above: faster, flies further, and — once
+# it lands — leaves a persistent embedded-arrow prop instead of just vanishing)
+# ---------------------------------------------------------------------------
+ARROW_SPEED = 1600.0                    # world-units / second
+ARROW_MAX_DIST = 3000.0                 # falls/despawns beyond this if it hits nothing
+ARROW_SPRITE_SIZE = (40.0, 40.0)        # billboard size while in flight
+ARROW_TEXTURE_SUBFOLDER = "sprites/monsters"
+ARROW_TEXTURE_FILE = "arrow.png"
+STUCK_ARROW_SPRITE_SIZE = (28.0, 28.0)  # smaller billboard once embedded
+MAX_STUCK_ARROWS = 150                  # oldest are dropped past this cap
+
+# ---------------------------------------------------------------------------
 # Fantasy combat  (attack_style: "melee" | "bow")
 # ---------------------------------------------------------------------------
 # Fio's world of Miniwind has no firearms.  A monster/NPC carries an
