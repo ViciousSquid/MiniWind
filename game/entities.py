@@ -288,6 +288,7 @@ def _init_settings(self):
 if _HAVE_EDITOR:
     class GameSettings(Thing):
         """Per-map RPG settings + game-clock config. Presence = RPG map opt-in."""
+        map_type = "miniwindsettings"
         pixmap_path = "assets/sprites/logic_keyvalue.png"
 
         def __init__(self, pos=None, properties=None):
@@ -295,6 +296,8 @@ if _HAVE_EDITOR:
             _init_settings(self)
 else:  # pragma: no cover
     class GameSettings(Thing):
+        map_type = "miniwindsettings"
+
         def __init__(self, pos=None, properties=None):
             super().__init__(pos, properties)
             _init_settings(self)

@@ -214,7 +214,8 @@ class Thing:
 
         thing = None
         for cls in find_subclasses(Thing):
-            if cls.__name__.lower() == thing_type.replace('_', ''):
+            class_type = getattr(cls, 'map_type', cls.__name__.lower())
+            if class_type == thing_type.replace('_', ''):
                 thing = cls(pos=data.get('pos'), properties=properties)
                 break
         
