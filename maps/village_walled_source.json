@@ -4989,8 +4989,8 @@
                 "move_speed": 90.0,
                 "can_defend": true,
                 "courage": 0.6,
-                "custom_idle": "assets/sprites/heads/head11.png",
-                "custom_shoot": "assets/sprites/heads/head11.png",
+                "custom_idle": "assets/sprites/heads/Chef.png",
+                "custom_shoot": "assets/sprites/heads/Chef.png",
                 "portrait": "assets/portraits/miniwind/villager.png",
                 "inventory": [],
                 "persistent": true,
@@ -5046,7 +5046,7 @@
                         "speed": 1400.0
                     }
                 ],
-                "head": "head11",
+                "head": "Chef",
                 "_anchor": [
                     -128.0,
                     40,
@@ -5201,7 +5201,7 @@
                 "health": 90,
                 "max_health": 100,
                 "damage": 12,
-                "triggered": false,
+                "triggered": true,
                 "wake_on_sight": true,
                 "awake": false,
                 "patrol": false,
@@ -5468,7 +5468,7 @@
                 "id": "75ab65f4-c11b-4925-b590-eaf9afe6600e",
                 "marker_kind": "guardpost",
                 "hidden_in_game": true,
-                "custom_idle": "assets/sprites/miniwind/marker_idle.png"
+                "custom_idle": "assets/sprites/miniwind/marker_guardpost.png"
             },
             "io_connections": []
         },
@@ -5543,7 +5543,8 @@
                         "damage": 18,
                         "speed": 950.0
                     }
-                ]
+                ],
+                "hidden": false
             },
             "io_connections": []
         },
@@ -5595,6 +5596,30 @@
                 "respawn": false,
                 "hidden_in_game": true,
                 "custom_idle": "assets/sprites/logic_spawner.png"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "miniwindsettings",
+            "pos": [
+                -64,
+                464,
+                -96
+            ],
+            "properties": {
+                "type": "miniwindsettings",
+                "name": "GameSettings_1",
+                "id": "6d242a35-7730-4c64-8f41-d75f760ac04e",
+                "start_hour": 8.0,
+                "start_day": 1,
+                "minutes_per_day": 20.0,
+                "show_clock": true,
+                "state_store": "miniwind",
+                "difficulty": "normal",
+                "start_scenario": "prompt",
+                "region_name": "The Vale of Miniwind",
+                "player_spells": [],
+                "quests": []
             },
             "io_connections": []
         }
