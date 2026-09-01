@@ -5602,14 +5602,14 @@
         {
             "type": "miniwindsettings",
             "pos": [
-                -64,
-                464,
+                -80,
+                32,
                 -96
             ],
             "properties": {
                 "type": "miniwindsettings",
                 "name": "GameSettings_1",
-                "id": "6d242a35-7730-4c64-8f41-d75f760ac04e",
+                "id": "636bd661-c873-4d4b-bcdb-093343a0d05f",
                 "start_hour": 8.0,
                 "start_day": 1,
                 "minutes_per_day": 20.0,
