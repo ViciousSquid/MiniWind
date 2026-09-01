@@ -282,6 +282,14 @@ class Ui_MainWindow(object):
         MainWindow.logic_wizard_action.setToolTip('Guided setup for common I/O scenarios')
         MainWindow.logic_wizard_action.triggered.connect(MainWindow.open_logic_wizard)
 
+        MainWindow.quest_wizard_action = QAction("Quest Wizard", MainWindow)
+        MainWindow.quest_wizard_action.setToolTip(
+            "Create/edit a MiniWind quests"
+        )
+        MainWindow.quest_wizard_action.triggered.connect(MainWindow.open_quest_wizard)
+        MainWindow.tools_menu.addAction(MainWindow.quest_wizard_action)
+        MainWindow.tools_menu.addSeparator()
+
         MainWindow.validate_action = QAction('Validate All Connections…', MainWindow)
         MainWindow.validate_action.setToolTip('Check for connections with missing target entities')
         MainWindow.validate_action.triggered.connect(MainWindow.validate_io_connections)

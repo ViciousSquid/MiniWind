@@ -565,6 +565,30 @@ class MainWindow(QMainWindow):
         # Force a UI refresh
         self.update_all_ui()
 
+    def open_quest_wizard(self):
+        """Open the same Quest Wizard used by Game Settings."""
+        from game.quest_editor import open_quest_editor
+
+        # Find the MiniWind GameSettings entity in the current map.
+        settings = next(
+            (
+                thing for thing in getattr(self.state, "things", [])
+                if str(getattr(thing, "properties", {}).get("type", "")).lower()
+                == "miniwindsettings"
+            ),
+            None,
+        )
+
+        if settings is None:
+            QMessageBox.information(
+                self,
+                "Quest Wizard",
+                "This map does not contain a MiniWind Game Settings entity.",
+            )
+            return
+
+        open_quest_editor(settings, parent=self)
+
     # ------------------------------------------------------------------
     #  Play-mode console overlay helpers
     # ------------------------------------------------------------------
