@@ -202,6 +202,16 @@ class MainWindow(QMainWindow):
         self.setFocus()
         self.update_global_font()
         self.load_layout()
+
+        # Apply configured default dock visibility after restoring saved layout.
+        self.right_dock.setVisible(
+            self.config.getboolean('Display', 'show_2d_views', fallback=False)
+        )
+
+        self.properties_dock.setVisible(
+            self.config.getboolean('Display', 'show_properties_console', fallback=False)
+        )
+        
         
         self.terrain = None
         self.terrain_editor_window = None
