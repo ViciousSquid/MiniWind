@@ -47,6 +47,12 @@ TALK_RADIUS = 140.0
 #: cue at a wider range than the interaction range above.
 BUBBLE_RADIUS = 280.0
 DEFEND_SIGHT = 700.0
+#: A follow_player companion tries to stay within this distance of the
+#: player when it isn't fighting (see _follow_player_dest / _decide).
+FOLLOW_DISTANCE = 220.0
+#: How far a companion will look for a target the *player* just struck
+#: before joining in (see _provoke's follower-alert pass).
+FOLLOW_ASSIST_RADIUS = 900.0
 #: A bounty below this value can be resolved by paying gold instead of serving jail time.
 BOUNTY_FINE_THRESHOLD = 1000
 #: Guards notice a wanted player when the player enters this radius.
@@ -1383,6 +1389,18 @@ class MiniwindSession:
                 p.pop("_rally", None)
             p.pop("_flee", None)
 
+        # (b.5) COMPANION FOLLOW: nothing more urgent above claimed this tick
+        #     (not arrested, not itself hostile, no nearby enemy to defend
+        #     against/flee from) — a follow_player NPC walks to keep pace
+        #     with the player instead of running its normal schedule. This is
+        #     deliberately placed *after* the combat/flee returns above so a
+        #     fight or flight response always wins, and *before* the normal
+        #     schedule evaluation below so it isn't overridden by e.g. a
+        #     work/home schedule entry.
+        if p.get("follow_player", False):
+            self._follow_player_dest(npc)
+            return
+
         entry = sched.evaluate(p.get("schedule", []), self.clock.hour)
         if entry is None:
             self._idle_or_wander(npc)
@@ -1407,6 +1425,32 @@ class MiniwindSession:
             p.pop("_wander_dest", None)
         else:
             p.pop("_dest", None)
+
+    def _follow_player_dest(self, npc) -> None:
+        """Set (or clear) a follow_player companion's destination so it keeps
+        pace with the player. Called from _decide once combat/flee checks
+        for this tick have already run and found nothing to react to.
+
+        Walks to just inside its leash (``follow_distance``) rather than
+        exactly onto the player's position, so a companion settles beside
+        the player instead of jostling for the same spot.
+        """
+        p = npc.properties
+        p["sched_state"] = sched.FOLLOW
+        ppos = self._player_pos()
+        if ppos is None:
+            p.pop("_dest", None)
+            return
+        leash = float(p.get("follow_distance", FOLLOW_DISTANCE))
+        dx = ppos[0] - npc.pos[0]
+        dz = ppos[2] - npc.pos[2]
+        dist = math.hypot(dx, dz)
+        if dist <= leash:
+            p.pop("_dest", None)
+            return
+        ux, uz = dx / dist, dz / dist
+        stop_at = leash * 0.6
+        p["_dest"] = [ppos[0] - ux * stop_at, npc.pos[1], ppos[2] - uz * stop_at]
 
     def _idle_or_wander(self, npc) -> None:
         """Pick a nearby stroll target around the NPC's idle anchor (autonomy)."""
@@ -2191,7 +2235,8 @@ class MiniwindSession:
                 target.properties["faction"] = "player"
 
     def _provoke(self, target):
-        """A struck NPC (and its nearby allies) turns hostile and fights back."""
+        """A struck NPC turns hostile and fights back, and any nearby
+        follow_player companion joins in against that same target."""
         tp = target.properties
         tp["_hit_flash"] = HIT_FLASH_TIME    # red flash on a landed player hit
         team = tp.get("team") or tp.get("faction")
@@ -2203,6 +2248,38 @@ class MiniwindSession:
         tp["triggered"] = False
         tp["awake"] = True
         tp["wake_on_sight"] = True
+        self._alert_followers(target)
+
+    def _alert_followers(self, target) -> None:
+        """Un-park every follow_player companion near the player and send it
+        after *target* — the same thing the player just struck.
+
+        Reuses the exact hand-off the settlement defend logic already uses
+        (``_aggro_target`` + ``triggered=False`` + ``awake=True``) to give
+        the engine MonsterAI's live combat/movement to the companion, so
+        chasing and attacking *target* needs no new engine-side code. The
+        companion re-parks itself the usual way once ``target`` is dead or
+        out of range (see the combatant branch in ``_decide``) — which is
+        why a follower should generally also be authored ``combatant=True``.
+        """
+        if target.properties.get("dead", False):
+            return
+        ppos = self._player_pos()
+        if ppos is None:
+            return
+        target_id = id(target)
+        for npc in self.npcs():
+            p = npc.properties
+            if npc is target or not p.get("follow_player", False):
+                continue
+            if self._dist2d(ppos, npc.pos) > FOLLOW_ASSIST_RADIUS:
+                continue
+            p["_aggro_target"] = target_id
+            p["triggered"] = False
+            p["awake"] = True
+            p["sched_state"] = sched.COMBAT
+            p.pop("_flee", None)
+            p.pop("_rally", None)
 
     def _on_creature_killed(self, target):
         self.add_floater("SLAIN", kind="kill")

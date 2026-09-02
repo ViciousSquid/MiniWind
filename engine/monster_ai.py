@@ -495,7 +495,8 @@ class MonsterAI:
                             thing, target_pos, damage, mid,
                             sprite=MONSTER_ARROW_SPRITE,
                             size=MONSTER_ARROW_SPRITE_SIZE,
-                            speed=MONSTER_BOW_PROJECTILE_SPEED)
+                            speed=MONSTER_BOW_PROJECTILE_SPEED,
+                            embeds=True, kind='arrow')
                         sound_file = MONSTER_BOW_SOUND
                     elif attack_style == 'magic':
                         # Hurl a glowing magic bolt (dodgeable projectile). If the
@@ -836,12 +837,18 @@ class MonsterAI:
 
     def _spawn_monster_projectile(self, thing, target_pos: glm.vec3, damage: int, owner_id: int,
                                   sprite: str = None, size=None, speed: float = None,
-                                  color=None):
+                                  color=None, embeds: bool = False, kind: str = None):
         """Spawn a projectile sprite (a lobbed bolt, or an arrow for archers).
 
         The projectile travels toward the target position and can be dodged.
         *sprite* / *size* / *speed* let a bow-armed attacker fire a fast arrow
-        instead of the default flying-monster bolt."""
+        instead of the default flying-monster bolt. *embeds* mirrors the
+        player arrow's behaviour (see ``game.runtime._spawn_player_arrow_projectile``):
+        when true the shaft is left sticking in whatever it hits (or the wall)
+        via ``LogicThread._embed_projectile`` instead of just vanishing on
+        impact. *kind* is a free-form tag (e.g. ``"arrow"``) carried through
+        to the embedded-shaft record for anything that wants to distinguish
+        arrows from bolts later."""
         from .monster_constants import (
             MONSTER_PROJECTILE_SPEED,
             MONSTER_PROJECTILE_MAX_DIST,
@@ -884,6 +891,8 @@ class MonsterAI:
             'size': tuple(size),
             'color': list(color) if color else None,
             'distance_travelled': 0.0,
+            'embeds': embeds,
+            'kind': kind,
         }
 
         # Add to logic thread's projectile list for update

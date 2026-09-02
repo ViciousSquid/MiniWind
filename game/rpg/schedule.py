@@ -47,6 +47,9 @@ ALERT = "ALERT"
 RALLY = "RALLY"
 WANDER = "WANDER"
 PATROL = "PATROL"
+#: A follow_player companion walking to keep pace with the player when it
+#: isn't fighting (see RuntimeSession._follow_player_dest).
+FOLLOW = "FOLLOW"
 
 #: Ready-made schedules keyed by ``npc_role`` (§4), loaded from editable content
 #: (``game/data/schedules.json`` + mods). A map can also author a bespoke

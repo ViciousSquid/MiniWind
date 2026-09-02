@@ -232,6 +232,15 @@ class NPC(Monster):
         p.setdefault("work_location", "")
         p.setdefault("autonomy", True)          # allowed to wander locally when idle
         p.setdefault("wander_radius", 220.0)
+        # Companion behaviour: walk to keep pace with the player when not
+        # fighting, and join in on whatever the player just attacked. Off by
+        # default — set via the editor's raw properties or the console's
+        # `setprop <name> follow_player true` while testing. Works best on a
+        # combatant NPC (guard/companion role, or combatant=True authored
+        # directly) so it also re-parks itself via the existing defend logic
+        # once a fight ends.
+        p.setdefault("follow_player", False)
+        p.setdefault("follow_distance", 220.0)
 
         # social / dialogue / trade
         p.setdefault("dialogue", {})
@@ -273,7 +282,7 @@ def _init_settings(self):
     p["type"] = "miniwindsettings"
     p.setdefault("start_hour", 8.0)
     p.setdefault("start_day", 1)
-    p.setdefault("minutes_per_day", 20.0)
+    p.setdefault("minutes_per_day", 24.0)
     p.setdefault("show_clock", True)
     p.setdefault("state_store", "miniwind")
     p.setdefault("difficulty", "normal")        # easy | normal | hard

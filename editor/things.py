@@ -61,14 +61,10 @@ def update_all_counters_from_entities(entities):
             if num > max_indices[class_name]:
                 max_indices[class_name] = num
 
-    # Update counters for all Thing subclasses
-    for cls in find_subclasses(Thing):
-        class_name = cls.__name__
-        if class_name in max_indices:
-            cls._counters[class_name] = max_indices[class_name]
-        else:
-            # Ensure counter exists, starting at 0 (next created gets 1)
-            cls._counters[class_name] = 0
+        # Update counters for all Thing subclasses
+        for cls in find_subclasses(Thing):
+            class_name = cls.__name__
+            Thing._counters[class_name] = max_indices.get(class_name, 0) + 1
 
 
 class Thing:

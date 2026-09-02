@@ -1049,15 +1049,30 @@ class QtGameView(QOpenGLWidget):
         })
         return light
 
+    def _projectile_texture(self, sprite_path):
+        """Resolve a projectile's authored sprite path to a preloaded texture.
+
+        Only a couple of textures are actually preloaded for in-flight
+        projectiles (the generic glow-bolt and the arrow shaft), so this is a
+        cheap keyword match rather than a full path->texture table. Anything
+        that isn't recognisably an arrow falls back to the generic bolt,
+        which is also what happens if the sprite field is missing entirely.
+        """
+        if sprite_path and 'arrow' in str(sprite_path).lower():
+            tid = self.sprite_textures.get('arrow')
+            if tid:
+                return tid
+        return self.sprite_textures.get('projectile') or self.sprite_textures.get('Monster')
+
     def _render_projectiles(self, projectiles, proj_matrix, view_matrix):
         if not projectiles or 'sprite' not in self.renderer.shaders:
             return
-        tex_id = (self.sprite_textures.get('projectile') or
-                  self.sprite_textures.get('Monster'))
-        if not tex_id:
+        default_tex_id = (self.sprite_textures.get('projectile') or
+                           self.sprite_textures.get('Monster'))
+        if not default_tex_id:
             return
         from engine.monster_constants import MONSTER_PROJECTILE_SPRITE_SIZE
-        pw, ph = MONSTER_PROJECTILE_SPRITE_SIZE
+        default_pw, default_ph = MONSTER_PROJECTILE_SPRITE_SIZE
         shader = self.renderer.shaders['sprite']
         uniforms = self.renderer.uniforms['sprite']
         gl.glUseProgram(shader)
@@ -1067,7 +1082,7 @@ class QtGameView(QOpenGLWidget):
         gl.glUniformMatrix4fv(uniforms['view'], 1, gl.GL_FALSE, view_ptr)
         gl.glActiveTexture(gl.GL_TEXTURE0)
         gl.glUniform1i(uniforms['sprite_texture'], 0)
-        gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, default_tex_id)
         gl.glBindVertexArray(self.renderer.vaos['sprite'])
         gl.glEnable(gl.GL_BLEND)
         gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
@@ -1075,12 +1090,24 @@ class QtGameView(QOpenGLWidget):
         size_loc = uniforms['sprite_size']
         tint_loc = uniforms['sprite_tint']
         _last_tint = None
+        _last_tex = default_tex_id
         for proj in projectiles:
+            tex_id = self._projectile_texture(proj.get('sprite')) or default_tex_id
+            if tex_id != _last_tex:
+                gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
+                _last_tex = tex_id
             pos = proj['pos']
             gl.glUniform3f(pos_loc, pos[0], pos[1], pos[2])
-            gl.glUniform2f(size_loc, pw, ph)
+            size = proj.get('size')
+            if isinstance(size, (list, tuple)) and len(size) == 2:
+                gl.glUniform2f(size_loc, size[0], size[1])
+            else:
+                gl.glUniform2f(size_loc, default_pw, default_ph)
             # Per-spell colour: tint the (bright) projectile sprite toward the
             # spell's colour so e.g. a frost bolt reads blue, a fire bolt orange.
+            # An arrow's own wood/fletching tint (or no tint at all when a
+            # sprite already carries the right colours, like the arrow shaft)
+            # goes through the same field.
             col = proj.get('color')
             if col:
                 tint = (col[0] / 255.0, col[1] / 255.0, col[2] / 255.0, 0.85)
@@ -3027,6 +3054,9 @@ class QtGameView(QOpenGLWidget):
         self.game_state.set_p2_input(move_x, move_z, look_dx, look_dy, jump, crouch)
 
     def keyPressEvent(self, event):
+        # See MainWindow.keyPressEvent for why autorepeat is filtered here too.
+        if event.isAutoRepeat():
+            return
         # Esc cancels an armed inspect-mode pick before anything else consumes it.
         if getattr(self, 'inspect_mode', False) and event.key() == Qt.Key_Escape:
             self._exit_inspect_mode()
@@ -3159,6 +3189,8 @@ class QtGameView(QOpenGLWidget):
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
+        if event.isAutoRepeat():
+            return
         # Remove arrow keys from the set when released
         if self.play_mode and not self.gamepad and self.splitscreen_mode:
             if event.key() == Qt.Key_Up:
