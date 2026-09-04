@@ -116,9 +116,58 @@ def _npc_names(editor):
     return sorted(names)
 
 
+def _thing_id(thing):
+    """The entity's stable UUID (``properties['id']``), or ``''``."""
+    props = getattr(thing, "properties", None)
+    if isinstance(props, dict) and props.get("id"):
+        return str(props.get("id"))
+    return str(getattr(thing, "id", "") or "")
+
+
+def _npc_giver_entries(editor):
+    """(label, value) pairs for every quest-giver candidate in the scene.
+
+    The *value* stored on the quest is the NPC's **name** when that name is
+    unique, or its **entity id (UUID)** when the name is shared (e.g. two
+    "Guard" NPCs), so the giver always resolves to exactly one entity at play
+    start. The *label* stays human-readable ("Name — role" or "Name — role · id
+    abc123") so the author can still tell who they picked.
+    """
+    candidates = []
+    name_counts = {}
+    for t in _scene_things(editor):
+        props = getattr(t, "properties", None)
+        kind = str(props.get("type", "")).lower() if isinstance(props, dict) else ""
+        if kind not in ("npc", "monster", "creature"):
+            continue
+        name = str(props.get("name", "")).strip()
+        if not name:
+            continue
+        candidates.append(t)
+        name_counts[name] = name_counts.get(name, 0) + 1
+    entries = []
+    for t in candidates:
+        props = t.properties
+        name = str(props.get("name", "")).strip()
+        role = str(props.get("npc_role", "")).strip()
+        eid = _thing_id(t)
+        ambiguous = name_counts.get(name, 0) > 1
+        value = eid if (ambiguous and eid) else name
+        label = f"{name} — {role}" if role else name
+        if ambiguous and eid:
+            label += f" · id {eid[:8]}"
+        entries.append((label, value))
+    entries.sort(key=lambda e: e[0].lower())
+    return entries
+
+
 def _find_thing_by_name(editor, name):
+    """Find a scene thing by giver value — its entity id first, then its name."""
     if not name:
         return None
+    for t in _scene_things(editor):
+        if _thing_id(t) == name:
+            return t
     for t in _scene_things(editor):
         props = getattr(t, "properties", None)
         if isinstance(props, dict) and props.get("name") == name:
@@ -493,29 +542,31 @@ def _classes():
             p.setSubTitle("Name the quest and choose who hands it out.")
             f = QtWidgets.QFormLayout(p)
             self.w_name = QtWidgets.QLineEdit("A New Errand")
-            self._giver_names = _npc_names(self.editor)
+            self._giver_entries = _npc_giver_entries(self.editor)
             self.w_giver = QtWidgets.QComboBox()
             self.w_giver.setEditable(True)
             self.w_giver.addItem("", "")
-            for n in self._giver_names:
-                self.w_giver.addItem(n, n)
+            for _label, value in self._giver_entries:
+                self.w_giver.addItem(value, value)
             self.w_giver.setToolTip("The NPC or monster who offers the quest. Pick one from "
-                                    "the scene or type a name.")
+                                    "the scene, type a name, or paste an entity id (UUID) to "
+                                    "target one specific NPC when several share a name.")
             self.w_giver.currentTextChanged.connect(
                 lambda _text: self._refresh_plan() if hasattr(self, "w_make_marker") else None)
 
             self.w_giver_button = QtWidgets.QPushButton("Choose…")
-            self.w_giver_button.setToolTip("Choose an available NPC or monster from the scene.")
+            self.w_giver_button.setToolTip("Choose an available NPC or monster from the scene "
+                                           "(shared names are assigned by entity id).")
             self._giver_menu = QtWidgets.QMenu(self.w_giver_button)
             self.w_giver_button.setMenu(self._giver_menu)
             clear_action = self._giver_menu.addAction("(none)")
             clear_action.triggered.connect(lambda: self.w_giver.setEditText(""))
-            if self._giver_names:
+            if self._giver_entries:
                 self._giver_menu.addSeparator()
-                for name in self._giver_names:
-                    action = self._giver_menu.addAction(name)
+                for label, value in self._giver_entries:
+                    action = self._giver_menu.addAction(label)
                     action.triggered.connect(
-                        lambda _checked=False, selected=name:
+                        lambda _checked=False, selected=value:
                         self.w_giver.setEditText(selected))
             else:
                 empty_action = self._giver_menu.addAction("No NPCs or monsters found")
@@ -1022,8 +1073,18 @@ def _classes():
             combo.blockSignals(True)
             combo.clear()
             combo.addItem("")
-            for n in _npc_names(self.editor):
-                combo.addItem(n)
+            # Offer each candidate's giver value — a name when unique, an entity
+            # id (UUID) when the name is shared — so a giver always resolves to
+            # exactly one NPC. An author can still type a name or paste an id.
+            combo.setToolTip("NPC who gives this quest — a name, role, or an "
+                             "entity id (UUID) to target one specific NPC when "
+                             "several share a name.")
+            seen = set()
+            for _label, value in _npc_giver_entries(self.editor):
+                if value in seen:
+                    continue
+                seen.add(value)
+                combo.addItem(value)
             combo.setEditText(cur)
             combo.blockSignals(False)
 

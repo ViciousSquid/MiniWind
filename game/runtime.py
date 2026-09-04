@@ -784,24 +784,42 @@ class MiniwindSession:
         return "".join(ch.lower() if ch.isalnum() else "_"
                        for ch in str(text)).strip("_")
 
+    @staticmethod
+    def _thing_id(thing) -> str:
+        """The entity's stable UUID (``properties['id']``), or ``''``."""
+        p = getattr(thing, "properties", None)
+        if isinstance(p, dict) and p.get("id"):
+            return str(p.get("id"))
+        return str(getattr(thing, "id", "") or "")
+
     def _wire_quest_givers(self) -> None:
         """Make every quest's giver actually offer that quest in play.
 
-        This is the *easy way to assign a quest to a giver*: a quest just names
-        its ``giver`` (an NPC's name, display name or role) and, at play start,
-        the matching NPC in the scene automatically gains a dialogue branch that
-        offers and starts the quest. No manual dialogue editing is needed — which
-        is what previously left quest givers un-talkable and quests impossible to
-        accept. Idempotent (a giver that already offers a quest is untouched), so
-        an author who *did* wire dialogue by hand keeps their version.
+        This is the *easy way to assign a quest to a giver*: a quest names its
+        ``giver`` — an NPC's stable **entity id (UUID)**, or its name, display
+        name or role — and, at play start, the matching NPC in the scene
+        automatically gains a dialogue branch that offers and starts the quest.
+        Matching by id is unambiguous (two NPCs can share the name "Guard"), so
+        it is preferred where the author picked a specific entity; the readable
+        name/role matching still works for hand-written quests. No manual
+        dialogue editing is needed — which is what previously left quest givers
+        un-talkable and quests impossible to accept. Idempotent (a giver that
+        already offers a quest is untouched), so an author who *did* wire
+        dialogue by hand keeps their version.
         """
         from .rpg import quests as _quests
-        givers: Dict[str, list] = {}
+        # Two lookups: by slugged name/display/role, and by exact entity id.
+        givers_by_key: Dict[str, list] = {}
+        givers_by_id: Dict[str, list] = {}
         for quest in _quests.QUESTS.values():
             g = str(getattr(quest, "giver", "") or "").strip()
-            if g:
-                givers.setdefault(self._slug(g), []).append(quest)
-        if not givers:
+            if not g:
+                continue
+            # The giver string may be an id or a name/role; register it under
+            # both so whichever the scene matches resolves the quest.
+            givers_by_key.setdefault(self._slug(g), []).append(quest)
+            givers_by_id.setdefault(g.lower(), []).append(quest)
+        if not givers_by_key and not givers_by_id:
             return
         for npc in self.npcs():
             p = npc.properties
@@ -809,25 +827,37 @@ class MiniwindSession:
                     self._slug(p.get("display_name", "")),
                     self._slug(p.get("npc_role", ""))}
             keys.discard("")
-            seen = set()
+            matches = []
             for key in keys:
-                for quest in givers.get(key, []):
-                    if quest.id in seen:
-                        continue
-                    seen.add(quest.id)
-                    dlg = p.get("dialogue")
-                    dlg, _changed = _quests.offer_dialogue_branch(
-                        dlg if isinstance(dlg, dict) else None,
-                        quest.id, quest.name, quest.desc)
-                    p["dialogue"] = dlg
+                matches.extend(givers_by_key.get(key, []))
+            npc_id = self._thing_id(npc).lower()
+            if npc_id:
+                matches.extend(givers_by_id.get(npc_id, []))
+            seen = set()
+            for quest in matches:
+                if quest.id in seen:
+                    continue
+                seen.add(quest.id)
+                dlg = p.get("dialogue")
+                dlg, _changed = _quests.offer_dialogue_branch(
+                    dlg if isinstance(dlg, dict) else None,
+                    quest.id, quest.name, quest.desc)
+                p["dialogue"] = dlg
 
     def record_talk(self, npc) -> None:
-        """Note that the player has spoken with *npc* (for quest 'talk' aims)."""
+        """Note that the player has spoken with *npc* (for quest 'talk' aims).
+
+        Records the NPC's name, display name and role, and also its entity id,
+        so a 'talk' objective whose target was assigned by id (UUID) completes
+        the same as one assigned by name."""
         p = getattr(npc, "properties", {}) or {}
         for field in ("name", "display_name", "npc_role"):
             v = str(p.get(field, "") or "").strip()
             if v:
                 self.store.set(f"talked.{self._slug(v)}", "1")
+        npc_id = self._thing_id(npc)
+        if npc_id:
+            self.store.set(f"talked.{self._slug(npc_id)}", "1")
 
     def record_kill(self, target) -> None:
         """Bump per-identity kill counters (for quest 'kill' objectives)."""
@@ -917,7 +947,8 @@ class MiniwindSession:
                 p = npc.properties
                 if target in (self._slug(p.get("name", "")),
                               self._slug(p.get("display_name", "")),
-                              self._slug(p.get("npc_role", ""))):
+                              self._slug(p.get("npc_role", "")),
+                              self._slug(self._thing_id(npc))):
                     pos = npc.pos
                     break
         elif kind == _quests.COND_KILL:

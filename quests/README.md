@@ -62,3 +62,8 @@ the scene and automatically gives them a dialogue branch that **offers and
 starts** the quest — so a `!` bubble appears over them and you can walk up, talk,
 and accept. No manual dialogue editing is required. (If you *have* hand-authored
 a quest offer in that NPC's dialogue, it is left as-is.)
+
+The `giver` can be the NPC's **name**, **display name**, **role**, or its stable
+**entity id (UUID)**. Prefer the id when several NPCs share a name (e.g. two
+"Guard" NPCs) so the quest resolves to exactly one entity — the Quest Editor's
+giver picker fills in the id automatically for shared names.

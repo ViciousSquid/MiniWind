@@ -220,8 +220,9 @@ are exactly the ones the running game loads at play start
 list is migrated into the folder the first time the Quest Editor opens it.
 
 **Givers are wired automatically.** A quest simply names its `giver`; at play
-start `MiniwindSession._wire_quest_givers` finds the matching NPC (by name,
-display name or role) and injects a dialogue offer branch via the shared
+start `MiniwindSession._wire_quest_givers` finds the matching NPC (by entity id
+(UUID), name, display name or role — id being unambiguous when NPCs share a
+name) and injects a dialogue offer branch via the shared
 `quests.offer_dialogue_branch` helper — so the giver becomes talkable, shows the
 `!` available-quest bubble, and the player can walk up and accept. No manual
 dialogue authoring is required, and a hand-authored offer is left untouched.

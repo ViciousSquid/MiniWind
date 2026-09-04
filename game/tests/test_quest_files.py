@@ -124,9 +124,28 @@ class _FakeLogic:
         pass
 
 
+class _G:
+    """A minimal GlobalStore-like backing so StateStore actually persists."""
+    def __init__(self):
+        self.d = {}
+
+    def get(self, k, default=None, store="plugins"):
+        return self.d.get((store, k), default)
+
+    def set(self, k, v, store="plugins"):
+        self.d[(store, k)] = str(v)
+
+    def all(self, store="plugins"):
+        return {k[1]: v for k, v in self.d.items() if k[0] == store}
+
+
 def _session(things):
-    from game.runtime import MiniwindSession
-    return MiniwindSession(_FakeLogic(things), cfg={})
+    from game.runtime import MiniwindSession, StateStore
+    s = MiniwindSession(_FakeLogic(things), cfg={})
+    store = StateStore(_G(), "miniwind")
+    s.store = store
+    s.game.store = store
+    return s
 
 
 def test_wire_quest_givers_makes_named_giver_offer_quest():
@@ -157,6 +176,33 @@ def test_wire_quest_givers_matches_role_and_is_talkable():
     # nearest_talkable finds the giver now that it has dialogue.
     assert session.nearest_talkable([10, 0, 10]) is smith
     assert "wire_role" in session._quest_ids_in_dialogue(smith.properties["dialogue"])
+
+
+def test_wire_quest_givers_matches_by_entity_id():
+    # Two NPCs share the name "Guard"; assigning the quest by entity id targets
+    # exactly one of them.
+    quests.register(quests.quest_from_dict(
+        {"id": "wire_by_id", "name": "Id Assigned", "giver": "GUARD-UUID-2",
+         "desc": "For the second guard.", "stages": [{"index": 0, "journal": "Go"}]}))
+    guard1 = entities.NPC(pos=[0, 0, 0],
+                          properties={"name": "Guard", "id": "guard-uuid-1"})
+    guard2 = entities.NPC(pos=[0, 0, 0],
+                          properties={"name": "Guard", "id": "guard-uuid-2"})
+    session = _session([guard1, guard2])
+    session._wire_quest_givers()
+    assert "wire_by_id" in session._quest_ids_in_dialogue(guard2.properties["dialogue"])
+    assert "wire_by_id" not in session._quest_ids_in_dialogue(
+        guard1.properties.get("dialogue") or {})
+
+
+def test_record_talk_records_entity_id():
+    npc = entities.NPC(pos=[0, 0, 0], properties={"name": "Bob", "id": "bob-uuid-9"})
+    session = _session([npc])
+    session.record_talk(npc)
+    # Both the name and the id are marked talked-to, so a talk objective keyed by
+    # either completes.
+    assert session.store.get("talked.bob", "") == "1"
+    assert session.store.get("talked.bob_uuid_9", "") == "1"
 
 
 def test_wire_quest_givers_shows_available_quest_bubble():
