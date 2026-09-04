@@ -810,11 +810,10 @@ class MiniwindGame:
 
         if cur is None:
             if key == "dialogue":
-                npc = session.dialogue_npc
+                # The window chrome is a generic "Conversation"; the speaker's
+                # name is drawn inside the body (dialogue_ui), so titling the
+                # window with the name too would show it twice.
                 title = "Conversation"
-                if npc is not None:
-                    title = (npc.properties.get("display_name")
-                             or npc.properties.get("name") or title)
                 bw, bh = dialogue_ui.window_body_size(session)
                 draw_fn = (lambda p, x, y, ww, hh, s=session:
                            dialogue_ui.draw_in_rect(p, s, x, y, ww, hh))

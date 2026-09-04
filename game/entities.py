@@ -42,6 +42,7 @@ except Exception:  # pragma: no cover - PyQt-free player
 
 from .rpg import schedule as _schedule
 from .rpg import bestiary
+from .rpg import factions
 
 # ---------------------------------------------------------------------------
 # Art: which committed sprite/portrait a role uses (unknown roles fall back).
@@ -137,6 +138,17 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
     if "aggression" not in _authored:
         p["aggression"] = aggression
     aggression = p["aggression"]
+    # An NPC on a faction friendly to the player (villagers, guards) must never
+    # spawn already 'hostile': an aggressive-to-player actor treats the player as
+    # a target, so a "hostile" town guard cuts the player down on sight. The only
+    # legitimate way such an NPC turns on the player is at runtime via the
+    # bounty/arrest system, which mutates the live actor directly and so bypasses
+    # this constructor. An authored 'hostile' here is therefore a mistake (a true
+    # enemy belongs on an enemy faction), so fold it back to 'defensive' — the
+    # NPC still fights faction enemies but no longer hunts the player.
+    if (entity_type == "npc" and str(aggression).lower() == "hostile"
+            and factions.is_friendly(faction, factions.PLAYER)):
+        p["aggression"] = aggression = "defensive"
     if "health" not in _authored:
         p["health"] = tmpl.health if tmpl else 60
     # Full-health baseline (used by health bars / balance).
