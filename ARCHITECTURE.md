@@ -226,3 +226,23 @@ name) and injects a dialogue offer branch via the shared
 `quests.offer_dialogue_branch` helper — so the giver becomes talkable, shows the
 `!` available-quest bubble, and the player can walk up and accept. No manual
 dialogue authoring is required, and a hand-authored offer is left untouched.
+
+## 14. Gibbing — overkill deaths become splatters
+
+A killing blow dealing at least **120% of the victim's maximum health**
+(`engine.gore`, a pure Qt-free rule) *gibs* the actor: instead of a corpse it is
+replaced by a splatter sprite and can never be resurrected. The game-side entry
+point `game.rpg.game_state._mark_gibbed` records `gibbed`, the chosen
+`gib_sprite`, and `gib_magical`. Two kinds:
+
+* **Physical** kills (melee, arrows — `_apply_hit`) leave a **blood stain** from
+  `assets/sprites/miniwind/blood_stains/`.
+* **Magical** kills (`resolve_spell_on_creature`) **disintegrate** the target,
+  leaving a special splatter from `assets/sprites/miniwind/disintegrate/`.
+
+Both folders are author-editable (each has a README): files sorted by name are
+treated as **mild → severe**, and `game.rpg.gib` picks one by how far the blow
+overshot the victim's health. The renderer reacts to the flag —
+`editor.things.Monster.get_sprite_path` returns the splatter and the overhead
+view draws it flat on the ground — and `runtime._nearest_dead_actor` /
+`_revive_actor` refuse to resurrect a gibbed body.

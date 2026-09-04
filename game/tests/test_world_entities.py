@@ -110,6 +110,23 @@ def test_enemy_faction_actors_stay_hostile():
     assert wolf.properties["aggression"] == "hostile"
 
 
+def test_gibbed_body_cannot_be_resurrected():
+    from game.runtime import BOW_REACH
+    dead = _FakeThing([50, 0, 0], {"type": "npc", "npc_role": "villager",
+                                   "dead": True, "max_health": 40})
+    gibbed = _FakeThing([60, 0, 0], {"type": "npc", "npc_role": "villager",
+                                     "dead": True, "gibbed": True,
+                                     "gib_sprite": "assets/sprites/miniwind/blood_stains/1_mild.png",
+                                     "max_health": 40})
+    s = _session([dead, gibbed], _FakePlayer([55, 0, 0]))
+    # The plain corpse is a resurrection target; the gibbed one never is.
+    assert s._nearest_dead_actor(BOW_REACH) is dead
+    # Directly reviving a gibbed body is refused and it stays dead.
+    assert s._revive_actor(gibbed) is False
+    assert gibbed.properties["dead"] is True
+    assert gibbed.properties.get("gibbed") is True
+
+
 def test_item_pickup_adds_to_player_inventory():
     it = _FakeThing([0, 0, 0], {"type": "itempickup", "item_id": "iron_dagger",
                                 "quantity": 2, "pickup_radius": 60.0})

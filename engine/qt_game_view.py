@@ -696,6 +696,19 @@ class QtGameView(QOpenGLWidget):
                 idle_rel = str(p.get("custom_idle", ""))
                 is_head = bool(p.get("is_head")) if snapshot else self._is_overhead_head_actor(thing)
                 dead = bool(p.get("dead"))
+                gibbed = bool(p.get("gibbed")) if snapshot else bool(
+                    getattr(thing, "properties", {}).get("gibbed"))
+                if dead and gibbed:
+                    # Blown apart / disintegrated: draw the splatter flat on the
+                    # ground in place of the head+weapon corpse. No dead overlay.
+                    stain = str(p.get("gib_sprite", "") if snapshot
+                                else getattr(thing, "properties", {}).get("gib_sprite", "")) \
+                        or (str(p.get("sprite_path", "")) if snapshot else "")
+                    if stain:
+                        _renderer(stain).draw(self.projection_matrix,
+                                              self.view_matrix, gpos, facing,
+                                              SpriteController.IDLE)
+                        continue
                 if dead and is_head:
                     # Keep the identity: draw the living head, then paint the
                     # shared dead.png overlay on top (a second, slightly-higher

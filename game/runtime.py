@@ -2097,7 +2097,10 @@ class MiniwindSession:
             return 0
 
     def _nearest_dead_actor(self, reach: float):
-        """The nearest slain (revivable) NPC/creature within *reach*."""
+        """The nearest slain (revivable) NPC/creature within *reach*.
+
+        A gibbed body is destroyed — blown apart or disintegrated — so it is
+        never a resurrection target."""
         ppos = self._player_pos()
         if ppos is None:
             return None
@@ -2106,6 +2109,8 @@ class MiniwindSession:
             tp = t.properties
             if not tp.get("dead"):
                 continue
+            if tp.get("gibbed"):
+                continue          # gibbed corpses cannot be resurrected
             ttype = str(tp.get("type", "")).replace("_", "").lower()
             if ttype not in ("npc", "creature", "monster"):
                 continue
@@ -2141,19 +2146,26 @@ class MiniwindSession:
         c.magicka = 0.0
         self.store.set("resurrect.last_day", today)
         c.use_skill(spell.school, 1.0 + spell.base_cost / 40.0)
-        self._revive_actor(target)
+        if not self._revive_actor(target):
+            # Defensive: _nearest_dead_actor already skips gibbed bodies.
+            self.notify("The body is too destroyed to resurrect")
+            return False
         name = target.properties.get("name") or target.properties.get("npc_role") \
             or target.properties.get("monster_type") or "The fallen"
         self.notify(f"{name} rises again!")
         self.add_floater("RAISED", kind="heal")
         return True
 
-    def _revive_actor(self, thing) -> None:
+    def _revive_actor(self, thing) -> bool:
         """Bring a slain actor back to life: clear death flags, restore health
-        and its living (head) sprite, and rebuild the engine caches."""
+        and its living (head) sprite, and rebuild the engine caches.
+
+        A gibbed body (blown apart / disintegrated) cannot be revived — the flag
+        is never cleared and the actor stays dead. Returns whether it revived."""
         p = thing.properties
+        if p.get("gibbed"):
+            return False
         p["dead"] = False
-        p.pop("gibbed", None)
         p["hidden"] = False
         p["is_shooting"] = False
         try:
@@ -2168,6 +2180,7 @@ class MiniwindSession:
         except Exception:
             pass
         self._rebuild_entity_caches()
+        return True
 
     def _spawn_player_spell_projectile(self, spell) -> None:
         """Launch a visible spell bolt from the player toward the aim point (a

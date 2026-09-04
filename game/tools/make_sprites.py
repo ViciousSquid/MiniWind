@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 import os
+import random
 
 from PIL import Image, ImageDraw, ImageFilter
 
@@ -306,6 +307,140 @@ def draw_portrait(role: str) -> Image.Image:
     return out
 
 
+# The default blood stains that ship in assets/sprites/miniwind/blood_stains/,
+# named so they sort mild -> severe (the game picks by overkill severity). Users
+# can add or replace files in that folder; see its README.
+GIB_STAINS = [
+    ("1_mild",   0.0),
+    ("2_light",  0.35),
+    ("3_heavy",  0.7),
+    ("4_severe", 1.0),
+]
+
+# Placeholder "disintegration" splatters for MAGICAL gibs, in
+# assets/sprites/miniwind/disintegrate/ (mild -> severe by filename). These are
+# stand-ins to be replaced by two author-supplied images; see the folder README.
+DISINTEGRATE_STAINS = [
+    ("1_mild",   0.2),
+    ("2_severe", 1.0),
+]
+
+
+def draw_blood_stain(seed: int = 0, size: int = SPRITE, severity: float = 0.5):
+    """A random top-down blood stain (a slain, gibbed actor becomes one).
+
+    Procedural so a usable default ships without external/stock art: a dark
+    central pool of overlapping blobs, a wet sheen, and a scatter of spatter
+    droplets flung outward. *severity* (0..1) scales the pool size, the amount of
+    spatter and its spread, so a set drawn across 0..1 reads mild -> severe. Each
+    *seed* yields a distinct stain at a given severity.
+    """
+    sev = max(0.0, min(1.0, float(severity)))
+    ss = size * SS
+    img = Image.new("RGBA", (ss, ss), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    rng = random.Random(seed * 2654435761 + 12345)
+    cx = cy = ss / 2.0
+
+    def blood(dark=0.0):
+        # Deep arterial red with a little variance; dark pulls it toward maroon.
+        r = int(150 - dark * 60 + rng.randint(-15, 15))
+        g = int(12 + rng.randint(0, 12))
+        b = int(12 + rng.randint(0, 10))
+        return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
+
+    # Central pool grows with severity.
+    pool_r = ss * (0.14 + 0.16 * sev)
+    for _ in range(rng.randint(4, 6) + int(sev * 4)):
+        ox = rng.uniform(-pool_r * 0.5, pool_r * 0.5)
+        oy = rng.uniform(-pool_r * 0.5, pool_r * 0.5)
+        rr = pool_r * rng.uniform(0.55, 1.05)
+        rr2 = rr * rng.uniform(0.7, 1.0)
+        d.ellipse([cx + ox - rr, cy + oy - rr2, cx + ox + rr, cy + oy + rr2],
+                  fill=blood(0.2) + (235,))
+    # A darker core and a small lighter wet sheen for depth.
+    d.ellipse([cx - pool_r * 0.55, cy - pool_r * 0.5,
+               cx + pool_r * 0.55, cy + pool_r * 0.5], fill=blood(0.6) + (255,))
+    sheen_r = pool_r * 0.3
+    d.ellipse([cx - sheen_r * 0.6 - pool_r * 0.2, cy - sheen_r - pool_r * 0.2,
+               cx + sheen_r * 0.6 - pool_r * 0.2, cy + sheen_r - pool_r * 0.2],
+              fill=(190, 40, 40, 150))
+    # Spatter droplets flung outward — more of them, and further, with severity.
+    n_drops = int(8 + sev * 40)
+    max_dist = ss * (0.30 + 0.18 * sev)
+    for _ in range(n_drops):
+        ang = rng.uniform(0, 2 * math.pi)
+        dist = rng.uniform(pool_r * 0.9, max_dist)
+        dr = rng.uniform(ss * 0.006, ss * 0.03) * (1.0 - dist / (ss * 0.6))
+        dr = max(ss * 0.004, dr)
+        px = cx + math.cos(ang) * dist
+        py = cy + math.sin(ang) * dist
+        d.ellipse([px - dr, py - dr, px + dr, py + dr], fill=blood(0.1) + (225,))
+        # occasional teardrop trail toward the droplet
+        if rng.random() < 0.35:
+            mx = cx + math.cos(ang) * dist * 0.7
+            my = cy + math.sin(ang) * dist * 0.7
+            d.line([mx, my, px, py], fill=blood(0.1) + (170,),
+                   width=max(1, int(dr * 0.8)))
+    img = img.filter(ImageFilter.GaussianBlur(radius=ss * 0.004))
+    return img.resize((size, size), Image.LANCZOS)
+
+
+def draw_disintegration(seed: int = 0, size: int = SPRITE, severity: float = 0.5):
+    """A placeholder MAGICAL-disintegration splatter (for a spell-gibbed actor).
+
+    Deliberately distinct from a blood stain — an ashen, arcane scorch: a faded
+    violet-grey burn ring, drifting ash flecks and a few bright arcane embers —
+    so it reads as "disintegrated by magic", not butchered. A stand-in until the
+    author drops their own images into the disintegrate/ folder.
+    """
+    sev = max(0.0, min(1.0, float(severity)))
+    ss = size * SS
+    img = Image.new("RGBA", (ss, ss), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    rng = random.Random(seed * 40503 + 7)
+    cx = cy = ss / 2.0
+
+    def ash(v=0.0):
+        # Cool violet-grey ash; v brightens toward the arcane highlight.
+        r = int(90 + 60 * v + rng.randint(-12, 12))
+        g = int(70 + 40 * v + rng.randint(-12, 12))
+        b = int(110 + 70 * v + rng.randint(-12, 12))
+        return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
+
+    core_r = ss * (0.12 + 0.14 * sev)
+    # Diffuse scorch ring (darker rim, hollow-ish centre).
+    for _ in range(rng.randint(4, 6) + int(sev * 3)):
+        ox = rng.uniform(-core_r * 0.4, core_r * 0.4)
+        oy = rng.uniform(-core_r * 0.4, core_r * 0.4)
+        rr = core_r * rng.uniform(0.7, 1.2)
+        d.ellipse([cx + ox - rr, cy + oy - rr, cx + ox + rr, cy + oy + rr],
+                  fill=ash(0.0) + (110,))
+    d.ellipse([cx - core_r * 0.55, cy - core_r * 0.55,
+               cx + core_r * 0.55, cy + core_r * 0.55], fill=(40, 30, 55, 150))
+    # Ash flecks drifting outward.
+    n = int(14 + sev * 46)
+    max_dist = ss * (0.28 + 0.2 * sev)
+    for _ in range(n):
+        ang = rng.uniform(0, 2 * math.pi)
+        dist = rng.uniform(core_r * 0.6, max_dist)
+        dr = max(ss * 0.003, rng.uniform(ss * 0.004, ss * 0.02)
+                 * (1.0 - dist / (ss * 0.65)))
+        px = cx + math.cos(ang) * dist
+        py = cy + math.sin(ang) * dist
+        d.ellipse([px - dr, py - dr, px + dr, py + dr], fill=ash(0.1) + (150,))
+    # A few bright arcane embers.
+    for _ in range(rng.randint(3, 5) + int(sev * 4)):
+        ang = rng.uniform(0, 2 * math.pi)
+        dist = rng.uniform(core_r * 0.3, max_dist * 0.8)
+        er = max(ss * 0.004, rng.uniform(ss * 0.005, ss * 0.012))
+        px = cx + math.cos(ang) * dist
+        py = cy + math.sin(ang) * dist
+        d.ellipse([px - er, py - er, px + er, py + er], fill=(190, 170, 255, 230))
+    img = img.filter(ImageFilter.GaussianBlur(radius=ss * 0.006))
+    return img.resize((size, size), Image.LANCZOS)
+
+
 def main():
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     # MiniWind art is namespaced under the engine's assets/ tree so every Fio
@@ -321,7 +456,19 @@ def main():
     for kind in _MARKER_STYLE:
         draw_marker(kind).save(os.path.join(sdir, f"marker_{kind}.png"))
     draw_marker("idle").save(os.path.join(sdir, "marker.png"))   # generic fallback
-    print(f"wrote {len(ROLES)} sprites (+ magicbolt, {len(_MARKER_STYLE)} markers) -> {sdir}")
+    blood_dir = os.path.join(sdir, "blood_stains")
+    os.makedirs(blood_dir, exist_ok=True)
+    for i, (name, sev) in enumerate(GIB_STAINS, start=1):
+        draw_blood_stain(seed=i, severity=sev).save(
+            os.path.join(blood_dir, f"{name}.png"))
+    disint_dir = os.path.join(sdir, "disintegrate")
+    os.makedirs(disint_dir, exist_ok=True)
+    for i, (name, sev) in enumerate(DISINTEGRATE_STAINS, start=1):
+        draw_disintegration(seed=i, severity=sev).save(
+            os.path.join(disint_dir, f"{name}.png"))
+    print(f"wrote {len(ROLES)} sprites (+ magicbolt, {len(_MARKER_STYLE)} markers, "
+          f"{len(GIB_STAINS)} blood stains, {len(DISINTEGRATE_STAINS)} "
+          f"disintegration splatters) -> {sdir}")
     print(f"wrote {len(ROLES)} portraits -> {pdir}")
 
 
