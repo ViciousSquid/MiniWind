@@ -35,6 +35,23 @@ from . import bestiary
 from .character import Character
 from ..diceroll import DiceRoller
 
+try:  # engine.gore is a tiny, Qt-free rule module; guard for non-engine contexts
+    from engine import gore as _gore
+except Exception:  # pragma: no cover
+    _gore = None
+
+
+def _mark_gibbed(props, damage, new_health) -> bool:
+    """Flag *props* as gibbed on an overkill death, delegating to engine.gore.
+
+    The single game-side entry point for the gib rule (an oversized killing blow
+    switches the corpse to the gore sprite). Import-guarded so the RPG core still
+    runs where engine.gore is unavailable — then it marks nothing and returns
+    False."""
+    if _gore is None:
+        return False
+    return _gore.mark_gibbed(props, damage, new_health)
+
 
 #: Starting gear by class specialisation, granted at character creation.
 STARTER_KITS = {
