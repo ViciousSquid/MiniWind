@@ -2,9 +2,12 @@
 Quest Editor & Quest Wizard — a first-class, card-based popup for authoring the
 RPG's quests without touching JSON.
 
-Quests are plain dicts stored on the ``GameSettings`` entity's
-``properties['quests']`` (the same list the compact property tab used), so the
-runtime loads them unchanged. This module adds:
+Quests are plain dicts stored as human-readable ``.quest`` files in the
+project's ``quests/`` folder (see :mod:`game.rpg.quest_files`) — not on the
+``GameSettings`` entity — so the same files the editor writes are the ones the
+running game loads, and a designer can hand-edit or version-control them. A map
+that still carries the old ``properties['quests']`` list is migrated into the
+folder the first time the editor opens it. This module adds:
 
 * :func:`make_quests_launcher` — the small panel that lives in the GameSettings
   *Quests* property tab: a live summary of the map's quests plus buttons that
@@ -142,6 +145,55 @@ def _refresh_editor(editor):
 
 
 # ---------------------------------------------------------------------------
+# File-backed quest storage (quests/ folder of .quest files) — Qt-free
+# ---------------------------------------------------------------------------
+def load_quests_for_editor(thing):
+    """Return the quest list the editor should edit, from the ``quests/`` folder.
+
+    Quests are stored as external ``.quest`` files, not on the ``GameSettings``
+    entity. The first time this runs on a map that still carries the old
+    ``properties['quests']`` list, those quests are migrated into the folder so
+    nothing is lost. Returns a list of quest dicts (safe to mutate).
+    """
+    from .rpg import quest_files
+    defs = quest_files.load_quest_defs()
+    if defs:
+        return defs
+    # Migrate any legacy quests authored on the entity into the new folder.
+    legacy = getattr(thing, "properties", {}).get("quests") if thing is not None else None
+    if isinstance(legacy, list) and legacy:
+        import copy
+        legacy = [copy.deepcopy(q) for q in legacy if isinstance(q, dict) and q.get("id")]
+        if legacy:
+            try:
+                quest_files.sync_quest_files(legacy)
+            except Exception:
+                pass
+            return legacy
+    return []
+
+
+def save_quests_from_editor(thing, quests):
+    """Write *quests* to the ``quests/`` folder and clear the legacy entity copy.
+
+    Keeping the quests out of the ``GameSettings`` entity is deliberate: the
+    ``.quest`` files are the single source of truth the running game loads.
+    """
+    from .rpg import quest_files
+    try:
+        quest_files.sync_quest_files(quests)
+    except Exception:
+        pass
+    # Drop the legacy on-entity copy so quests are no longer stored in the map.
+    try:
+        if thing is not None and isinstance(getattr(thing, "properties", None), dict):
+            if thing.properties.get("quests"):
+                thing.properties["quests"] = []
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Pure data helpers (quest dict shape) — unit-testable without Qt
 # ---------------------------------------------------------------------------
 def new_quest_dict(existing, name="New Quest", giver=""):
@@ -269,54 +321,23 @@ def wire_giver_dialogue(giver_thing, quest):
     """Inject a 'start this quest' branch into *giver_thing*'s dialogue so the
     NPC offers it in play (this is what makes the '!' available-quest cue show).
     Idempotent: a second call for the same quest id does nothing. Returns True
-    when the dialogue was created or extended."""
+    when the dialogue was created or extended.
+
+    The branch itself is built by :func:`game.rpg.quests.offer_dialogue_branch`,
+    the same Qt-free helper the running game uses to auto-wire every giver at
+    play start, so hand-wiring in the editor and automatic wiring produce
+    identical dialogue."""
     if giver_thing is None:
         return False
+    from .rpg.quests import offer_dialogue_branch
     props = giver_thing.properties
     dlg = props.get("dialogue")
-    if not isinstance(dlg, dict):
-        dlg = {"start": "", "nodes": {}}
-        props["dialogue"] = dlg
-    dlg.setdefault("nodes", {})
-    nodes = dlg["nodes"]
-
-    # Ensure a start node exists.
-    start = dlg.get("start") or ""
-    if start not in nodes:
-        start = "greet"
-        nodes.setdefault(start, {"text": "Greetings, traveller.",
-                                 "responses": []})
-        dlg["start"] = start
-
-    qid = quest.get("id", "")
-    name = quest.get("name", qid)
-    node = nodes[start]
-    node.setdefault("responses", [])
-
-    # Already offers this quest? (scan every node's responses + on-enter actions)
-    for n in nodes.values():
-        acts = list(n.get("on_enter", []) or [])
-        for r in n.get("responses", []) or []:
-            acts.extend(r.get("actions", []) or [])
-        for a in acts:
-            if isinstance(a, dict) and a.get("op") == "start_quest" \
-                    and (a.get("quest") or a.get("value")) == qid:
-                return False
-
-    # A dedicated quest node the offer response leads into, then accept/decline.
-    # Action shape matches game.rpg.authoring (start_quest carries 'quest').
-    qnode_id = f"offer_{qid}"
-    nodes[qnode_id] = {
-        "text": quest.get("desc") or f"I have a task for you: {name}.",
-        "responses": [
-            {"text": "I'll do it.", "goto": "END",
-             "actions": [{"op": "start_quest", "quest": qid}]},
-            {"text": "Not right now.", "goto": "END"},
-        ],
-    }
-    node["responses"].append(
-        {"text": f"You mentioned a task… ({name})", "goto": qnode_id})
-    return True
+    dlg, changed = offer_dialogue_branch(
+        dlg if isinstance(dlg, dict) else None,
+        quest.get("id", ""), quest.get("name", quest.get("id", "")),
+        quest.get("desc", ""))
+    props["dialogue"] = dlg
+    return changed
 
 
 # Quest Wizard window sizing. Change these four values to tune its default and
@@ -816,7 +837,11 @@ def _classes():
             self.editor = _find_editor(self)
             if self.editor is None and parent is not None:
                 self.editor = _find_editor(parent)
-            self.thing.properties.setdefault("quests", [])
+            # Quests live as human-readable .quest files in the quests/ folder,
+            # not on the GameSettings entity. Load them from there (migrating any
+            # quests still authored on an old map on first open), edit in memory,
+            # and write the folder back on Done.
+            self._quest_list = load_quests_for_editor(thing)
             self._cur = -1
             self._stage_cards = []
             self.setWindowTitle("Quest Editor")
@@ -827,10 +852,7 @@ def _classes():
             self._reload()
 
         def _quests(self):
-            q = self.thing.properties.get("quests")
-            if not isinstance(q, list):
-                q = []; self.thing.properties["quests"] = q
-            return q
+            return self._quest_list
 
         # ---- layout -------------------------------------------------------
         def _build(self):
@@ -1180,6 +1202,7 @@ def _classes():
                 self._reload()
 
         def accept(self):
+            save_quests_from_editor(self.thing, self._quest_list)
             if self.editor is not None:
                 _refresh_editor(self.editor)
             super().accept()
@@ -1219,15 +1242,16 @@ def make_quests_launcher(thing):
         def __init__(self):
             super().__init__()
             self.thing = thing
-            thing.properties.setdefault("quests", [])
             v = QtWidgets.QVBoxLayout(self)
             v.setSpacing(10)
 
             intro = QtWidgets.QLabel(
-                "Quests are a first-class feature — author them in the full "
-                "editor. Give each quest a giver, staged journal text and a "
-                "completion goal (talk / fetch / kill / visit); the wizard can "
-                "even build the markers and dialogue for you.")
+                "Quests are a first-class feature, stored as human-readable "
+                ".quest files in the project's quests/ folder (not on this "
+                "entity). Author them in the full editor: give each quest a "
+                "giver and the giver automatically offers it in play, plus "
+                "staged journal text and a completion goal (talk / fetch / kill "
+                "/ visit). The wizard can even build the markers and dialogue.")
             intro.setWordWrap(True)
             intro.setStyleSheet("color:#9aa;")
             v.addWidget(intro)
@@ -1261,6 +1285,15 @@ def make_quests_launcher(thing):
             self._refresh()
 
         def _quests(self):
+            # Summary reflects the .quest files on disk; fall back to any legacy
+            # on-entity quests (shown until the editor is opened and migrates them).
+            try:
+                from .rpg import quest_files
+                defs = quest_files.load_quest_defs()
+                if defs:
+                    return defs
+            except Exception:
+                pass
             q = self.thing.properties.get("quests")
             return q if isinstance(q, list) else []
 

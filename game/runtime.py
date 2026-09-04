@@ -43,9 +43,11 @@ ARRIVE_RADIUS = 48.0
 #: How close the player must be to talk. Comfortably larger than a billboard so
 #: walking up to an NPC (whose speech bubble is showing) and pressing E works.
 TALK_RADIUS = 140.0
-#: How near a talkable NPC must be for its speech bubble to appear — a locator
-#: cue at a wider range than the interaction range above.
-BUBBLE_RADIUS = 280.0
+#: How near a talkable NPC must be for its speech bubble to appear. Kept a short
+#: step beyond the interaction range so a bubble means "you are close enough to
+#: talk", rather than floating over every NPC across the settlement — the cue
+#: should only show when the player is genuinely near a character with dialogue.
+BUBBLE_RADIUS = 190.0
 DEFEND_SIGHT = 700.0
 #: A follow_player companion tries to stay within this distance of the
 #: player when it isn't fighting (see _follow_player_dest / _decide).
@@ -165,13 +167,22 @@ class MiniwindSession:
         self.game = GameState(self.store, rng=self.rng)
         self.needs_char_creation = str(cfg.get("start_scenario", "prompt")) == "prompt"
 
-        # Register any quests the map author defined on the GameSettings entity
-        # (these override built-ins of the same id) so levels can add quests
-        # without touching code.
+        # Register quests. Precedence (later wins): built-ins < legacy map quests
+        # < external .quest files. Quests now live as human-readable .quest files
+        # in the project's quests/ folder (game.rpg.quest_files); any list still
+        # authored on an old GameSettings entity is honoured first for backward
+        # compatibility, then the folder overrides it.
         from .rpg import quests as _quests
+        from .rpg import quest_files
         map_quests = cfg.get("quests")
         if isinstance(map_quests, list):
             _quests.load_definitions(map_quests)
+        try:
+            file_defs = quest_files.load_quest_defs()
+            if file_defs:
+                _quests.load_definitions(file_defs)
+        except Exception:
+            pass
 
         self._decision_accum = 0.0
         self._last_hour_int = -1
@@ -293,6 +304,7 @@ class MiniwindSession:
         logic._faction_hostile = factions.is_hostile
         self._bind_dice_service()
         self.spawn_creature_points()   # materialise CreatureSpawn points once
+        self._wire_quest_givers()      # make quest givers offer their quests
         self._sync_engine_health(full=True)
 
     def uninstall(self) -> None:
@@ -771,6 +783,43 @@ class MiniwindSession:
     def _slug(text) -> str:
         return "".join(ch.lower() if ch.isalnum() else "_"
                        for ch in str(text)).strip("_")
+
+    def _wire_quest_givers(self) -> None:
+        """Make every quest's giver actually offer that quest in play.
+
+        This is the *easy way to assign a quest to a giver*: a quest just names
+        its ``giver`` (an NPC's name, display name or role) and, at play start,
+        the matching NPC in the scene automatically gains a dialogue branch that
+        offers and starts the quest. No manual dialogue editing is needed — which
+        is what previously left quest givers un-talkable and quests impossible to
+        accept. Idempotent (a giver that already offers a quest is untouched), so
+        an author who *did* wire dialogue by hand keeps their version.
+        """
+        from .rpg import quests as _quests
+        givers: Dict[str, list] = {}
+        for quest in _quests.QUESTS.values():
+            g = str(getattr(quest, "giver", "") or "").strip()
+            if g:
+                givers.setdefault(self._slug(g), []).append(quest)
+        if not givers:
+            return
+        for npc in self.npcs():
+            p = npc.properties
+            keys = {self._slug(p.get("name", "")),
+                    self._slug(p.get("display_name", "")),
+                    self._slug(p.get("npc_role", ""))}
+            keys.discard("")
+            seen = set()
+            for key in keys:
+                for quest in givers.get(key, []):
+                    if quest.id in seen:
+                        continue
+                    seen.add(quest.id)
+                    dlg = p.get("dialogue")
+                    dlg, _changed = _quests.offer_dialogue_branch(
+                        dlg if isinstance(dlg, dict) else None,
+                        quest.id, quest.name, quest.desc)
+                    p["dialogue"] = dlg
 
     def record_talk(self, npc) -> None:
         """Note that the player has spoken with *npc* (for quest 'talk' aims)."""

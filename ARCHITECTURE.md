@@ -205,6 +205,23 @@ tests (`test_combat_ai`, `test_world_entities`, `test_editor_integration`).
   `GameSettings`) is pre-existing; the runtime finds it by scanning live things,
   so it is unaffected, but `plugin_for_type("miniwindsettings")` returns `None`,
   so that one entity's panel renders generically rather than schema-typed.
-* **Races/classes/birthsigns/loot/quests remain in code.** They are the next
-  content to externalise; the loader and boundary make it mechanical, but doing
-  so now risked the character-creation tests, so it was deferred.
+* **Races/classes/birthsigns/loot remain in code.** They are the next content to
+  externalise; the loader and boundary make it mechanical, but doing so now
+  risked the character-creation tests, so it was deferred.
+
+## 13. Quests as external `.quest` files
+
+Quests are authored content, so they live as human-readable `.quest` files (one
+per quest, pretty JSON) in the top-level `quests/` folder — not baked into the
+map's `GameSettings` entity. `game/rpg/quest_files.py` is the Qt-free loader/saver
+the editor and the headless player both use, so the files the Quest Editor writes
+are exactly the ones the running game loads at play start
+(`MiniwindSession.__init__`). A map still carrying the old in-entity `quests`
+list is migrated into the folder the first time the Quest Editor opens it.
+
+**Givers are wired automatically.** A quest simply names its `giver`; at play
+start `MiniwindSession._wire_quest_givers` finds the matching NPC (by name,
+display name or role) and injects a dialogue offer branch via the shared
+`quests.offer_dialogue_branch` helper — so the giver becomes talkable, shows the
+`!` available-quest bubble, and the player can walk up and accept. No manual
+dialogue authoring is required, and a hand-authored offer is left untouched.

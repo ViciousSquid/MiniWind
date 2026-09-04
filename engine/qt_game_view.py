@@ -1089,8 +1089,19 @@ class QtGameView(QOpenGLWidget):
         pos_loc = uniforms['sprite_pos_world']
         size_loc = uniforms['sprite_size']
         tint_loc = uniforms['sprite_tint']
+        # An arrow sprite is a directional shaft, so it must be turned to face
+        # its flight heading instead of always drawing upright (which read as
+        # "always pointing right"). Round glow bolts stay unrotated. This uses
+        # the same world-yaw -> in-plane-billboard rotation the stuck arrows and
+        # overhead heads use, so an in-flight arrow and the shaft it leaves
+        # behind line up. The generic bolt/round projectiles pass rot 0.
+        rot_loc = uniforms.get('sprite_rot', -1)   # -1 if the shader lacks it
+        arrow_tex_id = self.sprite_textures.get('arrow')
+        cam_right = (view_matrix[0][0], view_matrix[1][0], view_matrix[2][0])
+        cam_up = (view_matrix[0][1], view_matrix[1][1], view_matrix[2][1])
         _last_tint = None
         _last_tex = default_tex_id
+        _last_rot = None
         for proj in projectiles:
             tex_id = self._projectile_texture(proj.get('sprite')) or default_tex_id
             if tex_id != _last_tex:
@@ -1103,6 +1114,19 @@ class QtGameView(QOpenGLWidget):
                 gl.glUniform2f(size_loc, size[0], size[1])
             else:
                 gl.glUniform2f(size_loc, default_pw, default_ph)
+            # Rotate arrows to their travel direction; keep everything else upright.
+            if rot_loc >= 0:
+                rot = 0.0
+                if arrow_tex_id is not None and tex_id == arrow_tex_id:
+                    vel = proj.get('vel') or (0.0, 0.0, -1.0)
+                    yaw = math.atan2(vel[0], vel[2])
+                    ha, hz = math.sin(yaw), math.cos(yaw)
+                    a = ha * cam_right[0] + hz * cam_right[2]
+                    b = ha * cam_up[0] + hz * cam_up[2]
+                    rot = math.atan2(-a, b) if (a * a + b * b) > 1e-8 else 0.0
+                if rot != _last_rot:
+                    gl.glUniform1f(rot_loc, rot)
+                    _last_rot = rot
             # Per-spell colour: tint the (bright) projectile sprite toward the
             # spell's colour so e.g. a frost bolt reads blue, a fire bolt orange.
             # An arrow's own wood/fletching tint (or no tint at all when a
@@ -1120,6 +1144,9 @@ class QtGameView(QOpenGLWidget):
         # Reset tint so later sprite draws aren't colourised.
         if _last_tint not in (None, (0.0, 0.0, 0.0, 0.0)):
             gl.glUniform4f(tint_loc, 0.0, 0.0, 0.0, 0.0)
+        # Reset rotation so later sprite draws aren't left turned.
+        if rot_loc >= 0 and _last_rot not in (None, 0.0):
+            gl.glUniform1f(rot_loc, 0.0)
         gl.glBindVertexArray(0)
         gl.glDisable(gl.GL_BLEND)
 

@@ -1,0 +1,35 @@
+{
+  "id": "fighters_join",
+  "name": "Proving Your Steel",
+  "giver": "Grunn",
+  "faction": "fighters",
+  "desc": "The Fighters Guild will take you on if you prove yourself.",
+  "xp": 25,
+  "rewards": {
+    "gold": 50,
+    "rep": [
+      "fighters",
+      10
+    ]
+  },
+  "stages": [
+    {
+      "index": 0,
+      "journal": "Grunn of the Fighters Guild will admit me if I clear the skeletons from the barrow.",
+      "objective": "Clear the barrow",
+      "finishes": false
+    },
+    {
+      "index": 10,
+      "journal": "The barrow is cleared. I should report to Grunn.",
+      "objective": "Report to Grunn",
+      "finishes": false
+    },
+    {
+      "index": 20,
+      "journal": "I am now a member of the Fighters Guild.",
+      "objective": "I am now a member of the Fighters Guild.",
+      "finishes": true
+    }
+  ]
+}

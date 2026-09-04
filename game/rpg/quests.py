@@ -136,6 +136,60 @@ def quest_from_dict(data: Dict) -> Optional[Quest]:
                  xp=int(data.get("xp", 0)))
 
 
+def offer_dialogue_branch(dialogue, qid, name, desc=""):
+    """Ensure a dialogue tree offers quest *qid*, so the giver hands it out.
+
+    This is the single piece of logic that makes a quest *acceptable in play*:
+    it injects a branch on the tree's start node — a "you mentioned a task…"
+    response leading to a small offer node with accept / decline choices, where
+    accepting runs the ``start_quest`` action the runtime honours. It is what
+    makes the '!' available-quest bubble appear and lets the player walk up and
+    talk to take the quest.
+
+    Pure and Qt-free so both the editor (wiring a chosen giver) and the runtime
+    (auto-wiring every giver at play start) share it. Idempotent: a tree that
+    already starts *qid* anywhere is left untouched. Accepts ``None`` / a
+    non-dict and builds a fresh greeting tree. Returns ``(dialogue, changed)``.
+    """
+    if not isinstance(dialogue, dict):
+        dialogue = {"start": "", "nodes": {}}
+    dialogue.setdefault("nodes", {})
+    nodes = dialogue["nodes"]
+
+    # Ensure a start node exists to hang the offer response on.
+    start = dialogue.get("start") or ""
+    if start not in nodes:
+        start = "greet"
+        nodes.setdefault(start, {"text": "Greetings, traveller.", "responses": []})
+        dialogue["start"] = start
+    node = nodes[start]
+    node.setdefault("responses", [])
+
+    # Already offers this quest? (scan every node's responses + on-enter actions)
+    for n in nodes.values():
+        acts = list(n.get("on_enter", []) or [])
+        for r in n.get("responses", []) or []:
+            acts.extend(r.get("actions", []) or [])
+        for a in acts:
+            if isinstance(a, dict) and a.get("op") == "start_quest" \
+                    and (a.get("quest") or a.get("value")) == qid:
+                return dialogue, False
+
+    name = name or qid
+    qnode_id = f"offer_{qid}"
+    nodes[qnode_id] = {
+        "text": desc or f"I have a task for you: {name}.",
+        "responses": [
+            {"text": "I'll do it.", "goto": "END",
+             "actions": [{"op": "start_quest", "quest": qid}]},
+            {"text": "Not right now.", "goto": "END"},
+        ],
+    }
+    node["responses"].append(
+        {"text": f"You mentioned a task… ({name})", "goto": qnode_id})
+    return dialogue, True
+
+
 def load_definitions(defs) -> int:
     """Register a list of editor-authored quest dicts. Returns how many loaded.
 
