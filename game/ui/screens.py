@@ -63,12 +63,42 @@ _SCREEN_BODY_SIZE = {
     "levelup": (560, 430),
     "trade": (760, 520),
     "container": (760, 500),
-    "quest": (620, 460),
+    "quest": (880, 540),
 }
 
 
 def window_body_size(screen):
     return _SCREEN_BODY_SIZE.get(screen, (700, 480))
+
+
+#: Clickable regions recorded by :func:`_draw_quest` each frame and hit-tested
+#: by :func:`handle_click` (the quest journal is mouse-driven — see the host's
+#: overlay wiring). ``rows`` is [(QRect, known-index)]; ``toggle`` is the
+#: "make active quest" box rect for ``toggle_qid``.
+_QUEST_HITS = {"rows": [], "toggle": None, "toggle_qid": None}
+
+
+def handle_click(session, x, y):
+    """Route a body click inside the open screen. Returns True if consumed.
+
+    Only the quest journal is clickable for now: a click selects the quest
+    row under the cursor, or toggles the selected quest as the tracked/active
+    one (so only its arrow shows)."""
+    if getattr(session, "open_screen", None) != "quest":
+        return False
+    from PyQt5.QtCore import QPoint
+    p = QPoint(int(x), int(y))
+    tog = _QUEST_HITS.get("toggle")
+    if tog is not None and tog.contains(p):
+        qid = _QUEST_HITS.get("toggle_qid")
+        if qid:
+            session.set_tracked_quest(qid)
+        return True
+    for r, idx in _QUEST_HITS.get("rows", []):
+        if r.contains(p):
+            _sel(session).setdefault("quest", {"row": 0})["row"] = idx
+            return True
+    return False
 
 
 def draw_in_rect(painter, session, x, y, w, h):
@@ -572,18 +602,58 @@ def _compass_word(dx, dz):
     return _COMPASS_WORDS[int((bearing + 22.5) // 45) % 8]
 
 
+def _known_quests(session):
+    """(active, completed) quest lists — every quest the player knows about."""
+    log = session.game.quests
+    return list(log.active_quests()), list(log.completed_quests())
+
+
+def _objective_rows(session, q):
+    """Objective lines for *q*'s detail pane: (text, is_active_step).
+
+    Revealed stages up to and including the current one are shown; the current
+    step is the active objective. A completed quest shows every step as done."""
+    log = session.game.quests
+    cur = log.stage_of(q.id)
+    complete = log.is_complete(q.id)
+    rows = []
+    for s in sorted(q.stages, key=lambda s: s.index):
+        obj = (getattr(s, "objective", "") or "").strip()
+        if not obj:
+            continue
+        if complete or s.index < cur:
+            rows.append((obj, False))          # done / past
+        elif s.index == cur:
+            rows.append((obj, True))           # the active step
+        # future stages stay hidden until reached
+    if not rows:
+        rows.append((q.desc or "See your journal.", not complete))
+    return rows
+
+
 def _draw_quest(painter, session, w, h):
+    """A Skyrim-style quest journal: a clickable list of every quest the player
+    knows (active, then completed) down the left, the selected quest's story and
+    objectives on the right, and a "Make Active Quest" box that pins the quest
+    so only its arrow shows. Mouse-driven (see :func:`handle_click`); the arrow
+    keys and Enter still work."""
     from ..ui.hud import _fmt_distance
-    active = session.game.quests.active_quests()
+    active, completed = _known_quests(session)
+    known = active + completed
     st = _sel(session).setdefault("quest", {"row": 0})
-    st["row"] = max(0, min(st["row"], max(0, len(active) - 1)))
+    st["row"] = max(0, min(st["row"], max(0, len(known) - 1)))
+    tracked = session.tracked_quest_id()
+
     x, y, bw, bh = _panel_rect(w, h)
     inner = T.panel(painter, x, y, bw, bh)
+    _QUEST_HITS["rows"] = []
+    _QUEST_HITS["toggle"] = None
+    _QUEST_HITS["toggle_qid"] = None
+    ty = T.heading(painter, inner, "Quests")
 
-    if not active:
-        T.heading(painter, inner, "Current Quest")
-        T.text_in(painter, QRect(inner.x(), inner.y() + 60, inner.width(), 60),
-                  "You have no active quest.\n\nTalk to the folk of Miniwind "
+    if not known:
+        T.text_in(painter, QRect(inner.x(), inner.y() + 70, inner.width(), 60),
+                  "You have no quests yet.\n\nTalk to the folk of Miniwind "
                   "(look for a golden “!”) to find work.",
                   size=11, color=T.DIM,
                   align=int(Qt.AlignTop | Qt.AlignHCenter) | int(Qt.TextWordWrap),
@@ -593,63 +663,126 @@ def _draw_quest(painter, session, w, h):
                   align=T.ALIGN_CENTER, family="Segoe UI")
         return
 
-    q = active[st["row"]]
-    g = session.quest_guidance(q) or {}
-    subtitle = (f"{st['row'] + 1} of {len(active)} active quests"
-                if len(active) > 1 else "")
-    ty = T.heading(painter, inner, "Current Quest", subtitle)
+    top = ty + 12
+    list_w = int(inner.width() * 0.34)
+    lx = inner.x() + 6
+    col_x = inner.x() + list_w + 18
+    col_w = inner.right() - col_x - 6
 
-    cx = inner.x() + 8
-    T.text(painter, cx, ty + 8, q.name, size=16, color=T.GOLD_BRIGHT, bold=True)
+    # Divider between the list and the detail pane.
+    painter.setPen(QPen(T.GILD, 1))
+    painter.drawLine(col_x - 9, top, col_x - 9, inner.bottom() - 8)
 
-    # "What to do now" — the imperative action, progress and where it lies.
-    row = ty + 36
-    action = g.get("action") or g.get("objective") or "Return to the quest giver"
-    line = "➤ " + action
-    if g.get("progress"):
-        line += f"    [{g['progress']}]"
-    T.text(painter, cx, row, line, size=12, color=T.INK, family="Segoe UI")
+    # --- left column: the clickable quest list -----------------------------
+    row_h = 22
+    yy = top
+    idx = 0
+    for group_title, group, dim in (("ACTIVE", active, False),
+                                    ("COMPLETED", completed, True)):
+        if not group:
+            continue
+        T.text(painter, lx, yy + 12, group_title, size=8, color=T.GOLD,
+               bold=True, family="Segoe UI")
+        yy += 20
+        for q in group:
+            r = QRect(lx, yy - 2, list_w - 10, row_h)
+            selected = (idx == st["row"])
+            if selected:
+                painter.fillRect(r, T.SELECT)
+            is_tracked = bool(tracked) and q.id == tracked
+            color = (T.GOLD_BRIGHT if selected else (T.DIM if dim else T.INK))
+            label = ("▸ " if is_tracked else "    ") + q.name
+            T.text_in(painter, r.adjusted(4, 0, -4, 0), label, size=10,
+                      color=color, align=T.ALIGN_LEFT, family="Segoe UI")
+            _QUEST_HITS["rows"].append((QRect(r), idx))
+            yy += row_h
+            idx += 1
+        yy += 10
 
-    row += 24
-    dist = _fmt_distance(g.get("distance"))
-    pos = g.get("target_pos")
-    ppos = session._player_pos()
-    if pos is not None and ppos is not None and dist:
-        way = _compass_word(float(pos[0]) - float(ppos[0]),
-                            float(pos[2]) - float(ppos[2]))
-        where = ("You are there — look around." if dist == "here"
-                 else f"About {dist} to the {way}. Follow the arrow orbiting you.")
-    elif g.get("complete"):
-        where = "Objective met — return to the quest giver to finish."
-    else:
-        where = "No map marker for this step — read the notes below."
-    T.text(painter, cx, row, where, size=10, color=T.PARCH, family="Segoe UI")
+    # --- right column: the selected quest's detail -------------------------
+    q = known[max(0, min(st["row"], len(known) - 1))]
+    is_active_q = q in active
+    is_tracked = bool(tracked) and q.id == tracked
 
-    # Journal detail — the fuller "how / why", straight from the quest text.
-    row += 30
-    T.text(painter, cx, row, "Journal", size=11, color=T.GOLD_BRIGHT, bold=True,
-           family="Segoe UI")
+    T.text(painter, col_x, top + 12, q.name, size=16, color=T.GOLD_BRIGHT, bold=True)
+    if session.game.quests.is_complete(q.id):
+        T.text_in(painter, QRect(col_x, top, col_w, 16), "COMPLETED", size=8,
+                  color=T.DIM, align=T.ALIGN_RIGHT, family="Segoe UI")
+    elif is_tracked:
+        T.text_in(painter, QRect(col_x, top, col_w, 16),
+                  "★ ACTIVE — only this quest's arrow shows", size=8,
+                  color=T.GOLD_BRIGHT, align=T.ALIGN_RIGHT, family="Segoe UI")
+    painter.setPen(QPen(T.GILD, 1))
+    painter.drawLine(col_x, top + 22, inner.right() - 6, top + 22)
+
     entries = session.game.quests.journal_entries(q.id)
-    body = "\n\n".join(f"• {e}" for e in entries) or g.get("detail") or q.desc
-    T.text_in(painter, QRect(cx, row + 10, inner.width() - 16,
-                             inner.height() - (row - inner.y()) - 40),
-              body, size=10, color=T.PARCH,
-              align=int(Qt.AlignTop | Qt.AlignLeft) | int(Qt.TextWordWrap),
+    desc = (entries[-1] if entries else "") or q.desc
+    T.text_in(painter, QRect(col_x, top + 30, col_w, 92), desc, size=10,
+              color=T.PARCH, align=int(Qt.AlignTop | Qt.AlignLeft) | int(Qt.TextWordWrap),
               family="Segoe UI")
 
-    hint = ("↑/↓ switch quest   Q/Esc close" if len(active) > 1
-            else "Q/Esc close   ·   J for full journal")
+    oy = top + 130
+    T.text(painter, col_x, oy, "OBJECTIVES", size=9, color=T.GOLD, bold=True,
+           family="Segoe UI")
+    oy += 20
+    for text_line, is_active_step in _objective_rows(session, q):
+        marker = "◆" if is_active_step else "◇"
+        T.text(painter, col_x, oy, f"{marker}  {text_line}", size=10,
+               color=(T.INK if is_active_step else T.DIM), family="Segoe UI")
+        oy += 20
+
+    # Where the objective lies (active quests only) — echoes the orbiting arrow.
+    if is_active_q:
+        g = session.quest_guidance(q) or {}
+        dist = _fmt_distance(g.get("distance"))
+        pos = g.get("target_pos")
+        ppos = session._player_pos()
+        if pos is not None and ppos is not None and dist and dist != "here":
+            way = _compass_word(float(pos[0]) - float(ppos[0]),
+                                float(pos[2]) - float(ppos[2]))
+            T.text(painter, col_x, oy + 6,
+                   f"➤ About {dist} to the {way} — follow the arrow.",
+                   size=9, color=T.PARCH, family="Segoe UI")
+
+    # --- "Make Active Quest" checkbox (active quests only) -----------------
+    if is_active_q:
+        box = QRect(col_x, inner.bottom() - 34, 16, 16)
+        painter.setPen(QPen(T.GILD, 1))
+        painter.setBrush(QColor(30, 28, 40))
+        painter.drawRect(box)
+        if is_tracked:
+            painter.setPen(QPen(T.GOLD_BRIGHT, 2))
+            painter.drawLine(box.x() + 3, box.y() + 8, box.x() + 6, box.y() + 12)
+            painter.drawLine(box.x() + 6, box.y() + 12, box.x() + 13, box.y() + 3)
+        label = ("Active quest — click to show all arrows" if is_tracked
+                 else "Make Active Quest (show only this arrow)")
+        T.text_in(painter, QRect(box.right() + 8, box.y() - 3, col_w - 30, 20),
+                  label, size=10, color=T.INK, align=T.ALIGN_LEFT, family="Segoe UI")
+        _QUEST_HITS["toggle"] = QRect(box.x(), box.y() - 3, col_w, 22)
+        _QUEST_HITS["toggle_qid"] = q.id
+
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              hint, size=9, color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
+              "Click a quest to read it  ·  click the box to make it active  ·  Q/Esc close",
+              size=9, color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
 
 
 def _handle_quest(session, key):
-    active = session.game.quests.active_quests()
+    active, completed = _known_quests(session)
+    known = active + completed
     st = _sel(session).setdefault("quest", {"row": 0})
+    n = max(1, len(known))
     if key in ("up", "w", "left", "a"):
-        st["row"] = (st["row"] - 1) % max(1, len(active)); return True
+        st["row"] = (st["row"] - 1) % n; return True
     if key in ("down", "s", "right", "d"):
-        st["row"] = (st["row"] + 1) % max(1, len(active)); return True
+        st["row"] = (st["row"] + 1) % n; return True
+    if key in ("return", "enter", "space") and known:
+        # Pin the highlighted quest as the active one (only its arrow shows);
+        # pressing again on the pinned quest clears it. Only active quests can
+        # be tracked.
+        q = known[max(0, min(st["row"], len(known) - 1))]
+        if session.game.quests.is_active(q.id):
+            session.set_tracked_quest(q.id)
+        return True
     if key in ("q", "escape", "esc"):
         session.open_screen = None
     return True

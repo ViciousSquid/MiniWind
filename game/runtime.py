@@ -999,6 +999,55 @@ class MiniwindSession:
             return None
         return (list(pos), q.name)
 
+    def quest_arrow_targets(self):
+        """Destinations for the orbiting arrows — one per active quest.
+
+        The player can carry several quests at once; each gets its own arrow
+        ringing the head (the HUD colours them apart). Returns a list of
+        ``(pos, quest_id, quest_name)`` in the quests' active order, skipping
+        any quest whose current stage resolves to no world position. The
+        stable ``quest_id`` lets the HUD assign each quest a consistent
+        colour regardless of how many are active.
+
+        When the player has pinned one quest as *tracked* (see
+        :meth:`set_tracked_quest`), only that quest's arrow is returned, so the
+        other quests' arrows are hidden — unless the tracked quest is no longer
+        active, in which case all active quests' arrows show again."""
+        active = self.game.quests.active_quests()
+        tracked = self.tracked_quest_id()
+        if tracked:
+            focused = [q for q in active if q.id == tracked]
+            if focused:
+                active = focused
+        out = []
+        for q in active:
+            pos = self._arrow_destination(q)
+            if pos is not None:
+                out.append((list(pos), q.id, q.name))
+        return out
+
+    def tracked_quest_id(self) -> str:
+        """The quest id the player pinned as active (only its arrow shows), or
+        ``''`` when none is pinned (every active quest shows its arrow)."""
+        try:
+            v = self.store.get("quest.tracked", "")
+        except Exception:
+            v = ""
+        return "" if v in (None, "", "false") else str(v)
+
+    def set_tracked_quest(self, qid) -> str:
+        """Pin *qid* as the tracked quest so only its arrow shows. Passing a
+        falsy id — or the id that is already tracked — clears the pin, so every
+        active quest's arrow shows again. Returns the new tracked id (``''``
+        when cleared)."""
+        qid = str(qid or "")
+        new = "" if (not qid or qid == self.tracked_quest_id()) else qid
+        try:
+            self.store.set("quest.tracked", new)
+        except Exception:
+            pass
+        return new
+
     def _arrow_destination(self, q):
         """Best-effort world position for *q*'s current stage, for the arrow.
 

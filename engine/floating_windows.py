@@ -253,14 +253,21 @@ class CallbackWindow(FloatingWindow):
 
     ``draw_fn(painter, x, y, w, h)`` paints the body (top-left ``x, y``).
     ``on_close_cb`` (optional) is called when the window's [X] is clicked.
+    ``on_body_click_cb(x, y)`` (optional) is called for a click inside the body
+    (view-space pixels); return True to consume it. ``wants_cursor`` tells the
+    play-mode view to free the (normally hidden, centre-locked) cursor while
+    this window is open so its body can be clicked.
     """
 
     def __init__(self, key, title, draw_fn, width=520, body_height=360,
-                 x=80, y=60, on_close_cb=None):
+                 x=80, y=60, on_close_cb=None, on_body_click_cb=None,
+                 wants_cursor=False):
         super().__init__(title, x, y, width, body_height)
         self.key = key
         self._draw_fn = draw_fn
         self._on_close_cb = on_close_cb
+        self._on_body_click_cb = on_body_click_cb
+        self.wants_cursor = bool(wants_cursor)
 
     def set_body_size(self, width, body_height):
         self.width = max(self.MIN_W, int(width))
@@ -271,6 +278,14 @@ class CallbackWindow(FloatingWindow):
             self._draw_fn(painter, x, y, w, self.content_height())
         except Exception:
             pass
+
+    def handle_body_click(self, x, y):
+        if self._on_body_click_cb is not None:
+            try:
+                return bool(self._on_body_click_cb(x, y))
+            except Exception:
+                return False
+        return False
 
     def on_close(self):
         if self._on_close_cb is not None:

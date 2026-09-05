@@ -27,6 +27,18 @@ DICE_RESULT_HOLD_DURATION = 1.0
 #: (TALK_RADIUS ~140u reads as arm's reach; BOW_REACH ~2400u as a long bowshot).
 WORLD_UNITS_PER_METRE = 64.0
 
+#: Distinct arrow colours, one taken per active quest (see _draw_quest_arrow).
+#: The first is the classic gold so a single-quest HUD looks unchanged; the
+#: rest are picked so several arrows read apart at a glance.
+_QUEST_ARROW_COLORS = [
+    QColor(255, 214, 130),   # gold
+    QColor(120, 200, 255),   # sky blue
+    QColor(150, 230, 150),   # green
+    QColor(240, 150, 220),   # pink
+    QColor(255, 170, 90),    # orange
+    QColor(190, 175, 255),   # lavender
+]
+
 
 def _fmt_distance(world_units):
     """A short, friendly distance label for a quest objective."""
@@ -380,40 +392,41 @@ def _draw_quest_tracker(painter, session, width):
 
 
 def _draw_quest_arrow(painter, session, width, height):
-    """A GTA1-style arrow orbiting the player's head, pointing at the current
-    active quest's objective (location / NPC / foe / item). The player sits at
-    screen centre, so the arrow rings the head and points at where the target
-    lies *on screen* — which depends on the camera, not the player's facing."""
+    """One GTA1-style arrow per active quest, orbiting the player's head and
+    pointing at that quest's objective (location / NPC / foe / item). The
+    player can carry several quests at once, so each arrow rings the head on
+    its own radius in its own colour (see :data:`_QUEST_ARROW_COLORS`). The
+    player sits at screen centre; the bearing is set by the camera, NOT the
+    player's facing:
+      * Overhead "north" (default, GTA-1 style): map fixed with world -Z up and
+        +X right, so spinning in place leaves the arrows put.
+      * Overhead "player": the map turns with the player, so 'up' is the
+        player's heading.
+      * First person: the arrow shows the target relative to where you look.
+    """
     try:
-        target = session.quest_arrow_target()
+        targets = session.quest_arrow_targets()
     except Exception:
-        target = None
-    if target is None:
+        # Fall back to the single-target API for older sessions.
+        try:
+            one = session.quest_arrow_target()
+        except Exception:
+            one = None
+        targets = [(one[0], "", one[1])] if one else []
+    if not targets:
         return
-    pos, _qname = target
     logic = getattr(session, "logic", None)
     player = getattr(logic, "player", None)
     ppos = getattr(player, "pos", None)
     if ppos is None:
         return
-    dx = float(pos[0]) - float(ppos[0])
-    dz = float(pos[2]) - float(ppos[2])
-    if abs(dx) < 1e-3 and abs(dz) < 1e-3:
-        return
-    # Convert the world direction to the target into a screen bearing where 0 is
-    # straight up and it grows clockwise. The mapping is set by the camera, NOT
-    # the player's facing:
-    #   * Overhead "north" (the default, GTA-1 style): the map is fixed with
-    #     world -Z up and +X right, so the player can spin in place and the arrow
-    #     stays put — this is the case the old player-relative maths got wrong.
-    #   * Overhead "player": the map turns with the player, so 'up' is the
-    #     player's heading.
-    #   * First person: the arrow shows the target relative to where you look.
+
     overhead = False
     try:
         overhead = bool(logic.is_overhead())
     except Exception:
         overhead = False
+    hx = hz = 0.0
     if overhead:
         orientation = str(getattr(logic, "overhead_orientation", "north")).strip().lower()
         if orientation == "player":
@@ -421,15 +434,32 @@ def _draw_quest_arrow(painter, session, width, height):
             hx, hz = math.sin(a), math.cos(a)
         else:                       # fixed north: -Z at the top of the screen
             hx, hz = 0.0, -1.0
-        # Screen bearing from the camera's ground right/up basis (right =
-        # (-hz, hx), up = (hx, hz)); 0 = up, clockwise-positive.
-        rel = math.atan2(-dx * hz + dz * hx, dx * hx + dz * hz)
-    else:
-        # First person: 'up' is straight ahead (the player's heading).
-        rel = _wrap(math.atan2(dx, dz) - getattr(player, "angle", 0.0))
+    pangle = getattr(player, "angle", 0.0)
 
     cx, cy = width // 2, height // 2
-    orbit = 58.0               # radius of the arrow's ring around the head
+    for i, entry in enumerate(targets):
+        pos = entry[0]
+        dx = float(pos[0]) - float(ppos[0])
+        dz = float(pos[2]) - float(ppos[2])
+        if abs(dx) < 1e-3 and abs(dz) < 1e-3:
+            continue
+        if overhead:
+            # Screen bearing from the camera's ground right/up basis (right =
+            # (-hz, hx), up = (hx, hz)); 0 = up, clockwise-positive.
+            rel = math.atan2(-dx * hz + dz * hx, dx * hx + dz * hz)
+        else:
+            rel = _wrap(math.atan2(dx, dz) - pangle)
+        color = _QUEST_ARROW_COLORS[i % len(_QUEST_ARROW_COLORS)]
+        # Stagger each quest onto its own ring so arrows in the same direction
+        # sit as concentric chevrons instead of overlapping.
+        orbit = 58.0 + i * 11.0
+        _draw_one_quest_arrow(painter, cx, cy, rel, orbit, color,
+                              _fmt_distance(math.hypot(dx, dz)), width, height)
+
+
+def _draw_one_quest_arrow(painter, cx, cy, rel, orbit, color, dist, width, height):
+    """Draw a single coloured chevron at bearing *rel* on the ring of radius
+    *orbit*, captioned with *dist* just beyond it."""
     ax = cx + math.sin(rel) * orbit
     ay = cy - math.cos(rel) * orbit
 
@@ -445,19 +475,18 @@ def _draw_quest_arrow(painter, session, width, height):
         QPoint(0, int(back - 5)),
         QPoint(-int(halfw), int(back)),
     ])
-    painter.setPen(QPen(QColor(60, 40, 0), 2))
-    painter.setBrush(QColor(255, 214, 130))
+    painter.setPen(QPen(QColor(40, 30, 0), 2))
+    painter.setBrush(color)
     painter.drawPolygon(arrow)
     painter.restore()
 
     # Caption the arrow with the distance to the objective so the ring reads as
     # "the objective is this way, this far" rather than a bare pointer. Drawn
-    # just outside the arrow along the same bearing, clamped to stay on screen.
-    # Distance comes straight from the vector already computed here.
-    dist = _fmt_distance(math.hypot(dx, dz))
+    # just outside the arrow along the same bearing, clamped to stay on screen,
+    # tinted to match the arrow so it reads as belonging to the same quest.
     if dist and dist != "here":
-        lx = cx + math.sin(rel) * (orbit + 20)
-        ly = cy - math.cos(rel) * (orbit + 20)
+        lx = cx + math.sin(rel) * (orbit + 18)
+        ly = cy - math.cos(rel) * (orbit + 18)
         lx = max(24, min(width - 60, lx))
         ly = max(24, min(height - 24, ly))
         painter.save()
@@ -465,7 +494,7 @@ def _draw_quest_arrow(painter, session, width, height):
         painter.setFont(T.font(9, bold=True, family="Segoe UI"))
         painter.drawText(QRect(int(lx - 39), int(ly - 8), 80, 16),
                          T.ALIGN_CENTER, dist)   # soft shadow
-        painter.setPen(QColor(255, 226, 150))
+        painter.setPen(color.lighter(115))
         painter.drawText(QRect(int(lx - 40), int(ly - 9), 80, 16),
                          T.ALIGN_CENTER, dist)
         painter.restore()
