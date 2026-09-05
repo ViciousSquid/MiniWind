@@ -175,6 +175,54 @@ def _find_thing_by_name(editor, name):
     return None
 
 
+def _resolve_entity_ref(editor, raw):
+    """Normalise a quest reference to a scene entity's stable **id (UUID)**.
+
+    Names change; ids do not. Given whatever the author typed or picked — an
+    id, or a name / display name / role — return the matching entity's id so
+    the quest keeps pointing at the same NPC even after it is renamed. Returns
+    *raw* unchanged when it is already an id, when it matches no single entity,
+    or when the name is shared by several (the combo offers ids for those, so an
+    ambiguous name only survives for hand-typed input). Empty in, empty out.
+    """
+    raw = str(raw or "").strip()
+    if not raw:
+        return ""
+    things = _scene_things(editor)
+    for t in things:                     # already an id?
+        if _thing_id(t) == raw:
+            return raw
+    rl = raw.lower()
+    matches = []
+    for t in things:
+        p = getattr(t, "properties", None) or {}
+        vals = {str(p.get("name", "")).strip().lower(),
+                str(p.get("display_name", "")).strip().lower(),
+                str(p.get("npc_role", "")).strip().lower()}
+        vals.discard("")
+        if rl in vals:
+            matches.append(t)
+    ids = [_thing_id(t) for t in matches if _thing_id(t)]
+    if len(matches) == 1 and ids and ids[0]:
+        return ids[0]
+    return raw
+
+
+def _entity_display_name(editor, ref):
+    """A human-readable name for a quest reference (id or name), for journal /
+    objective text. An id resolves to its entity's display name / name / role;
+    a plain name is returned as-is. Falls back to *ref* when nothing matches."""
+    ref = str(ref or "").strip()
+    if not ref:
+        return ""
+    for t in _scene_things(editor):
+        if _thing_id(t) == ref:
+            p = getattr(t, "properties", None) or {}
+            return str(p.get("display_name") or p.get("name")
+                       or p.get("npc_role") or ref)
+    return ref
+
+
 def _refresh_editor(editor):
     """Best-effort: push scene changes into the rest of the UI + dirty flag."""
     for meth in ("save_state",):
@@ -309,10 +357,16 @@ def goal_summary(quest):
 
 def build_wizard_quest(existing, *, name, giver, desc, goal_kind, target,
                        count, gold, xp, item, item_qty, faction="",
-                       roll_notation="1d20", roll_target=10):
+                       roll_notation="1d20", roll_target=10, giver_name="",
+                       target_name=""):
     """Assemble a complete quest dict (identity + two staged journal entries +
     completion condition + rewards) from the wizard's plain answers. Pure — no
-    Qt, no scene side effects — so it's easy to test."""
+    Qt, no scene side effects — so it's easy to test.
+
+    ``giver`` is the stored reference — a scene entity's **id (UUID)** when the
+    caller could resolve one, so a rename never breaks the link. ``giver_name``
+    is the readable name used only in the journal / objective text; it defaults
+    to ``giver`` when not supplied."""
     q = new_quest_dict(existing, name=name or "New Quest", giver=giver or "")
     q["giver"] = giver or ""
     q["desc"] = desc or ""
@@ -325,7 +379,8 @@ def build_wizard_quest(existing, *, name, giver, desc, goal_kind, target,
     q["rewards"] = rewards
 
     kind = goal_kind if goal_kind in GOAL_LABEL else "none"
-    obj = _default_objective(kind, target, count, roll_notation)
+    obj = _default_objective(kind, target, count, roll_notation,
+                             display=target_name)
     start_journal = desc or f"{name}."
     condition = {"kind": kind, "target": str(target or ""),
                  "count": int(count or 1)}
@@ -339,12 +394,15 @@ def build_wizard_quest(existing, *, name, giver, desc, goal_kind, target,
         "finishes": False,
         "condition": condition,
     }
+    gname = str(giver_name or giver or "").strip()
     done_stage = {
         "index": 10,
         "journal": f"You have completed '{name}'. Return for your reward."
                    if giver else f"You have completed '{name}'.",
-        "objective": f"Report to {giver}" if giver else "Quest complete",
+        "objective": f"Report to {gname}" if giver else "Quest complete",
         "finishes": True,
+        # Target stored as the giver reference (a UUID when resolved) so the
+        # "report back" step follows the same NPC even if it is renamed.
         "condition": {"kind": "talk", "target": giver, "count": 1} if giver
                      else {"kind": "none", "target": "", "count": 1},
     }
@@ -352,13 +410,17 @@ def build_wizard_quest(existing, *, name, giver, desc, goal_kind, target,
     return q
 
 
-def _default_objective(kind, target, count, notation="1d20"):
+def _default_objective(kind, target, count, notation="1d20", display=None):
+    # *display* is a readable name for the objective line when *target* is a
+    # stored id (UUID) — used for a 'talk' NPC. Kill/fetch targets are class /
+    # item ids and read fine as-is.
+    shown = str(display or target)
     if kind == "kill":
         return f"Kill {count} {target}".strip()
     if kind == "fetch":
         return f"Find {count} {target}".strip()
     if kind == "talk":
-        return f"Speak with {target}".strip()
+        return f"Speak with {shown}".strip()
     if kind == "visit":
         return f"Travel to {target}".strip()
     if kind == "roll":
@@ -689,14 +751,29 @@ def _classes():
 
         # -- finish ----------------------------------------------------------
         def accept(self):
-            giver = self.w_giver.currentText().strip()
+            # Store the giver by its stable entity id (UUID) when we can resolve
+            # one, so renaming the NPC later never orphans the quest; keep the
+            # readable name only for the journal / objective text.
+            raw_giver = self.w_giver.currentText().strip()
+            giver = _resolve_entity_ref(self.editor, raw_giver)
+            giver_name = _entity_display_name(self.editor, giver) or raw_giver
+            # A 'talk' goal points at one specific NPC, so store it by id (UUID)
+            # too — kill/fetch/visit targets are class / item / place ids and
+            # stay as typed (that is how the runtime tracks them).
+            raw_target = self.w_target.text().strip()
+            goal_target, target_name = raw_target, ""
+            if self._goal_kind == "talk":
+                goal_target = _resolve_entity_ref(self.editor, raw_target)
+                target_name = _entity_display_name(self.editor, goal_target) or raw_target
             quest = build_wizard_quest(
                 self.quests,
                 name=self.w_name.text().strip(),
                 giver=giver,
+                giver_name=giver_name,
                 desc=self.w_desc.toPlainText().strip(),
                 goal_kind=self._goal_kind,
-                target=self.w_target.text().strip(),
+                target=goal_target,
+                target_name=target_name,
                 count=self.w_count.value(),
                 gold=self.w_gold.value(),
                 xp=self.w_xp.value(),
@@ -1128,7 +1205,9 @@ def _classes():
             q = quests[self._cur]
             q["name"] = self.f_name.text().strip()
             q["id"] = self.f_id.text().strip()
-            q["giver"] = self.f_giver.currentText().strip()
+            # Persist the giver by stable entity id (UUID) so a later rename of
+            # the NPC does not orphan the quest.
+            q["giver"] = _resolve_entity_ref(self.editor, self.f_giver.currentText().strip())
             q["faction"] = self.f_faction.text().strip()
             q["desc"] = self.f_desc.toPlainText().strip()
             q["xp"] = self.f_xp.value()
