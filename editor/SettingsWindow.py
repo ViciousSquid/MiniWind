@@ -82,6 +82,17 @@ class SettingsWindow(QDialog):
         )
         dice_layout.addWidget(self.visualise_dice_rolls_checkbox)
         layout.addWidget(dice_group)
+
+        dialogue_group = QGroupBox("Dialogue")
+        dialogue_layout = QVBoxLayout(dialogue_group)
+        self.show_dialogue_heads_checkbox = QCheckBox("Show dialogue heads")
+        self.show_dialogue_heads_checkbox.setToolTip(
+            "Show the character's head beside the conversation window when "
+            "talking to an NPC. The head always matches the NPC's world sprite."
+        )
+        dialogue_layout.addWidget(self.show_dialogue_heads_checkbox)
+        layout.addWidget(dialogue_group)
+
         layout.addStretch()
 
 
@@ -569,6 +580,9 @@ class SettingsWindow(QDialog):
         self.visualise_dice_rolls_checkbox.setChecked(
             self.config.getboolean('GAME', 'visualise_dice_rolls', fallback=False)
         )
+        self.show_dialogue_heads_checkbox.setChecked(
+            self.config.getboolean('GAME', 'show_dialogue_heads', fallback=True)
+        )
         self.show_caulk_checkbox.setChecked(self.config.getboolean('Display', 'show_caulk', fallback=True))
         self.sync_selection_checkbox.setChecked(self.config.getboolean('Display', 'sync_selection', fallback=True))
         self.click_select_3d_checkbox.setChecked(self.config.getboolean('Display', 'click_select_3d', fallback=False))
@@ -683,6 +697,8 @@ class SettingsWindow(QDialog):
             self.config.add_section('GAME')
         self.config.set('GAME', 'visualise_dice_rolls',
                         str(self.visualise_dice_rolls_checkbox.isChecked()))
+        self.config.set('GAME', 'show_dialogue_heads',
+                        str(self.show_dialogue_heads_checkbox.isChecked()))
 
         if not self.config.has_section('Display'): 
             self.config.add_section('Display')

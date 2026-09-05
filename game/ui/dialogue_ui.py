@@ -157,7 +157,8 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
     subtitle = ""
     if npc is not None:
         speaker = npc.properties.get("display_name") or npc.properties.get("name", "")
-        head = _head_pixmap(npc)
+        if getattr(session, "dialogue_heads_enabled", None) is None or session.dialogue_heads_enabled():
+            head = _head_pixmap(npc)
         disp = guilds.disposition(session.game.character, npc.properties)
         mood = ("friendly" if disp >= 60 else "wary" if disp >= 35 else "hostile")
         subtitle = f"Disposition {disp} ({mood})"
