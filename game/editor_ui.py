@@ -50,7 +50,7 @@ def make_appearance_tab(thing):
     Setting a head updates the entity's sprite immediately.
 
     NPCs whose ``name`` contains "guard" (case-insensitive) also get an extra
-    "Guard heads" section offering the special guard01…guard04 sprites, plus a
+    "Guard heads" section offering the special guard01…guard06 sprites, plus a
     Browse… button to pick any PNG directly from assets/sprites/heads/."""
     try:
         QtWidgets, QtCore = _qt()
@@ -109,7 +109,7 @@ def make_appearance_tab(thing):
 
         def _ensure_combo_entry(self, hid: str) -> None:
             """Add a combo entry for *hid* if it isn't one already (e.g. a
-            head picked via Browse… that isn't head00-19 or guard01-04)."""
+            head picked via Browse… that isn't head00-19 or guard01-06)."""
             if not hid or self.combo.findData(hid) >= 0:
                 return
             self.combo.addItem(hid, hid)

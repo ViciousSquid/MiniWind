@@ -11,7 +11,7 @@ also the key a future audio layer will use to pick voice files.
 when its owner dies (see the renderers), so a corpse keeps its identity instead
 of switching to a generic role sprite.
 
-**Guard heads** (``guard01``…``guard04``) are a separate, NPC-only pool under
+**Guard heads** (``guard01``…``guard06``) are a separate, NPC-only pool under
 the same directory. They are never offered at player character creation and
 are never picked by :func:`random_head`; they only become available in the
 editor's Appearance tab for an NPC whose ``name`` contains "guard" (see
@@ -32,10 +32,10 @@ HEAD_COUNT = HEAD_LAST - HEAD_FIRST + 1
 HEAD_DIR = "assets/sprites/heads"
 HEAD_IDS = [f"head{n:02d}" for n in range(HEAD_FIRST, HEAD_LAST + 1)]
 
-#: Special guard heads — assets/sprites/heads/guard01.png … guard04.png.
+#: Special guard heads — assets/sprites/heads/guard01.png … guard06.png.
 #: A separate pool from HEAD_IDS: NPC-only, opt-in (never random, never the
 #: player's), offered only for NPCs whose name contains "guard".
-GUARD_HEAD_IDS = [f"guard{n:02d}" for n in (1, 2, 3, 4)]
+GUARD_HEAD_IDS = [f"guard{n:02d}" for n in (1, 2, 3, 4, 5, 6)]
 
 #: Overlay blended over a head sprite when its owner is dead.
 DEAD_OVERLAY = f"{HEAD_DIR}/dead.png"
@@ -122,3 +122,15 @@ def random_head(rng: Optional[_random.Random] = None,
     ban = {str(e) for e in exclude}
     pool = [h for h in HEAD_IDS if h not in ban] or list(HEAD_IDS)
     return (rng or _random).choice(pool)
+
+
+def random_guard_head(rng: Optional[_random.Random] = None) -> str:
+    """A random guard head id (guard01…guard06). Used to auto-assign a head to
+    a guard-named NPC that has no head explicitly set in the editor."""
+    return (rng or _random).choice(GUARD_HEAD_IDS)
+
+
+def name_is_guard(name) -> bool:
+    """True if an NPC name marks it as a guard (case-insensitive substring),
+    matching the editor's Appearance tab rule for offering guard heads."""
+    return "guard" in str(name or "").lower()

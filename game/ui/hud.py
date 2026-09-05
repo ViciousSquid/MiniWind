@@ -23,6 +23,22 @@ from ..runtime import (DICE_ANIMATION_SHAKE, DICE_ANIMATION_ROLL, DICE_ANIMATION
 
 DICE_RESULT_HOLD_DURATION = 1.0
 
+#: Rough world-units-per-metre used only to render friendly quest distances
+#: (TALK_RADIUS ~140u reads as arm's reach; BOW_REACH ~2400u as a long bowshot).
+WORLD_UNITS_PER_METRE = 64.0
+
+
+def _fmt_distance(world_units):
+    """A short, friendly distance label for a quest objective."""
+    if world_units is None:
+        return ""
+    m = world_units / WORLD_UNITS_PER_METRE
+    if m < 3:
+        return "here"
+    if m < 1000:
+        return f"{int(round(m))} m"
+    return f"{m / 1000:.1f} km"
+
 
 def draw(painter, session, width, height):
     game = session.game
@@ -336,23 +352,38 @@ def _draw_status_flags(painter, session, c, width, height):
 
 
 def _draw_quest_tracker(painter, session, width):
-    active = session.game.quests.active_quests()
-    if not active:
+    try:
+        g = session.quest_guidance()
+    except Exception:
+        g = None
+    if not g:
         return
-    q = active[0]
-    obj = session.game.quests.current_objective(q.id)
     x = width - 300
     y = 48
-    T.text(painter, x, y, "◈ " + q.name, size=11, color=T.GOLD_BRIGHT, bold=True)
-    if obj:
-        T.text(painter, x + 6, y + 18, "• " + obj, size=9, color=T.PARCH, family="Segoe UI")
+    T.text(painter, x, y, "◈ " + g["name"], size=11, color=T.GOLD_BRIGHT, bold=True)
+    # The action line is the "what to do now": a short imperative plus any
+    # countable progress, so the player can see how to complete the stage.
+    action = g.get("action") or g.get("objective")
+    if action:
+        line = "• " + action
+        prog = g.get("progress")
+        if prog:
+            line += f"   [{prog}]"
+        T.text(painter, x + 6, y + 18, line, size=9, color=T.PARCH, family="Segoe UI")
+    dist = _fmt_distance(g.get("distance"))
+    if dist:
+        T.text(painter, x + 6, y + 34, f"➤ {dist} away  ·  press Q for details",
+               size=8, color=T.DIM, family="Segoe UI")
+    else:
+        T.text(painter, x + 6, y + 34, "press Q for details",
+               size=8, color=T.DIM, family="Segoe UI")
 
 
 def _draw_quest_arrow(painter, session, width, height):
     """A GTA1-style arrow orbiting the player's head, pointing at the current
-    active quest's objective (location / NPC / foe / item). The player billboard
-    sits at screen centre in the top-down view, so the arrow rings the head and
-    rotates to bear on the target relative to the player's heading."""
+    active quest's objective (location / NPC / foe / item). The player sits at
+    screen centre, so the arrow rings the head and points at where the target
+    lies *on screen* — which depends on the camera, not the player's facing."""
     try:
         target = session.quest_arrow_target()
     except Exception:
@@ -360,7 +391,8 @@ def _draw_quest_arrow(painter, session, width, height):
     if target is None:
         return
     pos, _qname = target
-    player = getattr(session.logic, "player", None)
+    logic = getattr(session, "logic", None)
+    player = getattr(logic, "player", None)
     ppos = getattr(player, "pos", None)
     if ppos is None:
         return
@@ -368,10 +400,33 @@ def _draw_quest_arrow(painter, session, width, height):
     dz = float(pos[2]) - float(ppos[2])
     if abs(dx) < 1e-3 and abs(dz) < 1e-3:
         return
-    # World bearing (engine convention: forward at heading 0 is +z), made
-    # relative to the player's heading so 'up' on screen is straight ahead.
-    bearing = math.atan2(dx, dz)
-    rel = _wrap(bearing - getattr(player, "angle", 0.0))
+    # Convert the world direction to the target into a screen bearing where 0 is
+    # straight up and it grows clockwise. The mapping is set by the camera, NOT
+    # the player's facing:
+    #   * Overhead "north" (the default, GTA-1 style): the map is fixed with
+    #     world -Z up and +X right, so the player can spin in place and the arrow
+    #     stays put — this is the case the old player-relative maths got wrong.
+    #   * Overhead "player": the map turns with the player, so 'up' is the
+    #     player's heading.
+    #   * First person: the arrow shows the target relative to where you look.
+    overhead = False
+    try:
+        overhead = bool(logic.is_overhead())
+    except Exception:
+        overhead = False
+    if overhead:
+        orientation = str(getattr(logic, "overhead_orientation", "north")).strip().lower()
+        if orientation == "player":
+            a = getattr(player, "angle", 0.0)
+            hx, hz = math.sin(a), math.cos(a)
+        else:                       # fixed north: -Z at the top of the screen
+            hx, hz = 0.0, -1.0
+        # Screen bearing from the camera's ground right/up basis (right =
+        # (-hz, hx), up = (hx, hz)); 0 = up, clockwise-positive.
+        rel = math.atan2(-dx * hz + dz * hx, dx * hx + dz * hz)
+    else:
+        # First person: 'up' is straight ahead (the player's heading).
+        rel = _wrap(math.atan2(dx, dz) - getattr(player, "angle", 0.0))
 
     cx, cy = width // 2, height // 2
     orbit = 58.0               # radius of the arrow's ring around the head
@@ -394,6 +449,26 @@ def _draw_quest_arrow(painter, session, width, height):
     painter.setBrush(QColor(255, 214, 130))
     painter.drawPolygon(arrow)
     painter.restore()
+
+    # Caption the arrow with the distance to the objective so the ring reads as
+    # "the objective is this way, this far" rather than a bare pointer. Drawn
+    # just outside the arrow along the same bearing, clamped to stay on screen.
+    # Distance comes straight from the vector already computed here.
+    dist = _fmt_distance(math.hypot(dx, dz))
+    if dist and dist != "here":
+        lx = cx + math.sin(rel) * (orbit + 20)
+        ly = cy - math.cos(rel) * (orbit + 20)
+        lx = max(24, min(width - 60, lx))
+        ly = max(24, min(height - 24, ly))
+        painter.save()
+        painter.setPen(QColor(20, 16, 8))
+        painter.setFont(T.font(9, bold=True, family="Segoe UI"))
+        painter.drawText(QRect(int(lx - 39), int(ly - 8), 80, 16),
+                         T.ALIGN_CENTER, dist)   # soft shadow
+        painter.setPen(QColor(255, 226, 150))
+        painter.drawText(QRect(int(lx - 40), int(ly - 9), 80, 16),
+                         T.ALIGN_CENTER, dist)
+        painter.restore()
 
 
 def _draw_compass(painter, session, width, height):

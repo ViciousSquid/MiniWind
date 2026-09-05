@@ -69,6 +69,8 @@ class RenderState:
             # }
         self.stuck_arrows = []  # list of {'pos': [x,y,z], 'yaw': deg, 'pitch': deg}
             # — arrows embedded in a wall or a monster after landing
+        self.blood_stains = []  # list of {'pos': [x,y,z], 'sprite': str,
+            #     'size': float, 'yaw': deg} — ground decals from wounds
 
         # Muzzle flash — True for one frame after the player fires
         self.muzzle_flash_active = False
@@ -125,6 +127,7 @@ class RenderState:
         self.bullet_marks = []
         self.projectiles = []
         self.stuck_arrows = []
+        self.blood_stains = []
         self.muzzle_flash_active = False
         self.camera_transition_active = False
         self.monster_debug_active = False

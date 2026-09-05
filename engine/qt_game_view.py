@@ -648,11 +648,16 @@ class QtGameView(QOpenGLWidget):
         """Draw head-wearing NPCs/creatures as rotating ground quads so they face
         where they walk, mirroring the player's overhead sprite. Fully guarded:
         on any error it disables itself (``_overhead_npc_ok``) so the next frame
-        falls back to the ordinary billboards and no actor is left invisible."""
-        actors = getattr(self, "_overhead_actor_things", None)
-        if not actors:
-            return
+        falls back to the ordinary billboards and no actor is left invisible.
+
+        Also draws blood-stain ground decals, which is why it does not bail out
+        when there are no head-wearing actors — a battlefield can have blood on
+        it with no head NPCs currently in view."""
         if not (self.play_mode and self.overhead_sprite_enabled and self._is_overhead()):
+            return
+        actors = getattr(self, "_overhead_actor_things", None) or []
+        blood = getattr(render_state, "blood_stains", None) or ()
+        if not actors and not blood:
             return
         try:
             import os as _os
@@ -662,8 +667,12 @@ class QtGameView(QOpenGLWidget):
             if cache is None:
                 cache = self._overhead_npc_renderers = {}
 
-            def _renderer(sprite_rel, y_offset=2.0):
-                key = (sprite_rel, round(y_offset, 2))
+            def _renderer(sprite_rel, y_offset=2.0, size=None):
+                # *size* lets ground decals (blood stains) vary independently of
+                # the actor sprite size; it is bucketed into the cache key so a
+                # spread of wound sizes doesn't create an unbounded renderer set.
+                sz = float(self.overhead_sprite_size) if size is None else float(size)
+                key = (sprite_rel, round(y_offset, 2), round(sz / 8.0))
                 r = cache.get(key)
                 if r is None:
                     sabs = _os.path.join(root, sprite_rel)
@@ -673,11 +682,25 @@ class QtGameView(QOpenGLWidget):
                         SpriteController.WALK_A_G, SpriteController.WALK_B_G,
                         SpriteController.SHOOT)}
                     r = OverheadSpriteRenderer(
-                        frame_files=frames, size=float(self.overhead_sprite_size),
+                        frame_files=frames, size=sz,
                         y_offset=y_offset,
                         facing_offset_deg=float(self.overhead_sprite_facing_offset))
                     cache[key] = r
                 return r
+
+            # Blood stains — flat ground decals from wounds. Drawn before the
+            # actors (and low to the floor) so bodies and gib splatter sit on
+            # top of the blood, and each uses its own severity sprite + size.
+            for st in getattr(render_state, "blood_stains", None) or ():
+                sprite = st.get("sprite") if isinstance(st, dict) else None
+                if not sprite:
+                    continue
+                spos = st.get("pos", [0.0, 0.0, 0.0])
+                gspos = (float(spos[0]), float(spos[1]), float(spos[2]))
+                _renderer(sprite, y_offset=1.0,
+                          size=float(st.get("size", 32.0))).draw(
+                    self.projection_matrix, self.view_matrix, gspos,
+                    float(st.get("yaw", 0.0)), SpriteController.IDLE)
 
             dead_overlay_rel = "assets/sprites/heads/dead.png"
             for thing in actors:
@@ -883,19 +906,52 @@ class QtGameView(QOpenGLWidget):
             self.repaint()
 
     def _process_sound_queue(self):
-        """Drain the logic thread's sound queue and play via pygame mixer."""
+        """Drain the logic thread's sound queue and play via pygame mixer.
+
+        Speaker requests carry an ``action`` ('play'/'stop'), a ``looping`` flag
+        and an ``entity_id``. Looping speakers play with ``loops=-1`` and their
+        channel is remembered under the entity id so a later StopSound can
+        actually silence them; plain one-shot sounds (no entity id) just play."""
+        speaker_channels = getattr(self, "_speaker_channels", None)
+        if speaker_channels is None:
+            speaker_channels = self._speaker_channels = {}
         for request in self.game_state.consume_sounds():
+            action = request.get('action', 'play')
+            entity_id = request.get('entity_id')
+
+            if action == 'stop':
+                channel = speaker_channels.pop(entity_id, None)
+                if channel is not None:
+                    try:
+                        channel.stop()
+                    except Exception:
+                        pass
+                continue
+
             sound_file = request.get('file')
             volume = request.get('volume', 1.0)
             if not sound_file:
                 continue
-            
+
             sound = self._get_sound_instance(sound_file)
-            if sound:
-                # pygame mixer channels auto-manage, but we can set volume per-play
-                channel = sound.play()
-                if channel:
-                    channel.set_volume(volume)
+            if not sound:
+                continue
+            # -1 loops = repeat until stopped; 0 = play once.
+            loops = -1 if request.get('looping') else 0
+            # If this speaker is already looping, stop the old channel first so
+            # a re-trigger doesn't stack a second copy on top of itself.
+            if entity_id is not None:
+                prev = speaker_channels.pop(entity_id, None)
+                if prev is not None:
+                    try:
+                        prev.stop()
+                    except Exception:
+                        pass
+            channel = sound.play(loops=loops)
+            if channel:
+                channel.set_volume(volume)
+                if entity_id is not None and loops != 0:
+                    speaker_channels[entity_id] = channel
 
     def _process_console_command_queue(self):
         """Run any console commands queued by the I/O system on the UI thread.
@@ -1025,11 +1081,12 @@ class QtGameView(QOpenGLWidget):
         gl.glBindVertexArray(0)
         gl.glDisable(gl.GL_BLEND)
 
-    # Sprite-name to light colour mapping for projectile glow.
+    # Sprite-name to light colour mapping for projectile glow. Arrows are
+    # deliberately absent: a plain arrow shaft is not a light source and must
+    # not glow or illuminate the world as it flies (see _make_projectile_light).
     _PROJ_LIGHT_COLORS = {
         'magicbolt': [100, 140, 255],
         'magic':     [100, 140, 255],
-        'arrow':     [255, 200, 100],
         'fire':      [255, 140, 50],
         'frost':     [150, 210, 255],
         'shock':     [230, 230, 120],
@@ -1037,9 +1094,17 @@ class QtGameView(QOpenGLWidget):
     }
 
     def _make_projectile_light(self, proj):
-        """Create an ephemeral Light at a projectile's position."""
+        """Create an ephemeral Light at a projectile's position.
+
+        Arrows carry no light — they are inert wooden shafts, not glowing
+        magic — so they get no attached light and cast no glow in flight.
+        Only magical bolts (and other genuinely luminous projectiles) light
+        the world around them.
+        """
         pos = proj.get('pos')
         if pos is None:
+            return None
+        if self._proj_is_arrow(proj):
             return None
         # An explicit per-spell colour (from the cast spell) always wins so the
         # attached light matches the tinted projectile exactly; otherwise fall
@@ -1061,6 +1126,16 @@ class QtGameView(QOpenGLWidget):
             'casts_shadows': False,
         })
         return light
+
+    @staticmethod
+    def _proj_is_arrow(proj):
+        """True if a projectile is an arrow (a physical shaft, not a glowing
+        bolt). Prefers the authored ``kind`` tag and falls back to the sprite
+        name so arrows are recognised even on older render states that predate
+        the synced ``kind`` field."""
+        if str(proj.get('kind') or '').lower() == 'arrow':
+            return True
+        return 'arrow' in str(proj.get('sprite') or '').lower()
 
     def _projectile_texture(self, sprite_path):
         """Resolve a projectile's authored sprite path to a preloaded texture.

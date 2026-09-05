@@ -100,6 +100,10 @@ from .monster_constants import (
     MONSTER_PROJECTILE_SPRITE_SIZE,
     MAX_STUCK_ARROWS,
     STUCK_ARROW_SPRITE_SIZE,
+    BLOOD_STAIN_SIZE_MIN,
+    BLOOD_STAIN_SIZE_MAX,
+    MAX_BLOOD_STAINS,
+    BLOOD_MIN_DAMAGE,
 )
 
 # Import the extracted MonsterAI class and new thread
@@ -374,6 +378,10 @@ class LogicThread(threading.Thread):
         # Player arrows embedded in the world (walls, monster hitboxes) once
         # a bow shot lands — persistent physical props, not transient FX.
         self.stuck_arrows: list = []
+
+        # Blood stains — ground decals dropped when a character is wounded
+        # (any damaging hit, not only a gib death), sized by wound severity.
+        self.blood_stains: list = []
 
         # Gunfire sound events for AI hearing (list of dicts with pos, time, source)
         self._gunfire_events: list = []
@@ -937,6 +945,7 @@ class LogicThread(threading.Thread):
             # Clear monster projectiles
             self._monster_projectiles.clear()
             self.stuck_arrows.clear()
+            self.blood_stains.clear()
 
             # Clear gunfire events
             self._gunfire_events.clear()
@@ -1005,6 +1014,7 @@ class LogicThread(threading.Thread):
             # Clear monster projectiles
             self._monster_projectiles.clear()
             self.stuck_arrows.clear()
+            self.blood_stains.clear()
 
             # Clear gunfire events
             self._gunfire_events.clear()
@@ -1634,6 +1644,10 @@ class LogicThread(threading.Thread):
             if (current_time - e['time']) < 3.0
         ]
 
+        # Detect fresh wounds and drop blood stains before the projectile pass
+        # syncs the decal list to the render state, so new blood shows the same
+        # frame (projectile-inflicted wounds land on the next frame's scan).
+        self._update_blood_stains()
         # Update monster projectiles (flying monster ranged attacks)
         # NOTE: Monster AI itself now runs in MonsterAIThread
         self._update_monster_projectiles(delta)
@@ -2013,10 +2027,18 @@ class LogicThread(threading.Thread):
             if self.god_mode:
                 return
             was_alive = self.player_health > 0
+            max_hp = max(1, int(getattr(self, "player_max_health", 0) or self.player_health or 1))
             self.player_health = max(0, self.player_health - damage)
             if self.buddha_mode and self.player_health < 2:
                 self.player_health = 2
             became_dead = was_alive and self.player_health <= 0
+        # The player bleeds too: a ground stain under their feet, sized by the
+        # wound (guarded so a blood failure never interrupts the damage path).
+        try:
+            if damage >= BLOOD_MIN_DAMAGE and self.player is not None:
+                self.add_blood_stain(self.player.pos, damage, max_hp)
+        except Exception:
+            pass
         # Emit outside the lock so a handler can't deadlock on the damage path.
         self._plugin_emit("player_damage", damage=damage, health=self.player_health)
         if became_dead:
@@ -2925,9 +2947,11 @@ class LogicThread(threading.Thread):
         write_state.projectiles = [
             {
                 'pos': list(proj['pos']),
+                'vel': list(proj['vel']) if proj.get('vel') is not None else None,
                 'sprite': proj.get('sprite', 'projectile.png'),
                 'size': proj.get('size', MONSTER_PROJECTILE_SPRITE_SIZE),
                 'color': proj.get('color'),   # RGB 0-255 tint, or None
+                'kind': proj.get('kind'),     # e.g. 'arrow' — steers render/light choices
             }
             for proj in remaining
         ]
@@ -2935,6 +2959,11 @@ class LogicThread(threading.Thread):
             {'pos': list(e['pos']), 'yaw': e['yaw'], 'pitch': e['pitch'],
              'visible_frac': e.get('visible_frac', 1.0)}
             for e in self.stuck_arrows
+        ]
+        write_state.blood_stains = [
+            {'pos': list(e['pos']), 'sprite': e.get('sprite', ''),
+             'size': e.get('size', BLOOD_STAIN_SIZE_MIN), 'yaw': e.get('yaw', 0.0)}
+            for e in self.blood_stains
         ]
 
     def _embed_projectile(self, proj, pos, *, hit_wall: bool = False, hit_monster=None):
@@ -3022,6 +3051,90 @@ class LogicThread(threading.Thread):
             kept.append(e)
         self.stuck_arrows = kept
 
+    # =========================================================================
+    # BLOOD STAINS (ground decals from wounds — not only gib deaths)
+    # =========================================================================
+    def _blood_stain_paths(self):
+        """The physical blood-stain sprites (mild → severe), listed once and
+        cached — the on-disk lookup is not repeated per wound."""
+        paths = getattr(self, '_blood_stain_paths_cache', None)
+        if paths is None:
+            try:
+                from game.rpg import gib
+                paths = gib.stain_paths(magical=False)
+            except Exception:
+                paths = []
+            self._blood_stain_paths_cache = paths
+        return paths
+
+    def add_blood_stain(self, pos, damage, max_hp):
+        """Drop a ground blood decal for a wound of *damage* on a *max_hp* body.
+
+        The stain's sprite (mild → severe) and size both scale with how big the
+        wound was relative to the victim's health, and each stain gets a random
+        rotation and a small positional jitter so repeated hits read as a spread
+        of spatter rather than one stacked sprite. Oldest stains are dropped past
+        :data:`MAX_BLOOD_STAINS`."""
+        try:
+            dmg = float(damage)
+        except (TypeError, ValueError):
+            return
+        if dmg < BLOOD_MIN_DAMAGE or pos is None:
+            return
+        mh = max(1.0, float(max_hp) if max_hp else 1.0)
+        # Severity 0..1: a single blow removing ~40% of the health bar or more
+        # reads as the severest spatter; smaller nicks scale down from there.
+        sev = max(0.0, min(1.0, (dmg / mh) / 0.4))
+        paths = self._blood_stain_paths()
+        sprite = ""
+        if paths:
+            idx = int(round(sev * (len(paths) - 1)))
+            sprite = paths[max(0, min(len(paths) - 1, idx))]
+        size = BLOOD_STAIN_SIZE_MIN + (BLOOD_STAIN_SIZE_MAX - BLOOD_STAIN_SIZE_MIN) * sev
+        size *= random.uniform(0.85, 1.15)
+        jitter = size * 0.25
+        entry = {
+            'pos': [float(pos[0]) + random.uniform(-jitter, jitter),
+                    float(pos[1]),
+                    float(pos[2]) + random.uniform(-jitter, jitter)],
+            'sprite': sprite,
+            'size': float(size),
+            'yaw': random.uniform(0.0, 360.0),
+        }
+        self.blood_stains.append(entry)
+        overflow = len(self.blood_stains) - MAX_BLOOD_STAINS
+        if overflow > 0:
+            del self.blood_stains[:overflow]
+
+    def _update_blood_stains(self):
+        """Watch every actor's health and drop a blood stain whenever it falls.
+
+        Comparing each actor's current health against the value seen last tick
+        catches *every* damage source uniformly — player melee/arrows/spells,
+        monster infighting, environmental damage — without each of those paths
+        needing to know about blood, and gives the true wound size for scaling
+        the stain."""
+        actors = getattr(self, '_monster_things', None)
+        if not actors:
+            if MonsterThing is None:
+                return
+            actors = [t for t in self.things if isinstance(t, MonsterThing)]
+        for t in actors:
+            p = getattr(t, 'properties', None)
+            if not isinstance(p, dict):
+                continue
+            try:
+                hp = float(p.get('health', 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            prev = p.get('_bleed_last_hp')
+            p['_bleed_last_hp'] = hp
+            if prev is None:
+                continue
+            drop = float(prev) - hp
+            if drop >= BLOOD_MIN_DAMAGE:
+                max_hp = p.get('max_health') or prev
+                self.add_blood_stain(t.pos, drop, max_hp)
 
     # =========================================================================
     # GUNFIRE SOUND EVENTS (for AI hearing)
