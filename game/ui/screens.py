@@ -883,12 +883,15 @@ def _draw_container(painter, session, w, h):
     st["row_p"] = max(0, min(st["row_p"], max(0, len(pitems) - 1)))
 
     col_w = int((inner.width() - 24) / 2)
-    list_y = ty + 26
+    # Column titles sit clear below the heading's subtitle line (drawn by
+    # T.heading at ty-8); the item list starts below the titles.
+    head_y = ty + 20
+    list_y = head_y + 24
     row_h = 22
 
     def _column(cx, title, items, sel_row, active):
         head_col = T.GOLD_BRIGHT if active else T.DIM
-        T.text(painter, cx + 6, ty + 6, title, size=12, color=head_col, bold=True,
+        T.text(painter, cx + 6, head_y, title, size=12, color=head_col, bold=True,
                family="Segoe UI")
         if not items:
             T.text(painter, cx + 10, list_y + 16, "(empty)", size=10, color=T.DIM,
