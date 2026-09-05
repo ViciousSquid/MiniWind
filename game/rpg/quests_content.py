@@ -17,7 +17,8 @@ def load() -> None:
         rewards={"gold": 150, "items": [("steel_longsword", 1)], "rep": ("town", 15)},
         stages=[
             Stage(0, "Aldric asked me to clear the bandits out of the old mill "
-                     "east of Miniwind.", objective="Clear the old mill of bandits"),
+                     "east of Miniwind.", objective="Clear the old mill of bandits",
+                  waypoint="bandit"),
             Stage(10, "The bandits at the mill are dead. I should return to Aldric.",
                   objective="Return to Aldric"),
             Stage(20, "Aldric thanked me and paid me for clearing the mill.",
@@ -33,7 +34,8 @@ def load() -> None:
                  "rep": ("town", 8)},
         stages=[
             Stage(0, "Bryn asked me to thin the wolf pack harassing his flock. "
-                     "Kill five wolves.", objective="Kill 5 wolves (0/5)"),
+                     "Kill five wolves.", objective="Kill 5 wolves (0/5)",
+                  waypoint="wolf"),
             Stage(10, "The wolves are dealt with. Time to collect my reward from Bryn.",
                   objective="Return to Bryn"),
             Stage(20, "Bryn paid me for culling the wolves.", finishes=True),
@@ -47,7 +49,8 @@ def load() -> None:
         rewards={"gold": 50, "rep": ("fighters", 10)},
         stages=[
             Stage(0, "Grunn of the Fighters Guild will admit me if I clear the "
-                     "skeletons from the barrow.", objective="Clear the barrow"),
+                     "skeletons from the barrow.", objective="Clear the barrow",
+                  waypoint="skeleton"),
             Stage(10, "The barrow is cleared. I should report to Grunn.",
                   objective="Report to Grunn"),
             Stage(20, "I am now a member of the Fighters Guild.", finishes=True),
@@ -61,7 +64,8 @@ def load() -> None:
         rewards={"gold": 40, "items": [("potion_heal", 2)], "rep": ("town", 5)},
         stages=[
             Stage(0, "Elowen asked me to find her grandmother's amulet, lost in "
-                     "the woods.", objective="Find the silver amulet"),
+                     "the woods.", objective="Find the silver amulet",
+                  waypoint="silver_amulet"),
             Stage(10, "I found the amulet. I should bring it back to Elowen.",
                   objective="Return the amulet to Elowen"),
             Stage(20, "Elowen was overjoyed to have the amulet back.", finishes=True),
