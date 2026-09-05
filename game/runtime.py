@@ -999,6 +999,22 @@ class MiniwindSession:
             return None
         return (list(pos), q.name)
 
+    def quest_arrow_targets(self):
+        """Destinations for the orbiting arrows — one per active quest.
+
+        The player can carry several quests at once; each gets its own arrow
+        ringing the head (the HUD colours them apart). Returns a list of
+        ``(pos, quest_id, quest_name)`` in the quests' active order, skipping
+        any quest whose current stage resolves to no world position. The
+        stable ``quest_id`` lets the HUD assign each quest a consistent
+        colour regardless of how many are active."""
+        out = []
+        for q in self.game.quests.active_quests():
+            pos = self._arrow_destination(q)
+            if pos is not None:
+                out.append((list(pos), q.id, q.name))
+        return out
+
     def _arrow_destination(self, q):
         """Best-effort world position for *q*'s current stage, for the arrow.
 
