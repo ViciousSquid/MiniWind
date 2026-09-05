@@ -595,12 +595,19 @@ def _draw_quest(painter, session, w, h):
 
     q = active[st["row"]]
     g = session.quest_guidance(q) or {}
+    tracked = session.tracked_quest_id()
+    is_tracked = bool(tracked) and tracked == q.id
     subtitle = (f"{st['row'] + 1} of {len(active)} active quests"
                 if len(active) > 1 else "")
     ty = T.heading(painter, inner, "Current Quest", subtitle)
 
     cx = inner.x() + 8
-    T.text(painter, cx, ty + 8, q.name, size=16, color=T.GOLD_BRIGHT, bold=True)
+    name = ("★ " + q.name) if is_tracked else q.name
+    T.text(painter, cx, ty + 8, name, size=16, color=T.GOLD_BRIGHT, bold=True)
+    if is_tracked:
+        T.text_in(painter, QRect(inner.x(), ty + 2, inner.width() - 8, 16),
+                  "ACTIVE — only this quest's arrow is shown", size=8,
+                  color=T.GOLD_BRIGHT, align=T.ALIGN_RIGHT, family="Segoe UI")
 
     # "What to do now" — the imperative action, progress and where it lies.
     row = ty + 36
@@ -637,8 +644,12 @@ def _draw_quest(painter, session, w, h):
               align=int(Qt.AlignTop | Qt.AlignLeft) | int(Qt.TextWordWrap),
               family="Segoe UI")
 
-    hint = ("↑/↓ switch quest   Q/Esc close" if len(active) > 1
-            else "Q/Esc close   ·   J for full journal")
+    set_hint = ("[Enter] show all arrows" if is_tracked
+                else "[Enter] set as active quest")
+    if len(active) > 1:
+        hint = f"↑/↓ switch quest   ·   {set_hint}   ·   Q/Esc close"
+    else:
+        hint = f"{set_hint}   ·   Q/Esc close   ·   J for full journal"
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
               hint, size=9, color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
 
@@ -650,6 +661,12 @@ def _handle_quest(session, key):
         st["row"] = (st["row"] - 1) % max(1, len(active)); return True
     if key in ("down", "s", "right", "d"):
         st["row"] = (st["row"] + 1) % max(1, len(active)); return True
+    if key in ("return", "enter", "space") and active:
+        # Pin the highlighted quest as the active one (only its arrow shows);
+        # pressing again on the pinned quest clears it (all arrows return).
+        row = max(0, min(st["row"], len(active) - 1))
+        session.set_tracked_quest(active[row].id)
+        return True
     if key in ("q", "escape", "esc"):
         session.open_screen = None
     return True
