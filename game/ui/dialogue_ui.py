@@ -1,7 +1,13 @@
 """
-The dialogue box overlay — a framed, gilded panel across the lower third with a
-portrait, the speaker's line and numbered responses. Reads the live conversation
-from the session's :class:`DialogueRunner`.
+The dialogue box overlay — a framed, gilded panel across the lower third with
+the speaker's line and numbered responses, and the character's **head** shown
+just off the right edge of the window. Reads the live conversation from the
+session's :class:`DialogueRunner`.
+
+The head image is always the NPC's *assigned world head* (its ``head`` id,
+resolved exactly like the overhead billboard via :func:`heads.any_head_path`),
+so the face in the conversation is guaranteed to match the sprite the player
+sees walking around the world.
 """
 
 from __future__ import annotations
@@ -13,31 +19,50 @@ from PyQt5.QtGui import (QColor, QFont, QPixmap, QPainterPath, QLinearGradient,
                          QBrush, QPen, QFontMetrics)
 
 from . import theme as T
-from ..rpg import guilds
+from ..rpg import guilds, heads
 
-_PORTRAIT_CACHE = {}
+_PIXMAP_CACHE = {}
 
 
-def _portrait(path):
+def _pixmap(path):
     if not path:
         return None
-    if path in _PORTRAIT_CACHE:
-        return _PORTRAIT_CACHE[path]
+    if path in _PIXMAP_CACHE:
+        return _PIXMAP_CACHE[path]
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
     pm = QPixmap(os.path.join(root, path))
-    _PORTRAIT_CACHE[path] = pm if not pm.isNull() else None
-    return _PORTRAIT_CACHE[path]
+    _PIXMAP_CACHE[path] = pm if not pm.isNull() else None
+    return _PIXMAP_CACHE[path]
+
+
+def _head_pixmap(npc):
+    """The pixmap for *npc*'s assigned world head, or ``None``.
+
+    Resolved through :func:`heads.any_head_path` from the NPC's ``head`` id —
+    the *same* resolution the runtime uses for the overhead billboard
+    (see :meth:`game.runtime.GameRuntime._assign_npc_heads` and
+    :func:`game.entities._apply_head_sprite`) — so the dialogue face and the
+    world sprite are always the identical image.
+    """
+    if npc is None:
+        return None
+    hid = str(npc.properties.get("head", "") or "")
+    if not hid:
+        return None
+    return _pixmap(heads.any_head_path(hid))
 
 
 PAD = 18
-#: Reserved width of the portrait column. The portrait is drawn as a square no
-#: wider than this, and the speaker line/body text/responses always start to the
-#: right of it, so the column width is fixed regardless of the final box height
-#: (which keeps the text-wrap measurement stable — see :func:`_layout`).
-PORTRAIT_MAX = 150
 #: Fixed default width used to size the floating conversation window; the same
 #: value is fed back in as the draw width, so measurement and drawing agree.
 DEFAULT_WIDTH = 760
+
+#: Displayed head square (px). The head sits beside the window, sized to the box
+#: height but never larger than this.
+HEAD_MAX = 160
+#: How far the left of the head image overlaps back over the window's right edge
+#: (px). Kept as a single knob so the distance is easy to fine-tune.
+HEAD_OVERLAP = 10
 
 #: Body text (the speaker's line) font — kept in one place so the wrap
 #: measurement in :func:`_layout` uses exactly the font the drawing uses.
@@ -59,16 +84,15 @@ def _layout(session, w):
     text-column width so a long, multi-line greeting reserves the height it
     actually needs and the numbered responses always sit *below* it instead of
     being overdrawn (the previous fixed 58px slot let long lines overlap them).
+
+    The head lives *outside* the window (off its right edge), so it never enters
+    this measurement — the text spans the full box width.
     """
     view = session.current_view()
     responses = view["responses"] if view else []
     n_resp = max(1, len(responses))
 
-    npc = getattr(session, "dialogue_npc", None)
-    has_portrait = (npc is not None
-                    and _portrait(npc.properties.get("portrait", "")) is not None)
-
-    text_x = PAD + (PORTRAIT_MAX + PAD if has_portrait else 0)
+    text_x = PAD
     text_w = max(80, int(w) - PAD - text_x)
 
     body = view["text"] if view else ""
@@ -78,13 +102,10 @@ def _layout(session, w):
 
     resp_top = _TEXT_TOP + text_h + _GAP_AFTER_TEXT
     box_h = resp_top + n_resp * _RESP_LINE_H + _FOOTER_H + PAD
-    if has_portrait:
-        box_h = max(box_h, PORTRAIT_MAX + PAD * 2)
     box_h = max(_MIN_BOX_H, int(box_h))
 
     return {
         "responses": responses,
-        "has_portrait": has_portrait,
         "text_x": text_x,
         "text_w": text_w,
         "text_h": text_h,
@@ -132,11 +153,11 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
     lay = _layout(session, w)
     npc = session.dialogue_npc
     speaker = ""
-    portrait = None
+    head = None
     subtitle = ""
     if npc is not None:
         speaker = npc.properties.get("display_name") or npc.properties.get("name", "")
-        portrait = _portrait(npc.properties.get("portrait", ""))
+        head = _head_pixmap(npc)
         disp = guilds.disposition(session.game.character, npc.properties)
         mood = ("friendly" if disp >= 60 else "wary" if disp >= 35 else "hostile")
         subtitle = f"Disposition {disp} ({mood})"
@@ -149,14 +170,8 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
 
     tx = x + lay["text_x"]
 
-    if portrait is not None:
-        # Square portrait, no taller than the box and capped at the reserved
-        # column width so the text column position (tx) never has to move.
-        ps = min(PORTRAIT_MAX, int(box_h) - pad * 2)
-        px, py = x + pad, y + pad
-        painter.fillRect(QRect(px - 2, py - 2, ps + 4, ps + 4), T.GILD)
-        scaled = portrait.scaled(ps, ps, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-        painter.drawPixmap(QRect(px, py, ps, ps), scaled, QRect(0, 0, scaled.width(), scaled.height()))
+    if head is not None:
+        _draw_head(painter, head, x, y, w, box_h)
 
     painter.setPen(T.GOLD_BRIGHT)
     painter.setFont(T.font(16, bold=True))
@@ -190,3 +205,32 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
     painter.setPen(T.DIM)
     painter.setFont(T.font(8, family="Segoe UI"))
     painter.drawText(x + w - pad - 150, y + box_h - 10, "[1-9] choose   [Esc] leave")
+
+
+def _draw_head(painter, head, x, y, w, box_h):
+    """Draw the character's head just off the *right* edge of the window.
+
+    The left of the head image overlaps :data:`HEAD_OVERLAP` px back over the
+    window's right edge (``x + w``); the head is a square sized to the box
+    height (capped at :data:`HEAD_MAX`) and vertically centred against it. The
+    head sits in a small gilded frame so a transparent billboard PNG reads as a
+    portrait beside the conversation.
+    """
+    hs = min(HEAD_MAX, int(box_h))
+    hx = int(x + w - HEAD_OVERLAP)
+    hy = int(y + (int(box_h) - hs) / 2)
+
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    frame = QRect(hx, hy, hs, hs)
+    painter.setBrush(QColor(20, 20, 25, 235))
+    painter.setPen(QPen(T.GILD, 2))
+    painter.drawRoundedRect(frame, 8, 8)
+    inset = frame.adjusted(4, 4, -4, -4)
+    scaled = head.scaled(inset.width(), inset.height(),
+                         Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    # Centre the (aspect-preserved) head within the framed square.
+    dx = inset.x() + (inset.width() - scaled.width()) // 2
+    dy = inset.y() + (inset.height() - scaled.height()) // 2
+    painter.drawPixmap(dx, dy, scaled)
+    painter.restore()
