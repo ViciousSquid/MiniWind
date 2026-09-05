@@ -233,18 +233,34 @@ class MiniwindSession:
         self.game.add_roll_listener(self._on_dice_roll)
         self._attack_anim_time = 0.0   # player stab animation remaining (seconds)
 
+    def _editor_config(self):
+        """Best-effort handle on the live editor config (settings.ini), or None."""
+        config = getattr(self.logic, "editor_config", None)
+        if config is None:
+            editor_state = getattr(self.logic, "editor_state", None)
+            config = getattr(editor_state, "config", None)
+        return config
+
     def _visualise_dice_rolls_enabled(self) -> bool:
         """Read the live editor setting controlling automatic dice visuals."""
         try:
-            config = getattr(self.logic, "editor_config", None)
-            if config is None:
-                editor_state = getattr(self.logic, "editor_state", None)
-                config = getattr(editor_state, "config", None)
+            config = self._editor_config()
             if config is None:
                 return False
             return config.getboolean("GAME", "visualise_dice_rolls", fallback=False)
         except (AttributeError, TypeError, ValueError):
             return False
+
+    def dialogue_heads_enabled(self) -> bool:
+        """Whether to show the character head beside the conversation window
+        (GAME → "Show dialogue heads"). Defaults to on when unset."""
+        try:
+            config = self._editor_config()
+            if config is None:
+                return True
+            return config.getboolean("GAME", "show_dialogue_heads", fallback=True)
+        except (AttributeError, TypeError, ValueError):
+            return True
 
     def _on_dice_roll(self, result: Dict, _source: str, _context: Dict) -> None:
         """Start the HUD presentation for every roll when visualisation is enabled."""
