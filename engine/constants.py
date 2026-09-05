@@ -1,5 +1,6 @@
 # engine/constants.py
 import math
+import glm
 
 # --- Settings ---
 WIDTH, HEIGHT = 1280, 720
@@ -37,6 +38,39 @@ WATER_MAX_SINK_SPEED = -240.0   # Water resistance caps fall speed while immerse
 WATERJUMP_MAX_CLIMB = 120.0     # Highest ledge (above the feet) a waterjump can clear
 WATERJUMP_EDGE_ABOVE_SURFACE = 48.0  # Ledge top may be at most this far above the waterline
 WATERJUMP_MAX_BOOST = 360.0     # Cap on the vertical launch speed of a waterjump
+
+
+# Runtime-only keys written to brush dicts by the cached-AABB helper below.
+# Stripped on serialisation alongside the renderer's own private keys.
+AABB_RUNTIME_KEYS = ('_aabb_sig', '_aabb_bounds')
+
+
+def brush_aabb_bounds(brush):
+    """Return a brush's world-space AABB as ``(lo_x, lo_y, lo_z, hi_x, hi_y, hi_z)``.
+
+    PERF: the AABB (``pos ± size*0.5``) is invariant for static brushes and only
+    changes when a mover/door writes a new ``pos``. Every physics/AI hot path
+    used to rebuild two ``glm.vec3`` objects (plus a subtract and an add) per
+    brush per query — thousands of throwaway GLM allocations per second on a
+    busy level. Here the result is computed once *through GLM* (so its float32
+    rounding is bit-for-bit identical to the old ``glm.vec3(pos) ± ...`` path)
+    and cached on the brush dict, keyed by the current pos/size values so a
+    moved brush is transparently refreshed. Cache keys start with ``_`` and are
+    stripped by the serialisers, matching the renderer's own matrix cache.
+    """
+    pos = brush['pos']
+    size = brush['size']
+    sig = (pos[0], pos[1], pos[2], size[0], size[1], size[2])
+    if brush.get('_aabb_sig') == sig:
+        return brush['_aabb_bounds']
+    bp = glm.vec3(pos)
+    bh = glm.vec3(size) * 0.5
+    lo = bp - bh
+    hi = bp + bh
+    bounds = (lo.x, lo.y, lo.z, hi.x, hi.y, hi.z)
+    brush['_aabb_sig'] = sig
+    brush['_aabb_bounds'] = bounds
+    return bounds
 
 
 def is_water_brush(brush):

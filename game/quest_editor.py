@@ -2,9 +2,12 @@
 Quest Editor & Quest Wizard — a first-class, card-based popup for authoring the
 RPG's quests without touching JSON.
 
-Quests are plain dicts stored on the ``GameSettings`` entity's
-``properties['quests']`` (the same list the compact property tab used), so the
-runtime loads them unchanged. This module adds:
+Quests are plain dicts stored as human-readable ``.quest`` files in the
+project's ``quests/`` folder (see :mod:`game.rpg.quest_files`) — not on the
+``GameSettings`` entity — so the same files the editor writes are the ones the
+running game loads, and a designer can hand-edit or version-control them. A map
+that still carries the old ``properties['quests']`` list is migrated into the
+folder the first time the editor opens it. This module adds:
 
 * :func:`make_quests_launcher` — the small panel that lives in the GameSettings
   *Quests* property tab: a live summary of the map's quests plus buttons that
@@ -113,9 +116,58 @@ def _npc_names(editor):
     return sorted(names)
 
 
+def _thing_id(thing):
+    """The entity's stable UUID (``properties['id']``), or ``''``."""
+    props = getattr(thing, "properties", None)
+    if isinstance(props, dict) and props.get("id"):
+        return str(props.get("id"))
+    return str(getattr(thing, "id", "") or "")
+
+
+def _npc_giver_entries(editor):
+    """(label, value) pairs for every quest-giver candidate in the scene.
+
+    The *value* stored on the quest is the NPC's **name** when that name is
+    unique, or its **entity id (UUID)** when the name is shared (e.g. two
+    "Guard" NPCs), so the giver always resolves to exactly one entity at play
+    start. The *label* stays human-readable ("Name — role" or "Name — role · id
+    abc123") so the author can still tell who they picked.
+    """
+    candidates = []
+    name_counts = {}
+    for t in _scene_things(editor):
+        props = getattr(t, "properties", None)
+        kind = str(props.get("type", "")).lower() if isinstance(props, dict) else ""
+        if kind not in ("npc", "monster", "creature"):
+            continue
+        name = str(props.get("name", "")).strip()
+        if not name:
+            continue
+        candidates.append(t)
+        name_counts[name] = name_counts.get(name, 0) + 1
+    entries = []
+    for t in candidates:
+        props = t.properties
+        name = str(props.get("name", "")).strip()
+        role = str(props.get("npc_role", "")).strip()
+        eid = _thing_id(t)
+        ambiguous = name_counts.get(name, 0) > 1
+        value = eid if (ambiguous and eid) else name
+        label = f"{name} — {role}" if role else name
+        if ambiguous and eid:
+            label += f" · id {eid[:8]}"
+        entries.append((label, value))
+    entries.sort(key=lambda e: e[0].lower())
+    return entries
+
+
 def _find_thing_by_name(editor, name):
+    """Find a scene thing by giver value — its entity id first, then its name."""
     if not name:
         return None
+    for t in _scene_things(editor):
+        if _thing_id(t) == name:
+            return t
     for t in _scene_things(editor):
         props = getattr(t, "properties", None)
         if isinstance(props, dict) and props.get("name") == name:
@@ -139,6 +191,55 @@ def _refresh_editor(editor):
                 fn()
             except Exception:
                 pass
+
+
+# ---------------------------------------------------------------------------
+# File-backed quest storage (quests/ folder of .quest files) — Qt-free
+# ---------------------------------------------------------------------------
+def load_quests_for_editor(thing):
+    """Return the quest list the editor should edit, from the ``quests/`` folder.
+
+    Quests are stored as external ``.quest`` files, not on the ``GameSettings``
+    entity. The first time this runs on a map that still carries the old
+    ``properties['quests']`` list, those quests are migrated into the folder so
+    nothing is lost. Returns a list of quest dicts (safe to mutate).
+    """
+    from .rpg import quest_files
+    defs = quest_files.load_quest_defs()
+    if defs:
+        return defs
+    # Migrate any legacy quests authored on the entity into the new folder.
+    legacy = getattr(thing, "properties", {}).get("quests") if thing is not None else None
+    if isinstance(legacy, list) and legacy:
+        import copy
+        legacy = [copy.deepcopy(q) for q in legacy if isinstance(q, dict) and q.get("id")]
+        if legacy:
+            try:
+                quest_files.sync_quest_files(legacy)
+            except Exception:
+                pass
+            return legacy
+    return []
+
+
+def save_quests_from_editor(thing, quests):
+    """Write *quests* to the ``quests/`` folder and clear the legacy entity copy.
+
+    Keeping the quests out of the ``GameSettings`` entity is deliberate: the
+    ``.quest`` files are the single source of truth the running game loads.
+    """
+    from .rpg import quest_files
+    try:
+        quest_files.sync_quest_files(quests)
+    except Exception:
+        pass
+    # Drop the legacy on-entity copy so quests are no longer stored in the map.
+    try:
+        if thing is not None and isinstance(getattr(thing, "properties", None), dict):
+            if thing.properties.get("quests"):
+                thing.properties["quests"] = []
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -269,54 +370,23 @@ def wire_giver_dialogue(giver_thing, quest):
     """Inject a 'start this quest' branch into *giver_thing*'s dialogue so the
     NPC offers it in play (this is what makes the '!' available-quest cue show).
     Idempotent: a second call for the same quest id does nothing. Returns True
-    when the dialogue was created or extended."""
+    when the dialogue was created or extended.
+
+    The branch itself is built by :func:`game.rpg.quests.offer_dialogue_branch`,
+    the same Qt-free helper the running game uses to auto-wire every giver at
+    play start, so hand-wiring in the editor and automatic wiring produce
+    identical dialogue."""
     if giver_thing is None:
         return False
+    from .rpg.quests import offer_dialogue_branch
     props = giver_thing.properties
     dlg = props.get("dialogue")
-    if not isinstance(dlg, dict):
-        dlg = {"start": "", "nodes": {}}
-        props["dialogue"] = dlg
-    dlg.setdefault("nodes", {})
-    nodes = dlg["nodes"]
-
-    # Ensure a start node exists.
-    start = dlg.get("start") or ""
-    if start not in nodes:
-        start = "greet"
-        nodes.setdefault(start, {"text": "Greetings, traveller.",
-                                 "responses": []})
-        dlg["start"] = start
-
-    qid = quest.get("id", "")
-    name = quest.get("name", qid)
-    node = nodes[start]
-    node.setdefault("responses", [])
-
-    # Already offers this quest? (scan every node's responses + on-enter actions)
-    for n in nodes.values():
-        acts = list(n.get("on_enter", []) or [])
-        for r in n.get("responses", []) or []:
-            acts.extend(r.get("actions", []) or [])
-        for a in acts:
-            if isinstance(a, dict) and a.get("op") == "start_quest" \
-                    and (a.get("quest") or a.get("value")) == qid:
-                return False
-
-    # A dedicated quest node the offer response leads into, then accept/decline.
-    # Action shape matches game.rpg.authoring (start_quest carries 'quest').
-    qnode_id = f"offer_{qid}"
-    nodes[qnode_id] = {
-        "text": quest.get("desc") or f"I have a task for you: {name}.",
-        "responses": [
-            {"text": "I'll do it.", "goto": "END",
-             "actions": [{"op": "start_quest", "quest": qid}]},
-            {"text": "Not right now.", "goto": "END"},
-        ],
-    }
-    node["responses"].append(
-        {"text": f"You mentioned a task… ({name})", "goto": qnode_id})
-    return True
+    dlg, changed = offer_dialogue_branch(
+        dlg if isinstance(dlg, dict) else None,
+        quest.get("id", ""), quest.get("name", quest.get("id", "")),
+        quest.get("desc", ""))
+    props["dialogue"] = dlg
+    return changed
 
 
 # Quest Wizard window sizing. Change these four values to tune its default and
@@ -472,29 +542,31 @@ def _classes():
             p.setSubTitle("Name the quest and choose who hands it out.")
             f = QtWidgets.QFormLayout(p)
             self.w_name = QtWidgets.QLineEdit("A New Errand")
-            self._giver_names = _npc_names(self.editor)
+            self._giver_entries = _npc_giver_entries(self.editor)
             self.w_giver = QtWidgets.QComboBox()
             self.w_giver.setEditable(True)
             self.w_giver.addItem("", "")
-            for n in self._giver_names:
-                self.w_giver.addItem(n, n)
+            for _label, value in self._giver_entries:
+                self.w_giver.addItem(value, value)
             self.w_giver.setToolTip("The NPC or monster who offers the quest. Pick one from "
-                                    "the scene or type a name.")
+                                    "the scene, type a name, or paste an entity id (UUID) to "
+                                    "target one specific NPC when several share a name.")
             self.w_giver.currentTextChanged.connect(
                 lambda _text: self._refresh_plan() if hasattr(self, "w_make_marker") else None)
 
             self.w_giver_button = QtWidgets.QPushButton("Choose…")
-            self.w_giver_button.setToolTip("Choose an available NPC or monster from the scene.")
+            self.w_giver_button.setToolTip("Choose an available NPC or monster from the scene "
+                                           "(shared names are assigned by entity id).")
             self._giver_menu = QtWidgets.QMenu(self.w_giver_button)
             self.w_giver_button.setMenu(self._giver_menu)
             clear_action = self._giver_menu.addAction("(none)")
             clear_action.triggered.connect(lambda: self.w_giver.setEditText(""))
-            if self._giver_names:
+            if self._giver_entries:
                 self._giver_menu.addSeparator()
-                for name in self._giver_names:
-                    action = self._giver_menu.addAction(name)
+                for label, value in self._giver_entries:
+                    action = self._giver_menu.addAction(label)
                     action.triggered.connect(
-                        lambda _checked=False, selected=name:
+                        lambda _checked=False, selected=value:
                         self.w_giver.setEditText(selected))
             else:
                 empty_action = self._giver_menu.addAction("No NPCs or monsters found")
@@ -816,7 +888,11 @@ def _classes():
             self.editor = _find_editor(self)
             if self.editor is None and parent is not None:
                 self.editor = _find_editor(parent)
-            self.thing.properties.setdefault("quests", [])
+            # Quests live as human-readable .quest files in the quests/ folder,
+            # not on the GameSettings entity. Load them from there (migrating any
+            # quests still authored on an old map on first open), edit in memory,
+            # and write the folder back on Done.
+            self._quest_list = load_quests_for_editor(thing)
             self._cur = -1
             self._stage_cards = []
             self.setWindowTitle("Quest Editor")
@@ -827,10 +903,7 @@ def _classes():
             self._reload()
 
         def _quests(self):
-            q = self.thing.properties.get("quests")
-            if not isinstance(q, list):
-                q = []; self.thing.properties["quests"] = q
-            return q
+            return self._quest_list
 
         # ---- layout -------------------------------------------------------
         def _build(self):
@@ -1000,8 +1073,18 @@ def _classes():
             combo.blockSignals(True)
             combo.clear()
             combo.addItem("")
-            for n in _npc_names(self.editor):
-                combo.addItem(n)
+            # Offer each candidate's giver value — a name when unique, an entity
+            # id (UUID) when the name is shared — so a giver always resolves to
+            # exactly one NPC. An author can still type a name or paste an id.
+            combo.setToolTip("NPC who gives this quest — a name, role, or an "
+                             "entity id (UUID) to target one specific NPC when "
+                             "several share a name.")
+            seen = set()
+            for _label, value in _npc_giver_entries(self.editor):
+                if value in seen:
+                    continue
+                seen.add(value)
+                combo.addItem(value)
             combo.setEditText(cur)
             combo.blockSignals(False)
 
@@ -1180,6 +1263,7 @@ def _classes():
                 self._reload()
 
         def accept(self):
+            save_quests_from_editor(self.thing, self._quest_list)
             if self.editor is not None:
                 _refresh_editor(self.editor)
             super().accept()
@@ -1219,15 +1303,16 @@ def make_quests_launcher(thing):
         def __init__(self):
             super().__init__()
             self.thing = thing
-            thing.properties.setdefault("quests", [])
             v = QtWidgets.QVBoxLayout(self)
             v.setSpacing(10)
 
             intro = QtWidgets.QLabel(
-                "Quests are a first-class feature — author them in the full "
-                "editor. Give each quest a giver, staged journal text and a "
-                "completion goal (talk / fetch / kill / visit); the wizard can "
-                "even build the markers and dialogue for you.")
+                "Quests are a first-class feature, stored as human-readable "
+                ".quest files in the project's quests/ folder (not on this "
+                "entity). Author them in the full editor: give each quest a "
+                "giver and the giver automatically offers it in play, plus "
+                "staged journal text and a completion goal (talk / fetch / kill "
+                "/ visit). The wizard can even build the markers and dialogue.")
             intro.setWordWrap(True)
             intro.setStyleSheet("color:#9aa;")
             v.addWidget(intro)
@@ -1261,6 +1346,15 @@ def make_quests_launcher(thing):
             self._refresh()
 
         def _quests(self):
+            # Summary reflects the .quest files on disk; fall back to any legacy
+            # on-entity quests (shown until the editor is opened and migrates them).
+            try:
+                from .rpg import quest_files
+                defs = quest_files.load_quest_defs()
+                if defs:
+                    return defs
+            except Exception:
+                pass
             q = self.thing.properties.get("quests")
             return q if isinstance(q, list) else []
 

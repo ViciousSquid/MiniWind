@@ -1,0 +1,41 @@
+{
+  "id": "mill_bandits",
+  "name": "Trouble at the Old Mill",
+  "giver": "Aldric",
+  "faction": "town",
+  "desc": "Bandits have seized the old mill east of the village.",
+  "xp": 40,
+  "rewards": {
+    "gold": 150,
+    "items": [
+      [
+        "steel_longsword",
+        1
+      ]
+    ],
+    "rep": [
+      "town",
+      15
+    ]
+  },
+  "stages": [
+    {
+      "index": 0,
+      "journal": "Aldric asked me to clear the bandits out of the old mill east of Miniwind.",
+      "objective": "Clear the old mill of bandits",
+      "finishes": false
+    },
+    {
+      "index": 10,
+      "journal": "The bandits at the mill are dead. I should return to Aldric.",
+      "objective": "Return to Aldric",
+      "finishes": false
+    },
+    {
+      "index": 20,
+      "journal": "Aldric thanked me and paid me for clearing the mill.",
+      "objective": "Aldric thanked me and paid me for clearing the mill.",
+      "finishes": true
+    }
+  ]
+}

@@ -389,12 +389,13 @@ class Monster(Thing):
         self.properties.setdefault('health', 100)
         self.properties.setdefault('max_health', self.properties.get('health', 100))
         self.properties.setdefault('damage', 10)
-        # Custom death sprites and the gib/gore mechanic were removed: a slain
-        # actor always shows its head + heads/dead.png overlay (or its type's
-        # default dead.png). Shed any legacy keys so they never persist or show
-        # in the property editor.
+        # Custom death sprites were removed: a slain actor shows its head +
+        # heads/dead.png overlay (or its type's default dead.png). The gib/gore
+        # mechanic, however, is live again — a gibbed body is replaced by a
+        # splatter sprite — so its flags (``gibbed`` / ``gib_sprite`` /
+        # ``gib_magical``) are preserved here so a gibbed corpse survives a
+        # save/load instead of reverting to an ordinary corpse.
         self.properties.pop('custom_dead', None)
-        self.properties.pop('gibbed', None)
 
         # --- Wake / AI behaviour ---
         self.properties.setdefault('triggered', False)
@@ -599,6 +600,10 @@ class Monster(Thing):
                 (self.properties.get('equipment') or {}).get('weapon', '')
                 if isinstance(self.properties.get('equipment'), dict) else ''),
             'is_head': is_head,
+            # Gib state: a gibbed body renders as its splatter sprite (already
+            # folded into sprite_path above) instead of the head/weapon overlay.
+            'gibbed': bool(self.properties.get('gibbed')),
+            'gib_sprite': self.properties.get('gib_sprite', ''),
         }
 
     def get_sprite_path(self) -> str:
@@ -631,6 +636,13 @@ class Monster(Thing):
         default_idle, default_dead, default_shoot = Monster._get_default_paths(mtype, variant)
 
         if is_dead:
+            # A gibbed actor was blown apart / disintegrated: it is replaced by
+            # its chosen splatter sprite (blood stain, or a magical
+            # disintegration splatter), not a corpse.
+            if self.properties.get('gibbed'):
+                stain = self.properties.get('gib_sprite')
+                if stain:
+                    return stain
             # A slain actor keeps its identity: show its head with heads/dead.png
             # composited over it (never a custom death sprite — those are gone).
             # A non-head actor falls back to its monster-type's default dead.png.

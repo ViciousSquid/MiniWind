@@ -35,6 +35,36 @@ from . import bestiary
 from .character import Character
 from ..diceroll import DiceRoller
 
+try:  # engine.gore is a tiny, Qt-free rule module; guard for non-engine contexts
+    from engine import gore as _gore
+except Exception:  # pragma: no cover
+    _gore = None
+
+from . import gib as _gib
+
+
+def _mark_gibbed(props, damage, new_health, magical: bool = False) -> bool:
+    """Flag *props* as gibbed on an overkill death, delegating to engine.gore.
+
+    The single game-side entry point for the gib rule: an oversized killing blow
+    (>= 120% of the victim's max health) blows the body apart, so instead of a
+    corpse it becomes a splatter (recorded as ``gib_sprite``) that can never be
+    resurrected. A *magical* killing blow **disintegrates** the target, leaving a
+    special splatter instead of a blood stain; the exact sprite is chosen by
+    overkill severity (see :mod:`game.rpg.gib`). ``gib_magical`` records the kind.
+    Import-guarded so the RPG core still runs where engine.gore is unavailable —
+    then it marks nothing and returns False."""
+    if _gore is None:
+        return False
+    if not _gore.mark_gibbed(props, damage, new_health):
+        return False
+    if isinstance(props, dict):
+        props["gib_magical"] = bool(magical)
+        sprite = _gib.stain_for(damage, _gore.max_health(props), magical=magical)
+        if sprite:
+            props["gib_sprite"] = sprite
+    return True
+
 
 #: Starting gear by class specialisation, granted at character creation.
 STARTER_KITS = {
@@ -285,6 +315,9 @@ class GameState:
             res["killed"] = True
             target_props["health"] = 0
             target_props["dead"] = True
+            # A physical overkill (melee / arrow) blows the body apart into a
+            # blood stain (hp here is the pre-clamp negative health).
+            _mark_gibbed(target_props, res["damage"], hp, magical=False)
             self.on_kill(target_props)
         return res
 
@@ -342,6 +375,9 @@ class GameState:
                     target_props["health"] = 0
                     target_props["dead"] = True
                     result["killed"] = True
+                    # A magical overkill disintegrates the target (special
+                    # splatter) rather than leaving a blood stain.
+                    _mark_gibbed(target_props, result["damage"], hp, magical=True)
                     self.on_kill(target_props)
         return result
 

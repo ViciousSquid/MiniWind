@@ -1,7 +1,7 @@
 import math
 import glm
 
-from .constants import is_water_brush
+from .constants import is_water_brush, brush_aabb_bounds
 
 class SpatialGrid:
     """
@@ -213,16 +213,26 @@ class SpatialGrid:
             return True
         ray_dir = ray_dir / ray_len
 
+        # PERF: hoist the ray endpoints/direction to scalars once and inline the
+        # slab test below (bit-identical to intersect_ray_aabb_fn). This avoids
+        # two throwaway glm.vec3 constructions + a Python call per brush along
+        # the ray — the dominant cost of monster line-of-sight at 30 Hz.
+        ox, oy, oz = start.x, start.y, start.z
+        rdx, rdy, rdz = ray_dir.x, ray_dir.y, ray_dir.z
+        limit = ray_len - 0.1
+        cell_size = self.cell_size
+
         # Gather cells along the ray path + neighbours. Test each unique brush
         # immediately so no temporary candidate list or second traversal is needed.
-        steps = max(1, int(ray_len / self.cell_size) + 2)
+        steps = max(1, int(ray_len / cell_size) + 2)
         cells = self.cells
         seen = set()
+        seen_add = seen.add
         for i in range(steps + 1):
             t = min(i / float(steps), 1.0) * ray_len
             pt = start + ray_dir * t
-            cx = int(math.floor(pt.x / self.cell_size))
-            cz = int(math.floor(pt.z / self.cell_size))
+            cx = int(math.floor(pt.x / cell_size))
+            cz = int(math.floor(pt.z / cell_size))
             # FIX#11: Check the cell AND its 8 neighbours to catch brushes
             # that straddle cell boundaries on diagonal rays.
             for dx in (-1, 0, 1):
@@ -231,12 +241,59 @@ class SpatialGrid:
                         bid = id(brush)
                         if bid in seen:
                             continue
-                        seen.add(bid)
-                        pos = glm.vec3(brush['pos'])
-                        size = glm.vec3(brush['size'])
-                        b_min = pos - size * 0.5
-                        b_max = pos + size * 0.5
-                        hit, dist = intersect_ray_aabb_fn(start, ray_dir, b_min, b_max)
-                        if hit and dist < ray_len - 0.1:
+                        seen_add(bid)
+                        b0, b1, b2, b3, b4, b5 = brush_aabb_bounds(brush)
+                        # --- ray/AABB slab test (matches intersect_ray_aabb) ---
+                        t_min = 0.0
+                        t_max = 10000.0
+                        # X
+                        if -1e-6 < rdx < 1e-6:
+                            if ox < b0 or ox > b3:
+                                continue
+                        else:
+                            inv = 1.0 / rdx
+                            ta = (b0 - ox) * inv
+                            tb = (b3 - ox) * inv
+                            if ta > tb:
+                                ta, tb = tb, ta
+                            if ta > t_min:
+                                t_min = ta
+                            if tb < t_max:
+                                t_max = tb
+                            if t_min > t_max:
+                                continue
+                        # Y
+                        if -1e-6 < rdy < 1e-6:
+                            if oy < b1 or oy > b4:
+                                continue
+                        else:
+                            inv = 1.0 / rdy
+                            ta = (b1 - oy) * inv
+                            tb = (b4 - oy) * inv
+                            if ta > tb:
+                                ta, tb = tb, ta
+                            if ta > t_min:
+                                t_min = ta
+                            if tb < t_max:
+                                t_max = tb
+                            if t_min > t_max:
+                                continue
+                        # Z
+                        if -1e-6 < rdz < 1e-6:
+                            if oz < b2 or oz > b5:
+                                continue
+                        else:
+                            inv = 1.0 / rdz
+                            ta = (b2 - oz) * inv
+                            tb = (b5 - oz) * inv
+                            if ta > tb:
+                                ta, tb = tb, ta
+                            if ta > t_min:
+                                t_min = ta
+                            if tb < t_max:
+                                t_max = tb
+                            if t_min > t_max:
+                                continue
+                        if t_min < limit:
                             return False
         return True

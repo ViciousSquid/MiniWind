@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import math
 import random
+from itertools import chain as _chain
 from typing import Dict, List, Optional
 
 from .rpg import factions
@@ -43,9 +44,11 @@ ARRIVE_RADIUS = 48.0
 #: How close the player must be to talk. Comfortably larger than a billboard so
 #: walking up to an NPC (whose speech bubble is showing) and pressing E works.
 TALK_RADIUS = 140.0
-#: How near a talkable NPC must be for its speech bubble to appear — a locator
-#: cue at a wider range than the interaction range above.
-BUBBLE_RADIUS = 280.0
+#: How near a talkable NPC must be for its speech bubble to appear. Kept a short
+#: step beyond the interaction range so a bubble means "you are close enough to
+#: talk", rather than floating over every NPC across the settlement — the cue
+#: should only show when the player is genuinely near a character with dialogue.
+BUBBLE_RADIUS = 190.0
 DEFEND_SIGHT = 700.0
 #: A follow_player companion tries to stay within this distance of the
 #: player when it isn't fighting (see _follow_player_dest / _decide).
@@ -165,13 +168,22 @@ class MiniwindSession:
         self.game = GameState(self.store, rng=self.rng)
         self.needs_char_creation = str(cfg.get("start_scenario", "prompt")) == "prompt"
 
-        # Register any quests the map author defined on the GameSettings entity
-        # (these override built-ins of the same id) so levels can add quests
-        # without touching code.
+        # Register quests. Precedence (later wins): built-ins < legacy map quests
+        # < external .quest files. Quests now live as human-readable .quest files
+        # in the project's quests/ folder (game.rpg.quest_files); any list still
+        # authored on an old GameSettings entity is honoured first for backward
+        # compatibility, then the folder overrides it.
         from .rpg import quests as _quests
+        from .rpg import quest_files
         map_quests = cfg.get("quests")
         if isinstance(map_quests, list):
             _quests.load_definitions(map_quests)
+        try:
+            file_defs = quest_files.load_quest_defs()
+            if file_defs:
+                _quests.load_definitions(file_defs)
+        except Exception:
+            pass
 
         self._decision_accum = 0.0
         self._last_hour_int = -1
@@ -187,6 +199,16 @@ class MiniwindSession:
         #: Names of NPCs already reaped, so a death is turned into a settlement
         #: consequence exactly once (even across the low-frequency tick).
         self._deaths_seen = set()
+
+        #: PERF: per-tick the runtime used to scan the whole ``logic.things``
+        #: list ~8 times (pickups, spellbooks, triggers, locations, arrest,
+        #: reap, movement, attack-anim), each time re-normalising every thing's
+        #: type string. Instead we build one normalised type -> [things] index
+        #: and reuse it, rebuilding only when the things list actually changes
+        #: (membership add/remove changes its length; a whole-list swap changes
+        #: its identity — both are caught by the cheap ``(id, len)`` token).
+        self._type_index: Dict[str, list] = {}
+        self._type_index_token = None
 
         # transient UI state (driven by plugin/input, read by overlays)
         self.interact_prompt = ""       # e.g. "Press E to talk to Thalen"
@@ -293,6 +315,7 @@ class MiniwindSession:
         logic._faction_hostile = factions.is_hostile
         self._bind_dice_service()
         self.spawn_creature_points()   # materialise CreatureSpawn points once
+        self._wire_quest_givers()      # make quest givers offer their quests
         self._sync_engine_health(full=True)
 
     def uninstall(self) -> None:
@@ -462,11 +485,12 @@ class MiniwindSession:
 
         # Detect NPC/creature attacks by watching the engine's is_shooting flag.
         # When it flips from False -> True we start a 0.2 s stab animation.
-        for t in getattr(self.logic, "things", None) or []:
+        # PERF: iterate only the actor buckets (npc/creature/monster) from the
+        # cached type index instead of scanning + normalising the whole scene.
+        buckets = self._type_buckets()
+        for t in _chain(buckets.get("npc", ()), buckets.get("creature", ()),
+                        buckets.get("monster", ())):
             tp = t.properties
-            ttype = str(tp.get("type", "")).replace("_", "").lower()
-            if ttype not in ("npc", "creature", "monster"):
-                continue
             was = tp.get("_was_shooting", False)
             now = tp.get("is_shooting", False)
             if now and not was:
@@ -579,12 +603,38 @@ class MiniwindSession:
                 rebuild()
             except Exception:
                 pass
+        # Force the type index to rebuild on next use — the scene membership
+        # just changed (spawn/despawn). The (id,len) token catches this too,
+        # but invalidating here keeps it correct even for a same-length swap.
+        self._type_index_token = None
 
     # ---------------------------------------------------------- world placeables
+    def _rebuild_type_index(self, things) -> None:
+        """(Re)build the normalised-type -> [things] index in scene order."""
+        idx: Dict[str, list] = {}
+        for x in things:
+            tt = str(x.properties.get("type", "")).replace("_", "").lower()
+            bucket = idx.get(tt)
+            if bucket is None:
+                idx[tt] = [x]
+            else:
+                bucket.append(x)
+        self._type_index = idx
+        self._type_index_token = (id(things), len(things))
+
+    def _type_buckets(self) -> Dict[str, list]:
+        """Return the current normalised-type index, rebuilding it only when the
+        things list has changed (see the token comment in __init__)."""
+        things = getattr(self.logic, "things", None) or ()
+        if (id(things), len(things)) != self._type_index_token:
+            self._rebuild_type_index(things)
+        return self._type_index
+
     def _things_of_type(self, type_name):
+        # Returns the cached bucket (scene order preserved). Callers only read
+        # it; the list must not be mutated in place.
         tt = type_name.replace("_", "").lower()
-        return [x for x in (getattr(self.logic, "things", None) or [])
-                if str(x.properties.get("type", "")).replace("_", "").lower() == tt]
+        return self._type_buckets().get(tt, ())
 
     def spawn_creature_points(self) -> int:
         """Materialise actors from spawn points (once, at play start).
@@ -772,13 +822,80 @@ class MiniwindSession:
         return "".join(ch.lower() if ch.isalnum() else "_"
                        for ch in str(text)).strip("_")
 
+    @staticmethod
+    def _thing_id(thing) -> str:
+        """The entity's stable UUID (``properties['id']``), or ``''``."""
+        p = getattr(thing, "properties", None)
+        if isinstance(p, dict) and p.get("id"):
+            return str(p.get("id"))
+        return str(getattr(thing, "id", "") or "")
+
+    def _wire_quest_givers(self) -> None:
+        """Make every quest's giver actually offer that quest in play.
+
+        This is the *easy way to assign a quest to a giver*: a quest names its
+        ``giver`` — an NPC's stable **entity id (UUID)**, or its name, display
+        name or role — and, at play start, the matching NPC in the scene
+        automatically gains a dialogue branch that offers and starts the quest.
+        Matching by id is unambiguous (two NPCs can share the name "Guard"), so
+        it is preferred where the author picked a specific entity; the readable
+        name/role matching still works for hand-written quests. No manual
+        dialogue editing is needed — which is what previously left quest givers
+        un-talkable and quests impossible to accept. Idempotent (a giver that
+        already offers a quest is untouched), so an author who *did* wire
+        dialogue by hand keeps their version.
+        """
+        from .rpg import quests as _quests
+        # Two lookups: by slugged name/display/role, and by exact entity id.
+        givers_by_key: Dict[str, list] = {}
+        givers_by_id: Dict[str, list] = {}
+        for quest in _quests.QUESTS.values():
+            g = str(getattr(quest, "giver", "") or "").strip()
+            if not g:
+                continue
+            # The giver string may be an id or a name/role; register it under
+            # both so whichever the scene matches resolves the quest.
+            givers_by_key.setdefault(self._slug(g), []).append(quest)
+            givers_by_id.setdefault(g.lower(), []).append(quest)
+        if not givers_by_key and not givers_by_id:
+            return
+        for npc in self.npcs():
+            p = npc.properties
+            keys = {self._slug(p.get("name", "")),
+                    self._slug(p.get("display_name", "")),
+                    self._slug(p.get("npc_role", ""))}
+            keys.discard("")
+            matches = []
+            for key in keys:
+                matches.extend(givers_by_key.get(key, []))
+            npc_id = self._thing_id(npc).lower()
+            if npc_id:
+                matches.extend(givers_by_id.get(npc_id, []))
+            seen = set()
+            for quest in matches:
+                if quest.id in seen:
+                    continue
+                seen.add(quest.id)
+                dlg = p.get("dialogue")
+                dlg, _changed = _quests.offer_dialogue_branch(
+                    dlg if isinstance(dlg, dict) else None,
+                    quest.id, quest.name, quest.desc)
+                p["dialogue"] = dlg
+
     def record_talk(self, npc) -> None:
-        """Note that the player has spoken with *npc* (for quest 'talk' aims)."""
+        """Note that the player has spoken with *npc* (for quest 'talk' aims).
+
+        Records the NPC's name, display name and role, and also its entity id,
+        so a 'talk' objective whose target was assigned by id (UUID) completes
+        the same as one assigned by name."""
         p = getattr(npc, "properties", {}) or {}
         for field in ("name", "display_name", "npc_role"):
             v = str(p.get(field, "") or "").strip()
             if v:
                 self.store.set(f"talked.{self._slug(v)}", "1")
+        npc_id = self._thing_id(npc)
+        if npc_id:
+            self.store.set(f"talked.{self._slug(npc_id)}", "1")
 
     def record_kill(self, target) -> None:
         """Bump per-identity kill counters (for quest 'kill' objectives)."""
@@ -868,7 +985,8 @@ class MiniwindSession:
                 p = npc.properties
                 if target in (self._slug(p.get("name", "")),
                               self._slug(p.get("display_name", "")),
-                              self._slug(p.get("npc_role", ""))):
+                              self._slug(p.get("npc_role", "")),
+                              self._slug(self._thing_id(npc))):
                     pos = npc.pos
                     break
         elif kind == _quests.COND_KILL:
@@ -1011,10 +1129,10 @@ class MiniwindSession:
 
     # ============================================================= NPC AI
     def npcs(self) -> List:
-        things = getattr(self.logic, "things", None) or []
-        return [t for t in things
-                if str(t.properties.get("type", "")).replace("_", "").lower() == "npc"
-                and not t.properties.get("dead", False)]
+        # PERF: iterate the cached "npc" bucket instead of scanning + string-
+        # normalising the whole scene; only the live (not-dead) ones are returned.
+        return [t for t in self._things_of_type("npc")
+                if not t.properties.get("dead", False)]
 
     @staticmethod
     def _is_combatant(npc) -> bool:
@@ -1039,11 +1157,11 @@ class MiniwindSession:
         the persistent KV store, so it survives save/load and dialogue can read
         it — the town remembers who is gone.
         """
-        for t in getattr(self.logic, "things", None) or []:
+        # PERF: only NPCs matter here — walk the cached "npc" bucket instead of
+        # re-scanning + normalising every thing in the scene each tick.
+        for t in self._things_of_type("npc"):
             tp = t.properties
             if not tp.get("dead"):
-                continue
-            if str(tp.get("type", "")).replace("_", "").lower() != "npc":
                 continue
             name = str(tp.get("name", ""))
             if name in self._deaths_seen:
@@ -1615,16 +1733,17 @@ class MiniwindSession:
         """Snapshot live and dead combat actors once per decision pass."""
         actors = []
         dead = []
-        for t in getattr(self.logic, "things", None) or []:
+        # PERF: walk only the actor buckets from the cached type index.
+        buckets = self._type_buckets()
+        for t in _chain(buckets.get("npc", ()), buckets.get("creature", ()),
+                        buckets.get("monster", ())):
             tp = t.properties
             if tp.get("hidden"):
                 continue
-            ttype = str(tp.get("type", "")).replace("_", "").lower()
-            if ttype in ("npc", "creature", "monster"):
-                if tp.get("dead"):
-                    dead.append(t)
-                else:
-                    actors.append(t)
+            if tp.get("dead"):
+                dead.append(t)
+            else:
+                actors.append(t)
         self._actors = actors
         self._dead_actors = dead
 
@@ -2017,7 +2136,10 @@ class MiniwindSession:
             return 0
 
     def _nearest_dead_actor(self, reach: float):
-        """The nearest slain (revivable) NPC/creature within *reach*."""
+        """The nearest slain (revivable) NPC/creature within *reach*.
+
+        A gibbed body is destroyed — blown apart or disintegrated — so it is
+        never a resurrection target."""
         ppos = self._player_pos()
         if ppos is None:
             return None
@@ -2026,6 +2148,8 @@ class MiniwindSession:
             tp = t.properties
             if not tp.get("dead"):
                 continue
+            if tp.get("gibbed"):
+                continue          # gibbed corpses cannot be resurrected
             ttype = str(tp.get("type", "")).replace("_", "").lower()
             if ttype not in ("npc", "creature", "monster"):
                 continue
@@ -2061,19 +2185,26 @@ class MiniwindSession:
         c.magicka = 0.0
         self.store.set("resurrect.last_day", today)
         c.use_skill(spell.school, 1.0 + spell.base_cost / 40.0)
-        self._revive_actor(target)
+        if not self._revive_actor(target):
+            # Defensive: _nearest_dead_actor already skips gibbed bodies.
+            self.notify("The body is too destroyed to resurrect")
+            return False
         name = target.properties.get("name") or target.properties.get("npc_role") \
             or target.properties.get("monster_type") or "The fallen"
         self.notify(f"{name} rises again!")
         self.add_floater("RAISED", kind="heal")
         return True
 
-    def _revive_actor(self, thing) -> None:
+    def _revive_actor(self, thing) -> bool:
         """Bring a slain actor back to life: clear death flags, restore health
-        and its living (head) sprite, and rebuild the engine caches."""
+        and its living (head) sprite, and rebuild the engine caches.
+
+        A gibbed body (blown apart / disintegrated) cannot be revived — the flag
+        is never cleared and the actor stays dead. Returns whether it revived."""
         p = thing.properties
+        if p.get("gibbed"):
+            return False
         p["dead"] = False
-        p.pop("gibbed", None)
         p["hidden"] = False
         p["is_shooting"] = False
         try:
@@ -2088,6 +2219,7 @@ class MiniwindSession:
         except Exception:
             pass
         self._rebuild_entity_caches()
+        return True
 
     def _spawn_player_spell_projectile(self, spell) -> None:
         """Launch a visible spell bolt from the player toward the aim point (a

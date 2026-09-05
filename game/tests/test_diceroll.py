@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 
 from game.diceroll import DiceNotationError, DiceRoller, dicerollAPI, parse_dice_notation
@@ -28,7 +29,9 @@ def test_seeded_roll_is_bounded_and_tracks_history():
 
 def test_probability_distribution_is_exact():
     probabilities = DiceRoller().get_dice_probabilities("2d6")
-    assert sum(probabilities.values()) == 1.0
+    # Summing eleven 1/36 floats accumulates a sub-ULP rounding error, so the
+    # total is 1.0 to floating-point tolerance rather than bit-exactly 1.0.
+    assert math.isclose(sum(probabilities.values()), 1.0, rel_tol=1e-9)
     assert probabilities[2] == 1 / 36
     assert probabilities[7] == 6 / 36
     assert probabilities[12] == 1 / 36

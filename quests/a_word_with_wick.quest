@@ -1,0 +1,35 @@
+{
+  "id": "a_word_with_wick",
+  "name": "A Word with Wick",
+  "giver": "Mara",
+  "faction": "town",
+  "desc": "Mara frets that old Wick hasn't been seen today. Would you look in on him?",
+  "xp": 15,
+  "rewards": {
+    "gold": 25
+  },
+  "stages": [
+    {
+      "index": 0,
+      "journal": "Mara frets that old Wick hasn't been seen today. Would you look in on him?",
+      "objective": "Speak with Wick",
+      "finishes": false,
+      "condition": {
+        "kind": "talk",
+        "target": "Wick",
+        "count": 1
+      }
+    },
+    {
+      "index": 10,
+      "journal": "You have completed 'A Word with Wick'. Return for your reward.",
+      "objective": "Report to Mara",
+      "finishes": true,
+      "condition": {
+        "kind": "talk",
+        "target": "Mara",
+        "count": 1
+      }
+    }
+  ]
+}

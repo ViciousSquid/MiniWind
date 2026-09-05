@@ -30,6 +30,9 @@ from engine.brush_geometry import (
     rotate_brush as _geo_rotate_brush, brush_has_geometry as _geo_has_geometry,
     is_axis_aligned_box as _geo_is_box,
 )
+# Runtime-only AABB cache keys written by physics/AI hot paths (see
+# engine.constants.brush_aabb_bounds). Stripped on save/undo like the rest.
+from engine.constants import AABB_RUNTIME_KEYS
 
 # Keys written to brush dicts by the renderer/geometry layer at runtime.
 # They hold GLM/NumPy objects (not JSON-serialisable) and must be stripped
@@ -40,7 +43,7 @@ _RENDERER_PRIVATE_KEYS = frozenset({
     '_mat_cache_key', '_mat_cache',      # model matrix cache (renderer_F)
     '_nmat_cache_key', '_nmat_cache',    # normal matrix cache (renderer_F)
     '_render_mesh', '_render_sig',       # angled-brush GPU mesh cache (renderer_F)
-}) | GEO_RUNTIME_KEYS
+}) | GEO_RUNTIME_KEYS | frozenset(AABB_RUNTIME_KEYS)
 
 # Import lightmap bake state
 try:

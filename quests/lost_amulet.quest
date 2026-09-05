@@ -1,0 +1,41 @@
+{
+  "id": "lost_amulet",
+  "name": "The Lost Amulet",
+  "giver": "Elowen",
+  "faction": "town",
+  "desc": "Elowen lost her grandmother's amulet somewhere in the woods.",
+  "xp": 15,
+  "rewards": {
+    "gold": 40,
+    "items": [
+      [
+        "potion_heal",
+        2
+      ]
+    ],
+    "rep": [
+      "town",
+      5
+    ]
+  },
+  "stages": [
+    {
+      "index": 0,
+      "journal": "Elowen asked me to find her grandmother's amulet, lost in the woods.",
+      "objective": "Find the silver amulet",
+      "finishes": false
+    },
+    {
+      "index": 10,
+      "journal": "I found the amulet. I should bring it back to Elowen.",
+      "objective": "Return the amulet to Elowen",
+      "finishes": false
+    },
+    {
+      "index": 20,
+      "journal": "Elowen was overjoyed to have the amulet back.",
+      "objective": "Elowen was overjoyed to have the amulet back.",
+      "finishes": true
+    }
+  ]
+}

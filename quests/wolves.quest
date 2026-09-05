@@ -1,0 +1,45 @@
+{
+  "id": "wolves",
+  "name": "A Culling of Wolves",
+  "giver": "Bryn",
+  "faction": "town",
+  "desc": "The shepherd Bryn is losing sheep to wolves.",
+  "xp": 20,
+  "rewards": {
+    "gold": 60,
+    "items": [
+      [
+        "hunting_bow",
+        1
+      ],
+      [
+        "iron_arrow",
+        20
+      ]
+    ],
+    "rep": [
+      "town",
+      8
+    ]
+  },
+  "stages": [
+    {
+      "index": 0,
+      "journal": "Bryn asked me to thin the wolf pack harassing his flock. Kill five wolves.",
+      "objective": "Kill 5 wolves (0/5)",
+      "finishes": false
+    },
+    {
+      "index": 10,
+      "journal": "The wolves are dealt with. Time to collect my reward from Bryn.",
+      "objective": "Return to Bryn",
+      "finishes": false
+    },
+    {
+      "index": 20,
+      "journal": "Bryn paid me for culling the wolves.",
+      "objective": "Bryn paid me for culling the wolves.",
+      "finishes": true
+    }
+  ]
+}
