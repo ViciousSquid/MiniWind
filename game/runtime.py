@@ -985,17 +985,81 @@ class MiniwindSession:
     def quest_arrow_target(self):
         """World position the quest compass arrow should point at, or None.
 
-        Resolves the *first active quest*'s current-stage objective to a world
-        position (see :meth:`_objective_world_pos`). Returns ``(pos,
-        quest_name)`` or ``None``."""
+        Resolves the *first active quest* to a world position (see
+        :meth:`_arrow_destination`). Returns ``(pos, quest_name)`` or ``None``.
+        Any active quest yields a destination — the objective when it resolves,
+        otherwise the quest giver — so the arrow appears as soon as a quest is
+        received and keeps pointing somewhere useful through every stage."""
         active = self.game.quests.active_quests()
         if not active:
             return None
         q = active[0]
-        pos = self._objective_world_pos(q)
+        pos = self._arrow_destination(q)
         if pos is None:
             return None
         return (list(pos), q.name)
+
+    def _arrow_destination(self, q):
+        """Best-effort world position for *q*'s current stage, for the arrow.
+
+        Priority: the stage's machine-readable objective (kill/fetch/visit/talk,
+        via :meth:`_objective_world_pos`); then the stage's navigational
+        ``waypoint`` hint; then the quest giver. Purely navigational — it never
+        advances the quest, so a stage with no condition (e.g. "clear the mill",
+        "return to the giver") still gets an arrow without changing progression.
+        """
+        pos = self._objective_world_pos(q)
+        if pos is not None:
+            return pos
+        st = q.stage(self.game.quests.stage_of(q.id))
+        wp = getattr(st, "waypoint", "") if st is not None else ""
+        if wp:
+            pos = self._resolve_world_target(wp)
+            if pos is not None:
+                return pos
+        if getattr(q, "giver", ""):
+            pos = self._resolve_world_target(q.giver)
+            if pos is not None:
+                return pos
+        return None
+
+    def _resolve_world_target(self, name):
+        """World position of the nearest live thing matching *name*, or None.
+
+        Matches *name* (slugged) against a marker place/name, an NPC
+        name/display_name/role, a monster type, an item-pickup id or a thing id
+        — so one call resolves quest givers, foes, visit markers and fetch
+        items. Prefers the closest match to the player."""
+        target = self._slug(name)
+        if not target:
+            return None
+        ppos = self._player_pos()
+        best, best_pos = None, None
+        for t in getattr(self.logic, "things", None) or []:
+            p = getattr(t, "properties", {}) or {}
+            if p.get("dead"):
+                continue
+            names = {
+                self._slug(p.get("name", "")),
+                self._slug(p.get("display_name", "")),
+                self._slug(p.get("npc_role", "")),
+                self._slug(p.get("monster_type", "")),
+                self._slug(p.get("item_id", "")),
+                self._slug(p.get("place_name", "")),
+                self._slug(self._thing_id(t)),
+            }
+            names.discard("")
+            if target not in names:
+                continue
+            pos = getattr(t, "pos", None)
+            if pos is None:
+                continue
+            if ppos is None:
+                return list(pos)
+            d = self._dist2d(ppos, pos)
+            if best is None or d < best:
+                best, best_pos = d, list(pos)
+        return best_pos
 
     def _objective_world_pos(self, q):
         """World position of *q*'s current-stage objective, or None.

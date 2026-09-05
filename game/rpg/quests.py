@@ -32,7 +32,7 @@ COND_KINDS = [COND_NONE, COND_FETCH, COND_TALK, COND_KILL, COND_VISIT, COND_ROLL
 
 class Stage:
     def __init__(self, index: int, journal: str, finishes: bool = False,
-                 objective: str = "", condition=None):
+                 objective: str = "", condition=None, waypoint: str = ""):
         self.index = index
         self.journal = journal
         self.finishes = finishes
@@ -41,6 +41,13 @@ class Stage:
         # its kind is not ``none``, the runtime auto-advances this stage once the
         # condition is met (see game.runtime._tick_quests).
         self.condition = dict(condition) if isinstance(condition, dict) else None
+        # Optional purely-navigational hint: the name of a world thing (marker
+        # place, NPC name/role, monster type or item id) the quest arrow should
+        # point at while on this stage. Unlike ``condition`` this NEVER advances
+        # the quest — it only gives the on-screen arrow a destination when the
+        # stage has no machine-readable condition (e.g. "clear the mill"). When
+        # empty, the arrow falls back to the quest giver.
+        self.waypoint = str(waypoint or "").strip()
 
     def condition_kind(self) -> str:
         c = self.condition or {}
@@ -122,7 +129,8 @@ def quest_from_dict(data: Dict) -> Optional[Quest]:
     for i, s in enumerate(data.get("stages", []) or []):
         stages.append(Stage(int(s.get("index", i * 10)), s.get("journal", ""),
                             bool(s.get("finishes", False)), s.get("objective", ""),
-                            condition=s.get("condition")))
+                            condition=s.get("condition"),
+                            waypoint=s.get("waypoint", "")))
     if not stages:
         stages = [Stage(0, data.get("desc", "A new quest."))]
     rewards = dict(data.get("rewards", {}) or {})
