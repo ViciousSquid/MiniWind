@@ -3878,26 +3878,26 @@ class MainWindow(QMainWindow):
             # and press Apply to persist the connections.
             self.open_logic_graph()
 
-    def open_quest_wizard(self):
-        """Open the MiniWind Quest Wizard (guided quest authoring).
+    def open_quest_editor(self):
+        """Open the MiniWind Quest Editor (card-list view).
 
         Quests are stored on the map's GameSettings entity (see
         game/quest_editor.py), so this finds that entity and hands it to
-        the same dialog the GameSettings 'Quests' property tab's 'Wizard'
-        button opens, with start_wizard=True to jump straight to the
-        guided flow instead of the card-list view.
+        the same dialog the GameSettings 'Quests' property tab opens. It
+        opens the editor itself — not the guided wizard, which the editor
+        launches from its own 'New Quest (Wizard)' button.
         """
         from game.entities import GameSettings
         settings_things = [t for t in self.state.things if isinstance(t, GameSettings)]
         if not settings_things:
             QMessageBox.information(
-                self, "Quest Wizard",
+                self, "Quest Editor",
                 "This map has no Game Settings entity yet — place one from "
                 "the MiniWind palette first (quests are authored and stored "
                 "on it).")
             return
         from game import quest_editor
-        quest_editor.open_quest_editor(settings_things[0], parent=self, start_wizard=True)
+        quest_editor.open_quest_editor(settings_things[0], parent=self)
 
     def validate_io_connections(self):
         """Check all entities for connections that point to missing targets (by name or ID)."""
