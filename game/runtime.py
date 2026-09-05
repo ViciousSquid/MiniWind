@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import math
 import random
+from itertools import chain as _chain
 from typing import Dict, List, Optional
 
 from .rpg import factions
@@ -198,6 +199,16 @@ class MiniwindSession:
         #: Names of NPCs already reaped, so a death is turned into a settlement
         #: consequence exactly once (even across the low-frequency tick).
         self._deaths_seen = set()
+
+        #: PERF: per-tick the runtime used to scan the whole ``logic.things``
+        #: list ~8 times (pickups, spellbooks, triggers, locations, arrest,
+        #: reap, movement, attack-anim), each time re-normalising every thing's
+        #: type string. Instead we build one normalised type -> [things] index
+        #: and reuse it, rebuilding only when the things list actually changes
+        #: (membership add/remove changes its length; a whole-list swap changes
+        #: its identity — both are caught by the cheap ``(id, len)`` token).
+        self._type_index: Dict[str, list] = {}
+        self._type_index_token = None
 
         # transient UI state (driven by plugin/input, read by overlays)
         self.interact_prompt = ""       # e.g. "Press E to talk to Thalen"
@@ -474,11 +485,12 @@ class MiniwindSession:
 
         # Detect NPC/creature attacks by watching the engine's is_shooting flag.
         # When it flips from False -> True we start a 0.2 s stab animation.
-        for t in getattr(self.logic, "things", None) or []:
+        # PERF: iterate only the actor buckets (npc/creature/monster) from the
+        # cached type index instead of scanning + normalising the whole scene.
+        buckets = self._type_buckets()
+        for t in _chain(buckets.get("npc", ()), buckets.get("creature", ()),
+                        buckets.get("monster", ())):
             tp = t.properties
-            ttype = str(tp.get("type", "")).replace("_", "").lower()
-            if ttype not in ("npc", "creature", "monster"):
-                continue
             was = tp.get("_was_shooting", False)
             now = tp.get("is_shooting", False)
             if now and not was:
@@ -591,12 +603,38 @@ class MiniwindSession:
                 rebuild()
             except Exception:
                 pass
+        # Force the type index to rebuild on next use — the scene membership
+        # just changed (spawn/despawn). The (id,len) token catches this too,
+        # but invalidating here keeps it correct even for a same-length swap.
+        self._type_index_token = None
 
     # ---------------------------------------------------------- world placeables
+    def _rebuild_type_index(self, things) -> None:
+        """(Re)build the normalised-type -> [things] index in scene order."""
+        idx: Dict[str, list] = {}
+        for x in things:
+            tt = str(x.properties.get("type", "")).replace("_", "").lower()
+            bucket = idx.get(tt)
+            if bucket is None:
+                idx[tt] = [x]
+            else:
+                bucket.append(x)
+        self._type_index = idx
+        self._type_index_token = (id(things), len(things))
+
+    def _type_buckets(self) -> Dict[str, list]:
+        """Return the current normalised-type index, rebuilding it only when the
+        things list has changed (see the token comment in __init__)."""
+        things = getattr(self.logic, "things", None) or ()
+        if (id(things), len(things)) != self._type_index_token:
+            self._rebuild_type_index(things)
+        return self._type_index
+
     def _things_of_type(self, type_name):
+        # Returns the cached bucket (scene order preserved). Callers only read
+        # it; the list must not be mutated in place.
         tt = type_name.replace("_", "").lower()
-        return [x for x in (getattr(self.logic, "things", None) or [])
-                if str(x.properties.get("type", "")).replace("_", "").lower() == tt]
+        return self._type_buckets().get(tt, ())
 
     def spawn_creature_points(self) -> int:
         """Materialise actors from spawn points (once, at play start).
@@ -1091,10 +1129,10 @@ class MiniwindSession:
 
     # ============================================================= NPC AI
     def npcs(self) -> List:
-        things = getattr(self.logic, "things", None) or []
-        return [t for t in things
-                if str(t.properties.get("type", "")).replace("_", "").lower() == "npc"
-                and not t.properties.get("dead", False)]
+        # PERF: iterate the cached "npc" bucket instead of scanning + string-
+        # normalising the whole scene; only the live (not-dead) ones are returned.
+        return [t for t in self._things_of_type("npc")
+                if not t.properties.get("dead", False)]
 
     @staticmethod
     def _is_combatant(npc) -> bool:
@@ -1119,11 +1157,11 @@ class MiniwindSession:
         the persistent KV store, so it survives save/load and dialogue can read
         it — the town remembers who is gone.
         """
-        for t in getattr(self.logic, "things", None) or []:
+        # PERF: only NPCs matter here — walk the cached "npc" bucket instead of
+        # re-scanning + normalising every thing in the scene each tick.
+        for t in self._things_of_type("npc"):
             tp = t.properties
             if not tp.get("dead"):
-                continue
-            if str(tp.get("type", "")).replace("_", "").lower() != "npc":
                 continue
             name = str(tp.get("name", ""))
             if name in self._deaths_seen:
@@ -1695,16 +1733,17 @@ class MiniwindSession:
         """Snapshot live and dead combat actors once per decision pass."""
         actors = []
         dead = []
-        for t in getattr(self.logic, "things", None) or []:
+        # PERF: walk only the actor buckets from the cached type index.
+        buckets = self._type_buckets()
+        for t in _chain(buckets.get("npc", ()), buckets.get("creature", ()),
+                        buckets.get("monster", ())):
             tp = t.properties
             if tp.get("hidden"):
                 continue
-            ttype = str(tp.get("type", "")).replace("_", "").lower()
-            if ttype in ("npc", "creature", "monster"):
-                if tp.get("dead"):
-                    dead.append(t)
-                else:
-                    actors.append(t)
+            if tp.get("dead"):
+                dead.append(t)
+            else:
+                actors.append(t)
         self._actors = actors
         self._dead_actors = dead
 
