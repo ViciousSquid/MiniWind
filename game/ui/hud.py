@@ -23,6 +23,22 @@ from ..runtime import (DICE_ANIMATION_SHAKE, DICE_ANIMATION_ROLL, DICE_ANIMATION
 
 DICE_RESULT_HOLD_DURATION = 1.0
 
+#: Rough world-units-per-metre used only to render friendly quest distances
+#: (TALK_RADIUS ~140u reads as arm's reach; BOW_REACH ~2400u as a long bowshot).
+WORLD_UNITS_PER_METRE = 64.0
+
+
+def _fmt_distance(world_units):
+    """A short, friendly distance label for a quest objective."""
+    if world_units is None:
+        return ""
+    m = world_units / WORLD_UNITS_PER_METRE
+    if m < 3:
+        return "here"
+    if m < 1000:
+        return f"{int(round(m))} m"
+    return f"{m / 1000:.1f} km"
+
 
 def draw(painter, session, width, height):
     game = session.game
@@ -336,16 +352,31 @@ def _draw_status_flags(painter, session, c, width, height):
 
 
 def _draw_quest_tracker(painter, session, width):
-    active = session.game.quests.active_quests()
-    if not active:
+    try:
+        g = session.quest_guidance()
+    except Exception:
+        g = None
+    if not g:
         return
-    q = active[0]
-    obj = session.game.quests.current_objective(q.id)
     x = width - 300
     y = 48
-    T.text(painter, x, y, "◈ " + q.name, size=11, color=T.GOLD_BRIGHT, bold=True)
-    if obj:
-        T.text(painter, x + 6, y + 18, "• " + obj, size=9, color=T.PARCH, family="Segoe UI")
+    T.text(painter, x, y, "◈ " + g["name"], size=11, color=T.GOLD_BRIGHT, bold=True)
+    # The action line is the "what to do now": a short imperative plus any
+    # countable progress, so the player can see how to complete the stage.
+    action = g.get("action") or g.get("objective")
+    if action:
+        line = "• " + action
+        prog = g.get("progress")
+        if prog:
+            line += f"   [{prog}]"
+        T.text(painter, x + 6, y + 18, line, size=9, color=T.PARCH, family="Segoe UI")
+    dist = _fmt_distance(g.get("distance"))
+    if dist:
+        T.text(painter, x + 6, y + 34, f"➤ {dist} away  ·  press Q for details",
+               size=8, color=T.DIM, family="Segoe UI")
+    else:
+        T.text(painter, x + 6, y + 34, "press Q for details",
+               size=8, color=T.DIM, family="Segoe UI")
 
 
 def _draw_quest_arrow(painter, session, width, height):
@@ -394,6 +425,26 @@ def _draw_quest_arrow(painter, session, width, height):
     painter.setBrush(QColor(255, 214, 130))
     painter.drawPolygon(arrow)
     painter.restore()
+
+    # Caption the arrow with the distance to the objective so the ring reads as
+    # "the objective is this way, this far" rather than a bare pointer. Drawn
+    # just outside the arrow along the same bearing, clamped to stay on screen.
+    # Distance comes straight from the vector already computed here.
+    dist = _fmt_distance(math.hypot(dx, dz))
+    if dist and dist != "here":
+        lx = cx + math.sin(rel) * (orbit + 20)
+        ly = cy - math.cos(rel) * (orbit + 20)
+        lx = max(24, min(width - 60, lx))
+        ly = max(24, min(height - 24, ly))
+        painter.save()
+        painter.setPen(QColor(20, 16, 8))
+        painter.setFont(T.font(9, bold=True, family="Segoe UI"))
+        painter.drawText(QRect(int(lx - 39), int(ly - 8), 80, 16),
+                         T.ALIGN_CENTER, dist)   # soft shadow
+        painter.setPen(QColor(255, 226, 150))
+        painter.drawText(QRect(int(lx - 40), int(ly - 9), 80, 16),
+                         T.ALIGN_CENTER, dist)
+        painter.restore()
 
 
 def _draw_compass(painter, session, width, height):

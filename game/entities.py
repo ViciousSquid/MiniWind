@@ -93,7 +93,7 @@ def _apply_head_sprite(p: dict) -> None:
     """If a ``head`` id is set, point the actor's billboard frames at that head
     sprite (a single static image); otherwise leave the role art in place.
     Accepts either a regular head (headNN) or, for guard-named NPCs, one of
-    the special guard heads (guard01…guard04)."""
+    the special guard heads (guard01…guard06)."""
     from .rpg import heads
     hid = str(p.get("head", "") or "")
     if heads.is_any_head(hid):

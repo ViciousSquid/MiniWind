@@ -48,6 +48,7 @@ K_LEVELUP = "l"
 K_MAP = "m"
 K_DICE_ROLL = "d"
 K_DICE_TYPE = "y"
+K_QUEST = "q"          # show the current quest (objective + how to complete)
 
 
 # ---------------------------------------------------------------------------
@@ -497,12 +498,26 @@ class MiniwindGame:
                         or session.dialogue is not None)
         logic.gameplay_paused = world_paused
 
+        # The interact key (E) both opens a container/conversation and, inside
+        # a screen, closes it. The engine latches its use-key edge the instant E
+        # goes down, but this plugin's own key-edge detector (_just_pressed) can
+        # report the same 'e' one tick later, once the held-key snapshot catches
+        # up. That late edge would otherwise reach the freshly-opened screen and
+        # close it immediately (the container "flash"). Suppress the interact key
+        # inside screens/dialogue until it has been released at least once after
+        # opening.
+        if getattr(self, "_suppress_interact", False) and not ctx.key_down(K_INTERACT):
+            self._suppress_interact = False
+
         if world_paused:
             session.tick_ui(ctx.delta)   # ages toasts/floaters only, no world sim
+            menu_just = just
+            if getattr(self, "_suppress_interact", False):
+                menu_just = just - {K_INTERACT}
             if session.open_screen is not None:
-                self._handle_screen_input(session, just, ctx)
+                self._handle_screen_input(session, menu_just, ctx)
             elif session.dialogue is not None:
-                self._handle_dialogue_input(session, just, ctx)
+                self._handle_dialogue_input(session, menu_just, ctx)
             ctx.set_prompt("", priority=100)
             session.persist()
             return
@@ -563,6 +578,8 @@ class MiniwindGame:
             session.open_screen = "character"
         elif K_JOURNAL in just:
             session.open_screen = "journal"
+        elif K_QUEST in just:
+            session.open_screen = "quest"
         elif K_SPELLS in just:
             session.open_screen = "spells"
         elif K_LEVELUP in just and session.game.character.can_level_up:
@@ -598,6 +615,7 @@ class MiniwindGame:
             session.interact_prompt = prompt
             if K_INTERACT in just or ctx.use_pressed:
                 session.start_dialogue(arrest_guard, player)
+                self._suppress_interact = True
             return
 
         npc = session.nearest_talkable(player.pos, TALK_RADIUS)
@@ -613,6 +631,7 @@ class MiniwindGame:
             # honoured where a host wires it up).
             if K_INTERACT in just or ctx.use_pressed:
                 session.start_dialogue(npc, player)
+                self._suppress_interact = True
             return
         # No NPC to talk to — offer a nearby container to open with the same key.
         container = session.nearest_container(player.pos, TALK_RADIUS)
@@ -623,6 +642,7 @@ class MiniwindGame:
             session.interact_prompt = prompt
             if K_INTERACT in just or ctx.use_pressed:
                 session.open_container(container)
+                self._suppress_interact = True
 
     # -------------------------------------------------------------- overlay
     def _on_overlay(self, ev):
@@ -719,6 +739,7 @@ class MiniwindGame:
         "charcreate": "Create Your Character", "inventory": "Inventory",
         "character": "Character", "journal": "Quest Journal",
         "spells": "Spellbook", "levelup": "Level Up", "trade": "Trade",
+        "quest": "Current Quest",
     }
 
     def _close_overlay_screen(self, session, screen):

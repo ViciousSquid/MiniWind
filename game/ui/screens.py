@@ -63,6 +63,7 @@ _SCREEN_BODY_SIZE = {
     "levelup": (560, 430),
     "trade": (760, 520),
     "container": (760, 500),
+    "quest": (620, 460),
 }
 
 
@@ -557,6 +558,104 @@ def _handle_journal(session, key):
 
 
 # ===========================================================================
+# Current Quest (Q) — a focused view of the active quest: what to do now, how
+# far the objective is and which way it lies, plus the journal detail. Separate
+# from the full Journal (J), which lists every quest past and present.
+_COMPASS_WORDS = ["north", "north-east", "east", "south-east",
+                  "south", "south-west", "west", "north-west"]
+
+
+def _compass_word(dx, dz):
+    """World-direction word for a vector (engine convention: +z is north)."""
+    import math
+    bearing = math.degrees(math.atan2(dx, dz)) % 360.0   # 0 = north, 90 = east
+    return _COMPASS_WORDS[int((bearing + 22.5) // 45) % 8]
+
+
+def _draw_quest(painter, session, w, h):
+    from ..ui.hud import _fmt_distance
+    active = session.game.quests.active_quests()
+    st = _sel(session).setdefault("quest", {"row": 0})
+    st["row"] = max(0, min(st["row"], max(0, len(active) - 1)))
+    x, y, bw, bh = _panel_rect(w, h)
+    inner = T.panel(painter, x, y, bw, bh)
+
+    if not active:
+        T.heading(painter, inner, "Current Quest")
+        T.text_in(painter, QRect(inner.x(), inner.y() + 60, inner.width(), 60),
+                  "You have no active quest.\n\nTalk to the folk of Miniwind "
+                  "(look for a golden “!”) to find work.",
+                  size=11, color=T.DIM,
+                  align=int(Qt.AlignTop | Qt.AlignHCenter) | int(Qt.TextWordWrap),
+                  family="Segoe UI")
+        T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
+                  "Q/Esc close", size=9, color=T.DIM,
+                  align=T.ALIGN_CENTER, family="Segoe UI")
+        return
+
+    q = active[st["row"]]
+    g = session.quest_guidance(q) or {}
+    subtitle = (f"{st['row'] + 1} of {len(active)} active quests"
+                if len(active) > 1 else "")
+    ty = T.heading(painter, inner, "Current Quest", subtitle)
+
+    cx = inner.x() + 8
+    T.text(painter, cx, ty + 8, q.name, size=16, color=T.GOLD_BRIGHT, bold=True)
+
+    # "What to do now" — the imperative action, progress and where it lies.
+    row = ty + 36
+    action = g.get("action") or g.get("objective") or "Return to the quest giver"
+    line = "➤ " + action
+    if g.get("progress"):
+        line += f"    [{g['progress']}]"
+    T.text(painter, cx, row, line, size=12, color=T.INK, family="Segoe UI")
+
+    row += 24
+    dist = _fmt_distance(g.get("distance"))
+    pos = g.get("target_pos")
+    ppos = session._player_pos()
+    if pos is not None and ppos is not None and dist:
+        way = _compass_word(float(pos[0]) - float(ppos[0]),
+                            float(pos[2]) - float(ppos[2]))
+        where = ("You are there — look around." if dist == "here"
+                 else f"About {dist} to the {way}. Follow the arrow orbiting you.")
+    elif g.get("complete"):
+        where = "Objective met — return to the quest giver to finish."
+    else:
+        where = "No map marker for this step — read the notes below."
+    T.text(painter, cx, row, where, size=10, color=T.PARCH, family="Segoe UI")
+
+    # Journal detail — the fuller "how / why", straight from the quest text.
+    row += 30
+    T.text(painter, cx, row, "Journal", size=11, color=T.GOLD_BRIGHT, bold=True,
+           family="Segoe UI")
+    entries = session.game.quests.journal_entries(q.id)
+    body = "\n\n".join(f"• {e}" for e in entries) or g.get("detail") or q.desc
+    T.text_in(painter, QRect(cx, row + 10, inner.width() - 16,
+                             inner.height() - (row - inner.y()) - 40),
+              body, size=10, color=T.PARCH,
+              align=int(Qt.AlignTop | Qt.AlignLeft) | int(Qt.TextWordWrap),
+              family="Segoe UI")
+
+    hint = ("↑/↓ switch quest   Q/Esc close" if len(active) > 1
+            else "Q/Esc close   ·   J for full journal")
+    T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
+              hint, size=9, color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
+
+
+def _handle_quest(session, key):
+    active = session.game.quests.active_quests()
+    st = _sel(session).setdefault("quest", {"row": 0})
+    if key in ("up", "w", "left", "a"):
+        st["row"] = (st["row"] - 1) % max(1, len(active)); return True
+    if key in ("down", "s", "right", "d"):
+        st["row"] = (st["row"] + 1) % max(1, len(active)); return True
+    if key in ("q", "escape", "esc"):
+        session.open_screen = None
+    return True
+
+
+# ===========================================================================
 # Spellbook
 # ===========================================================================
 def _draw_spells(painter, session, w, h):
@@ -855,11 +954,11 @@ _DRAW = {
     "charcreate": _draw_charcreate, "inventory": _draw_inventory,
     "character": _draw_character, "journal": _draw_journal,
     "spells": _draw_spells, "trade": _draw_trade, "levelup": _draw_levelup,
-    "container": _draw_container,
+    "container": _draw_container, "quest": _draw_quest,
 }
 _HANDLE = {
     "charcreate": _handle_charcreate, "inventory": _handle_inventory,
     "character": _handle_character, "journal": _handle_journal,
     "spells": _handle_spells, "trade": _handle_trade, "levelup": _handle_levelup,
-    "container": _handle_container,
+    "container": _handle_container, "quest": _handle_quest,
 }

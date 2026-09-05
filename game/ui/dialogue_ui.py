@@ -10,7 +10,7 @@ import os
 
 from PyQt5.QtCore import QRect, QRectF, Qt
 from PyQt5.QtGui import (QColor, QFont, QPixmap, QPainterPath, QLinearGradient,
-                         QBrush, QPen)
+                         QBrush, QPen, QFontMetrics)
 
 from . import theme as T
 from ..rpg import guilds
@@ -30,17 +30,77 @@ def _portrait(path):
 
 
 PAD = 18
+#: Reserved width of the portrait column. The portrait is drawn as a square no
+#: wider than this, and the speaker line/body text/responses always start to the
+#: right of it, so the column width is fixed regardless of the final box height
+#: (which keeps the text-wrap measurement stable — see :func:`_layout`).
+PORTRAIT_MAX = 150
+#: Fixed default width used to size the floating conversation window; the same
+#: value is fed back in as the draw width, so measurement and drawing agree.
+DEFAULT_WIDTH = 760
+
+#: Body text (the speaker's line) font — kept in one place so the wrap
+#: measurement in :func:`_layout` uses exactly the font the drawing uses.
+_BODY_FONT = T.font(12, italic=True)
+
+# Vertical offsets from the box top.
+_TEXT_TOP = PAD + 34            # first line of the speaker's text
+_GAP_AFTER_TEXT = 16            # space between the text block and the responses
+_RESP_LINE_H = 24              # height of each numbered response row
+_FOOTER_H = 22                 # room for the "[1-9] choose  [Esc] leave" hint
+_MIN_BOX_H = 170
+
+
+def _layout(session, w):
+    """Measure the box for the current view at draw width *w*.
+
+    Returns a dict of geometry (all vertical values are offsets from the box
+    top). The speaker's line is measured with the real body font at the real
+    text-column width so a long, multi-line greeting reserves the height it
+    actually needs and the numbered responses always sit *below* it instead of
+    being overdrawn (the previous fixed 58px slot let long lines overlap them).
+    """
+    view = session.current_view()
+    responses = view["responses"] if view else []
+    n_resp = max(1, len(responses))
+
+    npc = getattr(session, "dialogue_npc", None)
+    has_portrait = (npc is not None
+                    and _portrait(npc.properties.get("portrait", "")) is not None)
+
+    text_x = PAD + (PORTRAIT_MAX + PAD if has_portrait else 0)
+    text_w = max(80, int(w) - PAD - text_x)
+
+    body = view["text"] if view else ""
+    fm = QFontMetrics(_BODY_FONT)
+    br = fm.boundingRect(QRect(0, 0, text_w, 100000), int(Qt.TextWordWrap), body)
+    text_h = max(fm.height(), br.height())
+
+    resp_top = _TEXT_TOP + text_h + _GAP_AFTER_TEXT
+    box_h = resp_top + n_resp * _RESP_LINE_H + _FOOTER_H + PAD
+    if has_portrait:
+        box_h = max(box_h, PORTRAIT_MAX + PAD * 2)
+    box_h = max(_MIN_BOX_H, int(box_h))
+
+    return {
+        "responses": responses,
+        "has_portrait": has_portrait,
+        "text_x": text_x,
+        "text_w": text_w,
+        "text_h": text_h,
+        "resp_top": resp_top,
+        "box_h": box_h,
+    }
 
 
 def box_height(session):
     """Pixel height the dialogue box needs for the current view."""
-    view = session.current_view()
-    n_resp = max(1, len(view["responses"])) if view else 1
-    content_h = 40 + 58 + n_resp * 24 + 22
-    return max(170, PAD * 2 + content_h)
+    if session.current_view() is None:
+        return _MIN_BOX_H
+    return _layout(session, DEFAULT_WIDTH)["box_h"]
 
 
-def window_body_size(session, width_hint=760):
+def window_body_size(session, width_hint=DEFAULT_WIDTH):
     """Suggested floating-window body size for the conversation."""
     return (width_hint, box_height(session))
 
@@ -69,6 +129,7 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
     view = session.current_view()
     if view is None:
         return
+    lay = _layout(session, w)
     npc = session.dialogue_npc
     speaker = ""
     portrait = None
@@ -83,19 +144,19 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
     pad = PAD
     if framed:
         inner = T.panel(painter, x, y, w, box_h, radius=14)
-        tx = inner.x()
     else:
-        from PyQt5.QtCore import QRect as _QRect
-        inner = _QRect(int(x), int(y), int(w), int(box_h))
-        tx = inner.x()
+        inner = QRect(int(x), int(y), int(w), int(box_h))
+
+    tx = x + lay["text_x"]
 
     if portrait is not None:
-        ps = box_h - pad * 2 - 8
+        # Square portrait, no taller than the box and capped at the reserved
+        # column width so the text column position (tx) never has to move.
+        ps = min(PORTRAIT_MAX, int(box_h) - pad * 2)
         px, py = x + pad, y + pad
         painter.fillRect(QRect(px - 2, py - 2, ps + 4, ps + 4), T.GILD)
         scaled = portrait.scaled(ps, ps, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
         painter.drawPixmap(QRect(px, py, ps, ps), scaled, QRect(0, 0, scaled.width(), scaled.height()))
-        tx = px + ps + pad
 
     painter.setPen(T.GOLD_BRIGHT)
     painter.setFont(T.font(16, bold=True))
@@ -108,12 +169,11 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
     painter.drawLine(tx, y + pad + 26, x + w - pad, y + pad + 26)
 
     painter.setPen(T.PARCH)
-    painter.setFont(T.font(12, italic=True))
-    text_w = x + w - pad - tx
-    painter.drawText(QRect(tx, y + pad + 34, text_w, 58), int(Qt.TextWordWrap), view["text"])
+    painter.setFont(_BODY_FONT)
+    painter.drawText(QRect(tx, y + _TEXT_TOP, lay["text_w"], lay["text_h"]),
+                     int(Qt.TextWordWrap), view["text"])
 
-    painter.setFont(T.font(11, family="Segoe UI"))
-    ry = y + pad + 104
+    ry = y + lay["resp_top"] + 11   # baseline of the first response row
     for i, resp in enumerate(view["responses"]):
         chip = QRect(tx, ry - 13, 18, 18)
         painter.setBrush(QColor(60, 52, 78))
@@ -125,7 +185,7 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
         painter.setPen(QColor(180, 210, 255))
         painter.setFont(T.font(11, family="Segoe UI"))
         painter.drawText(tx + 26, ry, resp.get("text", ""))
-        ry += 24
+        ry += _RESP_LINE_H
 
     painter.setPen(T.DIM)
     painter.setFont(T.font(8, family="Segoe UI"))

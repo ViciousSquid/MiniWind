@@ -648,11 +648,16 @@ class QtGameView(QOpenGLWidget):
         """Draw head-wearing NPCs/creatures as rotating ground quads so they face
         where they walk, mirroring the player's overhead sprite. Fully guarded:
         on any error it disables itself (``_overhead_npc_ok``) so the next frame
-        falls back to the ordinary billboards and no actor is left invisible."""
-        actors = getattr(self, "_overhead_actor_things", None)
-        if not actors:
-            return
+        falls back to the ordinary billboards and no actor is left invisible.
+
+        Also draws blood-stain ground decals, which is why it does not bail out
+        when there are no head-wearing actors — a battlefield can have blood on
+        it with no head NPCs currently in view."""
         if not (self.play_mode and self.overhead_sprite_enabled and self._is_overhead()):
+            return
+        actors = getattr(self, "_overhead_actor_things", None) or []
+        blood = getattr(render_state, "blood_stains", None) or ()
+        if not actors and not blood:
             return
         try:
             import os as _os
@@ -662,8 +667,12 @@ class QtGameView(QOpenGLWidget):
             if cache is None:
                 cache = self._overhead_npc_renderers = {}
 
-            def _renderer(sprite_rel, y_offset=2.0):
-                key = (sprite_rel, round(y_offset, 2))
+            def _renderer(sprite_rel, y_offset=2.0, size=None):
+                # *size* lets ground decals (blood stains) vary independently of
+                # the actor sprite size; it is bucketed into the cache key so a
+                # spread of wound sizes doesn't create an unbounded renderer set.
+                sz = float(self.overhead_sprite_size) if size is None else float(size)
+                key = (sprite_rel, round(y_offset, 2), round(sz / 8.0))
                 r = cache.get(key)
                 if r is None:
                     sabs = _os.path.join(root, sprite_rel)
@@ -673,11 +682,25 @@ class QtGameView(QOpenGLWidget):
                         SpriteController.WALK_A_G, SpriteController.WALK_B_G,
                         SpriteController.SHOOT)}
                     r = OverheadSpriteRenderer(
-                        frame_files=frames, size=float(self.overhead_sprite_size),
+                        frame_files=frames, size=sz,
                         y_offset=y_offset,
                         facing_offset_deg=float(self.overhead_sprite_facing_offset))
                     cache[key] = r
                 return r
+
+            # Blood stains — flat ground decals from wounds. Drawn before the
+            # actors (and low to the floor) so bodies and gib splatter sit on
+            # top of the blood, and each uses its own severity sprite + size.
+            for st in getattr(render_state, "blood_stains", None) or ():
+                sprite = st.get("sprite") if isinstance(st, dict) else None
+                if not sprite:
+                    continue
+                spos = st.get("pos", [0.0, 0.0, 0.0])
+                gspos = (float(spos[0]), float(spos[1]), float(spos[2]))
+                _renderer(sprite, y_offset=1.0,
+                          size=float(st.get("size", 32.0))).draw(
+                    self.projection_matrix, self.view_matrix, gspos,
+                    float(st.get("yaw", 0.0)), SpriteController.IDLE)
 
             dead_overlay_rel = "assets/sprites/heads/dead.png"
             for thing in actors:

@@ -404,7 +404,7 @@ class MiniwindSession:
         is one assigned automatically:
 
         * an NPC whose name contains "guard" gets a random *guard* head
-          (guard01…guard04), matching the editor's guard-head option;
+          (guard01…guard06), matching the editor's guard-head option;
         * everyone else gets a random regular head that is never the player's.
         """
         from .rpg import heads
@@ -970,14 +970,24 @@ class MiniwindSession:
         """World position the quest compass arrow should point at, or None.
 
         Resolves the *first active quest*'s current-stage objective to a world
-        position: the named location marker (visit), the named NPC (talk), the
-        nearest matching foe (kill) or the nearest matching item pickup (fetch).
-        Returns ``(pos, quest_name)`` or ``None``."""
-        log = self.game.quests
-        active = log.active_quests()
+        position (see :meth:`_objective_world_pos`). Returns ``(pos,
+        quest_name)`` or ``None``."""
+        active = self.game.quests.active_quests()
         if not active:
             return None
         q = active[0]
+        pos = self._objective_world_pos(q)
+        if pos is None:
+            return None
+        return (list(pos), q.name)
+
+    def _objective_world_pos(self, q):
+        """World position of *q*'s current-stage objective, or None.
+
+        Resolves the objective to the named location marker (visit), the named
+        NPC (talk), the nearest matching foe (kill) or the nearest matching item
+        pickup (fetch). ``roll``/``none`` objectives have no world target."""
+        log = self.game.quests
         st = q.stage(log.stage_of(q.id))
         if st is None:
             return None
@@ -1017,9 +1027,119 @@ class MiniwindSession:
                     d = self._dist2d(ppos, it.pos)
                     if best is None or d < best:
                         best, pos = d, it.pos
-        if pos is None:
-            return None
-        return (list(pos), q.name)
+        return list(pos) if pos is not None else None
+
+    def quest_guidance(self, q=None):
+        """A plain-language summary of how to complete a quest's current stage.
+
+        Used by the quest panel (Q) and the on-screen quest arrow so the player
+        can see *what* to do, *how far* the objective is and *which way* to go.
+        Defaults to the first active quest. Returns a dict, or ``None`` when
+        there is no active quest::
+
+            {"quest": Quest, "name", "objective", "detail",
+             "action",           # short imperative, e.g. "Defeat 5 wolves"
+             "progress",         # "2 / 5" or "" when not countable
+             "target_pos",       # [x,y,z] or None (roll/return objectives)
+             "distance",         # world units to target, or None
+             "complete": bool}
+        """
+        log = self.game.quests
+        if q is None:
+            active = log.active_quests()
+            if not active:
+                return None
+            q = active[0]
+        st = q.stage(log.stage_of(q.id))
+        objective = st.objective if st else ""
+        detail = st.journal if st else q.desc
+        complete = log.is_complete(q.id)
+        action, progress = self._objective_action(st) if st else ("", "")
+        target_pos = None if complete else self._objective_world_pos(q)
+        distance = None
+        if target_pos is not None:
+            ppos = self._player_pos()
+            if ppos is not None:
+                distance = self._dist2d(ppos, target_pos)
+        return {
+            "quest": q,
+            "name": q.name,
+            "objective": objective,
+            "detail": detail,
+            "action": action,
+            "progress": progress,
+            "target_pos": target_pos,
+            "distance": distance,
+            "complete": complete,
+        }
+
+    def _objective_action(self, st):
+        """Build a short imperative + progress string from a stage's condition.
+
+        Falls back to the authored objective text for objectives with no
+        machine-readable condition (roll checks, or 'return to giver' stages)."""
+        kind = st.condition_kind()
+        target = st.condition_target()
+        tslug = self._slug(target)
+        count = st.condition_count()
+        name = self._objective_target_name(kind, tslug, target)
+        if kind == _quests.COND_KILL:
+            have = self._safe_int(self.store.get(f"kills.{tslug}", "0"))
+            plural = name if count == 1 else self._pluralise(name)
+            return (f"Defeat {count} {plural}", f"{min(have, count)} / {count}")
+        if kind == _quests.COND_FETCH:
+            from .rpg import inventory as inv
+            have = inv.quantity(self.game.character.inventory, target)
+            return (f"Gather {count}× {name}", f"{min(have, count)} / {count}")
+        if kind == _quests.COND_TALK:
+            return (f"Speak with {name}", "")
+        if kind == _quests.COND_VISIT:
+            return (f"Travel to {name}", "")
+        if kind == _quests.COND_ROLL:
+            note = st.condition_notation()
+            thr = st.condition_target_value()
+            tail = f" (need {thr}+)" if thr is not None else ""
+            return (f"Pass a {note} check{tail}", "")
+        # No structured condition — lean on the authored objective line.
+        return (st.objective or "Return to the quest giver", "")
+
+    def _objective_target_name(self, kind, tslug, raw):
+        """Best display name for an objective target (NPC/marker/foe/item)."""
+        if kind in (_quests.COND_TALK, _quests.COND_KILL):
+            for t in getattr(self.logic, "things", None) or []:
+                p = getattr(t, "properties", {}) or {}
+                if tslug in (self._slug(p.get("name", "")),
+                             self._slug(p.get("display_name", "")),
+                             self._slug(p.get("npc_role", "")),
+                             self._slug(p.get("monster_type", ""))):
+                    return (p.get("display_name") or p.get("name")
+                            or p.get("npc_role") or p.get("monster_type")
+                            or str(raw))
+        if kind == _quests.COND_VISIT:
+            for mk in self._things_of_type("marker"):
+                nm = mk.properties.get("place_name") or mk.properties.get("name") or ""
+                if self._slug(nm) == tslug:
+                    return nm
+        # Fall back to a de-slugged, title-cased version of the raw target.
+        return str(raw).replace("_", " ").strip() or "the objective"
+
+    @staticmethod
+    def _pluralise(word):
+        w = str(word)
+        if not w:
+            return w
+        if w.endswith(("s", "x", "z", "ch", "sh")):
+            return w + "es"
+        if w.endswith("y") and len(w) > 1 and w[-2] not in "aeiou":
+            return w[:-1] + "ies"
+        return w + "s"
+
+    @staticmethod
+    def _safe_int(v, default=0):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return default
 
     def _nearest_matching_pos(self, target_slug):
         """Nearest alive actor whose type/role/name matches *target_slug*."""

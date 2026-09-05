@@ -86,6 +86,15 @@ STUCK_ARROW_SPRITE_SIZE = (28.0, 28.0)  # smaller billboard once embedded
 MAX_STUCK_ARROWS = 150                  # oldest are dropped past this cap
 
 # ---------------------------------------------------------------------------
+# Blood stains  (ground decals left when a character is wounded — not just on
+# a gib death). Size scales with the severity of the wound between these bounds.
+# ---------------------------------------------------------------------------
+BLOOD_STAIN_SIZE_MIN = 22.0             # a light nick
+BLOOD_STAIN_SIZE_MAX = 120.0            # a grievous, near-lethal wound
+MAX_BLOOD_STAINS = 120                  # oldest are dropped past this cap
+BLOOD_MIN_DAMAGE = 1.0                  # ignore sub-1 damage (rounding dust)
+
+# ---------------------------------------------------------------------------
 # Fantasy combat  (attack_style: "melee" | "bow")
 # ---------------------------------------------------------------------------
 # Fio's world of Miniwind has no firearms.  A monster/NPC carries an
