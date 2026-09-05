@@ -62,12 +62,39 @@ DEFAULT_WIDTH = 760
 #: height but never larger than this.
 HEAD_MAX = 160
 #: How far the left of the head image overlaps back over the window's right edge
-#: (px). Kept as a single knob so the distance is easy to fine-tune.
-HEAD_OVERLAP = 10
+#: (px). Larger = the head sits further *left*, tucked more over the window.
+#: Kept as a single knob so the distance is easy to fine-tune.
+HEAD_OVERLAP = 40
+#: Clear gap kept between the head's left edge and the text/labels beside it.
+_HEAD_GAP = 8
 
 #: Body text (the speaker's line) font — kept in one place so the wrap
 #: measurement in :func:`_layout` uses exactly the font the drawing uses.
 _BODY_FONT = T.font(12, italic=True)
+
+
+def _head_shown(session):
+    """Whether a head will be drawn for the current speaker (NPC present, the
+    'Show dialogue heads' toggle on, and its sprite actually loads)."""
+    npc = getattr(session, "dialogue_npc", None)
+    if npc is None:
+        return False
+    enabled = getattr(session, "dialogue_heads_enabled", None)
+    if enabled is not None and not enabled():
+        return False
+    return _head_pixmap(npc) is not None
+
+
+def _content_right_off(w, head_shown):
+    """X offset (from the box left) where the text/labels region must stop.
+
+    Normally one pad in from the right edge; when the head is drawn it overlaps
+    :data:`HEAD_OVERLAP` px into the window's right edge, so content stops short
+    of the head (plus :data:`_HEAD_GAP`) to avoid drawing under it."""
+    cr = int(w) - PAD
+    if head_shown:
+        cr = min(cr, int(w) - HEAD_OVERLAP - _HEAD_GAP)
+    return cr
 
 # Vertical offsets from the box top.
 _TEXT_TOP = PAD + 34            # first line of the speaker's text
@@ -86,15 +113,16 @@ def _layout(session, w):
     actually needs and the numbered responses always sit *below* it instead of
     being overdrawn (the previous fixed 58px slot let long lines overlap them).
 
-    The head lives *outside* the window (off its right edge), so it never enters
-    this measurement — the text spans the full box width.
+    The head overlaps the window's right edge, so the text column stops short of
+    it (see :func:`_content_right_off`) and wrapped lines never run under it.
     """
     view = session.current_view()
     responses = view["responses"] if view else []
     n_resp = max(1, len(responses))
 
+    head_shown = _head_shown(session)
     text_x = PAD
-    text_w = max(80, int(w) - PAD - text_x)
+    text_w = max(80, _content_right_off(w, head_shown) - text_x)
 
     body = view["text"] if view else ""
     fm = QFontMetrics(_BODY_FONT)
@@ -107,6 +135,7 @@ def _layout(session, w):
 
     return {
         "responses": responses,
+        "head_shown": head_shown,
         "text_x": text_x,
         "text_w": text_w,
         "text_h": text_h,
@@ -171,6 +200,9 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
         inner = QRect(int(x), int(y), int(w), int(box_h))
 
     tx = x + lay["text_x"]
+    # Right edge for text/labels — kept clear of the head that overlaps the
+    # window's right edge, so nothing spills past it or draws under the head.
+    cr = x + _content_right_off(w, head is not None)
 
     if head is not None:
         _draw_head(painter, head, x, y, w, box_h)
@@ -181,9 +213,10 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
     if subtitle:
         painter.setFont(T.font(8, italic=True, family="Segoe UI"))
         painter.setPen(T.DIM)
-        painter.drawText(inner.right() - 170, y + pad + 14, subtitle)
+        painter.drawText(QRect(int(tx), int(y + pad), int(cr - tx), 18),
+                         int(Qt.AlignRight | Qt.AlignVCenter), subtitle)
     painter.setPen(QPen(T.GILD, 1))
-    painter.drawLine(tx, y + pad + 26, x + w - pad, y + pad + 26)
+    painter.drawLine(int(tx), y + pad + 26, int(cr), y + pad + 26)
 
     painter.setPen(T.PARCH)
     painter.setFont(_BODY_FONT)
@@ -206,7 +239,8 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
 
     painter.setPen(T.DIM)
     painter.setFont(T.font(8, family="Segoe UI"))
-    painter.drawText(x + w - pad - 150, y + box_h - 10, "[1-9] choose   [Esc] leave")
+    painter.drawText(QRect(int(x + pad), int(y + box_h - 22), int(cr - (x + pad)), 16),
+                     int(Qt.AlignRight | Qt.AlignVCenter), "[1-9] choose   [Esc] leave")
 
 
 def _draw_head(painter, head, x, y, w, box_h):
