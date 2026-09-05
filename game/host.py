@@ -830,6 +830,8 @@ class MiniwindGame:
             return True  # own the (empty) popup slot: suppress legacy draw
 
         if cur is None:
+            click_cb = None
+            wants_cursor = False
             if key == "dialogue":
                 # The window chrome is a generic "Conversation"; the speaker's
                 # name is drawn inside the body (dialogue_ui), so titling the
@@ -847,10 +849,17 @@ class MiniwindGame:
                            screens.draw_in_rect(p, s, x, y, ww, hh))
                 on_close = (lambda s=session, sc=session.open_screen:
                             self._close_overlay_screen(s, sc))
+                # The quest journal is mouse-driven: free the play-mode cursor
+                # and route body clicks into the screen so its quest list and
+                # "make active quest" box can be clicked.
+                click_cb = (lambda cx, cy, s=session: screens.handle_click(s, cx, cy))
+                wants_cursor = (screen == "quest")
             win = CallbackWindow(key, title, draw_fn, width=bw, body_height=bh,
                                  x=max(20, (w - bw) // 2),
                                  y=max(20, (h - bh) // 2 - 24),
-                                 on_close_cb=on_close)
+                                 on_close_cb=on_close,
+                                 on_body_click_cb=click_cb,
+                                 wants_cursor=wants_cursor)
             wm.add(win)
             session._overlay_win = win
             session._overlay_key = key
