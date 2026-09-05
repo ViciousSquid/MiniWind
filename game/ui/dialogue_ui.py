@@ -29,7 +29,8 @@ def _pixmap(path):
         return None
     if path in _PIXMAP_CACHE:
         return _PIXMAP_CACHE[path]
-    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    # Repo root is two levels up from this file (game/ui/ -> game/ -> root).
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
     pm = QPixmap(os.path.join(root, path))
     _PIXMAP_CACHE[path] = pm if not pm.isNull() else None
     return _PIXMAP_CACHE[path]
@@ -209,29 +210,21 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
 
 
 def _draw_head(painter, head, x, y, w, box_h):
-    """Draw the character's head just off the *right* edge of the window.
+    """Draw the character's head as a clean billboard just off the *right* edge
+    of the window — no frame, so it reads like the world sprite it matches.
 
     The left of the head image overlaps :data:`HEAD_OVERLAP` px back over the
     window's right edge (``x + w``); the head is a square sized to the box
-    height (capped at :data:`HEAD_MAX`) and vertically centred against it. The
-    head sits in a small gilded frame so a transparent billboard PNG reads as a
-    portrait beside the conversation.
+    height (capped at :data:`HEAD_MAX`) and vertically centred against it.
     """
     hs = min(HEAD_MAX, int(box_h))
     hx = int(x + w - HEAD_OVERLAP)
     hy = int(y + (int(box_h) - hs) / 2)
 
     painter.save()
-    painter.setRenderHint(painter.Antialiasing, True)
-    frame = QRect(hx, hy, hs, hs)
-    painter.setBrush(QColor(20, 20, 25, 235))
-    painter.setPen(QPen(T.GILD, 2))
-    painter.drawRoundedRect(frame, 8, 8)
-    inset = frame.adjusted(4, 4, -4, -4)
-    scaled = head.scaled(inset.width(), inset.height(),
-                         Qt.KeepAspectRatio, Qt.SmoothTransformation)
-    # Centre the (aspect-preserved) head within the framed square.
-    dx = inset.x() + (inset.width() - scaled.width()) // 2
-    dy = inset.y() + (inset.height() - scaled.height()) // 2
-    painter.drawPixmap(dx, dy, scaled)
+    painter.setRenderHint(painter.SmoothPixmapTransform, True)
+    scaled = head.scaled(hs, hs, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    # Anchor the head's left edge at the overlap point; centre it vertically.
+    dy = hy + (hs - scaled.height()) // 2
+    painter.drawPixmap(hx, dy, scaled)
     painter.restore()
