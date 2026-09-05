@@ -59,6 +59,15 @@ class MonsterAI:
         self._debug_rays: List[Dict[str, Any]] = []   # for F7 debug lines
         self.monster_debug_active = False
         self._grid = None                          # SpatialGrid, set by LogicThread
+        # PERF: per-tick snapshot of every actor's position/team, plus a uniform
+        # spatial hash of them keyed by (cell_x, cell_z). Team targeting
+        # (_find_closest_enemy_team_monster) was O(N^2): every actor scanned
+        # every other actor each tick, building a glm.vec3 and calling the
+        # faction predicate per pair. With the hash, a query only visits actors
+        # in the handful of cells its sight radius covers, and team hostility is
+        # resolved once per distinct team — so a spread-out population is no
+        # longer quadratic. Rebuilt at the top of update(); see _build_ai_snapshot.
+        self._ai_snapshot = None
 
     def set_spatial_grid(self, grid):
         """Called by LogicThread after populating the grid."""
@@ -141,6 +150,11 @@ class MonsterAI:
         monster_things = getattr(self.lt, '_monster_things', None)
         if monster_things is None:
             monster_things = [t for t in self.lt.things if isinstance(t, MonsterThing)]
+
+        # PERF: build the per-tick actor snapshot + spatial hash once so every
+        # team-targeting query below is a local cell walk instead of a full
+        # per-pair scan (see _build_ai_snapshot / _find_closest_enemy_team_monster).
+        self._build_ai_snapshot(monster_things)
 
         for thing in monster_things:
             if thing.properties.get('hidden', False):
@@ -255,6 +269,7 @@ class MonsterAI:
             if thing.properties.pop('_kill', False):
                 thing.properties['dead'] = True
                 thing.properties.pop('is_shooting', None)
+                self._snapshot_mark_dead(thing)
                 if self.monster_debug_active:
                     name = thing.properties.get('name', '?')
                     debug_log("MonsterAI",
@@ -676,45 +691,162 @@ class MonsterAI:
             return True
         return self._teams_hostile(thing.properties.get('team', ''), 'player')
 
+    # ------------------------------------------------------------------
+    # Per-tick actor snapshot (bulk team targeting)
+    # ------------------------------------------------------------------
+
+    #: Side length of a spatial-hash cell (world units). Sized to the monster
+    #: sight range so a typical team query only touches a 3x3–5x5 cell block.
+    _AI_CELL_SIZE = float(MONSTER_SIGHT_RANGE)
+
+    def _build_ai_snapshot(self, monster_things) -> None:
+        """Snapshot every actor's position/team for this AI tick and bin them
+        into a uniform spatial hash, so team-targeting is a local cell walk
+        rather than a full scan.
+
+        Positions are frozen at tick start and used for *both* the hash bins and
+        the distance test, so the two can never disagree (an actor moves at most
+        a few units per tick — far less than a cell — so its bin is never stale).
+        Only actors that could actually be a target — alive, non-hidden and on a
+        team — are binned, keeping buckets small; ``alive`` is still tracked per
+        row and cleared by ``_snapshot_mark_dead`` when an actor dies mid-tick.
+        ``row_of`` maps ``id(thing)`` to its row for self exclusion / death
+        updates."""
+        n = len(monster_things)
+        if n == 0:
+            self._ai_snapshot = None
+            return
+        cs = self._AI_CELL_SIZE
+        pos: List[tuple] = []
+        teams: List[str] = []
+        alive: List[bool] = []
+        row_of: Dict[int, int] = {}
+        cells: Dict[tuple, list] = {}
+        distinct_teams = set()
+        floor = math.floor
+        for i, m in enumerate(monster_things):
+            p = m.pos
+            px, py, pz = float(p[0]), float(p[1]), float(p[2])
+            pos.append((px, py, pz))
+            props = m.properties
+            team = props.get('team', '') or ''
+            teams.append(team)
+            distinct_teams.add(team)
+            al = not (props.get('dead', False) or props.get('hidden', False))
+            alive.append(al)
+            row_of[id(m)] = i
+            if al and team:   # only ever-targetable actors go in the hash
+                key = (int(floor(px / cs)), int(floor(pz / cs)))
+                bucket = cells.get(key)
+                if bucket is None:
+                    cells[key] = [i]
+                else:
+                    bucket.append(i)
+        self._ai_snapshot = {
+            'mons': monster_things,
+            'pos': pos,
+            'teams': teams,
+            'alive': alive,
+            'row_of': row_of,
+            'cells': cells,
+            'cell_size': cs,
+            'distinct_teams': distinct_teams,
+            'hostile_cache': {},   # my_team -> set of hostile team strings
+        }
+
+    def _snapshot_mark_dead(self, thing) -> None:
+        """Flag *thing* dead in the current tick's snapshot so later queries in
+        the same tick don't target it. No-op if there is no snapshot."""
+        snap = self._ai_snapshot
+        if snap is None:
+            return
+        row = snap['row_of'].get(id(thing))
+        if row is not None:
+            snap['alive'][row] = False
+
+    def _hostile_teams_for(self, snap, my_team: str):
+        """The set of team names hostile to *my_team* (memoised per tick).
+
+        The faction predicate is consulted once per distinct team rather than
+        once per candidate pair, collapsing the old O(N^2) hostility checks to
+        O(distinct_teams). ``my_team`` is never in the result, so the returned
+        set doubles as the "is an enemy" membership test in the query."""
+        cache = snap['hostile_cache']
+        hostile = cache.get(my_team)
+        if hostile is None:
+            hostile = {t for t in snap['distinct_teams']
+                       if t and t != my_team and self._teams_hostile(my_team, t)}
+            cache[my_team] = hostile
+        return hostile
+
     def _find_closest_enemy_team_monster(self, thing, my_team: str, player_pos: glm.vec3, max_range: float):
         """Find the closest living monster on a DIFFERENT, hostile team within
         range. Returns the monster or None.  Team-based enemies are targeted
-        first before the player."""
+        first before the player.
+
+        PERF: walks only the spatial-hash cells the sight radius covers instead
+        of every actor (the AI's old O(N^2) hot spot). Selection and tie-breaking
+        match the old loop: the nearest hostile actor, and on an exact distance
+        tie the earlier one in scene order (smallest row index)."""
         if not my_team or MonsterThing is None:
             return None
+        snap = self._ai_snapshot
+        if snap is None:
+            return None
 
-        my_pos = glm.vec3(thing.pos)
-        best_dist_sq = float('inf')
-        best_monster = None
-        max_range_sq = max_range * max_range
-        monster_things = getattr(self.lt, '_monster_things', None) or self.lt.things
+        hostile = self._hostile_teams_for(snap, my_team)
+        if not hostile:
+            return None
 
-        for t in monster_things:
-            if monster_things is self.lt.things and not isinstance(t, MonsterThing):
-                continue
-            if t is thing:
-                continue
-            if t.properties.get('dead', False) or t.properties.get('hidden', False):
-                continue
-            other_team = t.properties.get('team', '')
-            if not other_team:
-                continue
-            if other_team == my_team:
-                continue  # Same team = ally, not enemy
-            if not self._teams_hostile(my_team, other_team):
-                continue  # Different team but not enemies (e.g. neutral factions)
+        pos = snap['pos']
+        teams = snap['teams']
+        alive = snap['alive']
+        mons = snap['mons']
+        cells = snap['cells']
+        cs = snap['cell_size']
 
-            # PERF: compare squared distances — only used for a threshold
-            # and closest-of check, so the sqrt in glm.distance is wasted.
-            diff = my_pos - glm.vec3(t.pos)
-            dist_sq = glm.dot(diff, diff)
-            if dist_sq > max_range_sq:
-                continue
-            if dist_sq < best_dist_sq:
-                best_dist_sq = dist_sq
-                best_monster = t
+        self_row = snap['row_of'].get(id(thing))
+        # Query from the frozen snapshot position (consistent with the bins);
+        # the querying actor hasn't moved yet this tick, so this equals its live
+        # position anyway.
+        if self_row is not None:
+            mx, my_, mz = pos[self_row]
+        else:
+            mp = thing.pos
+            mx, my_, mz = float(mp[0]), float(mp[1]), float(mp[2])
 
-        return best_monster
+        mr2 = max_range * max_range
+        # +2 cells of margin guarantees every actor within max_range is visited
+        # regardless of where it sits inside its cell.
+        r = int(max_range / cs) + 2
+        cx = int(math.floor(mx / cs))
+        cz = int(math.floor(mz / cs))
+
+        best = None
+        best_d = float('inf')
+        best_row = 0
+        for gx in range(cx - r, cx + r + 1):
+            for gz in range(cz - r, cz + r + 1):
+                bucket = cells.get((gx, gz))
+                if not bucket:
+                    continue
+                for row in bucket:
+                    if row == self_row or not alive[row]:
+                        continue
+                    if teams[row] not in hostile:
+                        continue
+                    px, py, pz = pos[row]
+                    dx = px - mx
+                    dy = py - my_
+                    dz = pz - mz
+                    d2 = dx * dx + dy * dy + dz * dz
+                    if d2 > mr2:
+                        continue
+                    if d2 < best_d or (d2 == best_d and row < best_row):
+                        best_d = d2
+                        best = mons[row]
+                        best_row = row
+        return best
 
 
     def _find_monster_in_crossfire(self, shooter, ray_start: glm.vec3,
@@ -794,6 +926,9 @@ class MonsterAI:
             victim.properties['dead'] = True
             victim.properties.pop('is_shooting', None)
             victim.properties.pop('_aggro_target', None)
+            # Keep the per-tick AI snapshot in step so a monster killed earlier
+            # this tick is no longer a valid target for later actors' queries.
+            self._snapshot_mark_dead(victim)
             if self.lt.io_manager:
                 self.lt.io_manager.fire_output(victim, 'OnDeath')
             if self.monster_debug_active:
