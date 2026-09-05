@@ -1025,11 +1025,12 @@ class QtGameView(QOpenGLWidget):
         gl.glBindVertexArray(0)
         gl.glDisable(gl.GL_BLEND)
 
-    # Sprite-name to light colour mapping for projectile glow.
+    # Sprite-name to light colour mapping for projectile glow. Arrows are
+    # deliberately absent: a plain arrow shaft is not a light source and must
+    # not glow or illuminate the world as it flies (see _make_projectile_light).
     _PROJ_LIGHT_COLORS = {
         'magicbolt': [100, 140, 255],
         'magic':     [100, 140, 255],
-        'arrow':     [255, 200, 100],
         'fire':      [255, 140, 50],
         'frost':     [150, 210, 255],
         'shock':     [230, 230, 120],
@@ -1037,9 +1038,17 @@ class QtGameView(QOpenGLWidget):
     }
 
     def _make_projectile_light(self, proj):
-        """Create an ephemeral Light at a projectile's position."""
+        """Create an ephemeral Light at a projectile's position.
+
+        Arrows carry no light — they are inert wooden shafts, not glowing
+        magic — so they get no attached light and cast no glow in flight.
+        Only magical bolts (and other genuinely luminous projectiles) light
+        the world around them.
+        """
         pos = proj.get('pos')
         if pos is None:
+            return None
+        if self._proj_is_arrow(proj):
             return None
         # An explicit per-spell colour (from the cast spell) always wins so the
         # attached light matches the tinted projectile exactly; otherwise fall
@@ -1061,6 +1070,16 @@ class QtGameView(QOpenGLWidget):
             'casts_shadows': False,
         })
         return light
+
+    @staticmethod
+    def _proj_is_arrow(proj):
+        """True if a projectile is an arrow (a physical shaft, not a glowing
+        bolt). Prefers the authored ``kind`` tag and falls back to the sprite
+        name so arrows are recognised even on older render states that predate
+        the synced ``kind`` field."""
+        if str(proj.get('kind') or '').lower() == 'arrow':
+            return True
+        return 'arrow' in str(proj.get('sprite') or '').lower()
 
     def _projectile_texture(self, sprite_path):
         """Resolve a projectile's authored sprite path to a preloaded texture.

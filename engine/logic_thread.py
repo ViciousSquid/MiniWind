@@ -2925,9 +2925,11 @@ class LogicThread(threading.Thread):
         write_state.projectiles = [
             {
                 'pos': list(proj['pos']),
+                'vel': list(proj['vel']) if proj.get('vel') is not None else None,
                 'sprite': proj.get('sprite', 'projectile.png'),
                 'size': proj.get('size', MONSTER_PROJECTILE_SPRITE_SIZE),
                 'color': proj.get('color'),   # RGB 0-255 tint, or None
+                'kind': proj.get('kind'),     # e.g. 'arrow' — steers render/light choices
             }
             for proj in remaining
         ]

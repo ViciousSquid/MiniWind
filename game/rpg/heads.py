@@ -122,3 +122,15 @@ def random_head(rng: Optional[_random.Random] = None,
     ban = {str(e) for e in exclude}
     pool = [h for h in HEAD_IDS if h not in ban] or list(HEAD_IDS)
     return (rng or _random).choice(pool)
+
+
+def random_guard_head(rng: Optional[_random.Random] = None) -> str:
+    """A random guard head id (guard01…guard04). Used to auto-assign a head to
+    a guard-named NPC that has no head explicitly set in the editor."""
+    return (rng or _random).choice(GUARD_HEAD_IDS)
+
+
+def name_is_guard(name) -> bool:
+    """True if an NPC name marks it as a guard (case-insensitive substring),
+    matching the editor's Appearance tab rule for offering guard heads."""
+    return "guard" in str(name or "").lower()

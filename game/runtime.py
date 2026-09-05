@@ -396,9 +396,17 @@ class MiniwindSession:
         self.notify(f"Welcome to {self.region_name}, {name}.", 5.0)
 
     def _assign_npc_heads(self) -> None:
-        """Give every NPC/creature a head sprite — a random one that is never the
-        player's. An editor-authored head is kept unless it clashes with the
-        player's; empty/invalid heads are filled in."""
+        """Give every NPC/creature a head sprite.
+
+        A head explicitly set in the editor is always respected — regular head,
+        special guard head, or any browsed PNG under assets/sprites/heads/. Only
+        when no head was set (the '(random)' option, i.e. an empty/invalid head)
+        is one assigned automatically:
+
+        * an NPC whose name contains "guard" gets a random *guard* head
+          (guard01…guard04), matching the editor's guard-head option;
+        * everyone else gets a random regular head that is never the player's.
+        """
         from .rpg import heads
         player_head = str(getattr(self.game.character, "head", "") or "")
         things = getattr(self.logic, "things", None) or []
@@ -411,11 +419,15 @@ class MiniwindSession:
             if ttype not in ("npc", "creature", "monster"):
                 continue
             cur = str(p.get("head", "") or "")
-            # Keep a valid authored head unless it clashes with the player's;
-            # otherwise roll a random one that avoids the player.
-            head = cur if (cur in heads.HEAD_IDS and cur != player_head) \
-                else heads.random_head(self.rng, exclude={player_head})
-            path = heads.head_path(head)
+            # Always respect a head explicitly set in the editor (regular, guard,
+            # or browsed). Only roll a random head when none was set.
+            if heads.is_any_head(cur):
+                head = cur
+            elif heads.name_is_guard(p.get("name") or p.get("display_name")):
+                head = heads.random_guard_head(self.rng)
+            else:
+                head = heads.random_head(self.rng, exclude={player_head})
+            path = heads.any_head_path(head)
             if p.get("head") != head or p.get("custom_idle") != path:
                 p["head"] = head
                 p["custom_idle"] = path
