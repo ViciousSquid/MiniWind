@@ -603,4 +603,9 @@ class OverheadSpriteRenderer:
             texture,
             weapon_size,
             self.y_offset + 0.6,
+            # Match the half-turn applied to the character sprite so the weapon
+            # art points the same way. Only the sprite's orientation is rotated;
+            # its resting position (actor's right) and thrust direction are
+            # computed above from the raw facing and are unaffected.
+            rotation_offset=math.radians(HEAD_FACING_OFFSET_DEG),
         )
