@@ -136,6 +136,8 @@ def build(settlement: dict, base: dict) -> dict:
         if npc.get("merchant"):
             props["merchant"] = True
             props["merchant_gold"] = npc.get("gold", 200)
+            # Baseline purse the daily off-screen resolution restocks back up to.
+            props["merchant_gold_base"] = npc.get("gold", 200)
         if "inventory" in npc:
             props["inventory"] = _resolve_inventory(npc["inventory"])
         if "dialogue" in npc:
@@ -148,6 +150,11 @@ def build(settlement: dict, base: dict) -> dict:
         if "patrol" in npc:
             # Patrol markers become the guard's schedule waypoints at night.
             props["patrol_markers"] = npc["patrol"]
+        # A carried torch: the NPC equivalent of equipping a light. ``torch``
+        # lights it after dark; ``torch_always`` lights it around the clock.
+        for flag in ("torch", "torch_always"):
+            if npc.get(flag):
+                props[flag] = True
         _art(props, npc.get("role", "villager"))
         world["things"].append(_thing("npc", home_pos, props))
 

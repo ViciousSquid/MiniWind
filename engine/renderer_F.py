@@ -20,6 +20,14 @@ from game.runtime import _current_session as miniwind_session
 # and transit regardless.
 PORTAL_RENDER_DISTANCE = 2048.0
 
+# MiniWind camera render-distance cull. The threshold and the pure per-object
+# geometry live in engine.render_cull (GL-free, so it is unit-testable without a
+# GL context); this module applies it to the MAIN camera pass only — never to the
+# shadow or portal passes, which keep using the full scene. See _camera_distance_cull.
+from engine.render_cull import (
+    CAMERA_RENDER_CULL_DISTANCE, CAMERA_RENDER_CULL_DISTANCE_SQ,
+    camera_xz as _cull_camera_xz, cull_by_distance as _cull_by_distance)
+
 # Cube face order — index maps to the face's 6-vertex run in the cube VAO
 # (face_idx * 6). Kept as a module constant so the per-frame texture batch
 # build doesn't allocate a fresh list for every brush.
@@ -522,6 +530,37 @@ class Renderer_F(BaseRenderer):
             self.render_stats.draw_calls += 1
         gl.glBindVertexArray(0)
 
+    @staticmethod
+    def _cull_keep_thing(t):
+        """Things exempt from the distance cull: lights and portals are always
+        kept so lighting, shadow and portal rendering are wholly unaffected."""
+        return isinstance(t, Light) or (Portal is not None and isinstance(t, Portal))
+
+    def _camera_distance_cull(self, brushes, things, camera_pos):
+        """Broad-phase distance cull for the MAIN camera pass (see
+        :data:`engine.render_cull.CAMERA_RENDER_CULL_DISTANCE`).
+
+        Returns ``(brushes, things)`` filtered to those within the cull radius on
+        the XZ plane, reusing two persistent scratch buffers so nothing new is
+        allocated per frame. Lights and portals are always retained, and anything
+        without a readable position is kept (fail-open). The caller passes the
+        results to ``_sort_objects`` only, leaving the original ``brushes`` /
+        ``things`` lists (used by the shadow and portal passes) untouched."""
+        if camera_pos is None:
+            return brushes, things
+        cx, cz = _cull_camera_xz(camera_pos)
+        bbuf = getattr(self, "_cull_brush_buf", None)
+        if bbuf is None:
+            bbuf = self._cull_brush_buf = []
+        tbuf = getattr(self, "_cull_thing_buf", None)
+        if tbuf is None:
+            tbuf = self._cull_thing_buf = []
+        brushes = _cull_by_distance(brushes, cx, cz,
+                                    CAMERA_RENDER_CULL_DISTANCE_SQ, out=bbuf)
+        things = _cull_by_distance(things, cx, cz, CAMERA_RENDER_CULL_DISTANCE_SQ,
+                                   out=tbuf, keep=self._cull_keep_thing)
+        return brushes, things
+
     def render_scene(self, projection, view, camera_pos, brushes, things, selected_object, config, clear=True):
         current_mode = config.get('render_mode', RENDER_MODE_LIT)
         gl.glEnable(gl.GL_DEPTH_TEST)
@@ -548,8 +587,16 @@ class Renderer_F(BaseRenderer):
             gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
         self.draw_grid(projection, view, self.grid_indices_count,
                       config.get('play_mode', False), config.get('grid_visible', True))
+        # MiniWind broad-phase distance cull (main camera pass only): feed
+        # _sort_objects a range-limited view of the scene, on top of the frustum
+        # cull it already applies downstream. The original brushes/things lists
+        # are left intact for the shadow and portal passes below. Enabled in play
+        # mode by default; a caller can force it on/off via 'camera_distance_cull'.
+        cull_brushes, cull_things = brushes, things
+        if config.get('camera_distance_cull', config.get('play_mode', False)):
+            cull_brushes, cull_things = self._camera_distance_cull(brushes, things, camera_pos)
         opaque_brushes, transparent_brushes, sprite_things, fog_volumes, water_brushes, glass_brushes, glow_brushes = \
-            self._sort_objects(brushes, things, config)
+            self._sort_objects(cull_brushes, cull_things, config)
         textured_opaque, solid_opaque = self._split_opaque(opaque_brushes)
         models_to_render, final_sprites = [], []
         for thing in sprite_things:

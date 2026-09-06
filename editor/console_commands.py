@@ -1485,11 +1485,13 @@ class ConsoleCommandHandler:
             debug_log("Info", f"Camera switched to {new_mode}")
 
     def cmd_inspect(self, args):
-        """inspect | mind   — click a monster/NPC to open a live mental-state popup.
+        """inspect | mind   — pause and click a monster/NPC for a live mental-state popup.
 
-        Arms a one-shot picker: the next left-click on a monster or NPC in the 3D
-        view opens a draggable inspector window showing its identity, AI state and
-        prioritised internal task list. Esc cancels. Play Mode only."""
+        Pauses the world and frees the mouse, then arms a one-shot picker: the
+        next left-click on a monster or NPC in the 3D view opens a draggable
+        inspector window showing its identity, AI state, needs, standing toward
+        the player and prioritised internal task (job) list. Esc cancels and
+        unpauses. Play Mode only."""
         if not self._require_play_mode("inspect"):
             return
         view_3d = getattr(self.main_window, 'view_3d', None)
@@ -1498,8 +1500,8 @@ class ConsoleCommandHandler:
             return
         view_3d.enter_inspect_mode()
         if hasattr(self.main_window, 'show_toast'):
-            self.main_window.show_toast("Inspect: click a monster / NPC (Esc to cancel)")
-        debug_log("Info", "Inspect mode armed — click a monster or NPC.")
+            self.main_window.show_toast("Inspect (paused): click a monster / NPC (Esc to cancel)")
+        debug_log("Info", "Inspect mode armed — world paused; click a monster or NPC.")
 
     def cmd_noclip(self, args):
         if not self._require_play_mode("noclip"):

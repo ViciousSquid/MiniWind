@@ -2604,8 +2604,24 @@ class QtGameView(QOpenGLWidget):
         """Arm the click-to-inspect picker (called by the 'inspect' console cmd).
 
         Frees the mouse cursor so the next click can land on a monster/NPC or on
-        an inspector popup, and shows a hint until a pick is made or cancelled."""
+        an inspector popup, and shows a hint until a pick is made or cancelled.
+
+        Also *pauses the world* while inspecting, so the actor being examined
+        holds still and its live state can be read at leisure. The pause is set
+        two ways so it sticks whether or not a built-in game owns the tick: the
+        engine ``gameplay_paused`` flag freezes the base logic thread directly,
+        and the sticky ``_inspect_paused`` request is OR-ed into any game host's
+        per-tick pause recomputation (see game/host.py). Both are cleared on
+        exit, restoring whatever pause state was in effect before."""
         self.inspect_mode = True
+        lt = getattr(self, 'logic_thread', None)
+        if lt is not None:
+            try:
+                self._inspect_prev_pause = bool(getattr(lt, 'gameplay_paused', False))
+                lt._inspect_paused = True
+                lt.gameplay_paused = True
+            except Exception:
+                pass
         try:
             while QApplication.overrideCursor() is not None:
                 QApplication.restoreOverrideCursor()
@@ -2653,6 +2669,15 @@ class QtGameView(QOpenGLWidget):
 
     def _exit_inspect_mode(self):
         self.inspect_mode = False
+        # Lift the inspect pause, restoring the pause state from before we armed
+        # (a game host recomputes gameplay_paused from its own state next tick).
+        lt = getattr(self, 'logic_thread', None)
+        if lt is not None:
+            try:
+                lt._inspect_paused = False
+                lt.gameplay_paused = bool(getattr(self, '_inspect_prev_pause', False))
+            except Exception:
+                pass
         try:
             self.unsetCursor()
             if self.play_mode:
@@ -2773,7 +2798,7 @@ class QtGameView(QOpenGLWidget):
             painter.setFont(QFont("Arial", 10))
             painter.setPen(QColor(240, 220, 120))
             painter.drawText(QRect(0, 8, self.width(), 22), Qt.AlignHCenter,
-                             "Inspect mode: click a monster / NPC   (Esc to cancel)")
+                             "Inspect mode (paused): click a monster / NPC   (Esc to cancel)")
         except Exception:
             pass
 

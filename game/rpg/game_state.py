@@ -159,7 +159,7 @@ class GameState:
             else:
                 self.message(f"You read {d.name}.")
             return True
-        if d.category in (items.WEAPON, items.ARMOUR, items.AMMO):
+        if d.category in (items.WEAPON, items.ARMOUR, items.AMMO, items.LIGHT):
             return self.equip(item_id)
         return False
 
