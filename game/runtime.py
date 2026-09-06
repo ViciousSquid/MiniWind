@@ -91,6 +91,13 @@ DICE_ANIMATION_FADE = FADE_DURATION
 DICE_DISPLAY_DURATION = DICE_ANIMATION_SHAKE + DICE_ANIMATION_ROLL + DICE_ANIMATION_FADE + 1.0
 DICE_TYPES = ("d4", "d6", "d8", "d10", "d12", "d20")
 
+#: A carried torch floats a warm dynamic light on its holder. Height above the
+#: holder's feet, and the fallback light params a torch item may override.
+TORCH_LIGHT_HEIGHT = 70.0
+TORCH_DEFAULT_RADIUS = 380.0
+TORCH_DEFAULT_INTENSITY = 1.5
+TORCH_DEFAULT_COLOUR = [255, 170, 80]
+
 #: Wisp companion light — how far it may wander from the player, and its four
 #: possible hues (RGB 0-255). One is picked at cast time and never changes.
 WISP_LEASH = 150.0
@@ -235,6 +242,11 @@ class MiniwindSession:
         self._arrest_notice_sent = False
         #: Active Wisp companion light, or None. See _spawn_wisp / _update_wisp.
         self._wisp = None
+        #: Live torch lights, keyed by holder ("player" or an NPC's id): a
+        #: dynamic Light that follows whoever carries a lit torch. See
+        #: _update_torch_lights.
+        self._torch_lights: Dict = {}
+        self._torch_flicker_t = 0.0
         self.dice_type_index = len(DICE_TYPES) - 1
         self.dice_animation: Optional[Dict] = None
         self.game.add_roll_listener(self._on_dice_roll)
@@ -345,6 +357,7 @@ class MiniwindSession:
         global _current_session
         _current_session = None
         self._remove_wisp()
+        self._remove_all_torch_lights()
         io_manager = getattr(self.logic, "io_manager", None)
         if io_manager is not None:
             try:
@@ -545,6 +558,9 @@ class MiniwindSession:
         # the wandering Wisp companion light
         self._update_wisp(delta)
 
+        # carried torches (player + NPCs) float a warm light on their holder
+        self._update_torch_lights(delta)
+
         # age transient UI
         self._age_lists(delta)
 
@@ -635,6 +651,140 @@ class MiniwindSession:
                 self._rebuild_entity_caches()
         except Exception:
             pass
+
+    # ------------------------------------------------------------ torches
+    def _make_light(self, pos, props):
+        """Create a Light entity for the scene (a torch/wisp light).
+
+        Uses the engine ``Light`` in the real game; falls back to the Qt-free
+        ``plugins.entitybase.Thing`` (tagged ``type='light'``) where PyQt is
+        unavailable — the same fallback the entity module uses — so the runtime's
+        light handling is exercisable headlessly. Returns None if neither exists."""
+        try:
+            from editor.things import Light
+            return Light(pos=list(pos), properties=dict(props))
+        except Exception:
+            pass
+        try:
+            from plugins.entitybase import Thing
+            t = Thing(pos=list(pos), properties=dict(props))
+            if isinstance(getattr(t, "properties", None), dict):
+                t.properties.setdefault("type", "light")
+            return t
+        except Exception:
+            return None
+
+    def _torch_light_props(self, item_def) -> Dict:
+        """Light properties for a carried torch, from the item's own light fields
+        (falling back to the defaults) — a warm, non-shadowing point light."""
+        radius = intensity = None
+        colour = None
+        if item_def is not None:
+            radius = item_def.get("light_radius")
+            intensity = item_def.get("light_intensity")
+            colour = item_def.get("light_color")
+        base_intensity = float(intensity if intensity is not None else TORCH_DEFAULT_INTENSITY)
+        return {
+            "colour": list(colour) if colour else list(TORCH_DEFAULT_COLOUR),
+            "intensity": base_intensity,
+            "radius": float(radius if radius is not None else TORCH_DEFAULT_RADIUS),
+            "state": "on",
+            "casts_shadows": False,
+            "hidden_in_game": False,
+            "_torch": True,
+            "_torch_base_intensity": base_intensity,
+        }
+
+    def _player_torch_def(self):
+        """The torch item the player currently has equipped in the light slot,
+        or None."""
+        c = self.game.character
+        if c.is_dead:
+            return None
+        return eq.light_source(c)
+
+    def _npc_torch_def(self, props: Dict, night: bool):
+        """The torch item an NPC is currently holding lit, or None.
+
+        ``torch_always`` burns day and night; ``torch`` lights only after dark —
+        so authoring ``torch: true`` gives the lovely "guards carry torches at
+        night" behaviour with no schedule work. The specific item can be named
+        via ``torch_item`` (defaults to the generic ``torch``)."""
+        if props.get("dead") or props.get("hidden"):
+            return None
+        if not (props.get("torch_always") or (props.get("torch") and night)):
+            return None
+        tid = props.get("torch_item") or "torch"
+        return rpg_items.get(tid) or rpg_items.get("torch")
+
+    def _update_torch_lights(self, delta: float) -> None:
+        """Spawn / move / remove the dynamic lights carried by torch holders.
+
+        Cheap and allocation-light: one pass builds the set of holders that
+        should have a lit torch right now (the player if a torch is equipped,
+        plus any NPC whose flags say so), existing lights are repositioned in
+        place onto their holder, new ones are spawned and vanished ones removed,
+        and the engine caches are rebuilt only when the light set actually
+        changes (a spawn/despawn), never on a mere reposition."""
+        night = not self.clock.is_daytime
+        # holder key -> (holder position, torch item def)
+        desired = {}
+        ppos = self._player_pos()
+        pdef = self._player_torch_def()
+        if pdef is not None and ppos is not None:
+            desired["player"] = (ppos, pdef)
+        for npc in self.npcs():
+            tdef = self._npc_torch_def(npc.properties, night)
+            if tdef is not None:
+                desired[id(npc)] = (list(npc.pos), tdef)
+
+        changed = False
+        for key in list(self._torch_lights):
+            if key not in desired:
+                self._remove_torch_light(key)
+                changed = True
+
+        self._torch_flicker_t += delta
+        flick = 0.9 + 0.1 * math.sin(self._torch_flicker_t * 9.0)
+        for key, (pos, tdef) in desired.items():
+            light = self._torch_lights.get(key)
+            if light is None:
+                start = [pos[0], pos[1] + TORCH_LIGHT_HEIGHT, pos[2]]
+                light = self._make_light(start, self._torch_light_props(tdef))
+                if light is None:
+                    continue
+                try:
+                    self.logic.things.append(light)
+                except Exception:
+                    continue
+                self._torch_lights[key] = light
+                changed = True
+            else:
+                lp = light.pos
+                lp[0] = pos[0]
+                lp[1] = pos[1] + TORCH_LIGHT_HEIGHT
+                lp[2] = pos[2]
+            base = float(light.properties.get("_torch_base_intensity",
+                                              TORCH_DEFAULT_INTENSITY))
+            light.properties["intensity"] = base * flick
+        if changed:
+            self._rebuild_entity_caches()
+
+    def _remove_torch_light(self, key) -> None:
+        light = self._torch_lights.pop(key, None)
+        if light is None:
+            return
+        try:
+            things = getattr(self.logic, "things", None)
+            if things is not None and light in things:
+                things.remove(light)
+        except Exception:
+            pass
+
+    def _remove_all_torch_lights(self) -> None:
+        for key in list(self._torch_lights):
+            self._remove_torch_light(key)
+        self._rebuild_entity_caches()
 
     def _rebuild_entity_caches(self) -> None:
         rebuild = getattr(self.logic, "_build_entity_caches", None)

@@ -26,6 +26,9 @@ SCROLL = "scroll"
 KEY = "key"
 GOLD = "gold"
 MISC = "misc"
+#: A carried light source (torch, lantern) — equips in the off-hand light slot
+#: and makes the runtime float a dynamic light on its holder (see runtime).
+LIGHT = "light"
 
 # equip slots
 SLOT_WEAPON = "weapon"
@@ -38,10 +41,13 @@ SLOT_LEGS = "legs"
 SLOT_FEET = "feet"
 SLOT_AMULET = "amulet"
 SLOT_RING = "ring"
+#: Off-hand light slot (a torch/lantern). Kept separate from the shield so a
+#: one-handed fighter can hold a blade and a torch at once.
+SLOT_LIGHT = "light"
 
 ARMOUR_SLOTS = (SLOT_HEAD, SLOT_CHEST, SLOT_HANDS, SLOT_LEGS, SLOT_FEET, SLOT_SHIELD)
 ALL_SLOTS = (SLOT_WEAPON, SLOT_AMMO, SLOT_SHIELD, SLOT_HEAD, SLOT_CHEST,
-             SLOT_HANDS, SLOT_LEGS, SLOT_FEET, SLOT_AMULET, SLOT_RING)
+             SLOT_HANDS, SLOT_LEGS, SLOT_FEET, SLOT_AMULET, SLOT_RING, SLOT_LIGHT)
 
 # weapon kinds (drive combat + which core attack the engine plays)
 KIND_MELEE = "melee"
@@ -161,7 +167,13 @@ _load_items()
 # ---------------------------------------------------------------------------
 def is_equippable(item_id: str) -> bool:
     d = get(item_id)
-    return bool(d and (d.get("slot") or d.category in (WEAPON, ARMOUR, AMMO)))
+    return bool(d and (d.get("slot") or d.category in (WEAPON, ARMOUR, AMMO, LIGHT)))
+
+
+def is_light_source(item_def) -> bool:
+    """Whether an item def is a carried light (torch/lantern): the LIGHT category,
+    or anything that declares a ``light_radius``."""
+    return bool(item_def and (item_def.category == LIGHT or item_def.get("light_radius")))
 
 
 def slot_of(item_id: str) -> Optional[str]:

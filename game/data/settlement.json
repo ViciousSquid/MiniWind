@@ -104,7 +104,8 @@
         { "id": "potion_heal_minor", "qty": 5 },
         { "id": "bread", "qty": 6 },
         { "id": "short_bow", "qty": 1 },
-        { "id": "iron_arrow", "qty": 40 }
+        { "id": "iron_arrow", "qty": 40 },
+        { "id": "torch", "qty": 4 }
       ],
       "dialogue": {
         "start": "greeting",
@@ -166,6 +167,7 @@
       "role": "guard",
       "home": "kestrel_post",
       "work": "kestrel_post",
+      "torch": true,
       "patrol": [ "kestrel_post", "patrol_west", "village_square", "patrol_east" ],
       "relationships": { "Mara": "sweetheart", "Thalen": "friend" },
       "dialogue": {

@@ -111,6 +111,15 @@ def ammo(character):
     return equipped_def(character, items.SLOT_AMMO)
 
 
+def light_source(character):
+    """The equipped carried light (torch/lantern) ItemDef, or None.
+
+    Read by the runtime to decide whether to float a dynamic light on the
+    player; NPCs use an authored ``torch`` flag instead of an equipment slot."""
+    d = equipped_def(character, items.SLOT_LIGHT)
+    return d if items.is_light_source(d) else None
+
+
 def armor_rating(character) -> float:
     """Sum of worn armour ratings, scaled by the relevant armour skill.
 

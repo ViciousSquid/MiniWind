@@ -613,10 +613,18 @@
   },
   "torch": {
     "name": "Torch",
-    "category": "misc",
-    "value": 2,
+    "category": "light",
+    "value": 5,
     "weight": 1.0,
-    "desc": "Lights the dark."
+    "desc": "A pitch-soaked torch that throws a warm circle of light. Equip it in the off hand to see in the dark.",
+    "slot": "light",
+    "light_radius": 380.0,
+    "light_intensity": 1.5,
+    "light_color": [
+      255,
+      170,
+      80
+    ]
   },
   "lockpick": {
     "name": "Lockpick",

@@ -150,6 +150,11 @@ def build(settlement: dict, base: dict) -> dict:
         if "patrol" in npc:
             # Patrol markers become the guard's schedule waypoints at night.
             props["patrol_markers"] = npc["patrol"]
+        # A carried torch: the NPC equivalent of equipping a light. ``torch``
+        # lights it after dark; ``torch_always`` lights it around the clock.
+        for flag in ("torch", "torch_always"):
+            if npc.get(flag):
+                props[flag] = True
         _art(props, npc.get("role", "villager"))
         world["things"].append(_thing("npc", home_pos, props))
 
