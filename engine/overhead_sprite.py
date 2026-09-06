@@ -17,6 +17,12 @@ from typing import Optional
 WEAPON_SIZE_MULTIPLIER = 2.0
 
 # Fixed resting offset from the actor centre.
+# Extra in-plane rotation (degrees) applied to the character (head/body) sprite
+# only — never to the equipped weapon. The head-sprite art faces "down" (the
+# bottom of the image is the character's front), so a half-turn makes that front
+# point along the actor's heading. Mirrors renderer_core.HEAD_FACING_OFFSET.
+HEAD_FACING_OFFSET_DEG = 180.0
+
 # Positive right_offset means the actor's local right-hand side.
 WEAPON_RIGHT_OFFSET = 42.0
 
@@ -471,6 +477,11 @@ class OverheadSpriteRenderer:
                 texture,
                 self.size,
                 self.y_offset,
+                # Rotate the character/head sprite so its art's front (image
+                # bottom) points along the heading. Applied here on the actor
+                # sprite only — draw_weapon computes its own placement from the
+                # raw facing and must not inherit this half-turn.
+                rotation_offset=math.radians(HEAD_FACING_OFFSET_DEG),
                 tint=tint,
             )
 

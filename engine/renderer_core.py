@@ -50,10 +50,11 @@ except ImportError:
 
 
 # Extra in-plane rotation (radians) applied to head billboards so their art's
-# "forward" lines up with the actor heading. The head sprites point up in their
-# art, so 0 is correct; kept as a single tunable knob if the art convention
-# changes (mirrors OverheadSpriteRenderer.facing_offset_deg for the player).
-HEAD_FACING_OFFSET = 0.0
+# "forward" lines up with the actor heading. The head-sprite art faces "down"
+# (the bottom of the image is the character's front), so a half-turn is applied
+# to make that front point along the actor's heading; kept as a single tunable
+# knob mirroring overhead_sprite.HEAD_FACING_OFFSET_DEG.
+HEAD_FACING_OFFSET = math.pi
 
 
 # ---------- Utility classes ----------
