@@ -495,7 +495,11 @@ class MiniwindGame:
         # engine idles the monsters/physics, advance nothing, and route input to
         # the menu only. Time, NPC schedules and combat resume on close.
         world_paused = (session.needs_char_creation or session.open_screen is not None
-                        or session.dialogue is not None)
+                        or session.dialogue is not None
+                        # The 'inspect' console command freezes the world while the
+                        # player examines an actor (engine sets this on the logic
+                        # thread; see qt_game_view.enter_inspect_mode).
+                        or getattr(logic, "_inspect_paused", False))
         logic.gameplay_paused = world_paused
 
         # The interact key (E) both opens a container/conversation and, inside
