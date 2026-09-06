@@ -52,6 +52,8 @@
           "greeting": {
             "text": "Well met. The forge is hot if you need steel.",
             "responses": [
+              { "text": "Have you cooled off?", "goto": "grudge", "condition": { "key": "talk.wronged", "is_true": true } },
+              { "text": "Good to see a friend.", "goto": "friend", "condition": { "key": "talk.tier", "equals": "devoted" } },
               { "text": "Show me your wares.", "goto": "END", "actions": [ { "op": "open_trade" } ] },
               { "text": "Trouble on the road?", "goto": "warn" },
               { "text": "Any family in town?", "goto": "kin", "condition": { "key": "dead.Elowen", "equals": "false" } },
@@ -59,6 +61,14 @@
               { "text": "The town seems uneasy.", "goto": "mourn", "condition": { "key": "town.mourning", "is_true": true } },
               { "text": "Good day.", "goto": "END" }
             ]
+          },
+          "grudge": {
+            "text": "Cooled off? You raised a hand in my town. I'll take your coin at the forge, but don't mistake that for forgiveness.",
+            "responses": [ { "text": "Fair enough.", "goto": "greeting" } ]
+          },
+          "friend": {
+            "text": "Aye, always. You've done right by me and mine — there's a warm welcome and a fair price waiting whenever you pass through.",
+            "responses": [ { "text": "Much obliged, Thalen.", "goto": "greeting" } ]
           },
           "warn": {
             "text": "Bandits camp east of the mill. Kestrel keeps them off us — buys his blades from me, so I've a stake in him coming home.",

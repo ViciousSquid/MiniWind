@@ -125,6 +125,9 @@ def snapshot(thing, monster_state: Optional[dict] = None,
     sched_state = str(_get(props, "sched_state", default="")).upper()
     if sched_state:
         ai.insert(0, ("State", f"{sched_state} — {_STATE_BLURB.get(sched_state, sched_state)}"))
+    need_reason = props.get("_need_reason")
+    if need_reason:
+        ai.append(("Need driving them", str(need_reason)))
 
     # Optional confidence read from the live MiniWind session.
     confidence = None
@@ -149,11 +152,35 @@ def snapshot(thing, monster_state: Optional[dict] = None,
     # ---- Task list (prioritised) ------------------------------------
     tasks = _build_tasks(props, sched_state, target, investigating, confidence)
 
+    # ---- Needs (persistent drives biasing the schedule) --------------------
+    if "need_fatigue" in props or "need_hunger" in props:
+        vitals.append(("Fatigue", _fmt(_get(props, "need_fatigue", default=0.0))))
+        vitals.append(("Hunger", _fmt(_get(props, "need_hunger", default=0.0))))
+
     sections: List[Tuple[str, List[Tuple[str, str]]]] = [
         ("Identity", identity),
         ("Vitals & Combat", vitals),
         ("AI State", ai),
     ]
+
+    # ---- Player standing (this NPC's remembered feelings toward the player) --
+    if session is not None and not dead:
+        try:
+            from .rpg import disposition as _disp
+            char = getattr(getattr(session, "game", None), "character", None)
+            store = getattr(session, "store", None)
+            if char is not None and store is not None:
+                s = _disp.summary(char, props, store)
+                standing = [
+                    ("Disposition", f"{s['disposition']} ({s['tier']})"),
+                    ("Wronged by player", _fmt(s["wronged"])),
+                    ("Befriended player", _fmt(s["befriended"])),
+                ]
+                if s["log"]:
+                    standing.append(("Remembers", "; ".join(s["log"][-3:])))
+                sections.append(("Player Standing", standing))
+        except Exception:
+            pass
 
     # ---- Anchors (home/work) for social NPCs ------------------------
     home = props.get("home")

@@ -136,6 +136,8 @@ def build(settlement: dict, base: dict) -> dict:
         if npc.get("merchant"):
             props["merchant"] = True
             props["merchant_gold"] = npc.get("gold", 200)
+            # Baseline purse the daily off-screen resolution restocks back up to.
+            props["merchant_gold_base"] = npc.get("gold", 200)
         if "inventory" in npc:
             props["inventory"] = _resolve_inventory(npc["inventory"])
         if "dialogue" in npc:

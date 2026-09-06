@@ -29,6 +29,9 @@ from .rpg import equipment as eq
 from .rpg import items as rpg_items
 from .rpg import magic as rpg_magic
 from .rpg import guilds
+from .rpg import disposition as disp
+from .rpg import needs as rpg_needs
+from .rpg import daily as rpg_daily
 from .rpg import quests as _quests
 from .rpg.gametime import GameClock
 from .rpg.dialogue import DialogueRunner
@@ -187,6 +190,10 @@ class MiniwindSession:
 
         self._decision_accum = 0.0
         self._last_hour_int = -1
+        #: In-game day last seen by the tick, so a day rollover triggers the
+        #: off-screen daily resolution (merchant restock, debts, mourning fade,
+        #: harvest — see game.rpg.daily) exactly once per day.
+        self._last_day = None
         self._attack_cooldown = 0.0
         self._cast_cooldown = 0.0
         #: Live combat actors (NPCs/creatures), refreshed once per decision pass
@@ -499,6 +506,11 @@ class MiniwindSession:
         # Turn any NPC deaths (from player or engine combat) into persistent
         # settlement consequences — cheap: it walks the same cached actor list.
         self._reap_dead()
+
+        # At each in-game day boundary, resolve one day of off-screen settlement
+        # life (merchant restock, debts, mourning fade, harvest, memory decay)
+        # and log it — the world moves on between the player's visits.
+        self._resolve_day_rollover()
 
         # world placeables: item pickups, spellbooks and quest triggers
         self._tick_pickups()
@@ -924,9 +936,16 @@ class MiniwindSession:
         npc_id = self._thing_id(npc)
         if npc_id:
             self.store.set(f"talked.{self._slug(npc_id)}", "1")
+        # A first introduction warms an NPC to the player a touch (once).
+        disp.remember(self.store, getattr(npc, "properties", {}) or {}, "greeted")
 
     def record_kill(self, target) -> None:
-        """Bump per-identity kill counters (for quest 'kill' objectives)."""
+        """Bump per-identity kill counters (for quest 'kill' objectives).
+
+        Also flags a named victim as *killed by the player*, so that when the
+        death is reaped into a settlement consequence, the victim's kin can tell
+        an honest bandit-slaying apart from a murder at the player's own hand and
+        remember the player accordingly (see :meth:`_on_npc_death`)."""
         p = getattr(target, "properties", {}) or {}
         for field in ("name", "npc_role", "monster_type"):
             v = str(p.get(field, "") or "").strip()
@@ -938,6 +957,9 @@ class MiniwindSession:
             except (TypeError, ValueError):
                 n = 0
             self.store.set(key, n + 1)
+        name = str(p.get("name", "") or "").strip()
+        if name:
+            self.store.set("killed_by_player." + name, "1")
 
     def _condition_met(self, stage, qid: Optional[str] = None) -> bool:
         """True when *stage*'s completion condition is satisfied right now."""
@@ -1437,25 +1459,72 @@ class MiniwindSession:
         """Record the durable, save/load-persistent fallout of one NPC's death."""
         p = npc.properties
         name = str(p.get("name", ""))
-        disp = p.get("display_name") or name or "Someone"
+        disp_name = p.get("display_name") or name or "Someone"
         already = str(self.store.get("dead." + name, "false")).lower() not in (
             "false", "", "none")
         if name:
             self.store.set("dead." + name, "1")
-        self.game.message(f"{disp} has died.")
-        self.notify(f"{disp} has died.", 5.0)
+        self.game.message(f"{disp_name} has died.")
+        self.notify(f"{disp_name} has died.", 5.0)
         if not already:
             try:
                 n = int(self.store.get("town.deaths", "0"))
             except (TypeError, ValueError):
                 n = 0
             self.store.set("town.deaths", n + 1)
-        self.store.set("town.last_death", disp)
+        self.store.set("town.last_death", disp_name)
         self.store.set("town.mourning", "1")
+        # Stamp the day of the death so the daily resolution can let active
+        # mourning fade a couple of days later (game.rpg.daily._fade_mourning).
+        try:
+            self.store.set("town.last_death_day", int(self.clock.day))
+        except Exception:
+            pass
         # A fallen guard leaves the settlement less protected — a durable flag
         # other systems and dialogue can key off.
         if str(p.get("npc_role", "")).lower().startswith("guard"):
             self.store.set("town.unprotected", "1")
+        # If the player struck this NPC down, their kin remember it — every
+        # surviving townsperson who names the dead in their relationships turns
+        # colder toward the player (a durable, per-NPC disposition wound).
+        if str(self.store.get("killed_by_player." + name, "false")).lower() in (
+                "1", "true", "yes"):
+            self._remember_kin_grief(name)
+
+    def _remember_kin_grief(self, dead_name: str) -> None:
+        """Drop the disposition of the slain NPC's living relatives toward the
+        player (memory of a murder at the player's hand)."""
+        if not dead_name:
+            return
+        for npc in self.npcs():
+            rels = npc.properties.get("relationships")
+            if isinstance(rels, dict) and dead_name in rels:
+                disp.remember(self.store, npc.properties, "kin_slain")
+
+    def _resolve_day_rollover(self) -> None:
+        """On an in-game day boundary, resolve one day of off-screen settlement
+        life and surface its event log. Cheap: only fires when the day integer
+        actually changes, and the resolution is a single pass over the townsfolk
+        property dicts (see :mod:`game.rpg.daily`)."""
+        try:
+            day = int(self.clock.day)
+        except Exception:
+            return
+        if self._last_day is None:
+            # First tick of this session: establish the baseline day without
+            # resolving retroactively (resolve_pending records it and returns []).
+            self._last_day = day
+            rpg_daily.resolve_pending(self.store, day, [], self.rng)
+            return
+        if day == self._last_day:
+            return
+        self._last_day = day
+        actors = [npc.properties for npc in self.npcs()]
+        events = rpg_daily.resolve_pending(self.store, day, actors, self.rng)
+        for line in events:
+            self.game.message(line)
+        if events:
+            self.notify(events[-1], 5.0)
 
     def _is_arrest_guard(self, thing) -> bool:
         """Return whether *thing* is a living, non-hostile guard available for arrest duty."""
@@ -1785,6 +1854,25 @@ class MiniwindSession:
             self._idle_or_wander(npc)
             return
         state = entry.get("state", sched.IDLE)
+        loc_key = entry.get("location", "home")
+
+        # (c.5) NEEDS: for civilian townsfolk, advance persistent fatigue/hunger
+        #     with the hours that have passed and let a strong need bend the
+        #     authored plan — an exhausted farmer naps, a hungry worker slips
+        #     home to eat — so no two days play out identically. Combatants
+        #     (guards on duty) are exempt: they hold their posts. The base state
+        #     is re-read from the schedule every tick, so an override lapses on
+        #     its own once the need is met.
+        if not self._is_combatant(npc):
+            self._advance_needs(npc, state)
+            new_state, reason = rpg_needs.apply(p, state, self.clock.hour)
+            if reason:
+                state = new_state
+                loc_key = "home"
+                p["_need_reason"] = reason
+            else:
+                p.pop("_need_reason", None)
+
         # (d) PATROL: an on-duty guard/combatant with an authored patrol circuit
         #     walks between its markers rather than standing at one work spot, so
         #     the town has a visibly moving watch. Combat (b) pre-empts this; the
@@ -1793,7 +1881,7 @@ class MiniwindSession:
             if self._patrol(npc):
                 return
         p["sched_state"] = state
-        dest = self._resolve_location(npc, entry.get("location", "home"))
+        dest = self._resolve_location(npc, loc_key)
         if state == sched.IDLE:
             # At an idle point: allow a little local wandering so the town looks
             # alive rather than frozen in place.
@@ -1830,6 +1918,32 @@ class MiniwindSession:
         ux, uz = dx / dist, dz / dist
         stop_at = leash * 0.6
         p["_dest"] = [ppos[0] - ux * stop_at, npc.pos[1], ppos[2] - uz * stop_at]
+
+    def _advance_needs(self, npc, current_state) -> None:
+        """Advance a civilian NPC's persistent needs by the in-game hours passed
+        since its last decision, using the state it was actually in.
+
+        The last-advanced timestamp is a transient underscore field (dropped by
+        the serializer), so a loaded save simply re-baselines on its first tick
+        while the *needs themselves* — ``need_fatigue`` / ``need_hunger`` — persist
+        as ordinary properties. Per-NPC appetite/stamina are seeded once here."""
+        p = npc.properties
+        rpg_needs.seed(p, self.rng)
+        abs_now = float(self.clock.day) * 24.0 + float(self.clock.hour)
+        last = p.get("_need_t")
+        p["_need_t"] = abs_now
+        if last is None:
+            return
+        try:
+            hours = abs_now - float(last)
+        except (TypeError, ValueError):
+            return
+        if hours <= 0.0:
+            return
+        # What the NPC has been doing since the last decision (this call runs
+        # before p["sched_state"] is updated for the new decision).
+        prev_state = str(p.get("sched_state") or current_state)
+        rpg_needs.advance(p, hours, prev_state)
 
     def _idle_or_wander(self, npc) -> None:
         """Pick a nearby stroll target around the NPC's idle anchor (autonomy)."""
@@ -2634,9 +2748,11 @@ class MiniwindSession:
         tp["_hit_flash"] = HIT_FLASH_TIME    # red flash on a landed player hit
         team = tp.get("team") or tp.get("faction")
         if factions.is_friendly("player", team) and str(tp.get("aggression")) != "hostile":
-            # attacking innocents earns a bounty and their wrath
+            # attacking innocents earns a bounty and their wrath — and this NPC
+            # remembers the assault even if it later calms or the player flees.
             self.game.character.bounty += 40
             self.notify("Your bounty has increased!")
+            disp.remember(self.store, tp, "assaulted")
         tp["aggression"] = "hostile"
         tp["triggered"] = False
         tp["awake"] = True
@@ -2773,6 +2889,10 @@ class MiniwindSession:
             tree = self._arrest_tree(npc)
         if npc.properties.get("merchant"):
             self.merchant_npc = npc
+        # Publish the partner's remembered standing under generic talk.* keys so
+        # both the synthesised greeting below and authored dialogue can react to
+        # this NPC's memory of the player (talk.tier / talk.wronged / …).
+        disp.write_talk_keys(self.store, self.game.character, npc.properties)
         if not tree:
             # a bare merchant/greeter: synthesise a tiny greeting tree
             tree = self._default_tree(npc)
@@ -2793,8 +2913,19 @@ class MiniwindSession:
 
     def _default_tree(self, npc):
         name = npc.properties.get("display_name", "Villager")
-        disp = guilds.disposition(self.game.character, npc.properties)
-        greeting = "Well met, traveller." if disp >= 40 else "What do you want?"
+        # Effective disposition includes this NPC's memory of the player, so the
+        # greeting reflects a history of kindness or of wrongs, not just a base.
+        value = disp.of(self.game.character, npc.properties, self.store)
+        if disp.has_flag(self.store, npc.properties, "wronged"):
+            greeting = "You. I've not forgotten what you did. State your business and go."
+        elif value >= 80:
+            greeting = "Ah, it's you! Always good to see a friend of mine."
+        elif value >= 55:
+            greeting = "Well met, friend. What can I do for you?"
+        elif value >= 30:
+            greeting = "Well met, traveller."
+        else:
+            greeting = "What do you want?"
         responses = [{"text": "Just passing through. Farewell.", "goto": "END"}]
         if npc.properties.get("merchant"):
             responses.insert(0, {"text": "Let's trade.", "goto": "END",
@@ -2821,10 +2952,13 @@ class MiniwindSession:
             self.notify("They warm to you." if r["success"] else "That didn't help.")
         elif op == "start_quest":
             self.game.start_quest(action.get("quest", action.get("value", "")))
+            disp.remember(self.store, npc.properties, "quest_accepted")
         elif op == "advance_quest":
             self.game.quests.advance(action.get("quest", ""))
         elif op == "complete_quest":
             self.game.complete_quest(action.get("quest", ""))
+            # Finishing a quest for this NPC is a lasting good turn they remember.
+            disp.remember(self.store, npc.properties, "quest_helped")
         elif op == "join_guild":
             if guilds.join(self.game.character, action.get("guild", "")):
                 self.notify(f"You have joined the {guilds.get(action.get('guild','')).name}.")
@@ -2917,13 +3051,14 @@ class MiniwindSession:
         d = rpg_items.get(item_id)
         if not d:
             return False
-        price = self._price(d.value, buying=True)
+        price = self._price(d.value, buying=True, npc=self.merchant_npc)
         if c.gold < price:
             self.notify("Not enough gold")
             return False
         c.gold -= price
         self.game.pick_up(item_id, 1)
         c.use_skill("mercantile", 0.5)
+        self._remember_trade()
         return True
 
     def sell(self, item_id: str) -> bool:
@@ -2931,20 +3066,30 @@ class MiniwindSession:
         d = rpg_items.get(item_id)
         if not d or not inv.has_item(c.inventory, item_id):
             return False
-        price = self._price(d.value, buying=False)
+        price = self._price(d.value, buying=False, npc=self.merchant_npc)
         inv.remove_item(c.inventory, item_id, 1)
         c.gold += price
         c.use_skill("mercantile", 0.5)
+        self._remember_trade()
         return True
 
-    def _price(self, base_value: int, buying: bool) -> int:
+    def _remember_trade(self) -> None:
+        """Honest business slowly warms a merchant to the player (memory)."""
+        npc = self.merchant_npc
+        if npc is not None:
+            disp.remember(self.store, getattr(npc, "properties", {}) or {}, "traded")
+
+    def _price(self, base_value: int, buying: bool, npc=None) -> int:
         c = self.game.character
         merc = c.skill("mercantile")
         pers = c.attrs.get("personality", 40)
         factor = 1.0 - (merc + (pers - 40)) / 300.0
+        # A trader who likes the player shaves coin off the asking price and
+        # pays a little more for goods; a wary one does the opposite.
+        like = disp.price_factor(c, npc.properties, self.store) if npc is not None else 1.0
         if buying:
-            return max(1, int(base_value * (2.0 - factor)))
-        return max(1, int(base_value * factor * 0.8))
+            return max(1, int(base_value * (2.0 - factor) * like))
+        return max(1, int(base_value * factor * 0.8 / like))
 
     # -- persistence --------------------------------------------------------
     _last_persist = 0.0

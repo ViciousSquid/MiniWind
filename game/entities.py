@@ -258,6 +258,10 @@ class NPC(Monster):
         p.setdefault("dialogue", {})
         p.setdefault("merchant", role == "merchant")
         p.setdefault("merchant_gold", 200 if role == "merchant" else 0)
+        # The full coin purse a merchant is restocked back up to overnight (see
+        # game.rpg.daily). Captured from the authored starting gold so it is set
+        # before the player can ever spend it down.
+        p.setdefault("merchant_gold_base", p.get("merchant_gold", 0))
         p.setdefault("respawn", False)
         p.setdefault("quest_flags", {})
         # Authored social ties to other named NPCs ({"Mara": "sister", …}). Empty
