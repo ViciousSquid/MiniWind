@@ -87,9 +87,10 @@ def test_load_missing_file_is_safe(tmp_path, monkeypatch):
     assert magic.load_custom_spells() == 0
 
 
-def test_instadeath_spell_is_always_red_and_kills_instantly():
-    sp = magic.get("instadeath")
+def test_disintegrate_spell_is_always_red_and_kills_instantly():
+    sp = magic.get("disintegrate")
     assert sp is not None
+    assert sp.name == "Disintegrate"
     # Always red — an explicit override, independent of its element.
     assert sp.color == [255, 0, 0]
     # Delivered as a projectile and deals overwhelming damage (one-shot + gib).
@@ -97,4 +98,6 @@ def test_instadeath_spell_is_always_red_and_kills_instantly():
     assert sp.damage >= 99999
     # It's offered to NPCs as a castable projectile spell.
     from game.editor_ui import _castable_spells
-    assert "instadeath" in {sid for sid, _ in _castable_spells()}
+    assert "disintegrate" in {sid for sid, _ in _castable_spells()}
+    # The old id no longer resolves (it was renamed, not aliased).
+    assert magic.get("instadeath") is None
