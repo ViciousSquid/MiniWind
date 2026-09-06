@@ -125,10 +125,10 @@ register(Spell("lightning", "Lightning Bolt", sk.DESTRUCTION, 30, PROJECTILE,
                [{"kind": "damage_health", "magnitude": 26, "duration": 0},
                 {"kind": "damage_magicka", "magnitude": 15, "duration": 0}],
                "A crackling arc of shock.", element="shock", projectile_speed=1600))
-# Instadeath — a bolt of pure annihilation. Its projectile is ALWAYS red (an
+# Disintegrate — a bolt of pure annihilation. Its projectile is ALWAYS red (an
 # explicit colour override, independent of element) and its damage is high enough
 # to kill anything in one hit (and gib it, being far over the overkill threshold).
-register(Spell("instadeath", "Instadeath", sk.DESTRUCTION, 60, PROJECTILE,
+register(Spell("disintegrate", "Disintegrate", sk.DESTRUCTION, 60, PROJECTILE,
                [{"kind": "damage_health", "magnitude": 99999, "duration": 0}],
                "A bolt of pure annihilation — kills instantly on contact.",
                element="magic", projectile_speed=1400.0, color=[255, 0, 0]))

@@ -5036,7 +5036,7 @@
                 "non_hostile": true,
                 "spells": [
                     {
-                        "id": "instadeath",
+                        "id": "disintegrate",
                         "color": [
                             255,
                             0,
