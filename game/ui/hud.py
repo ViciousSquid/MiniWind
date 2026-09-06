@@ -56,19 +56,27 @@ def draw(painter, session, width, height):
     game = session.game
     c = game.character
 
+    # A modal menu or an open conversation covers the play view; the world-space
+    # navigation cues (the orbiting quest arrow, the compass, the quest tracker
+    # and target nameplates) are meaningless there and must not bleed on top of
+    # the dialogue box or a menu window, so they are suppressed while one is open.
+    menu_open = session.open_screen is not None or session.dialogue is not None
+
     _draw_orbs(painter, c, width, height)
     _draw_clock(painter, session, width)
     _draw_topleft(painter, session, c)
     _draw_active(painter, session, c, width, height)
-    _draw_quest_tracker(painter, session, width)
-    _draw_quest_arrow(painter, session, width, height)
-    _draw_compass(painter, session, width, height)
-    _draw_target(painter, session, width, height)
+    if not menu_open:
+        _draw_quest_tracker(painter, session, width)
+        _draw_quest_arrow(painter, session, width, height)
+        _draw_compass(painter, session, width, height)
+        _draw_target(painter, session, width, height)
     _draw_status_flags(painter, session, c, width, height)
     _draw_dice_roll(painter, session, width, height)
     _draw_notifications(painter, session, width, height)
     _draw_floaters(painter, session, width, height)
-    _draw_interact_prompt(painter, session, width, height)
+    if not menu_open:
+        _draw_interact_prompt(painter, session, width, height)
 
 
 def _draw_interact_prompt(painter, session, width, height):
