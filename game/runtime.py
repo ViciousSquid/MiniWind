@@ -91,6 +91,10 @@ DICE_ANIMATION_FADE = FADE_DURATION
 DICE_DISPLAY_DURATION = DICE_ANIMATION_SHAKE + DICE_ANIMATION_ROLL + DICE_ANIMATION_FADE + 1.0
 DICE_TYPES = ("d4", "d6", "d8", "d10", "d12", "d20")
 
+#: Probability an NPC/creature with no authored handedness is left-handed. Left
+#: handedness is deliberately rare, so most actors wield on the right.
+LEFT_HANDED_CHANCE = 0.12
+
 #: A carried torch floats a warm dynamic light on its holder. Height above the
 #: holder's feet, and the fallback light params a torch item may override.
 TORCH_LIGHT_HEIGHT = 70.0
@@ -350,6 +354,7 @@ class MiniwindSession:
         logic._faction_hostile = factions.is_hostile
         self._bind_dice_service()
         self.spawn_creature_points()   # materialise CreatureSpawn points once
+        self._assign_npc_handedness()  # random handedness (left rare) where unset
         self._wire_quest_givers()      # make quest givers offer their quests
         self._sync_engine_health(full=True)
 
@@ -403,10 +408,12 @@ class MiniwindSession:
 
     # -- character creation result -----------------------------------------
     def begin_new_character(self, name, race_id, class_id, birthsign_id="none",
-                            gender="male", custom_class=None, head="") -> None:
+                            gender="male", custom_class=None, head="",
+                            handed="right") -> None:
         self.game = GameState.new_game(self.store, name, race_id, class_id,
                                        birthsign_id, gender, custom_class, self.rng,
                                        head=head)
+        self.game.character.handed = "left" if str(handed).lower() == "left" else "right"
         self.game.add_roll_listener(self._on_dice_roll)
         self._bind_dice_service()
         # Author-granted starting spells (Game Settings → Player Spells).
@@ -477,6 +484,26 @@ class MiniwindSession:
             except Exception:
                 pass
             self._rebuild_entity_caches()
+
+    def _assign_npc_handedness(self) -> None:
+        """Give every NPC/creature a handedness where none was authored.
+
+        A hand explicitly set in the editor (``handed`` = 'left'/'right') is
+        always respected; only an unset (or '(random)') hand is rolled here, and
+        left handedness is deliberately rare (see LEFT_HANDED_CHANCE). Stored on
+        ``properties`` so it round-trips through save/load and the overhead
+        renderer can draw the weapon on the correct side."""
+        for t in getattr(self.logic, "things", None) or []:
+            p = getattr(t, "properties", None)
+            if not isinstance(p, dict):
+                continue
+            ttype = str(p.get("type", "")).replace("_", "").lower()
+            if ttype not in ("npc", "creature", "monster"):
+                continue
+            cur = str(p.get("handed", "") or "").lower()
+            if cur in ("left", "right"):
+                continue
+            p["handed"] = "left" if self.rng.random() < LEFT_HANDED_CHANCE else "right"
 
     def _apply_player_head(self, head_id) -> None:
         """Force the player's overhead sprite to the chosen head image."""

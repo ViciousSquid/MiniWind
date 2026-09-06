@@ -600,12 +600,51 @@ def _patch_property_editor():
             ttype = props.get("type") if isinstance(props, dict) else None
             tabs = get_manager().property_tabs_for(ttype) if ttype else []
             widget = getattr(self, "tab_widget", None)
-            if tabs and widget is not None:
+            if not tabs or widget is None:
+                return
+            # Lazy tab construction: each custom tab's factory builds a full,
+            # often heavy widget (item tables, dialogue trees, spell pickers).
+            # Building all of them on every selection is the bulk of the panel's
+            # sluggishness, and most are never looked at. So insert a light
+            # placeholder per tab now and build the real content the first time
+            # that tab is actually shown.
+            try:
+                from PyQt5.QtWidgets import QWidget, QVBoxLayout
+            except Exception:
+                # No Qt (headless) — fall back to eager build so behaviour holds.
                 for label, factory in tabs:
                     try:
                         widget.addTab(factory(thing), label)
                     except Exception as exc:
                         _log(f"custom tab '{label}' failed ({exc})")
+                return
+
+            pending = {}
+            for label, factory in tabs:
+                placeholder = QWidget()
+                lay = QVBoxLayout(placeholder)
+                lay.setContentsMargins(0, 0, 0, 0)
+                idx = widget.addTab(placeholder, label)
+                pending[idx] = (placeholder, factory)
+            widget._mw_pending_tabs = pending
+
+            def _build_pending(index, w=widget, th=thing):
+                p = getattr(w, "_mw_pending_tabs", None)
+                if not p or index not in p:
+                    return
+                placeholder, factory = p.pop(index)
+                try:
+                    inner = factory(th)
+                except Exception as exc:
+                    _log(f"custom tab build failed ({exc})")
+                    return
+                if inner is not None:
+                    placeholder.layout().addWidget(inner)
+
+            widget.currentChanged.connect(_build_pending)
+            # If a custom tab happens to be the current one (e.g. a restored tab
+            # index), build it now so it isn't left blank.
+            _build_pending(widget.currentIndex())
         except Exception:
             pass
 

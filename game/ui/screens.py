@@ -134,7 +134,8 @@ _HEAD_PIXMAP_CACHE = {}
 
 def _cc(session):
     return _sel(session).setdefault("cc", {"step": 0, "name": "", "head": 0,
-                                           "class": 0, "birthsign": 0})
+                                           "class": 0, "birthsign": 0,
+                                           "handed": "right"})
 
 
 def _head_pixmap(head_index):
@@ -167,7 +168,7 @@ def _draw_charcreate(painter, session, w, h):
 
     if step == "identity":
         _draw_identity(painter, inner, ty, s)
-        hint = "Type a name    ←/→ choose head    Enter next"
+        hint = "Type a name    ←/→ head    ↑/↓ switch hand    Enter next"
     elif step == "class":
         ids = classes.CREATION_CLASS_IDS
         k = classes.get(ids[s["class"]])
@@ -248,6 +249,10 @@ def _draw_identity(painter, inner, ty, s):
     T.text_in(painter, QRect(box.x(), box.bottom() + 4, size, 18),
               f"Head {s['head'] + 1} / {heads.HEAD_COUNT}", size=10,
               color=T.DIM, align=T.ALIGN_CENTER)
+    handed = s.get("handed", "right")
+    T.text_in(painter, QRect(box.x(), box.bottom() + 22, size, 18),
+              f"Handedness: {handed.capitalize()}-handed   (↑/↓ to switch)", size=11,
+              color=T.GOLD_BRIGHT, align=T.ALIGN_CENTER, family="Georgia")
 
 
 def _cc_list(painter, x, y, w, ids, sel, labeller):
@@ -277,6 +282,9 @@ def _handle_charcreate(session, key):
             s["head"] = (s["head"] - 1) % heads.HEAD_COUNT; return True
         if key == "right":
             s["head"] = (s["head"] + 1) % heads.HEAD_COUNT; return True
+        if key in ("up", "down"):
+            s["handed"] = "left" if s.get("handed", "right") == "right" else "right"
+            return True
         if key == "backspace":
             s["name"] = s["name"][:-1]; return True
         if key == "space":
@@ -316,7 +324,8 @@ def _finish_charcreate(session):
     sign = birthsigns.CREATION_BIRTHSIGN_IDS[s["birthsign"]]
     head = heads.head_at(s["head"])
     # Gender is fixed internally and never asked (it changes nothing in play).
-    session.begin_new_character(name, _DEFAULT_RACE, klass, sign, "male", head=head)
+    session.begin_new_character(name, _DEFAULT_RACE, klass, sign, "male", head=head,
+                                handed=s.get("handed", "right"))
 
 
 # ===========================================================================

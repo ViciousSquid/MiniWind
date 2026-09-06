@@ -562,11 +562,18 @@ class QtGameView(QOpenGLWidget):
                 weapon_id = ""
         weapon_path = self._weapon_asset_path(weapon_id)
         if weapon_path:
+            player_handed = "right"
+            if sess is not None:
+                try:
+                    player_handed = str(getattr(sess.game.character, "handed", "right"))
+                except Exception:
+                    player_handed = "right"
             self._overhead_sprite_renderer.draw_weapon(
                 self.projection_matrix, self.view_matrix, gpos,
                 self._overhead_sprite_ctrl.facing, weapon_path,
                 time.perf_counter(), attacking=shooting,
-                weapon_kind=self._weapon_kind(weapon_id))
+                weapon_kind=self._weapon_kind(weapon_id),
+                handed=player_handed)
 
     @staticmethod
     def _is_overhead_head_actor(thing) -> bool:
@@ -762,7 +769,8 @@ class QtGameView(QOpenGLWidget):
                         self.projection_matrix, self.view_matrix, gpos, facing,
                         weapon_path, time.perf_counter(),
                         attacking=bool(p.get("is_shooting", False)),
-                        weapon_kind=self._weapon_kind(weapon_id))
+                        weapon_kind=self._weapon_kind(weapon_id),
+                        handed=str(p.get("handed", "right")))
 
         except Exception as exc:
             # Disable and fall back to billboards next frame.

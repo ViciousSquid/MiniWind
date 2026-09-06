@@ -496,10 +496,14 @@ class OverheadSpriteRenderer:
         attacking: bool = False,
         weapon_kind: str = "melee",
         size: Optional[float] = None,
+        handed: str = "right",
     ) -> None:
-        """Draw an equipped weapon to the actor's right.
+        """Draw an equipped weapon to the actor's wielding hand.
 
-        The resting position is offset to the actor's local right-hand side.
+        ``handed`` ("right"/"left") chooses the side: the resting position is
+        offset to the actor's right-hand side by default, or its left for a
+        left-handed wielder. The offset is derived from ``facing`` so it tracks
+        the actor's heading, and the attack thrust is unaffected by handedness.
         Because the offset is calculated from ``facing``, the weapon remains on
         the character's right regardless of which direction the actor faces.
 
@@ -549,8 +553,10 @@ class OverheadSpriteRenderer:
 
         # Character's local right = forward rotated clockwise 90 degrees.
         # This is deliberately tied to facing rather than screen coordinates.
-        right_x = forward_z
-        right_z = -forward_x
+        # A left-handed wielder mirrors it to the local left-hand side.
+        side = -1.0 if str(handed).lower() == "left" else 1.0
+        right_x = forward_z * side
+        right_z = -forward_x * side
 
         # The weapon's normal resting position: beside the right side of
         # the head, rather than floating in front of the actor.

@@ -43,6 +43,9 @@ class Character:
         self.class_id = "warrior"
         self.birthsign_id = "none"
         self.gender = "male"
+        #: "right" or "left" — the hand that wields the weapon, so the overhead
+        #: weapon sprite is drawn on the correct side (chosen at creation).
+        self.handed = "right"
 
         # stats
         self.attrs: Dict[str, int] = attr.new_attribute_block()
@@ -334,6 +337,7 @@ class Character:
         return {
             "name": self.name, "race": self.race_id, "class": self.class_id,
             "birthsign": self.birthsign_id, "gender": self.gender,
+            "handed": self.handed,
             "attrs": dict(self.attrs), "skills": dict(self.skills),
             "major_skills": list(self.major_skills),
             "health": round(self.health, 2), "max_health": round(self.max_health, 2),
@@ -361,6 +365,7 @@ class Character:
         c.class_id = data.get("class", c.class_id)
         c.birthsign_id = data.get("birthsign", c.birthsign_id)
         c.gender = data.get("gender", c.gender)
+        c.handed = "left" if str(data.get("handed", c.handed)).lower() == "left" else "right"
         if isinstance(data.get("attrs"), dict):
             c.attrs.update({k: int(v) for k, v in data["attrs"].items() if k in c.attrs})
         if isinstance(data.get("skills"), dict):

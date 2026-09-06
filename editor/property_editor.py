@@ -336,17 +336,26 @@ class PropertyEditor(QWidget):
 
         self._populating = True
         self.current_object = obj
-        self.clear_layout()
+        # Tearing down and rebuilding the whole panel triggers a relayout/repaint
+        # for every widget removed and added; freezing updates across the rebuild
+        # collapses that into a single repaint, which is the bulk of the per-
+        # selection cost on entities with many fields/tabs.
+        self.setUpdatesEnabled(False)
+        try:
+            self.clear_layout()
 
-        if obj is None:
-            self.main_layout.addWidget(QLabel("Nothing selected."))
-            self._populating = False
-            return
+            if obj is None:
+                self.main_layout.addWidget(QLabel("Nothing selected."))
+                return
 
-        if isinstance(obj, dict):
-            self.populate_for_brush(obj)
-        elif isinstance(obj, Thing):
-            self.populate_for_thing(obj)
+            if isinstance(obj, dict):
+                self.populate_for_brush(obj)
+            elif isinstance(obj, Thing):
+                self.populate_for_thing(obj)
+        finally:
+            self.setUpdatesEnabled(True)
+            if obj is None:
+                self._populating = False
 
         if saved_tab_index is not None and self.tab_widget is not None:
             if saved_tab_index < self.tab_widget.count():
@@ -1159,7 +1168,7 @@ class PropertyEditor(QWidget):
         tab_layout.setContentsMargins(8, 8, 8, 8)
         tab_layout.setSpacing(4)
 
-        section = CollapsibleSection("Other Properties", expanded=(n <= 9), count=n)
+        section = CollapsibleSection("Other Properties", expanded=True, count=n)
         section.addLayout(adv_form)
         tab_layout.addWidget(section)
         tab_layout.addStretch()

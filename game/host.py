@@ -148,9 +148,12 @@ class MiniwindGame:
 
         weapon_ids = sorted(item_id for item_id, item_def in rpg_items.ITEMS.items()
                             if item_def.category == rpg_items.WEAPON)
+        light_ids = sorted(item_id for item_id, item_def in rpg_items.ITEMS.items()
+                           if rpg_items.is_light_source(item_def))
         factions = ["player", "villagers", "guards", "bandits", "cultists",
                     "wildlife", "monsters"]
         styles = ["melee", "bow", "magic"]
+        handed_choices = ["", "right", "left"]   # "" = random (left rare)
         npc_roles = bestiary.roles_of_kind(bestiary.NPC)
         creature_roles = bestiary.roles_of_kind(bestiary.CREATURE)
         api.register_properties("itempickup", [
@@ -241,13 +244,25 @@ class MiniwindGame:
             prop("npc_role", "enum", "Role", default="villager", choices=npc_roles,
                  group="IDENTITY",
                  help="Drives stats, faction, attack style, schedule and loot."),
+            prop("handed", "enum", "Handedness", default="", choices=handed_choices,
+                 group="IDENTITY",
+                 help="Which hand wields the weapon (draws it on that side). "
+                      "Blank = random at play start, where left is rare."),
             prop("faction", "enum", "Faction", default="villagers", choices=factions,
                  group="FACTION", help="Team used for relationships and combat."),
             prop("disposition_base", "int", "Disposition", default=45, min=0, max=100,
                  group="FACTION", help="How warmly this NPC greets the player (0–100)."),
+            prop("disposition_offset", "int", "Disposition offset", default=0,
+                 min=-100, max=100, group="FACTION",
+                 help="A starting nudge to this NPC's opinion of the player, on top "
+                      "of the base (persuasion and remembered deeds add to it in play)."),
             prop("health", "int", "Health", default=60, min=1, max=100000, group="STATS"),
+            prop("max_health", "int", "Max health", default=60, min=1, max=100000,
+                 group="STATS", help="Full-health baseline for the health bar."),
             prop("damage", "int", "Attack damage", default=8, min=0, max=10000, group="STATS"),
             prop("creature_level", "int", "Level", default=1, min=1, max=100, group="STATS"),
+            prop("xp_value", "int", "XP reward", default=0, min=0, max=100000,
+                 group="STATS", help="XP granted to the player for defeating this NPC."),
             prop("aggression", "enum", "Aggression", default="passive",
                  choices=["passive", "defensive", "hostile"], group="BEHAVIOUR",
                  help="passive = never fights; defensive = fights when threatened "
@@ -255,6 +270,10 @@ class MiniwindGame:
             prop("combatant", "bool", "Can fight", default=False, group="BEHAVIOUR",
                  help="Whether this NPC fights at all. Non-combatants (merchants, "
                       "farmers) flee to safety instead. Separate from faction."),
+            prop("can_defend", "bool", "Defends when threatened", default=False,
+                 group="BEHAVIOUR",
+                 help="Un-parks into combat when a faction enemy is near, then "
+                      "returns to its post (the guard behaviour)."),
             prop("attack_style", "enum", "Combat style", default="melee",
                  choices=styles, group="BEHAVIOUR",
                  help="Fantasy combat: melee strike, bow arrow, or magic bolt."),
@@ -262,19 +281,48 @@ class MiniwindGame:
                  group="BEHAVIOUR",
                  help="How likely to stand and fight (0=coward, 1=fearless). "
                       "Affects confidence-based rally decisions."),
+            prop("sight_range", "int", "Sight range", default=1024, min=0, max=100000,
+                 group="BEHAVIOUR", help="How far it perceives enemies before engaging."),
+            prop("wake_on_sight", "bool", "Wakes on sight", default=False,
+                 group="BEHAVIOUR",
+                 help="A hostile actor engages the moment it sees the player."),
             prop("autonomy", "bool", "Wanders when idle", default=True, group="BEHAVIOUR"),
             prop("move_speed", "float", "Movement speed", default=90.0, min=0.0,
                  max=1000.0, group="BEHAVIOUR"),
+            prop("follow_player", "bool", "Follows the player", default=False,
+                 group="COMPANION",
+                 help="A companion that walks with the player when not fighting and "
+                      "joins in on what the player attacks (best with Can fight)."),
+            prop("follow_distance", "float", "Follow distance", default=220.0,
+                 min=0.0, max=100000.0, group="COMPANION"),
             prop("work_location", "string", "Workplace marker", default="",
                  group="SCHEDULE", help="Name of a World Marker this NPC works at."),
             prop("wander_radius", "float", "Wander radius", default=220.0, min=0.0,
                  max=100000.0, group="SCHEDULE"),
-             prop("equipped_weapon", "enum", "Equipped weapon", default="", choices=[""] + weapon_ids,
-                  group="INVENTORY", help="Weapon drawn in front of this actor in overhead mode."),
-
+            prop("torch", "bool", "Carries a torch (night)", default=False,
+                 group="LIGHT",
+                 help="Lights a torch after dark that follows this NPC."),
+            prop("torch_always", "bool", "Torch always lit", default=False,
+                 group="LIGHT", help="Keep the torch lit day and night."),
+            prop("torch_item", "enum", "Torch item", default="",
+                 choices=[""] + light_ids, group="LIGHT",
+                 help="Which light item to carry (blank = the default torch)."),
+            prop("need_appetite", "float", "Appetite", default=1.0, min=0.0, max=3.0,
+                 group="NEEDS",
+                 help="How fast hunger builds (>1 eats sooner). Drives meal breaks."),
+            prop("need_stamina", "float", "Stamina", default=1.0, min=0.0, max=3.0,
+                 group="NEEDS",
+                 help="How slowly fatigue builds (>1 tires slower). Drives naps."),
+            prop("equipped_weapon", "enum", "Equipped weapon", default="", choices=[""] + weapon_ids,
+                 group="INVENTORY", help="Weapon drawn in front of this actor in overhead mode."),
             prop("merchant", "bool", "Is a merchant", default=False, group="INVENTORY"),
             prop("merchant_gold", "int", "Merchant gold", default=0, min=0, max=1000000,
                  group="INVENTORY"),
+            prop("merchant_gold_base", "int", "Merchant gold (restock)", default=0,
+                 min=0, max=1000000, group="INVENTORY",
+                 help="The purse the merchant is restocked back up to each day."),
+            prop("loot", "string", "Loot table", default="", group="LOOT",
+                 help="Loot-table id rolled on death (see game/rpg/loot)."),
             prop("respawn", "bool", "Respawns when killed", default=False, group="STATE"),
             prop("persistent", "bool", "Persistent identity", default=True, group="STATE"),
         ])
@@ -285,25 +333,50 @@ class MiniwindGame:
             prop("npc_role", "enum", "Creature type", default="wolf",
                  choices=creature_roles, group="IDENTITY",
                  help="Drives stats, faction, attack style, loot and sprite."),
+            prop("handed", "enum", "Handedness", default="", choices=handed_choices,
+                 group="IDENTITY",
+                 help="Which hand wields the weapon. Blank = random (left rare)."),
             prop("faction", "enum", "Faction", default="wildlife", choices=factions,
                  group="FACTION"),
             prop("health", "int", "Health", default=40, min=1, max=100000, group="STATS"),
+            prop("max_health", "int", "Max health", default=40, min=1, max=100000,
+                 group="STATS", help="Full-health baseline for the health bar."),
             prop("damage", "int", "Attack damage", default=8, min=0, max=10000, group="STATS"),
             prop("creature_level", "int", "Level", default=1, min=1, max=100, group="STATS"),
             prop("xp_value", "int", "XP reward", default=10, min=0, max=100000, group="STATS"),
             prop("aggression", "enum", "Aggression", default="hostile",
                  choices=["passive", "defensive", "hostile"], group="BEHAVIOUR"),
+            prop("combatant", "bool", "Can fight", default=True, group="BEHAVIOUR",
+                 help="Whether this creature fights (off for a passive critter)."),
+            prop("courage", "float", "Courage", default=0.5, min=0.0, max=1.0,
+                 group="BEHAVIOUR",
+                 help="How likely to stand and fight rather than flee."),
             prop("attack_style", "enum", "Combat style", default="melee",
                  choices=styles, group="BEHAVIOUR"),
             prop("equipped_weapon", "enum", "Equipped weapon", default="", choices=[""] + weapon_ids,
                  group="BEHAVIOUR", help="Weapon drawn in front of this actor in overhead mode."),
             prop("sight_range", "int", "Sight range", default=1024, min=0, max=100000,
                  group="BEHAVIOUR", help="How far it perceives enemies before engaging."),
+            prop("wake_on_sight", "bool", "Wakes on sight", default=True,
+                 group="BEHAVIOUR",
+                 help="Engages the moment it sees a target (typical for a monster)."),
             prop("move_speed", "float", "Movement speed", default=90.0, min=0.0,
                  max=1000.0, group="BEHAVIOUR"),
             prop("roam", "bool", "Roams its spawn area", default=True, group="BEHAVIOUR"),
             prop("roam_radius", "float", "Roam radius", default=300.0, min=0.0,
                  max=100000.0, group="BEHAVIOUR"),
+            prop("follow_player", "bool", "Follows the player", default=False,
+                 group="COMPANION",
+                 help="A tamed/summoned creature that walks with the player and "
+                      "joins its fights."),
+            prop("follow_distance", "float", "Follow distance", default=220.0,
+                 min=0.0, max=100000.0, group="COMPANION"),
+            prop("torch", "bool", "Carries a torch (night)", default=False,
+                 group="LIGHT", help="Lights a torch after dark that follows it."),
+            prop("torch_always", "bool", "Torch always lit", default=False,
+                 group="LIGHT"),
+            prop("torch_item", "enum", "Torch item", default="",
+                 choices=[""] + light_ids, group="LIGHT"),
             prop("loot", "string", "Loot table", default="", group="LOOT",
                  help="Loot-table id rolled on death (see game/rpg/loot)."),
             prop("respawn", "bool", "Respawns when killed", default=False, group="STATE"),
@@ -358,6 +431,7 @@ class MiniwindGame:
             api.register_property_tab("Inventory", editor_ui.make_inventory_tab, entity_type="npc")
             api.register_property_tab("Dialogue", editor_ui.make_dialogue_tab, entity_type="npc")
             api.register_property_tab("Schedule", editor_ui.make_schedule_tab, entity_type="npc")
+            api.register_property_tab("Ties & Patrol", editor_ui.make_ties_tab, entity_type="npc")
             api.register_property_tab("Spells", editor_ui.make_spells_tab, entity_type="npc")
             api.register_property_tab("Loot", editor_ui.make_inventory_tab, entity_type="creature")
             api.register_property_tab("Spells", editor_ui.make_spells_tab, entity_type="creature")
