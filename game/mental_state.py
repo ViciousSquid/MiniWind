@@ -101,6 +101,7 @@ def snapshot(thing, monster_state: Optional[dict] = None,
         ("Faction", faction),
         ("Aggression", aggression),
         ("Combatant", _fmt(bool(props.get("combatant", aggression in ("defensive", "hostile"))))),
+        ("Handedness", str(_get(props, "handed", default="right"))),
     ]
 
     # ---- Vitals / combat --------------------------------------------

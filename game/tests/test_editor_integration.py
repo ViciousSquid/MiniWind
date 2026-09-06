@@ -47,6 +47,43 @@ def test_schemas_are_grouped_into_sections():
     assert "LOOT" in [s.group for s in creature if getattr(s, "group", "")]
 
 
+def test_editor_exposes_the_full_behaviour_surface():
+    """The editor is a toolkit: every scalar behaviour the runtime reads should
+    be an editable, typed field, not a hidden magic property."""
+    m = _mgr()
+    npc = {s.name: s for s in (m.property_schema_for("npc") or [])}
+    # disposition memory, needs tuning, companion, torch, handedness, combat axes
+    for name in ("disposition_base", "disposition_offset", "courage", "combatant",
+                 "can_defend", "sight_range", "wake_on_sight", "autonomy",
+                 "follow_player", "follow_distance", "handed",
+                 "torch", "torch_always", "torch_item",
+                 "need_appetite", "need_stamina", "merchant_gold_base",
+                 "xp_value", "loot"):
+        assert name in npc, f"NPC schema missing editable behaviour '{name}'"
+    # handedness is an enum offering blank (random) / right / left
+    assert npc["handed"].type == "enum"
+    assert set(npc["handed"].choices) >= {"", "right", "left"}
+    # its light-carrier group is a real section
+    assert npc["torch"].group == "LIGHT" and npc["need_appetite"].group == "NEEDS"
+
+    creature = {s.name: s for s in (m.property_schema_for("creature") or [])}
+    for name in ("courage", "combatant", "wake_on_sight", "follow_player",
+                 "handed", "torch", "torch_always", "sight_range"):
+        assert name in creature, f"Creature schema missing behaviour '{name}'"
+
+
+def test_structured_behaviour_tabs_are_registered_for_npcs():
+    """Relationships and the patrol circuit — structured behaviours — get their
+    own authoring tab so they aren't raw-JSON-only."""
+    m = _mgr()
+    if not hasattr(m, "property_tabs_for"):
+        import pytest
+        pytest.skip("manager exposes no property_tabs_for introspection")
+    tabs = {label for (label, _factory) in m.property_tabs_for("npc")}
+    assert "Ties & Patrol" in tabs
+    assert "Schedule" in tabs and "Dialogue" in tabs
+
+
 def test_creation_wizards_registered_and_headless_safe():
     m = _mgr()
     npc_w = m.entity_wizard_for("npc")

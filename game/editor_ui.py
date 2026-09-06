@@ -1091,6 +1091,181 @@ def _ScheduleTab(thing, QtWidgets, QtCore):
 
 
 # ===========================================================================
+# Ties & Patrol — author an NPC's social relationships (who they are to other
+# named townsfolk) and, for a guard/combatant, the ordered patrol circuit of
+# World Marker names it walks. Both are structured behaviours the runtime reads
+# (relationships drive kin grief and dialogue; patrol_markers drive the moving
+# watch), so the toolkit exposes them as proper tables rather than raw JSON.
+# ===========================================================================
+#: Common relationship words offered in the dropdown (any text is allowed).
+_RELATION_PRESETS = [
+    "friend", "rival", "sister", "brother", "mother", "father", "son",
+    "daughter", "spouse", "sweetheart", "creditor", "debtor", "supplier",
+    "customer", "employer", "employee", "ally", "enemy",
+]
+
+
+def make_ties_tab(thing):
+    try:
+        QtWidgets, QtCore = _qt()
+    except Exception:  # pragma: no cover
+        return None
+    return _TiesTab(thing, QtWidgets, QtCore)
+
+
+def _TiesTab(thing, QtWidgets, QtCore):
+    class Tab(QtWidgets.QWidget):
+        def __init__(self):
+            super().__init__()
+            self.thing = thing
+            self._loading = False
+            layout = QtWidgets.QVBoxLayout(self)
+
+            # --- Relationships -------------------------------------------------
+            layout.addWidget(QtWidgets.QLabel(
+                "Relationships — social ties to other named NPCs. The other's "
+                "name must match an NPC's Name. Drives kin reactions and dialogue."))
+            self.rel_table = QtWidgets.QTableWidget(0, 2)
+            self.rel_table.setHorizontalHeaderLabels(["NPC name", "Relation"])
+            self.rel_table.horizontalHeader().setStretchLastSection(True)
+            layout.addWidget(self.rel_table)
+            rbtns = QtWidgets.QHBoxLayout()
+            radd = QtWidgets.QPushButton("Add Tie")
+            rrem = QtWidgets.QPushButton("Remove Selected")
+            radd.clicked.connect(self._rel_add)
+            rrem.clicked.connect(self._rel_remove)
+            for b in (radd, rrem):
+                rbtns.addWidget(b)
+            rbtns.addStretch(1)
+            layout.addLayout(rbtns)
+            self.rel_table.itemChanged.connect(self._write_back)
+
+            # --- Patrol circuit ------------------------------------------------
+            layout.addWidget(QtWidgets.QLabel(
+                "Patrol circuit — ordered World Marker names a guard/combatant "
+                "walks between while on duty. Leave empty for no patrol."))
+            self.pat_table = QtWidgets.QTableWidget(0, 1)
+            self.pat_table.setHorizontalHeaderLabels(["Marker name"])
+            self.pat_table.horizontalHeader().setStretchLastSection(True)
+            layout.addWidget(self.pat_table)
+            pbtns = QtWidgets.QHBoxLayout()
+            padd = QtWidgets.QPushButton("Add Waypoint")
+            prem = QtWidgets.QPushButton("Remove Selected")
+            pup = QtWidgets.QPushButton("Move Up")
+            pdn = QtWidgets.QPushButton("Move Down")
+            padd.clicked.connect(self._pat_add)
+            prem.clicked.connect(self._pat_remove)
+            pup.clicked.connect(lambda: self._pat_move(-1))
+            pdn.clicked.connect(lambda: self._pat_move(1))
+            for b in (padd, prem, pup, pdn):
+                pbtns.addWidget(b)
+            pbtns.addStretch(1)
+            layout.addLayout(pbtns)
+            self.pat_table.itemChanged.connect(self._write_back)
+
+            self._reload()
+
+        # -- data accessors --------------------------------------------------
+        def _rels(self):
+            r = self.thing.properties.get("relationships")
+            if not isinstance(r, dict):
+                r = {}
+                self.thing.properties["relationships"] = r
+            return r
+
+        def _patrol(self):
+            p = self.thing.properties.get("patrol_markers")
+            if not isinstance(p, list):
+                p = []
+                self.thing.properties["patrol_markers"] = p
+            return p
+
+        # -- reload ----------------------------------------------------------
+        def _reload(self):
+            self._loading = True
+            rels = self._rels()
+            self.rel_table.setRowCount(len(rels))
+            for r, (name, rel) in enumerate(rels.items()):
+                self.rel_table.setItem(r, 0, QtWidgets.QTableWidgetItem(str(name)))
+                combo = QtWidgets.QComboBox()
+                combo.setEditable(True)
+                combo.addItems(_RELATION_PRESETS)
+                combo.setCurrentText(str(rel))
+                combo.currentTextChanged.connect(lambda _t: self._write_back())
+                self.rel_table.setCellWidget(r, 1, combo)
+            patrol = self._patrol()
+            self.pat_table.setRowCount(len(patrol))
+            for r, name in enumerate(patrol):
+                self.pat_table.setItem(r, 0, QtWidgets.QTableWidgetItem(str(name)))
+            self._loading = False
+
+        # -- relationship edits ---------------------------------------------
+        def _rel_add(self):
+            rels = self._rels()
+            base, name, n = "NewNPC", "NewNPC", 1
+            while name in rels:
+                n += 1
+                name = f"{base}{n}"
+            rels[name] = "friend"
+            self._reload()
+
+        def _rel_remove(self):
+            row = self.rel_table.currentRow()
+            item = self.rel_table.item(row, 0) if row >= 0 else None
+            if item is not None:
+                self._rels().pop(item.text(), None)
+                self._reload()
+
+        # -- patrol edits ----------------------------------------------------
+        def _pat_add(self):
+            self._patrol().append("marker_name")
+            self._reload()
+
+        def _pat_remove(self):
+            row = self.pat_table.currentRow()
+            patrol = self._patrol()
+            if 0 <= row < len(patrol):
+                del patrol[row]
+                self._reload()
+
+        def _pat_move(self, delta):
+            row = self.pat_table.currentRow()
+            patrol = self._patrol()
+            new = row + delta
+            if 0 <= row < len(patrol) and 0 <= new < len(patrol):
+                patrol[row], patrol[new] = patrol[new], patrol[row]
+                self._reload()
+                self.pat_table.setCurrentCell(new, 0)
+
+        # -- write back ------------------------------------------------------
+        def _write_back(self, *_):
+            if self._loading:
+                return
+            # Rebuild relationships from the table (name cell + relation combo).
+            new_rels = {}
+            for r in range(self.rel_table.rowCount()):
+                name_cell = self.rel_table.item(r, 0)
+                combo = self.rel_table.cellWidget(r, 1)
+                if name_cell is None:
+                    continue
+                name = name_cell.text().strip()
+                if not name:
+                    continue
+                rel = combo.currentText().strip() if combo is not None else "friend"
+                new_rels[name] = rel or "friend"
+            self.thing.properties["relationships"] = new_rels
+            # Rebuild the patrol list in table order.
+            patrol = []
+            for r in range(self.pat_table.rowCount()):
+                cell = self.pat_table.item(r, 0)
+                if cell is not None and cell.text().strip():
+                    patrol.append(cell.text().strip())
+            self.thing.properties["patrol_markers"] = patrol
+
+    return Tab()
+
+
+# ===========================================================================
 # Spells editor — assign spells to an NPC/creature (like inventory), with a
 # per-spell projectile colour, damage-per-shot and speed.
 # ===========================================================================
