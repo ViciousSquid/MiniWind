@@ -603,9 +603,10 @@ class OverheadSpriteRenderer:
             texture,
             weapon_size,
             self.y_offset + 0.6,
-            # Match the half-turn applied to the character sprite so the weapon
-            # art points the same way. Only the sprite's orientation is rotated;
-            # its resting position (actor's right) and thrust direction are
-            # computed above from the raw facing and are unaffected.
-            rotation_offset=math.radians(HEAD_FACING_OFFSET_DEG),
+            # No extra half-turn here: the weapon art and the head art carry
+            # opposite baked orientations, so the weapon already points the same
+            # way as the (half-turned) character sprite under the shared facing.
+            # Adding the head's HEAD_FACING_OFFSET_DEG made the sword point the
+            # opposite way; its resting position (actor's right) and thrust are
+            # computed above from the raw facing and are unaffected either way.
         )
