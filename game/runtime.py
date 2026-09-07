@@ -22,6 +22,7 @@ import random
 from itertools import chain as _chain
 from typing import Dict, List, Optional
 
+from engine.facing import face_heading
 from .rpg import factions
 from .rpg import schedule as sched
 from .rpg import combat as rpg_combat
@@ -50,6 +51,11 @@ _current_session = None
 
 DECISION_INTERVAL = 0.4
 NPC_WALK_SPEED = 90.0
+#: How much quicker a frightened villager moves. Applied only while the NPC is
+#: in the FLEE state, which the decision tick re-evaluates constantly and drops
+#: as soon as no hostile is within FLEE_SIGHT — so the sprint lasts exactly as
+#: long as the fright does, and they go back to a walk on their own.
+FLEE_SPEED_MULTIPLIER = 2.0
 ARRIVE_RADIUS = 48.0
 #: How close the player must be to talk. Comfortably larger than a billboard so
 #: walking up to an NPC (whose speech bubble is showing) and pressing E works.
@@ -2822,14 +2828,18 @@ class MiniwindSession:
             return
         speed = float(p.get("move_speed", NPC_WALK_SPEED)) or NPC_WALK_SPEED
         if p.get("sched_state") == sched.FLEE:
-            speed *= 1.6          # a fright quickens the step
+            speed *= FLEE_SPEED_MULTIPLIER   # a fright doubles the step
         step = min(speed * delta, dist)
         nx = pos[0] + dx / dist * step
         nz = pos[2] + dz / dist * step
         npc.pos = [nx, pos[1], nz]
-        # Track a facing heading (engine convention: forward at 0 is +z) so the
-        # overhead view can rotate this actor's head to face where it walks.
-        p["angle"] = math.atan2(dx, dz)
+        # Turn to face the way it is walking. This has to go through
+        # engine.facing: the renderer reads an actor's heading from the
+        # transient '_facing' property (that is what Monster.get_render_state
+        # snapshots for the head billboard, the overhead ground sprite and the
+        # weapon overlay), so writing a bare 'angle' here left schedule-driven
+        # NPCs sliding around the world without ever rotating.
+        face_heading(p, dx, dz, delta)
 
     # ========================================================= player combat
     def _player_pos(self):

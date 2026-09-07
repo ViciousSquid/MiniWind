@@ -658,7 +658,10 @@ class MiniwindGame:
                         # The 'inspect' console command freezes the world while the
                         # player examines an actor (engine sets this on the logic
                         # thread; see qt_game_view.enter_inspect_mode).
-                        or getattr(logic, "_inspect_paused", False))
+                        or getattr(logic, "_inspect_paused", False)
+                        # The play-mode Escape menu (engine/pause_menu.py) sets
+                        # this for as long as it is on screen.
+                        or getattr(logic, "_menu_paused", False))
         logic.gameplay_paused = world_paused
 
         # The interact key (E) both opens a container/conversation and, inside

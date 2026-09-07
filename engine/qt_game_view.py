@@ -50,6 +50,7 @@ from engine.constants import RENDER_MODE_LIT, RENDER_MODE_UNLIT, RENDER_MODE_WIR
 from editor.debug_console import DebugConsole, get_debug_logger
 from .sysmon import SysMon
 from .floating_windows import WindowManager, NpcDebugWindow
+from .pause_menu import PauseMenu
 
 # Pygame for gamepad support
 import pygame
@@ -128,6 +129,9 @@ class QtGameView(QOpenGLWidget):
         # True while an interactive floating window (e.g. the loadout popup) has
         # freed the otherwise hidden, centre-locked play-mode cursor.
         self._play_cursor_free = False
+        # Escape menu for standalone play sessions (see engine/pause_menu.py).
+        # Idle until MainWindow opens it; it owns its own pause of the world.
+        self.pause_menu = PauseMenu(self)
 
 
         self.sound_pool = {}
@@ -408,8 +412,16 @@ class QtGameView(QOpenGLWidget):
             "Press ESC to cancel")
         self._cached_death_title_width = QFontMetrics(self._death_title_font).horizontalAdvance(
             "DIED")
-        self._cached_death_sub_width = QFontMetrics(self._death_sub_font).horizontalAdvance(
-            "Press Escape to return to the editor")
+        # Two death-screen prompts: in a game the player launched Escape raises
+        # the pause menu, in an editor preview it stops the preview. Both widths
+        # are measured once so the draw stays allocation-free.
+        self._death_sub_editor = "Press Escape to return to the editor"
+        self._death_sub_game = "Press Escape for the menu"
+        _death_metrics = QFontMetrics(self._death_sub_font)
+        self._cached_death_sub_width = _death_metrics.horizontalAdvance(
+            self._death_sub_editor)
+        self._cached_death_sub_game_width = _death_metrics.horizontalAdvance(
+            self._death_sub_game)
 
         self._cached_hud_message = None
         self._cached_hud_message_width = 0
@@ -668,13 +680,14 @@ class QtGameView(QOpenGLWidget):
             return
         try:
             import os as _os
-            from engine.overhead_sprite import (SpriteController, OverheadSpriteRenderer)
+            from engine.overhead_sprite import (SpriteController, OverheadSpriteRenderer,
+                                                ACTOR_Y, CORPSE_MARK_Y, DECAL_Y, GIB_Y)
             root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
             cache = getattr(self, "_overhead_npc_renderers", None)
             if cache is None:
                 cache = self._overhead_npc_renderers = {}
 
-            def _renderer(sprite_rel, y_offset=2.0, size=None):
+            def _renderer(sprite_rel, y_offset=ACTOR_Y, size=None):
                 # *size* lets ground decals (blood stains) vary independently of
                 # the actor sprite size; it is bucketed into the cache key so a
                 # spread of wound sizes doesn't create an unbounded renderer set.
@@ -695,16 +708,18 @@ class QtGameView(QOpenGLWidget):
                     cache[key] = r
                 return r
 
-            # Blood stains — flat ground decals from wounds. Drawn before the
-            # actors (and low to the floor) so bodies and gib splatter sit on
-            # top of the blood, and each uses its own severity sprite + size.
+            # Blood stains — flat ground decals from wounds. Drawn first and on
+            # the bottom layer of the ground stack (overhead_sprite.DECAL_Y) so
+            # bodies, gib splatter and anyone walking through sit on top of the
+            # blood rather than z-fighting it. Each uses its own severity
+            # sprite + size.
             for st in getattr(render_state, "blood_stains", None) or ():
                 sprite = st.get("sprite") if isinstance(st, dict) else None
                 if not sprite:
                     continue
                 spos = st.get("pos", [0.0, 0.0, 0.0])
                 gspos = (float(spos[0]), float(spos[1]), float(spos[2]))
-                _renderer(sprite, y_offset=1.0,
+                _renderer(sprite, y_offset=DECAL_Y,
                           size=float(st.get("size", 32.0))).draw(
                     self.projection_matrix, self.view_matrix, gspos,
                     float(st.get("yaw", 0.0)), SpriteController.IDLE)
@@ -735,9 +750,11 @@ class QtGameView(QOpenGLWidget):
                                 else getattr(thing, "properties", {}).get("gib_sprite", "")) \
                         or (str(p.get("sprite_path", "")) if snapshot else "")
                     if stain:
-                        _renderer(stain).draw(self.projection_matrix,
-                                              self.view_matrix, gpos, facing,
-                                              SpriteController.IDLE)
+                        # Splatter is a decal: it belongs under every actor, on
+                        # its own layer just above the blood it made.
+                        _renderer(stain, y_offset=GIB_Y).draw(
+                            self.projection_matrix, self.view_matrix, gpos,
+                            facing, SpriteController.IDLE)
                         continue
                 if dead and is_head:
                     # Keep the identity: draw the living head, then paint the
@@ -747,7 +764,7 @@ class QtGameView(QOpenGLWidget):
                     _renderer(idle_rel).draw(self.projection_matrix,
                                              self.view_matrix, gpos, facing,
                                              SpriteController.IDLE, tint=tint)
-                    _renderer(dead_overlay_rel, y_offset=3.6).draw(
+                    _renderer(dead_overlay_rel, y_offset=CORPSE_MARK_Y).draw(
                         self.projection_matrix, self.view_matrix, gpos, facing,
                         SpriteController.IDLE)
                     continue
@@ -902,7 +919,8 @@ class QtGameView(QOpenGLWidget):
         self._process_sound_queue()
         self._process_console_command_queue()
         if self.use_threading and self.logic_thread:
-            keys = set() if self.console_overlay_active else self.editor.keys_pressed
+            keys = (set() if (self.console_overlay_active or self.pause_menu.active)
+                    else self.editor.keys_pressed)
             self.game_state.set_keys(keys)
             # Update Player 2 input from arrow keys (if no gamepad)
             self._update_p2_keyboard_input()
@@ -1710,6 +1728,11 @@ class QtGameView(QOpenGLWidget):
                        width=self.width(), height=self.height(),
                        play_mode=self.play_mode)
 
+        # The pause menu is the very last thing in the frame: it must sit over
+        # the game's own HUD, not under it.
+        if self.pause_menu.active:
+            self.pause_menu.draw(painter)
+
         painter.end()
         if self._muzzle_flash_counter > 0:
             self._muzzle_flash_counter -= 1
@@ -1995,12 +2018,16 @@ class QtGameView(QOpenGLWidget):
         painter.setPen(QColor(255, 60, 60))
         painter.drawText(title_x, title_y, "DIED")
         painter.setFont(self._death_sub_font)
-        sub_x = (w - self._cached_death_sub_width) // 2
+        if getattr(self.editor, 'standalone_play_session', False):
+            sub, sub_w = self._death_sub_game, self._cached_death_sub_game_width
+        else:
+            sub, sub_w = self._death_sub_editor, self._cached_death_sub_width
+        sub_x = (w - sub_w) // 2
         sub_y = title_y + 60
         painter.setPen(QColor(0, 0, 0, 180))
-        painter.drawText(sub_x + 2, sub_y + 2, "Press Escape to return to the editor")
+        painter.drawText(sub_x + 2, sub_y + 2, sub)
         painter.setPen(QColor(220, 180, 180))
-        painter.drawText(sub_x, sub_y, "Press Escape to return to the editor")
+        painter.drawText(sub_x, sub_y, sub)
 
     def _draw_key_fallback(self, painter, key_name, x, y, size):
         color, pen, brush = self._key_fallback_cache.get(key_name, self._key_fallback_default)
@@ -2639,8 +2666,11 @@ class QtGameView(QOpenGLWidget):
         self.update()
 
     def _play_mode_wants_cursor(self):
-        """True if an interactive floating window (one with wants_cursor) is
-        open and needs the free play-mode cursor to be clicked."""
+        """True if something on top of the game needs the free play-mode cursor:
+        the pause menu, or an interactive floating window (one with
+        wants_cursor)."""
+        if self.pause_menu.active:
+            return True
         wm = getattr(self, 'window_manager', None)
         if wm is None:
             return False
@@ -2866,6 +2896,9 @@ class QtGameView(QOpenGLWidget):
         return best_hit
 
     def mousePressEvent(self, event):
+        if self.pause_menu.active:
+            self.pause_menu.handle_mouse_press(event)
+            return
         if (self.play_mode and getattr(self, '_cached_level_complete_ui', None)
                 and getattr(self, '_level_complete_btn_rect', None)):
             if self._level_complete_btn_rect.contains(event.pos()):
@@ -2984,6 +3017,9 @@ class QtGameView(QOpenGLWidget):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if self.pause_menu.active:
+            self.pause_menu.handle_mouse_move(event)
+            return
         if self.sysmon.handle_mouse_move(event, self.play_mode, self.width(), self.height()):
             self.update()
             return
@@ -3038,6 +3074,8 @@ class QtGameView(QOpenGLWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if self.pause_menu.active:
+            return
         if self.terrain_sculpt_painting and event.button() == Qt.LeftButton:
             self.terrain_sculpt_painting = False
             return
@@ -3205,6 +3243,10 @@ class QtGameView(QOpenGLWidget):
         # See MainWindow.keyPressEvent for why autorepeat is filtered here too.
         if event.isAutoRepeat():
             return
+        # The pause menu is modal over the game: it takes every key while it is up.
+        if self.pause_menu.active:
+            self.pause_menu.handle_key(event)
+            return
         # Esc cancels an armed inspect-mode pick before anything else consumes it.
         if getattr(self, 'inspect_mode', False) and event.key() == Qt.Key_Escape:
             self._exit_inspect_mode()
@@ -3298,7 +3340,13 @@ class QtGameView(QOpenGLWidget):
             render_state = self.game_state.get_render_state()
             if getattr(render_state, 'player_dead', False):
                 if event.key() == Qt.Key_Escape:
-                    self._exit_play_mode()
+                    # Dying in a game the player launched leads to the pause
+                    # menu (load a save, start over, leave) — not straight out
+                    # to the editor, which is only right for a preview.
+                    if getattr(self.editor, 'standalone_play_session', False):
+                        self.pause_menu.open()
+                    else:
+                        self._exit_play_mode()
                     return
                 return
         if not self.play_mode:
@@ -3338,6 +3386,8 @@ class QtGameView(QOpenGLWidget):
 
     def keyReleaseEvent(self, event):
         if event.isAutoRepeat():
+            return
+        if self.pause_menu.active:
             return
         # Remove arrow keys from the set when released
         if self.play_mode and not self.gamepad and self.splitscreen_mode:

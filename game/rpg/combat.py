@@ -25,7 +25,7 @@ from . import attributes as attr
 from . import skills as sk
 from . import items
 from . import equipment as eq
-from ..diceroll import DiceRoller
+from ..diceroll import CHECK_NOTATION, DiceRoller, check_threshold
 
 
 # ---------------------------------------------------------------------------
@@ -99,12 +99,13 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         # Near + facing, confirmed by the caller: always connects.
         result["hit_probability"] = hit_probability
     elif dice is not None:
+        # Resolved on a d20, not a percentile die: every roll is shown to the
+        # player and there is no d100 in this game (see diceroll.CHECK_DIE).
         hit_roll = dice.request_roll(
-            "1d100", source="combat.hit",
+            CHECK_NOTATION, source="combat.hit",
             context={"skill": skill_id, "target": target_props.get("name", "")})
         result["hit_roll"] = hit_roll
-        hit_value = hit_roll["roll_result"]
-        if hit_value > hit_probability * 100.0:
+        if hit_roll["roll_result"] > check_threshold(hit_probability):
             return result
     elif rng.random() > hit_probability:
         return result  # miss
@@ -136,10 +137,10 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     crit_chance = 0.05 + character.attrs.get(attr.LUCK, 40) * 0.0015
     if dice is not None:
         crit_roll = dice.request_roll(
-            "1d100", source="combat.critical",
+            CHECK_NOTATION, source="combat.critical",
             context={"skill": skill_id, "target": target_props.get("name", "")})
         result["critical_roll"] = crit_roll
-        is_critical = crit_roll["roll_result"] <= crit_chance * 100.0
+        is_critical = crit_roll["roll_result"] <= check_threshold(crit_chance)
     else:
         is_critical = rng.random() < crit_chance
     if is_critical:

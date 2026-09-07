@@ -100,7 +100,10 @@ class Ui_MainWindow(object):
         # 2D Views Dock (Right, Tabbed)
         MainWindow.right_dock = QDockWidget("2D Views", MainWindow)
         MainWindow.right_dock.setObjectName("2DViewsDock")
-        MainWindow.right_dock.setMinimumWidth(610)
+        # Small enough that the default layout's 30% right-hand column is
+        # actually reachable on an ordinary 1080p window (see
+        # MainWindow.apply_default_layout); the 2D views still grow happily.
+        MainWindow.right_dock.setMinimumWidth(240)
         MainWindow.right_tabs = QTabWidget()
         MainWindow.right_tabs.addTab(MainWindow.view_top, "Top (XZ)")
         MainWindow.right_tabs.addTab(MainWindow.view_side, "Side (YZ)")
@@ -131,7 +134,9 @@ class Ui_MainWindow(object):
         MainWindow.splitDockWidget(MainWindow.view_3d_dock, MainWindow.right_dock, Qt.Horizontal)
         MainWindow.splitDockWidget(MainWindow.right_dock, MainWindow.properties_dock, Qt.Vertical)
 
-        MainWindow.resizeDocks([MainWindow.view_3d_dock, MainWindow.right_dock], [800, 600], Qt.Horizontal)
+        # Rough starting proportions; MainWindow.apply_default_layout() sets the
+        # real 10 / 60 / 30 split once the window has been shown and has a width.
+        MainWindow.resizeDocks([MainWindow.view_3d_dock, MainWindow.right_dock], [600, 300], Qt.Horizontal)
         MainWindow.resizeDocks([MainWindow.right_dock, MainWindow.properties_dock], [600, 300], Qt.Vertical)
 
         # Tab Styling

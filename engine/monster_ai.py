@@ -13,6 +13,7 @@ import json
 from html import escape
 from typing import Dict, List, Any, Optional, Tuple
 from editor.debug_console import debug_log
+from engine.facing import face_heading
 from game.diceroll import DICE_TYPES
 from .monster_constants import (
     MONSTER_SIGHT_RANGE,
@@ -110,20 +111,21 @@ class MonsterAI:
 
 
     @staticmethod
-    def _face_dir(thing, direction) -> None:
-        """Record an actor's heading so its head sprite turns to face where it's
-        moving or looking. Stored in the transient ``properties['_facing']`` as
-        radians in the engine's forward convention — forward = (sin a, 0, cos a),
-        so ``_facing = atan2(dir.x, dir.z)`` (matches how the player's angle is
-        derived). This is what the 3D head billboard and the overhead ground
-        sprite read. The leading underscore keeps it out of saved maps, and
-        near-zero directions are ignored so a stationary actor holds its heading."""
+    def _face_dir(thing, direction, delta=None) -> None:
+        """Turn an actor toward *direction* so it faces where it's moving or
+        looking, rather than sliding there sideways.
+
+        Delegates to :func:`engine.facing.face_heading`, which owns the heading
+        convention and the easing — see that module for why every mover has to
+        go through it. Passing *delta* eases the turn over time; omitting it
+        (e.g. snapping to face a target the instant combat starts) sets the
+        heading outright.
+        """
         try:
             dx = float(direction.x); dz = float(direction.z)
         except AttributeError:
             dx, dz = float(direction[0]), float(direction[2])
-        if dx * dx + dz * dz > 1e-9:
-            thing.properties['_facing'] = math.atan2(dx, dz)
+        face_heading(thing.properties, dx, dz, delta)
 
     # -------------------------------------------------------------------------
     # Main update entry point
@@ -1131,7 +1133,7 @@ class MonsterAI:
             direction = direction / dir_len
             if mtype != 'flying':
                 direction = glm.normalize(glm.vec3(direction.x, 0.0, direction.z))
-            self._face_dir(monster, direction)
+            self._face_dir(monster, direction, delta)
             step = direction * MONSTER_MOVE_SPEED * delta
             new_pos = thing_pos + step
 
@@ -1351,7 +1353,7 @@ class MonsterAI:
         direction = to_node / dir_len
         if mtype != 'flying':
             direction = glm.normalize(glm.vec3(direction.x, 0.0, direction.z))
-        self._face_dir(monster, direction)
+        self._face_dir(monster, direction, delta)
 
         step = direction * MONSTER_MOVE_SPEED * speed_mult * delta
         new_pos = m_pos + step

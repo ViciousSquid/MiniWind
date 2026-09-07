@@ -392,6 +392,6 @@ if __name__ == "__main__":
         # scene has a Player Start to spawn at. enter_kiosk_mode hides the
         # editor UI and presents the window per [Kiosk] window_mode.
         from PyQt5.QtCore import QTimer
-        QTimer.singleShot(0, window.enter_kiosk_mode)
+        QTimer.singleShot(0, lambda: window.enter_kiosk_mode(standalone=True))
 
     sys.exit(app.exec_())

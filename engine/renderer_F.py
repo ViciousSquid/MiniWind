@@ -11,6 +11,7 @@ import os
 
 from .renderer_core import BaseRenderer, normalize_color
 from engine.brush_geometry import brush_has_geometry, geometry_signature
+from engine.facing import get_heading
 from engine.constants import RENDER_MODE_LIT, RENDER_MODE_UNLIT, RENDER_MODE_WIREFRAME, RENDER_MODE_VERTEX
 from editor.things import Thing, Light, PathNode, Portal, Pickup, Monster, LogicGate, LogicRelay, LogicTimer, LevelChanger
 from game.runtime import _current_session as miniwind_session
@@ -193,7 +194,10 @@ class Renderer_F(BaseRenderer):
 
             # Position: above head, offset to the right
             pos = actor.pos
-            facing = actor.properties.get('angle', 0.0)  # angle in radians
+            # The live heading the actor is turning to (engine/facing.py), not
+            # the design-time 'angle' — the weapon has to swing round with the
+            # head it is drawn beside.
+            facing = get_heading(actor.properties)
             forward_x = math.sin(facing)
             forward_z = math.cos(facing)
             right_x = forward_z
