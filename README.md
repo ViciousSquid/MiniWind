@@ -109,9 +109,12 @@ After the splash, the **launcher** asks which half of MiniWind you came for:
 ```
                         MiniWind
         ────────────────────────────────────────
-         DISPLAY
+         PLAY MODE DISPLAY
            Mode          Fullscreen ▾
            Resolution    1280 × 720 ▾      (Windowed only)
+           Applies to the game only — the editor keeps its own
+           window size and layout.
+         APPLICATION
            ☑ Vertical sync
            ☑ High DPI scaling
         ────────────────────────────────────────
@@ -123,13 +126,21 @@ After the splash, the **launcher** asks which half of MiniWind you came for:
   the way the display mode says — the existing kiosk mode.
 * **EDIT** opens the editor exactly as it always did.
 
-Display mode, resolution, vertical sync and high-DPI scaling are written
-straight back to `settings.ini` — the same keys Settings ▸ Display and
-Settings ▸ Kiosk use — so the launcher and the Settings window never disagree,
-and a choice made here is still there next launch. **Reset to defaults** puts
-all four back. Every dimension in the launcher is a multiple of the application
-font, so it scales with the OS display scale and with the editor's own font-size
-setting rather than shrinking on a 4K panel.
+**Mode and resolution are the game's, not the editor's.** Play mode is presented
+in the editor's own main window, so its size, position and frame are snapshotted
+on the way in and restored exactly on the way out — and never written to the
+editor's saved layout. Setting the game to 1280 × 720 does not resize the
+editor, and quitting straight from play no longer reopens the editor at the
+game's resolution. Vertical sync and high-DPI scaling are unavoidably
+application-wide: Qt is told about both once, before it starts.
+
+Everything the launcher changes is written straight back to `settings.ini` —
+the same keys Settings ▸ Display and Settings ▸ Kiosk use — so the launcher and
+the Settings window never disagree, and a choice made here is still there next
+launch. **Reset to defaults** puts all four back. Every dimension in the
+launcher is a multiple of the application font, so it scales with the OS display
+scale and with the editor's own font-size setting rather than shrinking on a 4K
+panel.
 
 Turn the launcher off with `[Startup] show_launcher = False` (or the checkbox in
 Settings ▸ Kiosk) to go straight to the editor as before.
@@ -258,7 +269,7 @@ plugins/                  the generic plugin system + optional plugins (BigWorld
 ```bash
 python -m pytest game/tests -q            # MiniWind: 224 headless tests
 python -m pytest editor/tests game/tests engine/tests plugins/bigworld/tests -q
-# 307 with PyQt5 installed; 284 + 1 skipped without it (editor/tests needs Qt,
+# 316 with PyQt5 installed; 284 + 2 skipped without it (editor/tests needs Qt,
 # and skips cleanly — everything else stays headless).
 ```
 

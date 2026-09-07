@@ -39,11 +39,11 @@ QUIT = "quit"
 #: settings.ini keeps working and the Settings window agrees.
 MODES = [
     ("Fullscreen", "Fullscreen",
-     "Takes over the whole screen."),
+     "The game takes over the whole screen."),
     ("Borderless", "Fullscreen borderless",
-     "Fills the screen with no frame — easy to alt-tab out of."),
+     "The game fills the screen with no frame — easy to alt-tab out of."),
     ("Windowed", "Windowed",
-     "A normal window at the resolution below."),
+     "The game runs in a normal window at the resolution above."),
 ]
 
 #: Offered window sizes. Anything larger than the current screen is filtered
@@ -327,7 +327,7 @@ class Launcher(QDialog):
         body.setSpacing(int(unit * 0.8))
         outer.addLayout(body)
 
-        self.section_label = QLabel("DISPLAY")
+        self.section_label = QLabel("PLAY MODE DISPLAY")
         self.section_label.setObjectName("section")
         body.addWidget(self.section_label)
 
@@ -349,9 +349,25 @@ class Launcher(QDialog):
         self.mode_help.setStyleSheet("color:#7d7f88;")
         body.addWidget(self.mode_help)
 
+        # Say plainly what these two do *not* touch. Play mode is presented in
+        # the editor's own window, so it would be a fair guess that setting a
+        # resolution here resizes the editor. It does not: the editor keeps its
+        # own size, position and layout, and gets them back on the way out.
+        self.scope_note = QLabel(
+            "Applies to the game only — the editor keeps its own window size "
+            "and layout.")
+        self.scope_note.setWordWrap(True)
+        self.scope_note.setStyleSheet("color:#61636b;")
+        body.addWidget(self.scope_note)
+
+        self.app_section_label = QLabel("APPLICATION")
+        self.app_section_label.setObjectName("section")
+        body.addWidget(self.app_section_label)
+
         self.vsync_check = QCheckBox("Vertical sync")
         self.vsync_check.setToolTip(
-            "Match the display's refresh rate. Smoother, at a little latency.")
+            "Match the display's refresh rate. Smoother, at a little latency.\n"
+            "Applies to the whole application — Qt is told once, at startup.")
         self.vsync_check.toggled.connect(self._save)
         body.addWidget(self.vsync_check)
 
@@ -446,7 +462,8 @@ class Launcher(QDialog):
         unit = text_unit(self)
         self.setFixedWidth(int(round(unit * _WIDTH_LINES)))
         small = self._small_font()
-        for label in (self.section_label, self.mode_help, self.high_dpi_note,
+        for label in (self.section_label, self.app_section_label,
+                      self.mode_help, self.scope_note, self.high_dpi_note,
                       self.version_label, self.project_link):
             label.setFont(small)
         size = self._button_size()

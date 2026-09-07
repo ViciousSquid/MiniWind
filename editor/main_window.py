@@ -3409,10 +3409,20 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Could not launch game:\n{e}")
             
     def save_layout(self):
+        """Persist the *editor's* window layout.
+
+        While play mode is running this window is showing the game at the
+        kiosk display mode and resolution, which is not a layout anybody meant
+        to save — quitting straight from play used to persist it and the editor
+        would reopen at the game's resolution (frameless, even). So when a
+        kiosk snapshot is live, that is what gets written."""
         if not self.config.has_section('Layout'):
             self.config.add_section('Layout')
-        self.config['Layout']['geometry'] = self.saveGeometry().toHex().data().decode()
-        self.config['Layout']['state'] = self.saveState().toHex().data().decode()
+        snapshot = getattr(self, '_editor_layout', None)
+        geometry, state = snapshot if snapshot is not None else (
+            self.saveGeometry(), self.saveState())
+        self.config['Layout']['geometry'] = geometry.toHex().data().decode()
+        self.config['Layout']['state'] = state.toHex().data().decode()
         self.save_config()
         self.statusBar().showMessage("Layout saved.", 2000)
 
@@ -3725,11 +3735,16 @@ class MainWindow(QMainWindow):
         return best_match or fallback
 
     def enter_kiosk_mode(self):
-        """Hide all editor UI and launch play mode fullscreen."""
+        """Hide all editor UI and present play mode per Settings ▸ Kiosk."""
         self.is_kiosk_mode = True
 
-        # Save layout before hiding
-        self.save_layout()
+        # Play mode is a *transient presentation of the editor's own window*,
+        # so the display mode and resolution it uses must never become the
+        # editor's remembered size, position or frame. The layout is snapshotted
+        # in memory here and put back on the way out; nothing is written to
+        # [Layout] on the way in, and save_layout() refuses to persist the
+        # play-mode window while this snapshot is live.
+        self._editor_layout = (self.saveGeometry(), self.saveState())
 
         # Hide menu bar and status bar
         if self.menuBar():
@@ -3841,10 +3856,19 @@ class MainWindow(QMainWindow):
             self._kiosk_prev_flags = None
         self.showNormal()
 
-        # Restore the complete layout state (geometry, docks, toolbars)
+        # Restore the complete layout state (geometry, docks, toolbars) from the
+        # snapshot taken on the way in, so the editor comes back exactly the
+        # size and position it was — not at whatever resolution play mode used.
         # This must happen BEFORE manual visibility fixes so restoreState()
-        # has full control over dock positions and toolbar states
-        self.load_layout()
+        # has full control over dock positions and toolbar states.
+        snapshot = getattr(self, '_editor_layout', None)
+        if snapshot is not None:
+            geometry, state = snapshot
+            self.restoreGeometry(geometry)
+            self.restoreState(state)
+            self._editor_layout = None
+        else:
+            self.load_layout()
 
         # restoreState()/restoreGeometry() handle docks and toolbars,
         # but menu bar and status bar visibility are NOT saved in the state

@@ -205,6 +205,30 @@ def test_escape_and_dismissal_mean_the_editor(ui):
     assert ui.choice == lx.EDIT
 
 
+def test_the_ui_says_the_display_settings_are_the_games(ui):
+    """Play mode runs in the editor's own window, so the launcher has to be
+    explicit that a resolution set here does not resize the editor."""
+    assert "PLAY MODE" in ui.section_label.text().upper()
+    assert "editor" in ui.scope_note.text().lower()
+    for value, _label, help_text in lx.MODES:
+        ui.mode_combo.setCurrentIndex(ui.mode_combo.findData(value))
+        assert "game" in ui.mode_help.text().lower()
+
+
+def test_it_writes_no_editor_geometry(ini):
+    """The launcher must not touch the editor's remembered window layout."""
+    cfg = configparser.ConfigParser()
+    cfg.read(ini)
+    if not cfg.has_section("Layout"):
+        cfg.add_section("Layout")
+    cfg.set("Layout", "geometry", "deadbeef")
+    with open(ini, "w") as f:
+        cfg.write(f)
+
+    lx.DisplaySettings(ini).save("Windowed", 3840, 2160, False, high_dpi=True)
+    assert _read(ini, "Layout", "geometry") == "deadbeef"
+
+
 def test_launch_never_raises(monkeypatch):
     monkeypatch.setattr(lx, "Launcher",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
