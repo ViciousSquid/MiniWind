@@ -107,17 +107,16 @@ python main.py
 After the splash, the **launcher** asks which half of MiniWind you came for:
 
 ```
-                        MiniWind
+                   ▓▓  MiniWind
         ────────────────────────────────────────
-         PLAY MODE DISPLAY
            Mode          Fullscreen ▾
            Resolution    1280 × 720 ▾      (Windowed only)
-         APPLICATION
+           The game takes over the whole screen.
            ☑ Vertical sync
            ☑ High DPI scaling
         ────────────────────────────────────────
          Reset to defaults      [ PLAY ]   [ EDIT ]
-         version …   github.com/ViciousSquid/MiniWind    Quit
+         version 2.2.0.…                       Quit
 ```
 
 * **PLAY** drops straight into the game with the editor UI hidden, presented

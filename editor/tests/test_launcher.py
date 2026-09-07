@@ -160,9 +160,15 @@ def test_a_missing_version_file_is_not_an_error(tmp_path):
     assert lx.read_version(str(tmp_path)) == ""
 
 
-def test_it_links_to_the_project(ui):
-    assert lx.PROJECT_URL in ui.project_link.text()
-    assert ui.project_link.openExternalLinks()
+def test_the_version_is_plain_text_with_room_for_all_of_it(ui, app):
+    """No panel behind it, and never squeezed into an ellipsis."""
+    app.processEvents()
+    style = ui.version_label.styleSheet()
+    assert "background:transparent" in style.replace(" ", "")
+    assert not ui.version_label.autoFillBackground()
+    needed = QtGui.QFontMetricsF(
+        ui.version_label.font()).horizontalAdvance(ui.version_label.text())
+    assert ui.version_label.minimumWidth() >= needed
 
 
 def test_resolution_only_applies_to_a_real_window(ui):
@@ -206,9 +212,8 @@ def test_escape_and_dismissal_mean_the_editor(ui):
 
 
 def test_the_ui_says_the_display_settings_are_the_games(ui):
-    """Play mode runs in the editor's own window, so the launcher has to make
-    clear that a resolution set here belongs to the game, not the editor."""
-    assert "PLAY MODE" in ui.section_label.text().upper()
+    """Play mode runs in the editor's own window, so each mode has to make
+    clear that what it describes is the game, not the editor."""
     for value, _label, _help in lx.MODES:
         ui.mode_combo.setCurrentIndex(ui.mode_combo.findData(value))
         assert "game" in ui.mode_help.text().lower()
@@ -285,10 +290,19 @@ def test_a_live_launcher_follows_a_font_change(app, ini):
         dialog.close()
 
 
-def test_the_banner_falls_back_to_a_placeholder(app, tmp_path):
-    """No art yet is not a broken launcher — it says where the art goes."""
-    assert lx.Banner._load(str(tmp_path)) is None
+def test_the_banner_shows_the_splash_mark(app):
+    """The launcher wears the project's own identity, not a placeholder."""
+    logo = lx.Banner._load_logo(ROOT)
+    assert logo is not None and not logo.isNull()
+    assert lx.Banner._load(ROOT) is None, "no wide banner art yet"
+    banner = lx.Banner(ROOT)
+    assert banner._logo is not None
+    assert banner.height() > 0
+
+
+def test_a_missing_logo_is_not_an_error(app, tmp_path):
     banner = lx.Banner(str(tmp_path))
+    assert banner._logo is None
     assert banner.height() > 0
 
 

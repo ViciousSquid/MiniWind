@@ -64,8 +64,6 @@ DEFAULTS = {
     "high_dpi_scaling": False,
 }
 
-#: Where the project lives, linked from the launcher footer.
-PROJECT_URL = "https://github.com/ViciousSquid/MiniWind"
 
 _ACCENT = "#C41E3A"
 _PLAY_GREEN = "#2E7D32"
@@ -82,7 +80,9 @@ _WIDTH_LINES = 31.0        # launcher width, in text lines
 _BUTTON_W_LINES = 7.3
 _BUTTON_H_LINES = 2.3
 _TITLE_SCALE = 2.6         # banner title, relative to the base font
-_SMALL_SCALE = 0.85        # captions and section headings
+_SMALL_SCALE = 0.85        # captions and the version line
+_LOGO_FRACTION = 0.68      # splash-mark height, as a fraction of the banner
+_LOGO_GAP = 0.22           # space between the mark and the title
 
 
 def text_unit(widget) -> float:
@@ -177,17 +177,19 @@ class DisplaySettings:
 # The banner
 # ---------------------------------------------------------------------------
 class Banner(QWidget):
-    """The strip along the top.
+    """The strip along the top: the splash logo beside the title.
 
-    Uses ``assets/banner.png`` when there is one; otherwise it paints a
-    placeholder so the launcher is complete and legible before any art exists —
-    and so it is obvious where the art goes. It also doubles as the drag handle,
+    ``assets/splash.png`` — the same mark the splash screen shows — is drawn to
+    the left of "MiniWind", so the launcher wears the project's own identity
+    rather than a placeholder. A wide ``assets/banner.png``, if one is ever
+    added, replaces the whole strip instead. It also doubles as the drag handle,
     since the launcher has no title bar."""
 
     def __init__(self, root_dir: str = ".", parent=None):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._pixmap = self._load(root_dir)
+        self._logo = self._load_logo(root_dir)
         self._drag_from = None
         self.refresh_metrics()
 
@@ -212,12 +214,23 @@ class Banner(QWidget):
 
     @staticmethod
     def _load(root_dir: str):
+        """A full-width banner image, if the project has one."""
         for name in ("banner.png", "banner.jpg"):
             path = os.path.join(root_dir, "assets", name)
             if os.path.isfile(path):
                 pix = QPixmap(path)
                 if not pix.isNull():
                     return pix
+        return None
+
+    @staticmethod
+    def _load_logo(root_dir: str):
+        """The splash mark, drawn beside the title."""
+        path = os.path.join(root_dir, "assets", "splash.png")
+        if os.path.isfile(path):
+            pix = QPixmap(path)
+            if not pix.isNull():
+                return pix
         return None
 
     def paintEvent(self, _event):
@@ -235,7 +248,7 @@ class Banner(QWidget):
             painter.end()
             return
 
-        # --- placeholder ---
+        # --- the splash mark, then the title, centred as one group ---
         gradient = QLinearGradient(0, 0, 0, rect.height())
         gradient.setColorAt(0.0, QColor(28, 30, 38))
         gradient.setColorAt(1.0, QColor(16, 17, 22))
@@ -247,20 +260,29 @@ class Banner(QWidget):
         title = QFont(base)
         title.setPointSizeF(max(8.0, base.pointSizeF() * _TITLE_SCALE))
         title.setLetterSpacing(QFont.PercentageSpacing, 106)
+        metrics = QFontMetricsF(title)
+        text_w = metrics.horizontalAdvance("MiniWind")
+
+        logo_rect = None
+        gap = 0.0
+        if self._logo is not None and self._logo.height():
+            logo_h = rect.height() * _LOGO_FRACTION
+            logo_w = logo_h * (self._logo.width() / self._logo.height())
+            gap = logo_h * _LOGO_GAP
+            logo_rect = QRectF(0, (rect.height() - logo_h) / 2.0, logo_w, logo_h)
+
+        group_w = text_w + (logo_rect.width() + gap if logo_rect else 0.0)
+        x = (rect.width() - group_w) / 2.0
+        if logo_rect is not None:
+            logo_rect.moveLeft(x)
+            painter.drawPixmap(logo_rect, self._logo,
+                               QRectF(self._logo.rect()))
+            x += logo_rect.width() + gap
+
         painter.setFont(title)
         painter.setPen(QPen(QColor(232, 232, 236)))
-        painter.drawText(QRectF(0, rect.height() * 0.26, rect.width(),
-                                rect.height() * 0.34),
-                         Qt.AlignHCenter | Qt.AlignVCenter, "MiniWind")
-
-        sub = QFont(base)
-        sub.setPointSizeF(max(6.0, base.pointSizeF() * _SMALL_SCALE))
-        painter.setFont(sub)
-        painter.setPen(QPen(QColor(130, 132, 140)))
-        painter.drawText(QRectF(0, rect.height() * 0.60, rect.width(),
-                                rect.height() * 0.20),
-                         Qt.AlignHCenter | Qt.AlignVCenter,
-                         "banner placeholder — drop assets/banner.png here")
+        painter.drawText(QRectF(x, 0, text_w, rect.height()),
+                         Qt.AlignLeft | Qt.AlignVCenter, "MiniWind")
         painter.end()
 
     # -- dragging (there is no title bar to grab) -------------------------
@@ -303,7 +325,6 @@ class Launcher(QDialog):
         self.setStyleSheet("""
             QDialog { background-color: #17181d; border: 1px solid #34363f; }
             QLabel { color: #d8d8dc; }
-            QLabel#section { color: #8a8c96; }
             QComboBox { background-color: #23252c; border: 1px solid #3a3d47;
                         padding: 0.3em 0.5em; color: #e4e4e8; }
             QComboBox:disabled { color: #6a6c74; }
@@ -327,10 +348,6 @@ class Launcher(QDialog):
         body.setSpacing(int(unit * 0.8))
         outer.addLayout(body)
 
-        self.section_label = QLabel("PLAY MODE DISPLAY")
-        self.section_label.setObjectName("section")
-        body.addWidget(self.section_label)
-
         form = QFormLayout()
         form.setSpacing(int(unit * 0.5))
         self.mode_combo = QComboBox()
@@ -348,10 +365,6 @@ class Launcher(QDialog):
         self.mode_help.setWordWrap(True)
         self.mode_help.setStyleSheet("color:#7d7f88;")
         body.addWidget(self.mode_help)
-
-        self.app_section_label = QLabel("APPLICATION")
-        self.app_section_label.setObjectName("section")
-        body.addWidget(self.app_section_label)
 
         self.vsync_check = QCheckBox("Vertical sync")
         self.vsync_check.setToolTip(
@@ -409,19 +422,18 @@ class Launcher(QDialog):
         footer = QHBoxLayout()
         footer.setSpacing(int(unit * 0.7))
 
+        # Plain text, no panel behind it, and wide enough for the whole build
+        # string — a version that reads "version 2.2.0.24…" is worse than none.
         self.version_label = QLabel(read_version(root_dir) or "")
-        self.version_label.setStyleSheet("color:#5f6169;")
+        self.version_label.setStyleSheet(
+            "color:#5f6169; background:transparent; border:none;")
+        self.version_label.setFrameStyle(QFrame.NoFrame)
+        self.version_label.setAutoFillBackground(False)
+        self.version_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.version_label.setToolTip("From editor/version.txt")
+        self.version_label.setSizePolicy(QSizePolicy.Preferred,
+                                         QSizePolicy.Preferred)
         footer.addWidget(self.version_label)
-
-        self.project_link = QLabel(
-            f'<a href="{PROJECT_URL}" style="color:#7d8fa8; '
-            f'text-decoration:none;">github.com/ViciousSquid/MiniWind</a>')
-        self.project_link.setOpenExternalLinks(True)
-        self.project_link.setTextInteractionFlags(Qt.TextBrowserInteraction)
-        self.project_link.setToolTip(PROJECT_URL)
-        self.project_link.setCursor(Qt.PointingHandCursor)
-        footer.addWidget(self.project_link)
 
         footer.addStretch(1)
         quit_link = QPushButton("Quit")
@@ -451,10 +463,13 @@ class Launcher(QDialog):
         unit = text_unit(self)
         self.setFixedWidth(int(round(unit * _WIDTH_LINES)))
         small = self._small_font()
-        for label in (self.section_label, self.app_section_label,
-                      self.mode_help, self.high_dpi_note,
-                      self.version_label, self.project_link):
+        for label in (self.mode_help, self.high_dpi_note, self.version_label):
             label.setFont(small)
+        # Give the version line the width its own text needs, so it is never
+        # squeezed by the layout into an ellipsis.
+        self.version_label.setMinimumWidth(int(
+            QFontMetricsF(small).horizontalAdvance(self.version_label.text())
+            + unit))
         size = self._button_size()
         self.play_button.setMinimumSize(size)
         self.edit_button.setMinimumSize(size)
