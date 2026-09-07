@@ -106,6 +106,7 @@ class WorldIndex:
         "cell_size", "actors", "n", "_cap",
         "px", "pz", "py", "alive", "dead", "team_ids", "tiers", "dist2", "_scratch",
         "team_names", "_team_of_name", "_bins", "_binned", "_prev_tiers",
+        "authoritative",
         "_row_of", "_derived", "_focus",
     )
 
@@ -113,6 +114,14 @@ class WorldIndex:
         self.cell_size = float(cell_size)
         self.actors: List = []
         self.n = 0
+        #: Whether this index actually classified a world this tick. False means
+        #: "no relevance information" — no focus point (the editor, a headless
+        #: test) or the engine deliberately skipped classification for a cast
+        #: too small to be worth it. Consumers must fall back to their scalar
+        #: paths in that case; they must NOT read an empty index as "nothing is
+        #: relevant", because an *authoritative* empty index means exactly that
+        #: and the two are opposite answers.
+        self.authoritative = False
         self._cap = 0
         # Reusable coordinate/state buffers, grown geometrically and sliced to
         # ``n`` — a steady-state tick allocates nothing here.
@@ -177,6 +186,7 @@ class WorldIndex:
         tier classification, distances and cell keys are then computed for the
         whole batch at once.
         """
+        self.authoritative = focus_xz is not None
         n = len(actors)
         if self._prev_tiers is not None and (n != self._prev_tiers.shape[0]
                                              or actors is not self.actors):

@@ -791,18 +791,21 @@ def register_all_input_handlers(io_manager: IOManager):
     def thing_hide(entity, param, logic):
         """Hide a thing entity."""
         entity.properties['hidden'] = True
+        _visibility_changed(logic)
         name = entity.properties.get('name', 'unnamed')
         debug_log('IO', f"Entity '{name}' hidden")
 
     def thing_show(entity, param, logic):
         """Show a thing entity."""
         entity.properties['hidden'] = False
+        _visibility_changed(logic)
         name = entity.properties.get('name', 'unnamed')
         debug_log('IO', f"Entity '{name}' shown")
 
     def thing_toggle_vis(entity, param, logic):
         """Toggle thing visibility."""
         entity.properties['hidden'] = not entity.properties.get('hidden', False)
+        _visibility_changed(logic)
         name = entity.properties.get('name', 'unnamed')
         state = "hidden" if entity.properties.get('hidden') else "visible"
         debug_log('IO', f"Entity '{name}' toggled → {state}")

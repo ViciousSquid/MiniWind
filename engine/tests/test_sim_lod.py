@@ -361,3 +361,77 @@ def test_falling_below_the_crossover_clears_stale_tier_stamps():
     lt.sim_lod_min_actors = 100                     # scene is now "tiny"
     lt._rebuild_world_index()
     assert "_sim_tier" not in far.properties
+
+
+# --- dormant costs nothing at all -----------------------------------------
+
+def test_a_parked_actor_is_not_even_classified():
+    """TIER_DORMANT means no work, and that has to include the work of
+    deciding it is dormant. On a streamed world almost every actor is parked, so
+    re-reading a thousand positions per tick to conclude "still dormant" is
+    exactly the cost streaming exists to avoid."""
+    here = _monster("here", 100, 0)
+    parked = _monster("parked", 200, 0)
+    parked.properties["disabled"] = True
+    lt = _logic([here, parked], [_brush(0, 0)])
+    lt._rebuild_world_index()
+    assert lt.world_index.n == 1, "only the live actor holds a row"
+    assert lt.world_index.actors[0] is here
+    # …and the parked one still answers correctly for every consumer.
+    assert parked.properties["_sim_tier"] == TIER_DORMANT
+    lt.monster_ai.update(1.0 / 30.0)
+    assert id(parked) not in {id(t) for t in lt.monster_ai._active_buf}
+
+
+def test_unparking_an_actor_brings_it_back_on_the_next_frame():
+    """The partition is cached, so whatever unparks an actor has to say so —
+    otherwise it would stand still until the periodic re-validation."""
+    a = _monster("a", 100, 0)
+    a.properties["hidden"] = True
+    lt = _logic([a], [_brush(0, 0)])
+    lt._rebuild_world_index()
+    assert lt.world_index.n == 0
+    a.properties["hidden"] = False
+    lt.notify_visibility_changed()
+    lt._rebuild_world_index()
+    assert lt.world_index.n == 1
+    assert lt.world_index.tier_of(a) == TIER_NEAR
+
+
+def test_a_missed_notification_heals_itself_within_the_revalidation_window():
+    """Fail-safe, not fail-silent: a path that forgets to announce a change
+    costs at most one revalidation window, never a permanently frozen actor."""
+    a = _monster("a", 100, 0)
+    a.properties["hidden"] = True
+    lt = _logic([a], [_brush(0, 0)])
+    lt._rebuild_world_index()
+    assert lt.world_index.n == 0
+    a.properties["hidden"] = False            # changed with no notification
+    for _ in range(lt.VISIBILITY_REVALIDATE_TICKS + 1):
+        lt._rebuild_world_index()
+    assert lt.world_index.n == 1
+
+
+def test_an_empty_live_set_is_not_read_as_no_information():
+    """A world where the streamer has parked *everything* is the exact case
+    relevance exists for. Reading its empty live set as "too small to bother"
+    would hand the gameplay layer the whole population again through its scalar
+    fallbacks — the opposite of what streaming just achieved."""
+    actors = [_monster(f"m{i}", 100000 + i * 10, 0) for i in range(40)]
+    for a in actors:
+        a.properties["disabled"] = True
+    lt = _logic(actors, [_brush(0, 0)])
+    lt.sim_lod_min_actors = 32          # a cast of 40 is over the crossover
+    lt._rebuild_world_index()
+    assert lt.world_index.n == 0
+    assert lt.world_index.authoritative, \
+        "an empty index is still an answer: nothing is relevant"
+
+
+def test_an_index_with_no_focus_point_is_not_authoritative():
+    """No player, no relevance. Consumers must take their scalar paths rather
+    than read the index's 'everything is NEAR' as a classification."""
+    lt = _logic([_monster("a", 0, 0)], [_brush(0, 0)])
+    lt.sim_lod_enabled = False
+    lt._rebuild_world_index()
+    assert not lt.world_index.authoritative

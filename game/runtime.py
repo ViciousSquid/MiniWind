@@ -657,7 +657,11 @@ class MiniwindSession:
         # Observable behaviour is unchanged: everything inside the overhead
         # camera's view is in NEAR or ACTIVE, and both move every tick.
         hour_int = int(self.clock.hour)
-        npcs = self.npcs()
+        # The NPCs worth ticking at all: the engine's live actor set, which
+        # already excludes anything the streamer has parked. On a streamed world
+        # that is a handful of townsfolk rather than the whole population, and
+        # the difference never reaches any of the loops below.
+        npcs = self._live_npcs()
         # Tiers are fixed for the tick (the world index set them just before
         # this call), so read each actor's once and share it with every pass
         # below rather than asking again per pass per actor.
@@ -726,10 +730,7 @@ class MiniwindSession:
         # and only those the player could actually watch swing. An attack
         # animation is a purely visual 0.2 s decay; running it for an actor
         # outside the camera's reach changes nothing anyone sees.
-        buckets = self._type_buckets()
-        tier_of = self._tier_of
-        for t in _chain(buckets.get("npc", ()), buckets.get("creature", ()),
-                        buckets.get("monster", ())):
+        for t in self._live_actors():
             if tier_of(t) > TIER_ACTIVE:
                 continue
             tp = t.properties
@@ -3114,6 +3115,11 @@ class MiniwindSession:
         index has been built — the scalar scans below run exactly as they did
         before, so behaviour is identical either way.
 
+        An index that exists but is not *authoritative* — no focus point, or a
+        cast too small for the engine to bother classifying — is the same as no
+        index. An authoritative index that happens to be empty is the opposite
+        answer, and means nothing in the world is currently relevant.
+
         Resolved once per tick and cached on the session: this is asked tens of
         thousands of times a second, and a ``getattr`` chain per ask is real
         money at settlement scale.
@@ -3122,7 +3128,7 @@ class MiniwindSession:
         if wi is not None:
             return wi
         wi = getattr(getattr(self, "logic", None), "world_index", None)
-        if wi is None or getattr(wi, "n", 0) == 0:
+        if wi is None or not getattr(wi, "authoritative", False):
             return None
         self._wi_cache = wi
         return wi
@@ -3157,6 +3163,37 @@ class MiniwindSession:
                 (sim_appraisal.is_combatant(a.properties) for a in wi.actors),
                 dtype=bool, count=wi.n)
         return wi.derived("combatant", _build)
+
+    def _live_actors(self):
+        """Every actor the engine still considers part of the live world.
+
+        The world index is built from exactly that set, so its rows *are* the
+        answer — no second walk of the scene, and nothing the streamer has
+        parked is ever visited. With no index (a small world, or a headless
+        test) it falls back to the cached type buckets, which is what the code
+        did before tiers existed.
+        """
+        wi = self._world_index()
+        if wi is not None:
+            return wi.actors
+        buckets = self._type_buckets()
+        return list(_chain(buckets.get("npc", ()), buckets.get("creature", ()),
+                           buckets.get("monster", ())))
+
+    def _live_npcs(self) -> List:
+        """The live actors that are NPCs and not dead — what the tick drives."""
+        wi = self._world_index()
+        if wi is None:
+            return self.npcs()
+        out = []
+        for t in wi.actors:
+            p = t.properties
+            if p.get("dead"):
+                continue
+            if str(p.get("type", "")).replace("_", "").lower() != "npc":
+                continue
+            out.append(t)
+        return out
 
     def _rally_mask(self, wi):
         """Per-row boolean: this actor has rallied. Built once per tick, so the

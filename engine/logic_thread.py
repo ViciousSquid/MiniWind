@@ -265,6 +265,11 @@ class LogicThread(threading.Thread):
         #: below SIM_LOD_MIN_ACTORS clears them exactly once instead of every
         #: tick (a stale stamp would wrongly skip simulation).
         self._sim_lod_stamped = False
+        #: The unparked actors, and the bookkeeping that keeps that partition
+        #: honest. See _live_actors.
+        self._live_actors_cache = None
+        self._live_actors_epoch = -1
+        self._live_actors_countdown = 0
 
         self._cull_valid = False
         self._cull_n = 0
@@ -545,6 +550,9 @@ class LogicThread(threading.Thread):
         # every entity in the level on every AI tick.
         self._monster_things = [t for t in self.things if MonsterThing and isinstance(t, MonsterThing)]
         self._monster_by_id = {id(t): t for t in self._monster_things}
+        # The actor set itself changed, so the live/parked partition over it is
+        # meaningless until it is re-derived.
+        self._live_actors_cache = None
 
     def _find_entity_by_name(self, name: str):
         if not name:
@@ -1672,6 +1680,40 @@ class LogicThread(threading.Thread):
                 speed *= self.EDITOR_CAMERA_FAST_MULT
             self.editor_camera.pos += move_dir * speed * delta
 
+    def _live_actors(self):
+        """The actors the streamer has not parked, cached between changes.
+
+        A streamed-out actor is not merely simulated less — it is not simulated
+        at all, and that has to include *classifying* it. On a large streamed
+        world almost every actor is parked, so re-reading a thousand positions
+        each tick to conclude "still dormant" is the exact shape of work this
+        pass exists to remove.
+
+        The partition is event-driven: it is rebuilt when something announces a
+        visibility change (streaming a cell in or out, an I/O Show/Hide, the
+        console), with the same periodic re-validation the non-hidden brush list
+        uses as a backstop for any path that forgets to say so. Parked actors
+        keep a TIER_DORMANT stamp, so every consumer still gets a correct answer
+        without the index carrying a row for them.
+        """
+        all_actors = getattr(self, '_monster_things', None) or []
+        if (self._live_actors_cache is not None
+                and self._live_actors_epoch == self._visibility_epoch
+                and self._live_actors_countdown > 0):
+            self._live_actors_countdown -= 1
+            return self._live_actors_cache
+        live = []
+        for a in all_actors:
+            props = a.properties
+            if props.get('hidden') or props.get('disabled'):
+                props['_sim_tier'] = TIER_DORMANT
+            else:
+                live.append(a)
+        self._live_actors_cache = live
+        self._live_actors_epoch = self._visibility_epoch
+        self._live_actors_countdown = self.VISIBILITY_REVALIDATE_TICKS
+        return live
+
     def _rebuild_world_index(self):
         """Refresh the authoritative actor index + simulation tiers.
 
@@ -1682,10 +1724,13 @@ class LogicThread(threading.Thread):
         focus, every loaded actor classifies as TIER_NEAR — i.e. exactly the
         pre-LOD behaviour, which is what the editor and headless tests want.
         """
-        actors = getattr(self, '_monster_things', None)
-        if actors is None:
-            actors = []
-        if len(actors) < self.sim_lod_min_actors:
+        actors = self._live_actors()
+        # The crossover is about the size of the *cast*, not of whatever
+        # survives streaming: a world of a thousand actors with six of them
+        # loaded is precisely the case relevance exists for, and reading its
+        # empty live set as "too small to bother" would hand the gameplay layer
+        # the whole population again through its scalar fallbacks.
+        if len(getattr(self, '_monster_things', None) or ()) < self.sim_lod_min_actors:
             # Too few actors for relevance to be worth computing: simulating all
             # of them costs less than sorting them into tiers. Measured, not
             # assumed — at settlement scale (a dozen or two townsfolk) the index
