@@ -32,22 +32,13 @@ QtWidgets = pytest.importorskip("PyQt5.QtWidgets")
 # ``editor.main_window`` pulls in the render stack at import time, and PyOpenGL
 # cannot even be imported on a machine with no GL driver (a CI container, a
 # headless build box). The rules under test are pure window bookkeeping and
-# touch none of it, so the GL modules are stubbed for the import only — the code
-# being exercised below is still MainWindow's own.
-def _import_main_window():
-    from unittest import mock
+# touch none of it, so the GL modules are stubbed where there is no driver — the
+# code being exercised below is still MainWindow's own.
+from conftest import install_gl_stubs          # noqa: E402
 
-    stubbed = {name: mock.MagicMock(name=name) for name in (
-        "OpenGL", "OpenGL.GL", "OpenGL.GLU", "OpenGL.GLUT",
-        "OpenGL.GL.shaders", "OpenGL.arrays", "OpenGL.arrays.vbo",
-    ) if name not in sys.modules}
-    with mock.patch.dict(sys.modules, stubbed):
-        from editor.main_window import MainWindow
-    return MainWindow
-
-
+install_gl_stubs()
 try:
-    MainWindow = _import_main_window()
+    from editor.main_window import MainWindow
 except Exception as exc:                       # pragma: no cover - env-specific
     pytest.skip(f"editor.main_window is not importable here ({exc})",
                 allow_module_level=True)

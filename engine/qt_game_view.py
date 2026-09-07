@@ -125,6 +125,9 @@ class QtGameView(QOpenGLWidget):
         # each draggable/collapsible like SysMon. Populated on demand.
         self.window_manager = WindowManager()
         self.inspect_mode = False          # 'inspect' console command armed a pick
+        # The actor the cursor is over while inspect mode is armed. The renderer
+        # tints it so it is obvious what a click will pick.
+        self.inspect_hover = None
         self._inspect_refresh_accum = 0.0
         # True while an interactive floating window (e.g. the loadout popup) has
         # freed the otherwise hidden, centre-locked play-mode cursor.
@@ -682,6 +685,7 @@ class QtGameView(QOpenGLWidget):
             import os as _os
             from engine.overhead_sprite import (SpriteController, OverheadSpriteRenderer,
                                                 ACTOR_Y, CORPSE_MARK_Y, DECAL_Y, GIB_Y)
+            from engine.renderer_core import INSPECT_HOVER_TINT
             root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
             cache = getattr(self, "_overhead_npc_renderers", None)
             if cache is None:
@@ -725,6 +729,9 @@ class QtGameView(QOpenGLWidget):
                     float(st.get("yaw", 0.0)), SpriteController.IDLE)
 
             dead_overlay_rel = "assets/sprites/heads/dead.png"
+            hover_id = (id(self.inspect_hover)
+                        if self.inspect_mode and self.inspect_hover is not None
+                        else None)
             for thing in actors:
                 snapshot = isinstance(thing, dict)
                 p = thing if snapshot else thing.properties
@@ -735,8 +742,16 @@ class QtGameView(QOpenGLWidget):
                 # Brief red flash when the actor was just hit.
                 flash = float(p.get("hit_flash", 0.0) if snapshot else
                               p.get("_hit_flash", 0.0) or 0.0)
-                tint = (1.0, 0.15, 0.1, min(0.8, flash * 4.0)) if flash > 0 else \
-                    (0.0, 0.0, 0.0, 0.0)
+                # Same rule as the billboard path: a hit outranks the
+                # inspector's hover highlight.
+                hovered = (hover_id is not None
+                           and (p.get("id") if snapshot else id(thing)) == hover_id)
+                if flash > 0:
+                    tint = (1.0, 0.15, 0.1, min(0.8, flash * 4.0))
+                elif hovered:
+                    tint = INSPECT_HOVER_TINT
+                else:
+                    tint = (0.0, 0.0, 0.0, 0.0)
 
                 idle_rel = str(p.get("custom_idle", ""))
                 is_head = bool(p.get("is_head")) if snapshot else self._is_overhead_head_actor(thing)
@@ -1421,6 +1436,12 @@ class QtGameView(QOpenGLWidget):
         if self.grid_dirty:
             self.renderer.update_grid_buffers(self.world_size, self.grid_size)
             self.grid_dirty = False
+        # Which actor the inspector is hovering, for the highlight tint. The
+        # renderer draws from snapshots, so it matches on the live Thing's id
+        # (see Monster.get_render_snapshot).
+        self.renderer.inspect_hover_id = (
+            id(self.inspect_hover)
+            if self.inspect_mode and self.inspect_hover is not None else None)
         if self.use_threading and self.logic_thread:
             self.view_matrix = render_state.camera_view_matrix
             if render_state.is_play_mode:
@@ -2583,16 +2604,23 @@ class QtGameView(QOpenGLWidget):
         inv_view = glm.inverse(self.view_matrix)
         world = inv_view * eye
         ray_dir = glm.normalize(glm.vec3(world))
-        if self.use_threading and self.logic_thread:
-            ec = self.logic_thread.get_editor_camera()
-            ray_origin = ec.pos
-        else:
-            ray_origin = self.camera.pos
+        # The eye is the translation column of the inverted view matrix, so the
+        # ray always starts wherever the frame was actually drawn from. Taking it
+        # from the *editor* camera instead made every play-mode pick miss: the
+        # direction came from the play camera and the origin from wherever the
+        # editor camera happened to be parked, so the ray started in the wrong
+        # place entirely (this is why clicking an NPC in inspect mode did
+        # nothing). It is the same value in editor mode.
+        ray_origin = glm.vec3(inv_view[3])
         return ray_origin, ray_dir
 
-    def get_object_at_3d(self, mx, my):
-        ray_o, ray_d = self.get_ray_from_mouse(mx, my)
-        best_obj, best_t = None, float('inf')
+    def _nearest_brush_along(self, ray_o, ray_d, limit=float('inf')):
+        """(brush, t) for the closest brush the ray enters, or (None, *limit*).
+
+        Shared by ordinary object picking and the inspect-mode actor pick, which
+        uses it purely as an occluder so an NPC behind a wall is not clickable.
+        """
+        best_brush, best_t = None, limit
         for brush in self.editor.state.brushes:
             pos = glm.vec3(brush.get('pos', [0, 0, 0]))
             size = glm.vec3(brush.get('size', [64, 64, 64]))
@@ -2616,7 +2644,12 @@ class QtGameView(QOpenGLWidget):
                         break
             if hit and tmin < best_t:
                 best_t = tmin
-                best_obj = brush
+                best_brush = brush
+        return best_brush, best_t
+
+    def get_object_at_3d(self, mx, my):
+        ray_o, ray_d = self.get_ray_from_mouse(mx, my)
+        best_obj, best_t = self._nearest_brush_along(ray_o, ray_d)
         for thing in self.editor.state.things:
             tp = glm.vec3(thing.pos)
             radius = 32.0
@@ -2649,6 +2682,7 @@ class QtGameView(QOpenGLWidget):
         per-tick pause recomputation (see game/host.py). Both are cleared on
         exit, restoring whatever pause state was in effect before."""
         self.inspect_mode = True
+        self.inspect_hover = None
         lt = getattr(self, 'logic_thread', None)
         if lt is not None:
             try:
@@ -2707,6 +2741,7 @@ class QtGameView(QOpenGLWidget):
 
     def _exit_inspect_mode(self):
         self.inspect_mode = False
+        self.inspect_hover = None
         # Lift the inspect pause, restoring the pause state from before we armed
         # (a game host recomputes gameplay_paused from its own state next tick).
         lt = getattr(self, 'logic_thread', None)
@@ -2731,6 +2766,65 @@ class QtGameView(QOpenGLWidget):
                 self.setCursor(Qt.ArrowCursor)
         except Exception:
             pass
+
+    #: Smallest pick sphere an actor gets, whatever its sprite says. Small
+    #: sprites still need a target you can realistically hit with the mouse.
+    INSPECT_MIN_PICK_RADIUS = 48.0
+
+    def _inspect_pick_radius(self, thing):
+        """Pick-sphere radius matching the billboard the renderer actually drew.
+
+        Sprites are quads centred on the actor's position and scaled by its
+        ``sprite_width``/``sprite_height`` (see the sprite vertex shader), so a
+        128x192 human reaches ~96 units from its centre — three times the flat
+        32-unit sphere ordinary object picking uses. Aiming at a head and
+        hitting nothing was the other half of "inspect does nothing".
+        """
+        props = getattr(thing, "properties", None) or {}
+        try:
+            w = float(props.get("sprite_width", 128) or 128)
+            h = float(props.get("sprite_height", 128) or 128)
+        except (TypeError, ValueError):
+            w = h = 128.0
+        return max(self.INSPECT_MIN_PICK_RADIUS, 0.5 * max(w, h))
+
+    def pick_actor_at(self, mx, my):
+        """The inspectable monster/NPC under the cursor, or None.
+
+        Deliberately not :meth:`get_object_at_3d`: that picks whatever is
+        nearest, so a floor brush under an actor's feet wins the click. Here
+        brushes are only occluders — the nearest actor in front of the first
+        wall is the answer, and everything else is ignored.
+        """
+        ray_o, ray_d = self.get_ray_from_mouse(mx, my)
+        _, wall_t = self._nearest_brush_along(ray_o, ray_d)
+        best, best_t = None, wall_t
+        for thing in self.editor.state.things:
+            if not self._is_inspectable(thing):
+                continue
+            if getattr(thing, "properties", {}).get("hidden", False):
+                continue
+            radius = self._inspect_pick_radius(thing)
+            oc = ray_o - glm.vec3(thing.pos)
+            b = 2.0 * glm.dot(oc, ray_d)
+            c = glm.dot(oc, oc) - radius * radius
+            disc = b * b - 4.0 * c        # ray_d is normalised, so a == 1
+            if disc < 0.0:
+                continue
+            t = (-b - disc ** 0.5) * 0.5
+            if t <= 0.0:
+                t = (-b + disc ** 0.5) * 0.5   # eye inside the sphere
+            if 0.0 < t < best_t:
+                best_t = t
+                best = thing
+        return best
+
+    def _update_inspect_hover(self, mx, my):
+        """Track which actor the cursor is over so the renderer can light it up."""
+        hovered = self.pick_actor_at(mx, my)
+        if hovered is not self.inspect_hover:
+            self.inspect_hover = hovered
+            self.update()
 
     @staticmethod
     def _is_inspectable(obj):
@@ -2818,6 +2912,21 @@ class QtGameView(QOpenGLWidget):
         self.update()
         return win
 
+    def _show_simulation_tab_for(self, thing):
+        """Ask the editor window to show this actor's Simulation tab.
+
+        Guarded and duck-typed: the viewport works with hosts that have no such
+        pane (the standalone player), and a missing tab must never cost the
+        popup that has already opened.
+        """
+        show = getattr(self.editor, 'show_simulation_tab_for', None)
+        if show is None:
+            return
+        try:
+            show(thing)
+        except Exception:
+            pass
+
     def _refresh_debug_windows(self):
         """Throttled live refresh of open NPC inspector popups (~4 Hz)."""
         self._inspect_refresh_accum += getattr(self, '_last_frame_dt', 0.016)
@@ -2836,7 +2945,8 @@ class QtGameView(QOpenGLWidget):
             painter.setFont(QFont("Arial", 10))
             painter.setPen(QColor(240, 220, 120))
             painter.drawText(QRect(0, 8, self.width(), 22), Qt.AlignHCenter,
-                             "Inspect mode (paused): click a monster / NPC   (Esc to cancel)")
+                             "Inspect mode (paused): click the highlighted "
+                             "monster / NPC   (Esc to cancel)")
         except Exception:
             pass
 
@@ -2924,10 +3034,11 @@ class QtGameView(QOpenGLWidget):
             return
         # Inspect mode: the next left click picks a monster/NPC to inspect.
         if getattr(self, 'inspect_mode', False) and event.button() == Qt.LeftButton:
-            obj = self.get_object_at_3d(event.x(), event.y())
+            obj = self.pick_actor_at(event.x(), event.y())
             self._exit_inspect_mode()
-            if obj is not None and self._is_inspectable(obj):
+            if obj is not None:
                 self.open_npc_inspector(obj)
+                self._show_simulation_tab_for(obj)
             else:
                 from editor.debug_console import debug_log
                 debug_log("Info", "Inspect: no monster or NPC under the cursor.")
@@ -3045,7 +3156,10 @@ class QtGameView(QOpenGLWidget):
             # has freed the cursor, the mouse must move freely so the user can
             # aim / click. Skip the mouselook recentring that would otherwise
             # snap the cursor back to screen centre every frame.
-            if getattr(self, 'inspect_mode', False) or self._play_cursor_free:
+            if getattr(self, 'inspect_mode', False):
+                self._update_inspect_hover(event.x(), event.y())
+                return
+            if self._play_cursor_free:
                 return
             cp = event.pos()
             dx, dy = cp.x() - self.last_mouse_pos.x(), cp.y() - self.last_mouse_pos.y()

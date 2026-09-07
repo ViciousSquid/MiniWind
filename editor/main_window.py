@@ -2000,6 +2000,75 @@ class MainWindow(QMainWindow):
         self._exit_play_mode()
         QApplication.quit()
 
+    # =========================================================================
+    # INSPECTOR  (console 'inspect' → click an actor)
+    # =========================================================================
+
+    #: Property-editor tab the inspector jumps to. Registered by the MiniWind
+    #: plugin for npc and creature entities (see game/host.py), and the one that
+    #: shows what an actor believes, wants and is about to do.
+    INSPECT_TAB_LABEL = "Simulation"
+
+    def show_simulation_tab_for(self, thing):
+        """Select *thing* and bring its Simulation tab to the front.
+
+        The floating inspector popup shows the live per-tick mental state; this
+        is the other half — the full authored/derived picture in the Properties
+        pane, where the rest of an actor's data already lives. Called by the
+        viewport when an inspect pick lands.
+
+        Plenty of things can be inspected that have no Simulation tab: a plain
+        engine monster, an actor from another game, a plugin whose tabs failed
+        to build. That is an ordinary outcome, not an error — the panel still
+        shows whatever tabs the thing *does* have, the popup is unaffected, and
+        the only feedback is a toast saying there is no such tab. Returns True
+        only when the tab was actually brought to the front.
+        """
+        try:
+            self.set_selected_object(thing)
+
+            # Play mode hides the whole Properties dock (and switches its inner
+            # tab to the console); inspecting is a debugging act, so put it back.
+            dock = getattr(self, 'properties_dock', None)
+            if dock is not None:
+                dock.setVisible(True)
+                dock.raise_()
+            tabs = getattr(self, 'properties_tab_widget', None)
+            editor_widget = getattr(self, 'property_editor', None)
+            if tabs is not None and editor_widget is not None:
+                index = tabs.indexOf(editor_widget)
+                if index >= 0:
+                    tabs.setCurrentIndex(index)
+
+            # Plugin tabs are built lazily and vary per entity type, so look the
+            # tab up by label rather than trusting a remembered index.
+            inner = getattr(editor_widget, 'tab_widget', None)
+            if inner is None:
+                return False
+            wanted = self.INSPECT_TAB_LABEL.lower()
+            for i in range(inner.count()):
+                if inner.tabText(i).strip().lower() == wanted:
+                    inner.setCurrentIndex(i)
+                    return True
+            self.show_toast(
+                f"No {self.INSPECT_TAB_LABEL} tab for "
+                f"{self._display_name_of(thing)}.")
+        except Exception as exc:
+            from editor.debug_console import debug_log
+            debug_log("Warning", f"inspect: could not show the "
+                                 f"{self.INSPECT_TAB_LABEL} tab ({exc})")
+        return False
+
+    @staticmethod
+    def _display_name_of(thing):
+        """A readable label for an entity, for toasts and log lines."""
+        props = getattr(thing, 'properties', None)
+        if not isinstance(props, dict):
+            return 'this object'
+        return str(props.get('display_name') or props.get('name')
+                   or props.get('monster_type') or props.get('type')
+                   or 'this object')
+
     def _reset_miniwind_world(self, store_name="miniwind"):
         """Wipe persisted MiniWind progress so the next play starts from a clean
         world.

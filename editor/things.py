@@ -576,6 +576,11 @@ class Monster(Thing):
             and base.startswith('head')
         )
         return {
+            # Identity of the live Thing this snapshot came from. The renderer
+            # draws from snapshots only, so this is how it recognises the actor
+            # the inspector is hovering over and tints it (see
+            # renderer_core.draw_sprites / QtGameView.inspect_hover).
+            'id': id(self),
             'pos': list(self.pos),                         # copy list
             'dead': self.properties.get('dead', False),
             'is_shooting': self.properties.get('is_shooting', False),
