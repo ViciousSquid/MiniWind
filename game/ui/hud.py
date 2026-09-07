@@ -757,14 +757,72 @@ def _draw_dice_roll(painter, session, width, height):
 
 
 
+#: Toast plate colours: cream on black, so a line like "your bounty has
+#: increased" reads instantly over any scene without borrowing the gilded
+#: panel chrome the menus use.
+_TOAST_CREAM = QColor(247, 238, 214)
+_TOAST_PLATE = QColor(0, 0, 0)
+_TOAST_EDGE = QColor(168, 142, 84)
+
+#: Where the toast stack starts: clear of the compass strip
+#: (_draw_compass draws at y=14, 22 tall) with a little air beneath it.
+TOAST_TOP = 46
+#: Seconds of fade at the end of a toast's life. Before that it is fully opaque —
+#: an announcement should be legible for as long as it is up, not dimming the
+#: whole time.
+TOAST_FADE = 0.6
+
+
 def _draw_notifications(painter, session, width, height):
-    y = height // 2 - 40
-    for n in reversed(session.notifications[-4:]):
-        alpha = max(0, min(255, int(n["t"] / 3.0 * 255)))
-        col = QColor(240, 226, 190, alpha)
-        T.text_in(painter, QRect(0, y, width, 22), n["text"], size=13,
-                  color=col, align=T.ALIGN_CENTER, bold=True)
-        y -= 24
+    """The toast stack: announcements pinned top-centre, under the compass.
+
+    Newest first and reading downwards, each on its own black plate with a thin
+    gilded edge, so several arriving at once stay separate lines rather than one
+    block of text.
+    """
+    notes = session.notifications[-4:]
+    if not notes:
+        return
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    font = T.font(15, bold=True)
+    painter.setFont(font)
+    metrics = painter.fontMetrics()
+    pad_x, pad_y, gap = 18, 8, 6
+    max_w = int(width * 0.7)
+    y = TOAST_TOP
+
+    for n in reversed(notes):
+        text = str(n["text"])
+        alpha = max(0, min(255, int(255 * min(1.0, float(n["t"]) / TOAST_FADE))))
+        if alpha <= 0:
+            continue
+        shown = metrics.elidedText(text, Qt.ElideRight, max_w - pad_x * 2)
+        tw = metrics.horizontalAdvance(shown)
+        th = metrics.height()
+        w = tw + pad_x * 2
+        h = th + pad_y * 2
+        x = (width - w) // 2
+
+        plate = QColor(_TOAST_PLATE)
+        plate.setAlpha(int(alpha * 0.86))
+        edge = QColor(_TOAST_EDGE)
+        edge.setAlpha(alpha)
+        rect = QRect(x, y, w, h)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(plate)
+        painter.drawRoundedRect(rect, 4, 4)
+        painter.setPen(QPen(edge, 1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(rect, 4, 4)
+
+        cream = QColor(_TOAST_CREAM)
+        cream.setAlpha(alpha)
+        painter.setPen(cream)
+        painter.setFont(font)
+        painter.drawText(rect, T.ALIGN_CENTER, shown)
+        y += h + gap
+    painter.restore()
 
 
 def _draw_floaters(painter, session, width, height):

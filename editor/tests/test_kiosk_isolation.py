@@ -32,22 +32,13 @@ QtWidgets = pytest.importorskip("PyQt5.QtWidgets")
 # ``editor.main_window`` pulls in the render stack at import time, and PyOpenGL
 # cannot even be imported on a machine with no GL driver (a CI container, a
 # headless build box). The rules under test are pure window bookkeeping and
-# touch none of it, so the GL modules are stubbed for the import only — the code
-# being exercised below is still MainWindow's own.
-def _import_main_window():
-    from unittest import mock
+# touch none of it, so the GL modules are stubbed where there is no driver — the
+# code being exercised below is still MainWindow's own.
+from conftest import install_gl_stubs          # noqa: E402
 
-    stubbed = {name: mock.MagicMock(name=name) for name in (
-        "OpenGL", "OpenGL.GL", "OpenGL.GLU", "OpenGL.GLUT",
-        "OpenGL.GL.shaders", "OpenGL.arrays", "OpenGL.arrays.vbo",
-    ) if name not in sys.modules}
-    with mock.patch.dict(sys.modules, stubbed):
-        from editor.main_window import MainWindow
-    return MainWindow
-
-
+install_gl_stubs()
 try:
-    MainWindow = _import_main_window()
+    from editor.main_window import MainWindow
 except Exception as exc:                       # pragma: no cover - env-specific
     pytest.skip(f"editor.main_window is not importable here ({exc})",
                 allow_module_level=True)
@@ -68,6 +59,7 @@ class _Window(QtWidgets.QMainWindow):
     save_layout = MainWindow.save_layout
     enter_kiosk_mode = MainWindow.enter_kiosk_mode
     _apply_kiosk_display_mode = MainWindow._apply_kiosk_display_mode
+    standalone_play_session = False
 
     def __init__(self, config_path):
         from unittest import mock
@@ -180,3 +172,20 @@ def test_borderless_play_drops_the_frame_and_remembers_the_old_flags(win, app):
     app.processEvents()
     assert win.windowFlags() & QtCore.Qt.FramelessWindowHint
     assert win._kiosk_prev_flags == before, "so exiting can put the frame back"
+
+
+def test_a_launched_game_is_marked_standalone_but_an_editor_preview_is_not(win):
+    """Escape's meaning hangs on this flag.
+
+    A session the player came for — the launcher's Play button, or an imported
+    package — pauses on Escape and offers the pause menu. Play mode started from
+    the editor (including F12's kiosk toggle, which passes nothing) keeps the old
+    behaviour: Escape stops the preview and hands the map back.
+    """
+    win.enter_kiosk_mode(standalone=True)
+    assert win.standalone_play_session is True
+
+
+def test_the_kiosk_toggle_from_inside_the_editor_stays_a_preview(win):
+    win.enter_kiosk_mode()
+    assert win.standalone_play_session is False

@@ -56,6 +56,11 @@ except ImportError:
 # knob mirroring overhead_sprite.HEAD_FACING_OFFSET_DEG.
 HEAD_FACING_OFFSET = math.pi
 
+#: Tint laid over the actor the inspector is hovering (r, g, b, strength). A
+#: warm gold, strong enough to pick the actor out of a crowd but light enough
+#: that you can still read which head it is.
+INSPECT_HOVER_TINT = (1.0, 0.85, 0.35, 0.55)
+
 
 # ---------- Utility classes ----------
 class UniformCache:
@@ -988,6 +993,12 @@ class BaseRenderer:
                 return 0.0
             return math.atan2(-a, b) + HEAD_FACING_OFFSET
 
+        # The actor the inspector's cursor is over, set on the renderer by the
+        # viewport each frame (id of the live Thing; None when inspect mode is
+        # off). Read here rather than passed down because draw_sprites sits at
+        # the bottom of the render call chain.
+        hover_id = getattr(self, 'inspect_hover_id', None)
+
         current_tex = None
         _tinted = False   # whether the last draw left a non-zero tint set
         _rotated = False  # whether the last draw left a non-zero rotation set
@@ -1074,9 +1085,15 @@ class BaseRenderer:
                     gl.glUniform1f(rot_loc, 0.0)
                     _rotated = False
                 # Red damage flash: mix toward red by the remaining flash time.
+                # A hit always wins over the inspector's hover tint — being shot
+                # is the more urgent thing to show.
                 flash = thing.get('hit_flash', 0.0) or 0.0
+                hovered = (hover_id is not None and thing.get('id') == hover_id)
                 if flash > 0.0:
                     gl.glUniform4f(tint_loc, 1.0, 0.15, 0.1, min(0.75, flash * 4.0))
+                    _tinted = True
+                elif hovered:
+                    gl.glUniform4f(tint_loc, *INSPECT_HOVER_TINT)
                     _tinted = True
                 elif _tinted:
                     gl.glUniform4f(tint_loc, 0.0, 0.0, 0.0, 0.0)

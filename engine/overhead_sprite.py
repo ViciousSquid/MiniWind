@@ -16,6 +16,42 @@ from typing import Optional
 
 WEAPON_SIZE_MULTIPLIER = 2.0
 
+# ---------------------------------------------------------------------------
+# Ground-quad layering
+# ---------------------------------------------------------------------------
+# Everything the overhead view draws on the floor — blood, gib splatter, actors,
+# their weapons — is a flat quad lying in the same plane as the floor under it.
+# Two quads a world-unit apart are far below the depth buffer's precision at
+# overhead camera range, so they z-fight: the decal flickers against the floor,
+# and an actor standing in a pool of blood sinks into it.
+#
+# So the layers are named and spaced properly, rather than each caller passing a
+# hand-picked number. Ordering, floor upward:
+#
+#   floor  <  blood  <  gib splatter  <  actors  <  their weapons  <  corpse mark
+#
+# and EFFECT_Y is reserved above all of it for the fire and explosion decals to
+# come, which are the one thing allowed to cover an actor.
+#
+# The gaps are generous in world units (64 per metre) but a few centimetres in
+# world terms, so nothing visibly floats — an overhead camera sees the stack
+# flat on the ground, in the right order, without a flicker.
+
+#: Every ground quad clears the floor by at least this much.
+GROUND_CLEARANCE = 6.0
+#: Blood pools and other wound decals — the bottom of the stack.
+DECAL_Y = GROUND_CLEARANCE
+#: Gib splatter: a decal too, but it belongs on top of the blood it made.
+GIB_Y = DECAL_Y + 8.0
+#: Actors — NPCs, monsters and the player. Always above every decal.
+ACTOR_Y = GIB_Y + 24.0
+#: An equipped weapon, lifted clear of the actor holding it.
+WEAPON_Y_LIFT = 4.0
+#: The dead.png cross laid over a slain head.
+CORPSE_MARK_Y = ACTOR_Y + WEAPON_Y_LIFT + 4.0
+#: Reserved for fire / explosion decals, the one layer allowed over an actor.
+EFFECT_Y = CORPSE_MARK_Y + 12.0
+
 # Fixed resting offset from the actor centre.
 # Extra in-plane rotation (degrees) applied to the character (head/body) sprite
 # only — never to the equipped weapon. The head-sprite art faces "down" (the
@@ -151,7 +187,7 @@ class OverheadSpriteRenderer:
         self,
         frame_files: Optional[dict] = None,
         size: float = 128.0,
-        y_offset: float = 2.0,
+        y_offset: float = ACTOR_Y,
         facing_offset_deg: float = 0.0,
     ):
         directory = os.path.join(
@@ -377,6 +413,7 @@ class OverheadSpriteRenderer:
         y_offset: float,
         rotation_offset: float = 0.0,
         tint=(0.0, 0.0, 0.0, 0.0),
+        depth_write: bool = True,
     ) -> None:
         try:
             gl = self._gl
@@ -437,9 +474,21 @@ class OverheadSpriteRenderer:
             )
             gl.glDisable(gl.GL_CULL_FACE)
 
-            gl.glBindVertexArray(self._vao)
-            gl.glDrawArrays(gl.GL_TRIANGLES, 0, 6)
-            gl.glBindVertexArray(0)
+            # Ground decals draw without writing depth. Two blood pools lying in
+            # the same plane otherwise z-fight each other — the first writes its
+            # depth and the second half-passes GL_LESS across the overlap, which
+            # is the flicker. Reading depth is still on, so a decal is still
+            # hidden by walls and by anything in front of it; it just blends in
+            # draw order against its neighbours instead of fighting them.
+            if not depth_write:
+                gl.glDepthMask(gl.GL_FALSE)
+            try:
+                gl.glBindVertexArray(self._vao)
+                gl.glDrawArrays(gl.GL_TRIANGLES, 0, 6)
+                gl.glBindVertexArray(0)
+            finally:
+                if not depth_write:
+                    gl.glDepthMask(gl.GL_TRUE)
             gl.glUseProgram(0)
 
         except Exception:
@@ -462,6 +511,7 @@ class OverheadSpriteRenderer:
         facing: float,
         frame_key: str,
         tint=(0.0, 0.0, 0.0, 0.0),
+        depth_write: bool = True,
     ) -> None:
         if not self._ready():
             return
@@ -483,6 +533,7 @@ class OverheadSpriteRenderer:
                 # raw facing and must not inherit this half-turn.
                 rotation_offset=math.radians(HEAD_FACING_OFFSET_DEG),
                 tint=tint,
+                depth_write=depth_write,
             )
 
     def draw_weapon(
@@ -608,7 +659,7 @@ class OverheadSpriteRenderer:
             facing,
             texture,
             weapon_size,
-            self.y_offset + 0.6,
+            self.y_offset + WEAPON_Y_LIFT,
             # No extra half-turn here: the weapon art and the head art carry
             # opposite baked orientations, so the weapon already points the same
             # way as the (half-turned) character sprite under the shared facing.

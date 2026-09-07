@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..diceroll import DiceRoller
 
+from ..diceroll import CHECK_DIE, CHECK_NOTATION, check_threshold
 from . import attributes as attr
 from . import skills as sk
 
@@ -299,10 +300,13 @@ def cast_check(character, spell: Spell, rng: Optional[random.Random] = None,
     luck = character.attrs.get(attr.LUCK, 40)
     chance = (skill * 1.2 + wil * 0.2 + luck * 0.1 - spell.base_cost * 0.4) / 100.0
     chance = max(0.05, min(0.98, chance))
-    target = min(100, max(1, int((1.0 - chance) * 100.0) + 1))
+    # A d20 check, like every other chance in the game — there is no d100 die
+    # to put on screen (see diceroll.CHECK_DIE). The cast succeeds on a roll at
+    # or above *target*, so the winning faces are the top check_threshold ones.
+    target = CHECK_DIE - check_threshold(chance) + 1
     if dice is not None:
         result = dice.request_roll(
-            "1d100", target=target, source="magic.cast",
+            CHECK_NOTATION, target=target, source="magic.cast",
             context={"spell_id": spell.id, "school": spell.school})
         return bool(result.get("success")), result
     return rng.random() <= chance, None

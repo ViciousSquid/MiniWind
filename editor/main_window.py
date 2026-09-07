@@ -14,7 +14,7 @@ from datetime import datetime
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QMessageBox, QFileDialog, QDialog, QWidget, QLabel, QVBoxLayout,
-    QGraphicsOpacityEffect, QInputDialog, QColorDialog, QProgressDialog, QAction, QToolBar, QDockWidget,
+    QGraphicsOpacityEffect, QInputDialog, QColorDialog, QProgressDialog, QAction, QAbstractButton, QToolBar, QDockWidget,
     QPushButton, QDialogButtonBox, QHBoxLayout
 )
 from PyQt5.QtWidgets import QShortcut
@@ -173,6 +173,10 @@ class MainWindow(QMainWindow):
             self.state.selected_object = None
             
         self.keys_pressed = set()
+        # True while play mode is a game the player launched (launcher Play,
+        # or an imported package) rather than a preview started from the
+        # editor. Escape means 'pause' in the first case, 'stop' in the second.
+        self.standalone_play_session = False
         self._brush_clipboard = None  # For Ctrl+C / Ctrl+V brush copy-paste
         self.grid_visible = True
         self.clip_mode = False  # Radiant-style clip/slice tool (toggled with X)
@@ -202,6 +206,13 @@ class MainWindow(QMainWindow):
         self.setFocus()
         self.update_global_font()
         self.load_layout()
+
+        # No saved layout in settings.ini → lay the docks out proportionally
+        # (see apply_default_layout). Deferred by one event-loop turn because
+        # the window has not been shown yet, so its width is not yet final and
+        # resizeDocks would have nothing meaningful to divide up.
+        if not self.has_saved_layout():
+            QTimer.singleShot(0, self.apply_default_layout)
 
         # Apply configured default dock visibility after restoring saved layout.
         self.right_dock.setVisible(
@@ -1853,6 +1864,7 @@ class MainWindow(QMainWindow):
             return
 
         self._store_and_switch_to_debug_console()
+        self._suspend_editor_shortcuts()
 
         player_start = None
         for thing in self.state.things:
@@ -1905,6 +1917,159 @@ class MainWindow(QMainWindow):
         #self.ui.notification_label.setText("ESC = EXIT PLAY MODE  |  F12 = FULLSCREEN")
 
 
+    # =========================================================================
+    # PAUSE MENU ACTIONS  (engine/pause_menu.py calls these by name)
+    # =========================================================================
+    #
+    # The menu itself is pure presentation — it knows nothing about levels, play
+    # mode or the kiosk window. Everything it can actually *do* lives here,
+    # built on machinery that already exists: the console handler's save/load
+    # (engine/savegame.py) for the three slots, load_level_file() for a fresh
+    # start, and exit_kiosk_mode() for the way out.
+
+    #: The pause menu's three save slots, as ``.fiosave`` basenames. They are
+    #: ordinary saves, so ``load slot2`` in the console reaches the same file.
+    PAUSE_MENU_SLOTS = 3
+
+    def _pause_menu_slot_path(self, slot):
+        """Absolute path of pause-menu save slot *slot* (1-based)."""
+        from engine.pause_menu import slot_name
+        return self.console_handler._resolve_save_path(slot_name(slot))
+
+    def pause_menu_slot_info(self):
+        """Metadata for each save slot, or None for an empty one.
+
+        Only the header fields the menu captions a slot with are read, so a save
+        from an incompatible version still lists rather than breaking the menu.
+        """
+        out = []
+        for slot in range(1, self.PAUSE_MENU_SLOTS + 1):
+            path = self._pause_menu_slot_path(slot)
+            info = None
+            if os.path.exists(path):
+                info = {'map': '', 'saved_at': ''}
+                try:
+                    with open(path, 'r', encoding='utf-8') as fh:
+                        data = json.load(fh)
+                    info = {'map': data.get('map', ''),
+                            'saved_at': data.get('saved_at', '')}
+                except Exception:
+                    pass
+            out.append(info)
+        return out
+
+    def pause_menu_save_slot(self, slot):
+        """Write the live play session into slot *slot*."""
+        from engine.pause_menu import slot_name
+        self.console_handler.cmd_save(slot_name(slot))
+
+    def pause_menu_load_slot(self, slot):
+        """Restore slot *slot* over the running session."""
+        from engine.pause_menu import slot_name
+        path = self._pause_menu_slot_path(slot)
+        if not os.path.exists(path):
+            self.show_toast(f"Slot {slot} is empty.", is_error=True)
+            return
+        self.console_handler.cmd_load(slot_name(slot))
+
+    def pause_menu_new_game(self):
+        """Start the current map over from a clean world.
+
+        Wipes the persisted MiniWind progress (character, clock, quests, town
+        state) and reloads the map. load_level_file() restarts play mode by
+        itself when it was already running, so the player lands back at the
+        Player Start rather than in the editor.
+        """
+        self._reset_miniwind_world()
+        map_path = self.file_path
+        if not map_path:
+            self.show_toast("No map loaded.", is_error=True)
+            return
+        self.load_level_file(map_path)
+
+    def pause_menu_to_editor(self):
+        """Leave the game and hand the map back to the editor."""
+        self.standalone_play_session = False
+        if getattr(self, 'is_kiosk_mode', False):
+            self.exit_kiosk_mode(confirm=False)
+        else:
+            self._exit_play_mode()
+
+    def pause_menu_quit(self):
+        """Quit to desktop."""
+        self.standalone_play_session = False
+        self._exit_play_mode()
+        QApplication.quit()
+
+    # =========================================================================
+    # INSPECTOR  (console 'inspect' → click an actor)
+    # =========================================================================
+
+    #: Property-editor tab the inspector jumps to. Registered by the MiniWind
+    #: plugin for npc and creature entities (see game/host.py), and the one that
+    #: shows what an actor believes, wants and is about to do.
+    INSPECT_TAB_LABEL = "Simulation"
+
+    def show_simulation_tab_for(self, thing):
+        """Select *thing* and bring its Simulation tab to the front.
+
+        The floating inspector popup shows the live per-tick mental state; this
+        is the other half — the full authored/derived picture in the Properties
+        pane, where the rest of an actor's data already lives. Called by the
+        viewport when an inspect pick lands.
+
+        Plenty of things can be inspected that have no Simulation tab: a plain
+        engine monster, an actor from another game, a plugin whose tabs failed
+        to build. That is an ordinary outcome, not an error — the panel still
+        shows whatever tabs the thing *does* have, the popup is unaffected, and
+        the only feedback is a toast saying there is no such tab. Returns True
+        only when the tab was actually brought to the front.
+        """
+        try:
+            self.set_selected_object(thing)
+
+            # Play mode hides the whole Properties dock (and switches its inner
+            # tab to the console); inspecting is a debugging act, so put it back.
+            dock = getattr(self, 'properties_dock', None)
+            if dock is not None:
+                dock.setVisible(True)
+                dock.raise_()
+            tabs = getattr(self, 'properties_tab_widget', None)
+            editor_widget = getattr(self, 'property_editor', None)
+            if tabs is not None and editor_widget is not None:
+                index = tabs.indexOf(editor_widget)
+                if index >= 0:
+                    tabs.setCurrentIndex(index)
+
+            # Plugin tabs are built lazily and vary per entity type, so look the
+            # tab up by label rather than trusting a remembered index.
+            inner = getattr(editor_widget, 'tab_widget', None)
+            if inner is None:
+                return False
+            wanted = self.INSPECT_TAB_LABEL.lower()
+            for i in range(inner.count()):
+                if inner.tabText(i).strip().lower() == wanted:
+                    inner.setCurrentIndex(i)
+                    return True
+            self.show_toast(
+                f"No {self.INSPECT_TAB_LABEL} tab for "
+                f"{self._display_name_of(thing)}.")
+        except Exception as exc:
+            from editor.debug_console import debug_log
+            debug_log("Warning", f"inspect: could not show the "
+                                 f"{self.INSPECT_TAB_LABEL} tab ({exc})")
+        return False
+
+    @staticmethod
+    def _display_name_of(thing):
+        """A readable label for an entity, for toasts and log lines."""
+        props = getattr(thing, 'properties', None)
+        if not isinstance(props, dict):
+            return 'this object'
+        return str(props.get('display_name') or props.get('name')
+                   or props.get('monster_type') or props.get('type')
+                   or 'this object')
+
     def _reset_miniwind_world(self, store_name="miniwind"):
         """Wipe persisted MiniWind progress so the next play starts from a clean
         world.
@@ -1939,6 +2104,11 @@ class MainWindow(QMainWindow):
 
     def _exit_play_mode(self):
         """Exit play mode and return to editor."""
+        pause_menu = getattr(self.view_3d, 'pause_menu', None)
+        if pause_menu is not None:
+            pause_menu.close()
+        self._restore_editor_shortcuts()
+        self.standalone_play_session = False
         if hasattr(self.view_3d, 'play_mode') and self.view_3d.play_mode:
             self.view_3d.toggle_play_mode(None, None)
             self.view_3d.play_mode = False  # Force state change before UI update
@@ -1962,6 +2132,59 @@ class MainWindow(QMainWindow):
 
         self.setFocus()
         self.update_play_button_color()
+
+    # =========================================================================
+    # EDITOR SHORTCUTS vs. THE GAME'S KEYBOARD
+    # =========================================================================
+
+    def _suspend_editor_shortcuts(self):
+        """Take the editor's plain-letter shortcuts off the keyboard for play mode.
+
+        A shortcut on a QAction or a toolbar button is a *window* shortcut: Qt
+        fires it before the focused widget ever sees the key press. So H (Hide
+        Brush), T (Asset Browser), X (clip tool) and Shift+S / Shift+B were
+        swallowing those keys everywhere in play mode — H never reached
+        MiniWind's heal binding, Shift+S ate walking backwards, and typing a
+        name with an H or a T in it in character creation silently dropped the
+        letter.
+
+        Only shortcuts that are a single printable key, alone or with Shift, are
+        suspended: those are exactly the ones that collide with gameplay and with
+        typing. Ctrl-, Alt- and function-key shortcuts are left alone, so Ctrl+S
+        still saves. The originals are put back by
+        :meth:`_restore_editor_shortcuts` on the way out.
+        """
+        if getattr(self, '_suspended_shortcuts', None):
+            return
+        blocking_modifiers = (int(Qt.ControlModifier) | int(Qt.AltModifier)
+                              | int(Qt.MetaModifier))
+        suspended = []
+        # Buttons carry shortcuts too (the tool strip's X / Shift+S / Shift+B),
+        # and they are window shortcuts exactly like an action's.
+        for owner in self.findChildren(QAction) + self.findChildren(QAbstractButton):
+            sequence = owner.shortcut()
+            if sequence.isEmpty():
+                continue
+            combo = int(sequence[0])
+            if combo & blocking_modifiers:
+                continue                      # Ctrl+S and friends are harmless
+            key = combo & ~int(Qt.KeyboardModifierMask)
+            # Printable ASCII only: letters, digits and punctuation are what a
+            # player types or walks with. Function and navigation keys are not.
+            if not (Qt.Key_Space <= key <= Qt.Key_AsciiTilde):
+                continue
+            suspended.append((owner, sequence))
+            owner.setShortcut(QKeySequence())
+        self._suspended_shortcuts = suspended
+
+    def _restore_editor_shortcuts(self):
+        """Give the editor its plain-letter shortcuts back after play mode."""
+        for owner, sequence in getattr(self, '_suspended_shortcuts', None) or []:
+            try:
+                owner.setShortcut(sequence)
+            except RuntimeError:
+                pass                          # the widget outlived its owner
+        self._suspended_shortcuts = []
 
     def _store_and_switch_to_debug_console(self):
         """Store current tab index and switch to Debug Console tab."""
@@ -2818,6 +3041,13 @@ class MainWindow(QMainWindow):
         # PLAY MODE HANDLING (hardcoded shortcuts first)
         # ------------------------------------------------------------------
         if self.view_3d.play_mode:
+            # The pause menu is modal over the game: while it is up it takes
+            # every key, so nothing below (including Escape's quit) can fire.
+            pause_menu = getattr(self.view_3d, 'pause_menu', None)
+            if pause_menu is not None and pause_menu.active:
+                pause_menu.handle_key(event)
+                return
+
             # If the play console overlay is open, swallow all keys except
             # tilde (close it) and Escape (also close it).
             if self._is_play_console_visible():
@@ -2835,6 +3065,13 @@ class MainWindow(QMainWindow):
                 if _mw is not None and (_mw.open_screen is not None
                                         or _mw.dialogue is not None):
                     self.keys_pressed.add(event.key())
+                    return
+
+                # A game the player launched pauses instead of ending. Play mode
+                # started from the editor keeps the old behaviour — Escape there
+                # means "stop previewing", which is what an editor user wants.
+                if self.standalone_play_session and pause_menu is not None:
+                    pause_menu.open()
                     return
 
                 self._exit_play_mode()
@@ -3426,30 +3663,96 @@ class MainWindow(QMainWindow):
         self.save_config()
         self.statusBar().showMessage("Layout saved.", 2000)
 
-    def restore_layout(self):
-        """Restore the previously saved layout from settings.ini without restarting."""
-        if not self.config.has_section('Layout') or \
-           not (self.config.has_option('Layout', 'geometry') and self.config.has_option('Layout', 'state')):
-            self.show_toast("No saved layout found. Save a layout first.", is_error=True)
-            return
-        
+    #: The editor's default dock proportions, as fractions of the window width:
+    #: the scene tree down the left, then the 3D view and the Properties / Debug
+    #: Console column splitting the rest evenly. The 2D views dock shares the
+    #: right-hand column when it is shown, so the column as a whole is what gets
+    #: DEFAULT_PROPERTIES_FRACTION.
+    DEFAULT_SCENE_FRACTION = 0.10
+    DEFAULT_VIEW_3D_FRACTION = 0.45
+    DEFAULT_PROPERTIES_FRACTION = 0.45
+
+    def has_saved_layout(self):
+        """True when settings.ini carries a layout the user asked us to keep.
+
+        A saved [Layout] is an explicit preference and always wins over the
+        proportional default — that is the "unless overridden via settings.ini"
+        half of the rule.
+        """
+        return (self.config.has_section('Layout')
+                and self.config.has_option('Layout', 'geometry')
+                and self.config.has_option('Layout', 'state'))
+
+    def apply_default_layout(self):
+        """Lay the docks out at the editor's default proportions.
+
+        Scene 10% of the window width, then the 3D view and the Properties /
+        Debug Console column 50:50 across what is left. The asset browser is a
+        tool you open when you want it, so it starts hidden. Used on first run
+        (no saved layout) and by View ▸ Restore Layout, so there is always one
+        keystroke back to a sane arrangement no matter how far the docks have
+        been dragged.
+        """
         try:
-            # Restore geometry and state
-            if self.config.has_option('Layout', 'geometry'):
-                self.restoreGeometry(QByteArray.fromHex(self.config['Layout']['geometry'].encode()))
-            if self.config.has_option('Layout', 'state'):
-                self.restoreState(QByteArray.fromHex(self.config['Layout']['state'].encode()))
-            
-            # Restore menu bar and status bar visibility (not saved in state)
+            # Re-establish the arrangement first: the docks may have been torn
+            # off, tabbed together or floated since startup, and resizeDocks only
+            # means anything once they are back in their splitters.
+            self.scene_hierarchy_dock.setFloating(False)
+            self.view_3d_dock.setFloating(False)
+            self.right_dock.setFloating(False)
+            self.properties_dock.setFloating(False)
+            self.addDockWidget(Qt.LeftDockWidgetArea, self.scene_hierarchy_dock)
+            self.addDockWidget(Qt.RightDockWidgetArea, self.view_3d_dock)
+            self.splitDockWidget(self.view_3d_dock, self.right_dock, Qt.Horizontal)
+            self.splitDockWidget(self.right_dock, self.properties_dock, Qt.Vertical)
+            if hasattr(self, 'asset_browser_dock'):
+                self.asset_browser_dock.setFloating(False)
+                self.splitDockWidget(self.view_3d_dock, self.asset_browser_dock,
+                                     Qt.Vertical)
+                # A tool, not part of the working layout: T (or View ▸ Asset
+                # Browser) brings it up when it is wanted.
+                self.asset_browser_dock.setVisible(False)
+
+            self.view_3d_dock.setVisible(True)
             if self.menuBar():
                 self.menuBar().setVisible(True)
             self.statusBar().setVisible(True)
-            
-            self.show_toast("Layout restored")
+
+            width = max(1, self.width())
+            docks, widths = [], []
+            if self.scene_hierarchy_dock.isVisible():
+                docks.append(self.scene_hierarchy_dock)
+                widths.append(int(width * self.DEFAULT_SCENE_FRACTION))
+            docks.append(self.view_3d_dock)
+            widths.append(int(width * self.DEFAULT_VIEW_3D_FRACTION))
+            # The right-hand column is one splitter, so sizing whichever of its
+            # docks are visible sizes the column.
+            side_width = int(width * self.DEFAULT_PROPERTIES_FRACTION)
+            for dock in (self.right_dock, self.properties_dock):
+                if dock.isVisible():
+                    docks.append(dock)
+                    widths.append(side_width)
+            self.resizeDocks(docks, widths, Qt.Horizontal)
+
+            # Within that column, the 2D views get twice the height of the
+            # properties pane when both are showing.
+            if self.right_dock.isVisible() and self.properties_dock.isVisible():
+                self.resizeDocks([self.right_dock, self.properties_dock],
+                                 [2, 1], Qt.Vertical)
+            # The asset browser is a strip under the 3D view, not a half of it.
+            if (hasattr(self, 'asset_browser_dock')
+                    and self.asset_browser_dock.isVisible()):
+                self.resizeDocks([self.view_3d_dock, self.asset_browser_dock],
+                                 [10000, 1], Qt.Vertical)
         except Exception as e:
-            self.show_toast(f"Failed to restore layout: {e}", is_error=True)
+            self.show_toast(f"Failed to apply default layout: {e}", is_error=True)
             import traceback
             traceback.print_exc()
+
+    def restore_layout(self):
+        """View ▸ Restore Layout — put the docks back to the default proportions."""
+        self.apply_default_layout()
+        self.show_toast("Layout restored")
 
     def load_layout(self):
         if self.config.has_section('Layout') and self.config.has_option('Layout', 'geometry'):
@@ -3608,8 +3911,9 @@ class MainWindow(QMainWindow):
                 # Just load the map in the editor — no kiosk, no play mode
                 self.show_toast(f"Loaded package: {os.path.basename(filePath)}")
             else:
-                # Hide editor chrome and launch play mode
-                self.enter_kiosk_mode()
+                # Hide editor chrome and launch play mode. A package launched
+                # this way is a game, not a preview, so Escape pauses it.
+                self.enter_kiosk_mode(standalone=True)
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load game package:\n{e}")
@@ -3706,8 +4010,9 @@ class MainWindow(QMainWindow):
                 # Just load the map in the editor — no kiosk, no play mode
                 self.show_toast(f"Loaded package: {os.path.basename(file_path)}")
             else:
-                # Hide editor chrome and launch play mode
-                self.enter_kiosk_mode()
+                # Hide editor chrome and launch play mode. A package launched
+                # this way is a game, not a preview, so Escape pauses it.
+                self.enter_kiosk_mode(standalone=True)
 
         except Exception as e:
             self.show_toast(f"Failed to load game package: {e}", is_error=True)
@@ -3734,9 +4039,19 @@ class MainWindow(QMainWindow):
                         return best_match
         return best_match or fallback
 
-    def enter_kiosk_mode(self):
-        """Hide all editor UI and present play mode per Settings ▸ Kiosk."""
+    def enter_kiosk_mode(self, standalone=False):
+        """Hide all editor UI and present play mode per Settings ▸ Kiosk.
+
+        *standalone* marks a session the player came for rather than a preview
+        the editor is running: the launcher's Play button, or an imported
+        ``.fiopak``. It is what decides Escape's meaning — a standalone session
+        raises the pause menu (engine/pause_menu.py), an editor-launched one
+        keeps the old "quit game and return to editor?" prompt. F12's kiosk
+        toggle from inside the editor leaves it False, as it should.
+        """
         self.is_kiosk_mode = True
+        if standalone:
+            self.standalone_play_session = True
 
         # Play mode is a *transient presentation of the editor's own window*,
         # so the display mode and resolution it uses must never become the

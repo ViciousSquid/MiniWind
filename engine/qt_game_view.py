@@ -50,6 +50,8 @@ from engine.constants import RENDER_MODE_LIT, RENDER_MODE_UNLIT, RENDER_MODE_WIR
 from editor.debug_console import DebugConsole, get_debug_logger
 from .sysmon import SysMon
 from .floating_windows import WindowManager, NpcDebugWindow
+from .pause_menu import PauseMenu
+from . import sound_falloff
 
 # Pygame for gamepad support
 import pygame
@@ -73,6 +75,11 @@ def perspective_projection(fov, aspect, near, far):
 
 
 class QtGameView(QOpenGLWidget):
+    #: Seconds between re-mixing live speakers for the listener's new position
+    #: (see _update_speaker_volumes). ~15 Hz: far finer than an ear notices a
+    #: volume ramp, and a fraction of the work of doing it every frame.
+    SPEAKER_VOLUME_INTERVAL = 1.0 / 15.0
+
     def __init__(self, editor):
         super().__init__(editor)
 
@@ -124,10 +131,16 @@ class QtGameView(QOpenGLWidget):
         # each draggable/collapsible like SysMon. Populated on demand.
         self.window_manager = WindowManager()
         self.inspect_mode = False          # 'inspect' console command armed a pick
+        # The actor the cursor is over while inspect mode is armed. The renderer
+        # tints it so it is obvious what a click will pick.
+        self.inspect_hover = None
         self._inspect_refresh_accum = 0.0
         # True while an interactive floating window (e.g. the loadout popup) has
         # freed the otherwise hidden, centre-locked play-mode cursor.
         self._play_cursor_free = False
+        # Escape menu for standalone play sessions (see engine/pause_menu.py).
+        # Idle until MainWindow opens it; it owns its own pause of the world.
+        self.pause_menu = PauseMenu(self)
 
 
         self.sound_pool = {}
@@ -408,8 +421,16 @@ class QtGameView(QOpenGLWidget):
             "Press ESC to cancel")
         self._cached_death_title_width = QFontMetrics(self._death_title_font).horizontalAdvance(
             "DIED")
-        self._cached_death_sub_width = QFontMetrics(self._death_sub_font).horizontalAdvance(
-            "Press Escape to return to the editor")
+        # Two death-screen prompts: in a game the player launched Escape raises
+        # the pause menu, in an editor preview it stops the preview. Both widths
+        # are measured once so the draw stays allocation-free.
+        self._death_sub_editor = "Press Escape to return to the editor"
+        self._death_sub_game = "Press Escape for the menu"
+        _death_metrics = QFontMetrics(self._death_sub_font)
+        self._cached_death_sub_width = _death_metrics.horizontalAdvance(
+            self._death_sub_editor)
+        self._cached_death_sub_game_width = _death_metrics.horizontalAdvance(
+            self._death_sub_game)
 
         self._cached_hud_message = None
         self._cached_hud_message_width = 0
@@ -604,6 +625,11 @@ class QtGameView(QOpenGLWidget):
             props = getattr(actor_or_snapshot, "properties", {})
         if not isinstance(props, dict):
             return ""
+        # The weapon the combat AI switched to at this range beats everything
+        # else — it is what the actor is actually swinging (combat_loadout).
+        active = props.get("_active_weapon")
+        if active:
+            return str(active)
         equipment = props.get("equipment")
         if isinstance(equipment, dict) and equipment.get("weapon"):
             return str(equipment["weapon"])
@@ -668,13 +694,15 @@ class QtGameView(QOpenGLWidget):
             return
         try:
             import os as _os
-            from engine.overhead_sprite import (SpriteController, OverheadSpriteRenderer)
+            from engine.overhead_sprite import (SpriteController, OverheadSpriteRenderer,
+                                                ACTOR_Y, CORPSE_MARK_Y, DECAL_Y, GIB_Y)
+            from engine.renderer_core import INSPECT_HOVER_TINT
             root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
             cache = getattr(self, "_overhead_npc_renderers", None)
             if cache is None:
                 cache = self._overhead_npc_renderers = {}
 
-            def _renderer(sprite_rel, y_offset=2.0, size=None):
+            def _renderer(sprite_rel, y_offset=ACTOR_Y, size=None):
                 # *size* lets ground decals (blood stains) vary independently of
                 # the actor sprite size; it is bucketed into the cache key so a
                 # spread of wound sizes doesn't create an unbounded renderer set.
@@ -695,21 +723,28 @@ class QtGameView(QOpenGLWidget):
                     cache[key] = r
                 return r
 
-            # Blood stains — flat ground decals from wounds. Drawn before the
-            # actors (and low to the floor) so bodies and gib splatter sit on
-            # top of the blood, and each uses its own severity sprite + size.
+            # Blood stains — flat ground decals from wounds. Drawn first and on
+            # the bottom layer of the ground stack (overhead_sprite.DECAL_Y) so
+            # bodies, gib splatter and anyone walking through sit on top of the
+            # blood rather than z-fighting it. Each uses its own severity
+            # sprite + size.
             for st in getattr(render_state, "blood_stains", None) or ():
                 sprite = st.get("sprite") if isinstance(st, dict) else None
                 if not sprite:
                     continue
                 spos = st.get("pos", [0.0, 0.0, 0.0])
                 gspos = (float(spos[0]), float(spos[1]), float(spos[2]))
-                _renderer(sprite, y_offset=1.0,
+                _renderer(sprite,
+                          y_offset=DECAL_Y + float(st.get("y_bias", 0.0)),
                           size=float(st.get("size", 32.0))).draw(
                     self.projection_matrix, self.view_matrix, gspos,
-                    float(st.get("yaw", 0.0)), SpriteController.IDLE)
+                    float(st.get("yaw", 0.0)), SpriteController.IDLE,
+                    depth_write=False)
 
             dead_overlay_rel = "assets/sprites/heads/dead.png"
+            hover_id = (id(self.inspect_hover)
+                        if self.inspect_mode and self.inspect_hover is not None
+                        else None)
             for thing in actors:
                 snapshot = isinstance(thing, dict)
                 p = thing if snapshot else thing.properties
@@ -720,8 +755,16 @@ class QtGameView(QOpenGLWidget):
                 # Brief red flash when the actor was just hit.
                 flash = float(p.get("hit_flash", 0.0) if snapshot else
                               p.get("_hit_flash", 0.0) or 0.0)
-                tint = (1.0, 0.15, 0.1, min(0.8, flash * 4.0)) if flash > 0 else \
-                    (0.0, 0.0, 0.0, 0.0)
+                # Same rule as the billboard path: a hit outranks the
+                # inspector's hover highlight.
+                hovered = (hover_id is not None
+                           and (p.get("id") if snapshot else id(thing)) == hover_id)
+                if flash > 0:
+                    tint = (1.0, 0.15, 0.1, min(0.8, flash * 4.0))
+                elif hovered:
+                    tint = INSPECT_HOVER_TINT
+                else:
+                    tint = (0.0, 0.0, 0.0, 0.0)
 
                 idle_rel = str(p.get("custom_idle", ""))
                 is_head = bool(p.get("is_head")) if snapshot else self._is_overhead_head_actor(thing)
@@ -735,9 +778,12 @@ class QtGameView(QOpenGLWidget):
                                 else getattr(thing, "properties", {}).get("gib_sprite", "")) \
                         or (str(p.get("sprite_path", "")) if snapshot else "")
                     if stain:
-                        _renderer(stain).draw(self.projection_matrix,
-                                              self.view_matrix, gpos, facing,
-                                              SpriteController.IDLE)
+                        # Splatter is a decal: it belongs under every actor, on
+                        # its own layer just above the blood it made, and like
+                        # the blood it blends rather than writing depth.
+                        _renderer(stain, y_offset=GIB_Y).draw(
+                            self.projection_matrix, self.view_matrix, gpos,
+                            facing, SpriteController.IDLE, depth_write=False)
                         continue
                 if dead and is_head:
                     # Keep the identity: draw the living head, then paint the
@@ -747,7 +793,7 @@ class QtGameView(QOpenGLWidget):
                     _renderer(idle_rel).draw(self.projection_matrix,
                                              self.view_matrix, gpos, facing,
                                              SpriteController.IDLE, tint=tint)
-                    _renderer(dead_overlay_rel, y_offset=3.6).draw(
+                    _renderer(dead_overlay_rel, y_offset=CORPSE_MARK_Y).draw(
                         self.projection_matrix, self.view_matrix, gpos, facing,
                         SpriteController.IDLE)
                     continue
@@ -900,9 +946,11 @@ class QtGameView(QOpenGLWidget):
         if self.play_mode:
             self._sync_play_cursor()
         self._process_sound_queue()
+        self._update_speaker_volumes()
         self._process_console_command_queue()
         if self.use_threading and self.logic_thread:
-            keys = set() if self.console_overlay_active else self.editor.keys_pressed
+            keys = (set() if (self.console_overlay_active or self.pause_menu.active)
+                    else self.editor.keys_pressed)
             self.game_state.set_keys(keys)
             # Update Player 2 input from arrow keys (if no gamepad)
             self._update_p2_keyboard_input()
@@ -913,31 +961,51 @@ class QtGameView(QOpenGLWidget):
         else:
             self.repaint()
 
+    def _listener_pos(self):
+        """Where the player's ears are, as a plain ``[x, y, z]``.
+
+        In play mode ``self.camera`` is synced to the player each frame, so it
+        is the listener; in the editor the viewport camera stands in, which is
+        what makes a speaker audible while you fly around auditioning it.
+        """
+        pos = getattr(self.camera, 'pos', None)
+        if pos is None:
+            return None
+        try:
+            return [float(pos.x), float(pos.y), float(pos.z)]
+        except AttributeError:
+            return [float(pos[0]), float(pos[1]), float(pos[2])]
+
     def _process_sound_queue(self):
         """Drain the logic thread's sound queue and play via pygame mixer.
 
-        Speaker requests carry an ``action`` ('play'/'stop'), a ``looping`` flag
-        and an ``entity_id``. Looping speakers play with ``loops=-1`` and their
-        channel is remembered under the entity id so a later StopSound can
-        actually silence them; plain one-shot sounds (no entity id) just play."""
+        Speaker requests carry an ``action`` ('play'/'stop'), a ``looping`` flag,
+        an ``entity_id`` and where the speaker stands (``pos``/``radius``/
+        ``global``). Volume is mixed by distance from the listener — a linear
+        fade to silence at the speaker's radius, see engine/sound_falloff.py.
+        Looping speakers play with ``loops=-1`` and are remembered under the
+        entity id so a later StopSound can silence them and so
+        :meth:`_update_speaker_volumes` can keep re-mixing them as the player
+        moves; plain one-shot sounds are mixed once, where they were fired.
+        """
         speaker_channels = getattr(self, "_speaker_channels", None)
         if speaker_channels is None:
             speaker_channels = self._speaker_channels = {}
+        listener = self._listener_pos()
         for request in self.game_state.consume_sounds():
             action = request.get('action', 'play')
             entity_id = request.get('entity_id')
 
             if action == 'stop':
-                channel = speaker_channels.pop(entity_id, None)
-                if channel is not None:
+                live = speaker_channels.pop(entity_id, None)
+                if live is not None:
                     try:
-                        channel.stop()
+                        live['channel'].stop()
                     except Exception:
                         pass
                 continue
 
             sound_file = request.get('file')
-            volume = request.get('volume', 1.0)
             if not sound_file:
                 continue
 
@@ -952,14 +1020,54 @@ class QtGameView(QOpenGLWidget):
                 prev = speaker_channels.pop(entity_id, None)
                 if prev is not None:
                     try:
-                        prev.stop()
+                        prev['channel'].stop()
                     except Exception:
                         pass
+            speaker = {
+                'volume': request.get('volume', 1.0),
+                'pos': request.get('pos'),
+                'radius': request.get('radius', 0.0),
+                'global': request.get('global', False),
+            }
+            volume = sound_falloff.volume_for(listener, speaker)
+            # Out of range and not looping: nothing to hear, so don't take a
+            # mixer channel for it at all.
+            if loops == 0 and volume <= sound_falloff.SILENCE_EPSILON:
+                continue
             channel = sound.play(loops=loops)
             if channel:
                 channel.set_volume(volume)
                 if entity_id is not None and loops != 0:
-                    speaker_channels[entity_id] = channel
+                    speaker['channel'] = channel
+                    speaker_channels[entity_id] = speaker
+
+    def _update_speaker_volumes(self):
+        """Re-mix live looping speakers for where the listener is now.
+
+        Walking away from a fountain has to make it quieter, which means the
+        volume cannot be set once at play time. Only looping speakers are
+        tracked (a one-shot is over before it matters), there are rarely more
+        than a handful, and the pass is throttled — volume does not need
+        frame-accurate updates, and this is per-frame work in the render loop.
+        """
+        speaker_channels = getattr(self, "_speaker_channels", None)
+        if not speaker_channels:
+            return
+        self._speaker_volume_accum = (getattr(self, '_speaker_volume_accum', 0.0)
+                                     + getattr(self, '_last_frame_dt', 0.016))
+        if self._speaker_volume_accum < self.SPEAKER_VOLUME_INTERVAL:
+            return
+        self._speaker_volume_accum = 0.0
+        listener = self._listener_pos()
+        for entity_id, speaker in list(speaker_channels.items()):
+            channel = speaker.get('channel')
+            try:
+                if channel is None or not channel.get_busy():
+                    speaker_channels.pop(entity_id, None)
+                    continue
+                channel.set_volume(sound_falloff.volume_for(listener, speaker))
+            except Exception:
+                speaker_channels.pop(entity_id, None)
 
     def _process_console_command_queue(self):
         """Run any console commands queued by the I/O system on the UI thread.
@@ -1403,6 +1511,12 @@ class QtGameView(QOpenGLWidget):
         if self.grid_dirty:
             self.renderer.update_grid_buffers(self.world_size, self.grid_size)
             self.grid_dirty = False
+        # Which actor the inspector is hovering, for the highlight tint. The
+        # renderer draws from snapshots, so it matches on the live Thing's id
+        # (see Monster.get_render_snapshot).
+        self.renderer.inspect_hover_id = (
+            id(self.inspect_hover)
+            if self.inspect_mode and self.inspect_hover is not None else None)
         if self.use_threading and self.logic_thread:
             self.view_matrix = render_state.camera_view_matrix
             if render_state.is_play_mode:
@@ -1710,6 +1824,11 @@ class QtGameView(QOpenGLWidget):
                        width=self.width(), height=self.height(),
                        play_mode=self.play_mode)
 
+        # The pause menu is the very last thing in the frame: it must sit over
+        # the game's own HUD, not under it.
+        if self.pause_menu.active:
+            self.pause_menu.draw(painter)
+
         painter.end()
         if self._muzzle_flash_counter > 0:
             self._muzzle_flash_counter -= 1
@@ -1995,12 +2114,16 @@ class QtGameView(QOpenGLWidget):
         painter.setPen(QColor(255, 60, 60))
         painter.drawText(title_x, title_y, "DIED")
         painter.setFont(self._death_sub_font)
-        sub_x = (w - self._cached_death_sub_width) // 2
+        if getattr(self.editor, 'standalone_play_session', False):
+            sub, sub_w = self._death_sub_game, self._cached_death_sub_game_width
+        else:
+            sub, sub_w = self._death_sub_editor, self._cached_death_sub_width
+        sub_x = (w - sub_w) // 2
         sub_y = title_y + 60
         painter.setPen(QColor(0, 0, 0, 180))
-        painter.drawText(sub_x + 2, sub_y + 2, "Press Escape to return to the editor")
+        painter.drawText(sub_x + 2, sub_y + 2, sub)
         painter.setPen(QColor(220, 180, 180))
-        painter.drawText(sub_x, sub_y, "Press Escape to return to the editor")
+        painter.drawText(sub_x, sub_y, sub)
 
     def _draw_key_fallback(self, painter, key_name, x, y, size):
         color, pen, brush = self._key_fallback_cache.get(key_name, self._key_fallback_default)
@@ -2556,16 +2679,23 @@ class QtGameView(QOpenGLWidget):
         inv_view = glm.inverse(self.view_matrix)
         world = inv_view * eye
         ray_dir = glm.normalize(glm.vec3(world))
-        if self.use_threading and self.logic_thread:
-            ec = self.logic_thread.get_editor_camera()
-            ray_origin = ec.pos
-        else:
-            ray_origin = self.camera.pos
+        # The eye is the translation column of the inverted view matrix, so the
+        # ray always starts wherever the frame was actually drawn from. Taking it
+        # from the *editor* camera instead made every play-mode pick miss: the
+        # direction came from the play camera and the origin from wherever the
+        # editor camera happened to be parked, so the ray started in the wrong
+        # place entirely (this is why clicking an NPC in inspect mode did
+        # nothing). It is the same value in editor mode.
+        ray_origin = glm.vec3(inv_view[3])
         return ray_origin, ray_dir
 
-    def get_object_at_3d(self, mx, my):
-        ray_o, ray_d = self.get_ray_from_mouse(mx, my)
-        best_obj, best_t = None, float('inf')
+    def _nearest_brush_along(self, ray_o, ray_d, limit=float('inf')):
+        """(brush, t) for the closest brush the ray enters, or (None, *limit*).
+
+        Shared by ordinary object picking and the inspect-mode actor pick, which
+        uses it purely as an occluder so an NPC behind a wall is not clickable.
+        """
+        best_brush, best_t = None, limit
         for brush in self.editor.state.brushes:
             pos = glm.vec3(brush.get('pos', [0, 0, 0]))
             size = glm.vec3(brush.get('size', [64, 64, 64]))
@@ -2589,7 +2719,12 @@ class QtGameView(QOpenGLWidget):
                         break
             if hit and tmin < best_t:
                 best_t = tmin
-                best_obj = brush
+                best_brush = brush
+        return best_brush, best_t
+
+    def get_object_at_3d(self, mx, my):
+        ray_o, ray_d = self.get_ray_from_mouse(mx, my)
+        best_obj, best_t = self._nearest_brush_along(ray_o, ray_d)
         for thing in self.editor.state.things:
             tp = glm.vec3(thing.pos)
             radius = 32.0
@@ -2622,6 +2757,7 @@ class QtGameView(QOpenGLWidget):
         per-tick pause recomputation (see game/host.py). Both are cleared on
         exit, restoring whatever pause state was in effect before."""
         self.inspect_mode = True
+        self.inspect_hover = None
         lt = getattr(self, 'logic_thread', None)
         if lt is not None:
             try:
@@ -2639,8 +2775,11 @@ class QtGameView(QOpenGLWidget):
         self.update()
 
     def _play_mode_wants_cursor(self):
-        """True if an interactive floating window (one with wants_cursor) is
-        open and needs the free play-mode cursor to be clicked."""
+        """True if something on top of the game needs the free play-mode cursor:
+        the pause menu, or an interactive floating window (one with
+        wants_cursor)."""
+        if self.pause_menu.active:
+            return True
         wm = getattr(self, 'window_manager', None)
         if wm is None:
             return False
@@ -2677,6 +2816,7 @@ class QtGameView(QOpenGLWidget):
 
     def _exit_inspect_mode(self):
         self.inspect_mode = False
+        self.inspect_hover = None
         # Lift the inspect pause, restoring the pause state from before we armed
         # (a game host recomputes gameplay_paused from its own state next tick).
         lt = getattr(self, 'logic_thread', None)
@@ -2701,6 +2841,65 @@ class QtGameView(QOpenGLWidget):
                 self.setCursor(Qt.ArrowCursor)
         except Exception:
             pass
+
+    #: Smallest pick sphere an actor gets, whatever its sprite says. Small
+    #: sprites still need a target you can realistically hit with the mouse.
+    INSPECT_MIN_PICK_RADIUS = 48.0
+
+    def _inspect_pick_radius(self, thing):
+        """Pick-sphere radius matching the billboard the renderer actually drew.
+
+        Sprites are quads centred on the actor's position and scaled by its
+        ``sprite_width``/``sprite_height`` (see the sprite vertex shader), so a
+        128x192 human reaches ~96 units from its centre — three times the flat
+        32-unit sphere ordinary object picking uses. Aiming at a head and
+        hitting nothing was the other half of "inspect does nothing".
+        """
+        props = getattr(thing, "properties", None) or {}
+        try:
+            w = float(props.get("sprite_width", 128) or 128)
+            h = float(props.get("sprite_height", 128) or 128)
+        except (TypeError, ValueError):
+            w = h = 128.0
+        return max(self.INSPECT_MIN_PICK_RADIUS, 0.5 * max(w, h))
+
+    def pick_actor_at(self, mx, my):
+        """The inspectable monster/NPC under the cursor, or None.
+
+        Deliberately not :meth:`get_object_at_3d`: that picks whatever is
+        nearest, so a floor brush under an actor's feet wins the click. Here
+        brushes are only occluders — the nearest actor in front of the first
+        wall is the answer, and everything else is ignored.
+        """
+        ray_o, ray_d = self.get_ray_from_mouse(mx, my)
+        _, wall_t = self._nearest_brush_along(ray_o, ray_d)
+        best, best_t = None, wall_t
+        for thing in self.editor.state.things:
+            if not self._is_inspectable(thing):
+                continue
+            if getattr(thing, "properties", {}).get("hidden", False):
+                continue
+            radius = self._inspect_pick_radius(thing)
+            oc = ray_o - glm.vec3(thing.pos)
+            b = 2.0 * glm.dot(oc, ray_d)
+            c = glm.dot(oc, oc) - radius * radius
+            disc = b * b - 4.0 * c        # ray_d is normalised, so a == 1
+            if disc < 0.0:
+                continue
+            t = (-b - disc ** 0.5) * 0.5
+            if t <= 0.0:
+                t = (-b + disc ** 0.5) * 0.5   # eye inside the sphere
+            if 0.0 < t < best_t:
+                best_t = t
+                best = thing
+        return best
+
+    def _update_inspect_hover(self, mx, my):
+        """Track which actor the cursor is over so the renderer can light it up."""
+        hovered = self.pick_actor_at(mx, my)
+        if hovered is not self.inspect_hover:
+            self.inspect_hover = hovered
+            self.update()
 
     @staticmethod
     def _is_inspectable(obj):
@@ -2788,6 +2987,21 @@ class QtGameView(QOpenGLWidget):
         self.update()
         return win
 
+    def _show_simulation_tab_for(self, thing):
+        """Ask the editor window to show this actor's Simulation tab.
+
+        Guarded and duck-typed: the viewport works with hosts that have no such
+        pane (the standalone player), and a missing tab must never cost the
+        popup that has already opened.
+        """
+        show = getattr(self.editor, 'show_simulation_tab_for', None)
+        if show is None:
+            return
+        try:
+            show(thing)
+        except Exception:
+            pass
+
     def _refresh_debug_windows(self):
         """Throttled live refresh of open NPC inspector popups (~4 Hz)."""
         self._inspect_refresh_accum += getattr(self, '_last_frame_dt', 0.016)
@@ -2806,7 +3020,8 @@ class QtGameView(QOpenGLWidget):
             painter.setFont(QFont("Arial", 10))
             painter.setPen(QColor(240, 220, 120))
             painter.drawText(QRect(0, 8, self.width(), 22), Qt.AlignHCenter,
-                             "Inspect mode (paused): click a monster / NPC   (Esc to cancel)")
+                             "Inspect mode (paused): click the highlighted "
+                             "monster / NPC   (Esc to cancel)")
         except Exception:
             pass
 
@@ -2866,6 +3081,9 @@ class QtGameView(QOpenGLWidget):
         return best_hit
 
     def mousePressEvent(self, event):
+        if self.pause_menu.active:
+            self.pause_menu.handle_mouse_press(event)
+            return
         if (self.play_mode and getattr(self, '_cached_level_complete_ui', None)
                 and getattr(self, '_level_complete_btn_rect', None)):
             if self._level_complete_btn_rect.contains(event.pos()):
@@ -2891,10 +3109,11 @@ class QtGameView(QOpenGLWidget):
             return
         # Inspect mode: the next left click picks a monster/NPC to inspect.
         if getattr(self, 'inspect_mode', False) and event.button() == Qt.LeftButton:
-            obj = self.get_object_at_3d(event.x(), event.y())
+            obj = self.pick_actor_at(event.x(), event.y())
             self._exit_inspect_mode()
-            if obj is not None and self._is_inspectable(obj):
+            if obj is not None:
                 self.open_npc_inspector(obj)
+                self._show_simulation_tab_for(obj)
             else:
                 from editor.debug_console import debug_log
                 debug_log("Info", "Inspect: no monster or NPC under the cursor.")
@@ -2984,6 +3203,9 @@ class QtGameView(QOpenGLWidget):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if self.pause_menu.active:
+            self.pause_menu.handle_mouse_move(event)
+            return
         if self.sysmon.handle_mouse_move(event, self.play_mode, self.width(), self.height()):
             self.update()
             return
@@ -3009,7 +3231,10 @@ class QtGameView(QOpenGLWidget):
             # has freed the cursor, the mouse must move freely so the user can
             # aim / click. Skip the mouselook recentring that would otherwise
             # snap the cursor back to screen centre every frame.
-            if getattr(self, 'inspect_mode', False) or self._play_cursor_free:
+            if getattr(self, 'inspect_mode', False):
+                self._update_inspect_hover(event.x(), event.y())
+                return
+            if self._play_cursor_free:
                 return
             cp = event.pos()
             dx, dy = cp.x() - self.last_mouse_pos.x(), cp.y() - self.last_mouse_pos.y()
@@ -3038,6 +3263,8 @@ class QtGameView(QOpenGLWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if self.pause_menu.active:
+            return
         if self.terrain_sculpt_painting and event.button() == Qt.LeftButton:
             self.terrain_sculpt_painting = False
             return
@@ -3205,6 +3432,10 @@ class QtGameView(QOpenGLWidget):
         # See MainWindow.keyPressEvent for why autorepeat is filtered here too.
         if event.isAutoRepeat():
             return
+        # The pause menu is modal over the game: it takes every key while it is up.
+        if self.pause_menu.active:
+            self.pause_menu.handle_key(event)
+            return
         # Esc cancels an armed inspect-mode pick before anything else consumes it.
         if getattr(self, 'inspect_mode', False) and event.key() == Qt.Key_Escape:
             self._exit_inspect_mode()
@@ -3298,7 +3529,13 @@ class QtGameView(QOpenGLWidget):
             render_state = self.game_state.get_render_state()
             if getattr(render_state, 'player_dead', False):
                 if event.key() == Qt.Key_Escape:
-                    self._exit_play_mode()
+                    # Dying in a game the player launched leads to the pause
+                    # menu (load a save, start over, leave) — not straight out
+                    # to the editor, which is only right for a preview.
+                    if getattr(self.editor, 'standalone_play_session', False):
+                        self.pause_menu.open()
+                    else:
+                        self._exit_play_mode()
                     return
                 return
         if not self.play_mode:
@@ -3338,6 +3575,8 @@ class QtGameView(QOpenGLWidget):
 
     def keyReleaseEvent(self, event):
         if event.isAutoRepeat():
+            return
+        if self.pause_menu.active:
             return
         # Remove arrow keys from the set when released
         if self.play_mode and not self.gamepad and self.splitscreen_mode:

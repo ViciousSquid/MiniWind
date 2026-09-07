@@ -63,28 +63,16 @@ class LoadoutWindow(FloatingWindow):
             return None
 
     def _weapons(self):
-        """Equippable weapons in the inventory: list of (id, name, stack)."""
-        c = self._character()
-        if c is None:
-            return []
+        """Equippable weapons in the inventory: list of (id, name, stack).
+
+        Read straight from :meth:`MiniwindSession.weapon_slots` so the order
+        here is the order the number keys use — row 1 is what pressing 1 draws.
+        """
         try:
-            from ..rpg import items as itemdb
+            return [(entry["id"], entry["name"], entry["stack"])
+                    for entry in self.session.weapon_slots()]
         except Exception:
-            itemdb = None
-        out = []
-        seen = set()
-        for stack in getattr(c, "inventory", []) or []:
-            iid = stack.get("id")
-            if not iid or iid in seen:
-                continue
-            cat = stack.get("type") or stack.get("category")
-            if cat is None and itemdb is not None:
-                d = itemdb.get(iid)
-                cat = d.category if d else None
-            if str(cat).lower() == "weapon":
-                out.append((iid, stack.get("name") or iid.replace("_", " ").title(), stack))
-                seen.add(iid)
-        return out
+            return []
 
     def _spells(self):
         """Known spells: list of (id, Spell)."""
@@ -178,13 +166,18 @@ class LoadoutWindow(FloatingWindow):
             painter.fillRect(r, _SEL if sel else _ROW)
             if sel:
                 painter.fillRect(QRect(r.x(), r.y(), 3, r.height()), _SEL_LINE)
+            # Slot number: this row's key. Row 1 is what pressing 1 draws.
+            painter.setPen(_GOLD if sel else _MUTED)
+            painter.setFont(self.small_font)
+            painter.drawText(QRect(r.x() + 4, r.y(), 16, r.height()),
+                             Qt.AlignVCenter | Qt.AlignHCenter, str(i + 1))
             pm = self._weapon_icon(stack)
             iy = r.y() + (r.height() - self.ICON) // 2
             if pm is not None and not pm.isNull():
-                painter.drawPixmap(r.x() + 8, iy, pm)
+                painter.drawPixmap(r.x() + 22, iy, pm)
             painter.setPen(_WHITE if sel else _TEXT)
             painter.setFont(self.body_font)
-            painter.drawText(r.x() + 8 + self.ICON + 8, r.y() + r.height() // 2 + 4, name)
+            painter.drawText(r.x() + 22 + self.ICON + 8, r.y() + r.height() // 2 + 4, name)
             # damage stat, right-aligned
             dmg = stack.get("damage")
             if dmg is None:
@@ -203,7 +196,7 @@ class LoadoutWindow(FloatingWindow):
         painter.setPen(_MUTED)
         painter.setFont(self.small_font)
         painter.drawText(x + 8, top + len(weapons) * self.ROW_H + 14,
-                         "Click to equip • Left-mouse attacks")
+                         "Press 1-9 or click to equip • Left-mouse attacks")
 
     def _draw_spells(self, painter, x, top, w):
         spells = self._spells()

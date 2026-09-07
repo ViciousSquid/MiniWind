@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..diceroll import DiceRoller
 
+from ..diceroll import CHECK_NOTATION, DICE_TYPES, check_threshold
 from . import items
 
 
@@ -43,10 +44,12 @@ class LootTable:
             if player_level < e.min_level:
                 continue
             if dice is not None:
+                # d20, like every other chance in the game — there is no d100
+                # die to show the player (see diceroll.CHECK_DIE).
                 chance_roll = dice.request_roll(
-                    "1d100", source="loot.drop",
+                    CHECK_NOTATION, source="loot.drop",
                     context={"table": self.id, "item_id": e.item_id})
-                if chance_roll["roll_result"] > min(100.0, (e.chance + luck_bonus) * 100.0):
+                if chance_roll["roll_result"] > check_threshold(e.chance + luck_bonus):
                     continue
             elif rng.random() > min(1.0, e.chance + luck_bonus):
                 continue
@@ -65,32 +68,45 @@ def _roll_range(lo: int, hi: int, rng, dice, table_id: str, item_id: str) -> int
     lo, hi = int(lo), int(hi)
     if hi <= lo:
         return lo
-    if dice is not None:
+    span = hi - lo + 1
+    # Only roll this through the shared service when the span *is* one of the
+    # real dice: every roll is put on screen, and a 37-sided die is not one
+    # anybody owns. Odd spans fall back to a plain random pick, unshown.
+    if dice is not None and span in DICE_TYPES:
         result = dice.request_roll(
-            f"1d{hi - lo + 1}", source="loot.quantity",
+            f"1d{span}", source="loot.quantity",
             context={"table": table_id, "item_id": item_id})
         return lo + result["roll_result"] - 1
     return rng.randint(lo, hi)
 
 
 def _roll_rarity(stack, player_level, rng, luck, dice=None, table_id=""):
-    """Give weapons/armour a small, level- and luck-scaled chance to be special."""
+    """Give weapons/armour a small, level- and luck-scaled chance to be special.
+
+    The die only answers *is this item special at all* — an epic is one part in
+    a few hundred, which no real die can express, and the point of rolling here
+    in front of the player is the moment of "is it something good?". Once the
+    die says yes, which grade it is (epic / rare / fine) is picked off the
+    ordinary random stream, keeping the original 15 / 35 / 50 split.
+    """
     d = items.get(stack.get("id"))
     if not d or d.category not in (items.WEAPON, items.ARMOUR):
         return
     chance = 0.06 + player_level * 0.01 + (luck - 40) * 0.001
     if dice is not None:
         rarity_roll = dice.request_roll(
-            "1d100", source="loot.rarity",
+            CHECK_NOTATION, source="loot.rarity",
             context={"table": table_id, "item_id": stack.get("id")})
-        roll = rarity_roll["roll_result"] / 100.0
-    else:
-        roll = rng.random()
-    if roll < chance * 0.15:
+        if rarity_roll["roll_result"] > check_threshold(chance):
+            return
+    elif rng.random() >= chance:
+        return
+    grade = rng.random()
+    if grade < 0.15:
         items.apply_rarity(stack, items.EPIC)
-    elif roll < chance * 0.5:
+    elif grade < 0.5:
         items.apply_rarity(stack, items.RARE)
-    elif roll < chance:
+    else:
         items.apply_rarity(stack, items.FINE)
 
 

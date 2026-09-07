@@ -46,9 +46,16 @@ K_JOURNAL = "j"
 K_SPELLS = "p"
 K_LEVELUP = "l"
 K_MAP = "m"
-K_DICE_ROLL = "d"
-K_DICE_TYPE = "y"
+# No key rolls dice by hand. 'd' is strafe-right — the movement key the engine
+# reads directly — and a manual roller sitting on it meant the player rolled a
+# die every time they side-stepped. Gameplay rolls (attacks, casts, loot) go
+# through MiniwindSession.request_roll and animate on their own, so there is
+# nothing a roll key adds.
 K_QUEST = "q"          # show the current quest (objective + how to complete)
+#: Number keys that draw a carried weapon by slot. '1' is the first weapon in
+#: the pack, '2' the second: the same order the loadout popup shows, so the keys
+#: and the screen can never disagree. Nine is plenty and leaves '0' free.
+WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 10))
 
 
 # ---------------------------------------------------------------------------
@@ -658,7 +665,10 @@ class MiniwindGame:
                         # The 'inspect' console command freezes the world while the
                         # player examines an actor (engine sets this on the logic
                         # thread; see qt_game_view.enter_inspect_mode).
-                        or getattr(logic, "_inspect_paused", False))
+                        or getattr(logic, "_inspect_paused", False)
+                        # The play-mode Escape menu (engine/pause_menu.py) sets
+                        # this for as long as it is on screen.
+                        or getattr(logic, "_menu_paused", False))
         logic.gameplay_paused = world_paused
 
         # The interact key (E) both opens a container/conversation and, inside
@@ -722,12 +732,15 @@ class MiniwindGame:
             session.do_attack()
         if K_CAST in just:
             session.do_cast()
-        if K_DICE_TYPE in just:
-            session.cycle_dice_type()
-        if K_DICE_ROLL in just:
-            session.roll_dice()
         if K_NEXT_SPELL in just:
             session.next_spell()
+        # Weapon slots: 1 draws the first weapon you carry, 2 the second, and so
+        # on, in the order the loadout popup lists them. Pressing the slot you
+        # already hold sheathes it.
+        for slot in WEAPON_SLOT_KEYS:
+            if slot in just:
+                session.select_weapon_slot(int(slot))
+                break
         if K_SNEAK in just:
             session.toggle_sneak()
         if K_HEAL in just:

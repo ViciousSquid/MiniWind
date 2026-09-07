@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextBrowser, QPushButton, 
-    QLabel, QCheckBox, QComboBox, QFrame, QLineEdit, QSplitter
+    QLabel, QCheckBox, QComboBox, QFrame, QLineEdit, QSplitter, QScrollArea,
+    QSizePolicy
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject, QUrl
 from PyQt5.QtGui import QFont, QTextCursor, QColor, QDesktopServices, QPainter, QPixmap
@@ -374,7 +375,33 @@ class DebugConsole(QWidget):
         """)
         toolbar.addWidget(self._filter_btn)
 
-        layout.addLayout(toolbar)
+        # The toolbar is a single non-wrapping row of controls, so its combined
+        # width used to become the console's minimum width — nearly a thousand
+        # pixels, which in turn forced the whole Properties / Debug Console dock
+        # that wide and made the editor's 30% side column impossible (see
+        # MainWindow.apply_default_layout). Parking it in a scroll strip breaks
+        # that floor: at a comfortable width it looks exactly as before, and in
+        # a narrow dock the row scrolls sideways instead of shoving the pane open.
+        toolbar_strip = QWidget()
+        toolbar_strip.setLayout(toolbar)
+        toolbar_scroll = QScrollArea()
+        toolbar_scroll.setWidget(toolbar_strip)
+        toolbar_scroll.setWidgetResizable(True)
+        toolbar_scroll.setFrameShape(QFrame.NoFrame)
+        toolbar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        toolbar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        toolbar_scroll.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        # Tall enough for the row plus the slim scrollbar that only shows when
+        # the dock is too narrow for every control.
+        toolbar_scroll.setFixedHeight(toolbar_strip.sizeHint().height() + 14)
+        toolbar_scroll.setStyleSheet("""
+            QScrollArea { background: transparent; }
+            QScrollBar:horizontal { height: 8px; background: #2b2b2b; margin: 0; }
+            QScrollBar::handle:horizontal { background: #4b4d4d; border-radius: 4px;
+                                            min-width: 24px; }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
+        """)
+        layout.addWidget(toolbar_scroll)
 
         # --- Middle area: console + right-side filter column (resizable) ---
         splitter = QSplitter(Qt.Horizontal)

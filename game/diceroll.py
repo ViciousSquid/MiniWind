@@ -20,6 +20,33 @@ HISTORY_LIMIT = 5
 MAX_PROBABILITY_CELLS = 100000
 DICE_TYPES = (4, 6, 8, 10, 12, 20)
 
+#: The die every skill / luck / chance check is resolved on. There is no d100 in
+#: this game — the dice are the six real tabletop solids in DICE_TYPES, and every
+#: roll is shown to the player, so a percentile check would put a die on screen
+#: that does not exist. Probabilities are resolved on a d20 instead.
+CHECK_DIE = 20
+CHECK_NOTATION = f"1d{CHECK_DIE}"
+
+
+def check_threshold(chance: float, sides: int = CHECK_DIE) -> int:
+    """Highest roll on a *sides*-sided die that still counts as a success.
+
+    Maps a 0..1 probability onto the die: a roll of ``1..threshold`` succeeds.
+    Anything short of certain keeps at least one losing face and anything better
+    than impossible keeps at least one winning face, so a long shot is never
+    silently unrollable and a near-certainty is never a free pass.
+    """
+    try:
+        chance = float(chance)
+    except (TypeError, ValueError):
+        return 0
+    sides = int(sides)
+    if chance <= 0.0:
+        return 0
+    if chance >= 1.0:
+        return sides
+    return max(1, min(sides - 1, int(round(chance * sides))))
+
 
 class DiceColor:
     """Named colour values retained for callers of the supplied API."""

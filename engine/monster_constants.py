@@ -93,6 +93,12 @@ BLOOD_STAIN_SIZE_MIN = 22.0             # a light nick
 BLOOD_STAIN_SIZE_MAX = 120.0            # a grievous, near-lethal wound
 MAX_BLOOD_STAINS = 120                  # oldest are dropped past this cap
 BLOOD_MIN_DAMAGE = 1.0                  # ignore sub-1 damage (rounding dust)
+# Each new stain is laid a hair higher than the last, cycling through
+# BLOOD_STAIN_LAYERS steps of this size before wrapping. Overlapping pools then
+# have a definite order instead of sharing one plane; the total climb stays well
+# inside the gap to the layer above (see engine.overhead_sprite).
+BLOOD_STAIN_LAYER_STEP = 0.4
+BLOOD_STAIN_LAYERS = 8
 
 # ---------------------------------------------------------------------------
 # Fantasy combat  (attack_style: "melee" | "bow")

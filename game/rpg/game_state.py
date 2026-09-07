@@ -33,7 +33,7 @@ from . import quests_content
 from . import guilds
 from . import bestiary
 from .character import Character
-from ..diceroll import DiceRoller
+from ..diceroll import CHECK_NOTATION, DiceRoller
 
 try:  # engine.gore is a tiny, Qt-free rule module; guard for non-engine contexts
     from engine import gore as _gore
@@ -340,7 +340,7 @@ class GameState:
             spell_name = spell.name if spell else "Spell"
             roll = res.roll or {}
             if roll:
-                notation = escape(str(roll.get("dice_notation", "1d100")))
+                notation = escape(str(roll.get("dice_notation", CHECK_NOTATION)))
                 rolled = escape(str(roll.get("roll_result", "?")))
                 target = escape(str(roll.get("target", "?")))
                 debug_log(
