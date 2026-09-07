@@ -644,8 +644,12 @@ class MainWindow(QMainWindow):
         """Hide the overlay and re-grab the mouse."""
         self._play_console_frame.hide()
 
-        # Re-hide cursor for FPS control
-        QApplication.setOverrideCursor(Qt.BlankCursor)
+        # Re-hide the cursor for FPS control — unless this session wants it on
+        # screen (mouse control aims with it, inspect mode picks with it).
+        if not self.view_3d.play_mode_cursor_visible():
+            QApplication.setOverrideCursor(Qt.BlankCursor)
+        else:
+            self.view_3d.apply_play_cursor_shape()
         self.view_3d.setFocus()
 
     def _is_play_console_visible(self):
@@ -2102,6 +2106,92 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'ui') and hasattr(self.ui, 'notification_label'):
             self.ui.notification_label.setText("MiniWind world reset")
 
+    def _game_modal_wants_escape(self):
+        """True when the running game plugin will close something on Escape.
+
+        Only then is Escape the game's key rather than the editor's. A plugin
+        that offers no opinion (or none is loaded) leaves Escape to play mode.
+        Screens that refuse Escape — MiniWind's character creation and level-up
+        — answer False, so the key still reaches the exit prompt instead of
+        vanishing into a screen that was never going to close.
+        """
+        logic = getattr(self.view_3d, 'logic_thread', None)
+        session = getattr(logic, '_miniwind', None) if logic else None
+        if session is None:
+            return False
+        asks = getattr(session, 'escape_closes_modal', None)
+        if callable(asks):
+            try:
+                return bool(asks())
+            except Exception:
+                pass
+        # Older sessions without the question: fall back to "anything open".
+        return (getattr(session, 'open_screen', None) is not None
+                or getattr(session, 'dialogue', None) is not None)
+
+    def _confirm_exit_play_mode(self):
+        """Escape out of an editor-launched preview, after asking.
+
+        Play mode is a *preview* here, not a game the player came for (that one
+        gets the pause menu instead — see :meth:`enter_kiosk_mode`), but leaving
+        it still throws away the running session, so it is worth one question.
+        The world is frozen and the cursor given back while the box is up, and
+        answering "No" puts both back exactly as they were.
+        """
+        self.keys_pressed.clear()
+        logic = getattr(self.view_3d, 'logic_thread', None)
+        was_paused = bool(getattr(logic, 'gameplay_paused', False)) if logic else False
+        if logic is not None:
+            try:
+                logic._menu_paused = True
+                logic.gameplay_paused = True
+            except Exception:
+                pass
+
+        # Play mode hides the cursor (and stacks override cursors); a message
+        # box the player cannot point at is no question at all.
+        cursor_depth = 0
+        while QApplication.overrideCursor() is not None:
+            QApplication.restoreOverrideCursor()
+            cursor_depth += 1
+
+        leave = QMessageBox.question(
+            self, "Exit Play Mode", "Exit Play mode?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) == QMessageBox.Yes
+
+        if not leave:
+            if logic is not None:
+                try:
+                    logic._menu_paused = False
+                    logic.gameplay_paused = was_paused
+                except Exception:
+                    pass
+            # Put the cursor back the way play mode had it, unless this session
+            # deliberately keeps it on screen (mouse control, an open window, an
+            # armed inspect pick).
+            if not self.view_3d.play_mode_cursor_visible():
+                for _ in range(max(1, cursor_depth)):
+                    QApplication.setOverrideCursor(Qt.BlankCursor)
+            else:
+                self.view_3d.apply_play_cursor_shape()
+            self.view_3d.setFocus()
+            return
+
+        if logic is not None:
+            try:
+                logic._menu_paused = False
+            except Exception:
+                pass
+        self._exit_play_mode()
+
+        if getattr(self, 'is_kiosk_mode', False):
+            self.exit_kiosk_mode()
+            return
+
+        if not self.camera_movement_learned:
+            QTimer.singleShot(500, lambda: self.show_tooltip(
+                "Hold right mouse to move camera with WASD", duration=0, toast_id="camera_tip"))
+
     def _exit_play_mode(self):
         """Exit play mode and return to editor."""
         pause_menu = getattr(self.view_3d, 'pause_menu', None)
@@ -3056,33 +3146,37 @@ class MainWindow(QMainWindow):
                 # All other keys go to the overlay input — don't process as game input
                 return
 
+            # The 3D view has a console overlay of its own (the one tilde opens
+            # in play mode). Its line edit normally closes itself on Escape, but
+            # only while it still holds focus — click the viewport behind it and
+            # the key lands here instead, with the overlay still up and no way to
+            # dismiss it. Close it from here too, so Escape always gets rid of a
+            # console whatever has focus.
+            if getattr(self.view_3d, 'console_overlay_active', False):
+                if event.key() in (Qt.Key_QuoteLeft, Qt.Key_Escape):
+                    self.view_3d._close_console_overlay()
+                return
+
             if event.key() == Qt.Key_Escape:
-                # If the game plugin has a modal screen or dialogue open,
-                # route ESC to the plugin so it closes the modal instead
-                # of exiting play mode.
-                _lt = getattr(self.view_3d, 'logic_thread', None)
-                _mw = getattr(_lt, '_miniwind', None) if _lt else None
-                if _mw is not None and (_mw.open_screen is not None
-                                        or _mw.dialogue is not None):
+                # If the game plugin has a modal screen or dialogue open, route
+                # ESC to the plugin so it closes the modal instead of exiting
+                # play mode — but only when the plugin will actually close it.
+                # Character creation and the level-up screen deliberately refuse
+                # Escape, so handing them the key would swallow it and leave the
+                # player stuck in play mode with no way out.
+                if self._game_modal_wants_escape():
                     self.keys_pressed.add(event.key())
                     return
 
                 # A game the player launched pauses instead of ending. Play mode
-                # started from the editor keeps the old behaviour — Escape there
-                # means "stop previewing", which is what an editor user wants.
+                # started from the editor asks first — Escape there means "stop
+                # previewing", and it is worth a confirmation because a stray
+                # press otherwise throws away whatever the session was showing.
                 if self.standalone_play_session and pause_menu is not None:
                     pause_menu.open()
                     return
 
-                self._exit_play_mode()
-
-                if getattr(self, 'is_kiosk_mode', False):
-                    self.exit_kiosk_mode()
-                    return
-
-                if not self.camera_movement_learned:
-                    QTimer.singleShot(500, lambda: self.show_tooltip(
-                        "Hold right mouse to move camera with WASD", duration=0, toast_id="camera_tip"))
+                self._confirm_exit_play_mode()
                 return
 
             elif event.key() == Qt.Key_F3:
@@ -3135,8 +3229,16 @@ class MainWindow(QMainWindow):
             self.toggle_debug_console()
             return
 
-        # ESC: exit face mode or deselect
+        # ESC: hide the console, exit face mode, or deselect
         if event.key() == Qt.Key_Escape:
+            # Tilde opens the console; Escape is the other half of that reflex,
+            # so it puts the Properties dock back the way tilde would.
+            tab = self.properties_tab_widget
+            console_idx = tab.indexOf(self.debug_console)
+            if (console_idx >= 0 and tab.currentIndex() == console_idx
+                    and self.properties_dock.isVisible()):
+                tab.setCurrentIndex(0)
+                return
             if getattr(self.view_3d, 'face_mode_active', False):
                 self.toggle_face_mode(False)
                 return

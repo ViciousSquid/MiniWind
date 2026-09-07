@@ -151,6 +151,35 @@ The editor bootstrap (`editor/__init__.py`) installs the native game host
 through the manager's generic built-in-game surface. Open a MiniWind map (below)
 and press **Play**.
 
+### Escape always gets you out
+
+Play mode started **from the editor** is a preview, and **Escape** ends it —
+after asking *"Exit Play mode?"*, so a stray press cannot throw the session
+away. It gets there even when the game has a screen up: Escape goes to the game
+only when the game will actually close something with it, which character
+creation and the level-up screen deliberately will not. Escape also dismisses
+the play console whatever has focus, so clicking the viewport behind it no
+longer leaves it stranded on screen.
+
+A game the **player** launched — the launcher's PLAY button, or an imported
+`.fiopak` — is untouched: Escape there raises the pause menu, as it always has.
+
+### Mouse control
+
+**Settings ▸ GAME ▸ Mouse control** keeps the pointer on screen for the whole
+session instead of hiding and centre-locking it. The head turns to face the
+pointer, and arrows, spell bolts and every other projectile launch at it, so the
+cursor is the crosshair — a creature merely standing in front no longer steals a
+shot meant for one behind it.
+
+How the head follows depends on the camera. Overhead, the pointer lands on the
+ground the player is standing on, so the head faces it exactly. In first person
+there is no such point, so the pointer *steers*: held near the middle of the
+screen it leaves the view alone (which is what keeps close aiming usable) and
+pushed toward an edge it turns the view, faster the further out it is.
+
+Off by default — the classic hidden, centre-locked mouse look.
+
 ## The living settlement (vertical slice)
 
 The starter settlement **Millbrook** is authored entirely as data
@@ -304,9 +333,9 @@ whole world resident and behaves exactly as it always did.
 ## Tests
 
 ```bash
-python -m pytest game/tests -q            # MiniWind: 294 headless tests
+python -m pytest game/tests -q            # MiniWind: 307 headless tests
 python -m pytest editor/tests game/tests engine/tests -q
-# 508 passed, 5 skipped with PyQt5 installed. Without it the editor tests skip
+# 603 passed with PyQt5 installed. Without it the editor tests skip
 # cleanly — everything else stays headless.
 ```
 

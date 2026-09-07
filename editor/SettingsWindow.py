@@ -93,6 +93,18 @@ class SettingsWindow(QDialog):
         dialogue_layout.addWidget(self.show_dialogue_heads_checkbox)
         layout.addWidget(dialogue_group)
 
+        controls_group = QGroupBox("Controls")
+        controls_layout = QVBoxLayout(controls_group)
+        self.mouse_control_checkbox = QCheckBox("Mouse control")
+        self.mouse_control_checkbox.setToolTip(
+            "Keep the mouse pointer on screen during play. The head turns to "
+            "face the pointer, and arrows, spells and other projectiles are "
+            "launched at it, so the cursor is the crosshair.\n\n"
+            "Off: the classic hidden, centre-locked mouse look."
+        )
+        controls_layout.addWidget(self.mouse_control_checkbox)
+        layout.addWidget(controls_group)
+
         layout.addStretch()
 
 
@@ -592,6 +604,9 @@ class SettingsWindow(QDialog):
         self.show_dialogue_heads_checkbox.setChecked(
             self.config.getboolean('GAME', 'show_dialogue_heads', fallback=True)
         )
+        self.mouse_control_checkbox.setChecked(
+            self.config.getboolean('GAME', 'mouse_control', fallback=False)
+        )
         self.show_caulk_checkbox.setChecked(self.config.getboolean('Display', 'show_caulk', fallback=True))
         self.sync_selection_checkbox.setChecked(self.config.getboolean('Display', 'sync_selection', fallback=True))
         self.click_select_3d_checkbox.setChecked(self.config.getboolean('Display', 'click_select_3d', fallback=False))
@@ -710,6 +725,8 @@ class SettingsWindow(QDialog):
                         str(self.visualise_dice_rolls_checkbox.isChecked()))
         self.config.set('GAME', 'show_dialogue_heads',
                         str(self.show_dialogue_heads_checkbox.isChecked()))
+        self.config.set('GAME', 'mouse_control',
+                        str(self.mouse_control_checkbox.isChecked()))
 
         if not self.config.has_section('Display'): 
             self.config.add_section('Display')

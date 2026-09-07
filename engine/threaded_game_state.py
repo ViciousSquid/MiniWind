@@ -167,6 +167,17 @@ class ThreadedGameState:
         self._keys = set()
         self._mouse_lock = threading.Lock()
         self._mouse_delta = (0.0, 0.0)
+        # Mouse-control aiming (Settings ▸ GAME ▸ Mouse control): where the
+        # on-screen pointer is aiming, published by the view each frame and read
+        # by the logic thread and the game plugin. ``_aim_direction`` is a unit
+        # world-space vector from the player's eye toward the pointer, and
+        # ``_aim_yaw`` the absolute heading the head should face (overhead only,
+        # where the pointer maps onto the ground and facing it is exact). Both
+        # are None whenever mouse control is off, which is what every reader
+        # tests to know whether pointer aiming is live at all.
+        self._aim_lock = threading.Lock()
+        self._aim_direction = None
+        self._aim_yaw = None
         
         # Shot Queue — deque for O(1) popleft
         self._shot_lock = threading.Lock()
@@ -253,6 +264,26 @@ class ThreadedGameState:
             delta = self._mouse_delta
             self._mouse_delta = (0.0, 0.0)
             return delta
+
+    def set_aim(self, direction=None, yaw=None):
+        """Publish where the pointer is aiming, or clear it with no arguments.
+
+        Called from the UI thread once per frame while mouse control is on.
+        """
+        with self._aim_lock:
+            self._aim_direction = (tuple(float(c) for c in direction)
+                                   if direction is not None else None)
+            self._aim_yaw = float(yaw) if yaw is not None else None
+
+    def get_aim_direction(self):
+        """Unit aim vector toward the pointer, or None when mouse control is off."""
+        with self._aim_lock:
+            return self._aim_direction
+
+    def get_aim_yaw(self):
+        """Absolute heading the head should face, or None to leave yaw alone."""
+        with self._aim_lock:
+            return self._aim_yaw
 
     def set_use_key(self, pressed: bool):
         """Sets the state of the use key explicitly (True/False)."""

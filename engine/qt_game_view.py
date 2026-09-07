@@ -138,6 +138,12 @@ class QtGameView(QOpenGLWidget):
         # True while an interactive floating window (e.g. the loadout popup) has
         # freed the otherwise hidden, centre-locked play-mode cursor.
         self._play_cursor_free = False
+        # Mouse control (Settings ▸ GAME ▸ Mouse control): the play-mode cursor
+        # stays on screen, the head turns toward it, and every projectile is
+        # launched at it. Read from the config each time play mode starts.
+        self.mouse_control_mode = False
+        #: Last pointer position in widget coordinates while mouse control is on.
+        self._aim_screen_pos = None
         # Escape menu for standalone play sessions (see engine/pause_menu.py).
         # Idle until MainWindow opens it; it owns its own pause of the world.
         self.pause_menu = PauseMenu(self)
@@ -945,6 +951,7 @@ class QtGameView(QOpenGLWidget):
         self._last_frame_dt = delta
         if self.play_mode:
             self._sync_play_cursor()
+            self._update_mouse_control(delta)
         self._process_sound_queue()
         self._update_speaker_volumes()
         self._process_console_command_queue()
@@ -2455,8 +2462,16 @@ class QtGameView(QOpenGLWidget):
             center_pos = self.mapToGlobal(self.rect().center())
             QCursor.setPos(center_pos)
             self.last_mouse_pos = self.mapFromGlobal(center_pos)
-            self._play_cursor_free = False   # start locked; windows free it
-            QApplication.setOverrideCursor(Qt.BlankCursor)
+            # Mouse control keeps the pointer on screen for the whole session,
+            # so it is decided once here rather than re-read every frame.
+            self.mouse_control_mode = self._read_mouse_control_setting()
+            self._aim_screen_pos = self.rect().center()
+            if self.mouse_control_mode:
+                self._play_cursor_free = True    # the pointer is the aim
+                self.setCursor(Qt.CrossCursor)
+            else:
+                self._play_cursor_free = False   # start locked; windows free it
+                QApplication.setOverrideCursor(Qt.BlankCursor)
 
             # Convert editor angle (0° = east) to game angle (0° = north) and flip 180°
             player_angle_rad = np.radians(90.0 - player_start_angle) + np.pi
@@ -2496,6 +2511,9 @@ class QtGameView(QOpenGLWidget):
             if self.console_overlay_active:
                 self._console_input.hide()
                 self.console_overlay_active = False
+            self.mouse_control_mode = False
+            self._aim_screen_pos = None
+            self.game_state.set_aim()
             self.monster_debug_active = False
             self.show_spatial_grid = False
             # Drop all floating popups (NPC inspector, dialogue / menu / loadout
@@ -2812,9 +2830,11 @@ class QtGameView(QOpenGLWidget):
         self.update()
 
     def _play_mode_wants_cursor(self):
-        """True if something on top of the game needs the free play-mode cursor:
-        the pause menu, or an interactive floating window (one with
-        wants_cursor)."""
+        """True if anything wants the free play-mode cursor: mouse control
+        (which aims with it), the pause menu, or an interactive floating window
+        (one with wants_cursor)."""
+        if self.mouse_control_mode:
+            return True
         if self.pause_menu.active:
             return True
         wm = getattr(self, 'window_manager', None)
@@ -2839,7 +2859,9 @@ class QtGameView(QOpenGLWidget):
                 # Show a normal, free-moving cursor so the window can be clicked.
                 while QApplication.overrideCursor() is not None:
                     QApplication.restoreOverrideCursor()
-                self.setCursor(Qt.ArrowCursor)
+                # Mouse control aims with the pointer, so give it a crosshair.
+                self.setCursor(Qt.CrossCursor if self.mouse_control_mode
+                               else Qt.ArrowCursor)
             else:
                 # Back to mouselook: hide the cursor and centre-lock it.
                 while QApplication.overrideCursor() is not None:
@@ -2850,6 +2872,156 @@ class QtGameView(QOpenGLWidget):
                 self.last_mouse_pos = self.mapFromGlobal(center)
         except Exception:
             pass
+
+    def _read_mouse_control_setting(self):
+        """Whether Settings ▸ GAME ▸ Mouse control is on. Off if it cannot be read."""
+        config = getattr(getattr(self, 'editor', None), 'config', None)
+        if config is None:
+            return False
+        try:
+            return config.getboolean('GAME', 'mouse_control', fallback=False)
+        except Exception:
+            return False
+
+    def apply_play_cursor_shape(self):
+        """Give the widget the cursor the current play-mode state calls for.
+
+        Anything that borrows the cursor for a moment (a console overlay, a
+        message box) calls this on the way back rather than guessing a shape.
+        """
+        if not self.play_mode or not self.play_mode_cursor_visible():
+            return
+        # A crosshair wherever the cursor is aiming at the world — mouse control,
+        # and an armed inspect pick. An arrow where it is only clicking a window.
+        aiming = self.mouse_control_mode or getattr(self, 'inspect_mode', False)
+        self.setCursor(Qt.CrossCursor if aiming else Qt.ArrowCursor)
+
+    def play_mode_cursor_visible(self):
+        """True while play mode is deliberately showing the pointer.
+
+        Anything that hides and restores the cursor around a modal (the editor's
+        "Exit Play mode?" box) has to ask, or it re-blanks a cursor the session
+        wants on screen — mouse control above all, where a hidden pointer means
+        no aim at all.
+        """
+        if not self.play_mode:
+            return False
+        return bool(self._play_cursor_free or getattr(self, 'inspect_mode', False))
+
+    #: Fraction of the half-viewport around the centre in which the pointer does
+    #: not steer at all. Inside it the cursor moves freely for aiming; push past
+    #: it and the head turns to follow. Only used for the first-person camera —
+    #: overhead faces the pointer outright.
+    MOUSE_CONTROL_DEADZONE = 0.35
+    #: Turn speed at full deflection, in the mouse-delta units the logic thread's
+    #: look sensitivity consumes (0.002 rad each) — about 120°/s of yaw.
+    MOUSE_CONTROL_TURN_RATE = 1000.0
+    #: Pitch follows at half the yaw rate; up/down is a much shorter range.
+    MOUSE_CONTROL_PITCH_RATE = 500.0
+
+    def _mouse_control_active(self):
+        """True when the pointer is currently steering and aiming the player."""
+        if not (self.play_mode and self.mouse_control_mode):
+            return False
+        if self.pause_menu.active or self.console_overlay_active:
+            return False
+        if getattr(self, 'inspect_mode', False):
+            return False
+        # A floating window that wants the cursor (the loadout popup) owns it
+        # while it is up: clicking a button must not also swing the view.
+        wm = getattr(self, 'window_manager', None)
+        if wm is not None:
+            for w in wm.windows:
+                if getattr(w, 'active', False) and getattr(w, 'wants_cursor', False):
+                    return False
+        return True
+
+    def _aim_point(self):
+        """The pointer position to aim from, defaulting to the viewport centre."""
+        pos = self._aim_screen_pos
+        if pos is None:
+            return self.rect().center()
+        return pos
+
+    def _update_mouse_control(self, delta):
+        """Steer the head toward the pointer and publish where it is aiming.
+
+        Runs once per frame while mouse control is on. Overhead and first-person
+        differ in kind, not degree: with an overhead camera the pointer lands on
+        the ground next to the player, so the head can be turned to face it
+        outright; in first person there is no such point — the pointer is a
+        direction out of the eye — so it steers instead, turning while the
+        pointer sits outside a central deadzone and leaving the view alone
+        inside it, which is what keeps close aiming usable.
+        """
+        if not (self.play_mode and self.mouse_control_mode):
+            return
+        if not self._mouse_control_active():
+            # A menu or the console owns the pointer for now: stop aiming with
+            # it, so a shot fired from a hotkey does not fly at a menu button.
+            self.game_state.set_aim()
+            return
+        w, h = self.width(), self.height()
+        if w <= 0 or h <= 0:
+            return
+        pos = self._aim_point()
+        try:
+            origin, direction = self.get_ray_from_mouse(pos.x(), pos.y())
+        except Exception:
+            return
+        if self._is_overhead():
+            aim_yaw, aim_dir = self._overhead_aim(origin, direction)
+            if aim_dir is None:
+                return
+            self.game_state.set_aim(aim_dir, yaw=aim_yaw)
+            return
+
+        self.game_state.set_aim((direction.x, direction.y, direction.z))
+        self._steer_toward_pointer(pos, w, h, delta)
+
+    def _steer_toward_pointer(self, pos, w, h, delta):
+        """First-person steering: turn toward a pointer held off-centre."""
+        def past_deadzone(offset):
+            span = 1.0 - self.MOUSE_CONTROL_DEADZONE
+            magnitude = abs(offset)
+            if magnitude <= self.MOUSE_CONTROL_DEADZONE or span <= 0.0:
+                return 0.0
+            scaled = min(1.0, (magnitude - self.MOUSE_CONTROL_DEADZONE) / span)
+            return math.copysign(scaled, offset)
+
+        turn = past_deadzone((pos.x() - w * 0.5) / (w * 0.5))
+        tilt = past_deadzone((pos.y() - h * 0.5) / (h * 0.5))
+        if turn == 0.0 and tilt == 0.0:
+            return
+        # Fed through the ordinary look pipeline so sensitivity, threading and
+        # the pitch clamp all stay in one place (see LogicThread._tick_play_mode).
+        self.game_state.set_mouse_delta(
+            turn * self.MOUSE_CONTROL_TURN_RATE * delta,
+            tilt * self.MOUSE_CONTROL_PITCH_RATE * delta)
+
+    def _overhead_aim(self, origin, direction):
+        """(yaw, unit direction) from the player toward the pointer's ground spot.
+
+        The overhead camera looks down, so the pointer ray meets the plane the
+        player stands on at exactly one point — the spot under the cursor. The
+        head faces it and projectiles fly at it, both horizontally: an overhead
+        view has no way to express aiming up or down.
+        """
+        player = getattr(self, 'player', None)
+        if player is None or abs(direction.y) < 1e-5:
+            return None, None
+        eye_y = float(player.pos.y) + float(getattr(player, 'camera_height', 0.0))
+        distance = (eye_y - float(origin.y)) / float(direction.y)
+        if distance <= 0.0:
+            return None, None
+        target_x = float(origin.x) + float(direction.x) * distance
+        target_z = float(origin.z) + float(direction.z) * distance
+        dx = target_x - float(player.pos.x)
+        dz = target_z - float(player.pos.z)
+        length = math.hypot(dx, dz)
+        if length < 1e-3:
+            return None, None
+        return math.atan2(dx, dz), (dx / length, 0.0, dz / length)
 
     def _exit_inspect_mode(self):
         self.inspect_mode = False
@@ -3272,6 +3444,10 @@ class QtGameView(QOpenGLWidget):
                 self._update_inspect_hover(event.x(), event.y())
                 return
             if self._play_cursor_free:
+                # Mouse control aims with the free cursor: remember where it is
+                # and let update_loop turn that into steering and an aim ray.
+                if self.mouse_control_mode:
+                    self._aim_screen_pos = event.pos()
                 return
             cp = event.pos()
             dx, dy = cp.x() - self.last_mouse_pos.x(), cp.y() - self.last_mouse_pos.y()
@@ -3422,15 +3598,20 @@ class QtGameView(QOpenGLWidget):
         self.setFocus()
         # A command may have armed inspect mode (e.g. 'inspect'/'mind'), which
         # deliberately frees the cursor so the next click can land on an NPC.
-        # Don't re-hide or recentre the cursor in that case, or the pick becomes
-        # impossible (the cursor snaps to centre and stays invisible).
-        if self.play_mode and not getattr(self, 'inspect_mode', False):
+        # Mouse control frees it for the whole session. Don't re-hide or recentre
+        # the cursor in either case, or aiming becomes impossible (the cursor
+        # snaps to centre and stays invisible).
+        if self.play_mode and not self.play_mode_cursor_visible():
             while QApplication.overrideCursor() is not None:
                 QApplication.restoreOverrideCursor()
             QApplication.setOverrideCursor(Qt.BlankCursor)
             center = self.mapToGlobal(self.rect().center())
             QCursor.setPos(center)
             self.last_mouse_pos = self.mapFromGlobal(center)
+        elif self.play_mode:
+            while QApplication.overrideCursor() is not None:
+                QApplication.restoreOverrideCursor()
+            self.apply_play_cursor_shape()
 
     def _submit_console_command(self):
         cmd = self._console_input.text().strip()
@@ -3513,6 +3694,13 @@ class QtGameView(QOpenGLWidget):
                 self._open_console_overlay()
             return
         if self.console_overlay_active:
+            # The overlay's line edit closes itself on Escape through
+            # eventFilter, but only while it still holds focus. Once focus has
+            # drifted (a click on the viewport behind it) the key arrives here
+            # instead, and swallowing it would leave the console up with no way
+            # to dismiss it.
+            if event.key() == Qt.Key_Escape:
+                self._close_console_overlay()
             return
         if check_key('key_show_connections', 'F1'):
             current_state = getattr(self.editor, 'show_logic_links', False)

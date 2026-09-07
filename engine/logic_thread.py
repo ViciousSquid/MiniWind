@@ -1849,6 +1849,15 @@ class LogicThread(threading.Thread):
         self.player.angle -= mouse_dx * SENSITIVITY
         self.player.pitch -= mouse_dy * SENSITIVITY
         self.player.pitch = max(-1.5, min(1.5, self.player.pitch))
+
+        # Mouse control (Settings ▸ GAME ▸ Mouse control) with an overhead
+        # camera: the pointer lands on the ground, so the head can face it
+        # exactly rather than being steered toward it. The view publishes the
+        # heading each frame; None means pointer aiming is off and yaw stays
+        # entirely with the mouse-delta look above.
+        aim_yaw = self.game_state.get_aim_yaw()
+        if aim_yaw is not None:
+            self.player.angle = aim_yaw
         
         # Movement
         move_dir = glm.vec3(0)

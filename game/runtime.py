@@ -112,6 +112,14 @@ AIM_DOT = 0.55
 # ~106 degrees full cone vs the ~67 degrees ranged weapons get.
 MELEE_AIM_DOT = 0.30
 
+#: Screens that deliberately refuse Escape (see game/ui/screens.py): character
+#: creation walks back a step and then sits still, and the level-up screen makes
+#: you choose. Escape inside them is *not* a way out, so whoever hosts the game
+#: — the editor's play mode above all — must not hand Escape to the screen and
+#: assume it will be consumed, or the player is trapped with no way to stop
+#: playing. :meth:`MiniwindSession.escape_closes_modal` is that question.
+ESCAPE_LOCKED_SCREENS = frozenset({"charcreate", "levelup"})
+
 DICE_ANIMATION_SHAKE = SHAKE_DURATION
 DICE_ANIMATION_ROLL = ROLL_DURATION
 DICE_ANIMATION_FADE = FADE_DURATION
@@ -1756,6 +1764,21 @@ class MiniwindSession:
         self.dice_animation["elapsed"] += max(0.0, float(delta))
         if self.dice_animation["elapsed"] >= self.dice_animation["duration"]:
             self.dice_animation = None
+
+    def escape_closes_modal(self) -> bool:
+        """Would Escape close whatever the game currently has on screen?
+
+        The host (the editor's play mode) asks this before handing Escape to the
+        plugin. A conversation and most screens close on Escape, so the key
+        belongs to the game. Character creation and the level-up screen do not
+        (see :data:`ESCAPE_LOCKED_SCREENS`) — giving them the key would swallow
+        it silently and leave the player with no way to stop play mode.
+        """
+        if self.dialogue is not None:
+            return True
+        if self.open_screen is None:
+            return False
+        return self.open_screen not in ESCAPE_LOCKED_SCREENS
 
     def tick_ui(self, delta: float) -> None:
         """Age only the transient HUD (toasts/floaters) while the world is paused
@@ -3471,6 +3494,53 @@ class MiniwindSession:
         a = getattr(p, "angle", 0.0)
         return (math.sin(a), 0.0, math.cos(a))
 
+    def _pointer_aim(self):
+        """Unit aim vector toward the on-screen pointer, or None.
+
+        Only ever a vector while Settings ▸ GAME ▸ Mouse control is on: the view
+        publishes where the visible cursor is aiming every frame (see
+        ``QtGameView._update_mouse_control``). None means the pointer is not the
+        crosshair and aiming falls back to where the player is facing.
+        """
+        gs = getattr(self.logic, "game_state", None)
+        getter = getattr(gs, "get_aim_direction", None) if gs is not None else None
+        if not callable(getter):
+            return None
+        try:
+            aim = getter()
+        except Exception:
+            return None
+        if not aim:
+            return None
+        try:
+            x, y, z = (float(aim[0]), float(aim[1]), float(aim[2]))
+        except (TypeError, ValueError, IndexError):
+            return None
+        length = math.sqrt(x * x + y * y + z * z)
+        if length < 1e-6:
+            return None
+        return (x / length, y / length, z / length)
+
+    def _projectile_aim_point(self, start, target):
+        """Where a projectile fired from *start* should be sent.
+
+        With mouse control on, always the pointer: that is the whole point of
+        aiming with it, so a creature merely standing in front no longer steals
+        a shot meant for one behind it. Damage still resolves where the
+        projectile actually lands. Otherwise the old behaviour — the locked-on
+        *target* if there is one, else straight ahead.
+        """
+        aim = self._pointer_aim()
+        if aim is not None:
+            return (start[0] + aim[0] * 1500.0,
+                    start[1] + aim[1] * 1500.0,
+                    start[2] + aim[2] * 1500.0)
+        if target is not None:
+            tp = target.pos
+            return (float(tp[0]), float(tp[1]) + 64.0, float(tp[2]))
+        fwd = self._player_forward()
+        return (start[0] + fwd[0] * 1500.0, start[1], start[2] + fwd[2] * 1500.0)
+
     def _attackable(self, thing) -> bool:
         tp = thing.properties
         if tp.get("dead") or tp.get("hidden"):
@@ -3589,12 +3659,7 @@ class MiniwindSession:
             ARROW_SPEED, ARROW_MAX_DIST, ARROW_SPRITE_SIZE = 1600.0, 3000.0, (40.0, 40.0)
 
         start = [ppos[0], ppos[1] + 48.0, ppos[2]]
-        if target is not None:
-            tp = target.pos
-            aim = (float(tp[0]), float(tp[1]) + 64.0, float(tp[2]))
-        else:
-            fwd = self._player_forward()
-            aim = (start[0] + fwd[0] * 1500.0, start[1], start[2] + fwd[2] * 1500.0)
+        aim = self._projectile_aim_point(start, target)
 
         dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
         dlen = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
@@ -3816,13 +3881,7 @@ class MiniwindSession:
             MONSTER_PROJECTILE_SPRITE_SIZE = (48, 48)
 
         start = [ppos[0], ppos[1] + 48.0, ppos[2]]
-        target = self._acquire_target(BOW_REACH)
-        if target is not None:
-            tp = target.pos
-            aim = (float(tp[0]), float(tp[1]) + 64.0, float(tp[2]))
-        else:
-            fwd = self._player_forward()
-            aim = (start[0] + fwd[0] * 1500.0, start[1], start[2] + fwd[2] * 1500.0)
+        aim = self._projectile_aim_point(start, self._acquire_target(BOW_REACH))
 
         dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
         dlen = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
