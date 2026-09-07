@@ -139,6 +139,10 @@ engine/streaming_debug.py   the stats panel + active-cell minimap
 tools/world/generate_world.py    the synthetic world generator and benchmark
 ```
 
+[`engine/WORLD_STREAMING.md`](engine/WORLD_STREAMING.md) is the full guide:
+cells, activation and hysteresis, terrain fill, the per-cell save format, disk
+streaming, and the measured scaling numbers.
+
 `LogicThread` owns the session, builds it at play start from the map's
 `BigWorldSettings` entity (a core editor entity now), ticks it directly from
 `_tick_play_mode`, and tears it down at play stop. A map without that entity

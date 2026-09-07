@@ -284,6 +284,8 @@ engine/render_cull.py       the camera's relevance region, derived from the live
                             view volume and the world's height slab
 ```
 
+Full guide: [`engine/WORLD_STREAMING.md`](engine/WORLD_STREAMING.md).
+
 The simulation tiers, in order of how much the player can observe:
 
 | Tier | Where | What runs |
