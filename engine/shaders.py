@@ -232,10 +232,20 @@ uniform sampler2D sprite_texture;
 // Optional colour flash: rgb is the flash colour, a is how strongly to mix it in
 // (0 = untinted). Used for the red damage flash. Defaults to no tint.
 uniform vec4 sprite_tint;
+// Whole-sprite opacity, for something fading in or out (the reaper's arrival and
+// departure). 1 = solid, which is what every caller that never sets it gets — a
+// uniform an old driver has optimised away reads as 0 through glGetUniformLocation,
+// and the -1 location that produces makes the glUniform1f call a no-op, so the
+// default must be established by the caller each pass, not relied on here.
+uniform float sprite_opacity;
 void main() {
     vec4 texColor = texture(sprite_texture, TexCoords);
+    // Cut the sprite's transparent border on the *texture's* own alpha, before
+    // any fade is applied — otherwise fading one out would erode its silhouette
+    // from the edges in rather than dissolving it evenly.
     if(texColor.a < 0.1) discard;
     texColor.rgb = mix(texColor.rgb, sprite_tint.rgb, clamp(sprite_tint.a, 0.0, 1.0));
+    texColor.a *= clamp(sprite_opacity, 0.0, 1.0);
     FragColor = texColor;
 }""",
 

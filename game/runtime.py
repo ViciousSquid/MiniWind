@@ -147,6 +147,37 @@ WISP_COLOURS = [
     [255, 180, 215],   # pink
 ]
 
+# ---------------------------------------------------------------------------
+# The reaper. One death in four is attended: Death fades in a little way off,
+# walks over to the body, takes it with a stroke of his scythe and is gone
+# again. He is pure spectacle — he damages nothing, cannot be attacked or
+# talked to, is invisible to the simulation and leaves nothing behind. See
+# _maybe_send_the_reaper.
+# ---------------------------------------------------------------------------
+#: How often a fresh corpse is visited at all.
+REAPER_CHANCE = 0.25
+#: He appears this far off, on a random bearing, rather than on top of the body.
+REAPER_ARRIVE_DIST = (240.0, 460.0)
+#: Seconds to fade in on arrival, and to fade out on leaving.
+REAPER_FADE_IN = 1.0
+REAPER_FADE_OUT = 0.9
+#: He glides — no pathfinding, no collision, no gravity.
+REAPER_SPEED = 165.0
+#: How close he comes before he swings.
+REAPER_REACH = 70.0
+#: The stroke of the scythe, and the very short pause after it before he goes.
+REAPER_SWING = 0.5
+REAPER_LINGER = (0.15, 0.8)
+#: An approach that cannot finish (the body moved, or is walled off) gives up
+#: and reaps from where it stands rather than gliding forever.
+REAPER_APPROACH_TIMEOUT = 14.0
+#: However bloody it gets, no more than this many at once.
+REAPER_MAX = 3
+#: His head, his weapon, and how big he is drawn.
+REAPER_HEAD = "reaper"
+REAPER_WEAPON = "scythe"
+REAPER_SIZE = 132
+
 
 class _PlayerActor:
     """The player, wearing the same shape every other simulation actor has.
@@ -335,6 +366,9 @@ class MiniwindSession:
         self._arrest_pursuers = []
         #: Active Wisp companion light, or None. See _spawn_wisp / _update_wisp.
         self._wisp = None
+        #: Reaper visits currently playing out, one per attended corpse. See
+        #: _maybe_send_the_reaper / _update_reapers.
+        self._reapers: List[Dict] = []
         #: Live torch lights, keyed by holder ("player" or an NPC's id): a
         #: dynamic Light that follows whoever carries a lit torch. See
         #: _update_torch_lights.
@@ -424,6 +458,7 @@ class MiniwindSession:
         self.merchant_npc = None
         self.show_loadout = False
         self._remove_wisp()
+        self._banish_reapers()
         self.notifications = []
         self.floaters = []
         self.dice_animation = None
@@ -756,6 +791,9 @@ class MiniwindSession:
         # the wandering Wisp companion light
         self._update_wisp(delta)
 
+        # Death, coming for whoever has just died
+        self._update_reapers(delta)
+
         # carried torches (player + NPCs) float a warm light on their holder
         self._update_torch_lights(delta, npcs, npc_tiers)
 
@@ -849,6 +887,225 @@ class MiniwindSession:
                 self._rebuild_entity_caches()
         except Exception:
             pass
+
+    # ------------------------------------------------------------- the reaper
+    def _maybe_send_the_reaper(self, body) -> None:
+        """One death in four is attended: Death comes to collect it.
+
+        Called once per NPC death (see :meth:`_reap_dead`), so a townsperson cut
+        down by a wolf is as likely to be visited as one the player kills. He is
+        a piece of theatre and nothing else: he does no damage, cannot be
+        attacked or spoken to, the combat AI never sees him (``disabled``), and
+        when he is finished he takes himself out of the scene again.
+        """
+        if self.rng.random() >= REAPER_CHANCE:
+            return
+        if len(self._reapers) >= REAPER_MAX:
+            return
+        reaper = self._make_reaper(body)
+        if reaper is None:
+            return
+        things = getattr(self.logic, "things", None)
+        if things is None:
+            return
+        try:
+            things.append(reaper)
+        except Exception:
+            return
+        self._rebuild_entity_caches()
+        self._reapers.append({
+            "thing": reaper,
+            "body": body,
+            "phase": "arrive",
+            "t": 0.0,
+            "linger": self.rng.uniform(*REAPER_LINGER),
+        })
+
+    def _make_reaper(self, body):
+        """Build the reaper actor, standing off a random way from *body*.
+
+        Returns None where the entity types are unavailable (a headless build
+        without them), which simply means no visit.
+        """
+        try:
+            from .entities import Creature
+        except Exception:
+            return None
+        try:
+            bpos = [float(body.pos[0]), float(body.pos[1]), float(body.pos[2])]
+        except (TypeError, ValueError, IndexError):
+            return None
+        bearing = self.rng.uniform(0.0, 2.0 * math.pi)
+        distance = self.rng.uniform(*REAPER_ARRIVE_DIST)
+        pos = [bpos[0] + math.sin(bearing) * distance,
+               bpos[1],
+               bpos[2] + math.cos(bearing) * distance]
+        try:
+            reaper = Creature(pos=pos, properties={
+                "name": "Death",
+                "display_name": "Death",
+                "npc_role": "wraith",
+                "head": REAPER_HEAD,
+                "is_head": True,           # drawn like any other head actor
+                "sprite_width": REAPER_SIZE,
+                "sprite_height": REAPER_SIZE,
+                "equipped_weapon": REAPER_WEAPON,
+                "inventory": [],
+                "aggression": "passive",
+                "roam": False,
+                "respawn": False,
+                "persistent": False,
+                # The core combat AI skips a disabled actor outright, so he is
+                # never targeted, never targets, and is never moved by anything
+                # but _advance_reaper below.
+                "disabled": True,
+                "health": 1,
+                "max_health": 1,
+                "_reaper": True,
+                "_opacity": 0.0,
+                "_facing": bearing + math.pi,   # already looking at the body
+            })
+        except Exception:
+            return None
+        return reaper
+
+    def _update_reapers(self, delta: float) -> None:
+        """Advance every reaper visit; drop the ones that have finished."""
+        if not self._reapers:
+            return
+        remaining = []
+        for visit in self._reapers:
+            try:
+                alive = self._advance_reaper(visit, delta)
+            except Exception:
+                alive = False
+            if alive:
+                remaining.append(visit)
+            else:
+                self._despawn_reaper(visit)
+        if len(remaining) != len(self._reapers):
+            self._reapers = remaining
+            self._rebuild_entity_caches()
+
+    def _advance_reaper(self, visit, delta: float) -> bool:
+        """One visit, one tick. False once he is gone and can be removed.
+
+        The whole visit in order: fade in where he appeared, glide to the body,
+        one stroke of the scythe, a very short pause, then fade out.
+        """
+        reaper = visit["thing"]
+        props = reaper.properties
+        visit["t"] += delta
+        phase = visit["phase"]
+
+        # The body is what he came for. If it is gone — resurrected, gibbed away,
+        # streamed out — there is nothing to take, so he simply leaves.
+        if phase in ("arrive", "approach", "reap") and not self._reaper_body_ok(visit["body"]):
+            return self._reaper_phase(visit, "leave")
+
+        if phase == "arrive":
+            props["_opacity"] = min(1.0, visit["t"] / REAPER_FADE_IN)
+            self._reaper_face_body(visit)
+            if visit["t"] >= REAPER_FADE_IN:
+                return self._reaper_phase(visit, "approach")
+            return True
+
+        if phase == "approach":
+            props["_opacity"] = 1.0
+            arrived = self._reaper_glide(visit, delta)
+            if arrived or visit["t"] >= REAPER_APPROACH_TIMEOUT:
+                return self._reaper_phase(visit, "reap")
+            return True
+
+        if phase == "reap":
+            # The stroke goes through the same is_shooting / _attack_anim pair
+            # every actor's weapon overlay animates from, so the scythe swings
+            # exactly the way any other melee weapon does. Both are set here
+            # rather than left to the shared decay pass, which only visits
+            # actors the world index knows about — and it has never heard of him.
+            swinging = visit["t"] < REAPER_SWING * 0.5
+            props["is_shooting"] = swinging
+            if swinging:
+                props["_attack_anim"] = 0.2
+            else:
+                props.pop("_attack_anim", None)
+            self._reaper_face_body(visit)
+            if visit["t"] >= REAPER_SWING:
+                props["is_shooting"] = False
+                return self._reaper_phase(visit, "linger")
+            return True
+
+        if phase == "linger":
+            if visit["t"] >= visit["linger"]:
+                return self._reaper_phase(visit, "leave")
+            return True
+
+        # leave
+        props["is_shooting"] = False
+        props.pop("_attack_anim", None)
+        props["_opacity"] = max(0.0, 1.0 - visit["t"] / REAPER_FADE_OUT)
+        return visit["t"] < REAPER_FADE_OUT
+
+    def _reaper_phase(self, visit, phase: str) -> bool:
+        """Move a visit into *phase*, restarting its clock. Always still alive."""
+        visit["phase"] = phase
+        visit["t"] = 0.0
+        return True
+
+    def _reaper_body_ok(self, body) -> bool:
+        """Whether the corpse he came for is still there to be taken."""
+        props = getattr(body, "properties", None)
+        if not isinstance(props, dict):
+            return False
+        return bool(props.get("dead")) and not props.get("gibbed")
+
+    def _reaper_face_body(self, visit) -> None:
+        reaper, body = visit["thing"], visit["body"]
+        face_heading(reaper.properties,
+                     float(body.pos[0]) - float(reaper.pos[0]),
+                     float(body.pos[2]) - float(reaper.pos[2]))
+
+    def _reaper_glide(self, visit, delta: float) -> bool:
+        """Slide the reaper toward the body. True once he is close enough to reap.
+
+        He glides: no collision, no gravity, no path. Death is not obstructed by
+        a fence, and giving him the NPC mover would put him in queues for doors.
+        """
+        reaper, body = visit["thing"], visit["body"]
+        dx = float(body.pos[0]) - float(reaper.pos[0])
+        dz = float(body.pos[2]) - float(reaper.pos[2])
+        distance = math.hypot(dx, dz)
+        if distance <= REAPER_REACH:
+            return True
+        step = min(distance - REAPER_REACH, REAPER_SPEED * max(0.0, delta))
+        reaper.pos[0] += dx / distance * step
+        reaper.pos[2] += dz / distance * step
+        # Ride at the body's height rather than the ground he set out from, so
+        # he does not walk through the floor of a room on another storey.
+        reaper.pos[1] = float(body.pos[1])
+        face_heading(reaper.properties, dx, dz)
+        return distance - step <= REAPER_REACH
+
+    def _despawn_reaper(self, visit) -> None:
+        """Take one reaper out of the scene."""
+        reaper = visit.get("thing")
+        things = getattr(self.logic, "things", None)
+        if reaper is None or things is None:
+            return
+        try:
+            if reaper in things:
+                things.remove(reaper)
+        except Exception:
+            pass
+
+    def _banish_reapers(self) -> None:
+        """Remove every reaper at once (a world reset mid-visit)."""
+        if not self._reapers:
+            return
+        for visit in self._reapers:
+            self._despawn_reaper(visit)
+        self._reapers = []
+        self._rebuild_entity_caches()
 
     # ------------------------------------------------------------ torches
     def _make_light(self, pos, props):
@@ -1846,6 +2103,7 @@ class MiniwindSession:
                 continue          # already recorded before a save/load
             tp["_death_noted"] = True
             self._on_npc_death(t)
+            self._maybe_send_the_reaper(t)
 
     def _on_npc_death(self, npc) -> None:
         """Record the durable, save/load-persistent fallout of one NPC's death."""
@@ -3545,6 +3803,8 @@ class MiniwindSession:
         tp = thing.properties
         if tp.get("dead") or tp.get("hidden"):
             return False
+        if tp.get("_reaper"):
+            return False      # you do not get to swing at Death
         t = str(tp.get("type", "")).replace("_", "").lower()
         if t not in ("npc", "creature", "monster"):
             return False

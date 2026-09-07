@@ -596,11 +596,16 @@ class Monster(Thing):
         # camera-facing billboards). Mirrors
         # QtGameView._is_overhead_head_actor's live-object branch exactly, so
         # the snapshot and live-object paths agree on the same actors.
-        is_head = (
-            ttype in ('npc', 'creature', 'monster')
-            and ('/heads/' in idle or idle.startswith('heads/'))
-            and base.startswith('head')
-        )
+        # An actor may declare it outright — the way in for one whose head is
+        # not a numbered headNN (MiniWind's reaper wears heads/reaper.png).
+        if 'is_head' in self.properties:
+            is_head = bool(self.properties['is_head'])
+        else:
+            is_head = (
+                ttype in ('npc', 'creature', 'monster')
+                and ('/heads/' in idle or idle.startswith('heads/'))
+                and base.startswith('head')
+            )
         return {
             # Identity of the live Thing this snapshot came from. The renderer
             # draws from snapshots only, so this is how it recognises the actor
@@ -641,6 +646,10 @@ class Monster(Thing):
             # folded into sprite_path above) instead of the head/weapon overlay.
             'gibbed': bool(self.properties.get('gibbed')),
             'gib_sprite': self.properties.get('gib_sprite', ''),
+            # Whole-sprite opacity, for an actor fading in or out (MiniWind's
+            # reaper). 1.0 — solid — for everyone else, which is what the
+            # renderer's default is too.
+            'opacity': float(self.properties.get('_opacity', 1.0) or 0.0),
         }
 
     def get_sprite_path(self) -> str:

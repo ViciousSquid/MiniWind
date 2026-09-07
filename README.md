@@ -180,6 +180,29 @@ pushed toward an edge it turns the view, faster the further out it is.
 
 Off by default — the classic hidden, centre-locked mouse look.
 
+### The reaper
+
+One NPC death in four is attended. Death fades in a random way off from the
+body, glides over to it, takes it with a single stroke of his scythe, pauses a
+moment and fades out again — perhaps four seconds in all. It is theatre and
+nothing else: he does no damage, cannot be attacked or spoken to, the combat AI
+never sees him, and he leaves nothing behind. Deaths are caught by watching the
+`dead` flag rather than by hooking every kill path, so a townsperson cut down by
+a wolf is as likely to be visited as one the player kills.
+
+The fade is a `sprite_opacity` uniform on the sprite shader (and its twin on the
+overhead ground quads), so it costs nothing for the solid actors around him.
+
+### Farm tools
+
+**Scythe**, **pitchfork**, **shovel** and **bucket** are ordinary items — carried,
+bought, sold, equipped and swung. They go through no special path: they are
+weapon definitions in `game/data/items.json` with their own icons, so trading,
+damage, two-handedness and the overhead weapon overlay all pick them up for
+free. Thalen the blacksmith forges the edged ones, Elowen's shop keeps the pail,
+and Bram the farmer will part with his own. The scythe is what the reaper
+carries.
+
 ## The living settlement (vertical slice)
 
 The starter settlement **Millbrook** is authored entirely as data
@@ -333,9 +356,9 @@ whole world resident and behaves exactly as it always did.
 ## Tests
 
 ```bash
-python -m pytest game/tests -q            # MiniWind: 307 headless tests
+python -m pytest game/tests -q            # MiniWind: 363 headless tests
 python -m pytest editor/tests game/tests engine/tests -q
-# 603 passed with PyQt5 installed. Without it the editor tests skip
+# 659 passed with PyQt5 installed. Without it the editor tests skip
 # cleanly — everything else stays headless.
 ```
 

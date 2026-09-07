@@ -163,12 +163,18 @@ in vec2 TexCoords;
 out vec4 FragColor;
 uniform sampler2D tex;
 uniform vec4 tint;
+// Whole-sprite opacity, for an actor fading in or out (the reaper's arrival and
+// departure). Every caller sets it, so the shader needs no default of its own.
+uniform float opacity;
 void main() {
     vec4 c = texture(tex, TexCoords);
+    // Cut the transparent border on the texture's own alpha, before the fade —
+    // otherwise fading a sprite out erodes its silhouette from the edges in
+    // rather than dissolving it evenly.
     if (c.a < 0.05) discard;
     FragColor = vec4(
         mix(c.rgb, tint.rgb, clamp(tint.a, 0.0, 1.0)),
-        c.a
+        c.a * clamp(opacity, 0.0, 1.0)
     );
 }"""
 
@@ -222,6 +228,7 @@ class OverheadSpriteRenderer:
         self._mvp_loc = -1
         self._tex_loc = -1
         self._tint_loc = -1
+        self._opacity_loc = -1
         self._textures = {}
         self._gl = None
         self._glm = None
@@ -310,6 +317,7 @@ class OverheadSpriteRenderer:
             self._mvp_loc = gl.glGetUniformLocation(program, "mvp")
             self._tex_loc = gl.glGetUniformLocation(program, "tex")
             self._tint_loc = gl.glGetUniformLocation(program, "tint")
+            self._opacity_loc = gl.glGetUniformLocation(program, "opacity")
 
             quad = np.array(
                 [
@@ -414,6 +422,7 @@ class OverheadSpriteRenderer:
         rotation_offset: float = 0.0,
         tint=(0.0, 0.0, 0.0, 0.0),
         depth_write: bool = True,
+        opacity: float = 1.0,
     ) -> None:
         try:
             gl = self._gl
@@ -462,6 +471,9 @@ class OverheadSpriteRenderer:
                     float(tint[2]),
                     float(tint[3]),
                 )
+
+            if self._opacity_loc not in (-1, None):
+                gl.glUniform1f(self._opacity_loc, float(opacity))
 
             gl.glActiveTexture(gl.GL_TEXTURE0)
             gl.glBindTexture(gl.GL_TEXTURE_2D, texture)
@@ -512,6 +524,7 @@ class OverheadSpriteRenderer:
         frame_key: str,
         tint=(0.0, 0.0, 0.0, 0.0),
         depth_write: bool = True,
+        opacity: float = 1.0,
     ) -> None:
         if not self._ready():
             return
@@ -534,6 +547,7 @@ class OverheadSpriteRenderer:
                 rotation_offset=math.radians(HEAD_FACING_OFFSET_DEG),
                 tint=tint,
                 depth_write=depth_write,
+                opacity=opacity,
             )
 
     def draw_weapon(
@@ -548,6 +562,7 @@ class OverheadSpriteRenderer:
         weapon_kind: str = "melee",
         size: Optional[float] = None,
         handed: str = "right",
+        opacity: float = 1.0,
     ) -> None:
         """Draw an equipped weapon to the actor's wielding hand.
 
@@ -666,4 +681,5 @@ class OverheadSpriteRenderer:
             # Adding the head's HEAD_FACING_OFFSET_DEG made the sword point the
             # opposite way; its resting position (actor's right) and thrust are
             # computed above from the raw facing and are unaffected either way.
+            opacity=opacity,
         )

@@ -615,6 +615,10 @@ class QtGameView(QOpenGLWidget):
         ttype = str(props.get("type", "")).lower()
         if ttype not in ("npc", "creature", "monster"):
             return False
+        # An actor may say outright that it wears a head — the way in for one
+        # whose head is not a numbered headNN (the reaper).
+        if "is_head" in props:
+            return bool(props["is_head"])
         idle = str(props.get("custom_idle", "")).replace("\\", "/")
         base = idle.rsplit("/", 1)[-1]
         return ("/heads/" in idle or idle.startswith("heads/")) and base.startswith("head")
@@ -774,6 +778,10 @@ class QtGameView(QOpenGLWidget):
 
                 idle_rel = str(p.get("custom_idle", ""))
                 is_head = bool(p.get("is_head")) if snapshot else self._is_overhead_head_actor(thing)
+                # An actor mid-fade (the reaper arriving or leaving) draws
+                # translucent, weapon and all. Solid is the default and what
+                # every other actor gets.
+                opacity = float(p.get("opacity", p.get("_opacity", 1.0)) or 0.0)
                 dead = bool(p.get("dead"))
                 gibbed = bool(p.get("gibbed")) if snapshot else bool(
                     getattr(thing, "properties", {}).get("gibbed"))
@@ -798,10 +806,11 @@ class QtGameView(QOpenGLWidget):
                     # matches the 2D view.
                     _renderer(idle_rel).draw(self.projection_matrix,
                                              self.view_matrix, gpos, facing,
-                                             SpriteController.IDLE, tint=tint)
+                                             SpriteController.IDLE, tint=tint,
+                                             opacity=opacity)
                     _renderer(dead_overlay_rel, y_offset=CORPSE_MARK_Y).draw(
                         self.projection_matrix, self.view_matrix, gpos, facing,
-                        SpriteController.IDLE)
+                        SpriteController.IDLE, opacity=opacity)
                     continue
                 # Alive / shooting head, or a non-head actor's state sprite.
                 try:
@@ -813,7 +822,8 @@ class QtGameView(QOpenGLWidget):
                     continue
                 renderer = _renderer(sprite_rel)
                 renderer.draw(self.projection_matrix, self.view_matrix,
-                              gpos, facing, SpriteController.IDLE, tint=tint)
+                              gpos, facing, SpriteController.IDLE, tint=tint,
+                              opacity=opacity)
                 weapon_id = self._actor_weapon_id(thing)
                 weapon_path = self._weapon_asset_path(weapon_id)
                 if weapon_path and not dead:
@@ -822,7 +832,8 @@ class QtGameView(QOpenGLWidget):
                         weapon_path, time.perf_counter(),
                         attacking=bool(p.get("is_shooting", False)),
                         weapon_kind=self._weapon_kind(weapon_id),
-                        handed=str(p.get("handed", "right")))
+                        handed=str(p.get("handed", "right")),
+                        opacity=opacity)
 
         except Exception as exc:
             # Disable and fall back to billboards next frame.
@@ -1300,6 +1311,11 @@ class QtGameView(QOpenGLWidget):
         pos_loc = uniforms['sprite_pos_world']
         size_loc = uniforms['sprite_size']
         tint_loc = uniforms['sprite_tint']
+        # Every pass on the shared sprite program establishes its own defaults:
+        # a fade left set by the actor pass must not bleed into projectiles.
+        _op_loc = uniforms.get('sprite_opacity', -1)
+        if _op_loc >= 0:
+            gl.glUniform1f(_op_loc, 1.0)
         # An arrow sprite is a directional shaft, so it must be turned to face
         # its flight heading instead of always drawing upright (which read as
         # "always pointing right"). Round glow bolts stay unrotated. This uses
@@ -1391,6 +1407,9 @@ class QtGameView(QOpenGLWidget):
         gl.glEnable(gl.GL_BLEND)
         gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
         gl.glUniform4f(uniforms['sprite_tint'], 0.0, 0.0, 0.0, 0.0)
+        _op_loc = uniforms.get('sprite_opacity', -1)
+        if _op_loc >= 0:
+            gl.glUniform1f(_op_loc, 1.0)           # solid: see _render_projectiles
         pos_loc = uniforms['sprite_pos_world']
         size_loc = uniforms['sprite_size']
         rot_loc = uniforms.get('sprite_rot', -1)   # -1 if the shader lacks it (safe no-op)
