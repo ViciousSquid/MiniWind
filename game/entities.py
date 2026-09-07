@@ -152,8 +152,15 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
         p["aggression"] = aggression = "defensive"
     if "health" not in _authored:
         p["health"] = tmpl.health if tmpl else 60
-    # Full-health baseline (used by health bars / balance).
-    p.setdefault("max_health", p["health"])
+    # Full-health baseline (used by health bars / balance). This has to be an
+    # assignment, not a setdefault: the engine's Monster base class already
+    # seeds max_health from *its* generic default health, so a setdefault here
+    # never fires and a 120-health guard would show a bar that maxes at 100.
+    # Only a value the map actually authored wins.
+    if "max_health" in _authored:
+        p.setdefault("max_health", p["health"])
+    else:
+        p["max_health"] = p["health"]
     if "damage" not in _authored:
         p["damage"] = tmpl.damage if tmpl else 6
     if "attack_style" not in _authored:

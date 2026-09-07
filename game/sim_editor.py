@@ -34,7 +34,16 @@ REFRESH_MS = 500
 
 
 def _qt():
+    """The Qt widget/core modules — but only when there is a live QApplication.
+
+    "Headless" is not just "PyQt5 is missing": Qt can be importable in a process
+    that never created a QApplication (a test runner, a build tool), and
+    constructing a widget there aborts the process rather than raising. Treating
+    that as unavailable is what makes the documented behaviour — a panel or
+    wizard degrades instead of crashing — actually true."""
     from PyQt5 import QtWidgets, QtCore
+    if QtWidgets.QApplication.instance() is None:
+        raise RuntimeError("no QApplication: this process is headless")
     return QtWidgets, QtCore
 
 
