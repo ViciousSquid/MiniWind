@@ -2,6 +2,7 @@ import math
 import glm
 
 from .constants import is_water_brush, brush_aabb_bounds
+from .cells import CELL_SIZE
 
 class SpatialGrid:
     """
@@ -12,7 +13,7 @@ class SpatialGrid:
       - Player physics  (get_potential_colliders)
       - MonsterAI       (get_nearby_brushes, raycast_down, overlaps_wall, line_of_sight)
     """
-    def __init__(self, cell_size=512.0):
+    def __init__(self, cell_size=CELL_SIZE):
         self.cell_size = cell_size
         self.cells = {}
         self._all_solid = []          # flat list kept for ray queries that span many cells

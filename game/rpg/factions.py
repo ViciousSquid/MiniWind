@@ -68,16 +68,19 @@ def normalise_team(team) -> str:
 _DEFAULTS: Dict[Tuple[str, str], str] = _load_defaults()
 
 
-def relationship(team_a, team_b, overrides: Dict[Tuple[str, str], str] = None) -> str:
-    """Return the default relationship between two teams/factions.
+#: Memo of already-answered team pairs, keyed by the *raw* strings the callers
+#: hold (``{(team_a, team_b): relationship}``). PERF: the settlement AI asks
+#: this question once per actor pair it considers, several million times a
+#: minute at settlement scale, and every one of those used to re-run
+#: ``str().strip().lower()`` twice plus up to four dict probes. Team names come
+#: from a handful of authored strings, so the memo saturates within the first
+#: tick and every later ask is a single dict hit. Only the no-overrides path is
+#: memoised — a caller passing per-quest overrides gets the full lookup.
+_REL_MEMO: Dict[Tuple, str] = {}
 
-    One of :data:`FRIENDLY` / :data:`NEUTRAL` / :data:`HOSTILE`. Same team is
-    friendly; a team with no name is neutral to everyone. *overrides* is an
-    optional ``{(a, b): relationship}`` map (already-normalised keys) consulted
-    before the built-in table — the hook for quest-driven faction changes.
-    """
-    a = normalise_team(team_a)
-    b = normalise_team(team_b)
+
+def _relationship_uncached(a: str, b: str, overrides=None) -> str:
+    """The relationship rule itself, on already-normalised team names."""
     if not a or not b:
         return NEUTRAL
     if a == b:
@@ -94,6 +97,35 @@ def relationship(team_a, team_b, overrides: Dict[Tuple[str, str], str] = None) -
     if (b, a) in _DEFAULTS:
         return _DEFAULTS[(b, a)]
     return NEUTRAL
+
+
+def relationship(team_a, team_b, overrides: Dict[Tuple[str, str], str] = None) -> str:
+    """Return the default relationship between two teams/factions.
+
+    One of :data:`FRIENDLY` / :data:`NEUTRAL` / :data:`HOSTILE`. Same team is
+    friendly; a team with no name is neutral to everyone. *overrides* is an
+    optional ``{(a, b): relationship}`` map (already-normalised keys) consulted
+    before the built-in table — the hook for quest-driven faction changes.
+    """
+    if overrides:
+        return _relationship_uncached(normalise_team(team_a),
+                                      normalise_team(team_b), overrides)
+    key = (team_a, team_b)
+    try:
+        return _REL_MEMO[key]
+    except (KeyError, TypeError):
+        pass
+    rel = _relationship_uncached(normalise_team(team_a), normalise_team(team_b))
+    try:
+        _REL_MEMO[key] = rel
+    except TypeError:
+        pass        # unhashable team value (never in practice) — just answer
+    return rel
+
+
+def invalidate_relationship_cache() -> None:
+    """Drop the memo. Call after mutating :data:`_DEFAULTS` (content reload)."""
+    _REL_MEMO.clear()
 
 
 def is_hostile(team_a, team_b, overrides=None) -> bool:

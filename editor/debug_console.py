@@ -60,9 +60,39 @@ class DebugLogger(QObject):
 # Global logger instance
 _debug_logger = None
 
+
+def _logger_is_dead(logger) -> bool:
+    """Whether *logger*'s underlying C++ QObject has already been destroyed.
+
+    The logger is a process-wide singleton, but it is a QObject: destroying the
+    QApplication that owned it (which happens whenever the editor is torn down
+    and rebuilt in one process — the headless test suite does exactly that)
+    reaps the C++ side while the Python wrapper lives on. Emitting its signal
+    afterwards raises, and it raises *inside whatever was logging* — which on
+    the engine's boot path meant a dead console took the logic thread with it.
+    """
+    if not isinstance(logger, DebugLogger):
+        return False                 # a stand-in (tests swap one in) is never dead
+    for module in ("PyQt5.sip", "sip"):
+        try:
+            sip = __import__(module, fromlist=["isdeleted"])
+            return bool(sip.isdeleted(logger))
+        except Exception:
+            continue
+    try:
+        logger.objectName()          # cheapest call that touches the C++ side
+        return False
+    except RuntimeError:
+        return True
+
+
 def get_debug_logger() -> DebugLogger:
-    """Get the global debug logger instance."""
+    """Get the global debug logger instance, rebuilding it if Qt reaped it."""
     global _debug_logger
+    if _debug_logger is not None and _logger_is_dead(_debug_logger):
+        # Drop the singleton behind it too, or __new__ hands back the dead one.
+        DebugLogger._instance = None
+        _debug_logger = None
     if _debug_logger is None:
         _debug_logger = DebugLogger()
     return _debug_logger

@@ -1,15 +1,24 @@
 """
-:class:`BigWorldManager` — the cell manager at the heart of Big World.
+The engine's static world partition: :class:`WorldCellIndex`.
 
-It builds a UUID-addressed index of the world's brushes, entities and lights,
-groups them into 512-unit cells (the same grid :class:`engine.physics.SpatialGrid`
-uses), and answers the only question the runtime asks each time the player
-moves: *which cells are active, and what just entered or left the active set?*
+This is the authoritative index of *where everything in the world is*. It builds
+a UUID-addressed record of every brush, entity and light, groups them into the
+engine's shared 512-unit cells (:mod:`engine.cells` — the same cells the
+collision grid, the actor index and the renderer's region cull use), and answers
+the question the streaming system asks each time the player moves: *which cells
+are relevant, and what just entered or left that set?*
+
+It used to live in ``plugins/bigworld/manager.py``. Large-world operation is not
+optional behaviour layered on top of the engine — the renderer, the collision
+grid, the simulation scheduler and the save system all need to agree about which
+part of the world is live — so it is a core subsystem, owned and driven by
+:class:`~engine.logic_thread.LogicThread` rather than dispatched to per frame
+through a plugin.
 
 Design constraints honoured here
 --------------------------------
-* **Reuse, don't replace.** Cell coordinates and the multi-cell spanning rule
-  are the spatial grid's, imported from :mod:`.cell`. No BVH / octree / BSP.
+* **One partition, not several.** Cell coordinates and the multi-cell spanning
+  rule come from :mod:`engine.cells`. No BVH / octree / BSP, and no second grid.
 * **Identity is the UUID, cells are metadata.** Every object is keyed by its
   stable UUID (``brush['id']`` / ``thing.properties['id']``). Streaming a cell
   in or out never changes an object's UUID, and a brush that spans several cells
@@ -19,9 +28,9 @@ Design constraints honoured here
   cells (and the objects in them) that entered or left the active region — never
   the whole world. Objects spanning several cells are reference-counted so a
   brush stays active while *any* active cell still references it.
-* **Dependency-light.** Plain Python only, so the manager runs in the editor,
-  the standalone player and headless tests alike. Lights and persistent globals
-  are recognised by their ``type`` string / a marker property, not by importing
+* **Dependency-light.** Plain Python only, so it runs in the editor, the
+  standalone player and headless tests alike. Lights and persistent globals are
+  recognised by their ``type`` string / a marker property, not by importing
   editor classes.
 """
 
@@ -31,8 +40,8 @@ import math
 from collections import Counter
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from .cell import (CELL_SIZE, BigWorldCell, CellCoord, CellState,
-                   cell_distance_sq, cell_of_point, cells_for_aabb)
+from .cells import (CELL_SIZE, CellCoord, cell_bounds, cell_distance_sq,
+                    cell_of_point, cells_for_aabb)
 
 #: Default radius (world units) of the player's active region.
 DEFAULT_ACTIVATION_RADIUS = 2048.0
@@ -56,8 +65,97 @@ def _normalise_type(type_name) -> str:
     return str(type_name or "").replace("_", "").lower()
 
 
+# ---------------------------------------------------------------------------
+# Streaming lifecycle
+# ---------------------------------------------------------------------------
+
+class CellState:
+    """The streaming lifecycle of a cell.
+
+    ``UNLOADED``  — the cell's contents are not in memory (a future disk-streaming
+                    milestone; for the in-RAM milestone a cell is loaded as soon
+                    as the world is indexed).
+    ``LOADING``   — contents are being brought in (async disk load; transient).
+    ``INACTIVE``  — loaded and stored, but outside the activation radius: it takes
+                    part in *no* runtime rendering, collision or entity ticking.
+    ``ACTIVE``    — inside the activation radius: submitted to the normal Fio
+                    render / physics / entity pipeline.
+    ``UNLOADING`` — being evicted from memory (async disk unload; transient).
+
+    The distinction that matters for the first milestone is **ACTIVE vs
+    INACTIVE**; the LOADING/UNLOADING states exist so true asynchronous disk
+    streaming can be layered on later without reshaping the runtime.
+    """
+
+    UNLOADED = "unloaded"
+    LOADING = "loading"
+    INACTIVE = "inactive"
+    ACTIVE = "active"
+    UNLOADING = "unloading"
+
+
+# ---------------------------------------------------------------------------
+# Cell
+# ---------------------------------------------------------------------------
+
+class WorldCell:
+    """One streamable 512x512 column of the world, addressed by ``(cell_x, cell_z)``.
+
+    A cell holds *references* to the world objects whose footprint touches it,
+    grouped by kind so the runtime can activate/deactivate rendering, collision,
+    entity ticking and lighting independently:
+
+    * ``brushes`` — static/geometry brush dicts (the same dicts the editor owns).
+    * ``things``  — gameplay entities (pickups, monsters, triggers, movers…).
+    * ``lights``  — light entities whose influence radius reaches this cell.
+
+    An object appears in every cell its footprint overlaps (a brush spanning a
+    cell boundary is referenced from each side) but is stored once in the
+    manager's UUID index, so its identity is never split or duplicated.
+    """
+
+    __slots__ = ("cell_x", "cell_z", "state", "brushes", "things", "lights")
+
+    def __init__(self, cell_x: int, cell_z: int):
+        self.cell_x = int(cell_x)
+        self.cell_z = int(cell_z)
+        self.state = CellState.INACTIVE
+        self.brushes: List[dict] = []
+        self.things: List = []
+        self.lights: List = []
+
+    @property
+    def key(self) -> CellCoord:
+        """The cell's integer address, the key it is stored under."""
+        return (self.cell_x, self.cell_z)
+
+    @property
+    def is_active(self) -> bool:
+        return self.state == CellState.ACTIVE
+
+    @property
+    def is_loaded(self) -> bool:
+        """True once the cell's contents are in memory (not UN/LOADING)."""
+        return self.state in (CellState.INACTIVE, CellState.ACTIVE)
+
+    def object_count(self) -> int:
+        return len(self.brushes) + len(self.things) + len(self.lights)
+
+    def bounds(self, cell_size: float = CELL_SIZE):
+        return cell_bounds(self.cell_x, self.cell_z, cell_size)
+
+    def clear(self) -> None:
+        self.brushes.clear()
+        self.things.clear()
+        self.lights.clear()
+
+    def __repr__(self) -> str:  # pragma: no cover - cosmetic
+        return (f"<WorldCell ({self.cell_x},{self.cell_z}) {self.state} "
+                f"b={len(self.brushes)} t={len(self.things)} l={len(self.lights)}>")
+
+
 class ActivationDelta:
-    """What one :meth:`BigWorldManager.update` changed.
+    """What one :meth:`WorldCellIndex.update` changed.
 
     ``changed`` is False when the player has not crossed a cell boundary (the
     overwhelmingly common per-frame case), in which case every list is empty and
@@ -92,8 +190,8 @@ class ActivationDelta:
                 f"light +{len(self.lights_entering)}/-{len(self.lights_leaving)}>")
 
 
-class BigWorldManager:
-    """Indexes a world into cells and streams the active set as the player moves."""
+class WorldCellIndex:
+    """Indexes the world into cells and tracks which of them are active."""
 
     def __init__(self, cell_size: float = CELL_SIZE,
                  activation_radius: float = DEFAULT_ACTIVATION_RADIUS,
@@ -108,8 +206,8 @@ class BigWorldManager:
             _normalise_type(t) for t in (persistent_types or DEFAULT_PERSISTENT_TYPES)
         }
 
-        # (cell_x, cell_z) -> BigWorldCell
-        self.cells: Dict[CellCoord, BigWorldCell] = {}
+        # (cell_x, cell_z) -> WorldCell
+        self.cells: Dict[CellCoord, WorldCell] = {}
         # UUID -> object, the single source of identity for each kind.
         self._brush_by_id: Dict[str, dict] = {}
         self._thing_by_id: Dict[str, object] = {}
@@ -161,10 +259,10 @@ class BigWorldManager:
     # Build / index
     # ------------------------------------------------------------------
 
-    def _cell(self, coord: CellCoord) -> BigWorldCell:
+    def _cell(self, coord: CellCoord) -> WorldCell:
         cell = self.cells.get(coord)
         if cell is None:
-            cell = BigWorldCell(coord[0], coord[1])
+            cell = WorldCell(coord[0], coord[1])
             self.cells[coord] = cell
         return cell
 
@@ -247,7 +345,7 @@ class BigWorldManager:
     # Streaming API (state transitions; future disk streaming slots in here)
     # ------------------------------------------------------------------
 
-    def load_cell(self, cell_x: int, cell_z: int) -> BigWorldCell:
+    def load_cell(self, cell_x: int, cell_z: int) -> WorldCell:
         """Ensure a cell's contents are in memory.
 
         For the in-RAM milestone the whole map is already resident, so this only

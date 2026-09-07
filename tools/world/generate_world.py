@@ -2,8 +2,8 @@
 Synthetic Big World map generator + benchmark harness.
 
 Two jobs, both runnable headless (no editor, engine, PyQt or OpenGL — it drives
-the :class:`~plugins.bigworld.manager.BigWorldManager` and
-:class:`~plugins.bigworld.runtime.BigWorldSession` directly):
+the :class:`~engine.world_cells.WorldCellIndex` and
+:class:`~engine.world_streaming.WorldStreamingSession` directly):
 
 1. **Generate** a Fio map JSON containing a huge field of brushes, some
    entities and lights, and a ``BigWorldSettings`` entity so the map opts into
@@ -20,9 +20,9 @@ the :class:`~plugins.bigworld.manager.BigWorldManager` and
 
 Usage
 -----
-    python -m plugins.bigworld.tools.generate_world benchmark
-    python -m plugins.bigworld.tools.generate_world benchmark --sizes 10000,50000
-    python -m plugins.bigworld.tools.generate_world generate --brushes 100000 \\
+    python -m tools.world.generate_world benchmark
+    python -m tools.world.generate_world benchmark --sizes 10000,50000
+    python -m tools.world.generate_world generate --brushes 100000 \\
         --out maps/bigworld_100k.json
 """
 
@@ -37,12 +37,13 @@ import time
 import tracemalloc
 import uuid
 
-_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from plugins.bigworld.manager import BigWorldManager
-from plugins.bigworld.runtime import BigWorldSession
+from engine.world_streaming import StreamingHost
+from engine.world_cells import WorldCellIndex
+from engine.world_streaming import WorldStreamingSession
 
 
 # ---------------------------------------------------------------------------
@@ -138,14 +139,17 @@ def write_map(path: str, n_brushes: int, activation_radius=2048.0):
 # Benchmark
 # ---------------------------------------------------------------------------
 
-class _BenchLogic:
-    """Stand-in logic object for the session (just brushes/things/player.pos)."""
+class _BenchLogic(StreamingHost):
+    """Stand-in for the logic thread: a scene, a player, and the engine surface
+    a streaming session drives (simulation-LOD radii + the change notifications
+    the render-state builder and the entity caches listen for)."""
 
     class _P:
         def __init__(self, pos):
             self.pos = list(pos)
 
     def __init__(self, brushes, things, player_pos=(0, 0, 0)):
+        super().__init__()
         self.brushes = brushes
         self.things = things
         self.player = _BenchLogic._P(player_pos)
@@ -170,7 +174,7 @@ def benchmark_size(n_brushes: int, walk_cells: int = 32,
 
     mid = (side // 2) * lattice
     logic = _BenchLogic(brushes, things, player_pos=(mid, 0, mid))
-    session = BigWorldSession(logic, activation_radius=activation_radius,
+    session = WorldStreamingSession(logic, activation_radius=activation_radius,
                               deactivation_radius=activation_radius + 256.0)
 
     # Startup: index + park world + activate the local region.
@@ -275,7 +279,7 @@ def run_benchmark(sizes):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Big World generator + benchmark")
+    ap = argparse.ArgumentParser(description="Large-world generator + streaming benchmark")
     sub = ap.add_subparsers(dest="cmd")
 
     b = sub.add_parser("benchmark", help="Run the streaming benchmark")

@@ -403,7 +403,26 @@ class ConsoleCommandHandler:
             entity['hidden'] = True
         elif hasattr(entity, 'properties'):
             entity.properties['hidden'] = True
+        self._notify_visibility_changed()
         debug_log("Info", f"'{name}' is now hidden")
+
+    def _notify_visibility_changed(self):
+        """Tell a live play session that a brush's ``hidden`` flag moved.
+
+        The render-state builder caches the whole-world non-hidden brush list
+        between frames, so a console show/hide has to announce itself for the
+        change to land on the very next frame rather than at the next periodic
+        re-validation. Fully guarded — no play session, no logic thread, or an
+        engine without the hook all no-op.
+        """
+        try:
+            view_3d = getattr(self.main_window, 'view_3d', None)
+            lt = getattr(view_3d, 'logic_thread', None) if view_3d else None
+            notify = getattr(lt, 'notify_visibility_changed', None)
+            if notify is not None:
+                notify()
+        except Exception:
+            pass
 
     def cmd_show(self, args):
         """show <name> — Clear hidden flag on a brush or entity."""
@@ -419,6 +438,7 @@ class ConsoleCommandHandler:
             entity['hidden'] = False
         elif hasattr(entity, 'properties'):
             entity.properties['hidden'] = False
+        self._notify_visibility_changed()
         debug_log("Info", f"'{name}' is now visible")
 
     def cmd_tint(self, args):

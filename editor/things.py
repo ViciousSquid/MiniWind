@@ -1584,6 +1584,113 @@ class Portal(Thing):
 # KEY/VALUE STORE ENTITY
 # =============================================================================
 
+# ===========================================================================
+# Large-world streaming settings
+# ===========================================================================
+
+
+class BigWorldSettings(Thing):
+    """Map-level world-streaming configuration (one per map, optional).
+
+    Placing one of these in a map is how the map opts into the engine's
+    large-world path: cell streaming, activation radii and the simulation-LOD
+    band that follows them. A map without one loads and plays exactly as before,
+    with the whole world resident. It holds *config only* — the behaviour lives
+    in :mod:`engine.world_streaming`.
+
+    The type string stays ``bigworldsettings`` because that is what existing map
+    files on disk contain; it is a data format, not a code boundary.
+
+    Properties
+    ----------
+    enabled:              master switch for streaming on this map (default True).
+    activation_radius:    world units; cells within this of the player activate.
+    deactivation_radius:  world units; active cells drop only beyond this
+                          (the hysteresis band that prevents boundary thrash).
+    show_cell_debug:      draw the Big World debug overlay / cell grid in play.
+    terrain_fill:         if the map has a procedural terrain, expand it to cover
+                          every cell of the world and stream its chunks around
+                          the player instead of tessellating the whole grid
+                          up-front (default False — terrain is left as authored).
+    terrain_infinite:     with terrain_fill on, stream the terrain **forever**
+                          around the camera/player instead of stopping at the
+                          world's content bounds — so you never walk off an edge
+                          (default False). Heights are a pure function of world
+                          position, so the ground is deterministic everywhere.
+    terrain_stream_radius: world units of terrain kept resident around the
+                          player; 0 derives it from the activation radius.
+    """
+
+    #: Reused by the property panel / manager to key its schema.
+    TYPE = "bigworldsettings"
+
+    #: 2D-view sprite. Without this the entity draws nothing and is invisible /
+    #: unselectable in the top/front/side views.
+    pixmap_path = "assets/sprites/bigworldsettings.png"
+
+    def __init__(self, pos=None, properties=None):
+        super().__init__(pos, properties)
+        self.properties.setdefault("type", self.TYPE)
+        self.properties.setdefault("enabled", True)
+        self.properties.setdefault("activation_radius", 2048.0)
+        self.properties.setdefault("deactivation_radius", 2304.0)
+        self.properties.setdefault("show_cell_debug", True)
+        self.properties.setdefault("terrain_fill", False)
+        self.properties.setdefault("terrain_infinite", False)
+        self.properties.setdefault("terrain_stream_radius", 0.0)
+        self.properties.setdefault("disk_streaming", False)
+
+    # -- typed accessors ----------------------------------------------------
+    def disk_streaming(self) -> bool:
+        val = self.properties.get("disk_streaming", False)
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+    def is_enabled(self) -> bool:
+        val = self.properties.get("enabled", True)
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+    def activation_radius(self) -> float:
+        try:
+            return float(self.properties.get("activation_radius", 2048.0))
+        except (TypeError, ValueError):
+            return 2048.0
+
+    def deactivation_radius(self) -> float:
+        try:
+            r = float(self.properties.get("deactivation_radius", 2304.0))
+        except (TypeError, ValueError):
+            r = 2304.0
+        return max(r, self.activation_radius())
+
+    def show_cell_debug(self) -> bool:
+        val = self.properties.get("show_cell_debug", True)
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+    def terrain_fill(self) -> bool:
+        val = self.properties.get("terrain_fill", False)
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+    def terrain_infinite(self) -> bool:
+        val = self.properties.get("terrain_infinite", False)
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+    def terrain_stream_radius(self) -> float:
+        try:
+            return float(self.properties.get("terrain_stream_radius", 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+
+
 class LogicKeyValueStore(Thing):
     """
     A persistent key/value store that survives level transitions.

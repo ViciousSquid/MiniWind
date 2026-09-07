@@ -23,6 +23,8 @@ from itertools import chain as _chain
 from typing import Dict, List, Optional
 
 from engine.facing import face_heading
+from engine.world_index import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
+                                TIER_DORMANT)
 from .rpg import factions
 from .rpg import schedule as sched
 from .rpg import combat as rpg_combat
@@ -309,6 +311,10 @@ class MiniwindSession:
         #: Fights in progress, as (actor, who it is swinging at) pairs. Rebuilt
         #: once per decision pass by _refresh_actor_cache.
         self._fights = []
+        #: Alternates 0/1 each decision pass. TIER_ACTIVE NPCs decide on the
+        #: pass matching their row parity, so half of the near world re-plans
+        #: each pass and the cost is spread instead of spiking.
+        self._decision_phase = 0
         #: Guards currently running the player down (see _start_arrest_pursuit).
         self._arrest_pursuers = []
         #: Active Wisp companion light, or None. See _spawn_wisp / _update_wisp.
@@ -622,16 +628,52 @@ class MiniwindSession:
         # can approach, arrest, escort, or pursue the player immediately.
         self._update_arrest()
 
-        # decisions (low frequency) + movement (every tick)
+        # ---- decisions + movement, under simulation LOD --------------------
+        # The engine's world index (engine/world_index.py) has already sorted
+        # every actor into a tier by how near the player it is. What each tier
+        # costs per tick:
+        #
+        #   TIER_NEAR    full — decide every pass, move every tick
+        #   TIER_ACTIVE  decide every other pass (staggered by row so the work
+        #                spreads evenly), still move every tick so nothing the
+        #                player can see stutters
+        #   TIER_DISTANT no per-tick work at all — one coarse movement step per
+        #                decision pass, carrying the whole elapsed interval
+        #   TIER_DORMANT nothing; the streamer has parked it
+        #
+        # Observable behaviour is unchanged: everything inside the overhead
+        # camera's view is in NEAR or ACTIVE, and both move every tick.
         hour_int = int(self.clock.hour)
+        npcs = self.npcs()
+        tier_of = self._tier_of
         self._decision_accum += delta
-        if self._decision_accum >= DECISION_INTERVAL or hour_int != self._last_hour_int:
+        decided = (self._decision_accum >= DECISION_INTERVAL
+                   or hour_int != self._last_hour_int)
+        if decided:
+            coarse_delta = max(self._decision_accum, delta)
             self._decision_accum = 0.0
             self._last_hour_int = hour_int
+            self._decision_phase ^= 1
+            phase = self._decision_phase
             self._refresh_actor_cache()
-            for npc in self.npcs():
+            for i, npc in enumerate(npcs):
+                tier = tier_of(npc)
+                if tier >= TIER_DORMANT:
+                    continue
+                if tier == TIER_DISTANT:
+                    # Distant world: schedule/state transitions only, then one
+                    # coarse step that covers the whole interval since the last
+                    # pass. Still collision-checked, so nobody walks into a wall
+                    # while off-screen — just twelve times less often.
+                    self._decide(npc)
+                    self._move(npc, coarse_delta)
+                    continue
+                if tier == TIER_ACTIVE and (i & 1) != phase:
+                    continue
                 self._decide(npc)
-        for npc in self.npcs():
+        for npc in npcs:
+            if tier_of(npc) >= TIER_DISTANT:
+                continue          # moved coarsely on the decision pass above
             self._move(npc, delta)
 
         # Turn any NPC deaths (from player or engine combat) into persistent
@@ -2347,7 +2389,7 @@ class MiniwindSession:
         if intent.reaction == sim_appraisal.FLEE:
             p["sched_state"] = sched.FLEE
             p["_flee"] = True
-            p.pop("_rally", None)
+            self._set_rally(npc, False)
             p["_dest"] = self._refuge_point(npc, offender)
             return True
 
@@ -2373,7 +2415,7 @@ class MiniwindSession:
         p["triggered"] = False
         p["sched_state"] = sched.COMBAT
         p.pop("_flee", None)
-        p.pop("_rally", None)
+        self._set_rally(npc, False)
         if offender is self.player_actor:
             # The engine MonsterAI hunts the player when an actor is hostile.
             p["aggression"] = "hostile"
@@ -2483,24 +2525,24 @@ class MiniwindSession:
                     p["triggered"] = False
                     p["awake"] = True
                     p["sched_state"] = sched.RALLY
-                    p["_rally"] = True
+                    self._set_rally(npc, True)
                     p.pop("_flee", None)
                     return
                 if conf >= _FLEE_THRESHOLD:
                     p["sched_state"] = sched.ALERT
-                    p.pop("_rally", None)
+                    self._set_rally(npc, False)
                     p.pop("_flee", None)
                     p.pop("_dest", None)
                     return
                 p["sched_state"] = sched.FLEE
                 p["_flee"] = True
-                p.pop("_rally", None)
+                self._set_rally(npc, False)
                 p["_dest"] = self._refuge_point(npc, threat)
                 return
             if p.get("_rally"):
                 p["triggered"] = True
                 p["awake"] = False
-                p.pop("_rally", None)
+                self._set_rally(npc, False)
             p.pop("_flee", None)
 
         # (c.7) REACTIVE SIMULATION: nothing physically urgent is happening —
@@ -2877,10 +2919,110 @@ class MiniwindSession:
                 best, best_d = offender, d
         return best
 
+    # ------------------------------------------------- spatial relevance
+    def _tier_of(self, actor) -> int:
+        """This actor's simulation tier, from the engine's world index.
+
+        With no index behind the session (a headless unit test, or before the
+        first play tick) everything is TIER_NEAR — i.e. fully simulated, the
+        pre-LOD behaviour — so no test or tool silently loses simulation.
+        """
+        wi = self._world_index()
+        if wi is None:
+            return TIER_NEAR
+        return wi.tier_of(actor)
+
+    def _world_index(self):
+        """The engine's authoritative actor index, or None.
+
+        There is deliberately no fallback index here: relevance is a *core*
+        engine service (``engine/world_index.py``), built once per play tick by
+        the logic thread. When it is absent — a headless unit test poking the
+        session with a stub logic object, or the very first tick before the
+        index has been built — the scalar scans below run exactly as they did
+        before, so behaviour is identical either way.
+        """
+        wi = getattr(getattr(self, "logic", None), "world_index", None)
+        if wi is None or getattr(wi, "n", 0) == 0:
+            return None
+        return wi
+
+    def _rel_mask(self, wi, my_faction, want):
+        """Per-row boolean: live actors whose team is *want* to *my_faction*.
+
+        The faction predicate runs once per distinct team name in the world
+        (a handful), never once per candidate pair — that collapse is why the
+        settlement AI stopped spending 40% of its budget in
+        :func:`game.rpg.factions.relationship`.
+        """
+        import numpy as _np
+        key = ("rel", want, my_faction)
+
+        def _build():
+            pred = factions.is_hostile if want == "hostile" else factions.is_friendly
+            tbl = wi.team_relation_table(
+                lambda name: 1 if pred(my_faction, name) else 0)
+            n = wi.n
+            return wi.alive[:n] & (tbl[wi.team_ids[:n]] == 1)
+        return wi.derived(key, _build)
+
+    def _combatant_mask(self, wi):
+        """Per-row boolean: this actor can and will fight. Game policy
+        (:func:`game.sim.appraisal.is_combatant`) evaluated once per actor per
+        tick and shared by every query, instead of per candidate per NPC."""
+        import numpy as _np
+
+        def _build():
+            return _np.fromiter(
+                (sim_appraisal.is_combatant(a.properties) for a in wi.actors),
+                dtype=bool, count=wi.n)
+        return wi.derived("combatant", _build)
+
+    def _rally_mask(self, wi):
+        """Per-row boolean: this actor has rallied. Built once per tick, so the
+        social-contagion term costs one array read per candidate rather than a
+        dict probe per candidate per frightened villager."""
+        import numpy as _np
+
+        def _build():
+            return _np.fromiter(
+                (bool(a.properties.get("_rally")) for a in wi.actors),
+                dtype=bool, count=wi.n)
+        return wi.derived("rally", _build)
+
+    def _set_rally(self, npc, rallied: bool) -> None:
+        """Set/clear an NPC's rallied flag and keep the cached mask in step.
+
+        Rally is socially contagious *within* a decision pass — a villager who
+        stands his ground emboldens the next one the loop reaches — so the mask
+        cannot simply be frozen at the start of the tick. Patching the one row
+        keeps that immediacy at O(1) instead of rebuilding the array.
+        """
+        p = npc.properties
+        if rallied:
+            p["_rally"] = True
+        else:
+            p.pop("_rally", None)
+        wi = self._world_index()
+        if wi is None:
+            return
+        mask = wi._derived.get("rally")
+        if mask is None:
+            return
+        row = wi.row_of(npc)
+        if row >= 0:
+            mask[row] = rallied
+
     def _nearest_hostile(self, npc, radius: float):
         my_faction = npc.properties.get("faction") or npc.properties.get("team")
-        best, best_d = None, radius * radius
         npos = npc.pos
+        wi = self._world_index()
+        if wi is not None:
+            row = wi.nearest(npos[0], npos[2], radius,
+                             mask=self._rel_mask(wi, my_faction, "hostile"),
+                             exclude_row=wi.row_of(npc))
+            return wi.actors[row] if row >= 0 else None
+        best, best_d = None, radius * radius
         # Prefer the cached actor list; fall back to a full scan if a caller runs
         # outside the decision pass (e.g. a unit test poking a single tick).
         pool = self._actors or (getattr(self.logic, "things", None) or [])
@@ -2904,8 +3046,14 @@ class MiniwindSession:
         """Find the nearest living friendly combatant (e.g. a guard) that could
         protect this NPC.  Returns None if no protector is within *radius*."""
         my_faction = npc.properties.get("faction") or npc.properties.get("team")
-        best, best_d = None, radius * radius
         npos = npc.pos
+        wi = self._world_index()
+        if wi is not None:
+            mask = self._rel_mask(wi, my_faction, "friendly") & self._combatant_mask(wi)
+            row = wi.nearest(npos[0], npos[2], radius, mask=mask,
+                             exclude_row=wi.row_of(npc))
+            return wi.actors[row] if row >= 0 else None
+        best, best_d = None, radius * radius
         pool = self._actors or (getattr(self.logic, "things", None) or [])
         for t in pool:
             if t is npc:
@@ -2936,39 +3084,65 @@ class MiniwindSession:
         dist = self._dist2d(npc.pos, threat.pos)
         distance_factor = min(dist / FLEE_SIGHT, 1.0) * 0.25
 
-        n_guards = 0
-        n_rallied = 0
-        n_friendly = 0
-        n_hostile = 0
-        pool = self._actors or []
-        for t in pool:
-            if t is npc:
-                continue
-            tp = t.properties
-            dx = t.pos[0] - nx
-            dz = t.pos[2] - nz
-            if dx * dx + dz * dz > sight2:
-                continue
-            other = tp.get("team") or tp.get("faction")
-            if factions.is_hostile(my_faction, other):
-                n_hostile += 1
-            elif factions.is_friendly(my_faction, other):
-                n_friendly += 1
-                if self._is_combatant(t):
-                    n_guards += 1
-                if tp.get("_rally"):
-                    n_rallied += 1
+        wi = self._world_index()
+        if wi is not None:
+            # One radius query over the shared index, then five vectorised
+            # tallies over the candidate rows — instead of a full Python walk
+            # of every actor in the world per frightened villager.
+            import numpy as _np
+            rows = wi.rows_near(nx, nz, FLEE_SIGHT)
+            self_row = wi.row_of(npc)
+            if self_row >= 0 and rows.size:
+                rows = rows[rows != self_row]
+            hostile = self._rel_mask(wi, my_faction, "hostile")[rows]
+            friendly = self._rel_mask(wi, my_faction, "friendly")[rows]
+            n_hostile = int(_np.count_nonzero(hostile))
+            n_friendly = int(_np.count_nonzero(friendly))
+            n_guards = int(_np.count_nonzero(friendly & self._combatant_mask(wi)[rows]))
+            n_rallied = int(_np.count_nonzero(friendly & self._rally_mask(wi)[rows]))
+            # Casualties are corpses of his own side in sight — `alive` excludes
+            # them, so they need the dead mask and their own friendliness test.
+            dead_rows = rows[wi.dead[rows]]
+            if dead_rows.size:
+                tbl = wi.team_relation_table(
+                    lambda name: 1 if factions.is_friendly(my_faction, name) else 0)
+                n_casualties = int(_np.count_nonzero(tbl[wi.team_ids[dead_rows]] == 1))
+            else:
+                n_casualties = 0
+        else:
+            n_guards = 0
+            n_rallied = 0
+            n_friendly = 0
+            n_hostile = 0
+            pool = self._actors or []
+            for t in pool:
+                if t is npc:
+                    continue
+                tp = t.properties
+                dx = t.pos[0] - nx
+                dz = t.pos[2] - nz
+                if dx * dx + dz * dz > sight2:
+                    continue
+                other = tp.get("team") or tp.get("faction")
+                if factions.is_hostile(my_faction, other):
+                    n_hostile += 1
+                elif factions.is_friendly(my_faction, other):
+                    n_friendly += 1
+                    if self._is_combatant(t):
+                        n_guards += 1
+                    if tp.get("_rally"):
+                        n_rallied += 1
 
-        n_casualties = 0
-        for t in self._dead_actors:
-            tp = t.properties
-            other = tp.get("team") or tp.get("faction")
-            if not factions.is_friendly(my_faction, other):
-                continue
-            dx = t.pos[0] - nx
-            dz = t.pos[2] - nz
-            if dx * dx + dz * dz <= sight2:
-                n_casualties += 1
+            n_casualties = 0
+            for t in self._dead_actors:
+                tp = t.properties
+                other = tp.get("team") or tp.get("faction")
+                if not factions.is_friendly(my_faction, other):
+                    continue
+                dx = t.pos[0] - nx
+                dz = t.pos[2] - nz
+                if dx * dx + dz * dz <= sight2:
+                    n_casualties += 1
 
         # Group bonus is based on total nearby friendlies only. Rallied NPCs
         # are already counted in n_friendly, so adding n_rallied here would
@@ -3600,7 +3774,7 @@ class MiniwindSession:
             p["awake"] = True
             p["sched_state"] = sched.COMBAT
             p.pop("_flee", None)
-            p.pop("_rally", None)
+            self._set_rally(npc, False)
 
     def _on_creature_killed(self, target):
         self.add_floater("SLAIN", kind="kill")
