@@ -52,6 +52,10 @@ K_MAP = "m"
 # through MiniwindSession.request_roll and animate on their own, so there is
 # nothing a roll key adds.
 K_QUEST = "q"          # show the current quest (objective + how to complete)
+#: Number keys that draw a carried weapon by slot. '1' is the first weapon in
+#: the pack, '2' the second: the same order the loadout popup shows, so the keys
+#: and the screen can never disagree. Nine is plenty and leaves '0' free.
+WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 10))
 
 
 # ---------------------------------------------------------------------------
@@ -730,6 +734,13 @@ class MiniwindGame:
             session.do_cast()
         if K_NEXT_SPELL in just:
             session.next_spell()
+        # Weapon slots: 1 draws the first weapon you carry, 2 the second, and so
+        # on, in the order the loadout popup lists them. Pressing the slot you
+        # already hold sheathes it.
+        for slot in WEAPON_SLOT_KEYS:
+            if slot in just:
+                session.select_weapon_slot(int(slot))
+                break
         if K_SNEAK in just:
             session.toggle_sneak()
         if K_HEAL in just:

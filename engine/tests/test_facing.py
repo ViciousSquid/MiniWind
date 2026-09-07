@@ -75,6 +75,28 @@ def test_get_heading_falls_back_to_the_design_time_angle():
     assert facing.get_heading({facing.FACING_KEY: None, 'angle': None}) == 0.0
 
 
+class _NPC:
+    def __init__(self, dest=(1000.0, 0.0, 0.0), **props):
+        self.pos = [0.0, 0.0, 0.0]
+        self.properties = {"_dest": list(dest), "move_speed": 90.0}
+        self.properties.update(props)
+
+
+class _Walker:
+    """Just the RPG runtime's mover, with no live scene behind it.
+
+    ``logic`` is None, so the wall test finds no spatial grid and nothing is
+    solid — which is what isolates these tests to the movement and turning
+    rules. Wall collision has its own tests in game/tests/test_npc_movement.py.
+    """
+
+    from game.runtime import MiniwindSession as _S
+    _move = _S._move
+    _step_to = _S._step_to
+    _blocked_by_wall = _S._blocked_by_wall
+    logic = None
+
+
 def test_runtime_npc_mover_writes_the_property_the_renderer_reads():
     """The regression: schedule-driven NPCs used to write a bare ``angle``.
 
@@ -82,16 +104,8 @@ def test_runtime_npc_mover_writes_the_property_the_renderer_reads():
     angle the 3D head billboard rotates by, so an NPC walked by the RPG runtime
     slid around the world without ever turning.
     """
-    from game.runtime import MiniwindSession
-
-    class _NPC:
-        def __init__(self):
-            self.pos = [0.0, 0.0, 0.0]
-            self.properties = {"_dest": [1000.0, 0.0, 0.0], "move_speed": 90.0}
-
     npc = _NPC()
-    # Unbound call: _move touches nothing on the session itself.
-    MiniwindSession._move(None, npc, 0.1)
+    _Walker()._move(npc, 0.1)
 
     assert npc.pos[0] > 0.0                       # it walked
     assert facing.FACING_KEY in npc.properties    # and it turned
@@ -109,15 +123,11 @@ def test_a_fleeing_villager_moves_at_double_speed():
     from game.rpg import schedule as sched
 
     def _walk(state):
-        class _NPC:
-            def __init__(self):
-                self.pos = [0.0, 0.0, 0.0]
-                self.properties = {"_dest": [100000.0, 0.0, 0.0],
-                                   "move_speed": runtime.NPC_WALK_SPEED}
-                if state:
-                    self.properties["sched_state"] = state
-        npc = _NPC()
-        runtime.MiniwindSession._move(None, npc, 1.0)
+        props = {"move_speed": runtime.NPC_WALK_SPEED}
+        if state:
+            props["sched_state"] = state
+        npc = _NPC(dest=(100000.0, 0.0, 0.0), **props)
+        _Walker()._move(npc, 1.0)
         return npc.pos[0]
 
     calm = _walk(None)

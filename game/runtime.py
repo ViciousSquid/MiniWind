@@ -57,6 +57,15 @@ NPC_WALK_SPEED = 90.0
 #: long as the fright does, and they go back to a walk on their own.
 FLEE_SPEED_MULTIPLIER = 2.0
 ARRIVE_RADIUS = 48.0
+#: How close a walking NPC may come to a wall. Close to the player's own half
+#: width (TILE_SIZE/2 = 25) rather than the combat AI's much fatter monster
+#: margin, so a villager fits through any doorway the player does.
+NPC_WALL_MARGIN = 28.0
+#: Ticks an NPC may spend jammed against a brush before it gives up on its
+#: destination and lets the next decision pass choose a reachable one. About two
+#: seconds at 30Hz — long enough to slide along a wall to a door, short enough
+#: that nobody stands pressed into a corner for a whole day.
+NPC_BLOCKED_GIVE_UP_TICKS = 60
 #: How close the player must be to talk. Comfortably larger than a billboard so
 #: walking up to an NPC (whose speech bubble is showing) and pressing E works.
 TALK_RADIUS = 140.0
@@ -297,6 +306,8 @@ class MiniwindSession:
         self._arrest_guard = None
         self._arrest_state = ""
         self._arrest_notice_sent = False
+        #: Guards currently running the player down (see _start_arrest_pursuit).
+        self._arrest_pursuers = []
         #: Active Wisp companion light, or None. See _spawn_wisp / _update_wisp.
         self._wisp = None
         #: Live torch lights, keyed by holder ("player" or an NPC's id): a
@@ -1832,15 +1843,27 @@ class MiniwindSession:
         return (self._is_guard(thing) and not p.get("dead")
                 and str(p.get("aggression", "")) != "hostile")
 
+    def _prison_marker(self):
+        """The map's prison marker, or None.
+
+        A prison is a Marker with ``marker_kind = "prison"`` — that is what the
+        editor authors and what the arrest flow watches for. This used to look
+        the marker up by *name* instead, which almost never matched, so the
+        escort fell through to the nearest guardpost: the guard walked you to
+        his post and stood there. Name is still accepted as a fallback for maps
+        that authored a plain entity called "prison".
+        """
+        for marker in self._things_of_type("marker"):
+            if self._marker_kind(marker) == "prison":
+                return marker
+        return self._find_named(PRISON_MARKER_NAME)
+
     def _prison_position(self):
-        """Resolve the authored prison marker, or fall back to the guard post."""
-        prison = self._find_named(PRISON_MARKER_NAME)
-        if prison is not None:
-            return list(prison.pos)
-        post = self._nearest_of(self._arrest_guard, lambda t:
-                                self._marker_kind(t) == "guardpost") \
-            if self._arrest_guard is not None else None
-        return list(post.pos) if post is not None else None
+        """Where an escorted prisoner is being taken, or None if the map has no
+        prison. Never a guardpost: a guardpost is where the guard works, not
+        where a prisoner goes."""
+        prison = self._prison_marker()
+        return list(prison.pos) if prison is not None else None
 
     def _update_arrest(self) -> None:
         """Drive bounty detection, guard approach, escort delivery, and escape."""
@@ -1848,20 +1871,25 @@ class MiniwindSession:
         if player_pos is None or self.game.character.is_dead:
             return
 
-        # Resolve prison marker once; bail out if the map has none.
-        prison_pos = None
-        for mk in self._things_of_type("marker"):
-            if str(mk.properties.get("marker_kind", "")).lower() == "prison":
-                prison_pos = mk.pos
-                break
+        guard = self._arrest_guard
+        state = self._arrest_state
+
+        # A chase runs on its own: it needs no prison, because nobody is being
+        # delivered anywhere. Handled before the prison check so refusing arrest
+        # on a map with no gaol still gets you run down.
+        if state == "pursuit":
+            self._update_arrest_pursuit()
+            return
+
+        # Resolve the prison once, through the same lookup the escort uses so
+        # the two can never disagree about where the player is being taken.
+        prison_pos = self._prison_position()
         if prison_pos is None:
             # No prison on this map — clear any stale arrest state and skip.
             if self._arrest_state:
                 self._clear_arrest()
             return
 
-        guard = self._arrest_guard
-        state = self._arrest_state
         if state == "escorting":
             if not self._is_arrest_guard(guard):
                 self._start_arrest_pursuit()
@@ -1968,6 +1996,8 @@ class MiniwindSession:
 
     def _clear_arrest(self) -> None:
         """Release the arrest guard back to normal settlement AI."""
+        if getattr(self, "_arrest_pursuers", None):
+            self._end_arrest_pursuit()
         guard = self._arrest_guard
         if guard is not None:
             p = guard.properties
@@ -2008,11 +2038,22 @@ class MiniwindSession:
         self.notify("You are being escorted to prison. Stay with the guard.", 5.0)
 
     def _start_arrest_pursuit(self) -> None:
-        """Make nearby guards hostile when the player breaks away from an escort."""
+        """Run the player down after they break away from an escort or refuse arrest.
+
+        Every guard within :data:`GUARD_PURSUIT_RADIUS` turns hostile, which
+        hands them to the combat AI to fight with once they can see the player.
+        But the combat AI only engages what it has line of sight to, so on its
+        own a guard loses you the moment you round a corner and simply stands
+        there. So the guards also enter a runtime-driven ``pursuit``: their
+        destination is refreshed to the player's position every decision pass,
+        and they keep coming — through doorways, round buildings — until the
+        bounty is settled or they are put down.
+        """
         player_pos = self._player_pos()
         if player_pos is None:
             return
         radius2 = GUARD_PURSUIT_RADIUS * GUARD_PURSUIT_RADIUS
+        pursuers = []
         for guard in self.npcs():
             if not self._is_guard(guard) or guard.properties.get("dead"):
                 continue
@@ -2021,16 +2062,57 @@ class MiniwindSession:
             if dx * dx + dz * dz > radius2:
                 continue
             p = guard.properties
-            p.pop("_arrest_state", None)
-            p.pop("_dest", None)
+            p["_arrest_state"] = "pursuit"
+            p["_dest"] = list(player_pos)
             p["aggression"] = "hostile"
             p["triggered"] = False
             p["awake"] = True
             p["wake_on_sight"] = True
+            pursuers.append(guard)
         self._arrest_guard = None
+        self._arrest_state = "pursuit" if pursuers else ""
+        self._arrest_pursuers = pursuers
+        self._arrest_notice_sent = False
+        self.notify("You broke away from the escort. The guards give chase!", 5.0)
+
+    def _update_arrest_pursuit(self) -> None:
+        """Keep the chase alive, and call it off when it is over.
+
+        Runs on the arrest pass, which is already once per tick, and does one
+        dict lookup per pursuing guard — a handful at most. Where the guards are
+        actually headed is only rewritten on the decision pass (see _decide), so
+        this is not a per-tick path recompute.
+        """
+        alive = []
+        for guard in self._arrest_pursuers:
+            p = getattr(guard, "properties", None)
+            if not isinstance(p, dict) or p.get("dead"):
+                continue
+            if p.get("_arrest_state") != "pursuit":
+                continue        # something else claimed this guard
+            alive.append(guard)
+        self._arrest_pursuers = alive
+        if not alive:
+            self._arrest_state = ""
+            return
+        # The chase ends when the debt is settled — paid, served, or forgiven.
+        if int(getattr(self.game.character, "bounty", 0) or 0) <= 0:
+            self._end_arrest_pursuit()
+
+    def _end_arrest_pursuit(self) -> None:
+        """Call off the chase and send the guards back to their posts."""
+        for guard in getattr(self, "_arrest_pursuers", []) or []:
+            p = getattr(guard, "properties", None)
+            if not isinstance(p, dict):
+                continue
+            p.pop("_arrest_state", None)
+            p.pop("_dest", None)
+            p["aggression"] = "defensive"
+            p["triggered"] = True
+            p["awake"] = False
+        self._arrest_pursuers = []
         self._arrest_state = ""
         self._arrest_notice_sent = False
-        self.notify("You broke away from the escort. The guards attack!", 5.0)
 
     def _complete_escort(self, prison_pos) -> None:
         """Deliver a player who stayed with the guard to the prison marker."""
@@ -2321,6 +2403,16 @@ class MiniwindSession:
         # Arrest movement is owned by the runtime, not the normal schedule or
         # MonsterAI. The guard remains visible and walks to the player/prison.
         arrest_state = p.get("_arrest_state")
+        if arrest_state == "pursuit":
+            # A pursuing guard is hostile, so the combat AI owns him whenever he
+            # can see the player. This only refreshes where he is headed, so he
+            # keeps closing when sight is broken instead of stopping at the
+            # corner the player ran round.
+            player_pos = self._player_pos()
+            if player_pos is not None:
+                p["_dest"] = player_pos
+            p["sched_state"] = "PURSUE"
+            return
         if arrest_state in ("approach", "ready", "escorting"):
             p["triggered"] = True
             p["awake"] = False
@@ -2832,7 +2924,18 @@ class MiniwindSession:
         step = min(speed * delta, dist)
         nx = pos[0] + dx / dist * step
         nz = pos[2] + dz / dist * step
-        npc.pos = [nx, pos[1], nz]
+        if not self._step_to(npc, nx, nz):
+            # Nose against a wall with no way round it. Drop the destination so
+            # the next decision pass picks something reachable instead of
+            # grinding into the brush forever.
+            blocked = int(p.get("_blocked_ticks", 0)) + 1
+            p["_blocked_ticks"] = blocked
+            if blocked >= NPC_BLOCKED_GIVE_UP_TICKS:
+                p.pop("_dest", None)
+                p.pop("_wander_dest", None)
+                p["_blocked_ticks"] = 0
+            return
+        p["_blocked_ticks"] = 0
         # Turn to face the way it is walking. This has to go through
         # engine.facing: the renderer reads an actor's heading from the
         # transient '_facing' property (that is what Monster.get_render_state
@@ -2840,6 +2943,47 @@ class MiniwindSession:
         # weapon overlay), so writing a bare 'angle' here left schedule-driven
         # NPCs sliding around the world without ever rotating.
         face_heading(p, dx, dz, delta)
+
+    def _blocked_by_wall(self, x, y, z) -> bool:
+        """Whether an NPC-sized body at (x, y, z) would be inside a solid brush.
+
+        Answered by the engine's spatial grid — the same one the combat AI and
+        the player's own physics use, so it is a cell lookup rather than a scan
+        over every brush, cheap enough to run per walking NPC per tick. With no
+        grid (no play session) nothing is solid, which keeps the schedule
+        testable off a live map.
+        """
+        ai = getattr(self.logic, "monster_ai", None)
+        if ai is None:
+            return False
+        try:
+            return ai._monster_overlaps_wall(float(x), float(y), float(z),
+                                             NPC_WALL_MARGIN)
+        except Exception:
+            return False
+
+    def _step_to(self, npc, nx, nz) -> bool:
+        """Move *npc* to (nx, nz) if it can get there. True if it moved at all.
+
+        Schedule-driven NPCs used to walk straight through walls: this mover set
+        a position with no collision test at all, so a villager heading home cut
+        through the house rather than round to the door. The step now mirrors
+        what the combat AI does — take it whole if it is clear, otherwise slide
+        along whichever axis is, which is what carries an actor along a wall to
+        a doorway instead of sticking it to the brush.
+        """
+        pos = npc.pos
+        y = pos[1]
+        if not self._blocked_by_wall(nx, y, nz):
+            npc.pos = [nx, y, nz]
+            return True
+        if not self._blocked_by_wall(nx, y, pos[2]):
+            npc.pos = [nx, y, pos[2]]
+            return True
+        if not self._blocked_by_wall(pos[0], y, nz):
+            npc.pos = [pos[0], y, nz]
+            return True
+        return False
 
     # ========================================================= player combat
     def _player_pos(self):
@@ -3396,6 +3540,59 @@ class MiniwindSession:
         if s:
             spell = rpg_magic.get(s)
             self.notify(f"Spell: {spell.name if spell else s}")
+
+    # -- weapon slots -------------------------------------------------------
+    def weapon_slots(self) -> List[Dict]:
+        """The player's carried weapons, in slot order.
+
+        Slot 1 is the first entry, slot 2 the second, and so on: the same order
+        the loadout popup lists them in, so the number keys and what is on screen
+        can never disagree. One entry per distinct weapon id — a stack of three
+        daggers is one slot, not three.
+        """
+        character = getattr(self.game, "character", None)
+        if character is None:
+            return []
+        slots, seen = [], set()
+        for stack in getattr(character, "inventory", []) or []:
+            item_id = stack.get("id")
+            if not item_id or item_id in seen:
+                continue
+            category = stack.get("type") or stack.get("category")
+            if category is None:
+                definition = rpg_items.get(item_id)
+                category = definition.category if definition else None
+            if str(category).lower() != rpg_items.WEAPON:
+                continue
+            seen.add(item_id)
+            slots.append({
+                "id": item_id,
+                "name": stack.get("name") or item_id.replace("_", " ").title(),
+                "stack": stack,
+            })
+        return slots
+
+    def select_weapon_slot(self, number: int) -> bool:
+        """Equip the weapon in slot *number* (1-based). True if something changed.
+
+        Pressing the slot a weapon is already in puts it away, so the same key
+        both draws and sheathes — which is what the loadout popup's click does,
+        and means you can go unarmed without opening anything.
+        """
+        slots = self.weapon_slots()
+        index = int(number) - 1
+        if index < 0 or index >= len(slots):
+            self.notify(f"Nothing in weapon slot {int(number)}", 1.5)
+            return False
+        entry = slots[index]
+        character = self.game.character
+        if eq.equipped_id(character, rpg_items.SLOT_WEAPON) == entry["id"]:
+            eq.unequip(character, rpg_items.SLOT_WEAPON)
+            self.notify("Unarmed", 1.5)
+            return True
+        self.game.equip(entry["id"])
+        self.notify(f"{entry['name']} ({int(number)})", 1.5)
+        return True
 
     def use_health_potion(self):
         for pid in ("potion_heal", "potion_heal_minor"):

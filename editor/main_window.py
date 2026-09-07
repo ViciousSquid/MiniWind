@@ -14,7 +14,7 @@ from datetime import datetime
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QMessageBox, QFileDialog, QDialog, QWidget, QLabel, QVBoxLayout,
-    QGraphicsOpacityEffect, QInputDialog, QColorDialog, QProgressDialog, QAction, QToolBar, QDockWidget,
+    QGraphicsOpacityEffect, QInputDialog, QColorDialog, QProgressDialog, QAction, QAbstractButton, QToolBar, QDockWidget,
     QPushButton, QDialogButtonBox, QHBoxLayout
 )
 from PyQt5.QtWidgets import QShortcut
@@ -1864,6 +1864,7 @@ class MainWindow(QMainWindow):
             return
 
         self._store_and_switch_to_debug_console()
+        self._suspend_editor_shortcuts()
 
         player_start = None
         for thing in self.state.things:
@@ -2106,6 +2107,7 @@ class MainWindow(QMainWindow):
         pause_menu = getattr(self.view_3d, 'pause_menu', None)
         if pause_menu is not None:
             pause_menu.close()
+        self._restore_editor_shortcuts()
         self.standalone_play_session = False
         if hasattr(self.view_3d, 'play_mode') and self.view_3d.play_mode:
             self.view_3d.toggle_play_mode(None, None)
@@ -2130,6 +2132,59 @@ class MainWindow(QMainWindow):
 
         self.setFocus()
         self.update_play_button_color()
+
+    # =========================================================================
+    # EDITOR SHORTCUTS vs. THE GAME'S KEYBOARD
+    # =========================================================================
+
+    def _suspend_editor_shortcuts(self):
+        """Take the editor's plain-letter shortcuts off the keyboard for play mode.
+
+        A shortcut on a QAction or a toolbar button is a *window* shortcut: Qt
+        fires it before the focused widget ever sees the key press. So H (Hide
+        Brush), T (Asset Browser), X (clip tool) and Shift+S / Shift+B were
+        swallowing those keys everywhere in play mode — H never reached
+        MiniWind's heal binding, Shift+S ate walking backwards, and typing a
+        name with an H or a T in it in character creation silently dropped the
+        letter.
+
+        Only shortcuts that are a single printable key, alone or with Shift, are
+        suspended: those are exactly the ones that collide with gameplay and with
+        typing. Ctrl-, Alt- and function-key shortcuts are left alone, so Ctrl+S
+        still saves. The originals are put back by
+        :meth:`_restore_editor_shortcuts` on the way out.
+        """
+        if getattr(self, '_suspended_shortcuts', None):
+            return
+        blocking_modifiers = (int(Qt.ControlModifier) | int(Qt.AltModifier)
+                              | int(Qt.MetaModifier))
+        suspended = []
+        # Buttons carry shortcuts too (the tool strip's X / Shift+S / Shift+B),
+        # and they are window shortcuts exactly like an action's.
+        for owner in self.findChildren(QAction) + self.findChildren(QAbstractButton):
+            sequence = owner.shortcut()
+            if sequence.isEmpty():
+                continue
+            combo = int(sequence[0])
+            if combo & blocking_modifiers:
+                continue                      # Ctrl+S and friends are harmless
+            key = combo & ~int(Qt.KeyboardModifierMask)
+            # Printable ASCII only: letters, digits and punctuation are what a
+            # player types or walks with. Function and navigation keys are not.
+            if not (Qt.Key_Space <= key <= Qt.Key_AsciiTilde):
+                continue
+            suspended.append((owner, sequence))
+            owner.setShortcut(QKeySequence())
+        self._suspended_shortcuts = suspended
+
+    def _restore_editor_shortcuts(self):
+        """Give the editor its plain-letter shortcuts back after play mode."""
+        for owner, sequence in getattr(self, '_suspended_shortcuts', None) or []:
+            try:
+                owner.setShortcut(sequence)
+            except RuntimeError:
+                pass                          # the widget outlived its owner
+        self._suspended_shortcuts = []
 
     def _store_and_switch_to_debug_console(self):
         """Store current tab index and switch to Debug Console tab."""
