@@ -3873,7 +3873,13 @@ class LogicThread(threading.Thread):
                 write_state.player_angle = player_angle
                 write_state.player_pitch = player_pitch
         else:
-            write_state.editor_camera_pos = glm.vec3(self.editor_camera.pos)
+            # Editor mode: the free camera *is* the camera. Bind cam_pos here as
+            # well as on the play branches — everything downstream (the relevance
+            # region, and through it the brush and entity culls) measures from
+            # it, so leaving it to the play path alone left it unbound the moment
+            # the editor drew a frame.
+            cam_pos = glm.vec3(self.editor_camera.pos)
+            write_state.editor_camera_pos = glm.vec3(cam_pos)
             write_state.editor_camera_yaw = self.editor_camera.yaw
             write_state.editor_camera_pitch = self.editor_camera.pitch
             write_state.editor_camera_fov = self.editor_camera.fov

@@ -435,3 +435,48 @@ def test_an_index_with_no_focus_point_is_not_authoritative():
     lt.sim_lod_enabled = False
     lt._rebuild_world_index()
     assert not lt.world_index.authoritative
+
+
+# --- the render state must build from every camera the engine has ----------
+
+def test_the_editor_camera_builds_a_render_state():
+    """The regression: the relevance region is measured from the camera, and
+    `cam_pos` was only ever bound on the play-mode branches — so the first frame
+    the editor drew raised UnboundLocalError inside the logic thread."""
+    lt = _logic([_monster("a", 100, 0)], [_brush(0, 0), _brush(9000, 0)])
+    lt.play_mode = False
+    lt.editor_camera.pos = glm.vec3(0.0, 500.0, 0.0)
+    lt._prepare_render_state()
+    ws = lt.game_state.get_write_state()
+    assert ws.is_play_mode is False
+    assert ws.camera_relevance_box is not None
+    box = ws.camera_relevance_box
+    assert box[0] <= 0.0 <= box[2] and box[1] <= 0.0 <= box[3]
+    # The editor sees the whole scene: culling to the player's region is a
+    # play-mode behaviour, and an author must be able to see what they placed.
+    assert len(ws.visible_things) == 1
+    assert len(ws.all_brushes) == 2
+
+
+def test_play_mode_without_a_player_still_builds_a_render_state():
+    """Between entering play mode and the player spawning there is no player to
+    measure from; the editor camera stands in rather than the frame failing."""
+    lt = _logic([_monster("a", 100, 0)], [_brush(0, 0)])
+    lt.play_mode = True
+    lt.player = None
+    lt.editor_camera.pos = glm.vec3(0.0, 500.0, 0.0)
+    lt._prepare_render_state()
+    assert lt.game_state.get_write_state().camera_relevance_box is not None
+
+
+def test_a_cinematic_camera_defines_the_relevance_region():
+    """During a cinematic the camera is somewhere else entirely, and what the
+    viewer can see is what matters — so the region follows the camera, not the
+    player standing off-screen."""
+    lt = _logic([_monster("a", 0, 0)], [_brush(0, 0)])
+    lt.cinematic_state = {"cam_pos": [8000.0, 400.0, 0.0], "cam_angle": 0.0,
+                          "cam_pitch": -1.2, "fov": 90.0}
+    lt._prepare_render_state()
+    box = lt.game_state.get_write_state().camera_relevance_box
+    assert box[0] <= 8000.0 <= box[2], "the region follows the cinematic camera"
+    assert box[2] < 20000.0
