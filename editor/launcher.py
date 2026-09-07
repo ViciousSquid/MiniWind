@@ -349,17 +349,6 @@ class Launcher(QDialog):
         self.mode_help.setStyleSheet("color:#7d7f88;")
         body.addWidget(self.mode_help)
 
-        # Say plainly what these two do *not* touch. Play mode is presented in
-        # the editor's own window, so it would be a fair guess that setting a
-        # resolution here resizes the editor. It does not: the editor keeps its
-        # own size, position and layout, and gets them back on the way out.
-        self.scope_note = QLabel(
-            "Applies to the game only — the editor keeps its own window size "
-            "and layout.")
-        self.scope_note.setWordWrap(True)
-        self.scope_note.setStyleSheet("color:#61636b;")
-        body.addWidget(self.scope_note)
-
         self.app_section_label = QLabel("APPLICATION")
         self.app_section_label.setObjectName("section")
         body.addWidget(self.app_section_label)
@@ -463,7 +452,7 @@ class Launcher(QDialog):
         self.setFixedWidth(int(round(unit * _WIDTH_LINES)))
         small = self._small_font()
         for label in (self.section_label, self.app_section_label,
-                      self.mode_help, self.scope_note, self.high_dpi_note,
+                      self.mode_help, self.high_dpi_note,
                       self.version_label, self.project_link):
             label.setFont(small)
         size = self._button_size()

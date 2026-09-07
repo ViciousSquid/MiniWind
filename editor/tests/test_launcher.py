@@ -206,11 +206,10 @@ def test_escape_and_dismissal_mean_the_editor(ui):
 
 
 def test_the_ui_says_the_display_settings_are_the_games(ui):
-    """Play mode runs in the editor's own window, so the launcher has to be
-    explicit that a resolution set here does not resize the editor."""
+    """Play mode runs in the editor's own window, so the launcher has to make
+    clear that a resolution set here belongs to the game, not the editor."""
     assert "PLAY MODE" in ui.section_label.text().upper()
-    assert "editor" in ui.scope_note.text().lower()
-    for value, _label, help_text in lx.MODES:
+    for value, _label, _help in lx.MODES:
         ui.mode_combo.setCurrentIndex(ui.mode_combo.findData(value))
         assert "game" in ui.mode_help.text().lower()
 

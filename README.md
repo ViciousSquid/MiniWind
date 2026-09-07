@@ -112,8 +112,6 @@ After the splash, the **launcher** asks which half of MiniWind you came for:
          PLAY MODE DISPLAY
            Mode          Fullscreen ▾
            Resolution    1280 × 720 ▾      (Windowed only)
-           Applies to the game only — the editor keeps its own
-           window size and layout.
          APPLICATION
            ☑ Vertical sync
            ☑ High DPI scaling
