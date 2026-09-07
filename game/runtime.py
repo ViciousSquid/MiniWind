@@ -306,6 +306,9 @@ class MiniwindSession:
         self._arrest_guard = None
         self._arrest_state = ""
         self._arrest_notice_sent = False
+        #: Fights in progress, as (actor, who it is swinging at) pairs. Rebuilt
+        #: once per decision pass by _refresh_actor_cache.
+        self._fights = []
         #: Guards currently running the player down (see _start_arrest_pursuit).
         self._arrest_pursuers = []
         #: Active Wisp companion light, or None. See _spawn_wisp / _update_wisp.
@@ -2448,6 +2451,10 @@ class MiniwindSession:
             except (TypeError, ValueError):
                 defend_sight = DEFEND_SIGHT
             enemy = self._nearest_hostile(npc, defend_sight)
+            if enemy is None:
+                # Nothing his faction calls an enemy — but a fight happening in
+                # front of a guard is still his business, whoever is in it.
+                enemy = self._fight_to_break_up(npc, defend_sight)
             if enemy is not None:
                 # Give the core MonsterAI the exact intruder found by the
                 # settlement scan. This avoids waiting for a second perception
@@ -2779,9 +2786,18 @@ class MiniwindSession:
         return None
 
     def _refresh_actor_cache(self) -> None:
-        """Snapshot live and dead combat actors once per decision pass."""
+        """Snapshot live and dead combat actors once per decision pass.
+
+        Also indexes the fights currently going on. An actor swinging at another
+        actor carries ``_aggro_target`` — the engine sets it both when the AI
+        picks a target and when a struck actor rounds on whoever hit it — so the
+        fights in a settlement are already written down; this just reads them
+        into pairs. Done here, once, rather than per guard: with several guards
+        on duty a per-guard scan would multiply the same walk.
+        """
         actors = []
         dead = []
+        by_id = {}
         # PERF: walk only the actor buckets from the cached type index.
         buckets = self._type_buckets()
         for t in _chain(buckets.get("npc", ()), buckets.get("creature", ()),
@@ -2793,8 +2809,73 @@ class MiniwindSession:
                 dead.append(t)
             else:
                 actors.append(t)
+                by_id[id(t)] = t
+        fights = []
+        for t in actors:
+            tp = t.properties
+            # Parked actors are not run by the combat AI, so a mark left on one
+            # is a memory of a fight rather than a fight. Only live ones count.
+            if tp.get("triggered", False):
+                continue
+            target = by_id.get(tp.get("_aggro_target"))
+            if target is not None:
+                fights.append((t, target))
         self._actors = actors
         self._dead_actors = dead
+        self._fights = fights
+
+    def _fight_to_break_up(self, npc, radius: float):
+        """Whom a guard should take on to stop a fight near him, or None.
+
+        A guard only ever engaged actors his *own faction* counts as enemies, so
+        two NPCs could brawl in the street right in front of two guards and
+        neither would move — nothing in the fight was an enemy of the watch, so
+        as far as the guards were concerned nothing was happening. This is the
+        missing rule: a fight within a guard's sight is his business, whatever
+        the combatants' factions.
+
+        Who he grabs, in order: never one of the watch — guards do not wade in
+        against each other — then a stranger over one of his own, so a wolf or
+        an unaligned thug mauling a townsman is the one who gets it. Between two
+        of his own townsfolk neither is more guilty than the other as far as the
+        state here can tell (a struck actor and a deliberate attacker both carry
+        the same aggro mark), so he goes for whoever is nearer, which is what
+        wading into a brawl looks like anyway.
+
+        A fight the player is in is left alone: that belongs to the arrest flow,
+        which arrests rather than lynches.
+        """
+        fights = getattr(self, "_fights", None)
+        if not fights:
+            return None
+        my_faction = npc.properties.get("faction") or npc.properties.get("team")
+        player = self.player_actor
+        npos = npc.pos
+
+        def _dist2(actor):
+            dx = actor.pos[0] - npos[0]
+            dz = actor.pos[2] - npos[2]
+            return dx * dx + dz * dz
+
+        best, best_d = None, radius * radius
+        for first, second in fights:
+            if first is npc or second is npc:
+                continue                    # he is already in this one
+            if first is player or second is player:
+                continue                    # the player's fights are the arrest flow's
+            candidates = [a for a in (first, second)
+                          if not sim_crime.is_lawful(a.properties)]
+            if not candidates:
+                continue                    # two guards: already being handled
+            if len(candidates) > 1:
+                strangers = [a for a in candidates if not factions.is_friendly(
+                    my_faction, a.properties.get("faction") or a.properties.get("team"))]
+                candidates = strangers if len(strangers) == 1 else candidates
+            offender = min(candidates, key=_dist2)
+            d = _dist2(offender)
+            if d < best_d:
+                best, best_d = offender, d
+        return best
 
     def _nearest_hostile(self, npc, radius: float):
         my_faction = npc.properties.get("faction") or npc.properties.get("team")
