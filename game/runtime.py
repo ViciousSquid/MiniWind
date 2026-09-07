@@ -658,7 +658,11 @@ class MiniwindSession:
         # camera's view is in NEAR or ACTIVE, and both move every tick.
         hour_int = int(self.clock.hour)
         npcs = self.npcs()
+        # Tiers are fixed for the tick (the world index set them just before
+        # this call), so read each actor's once and share it with every pass
+        # below rather than asking again per pass per actor.
         tier_of = self._tier_of
+        npc_tiers = [tier_of(n) for n in npcs]
         self._decision_accum += delta
         decided = (self._decision_accum >= DECISION_INTERVAL
                    or hour_int != self._last_hour_int)
@@ -670,22 +674,23 @@ class MiniwindSession:
             phase = self._decision_phase
             self._refresh_actor_cache()
             for i, npc in enumerate(npcs):
-                tier = tier_of(npc)
+                tier = npc_tiers[i]
                 if tier >= TIER_DORMANT:
                     continue
                 if tier == TIER_DISTANT:
-                    # Distant world: schedule/state transitions only, then one
-                    # coarse step that covers the whole interval since the last
-                    # pass. Still collision-checked, so nobody walks into a wall
-                    # while off-screen — just twelve times less often.
-                    self._decide(npc)
+                    # Distant world: no perception, no combat reactions, no
+                    # reactive-simulation appraisal — only the transitions that
+                    # a clock or an event can cause. Then one coarse step that
+                    # covers the whole interval since the last pass, still
+                    # collision-checked so nobody walks into a wall off-screen.
+                    self._decide_distant(npc)
                     self._move(npc, coarse_delta)
                     continue
                 if tier == TIER_ACTIVE and (i & 1) != phase:
                     continue
                 self._decide(npc)
-        for npc in npcs:
-            if tier_of(npc) >= TIER_DISTANT:
+        for i, npc in enumerate(npcs):
+            if npc_tiers[i] >= TIER_DISTANT:
                 continue          # moved coarsely on the decision pass above
             self._move(npc, delta)
 
@@ -743,7 +748,7 @@ class MiniwindSession:
         self._update_wisp(delta)
 
         # carried torches (player + NPCs) float a warm light on their holder
-        self._update_torch_lights(delta)
+        self._update_torch_lights(delta, npcs, npc_tiers)
 
         # age transient UI
         self._age_lists(delta)
@@ -901,7 +906,7 @@ class MiniwindSession:
         tid = props.get("torch_item") or "torch"
         return rpg_items.get(tid) or rpg_items.get("torch")
 
-    def _update_torch_lights(self, delta: float) -> None:
+    def _update_torch_lights(self, delta: float, npcs=None, tiers=None) -> None:
         """Spawn / move / remove the dynamic lights carried by torch holders.
 
         Cheap and allocation-light: one pass builds the set of holders that
@@ -917,12 +922,15 @@ class MiniwindSession:
         pdef = self._player_torch_def()
         if pdef is not None and ppos is not None:
             desired["player"] = (ppos, pdef)
-        for npc in self.npcs():
+        if npcs is None:
+            npcs = self.npcs()
+            tiers = [self._tier_of(n) for n in npcs]
+        for i, npc in enumerate(npcs):
             # A torch is a dynamic light. One carried beyond the player's
             # vicinity illuminates nothing the camera can see, and each costs a
             # Light entity plus a renderer light slot, so distant holders simply
             # do not carry a lit one. It relights the moment they come near.
-            if self._tier_of(npc) > TIER_ACTIVE:
+            if tiers[i] > TIER_ACTIVE:
                 continue
             tdef = self._npc_torch_def(npc.properties, night)
             if tdef is not None:
@@ -2591,7 +2599,7 @@ class MiniwindSession:
             self._follow_player_dest(npc)
             return
 
-        entry = sched.evaluate(p.get("schedule", []), self.clock.hour)
+        entry = self._schedule_entry(npc)
         if entry is None:
             self._idle_or_wander(npc)
             return
@@ -2634,6 +2642,88 @@ class MiniwindSession:
             p.pop("_wander_dest", None)
         else:
             p.pop("_dest", None)
+
+    def _decide_distant(self, npc) -> None:
+        """The reduced decision path for an actor outside the player's vicinity.
+
+        What a distant townsperson still does is what the *clock* makes them do:
+        their schedule turns over, their needs advance with the hours, and they
+        walk to wherever that puts them. What they no longer do is look around —
+        no threat scan, no confidence calculation, no fight to break up, no
+        appraisal of what they know. None of that can produce anything the
+        player is in a position to observe, and all of it is per-actor work that
+        scales with the size of the settlement.
+
+        Deliberately *not* skipped: an arrest in progress (the flow owns those
+        actors wherever they are) and a patrol circuit (a guard who stopped
+        patrolling would be found standing still on arrival). Both are cheap.
+
+        The moment the player comes near, the actor is promoted to a live tier
+        and the full path resumes from whatever state this left them in — the
+        state is the same state, only reached more coarsely.
+        """
+        p = npc.properties
+
+        if p.get("_arrest_state"):
+            self._decide(npc)              # the arrest flow owns this one
+            return
+
+        if str(p.get("aggression")) == "hostile" and not p.get("triggered", False):
+            p["sched_state"] = sched.COMBAT
+            return
+
+        entry = self._schedule_entry(npc)
+        if entry is None:
+            # Nothing authored: leave them where they are rather than paying for
+            # a wander nobody can see.
+            p.pop("_dest", None)
+            return
+        state = entry.get("state", sched.IDLE)
+        loc_key = entry.get("location", "home")
+
+        if not self._is_combatant(npc):
+            self._advance_needs(npc, state)
+            new_state, reason = rpg_needs.apply(p, state, self.clock.hour)
+            if reason:
+                state = new_state
+                loc_key = "home"
+                p["_need_reason"] = reason
+            else:
+                p.pop("_need_reason", None)
+
+        if state in (sched.WORKING, sched.GOING_TO_WORK) and p.get("patrol_markers"):
+            if self._patrol(npc):
+                return
+        p["sched_state"] = state
+        dest = self._resolve_location(npc, loc_key)
+        if dest is not None:
+            p["_dest"] = list(dest)
+            p.pop("_wander_dest", None)
+        else:
+            # An idle actor with nowhere authored simply stands: the local
+            # wander exists to make the town look alive, and nobody is looking.
+            p.pop("_dest", None)
+
+    def _schedule_entry(self, npc):
+        """The NPC's schedule entry in effect, cached until it can change.
+
+        A schedule is a table of timestamps, so its answer only moves when the
+        clock crosses the next entry's hour — but it used to be re-derived (and
+        the table re-sorted) for every NPC on every decision pass. The entry and
+        the window it holds for are cached on the NPC and re-asked only when the
+        clock leaves that window, which is the difference between a schedule
+        that transitions on events and one that is continuously recalculated.
+        """
+        p = npc.properties
+        schedule = p.get("schedule") or ()
+        hour = self.clock.hour
+        cached = p.get("_sched_entry_cache")
+        if (cached is not None and cached[3] == len(schedule)
+                and sched.window_holds(hour, cached[1], cached[2])):
+            return cached[0]
+        entry, start, end = sched.evaluate_window(schedule, hour)
+        p["_sched_entry_cache"] = (entry, start, end, len(schedule))
+        return entry
 
     def _follow_player_dest(self, npc) -> None:
         """Set (or clear) a follow_player companion's destination so it keeps

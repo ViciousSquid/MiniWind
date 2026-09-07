@@ -628,8 +628,16 @@ class Renderer_F(BaseRenderer):
         if current_mode == RENDER_MODE_LIT and self.shadows_enabled:
             shadow_lights = [l for l in lights if _light_casts_shadows(l)]
             if shadow_lights:
-                shadow_brushes = config.get('all_brushes', brushes)
-                shadow_things = config.get('all_things', things)
+                # The caster set: everything within reach of a light that can
+                # reach the view. The logic thread narrows it from the same cell
+                # index the geometry cull uses; without one (editor preview) it
+                # falls back to the whole world, as it always did.
+                shadow_brushes = config.get('shadow_brushes')
+                if shadow_brushes is None:
+                    shadow_brushes = config.get('all_brushes', brushes)
+                shadow_things = config.get('shadow_things')
+                if shadow_things is None:
+                    shadow_things = config.get('all_things', things)
                 self.render_shadow_maps(shadow_lights, shadow_brushes, shadow_things, config, camera_pos)
 
         terrain = config.get('terrain', None)

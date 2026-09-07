@@ -16,6 +16,7 @@ from editor.debug_console import debug_log
 from engine import combat_loadout
 from engine.facing import face_heading
 from game.diceroll import DICE_TYPES
+from .constants import is_water_brush
 from .world_index import TIER_ACTIVE, TIER_DISTANT, TIER_DORMANT, TIER_NEAR
 from .monster_constants import (
     MONSTER_SIGHT_RANGE,

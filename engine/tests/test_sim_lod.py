@@ -92,6 +92,10 @@ def _logic(things=(), brushes=()):
     lt.set_camera_mode("Overhead")
     lt._build_entity_caches()
     lt._build_cull_cache()
+    # These tests are about the tiering path itself, so they opt in regardless
+    # of scene size. On a real settlement-sized map the engine skips it — see
+    # test_a_tiny_cast_is_simulated_whole_rather_than_classified.
+    lt.sim_lod_min_actors = 0
     return lt
 
 
@@ -275,3 +279,85 @@ def test_a_parked_entity_is_dormant_so_streaming_and_simulation_agree():
         assert lt.world_index.tier_of(far_actor) == TIER_DORMANT
     finally:
         lt.set_play_mode(False)
+
+
+# --- lights and the shadow pass -------------------------------------------
+
+def _light(x, z, radius=512.0, casts=False, name=None):
+    from editor.things import Light
+    l = Light()
+    l.pos = [float(x), 128.0, float(z)]
+    l.properties.update({"id": name or f"l{x}_{z}_{radius:.0f}",
+                         "radius": float(radius),
+                         "state": "on", "casts_shadows": casts})
+    return l
+
+
+def test_a_light_survives_exactly_as_far_as_it_reaches():
+    """Not a guess: a light contributes to the view iff its influence sphere
+    reaches it, so the test is its radius, not a fixed distance."""
+    near = _light(0, 0, radius=512.0)
+    reaching = _light(6000, 0, radius=8000.0)     # far away but very wide
+    tiny = _light(6000, 0, radius=64.0)           # far away and small
+    lt = _logic([near, reaching, tiny], [_brush(0, 0)])
+    ws = _render_things(lt)
+    ids = {t.properties["id"] for t in ws.visible_things if hasattr(t, "properties")}
+    assert near.properties["id"] in ids
+    assert reaching.properties["id"] in ids
+    assert tiny.properties["id"] not in ids
+
+
+def test_no_shadow_casting_light_means_no_caster_geometry_is_gathered():
+    lt = _logic([_light(0, 0, casts=False)],
+                [_brush(i * 600, 0) for i in range(600)])
+    ws = _render_things(lt)
+    assert ws.shadow_brushes == []
+
+
+def test_the_shadow_pass_gets_the_lights_reach_and_not_the_whole_world():
+    reach = 1024.0
+    lt = _logic([_light(0, 0, radius=reach, casts=True)],
+                [_brush(i * 600, 0) for i in range(600)])
+    ws = _render_things(lt)
+    assert ws.shadow_brushes, "a shadow caster needs geometry to cast from"
+    assert len(ws.shadow_brushes) < len(ws.all_brushes)
+    # Everything within the light's reach of the view must still be there —
+    # a missing caster is a missing shadow, which is a visible bug.
+    box = ws.camera_relevance_box
+    for b in ws.all_brushes:
+        x, z = b["pos"][0], b["pos"][2]
+        if (box[0] - reach <= x <= box[2] + reach
+                and box[1] - reach <= z <= box[3] + reach):
+            assert b in ws.shadow_brushes, f"caster at {x},{z} was dropped"
+
+
+def test_a_tiny_cast_is_simulated_whole_rather_than_classified():
+    """Relevance is not free. Below a measured crossover, sorting a handful of
+    actors into tiers costs more than simulating all of them — so the engine
+    does not, and every scalar path the gameplay layer had before is what runs.
+    MiniWind's authored settlement lives on this side of the line."""
+    from engine.logic_thread import SIM_LOD_MIN_ACTORS
+
+    actors = [_monster(f"m{i}", i * 10, 0) for i in range(3)]
+    far = _monster("far", TIER_ACTIVE_RADIUS * 8, 0)
+    lt = _logic(actors + [far], [_brush(0, 0)])
+    lt.sim_lod_min_actors = SIM_LOD_MIN_ACTORS      # the shipped policy
+    lt._rebuild_world_index()
+    assert lt.world_index.n == 0, "no index is built for a cast this small"
+    assert "_sim_tier" not in far.properties
+    lt.monster_ai.update(1.0 / 30.0)
+    assert id(far) in {id(t) for t in lt.monster_ai._active_buf}, \
+        "with no tiers, everything is simulated — the pre-LOD behaviour"
+
+
+def test_falling_below_the_crossover_clears_stale_tier_stamps():
+    """A stamp left over from a larger scene would silently stop an actor being
+    simulated, so switching to the whole-cast path must wipe them."""
+    a = _monster("a", 0, 0)
+    far = _monster("far", TIER_ACTIVE_RADIUS * 8, 0)
+    lt = _logic([a, far], [_brush(0, 0)])
+    lt._rebuild_world_index()
+    assert far.properties["_sim_tier"] == TIER_DISTANT
+    lt.sim_lod_min_actors = 100                     # scene is now "tiny"
+    lt._rebuild_world_index()
+    assert "_sim_tier" not in far.properties

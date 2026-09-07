@@ -370,6 +370,9 @@ class Monster(Thing):
     # subsequent frames don't re-stat the file.
     # Keyed tuple: (abs_path,) -> bool
     _custom_path_exists_cache = {}
+    #: custom sprite path -> whether it resolved. Keyed by the repo-relative
+    #: path the caller holds, so the hot path does no os.path.join at all.
+    _resolved_custom_cache = {}
     # Cache the project_root lookup once per class; it never changes at runtime.
     _cached_project_root = None
     # A head sprite's dead form is the *same head* with heads/dead.png overlaid
@@ -449,6 +452,21 @@ class Monster(Thing):
         return cached
 
     @classmethod
+    def invalidate_sprite_caches(cls):
+        """Drop every memoised sprite-path answer.
+
+        The resolution caches assume the sprite files on disk do not change
+        while the editor runs, which is what makes the render snapshot free of
+        filesystem work. Call this after adding, removing or replacing sprite
+        art at runtime. (The docstrings referred to this for a long time before
+        it existed — it does now, and it clears all three caches together so
+        they cannot get out of step with each other.)
+        """
+        cls._custom_path_exists_cache.clear()
+        cls._resolved_custom_cache.clear()
+        cls._default_path_cache.clear()
+
+    @classmethod
     def _get_default_paths(cls, mtype: str, variant: str):
         """Return (idle, dead, shoot) default sprite paths for this
         (monster_type, variant) pair. Filesystem stats happen only on the
@@ -493,13 +511,21 @@ class Monster(Thing):
         *default_path*.  Falls back silently — the caller guarantees the
         default path is the safest possible choice.
 
-        Uses the class-level existence cache so repeated calls don't re-stat.
+        Uses the class-level existence cache so repeated calls don't re-stat —
+        and now also skips rebuilding the absolute path, which is a string join
+        per actor per frame on the render-snapshot path.
         """
         if custom_path:
-            abs_custom = os.path.join(project_root, custom_path)
-            if Monster._path_exists_cached(abs_custom):
+            cache = Monster._resolved_custom_cache
+            resolved = cache.get(custom_path)
+            if resolved is None:
+                abs_custom = os.path.join(project_root, custom_path)
+                resolved = Monster._path_exists_cached(abs_custom)
+                cache[custom_path] = resolved
+                if not resolved:
+                    print(f"[Monster] Custom sprite not found, using default: {custom_path}")
+            if resolved:
                 return custom_path
-            print(f"[Monster] Custom sprite not found, using default: {custom_path}")
         return default_path
 
     @classmethod

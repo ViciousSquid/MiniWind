@@ -1565,6 +1565,12 @@ class QtGameView(QOpenGLWidget):
         # already applied to visible_brushes/visible_things. Its presence tells
         # the renderer the scene arrived culled, so it does not repeat the same
         # distance test; in the unthreaded editor path it stays None.
+        self._render_config["shadow_brushes"] = (
+            getattr(render_state, 'shadow_brushes', None)
+            if render_state is not None else None)
+        self._render_config["shadow_things"] = (
+            getattr(render_state, 'shadow_things', None)
+            if render_state is not None else None)
         self._render_config["camera_relevance_box"] = (
             getattr(render_state, 'camera_relevance_box', None)
             if render_state is not None else None)

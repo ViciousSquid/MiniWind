@@ -37,6 +37,12 @@ from .render_cull import (CAMERA_RENDER_CULL_DISTANCE,
 _FAR_PLANE_NDC = (glm.vec4(-1.0, -1.0, 1.0, 1.0), glm.vec4(1.0, -1.0, 1.0, 1.0),
                   glm.vec4(-1.0, 1.0, 1.0, 1.0), glm.vec4(1.0, 1.0, 1.0, 1.0))
 
+#: Below this many actors, classifying them into simulation tiers costs more
+#: than simulating all of them, so the world index is left empty and everything
+#: runs fully. MiniWind's authored settlement sits well under it; a crowd, a
+#: streamed world or a spawner-fed map goes over and starts paying by relevance.
+SIM_LOD_MIN_ACTORS = 32
+
 #: How far outside the camera's relevance box an actor's *centre* may sit and
 #: still be drawn. Generous enough for the widest billboard the game uses, so a
 #: sprite straddling the edge of the view never pops out.
@@ -251,6 +257,14 @@ class LogicThread(threading.Thread):
         self.sim_lod_enabled = True
         self.sim_near_radius = TIER_NEAR_RADIUS
         self.sim_active_radius = TIER_ACTIVE_RADIUS
+        #: Actor count below which relevance is not worth computing (see
+        #: SIM_LOD_MIN_ACTORS). Settable so a crowded map, a profiling run or a
+        #: test can move the crossover.
+        self.sim_lod_min_actors = SIM_LOD_MIN_ACTORS
+        #: Whether any actor currently carries a `_sim_tier` stamp, so dropping
+        #: below SIM_LOD_MIN_ACTORS clears them exactly once instead of every
+        #: tick (a stale stamp would wrongly skip simulation).
+        self._sim_lod_stamped = False
 
         self._cull_valid = False
         self._cull_n = 0
@@ -1671,6 +1685,21 @@ class LogicThread(threading.Thread):
         actors = getattr(self, '_monster_things', None)
         if actors is None:
             actors = []
+        if len(actors) < self.sim_lod_min_actors:
+            # Too few actors for relevance to be worth computing: simulating all
+            # of them costs less than sorting them into tiers. Measured, not
+            # assumed — at settlement scale (a dozen or two townsfolk) the index
+            # rebuild is a larger cost than everything it would save, while the
+            # scalar paths it replaces are short-list walks. So the index stays
+            # empty, every actor reads TIER_NEAR, and the gameplay layer takes
+            # the same scalar route it always did.
+            if self._sim_lod_stamped:
+                for a in actors:
+                    a.properties.pop('_sim_tier', None)
+                self._sim_lod_stamped = False
+            self.world_index.rebuild((), None)
+            return
+        self._sim_lod_stamped = True
         focus = None
         if self.sim_lod_enabled:
             cs = self.cinematic_state
@@ -3573,6 +3602,37 @@ class LogicThread(threading.Thread):
         # A brush spanning several cells appears once per cell it touches.
         return np.unique(rows)
 
+    def _shadow_casters(self, box, light_reach, all_brushes, visible_things):
+        """The brushes and model entities the shadow pass could possibly need.
+
+        A shadow-casting light survives the entity cull only if its influence
+        sphere reaches the camera's region, and a caster only matters within one
+        radius of that light — so everything that can cast a visible shadow lies
+        inside the region grown by twice the largest surviving light's reach.
+        The rows come from the same 512-unit cell index the geometry cull uses;
+        there is no second partition and no second distance calculation.
+
+        Falls back to the full lists when there is no usable index (the editor,
+        a cache miss), which is what the renderer always used to get.
+        """
+        if (not self.play_mode or not self.culling_enabled
+                or not self._cull_cells or self._cull_keep is None):
+            return all_brushes, visible_things
+        if light_reach <= 0.0:
+            # No shadow-casting light reaches the view, so the pass has nothing
+            # to gather geometry for. An empty list, not a fallback: the caller
+            # distinguishes "narrowed to nothing" from "never narrowed".
+            return [], []
+        grow = 2.0 * float(light_reach)
+        grown = (box[0] - grow, box[1] - grow, box[2] + grow, box[3] + grow)
+        rows = self._camera_candidate_rows(grown)
+        if rows is None:
+            return all_brushes, visible_things
+        rows = rows[self._cull_keep[rows]]
+        if rows.size == 0:
+            return [], visible_things
+        return self._cull_row_refs[rows].tolist(), visible_things
+
     def _all_things_list(self):
         """The full entity list handed to the render state, cached.
 
@@ -3928,8 +3988,9 @@ class LogicThread(threading.Thread):
         # shadows and portal discovery).
         visible_things = []
         _append = visible_things.append
-        cull_actors = self.play_mode and self.culling_enabled
-        if cull_actors:
+        cull_things = self.play_mode and self.culling_enabled
+        max_light_reach = 0.0
+        if cull_things:
             # The same box the geometry used, grown by the widest sprite an
             # actor can wear so a billboard whose centre is just outside the
             # view but whose edge is inside is never dropped.
@@ -3945,17 +4006,48 @@ class LogicThread(threading.Thread):
                 pos = [pos.x, pos.y, pos.z]
                 thing.pos = pos
             if isinstance(thing, MonsterThing):
-                if cull_actors:
+                if cull_things:
                     x = pos[0]
                     z = pos[2]
                     if x < bx0 or x > bx1 or z < bz0 or z > bz1:
                         continue
                 _append(thing.get_render_snapshot())
             else:
+                if cull_things:
+                    x = pos[0]
+                    z = pos[2]
+                    if Light is not None and isinstance(thing, Light):
+                        # A light reaches exactly as far as its radius, so that
+                        # is how much of the world outside the view can still be
+                        # lit by it. Exact, not a guess — and it is what stops a
+                        # thousand lamps on the far side of a large map being
+                        # considered (and shadow-mapped) every frame.
+                        r = thing.get_radius()
+                        if (x < bx0 - r or x > bx1 + r
+                                or z < bz0 - r or z > bz1 + r):
+                            continue
+                        # Only a shadow-caster's reach widens the caster set —
+                        # an ordinary lamp needs no geometry gathered for it.
+                        if r > max_light_reach and thing.properties.get('casts_shadows'):
+                            max_light_reach = r
+                    elif Portal is None or not isinstance(thing, Portal):
+                        # Portals are discovered from the full entity list, so
+                        # their own pass is unaffected; everything else here is
+                        # drawn as a sprite and cannot matter outside the view.
+                        if x < bx0 or x > bx1 or z < bz0 or z > bz1:
+                            continue
                 _append(thing)
 
         write_state.visible_things = visible_things
         write_state.all_things = self._all_things_list()
+        # The shadow pass casts from the lights that survived above, and a
+        # caster has to be within one light radius of one of them. Handing it
+        # the whole world instead meant a Python walk of every brush in the map,
+        # per shadow light, every frame — the single most expensive thing left
+        # in the renderer on a large map.
+        write_state.shadow_brushes, write_state.shadow_things = \
+            self._shadow_casters(relevance_box, max_light_reach,
+                                 all_brushes, visible_things)
         write_state.timestamp = time.perf_counter()
 
         # ── Player 2 render state ─────────────────────────────────────────────
