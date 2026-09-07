@@ -18,8 +18,12 @@ grid, save/load, UUID persistence, top-down camera, billboard rendering,
 lighting, collision and the team-aware Monster AI — and adds the RPG on top as an
 integrated `game/` layer, not a plugin.
 
-The generic Fio **plugin system remains** for optional plugins (BigWorld, Tidy);
-MiniWind simply no longer travels through it — it is built in and always on.
+The generic Fio **plugin system remains** for genuinely optional gameplay;
+MiniWind simply no longer travels through it — it is built in and always on. So
+is **world management**: spatial relevance, cell streaming and simulation LOD
+are core engine subsystems (`engine/world_index.py`, `engine/world_cells.py`,
+`engine/world_streaming.py`), because the renderer, the collision grid, the AI
+and the save system all have to agree about which part of the world is live.
 
 ## Author causality, not stories
 
@@ -258,17 +262,50 @@ game/                     the integrated MiniWind game layer (built-in, not a pl
 
 engine/                   generic Fio technology (renderer, terrain, monster AI, save/load…)
 editor/                   the Fio editor, presented as the MiniWind RPG Editor
-plugins/                  the generic plugin system + optional plugins (BigWorld) — unchanged
+plugins/                  the generic plugin system, for optional gameplay
 ```
+
+### World management is core, not a plugin
+
+Everything that decides *how much of the world is live* lives in `engine/`:
+
+```
+engine/cells.py             the 512-unit XZ grid — one definition, imported by
+                            the collision grid, the actor index, the renderer's
+                            region cull and the streamer
+engine/world_index.py       the actor index: contiguous NumPy position/team
+                            buffers rebuilt once per tick, vectorised radius
+                            queries, and a simulation-LOD tier per actor
+engine/world_cells.py       the static world partition: brushes/entities/lights
+                            by UUID and by cell, and which cells are active
+engine/world_streaming.py   applies that to a live session (+ the disk-streaming
+                            variant and the per-cell persistence registry)
+engine/render_cull.py       the camera's relevance region, derived from the live
+                            view volume and the world's height slab
+```
+
+The simulation tiers, in order of how much the player can observe:
+
+| Tier | Where | What runs |
+|---|---|---|
+| `TIER_NEAR` | player vicinity | everything: AI, perception, schedules, movement, combat, needs, animation |
+| `TIER_ACTIVE` | near world | decisions staggered across passes; still moves every tick, so nothing on screen stutters |
+| `TIER_DISTANT` | distant world | schedules and needs on the clock, one coarse collision-checked step per pass, no perception |
+| `TIER_DORMANT` | streamed out | nothing; the state persists and resumes when the region becomes relevant |
+
+A map opts into cell streaming by carrying a `BigWorldSettings` entity, and its
+activation radius sets the tier boundary too — so streaming and simulation can
+never disagree about how far out the world is live. A map without one keeps the
+whole world resident and behaves exactly as it always did.
 
 
 ## Tests
 
 ```bash
-python -m pytest game/tests -q            # MiniWind: 224 headless tests
-python -m pytest editor/tests game/tests engine/tests plugins/bigworld/tests -q
-# 339 with PyQt5 installed; 284 + 3 skipped without it (editor/tests needs Qt,
-# and skips cleanly — everything else stays headless).
+python -m pytest game/tests -q            # MiniWind: 294 headless tests
+python -m pytest editor/tests game/tests engine/tests -q
+# 508 passed, 5 skipped with PyQt5 installed. Without it the editor tests skip
+# cleanly — everything else stays headless.
 ```
 
 Covers the **reactive simulation** end to end (`game/tests/test_sim.py`) — that
@@ -288,4 +325,15 @@ consequences** (an NPC's death is recorded and survives save/load; a slain guard
 leaves the town "unprotected"), **authored NPC relationships** and dialogue that
 reflects a relative's death, speech-bubble cues, the editor authoring wiring
 (grouped schemas + creation wizards), and the world placeables (item pickup,
-quest trigger, creature spawn) — all headless, like the bigworld tests.
+quest trigger, creature spawn) — all headless, like the engine's own tests.
+
+The engine side covers **world management and relevance**
+(`engine/tests/test_world_index.py`, `test_sim_lod.py`, `test_render_cull.py`,
+`test_world_streaming*.py`): that every system addresses the same 512-unit
+cells, that radius queries agree with a brute-force scan on both the small and
+the binned path, that tier boundaries have hysteresis so a loiterer does not
+flap, that the camera's derived region is tight overhead yet never smaller than
+what is really visible, that only actors the camera can reach are snapshotted
+and only lights whose radius reaches the view survive, that a hidden brush still
+disappears on the very next frame despite the world list being cached, and that
+a streaming map parks its distant world and restores it exactly on play stop.

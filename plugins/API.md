@@ -601,12 +601,12 @@ def prop(name, type="string", label="", default=None,
 Terse, keyword-friendly constructor for a `PropertySpec`. Example:
 
 ```python
-api.register_properties("bigworldsettings", [
-    prop("enabled", "bool", "Streaming enabled", default=True,
-         help="Turn cell streaming on for this map."),
-    prop("activation_radius", "float", "Activation radius", default=2048.0,
+api.register_properties("beacontower", [
+    prop("enabled", "bool", "Beacon lit", default=True,
+         help="Whether this tower's beacon is burning."),
+    prop("signal_radius", "float", "Signal radius", default=2048.0,
          min=256.0, max=65536.0,
-         help="Cells within this distance of the player become active."),
+         help="How far the beacon can be seen from."),
 ])
 ```
 
@@ -812,10 +812,11 @@ def on_tick(self, logic, ctx):
   per-tick dispatch is cached and gated so a map whose active plugins don't tick
   pays almost nothing.
 - **Restore what you mutate.** If you move, hide or disable entities during play,
-  put them back in `on_play_stop` so the edited map is unchanged (see
-  `TidySession.stop` and `BigWorldSession.stop`).
+  put them back in `on_play_stop` so the edited map is unchanged (the engine's
+  own `WorldStreamingSession.stop` is the reference for doing this exactly).
 - **Never make an OpenGL call off the render thread.** If a change needs GL work,
-  defer it to a render frame (BigWorld defers its terrain chunk prune this way).
+  defer it to a render frame (the engine's world streaming defers its terrain
+  chunk prune this way).
 - **The player runtime is dependency-free.** No PyGLM, no PyQt in the runtime
   path — plugin entities fall back to `plugins/entitybase.py` when the editor
   package is absent, so the same plugin loads in the editor, the desktop player
@@ -829,5 +830,6 @@ def on_tick(self, logic, ctx):
 - [`plugins/api.py`](api.py) — the annotated source these docs mirror.
 - [`plugins/host.py`](host.py) — the `PluginHost` / `EventBus` source.
 - [`plugins/tidy/`](tidy/) — a complete worked gameplay plugin.
-- [`plugins/bigworld/README.md`](bigworld/README.md) — a runtime-scalability
-  plugin that uses the event bus, services and host wrapping.
+- [`engine/world_streaming.py`](../engine/world_streaming.py) — world streaming,
+  which used to be a plugin and is now a core engine subsystem (see
+  [`ARCHITECTURE.md`](../ARCHITECTURE.md) §7 for why).

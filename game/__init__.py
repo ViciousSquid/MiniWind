@@ -8,7 +8,7 @@ that host with Fio's editor and engine and applies the MiniWind RPG editor
 integration.
 
 The plugin *system* (:mod:`plugins`) remains generic Fio technology used by
-optional plugins such as BigWorld; MiniWind no longer travels through it.
+optional gameplay plugins; MiniWind no longer travels through it.
 """
 
 from __future__ import annotations

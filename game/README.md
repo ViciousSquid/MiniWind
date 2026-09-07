@@ -131,8 +131,10 @@ This branch turns Fio from a general-purpose FPS/level editor into a dedicated
 first-person, gun-based defaults are gone:
 
 * **MiniWind is the built-in game** — it is installed natively at startup (not a
-  plugin you switch on). The generic plugin system stays: **BigWorld remains an
-  optional Fio plugin**, disabled by default, demonstrating the plugin API.
+  plugin you switch on). The generic plugin system stays for optional gameplay;
+  world management (spatial relevance, cell streaming, simulation LOD) is a core
+  engine subsystem — see ARCHITECTURE.md §7 (it used to be the `bigworld`
+  plugin; a map still opts in by carrying a `BigWorldSettings` entity).
 * **No guns anywhere** — the gun weapon tables are emptied, the player's hitscan
   shooting path is inert, the gun/cigarette HUD art is deleted, and legacy
   monster attack sounds point at the fantasy melee/bow sounds. All combat is
@@ -168,4 +170,4 @@ python -m game.tests.test_miniwind   # systems + session (12 tests)
 # or:  python -m pytest game/tests -q
 ```
 
-All headless — no Qt/OpenGL — like the `plugins/bigworld` tests.
+All headless — no Qt/OpenGL — like the engine's own tests.

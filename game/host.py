@@ -13,7 +13,7 @@ never toggled on/off, carries no ``api_version``/``requires`` and never appears
 in the Plugins menu. It is a first-class part of the branch, installed by the
 application bootstrap (see :func:`game.install`) through the manager's generic
 built-in-game surface. The plugin *machinery* remains generic Fio technology
-that other plugins (e.g. BigWorld) still use — MiniWind simply no longer wears
+that optional gameplay plugins still use — MiniWind simply no longer wears
 it. Every rule and every stat lives in the engine-agnostic :mod:`game.rpg` core
 and the :mod:`game.ui` screens; this file is just the seam.
 """
