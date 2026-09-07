@@ -4,7 +4,7 @@ Unit tests for the Miniwind RPG plugin's pure-logic core.
 These exercise the systems that must be robust and deterministic — factions,
 game time, schedules, inventory, dialogue and the runtime session's schedule/
 combat/dialogue behaviour — without any Qt / OpenGL / editor dependency, so
-they run in a headless CI the same way ``plugins/bigworld/tests`` do.
+they run in a headless CI the same way the engine's own tests do.
 
 Run:  python -m pytest game/tests -q
 or:   python -m game.tests.test_miniwind   (self-runner below)

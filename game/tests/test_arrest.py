@@ -80,12 +80,17 @@ class _Session:
     _is_arrest_guard = MiniwindSession._is_arrest_guard
     _is_guard = staticmethod(MiniwindSession._is_guard)
     _marker_kind = staticmethod(MiniwindSession._marker_kind)
+    # Markers are grouped by kind once per scene change rather than rescanned
+    # (and re-lowercased) on every arrest tick; the stub takes the same route.
+    _markers_of_kind = MiniwindSession._markers_of_kind
     _find_named = MiniwindSession._find_named
     _nearest_of = MiniwindSession._nearest_of
     _dist2d = staticmethod(MiniwindSession._dist2d)
     _player_pos = MiniwindSession._player_pos
 
     def __init__(self, things=(), player_pos=(0.0, 0.0, 0.0), bounty=0):
+        self._marker_kinds = {}
+        self._marker_kinds_token = None
         self.logic = _Logic(things, player_pos)
         self.game = _Game(bounty)
         self._arrest_guard = None

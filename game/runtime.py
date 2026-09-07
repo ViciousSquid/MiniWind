@@ -23,6 +23,8 @@ from itertools import chain as _chain
 from typing import Dict, List, Optional
 
 from engine.facing import face_heading
+from engine.world_index import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
+                                TIER_DORMANT)
 from .rpg import factions
 from .rpg import schedule as sched
 from .rpg import combat as rpg_combat
@@ -309,6 +311,18 @@ class MiniwindSession:
         #: Fights in progress, as (actor, who it is swinging at) pairs. Rebuilt
         #: once per decision pass by _refresh_actor_cache.
         self._fights = []
+        #: The live watch, rebuilt alongside _actors. See _refresh_actor_cache.
+        self._guards: List = []
+        #: Markers grouped by their authored kind, rebuilt only when the scene
+        #: changes. See _markers_of_kind.
+        self._marker_kinds: Dict[str, list] = {}
+        self._marker_kinds_token = None
+        #: The engine's world index, resolved once per tick (see _world_index).
+        self._wi_cache = None
+        #: Alternates 0/1 each decision pass. TIER_ACTIVE NPCs decide on the
+        #: pass matching their row parity, so half of the near world re-plans
+        #: each pass and the cost is spread instead of spiking.
+        self._decision_phase = 0
         #: Guards currently running the player down (see _start_arrest_pursuit).
         self._arrest_pursuers = []
         #: Active Wisp companion light, or None. See _spawn_wisp / _update_wisp.
@@ -609,6 +623,11 @@ class MiniwindSession:
 
     # ================================================================= tick
     def tick(self, delta: float) -> None:
+        # The logic thread rebuilt the world index immediately before this call,
+        # so resolve it once here rather than through a getattr chain at every
+        # one of the tens of thousands of asks a settlement tick makes.
+        self._wi_cache = None
+        self._world_index()
         self.clock.advance(delta)
         self.game.tick(delta)
         if self._attack_cooldown > 0:
@@ -622,16 +641,61 @@ class MiniwindSession:
         # can approach, arrest, escort, or pursue the player immediately.
         self._update_arrest()
 
-        # decisions (low frequency) + movement (every tick)
+        # ---- decisions + movement, under simulation LOD --------------------
+        # The engine's world index (engine/world_index.py) has already sorted
+        # every actor into a tier by how near the player it is. What each tier
+        # costs per tick:
+        #
+        #   TIER_NEAR    full — decide every pass, move every tick
+        #   TIER_ACTIVE  decide every other pass (staggered by row so the work
+        #                spreads evenly), still move every tick so nothing the
+        #                player can see stutters
+        #   TIER_DISTANT no per-tick work at all — one coarse movement step per
+        #                decision pass, carrying the whole elapsed interval
+        #   TIER_DORMANT nothing; the streamer has parked it
+        #
+        # Observable behaviour is unchanged: everything inside the overhead
+        # camera's view is in NEAR or ACTIVE, and both move every tick.
         hour_int = int(self.clock.hour)
+        # The NPCs worth ticking at all: the engine's live actor set, which
+        # already excludes anything the streamer has parked. On a streamed world
+        # that is a handful of townsfolk rather than the whole population, and
+        # the difference never reaches any of the loops below.
+        npcs = self._live_npcs()
+        # Tiers are fixed for the tick (the world index set them just before
+        # this call), so read each actor's once and share it with every pass
+        # below rather than asking again per pass per actor.
+        tier_of = self._tier_of
+        npc_tiers = [tier_of(n) for n in npcs]
         self._decision_accum += delta
-        if self._decision_accum >= DECISION_INTERVAL or hour_int != self._last_hour_int:
+        decided = (self._decision_accum >= DECISION_INTERVAL
+                   or hour_int != self._last_hour_int)
+        if decided:
+            coarse_delta = max(self._decision_accum, delta)
             self._decision_accum = 0.0
             self._last_hour_int = hour_int
+            self._decision_phase ^= 1
+            phase = self._decision_phase
             self._refresh_actor_cache()
-            for npc in self.npcs():
+            for i, npc in enumerate(npcs):
+                tier = npc_tiers[i]
+                if tier >= TIER_DORMANT:
+                    continue
+                if tier == TIER_DISTANT:
+                    # Distant world: no perception, no combat reactions, no
+                    # reactive-simulation appraisal — only the transitions that
+                    # a clock or an event can cause. Then one coarse step that
+                    # covers the whole interval since the last pass, still
+                    # collision-checked so nobody walks into a wall off-screen.
+                    self._decide_distant(npc)
+                    self._move(npc, coarse_delta)
+                    continue
+                if tier == TIER_ACTIVE and (i & 1) != phase:
+                    continue
                 self._decide(npc)
-        for npc in self.npcs():
+        for i, npc in enumerate(npcs):
+            if npc_tiers[i] >= TIER_DISTANT:
+                continue          # moved coarsely on the decision pass above
             self._move(npc, delta)
 
         # Turn any NPC deaths (from player or engine combat) into persistent
@@ -662,10 +726,13 @@ class MiniwindSession:
         # Detect NPC/creature attacks by watching the engine's is_shooting flag.
         # When it flips from False -> True we start a 0.2 s stab animation.
         # PERF: iterate only the actor buckets (npc/creature/monster) from the
-        # cached type index instead of scanning + normalising the whole scene.
-        buckets = self._type_buckets()
-        for t in _chain(buckets.get("npc", ()), buckets.get("creature", ()),
-                        buckets.get("monster", ())):
+        # cached type index instead of scanning + normalising the whole scene —
+        # and only those the player could actually watch swing. An attack
+        # animation is a purely visual 0.2 s decay; running it for an actor
+        # outside the camera's reach changes nothing anyone sees.
+        for t in self._live_actors():
+            if tier_of(t) > TIER_ACTIVE:
+                continue
             tp = t.properties
             was = tp.get("_was_shooting", False)
             now = tp.get("is_shooting", False)
@@ -682,7 +749,7 @@ class MiniwindSession:
         self._update_wisp(delta)
 
         # carried torches (player + NPCs) float a warm light on their holder
-        self._update_torch_lights(delta)
+        self._update_torch_lights(delta, npcs, npc_tiers)
 
         # age transient UI
         self._age_lists(delta)
@@ -840,7 +907,7 @@ class MiniwindSession:
         tid = props.get("torch_item") or "torch"
         return rpg_items.get(tid) or rpg_items.get("torch")
 
-    def _update_torch_lights(self, delta: float) -> None:
+    def _update_torch_lights(self, delta: float, npcs=None, tiers=None) -> None:
         """Spawn / move / remove the dynamic lights carried by torch holders.
 
         Cheap and allocation-light: one pass builds the set of holders that
@@ -856,7 +923,16 @@ class MiniwindSession:
         pdef = self._player_torch_def()
         if pdef is not None and ppos is not None:
             desired["player"] = (ppos, pdef)
-        for npc in self.npcs():
+        if npcs is None:
+            npcs = self.npcs()
+            tiers = [self._tier_of(n) for n in npcs]
+        for i, npc in enumerate(npcs):
+            # A torch is a dynamic light. One carried beyond the player's
+            # vicinity illuminates nothing the camera can see, and each costs a
+            # Light entity plus a renderer light slot, so distant holders simply
+            # do not carry a lit one. It relights the moment they come near.
+            if tiers[i] > TIER_ACTIVE:
+                continue
             tdef = self._npc_torch_def(npc.properties, night)
             if tdef is not None:
                 desired[id(npc)] = (list(npc.pos), tdef)
@@ -1856,9 +1932,8 @@ class MiniwindSession:
         his post and stood there. Name is still accepted as a fallback for maps
         that authored a plain entity called "prison".
         """
-        for marker in self._things_of_type("marker"):
-            if self._marker_kind(marker) == "prison":
-                return marker
+        for marker in self._markers_of_kind("prison"):
+            return marker
         return self._find_named(PRISON_MARKER_NAME)
 
     def _prison_position(self):
@@ -2347,7 +2422,7 @@ class MiniwindSession:
         if intent.reaction == sim_appraisal.FLEE:
             p["sched_state"] = sched.FLEE
             p["_flee"] = True
-            p.pop("_rally", None)
+            self._set_rally(npc, False)
             p["_dest"] = self._refuge_point(npc, offender)
             return True
 
@@ -2373,7 +2448,7 @@ class MiniwindSession:
         p["triggered"] = False
         p["sched_state"] = sched.COMBAT
         p.pop("_flee", None)
-        p.pop("_rally", None)
+        self._set_rally(npc, False)
         if offender is self.player_actor:
             # The engine MonsterAI hunts the player when an actor is hostile.
             p["aggression"] = "hostile"
@@ -2389,7 +2464,7 @@ class MiniwindSession:
         enough — so a witness cut down on the way never testifies, and one who
         makes it does. That is the whole mechanism."""
         p = npc.properties
-        guard = self._nearest_of(npc, lambda t: self._is_guard(t))
+        guard = self._nearest_guard(npc)
         if guard is None:
             return False
         if self._dist2d(npc.pos, guard.pos) <= REPORT_ARRIVE_RADIUS:
@@ -2483,24 +2558,24 @@ class MiniwindSession:
                     p["triggered"] = False
                     p["awake"] = True
                     p["sched_state"] = sched.RALLY
-                    p["_rally"] = True
+                    self._set_rally(npc, True)
                     p.pop("_flee", None)
                     return
                 if conf >= _FLEE_THRESHOLD:
                     p["sched_state"] = sched.ALERT
-                    p.pop("_rally", None)
+                    self._set_rally(npc, False)
                     p.pop("_flee", None)
                     p.pop("_dest", None)
                     return
                 p["sched_state"] = sched.FLEE
                 p["_flee"] = True
-                p.pop("_rally", None)
+                self._set_rally(npc, False)
                 p["_dest"] = self._refuge_point(npc, threat)
                 return
             if p.get("_rally"):
                 p["triggered"] = True
                 p["awake"] = False
-                p.pop("_rally", None)
+                self._set_rally(npc, False)
             p.pop("_flee", None)
 
         # (c.7) REACTIVE SIMULATION: nothing physically urgent is happening —
@@ -2525,7 +2600,7 @@ class MiniwindSession:
             self._follow_player_dest(npc)
             return
 
-        entry = sched.evaluate(p.get("schedule", []), self.clock.hour)
+        entry = self._schedule_entry(npc)
         if entry is None:
             self._idle_or_wander(npc)
             return
@@ -2568,6 +2643,88 @@ class MiniwindSession:
             p.pop("_wander_dest", None)
         else:
             p.pop("_dest", None)
+
+    def _decide_distant(self, npc) -> None:
+        """The reduced decision path for an actor outside the player's vicinity.
+
+        What a distant townsperson still does is what the *clock* makes them do:
+        their schedule turns over, their needs advance with the hours, and they
+        walk to wherever that puts them. What they no longer do is look around —
+        no threat scan, no confidence calculation, no fight to break up, no
+        appraisal of what they know. None of that can produce anything the
+        player is in a position to observe, and all of it is per-actor work that
+        scales with the size of the settlement.
+
+        Deliberately *not* skipped: an arrest in progress (the flow owns those
+        actors wherever they are) and a patrol circuit (a guard who stopped
+        patrolling would be found standing still on arrival). Both are cheap.
+
+        The moment the player comes near, the actor is promoted to a live tier
+        and the full path resumes from whatever state this left them in — the
+        state is the same state, only reached more coarsely.
+        """
+        p = npc.properties
+
+        if p.get("_arrest_state"):
+            self._decide(npc)              # the arrest flow owns this one
+            return
+
+        if str(p.get("aggression")) == "hostile" and not p.get("triggered", False):
+            p["sched_state"] = sched.COMBAT
+            return
+
+        entry = self._schedule_entry(npc)
+        if entry is None:
+            # Nothing authored: leave them where they are rather than paying for
+            # a wander nobody can see.
+            p.pop("_dest", None)
+            return
+        state = entry.get("state", sched.IDLE)
+        loc_key = entry.get("location", "home")
+
+        if not self._is_combatant(npc):
+            self._advance_needs(npc, state)
+            new_state, reason = rpg_needs.apply(p, state, self.clock.hour)
+            if reason:
+                state = new_state
+                loc_key = "home"
+                p["_need_reason"] = reason
+            else:
+                p.pop("_need_reason", None)
+
+        if state in (sched.WORKING, sched.GOING_TO_WORK) and p.get("patrol_markers"):
+            if self._patrol(npc):
+                return
+        p["sched_state"] = state
+        dest = self._resolve_location(npc, loc_key)
+        if dest is not None:
+            p["_dest"] = list(dest)
+            p.pop("_wander_dest", None)
+        else:
+            # An idle actor with nowhere authored simply stands: the local
+            # wander exists to make the town look alive, and nobody is looking.
+            p.pop("_dest", None)
+
+    def _schedule_entry(self, npc):
+        """The NPC's schedule entry in effect, cached until it can change.
+
+        A schedule is a table of timestamps, so its answer only moves when the
+        clock crosses the next entry's hour — but it used to be re-derived (and
+        the table re-sorted) for every NPC on every decision pass. The entry and
+        the window it holds for are cached on the NPC and re-asked only when the
+        clock leaves that window, which is the difference between a schedule
+        that transitions on events and one that is continuously recalculated.
+        """
+        p = npc.properties
+        schedule = p.get("schedule") or ()
+        hour = self.clock.hour
+        cached = p.get("_sched_entry_cache")
+        if (cached is not None and cached[3] == len(schedule)
+                and sched.window_holds(hour, cached[1], cached[2])):
+            return cached[0]
+        entry, start, end = sched.evaluate_window(schedule, hour)
+        p["_sched_entry_cache"] = (entry, start, end, len(schedule))
+        return entry
 
     def _follow_player_dest(self, npc) -> None:
         """Set (or clear) a follow_player companion's destination so it keeps
@@ -2703,10 +2860,10 @@ class MiniwindSession:
         candidates: List[List[float]] = []
         if isinstance(home, (list, tuple)) and len(home) == 3:
             candidates.append([home[0], npc.pos[1], home[2]])
-        guard = self._nearest_of(npc, lambda t: self._is_guard(t))
+        guard = self._nearest_guard(npc)
         if guard is not None:
             candidates.append([guard.pos[0], npc.pos[1], guard.pos[2]])
-        post = self._nearest_of(npc, lambda t: self._marker_kind(t) == "guardpost")
+        post = self._nearest_in(self._markers_of_kind("guardpost"), npc)
         if post is not None:
             candidates.append([post.pos[0], npc.pos[1], post.pos[2]])
 
@@ -2740,8 +2897,52 @@ class MiniwindSession:
             return ""
         return str(p.get("marker_kind", "")).lower()
 
+    def _markers_of_kind(self, kind: str) -> list:
+        """Markers with the given authored ``marker_kind``, grouped and cached.
+
+        Markers are static scenery: their kinds only change when the scene does.
+        Grouping them once turns "where is the nearest guard post" from a walk
+        of every entity in the world — re-normalising each one's type string —
+        into a lookup plus a short list, which matters because a panicking
+        townsperson asks it every decision pass.
+        """
+        markers = self._things_of_type("marker")
+        token = (id(markers), len(markers))
+        if token != self._marker_kinds_token:
+            groups: Dict[str, list] = {}
+            for m in markers:
+                k = str(m.properties.get("marker_kind", "")).lower()
+                groups.setdefault(k, []).append(m)
+            self._marker_kinds = groups
+            self._marker_kinds_token = token
+        return self._marker_kinds.get(kind, ())
+
+    @staticmethod
+    def _nearest_in(pool, npc):
+        """Nearest thing in *pool* (2D XZ), excluding *npc* itself."""
+        best, best_d = None, float("inf")
+        npos = npc.pos
+        for t in pool:
+            if t is npc:
+                continue
+            dx = t.pos[0] - npos[0]
+            dz = t.pos[2] - npos[2]
+            d = dx * dx + dz * dz
+            if d < best_d:
+                best, best_d = t, d
+        return best
+
+    def _nearest_guard(self, npc):
+        """The nearest member of the watch, from the decision pass's snapshot."""
+        return self._nearest_in(self._guards, npc)
+
     def _nearest_of(self, npc, predicate):
-        """Nearest live thing (2D) satisfying *predicate*, excluding *npc*."""
+        """Nearest live thing (2D) satisfying *predicate*, excluding *npc*.
+
+        The general form, kept for callers with a one-off predicate. The two
+        that ran every decision pass — "nearest guard" and "nearest guard post"
+        — have their own indexed versions above and no longer come through here.
+        """
         best, best_d = None, float("inf")
         npos = npc.pos
         for t in getattr(self.logic, "things", None) or []:
@@ -2823,6 +3024,10 @@ class MiniwindSession:
         self._actors = actors
         self._dead_actors = dead
         self._fights = fights
+        # The watch, indexed once. A frightened villager looks for the nearest
+        # guard to shelter behind and a witness looks for one to report to, and
+        # both used to walk every entity in the scene to find one.
+        self._guards = [t for t in actors if self._is_guard(t)]
 
     def _fight_to_break_up(self, npc, radius: float):
         """Whom a guard should take on to stop a fight near him, or None.
@@ -2863,6 +3068,13 @@ class MiniwindSession:
                 continue                    # he is already in this one
             if first is player or second is player:
                 continue                    # the player's fights are the arrest flow's
+            # Distance first: a brawl across the settlement is not this guard's
+            # business, and finding that out with two subtractions is far
+            # cheaper than reasoning about who is lawful and whose faction is
+            # whose. With several guards on duty that reasoning was being redone
+            # for every fight in the world, per guard, every decision pass.
+            if _dist2(first) > best_d and _dist2(second) > best_d:
+                continue
             candidates = [a for a in (first, second)
                           if not sim_crime.is_lawful(a.properties)]
             if not candidates:
@@ -2877,10 +3089,157 @@ class MiniwindSession:
                 best, best_d = offender, d
         return best
 
+    # ------------------------------------------------- spatial relevance
+    @staticmethod
+    def _tier_of(actor) -> int:
+        """This actor's simulation tier.
+
+        Read straight off the actor, where the world index stamped it during
+        this tick's rebuild: a single dict get, rather than hashing ``id(actor)``
+        into the index and indexing a NumPy array — which matters because the
+        tick asks this once or twice for every actor in the world.
+
+        An actor the index has not classified (a headless unit test, the very
+        first tick, LOD switched off) reads TIER_NEAR — fully simulated, the
+        pre-LOD behaviour — so nothing ever silently loses simulation.
+        """
+        return actor.properties.get("_sim_tier", TIER_NEAR)
+
+    def _world_index(self):
+        """The engine's authoritative actor index, or None.
+
+        There is deliberately no fallback index here: relevance is a *core*
+        engine service (``engine/world_index.py``), built once per play tick by
+        the logic thread. When it is absent — a headless unit test poking the
+        session with a stub logic object, or the very first tick before the
+        index has been built — the scalar scans below run exactly as they did
+        before, so behaviour is identical either way.
+
+        An index that exists but is not *authoritative* — no focus point, or a
+        cast too small for the engine to bother classifying — is the same as no
+        index. An authoritative index that happens to be empty is the opposite
+        answer, and means nothing in the world is currently relevant.
+
+        Resolved once per tick and cached on the session: this is asked tens of
+        thousands of times a second, and a ``getattr`` chain per ask is real
+        money at settlement scale.
+        """
+        wi = self._wi_cache
+        if wi is not None:
+            return wi
+        wi = getattr(getattr(self, "logic", None), "world_index", None)
+        if wi is None or not getattr(wi, "authoritative", False):
+            return None
+        self._wi_cache = wi
+        return wi
+
+    def _rel_mask(self, wi, my_faction, want):
+        """Per-row boolean: live actors whose team is *want* to *my_faction*.
+
+        The faction predicate runs once per distinct team name in the world
+        (a handful), never once per candidate pair — that collapse is why the
+        settlement AI stopped spending 40% of its budget in
+        :func:`game.rpg.factions.relationship`.
+        """
+        import numpy as _np
+        key = ("rel", want, my_faction)
+
+        def _build():
+            pred = factions.is_hostile if want == "hostile" else factions.is_friendly
+            tbl = wi.team_relation_table(
+                lambda name: 1 if pred(my_faction, name) else 0)
+            n = wi.n
+            return wi.alive[:n] & (tbl[wi.team_ids[:n]] == 1)
+        return wi.derived(key, _build)
+
+    def _combatant_mask(self, wi):
+        """Per-row boolean: this actor can and will fight. Game policy
+        (:func:`game.sim.appraisal.is_combatant`) evaluated once per actor per
+        tick and shared by every query, instead of per candidate per NPC."""
+        import numpy as _np
+
+        def _build():
+            return _np.fromiter(
+                (sim_appraisal.is_combatant(a.properties) for a in wi.actors),
+                dtype=bool, count=wi.n)
+        return wi.derived("combatant", _build)
+
+    def _live_actors(self):
+        """Every actor the engine still considers part of the live world.
+
+        The world index is built from exactly that set, so its rows *are* the
+        answer — no second walk of the scene, and nothing the streamer has
+        parked is ever visited. With no index (a small world, or a headless
+        test) it falls back to the cached type buckets, which is what the code
+        did before tiers existed.
+        """
+        wi = self._world_index()
+        if wi is not None:
+            return wi.actors
+        buckets = self._type_buckets()
+        return list(_chain(buckets.get("npc", ()), buckets.get("creature", ()),
+                           buckets.get("monster", ())))
+
+    def _live_npcs(self) -> List:
+        """The live actors that are NPCs and not dead — what the tick drives."""
+        wi = self._world_index()
+        if wi is None:
+            return self.npcs()
+        out = []
+        for t in wi.actors:
+            p = t.properties
+            if p.get("dead"):
+                continue
+            if str(p.get("type", "")).replace("_", "").lower() != "npc":
+                continue
+            out.append(t)
+        return out
+
+    def _rally_mask(self, wi):
+        """Per-row boolean: this actor has rallied. Built once per tick, so the
+        social-contagion term costs one array read per candidate rather than a
+        dict probe per candidate per frightened villager."""
+        import numpy as _np
+
+        def _build():
+            return _np.fromiter(
+                (bool(a.properties.get("_rally")) for a in wi.actors),
+                dtype=bool, count=wi.n)
+        return wi.derived("rally", _build)
+
+    def _set_rally(self, npc, rallied: bool) -> None:
+        """Set/clear an NPC's rallied flag and keep the cached mask in step.
+
+        Rally is socially contagious *within* a decision pass — a villager who
+        stands his ground emboldens the next one the loop reaches — so the mask
+        cannot simply be frozen at the start of the tick. Patching the one row
+        keeps that immediacy at O(1) instead of rebuilding the array.
+        """
+        p = npc.properties
+        if rallied:
+            p["_rally"] = True
+        else:
+            p.pop("_rally", None)
+        wi = self._world_index()
+        if wi is None:
+            return
+        mask = wi._derived.get("rally")
+        if mask is None:
+            return
+        row = wi.row_of(npc)
+        if row >= 0:
+            mask[row] = rallied
+
     def _nearest_hostile(self, npc, radius: float):
         my_faction = npc.properties.get("faction") or npc.properties.get("team")
-        best, best_d = None, radius * radius
         npos = npc.pos
+        wi = self._world_index()
+        if wi is not None:
+            row = wi.nearest(npos[0], npos[2], radius,
+                             mask=self._rel_mask(wi, my_faction, "hostile"),
+                             exclude_row=wi.row_of(npc))
+            return wi.actors[row] if row >= 0 else None
+        best, best_d = None, radius * radius
         # Prefer the cached actor list; fall back to a full scan if a caller runs
         # outside the decision pass (e.g. a unit test poking a single tick).
         pool = self._actors or (getattr(self.logic, "things", None) or [])
@@ -2904,8 +3263,14 @@ class MiniwindSession:
         """Find the nearest living friendly combatant (e.g. a guard) that could
         protect this NPC.  Returns None if no protector is within *radius*."""
         my_faction = npc.properties.get("faction") or npc.properties.get("team")
-        best, best_d = None, radius * radius
         npos = npc.pos
+        wi = self._world_index()
+        if wi is not None:
+            mask = self._rel_mask(wi, my_faction, "friendly") & self._combatant_mask(wi)
+            row = wi.nearest(npos[0], npos[2], radius, mask=mask,
+                             exclude_row=wi.row_of(npc))
+            return wi.actors[row] if row >= 0 else None
+        best, best_d = None, radius * radius
         pool = self._actors or (getattr(self.logic, "things", None) or [])
         for t in pool:
             if t is npc:
@@ -2936,39 +3301,65 @@ class MiniwindSession:
         dist = self._dist2d(npc.pos, threat.pos)
         distance_factor = min(dist / FLEE_SIGHT, 1.0) * 0.25
 
-        n_guards = 0
-        n_rallied = 0
-        n_friendly = 0
-        n_hostile = 0
-        pool = self._actors or []
-        for t in pool:
-            if t is npc:
-                continue
-            tp = t.properties
-            dx = t.pos[0] - nx
-            dz = t.pos[2] - nz
-            if dx * dx + dz * dz > sight2:
-                continue
-            other = tp.get("team") or tp.get("faction")
-            if factions.is_hostile(my_faction, other):
-                n_hostile += 1
-            elif factions.is_friendly(my_faction, other):
-                n_friendly += 1
-                if self._is_combatant(t):
-                    n_guards += 1
-                if tp.get("_rally"):
-                    n_rallied += 1
+        wi = self._world_index()
+        if wi is not None:
+            # One radius query over the shared index, then five vectorised
+            # tallies over the candidate rows — instead of a full Python walk
+            # of every actor in the world per frightened villager.
+            import numpy as _np
+            rows = wi.rows_near(nx, nz, FLEE_SIGHT)
+            self_row = wi.row_of(npc)
+            if self_row >= 0 and rows.size:
+                rows = rows[rows != self_row]
+            hostile = self._rel_mask(wi, my_faction, "hostile")[rows]
+            friendly = self._rel_mask(wi, my_faction, "friendly")[rows]
+            n_hostile = int(_np.count_nonzero(hostile))
+            n_friendly = int(_np.count_nonzero(friendly))
+            n_guards = int(_np.count_nonzero(friendly & self._combatant_mask(wi)[rows]))
+            n_rallied = int(_np.count_nonzero(friendly & self._rally_mask(wi)[rows]))
+            # Casualties are corpses of his own side in sight — `alive` excludes
+            # them, so they need the dead mask and their own friendliness test.
+            dead_rows = rows[wi.dead[rows]]
+            if dead_rows.size:
+                tbl = wi.team_relation_table(
+                    lambda name: 1 if factions.is_friendly(my_faction, name) else 0)
+                n_casualties = int(_np.count_nonzero(tbl[wi.team_ids[dead_rows]] == 1))
+            else:
+                n_casualties = 0
+        else:
+            n_guards = 0
+            n_rallied = 0
+            n_friendly = 0
+            n_hostile = 0
+            pool = self._actors or []
+            for t in pool:
+                if t is npc:
+                    continue
+                tp = t.properties
+                dx = t.pos[0] - nx
+                dz = t.pos[2] - nz
+                if dx * dx + dz * dz > sight2:
+                    continue
+                other = tp.get("team") or tp.get("faction")
+                if factions.is_hostile(my_faction, other):
+                    n_hostile += 1
+                elif factions.is_friendly(my_faction, other):
+                    n_friendly += 1
+                    if self._is_combatant(t):
+                        n_guards += 1
+                    if tp.get("_rally"):
+                        n_rallied += 1
 
-        n_casualties = 0
-        for t in self._dead_actors:
-            tp = t.properties
-            other = tp.get("team") or tp.get("faction")
-            if not factions.is_friendly(my_faction, other):
-                continue
-            dx = t.pos[0] - nx
-            dz = t.pos[2] - nz
-            if dx * dx + dz * dz <= sight2:
-                n_casualties += 1
+            n_casualties = 0
+            for t in self._dead_actors:
+                tp = t.properties
+                other = tp.get("team") or tp.get("faction")
+                if not factions.is_friendly(my_faction, other):
+                    continue
+                dx = t.pos[0] - nx
+                dz = t.pos[2] - nz
+                if dx * dx + dz * dz <= sight2:
+                    n_casualties += 1
 
         # Group bonus is based on total nearby friendlies only. Rallied NPCs
         # are already counted in n_friendly, so adding n_rallied here would
@@ -3600,7 +3991,7 @@ class MiniwindSession:
             p["awake"] = True
             p["sched_state"] = sched.COMBAT
             p.pop("_flee", None)
-            p.pop("_rally", None)
+            self._set_rally(npc, False)
 
     def _on_creature_killed(self, target):
         self.add_floater("SLAIN", kind="kill")

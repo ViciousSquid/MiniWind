@@ -1561,6 +1561,19 @@ class QtGameView(QOpenGLWidget):
         self._render_config["show_sprites_in_play_mode"] = self.show_sprites_in_play_mode
         self._render_config["grid_visible"] = getattr(self, 'grid_visible', True) and not self.play_mode
         self._render_config["terrain"] = getattr(self.editor, 'terrain', None)
+        # The camera's relevance region, computed once on the logic thread and
+        # already applied to visible_brushes/visible_things. Its presence tells
+        # the renderer the scene arrived culled, so it does not repeat the same
+        # distance test; in the unthreaded editor path it stays None.
+        self._render_config["shadow_brushes"] = (
+            getattr(render_state, 'shadow_brushes', None)
+            if render_state is not None else None)
+        self._render_config["shadow_things"] = (
+            getattr(render_state, 'shadow_things', None)
+            if render_state is not None else None)
+        self._render_config["camera_relevance_box"] = (
+            getattr(render_state, 'camera_relevance_box', None)
+            if render_state is not None else None)
         if render_state and hasattr(render_state, 'all_brushes'):
             self._render_config["all_brushes"] = render_state.all_brushes
         else:
@@ -1816,6 +1829,19 @@ class QtGameView(QOpenGLWidget):
             total_text_h = ht + hb + spacing
             box_w = max(self._face_mode_top_width, self._face_mode_bot_width) + (padding_x * 2)
             box_h = total_text_h + (padding_y * 2)
+
+        # World-streaming debug: the stats panel + active-cell minimap, drawn
+        # straight from the live session the engine owns. Only when the map's
+        # settings entity asked for it, and never at the cost of a frame.
+        _stream = getattr(self.logic_thread, 'streaming', None) \
+            if getattr(self, 'logic_thread', None) is not None else None
+        if (self.play_mode and _stream is not None
+                and getattr(_stream, 'show_cell_debug', False)):
+            try:
+                from engine.streaming_debug import paint_streaming_debug
+                paint_streaming_debug(painter, _stream, self.width(), self.height())
+            except Exception:
+                pass          # a debug draw must never take down the frame
 
         # 2D overlay hook: plugins can draw HUD/graphics with the live QPainter
         # (the last thing before the painter closes for the frame).
@@ -2312,6 +2338,15 @@ class QtGameView(QOpenGLWidget):
         def _state_hash():
             parts = []
             for t in things:
+                if isinstance(t, dict):
+                    # A monster render snapshot. It resolves its own texture in
+                    # draw_sprites from the fully-resolved `sprite_path` it
+                    # carries, so it contributes nothing to the instance-texture
+                    # map. Hashing it was worse than pointless: the dict is
+                    # rebuilt every frame, so its id() changed every frame, the
+                    # hash never matched and play mode rebuilt the whole map on
+                    # every single frame.
+                    continue
                 if isinstance(t, Monster):
                     parts.append((id(t), t.properties.get('dead', False), t.properties.get('is_shooting', False)))
                 elif isinstance(t, LogicGate):
@@ -2332,6 +2367,8 @@ class QtGameView(QOpenGLWidget):
         self._instance_tex_hash = h
         instance_textures = {}
         for thing in things:
+            if isinstance(thing, dict):
+                continue          # snapshot: textured from its own sprite_path
             if isinstance(thing, Monster):
                 mtype = thing.properties.get('monster_type', 'human')
                 is_dead = thing.properties.get('dead', False)

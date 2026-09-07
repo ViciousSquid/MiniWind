@@ -76,6 +76,57 @@ def schedule_for(role: str) -> List[Dict]:
     return [dict(e) for e in ROLE_SCHEDULES.get(str(role or "").strip().lower(), [])]
 
 
+#: Sorted-entry cache, keyed by ``(id(schedule), len(schedule))`` — the same
+#: cheap identity token the rest of MiniWind uses for "has this list changed?".
+#: A schedule is authored data that lives on an entity for the session, so it is
+#: sorted once instead of once per NPC per decision pass.
+_SORTED_CACHE: Dict[tuple, tuple] = {}
+
+
+def _sorted_entries(schedule: List[Dict]) -> tuple:
+    key = (id(schedule), len(schedule))
+    got = _SORTED_CACHE.get(key)
+    if got is None:
+        got = tuple(sorted(schedule, key=lambda e: float(e.get("hour", 0))))
+        if len(_SORTED_CACHE) > 512:
+            _SORTED_CACHE.clear()      # bounded: this is a cache, not a registry
+        _SORTED_CACHE[key] = got
+    return got
+
+
+def evaluate_window(schedule: List[Dict], game_hour: float):
+    """The entry in effect at *game_hour*, and the window it holds for.
+
+    Returns ``(entry, start_hour, end_hour)`` — or ``(None, 0.0, 24.0)`` for an
+    empty schedule. ``end_hour`` is when the *next* entry takes over, wrapping
+    past midnight, so a caller can cache the answer and not ask again until the
+    clock actually crosses it. That is what turns schedules from something
+    recalculated every decision pass into something that changes on a timestamp.
+    """
+    if not schedule:
+        return None, 0.0, 24.0
+    entries = _sorted_entries(schedule)
+    n = len(entries)
+    active_i = n - 1        # wrap: the overnight entry holds until the morning
+    for i, entry in enumerate(entries):
+        if float(entry.get("hour", 0)) <= game_hour:
+            active_i = i
+        else:
+            break
+    start = float(entries[active_i].get("hour", 0))
+    end = float(entries[(active_i + 1) % n].get("hour", 0))
+    return entries[active_i], start, end
+
+
+def window_holds(game_hour: float, start: float, end: float) -> bool:
+    """Whether *game_hour* still falls inside ``[start, end)``, wrapping at 24."""
+    if start == end:
+        return True                     # a single-entry schedule holds all day
+    if start < end:
+        return start <= game_hour < end
+    return game_hour >= start or game_hour < end   # the window crosses midnight
+
+
 def evaluate(schedule: List[Dict], game_hour: float) -> Optional[Dict]:
     """Return the schedule entry in effect at *game_hour*, or None if empty.
 
@@ -83,13 +134,4 @@ def evaluate(schedule: List[Dict], game_hour: float) -> Optional[Dict]:
     current hour; before the first entry of the day it wraps to the *last*
     entry (i.e. the overnight activity carries over past midnight).
     """
-    if not schedule:
-        return None
-    entries = sorted(schedule, key=lambda e: float(e.get("hour", 0)))
-    active = entries[-1]  # wrap: overnight entry until the first morning entry
-    for entry in entries:
-        if float(entry.get("hour", 0)) <= game_hour:
-            active = entry
-        else:
-            break
-    return active
+    return evaluate_window(schedule, game_hour)[0]

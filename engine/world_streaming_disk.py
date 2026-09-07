@@ -1,7 +1,7 @@
 """
 Disk-streaming milestone for Big World: cells that are actually *freed*.
 
-The in-RAM milestone (:mod:`plugins.bigworld.runtime`) keeps every object
+The in-RAM session (:mod:`engine.world_streaming`) keeps every object
 resident and only toggles ``hidden``/``disabled`` flags as cells stream in and
 out — nothing is ever freed, so an unloaded cell's changes are trivially still
 in memory. This module is the next step: a streaming session that **removes an
@@ -40,11 +40,11 @@ import os
 from collections import Counter
 from typing import Dict, List, Optional, Set, Tuple
 
-from .cell import (CELL_SIZE, CellCoord, cell_distance_sq, cell_of_point,
+from .cells import (CELL_SIZE, CellCoord, cell_distance_sq, cell_of_point,
                    cells_for_aabb)
-from .manager import (DEFAULT_ACTIVATION_RADIUS, DEFAULT_DEACTIVATION_RADIUS,
+from .world_cells import (DEFAULT_ACTIVATION_RADIUS, DEFAULT_DEACTIVATION_RADIUS,
                       DEFAULT_PERSISTENT_TYPES, _normalise_type)
-from .persistence import cell_key_for_pos, normalize_streaming_state
+from .world_persistence import cell_key_for_pos, normalize_streaming_state
 
 _BRUSH = "brush"
 _THING = "thing"
@@ -256,7 +256,7 @@ class _LoadedCell:
 class DiskStreamingSession:
     """Streams cells in/out of the live scene, freeing unloaded cells' objects.
 
-    Method names line up with :class:`~plugins.bigworld.runtime.BigWorldSession`
+    Method names line up with :class:`~engine.world_streaming.WorldStreamingSession`
     (``streaming``, ``commit_all``, ``serialize_registry``, ``base_identity``) so
     the engine's existing Big World save branch drives it unchanged; loading goes
     through :meth:`restore_saved` (the world can't be overlaid wholesale because
@@ -338,6 +338,13 @@ class DiskStreamingSession:
         pos = player_pos if player_pos is not None else self._player_pos()
         if pos is not None:
             self._restream(pos, force=True)
+        # One answer to "how far out is the world still live": simulation LOD
+        # takes its outer band from whatever radius is actually being streamed,
+        # so tiering and streaming can never disagree.
+        if self.load_radius > 0.0:
+            self.logic.sim_active_radius = float(self.load_radius)
+            if self.logic.sim_near_radius > self.load_radius:
+                self.logic.sim_near_radius = float(self.load_radius)
         self._started = True
 
     def stop(self) -> None:
@@ -391,6 +398,12 @@ class DiskStreamingSession:
             self.stream_out_cell(coord)
         for coord in sorted(to_in):
             self.stream_in_cell(coord)
+        # Disk streaming genuinely adds and removes objects, so every index
+        # built from the brush/entity lists — the name/id caches, the actor list
+        # the AI and the world index run off, the collision grid, the cull
+        # buffers — has to be re-derived. That is one call, because it is one
+        # core engine service.
+        self.logic.notify_world_changed()
         return True
 
     def _desired_loaded(self, px: float, pz: float) -> Set[CellCoord]:

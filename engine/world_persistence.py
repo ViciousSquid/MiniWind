@@ -17,7 +17,7 @@ Big World adds almost nothing new to persist, and by design:
 The only genuinely new datum is the map's Big World *config* (whether streaming
 is on and the two radii). That travels as an ordinary :class:`BigWorldSettings`
 entity, so it round-trips through Fio's normal save/load with no core change —
-see :mod:`plugins.bigworld.entities`.
+see :mod:`engine.world_streaming.entities`.
 
 This module provides small, pure functions for reading that config out of a
 loaded map dict (or a live ``things`` list), plus verification helpers the tests
@@ -30,7 +30,7 @@ from __future__ import annotations
 import copy
 from typing import Dict, List, Optional
 
-from .cell import CELL_SIZE, cell_of_point
+from .cells import CELL_SIZE, cell_of_point
 
 _SETTINGS_TYPE = "bigworldsettings"
 

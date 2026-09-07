@@ -370,6 +370,9 @@ class Monster(Thing):
     # subsequent frames don't re-stat the file.
     # Keyed tuple: (abs_path,) -> bool
     _custom_path_exists_cache = {}
+    #: custom sprite path -> whether it resolved. Keyed by the repo-relative
+    #: path the caller holds, so the hot path does no os.path.join at all.
+    _resolved_custom_cache = {}
     # Cache the project_root lookup once per class; it never changes at runtime.
     _cached_project_root = None
     # A head sprite's dead form is the *same head* with heads/dead.png overlaid
@@ -449,6 +452,21 @@ class Monster(Thing):
         return cached
 
     @classmethod
+    def invalidate_sprite_caches(cls):
+        """Drop every memoised sprite-path answer.
+
+        The resolution caches assume the sprite files on disk do not change
+        while the editor runs, which is what makes the render snapshot free of
+        filesystem work. Call this after adding, removing or replacing sprite
+        art at runtime. (The docstrings referred to this for a long time before
+        it existed — it does now, and it clears all three caches together so
+        they cannot get out of step with each other.)
+        """
+        cls._custom_path_exists_cache.clear()
+        cls._resolved_custom_cache.clear()
+        cls._default_path_cache.clear()
+
+    @classmethod
     def _get_default_paths(cls, mtype: str, variant: str):
         """Return (idle, dead, shoot) default sprite paths for this
         (monster_type, variant) pair. Filesystem stats happen only on the
@@ -493,13 +511,21 @@ class Monster(Thing):
         *default_path*.  Falls back silently — the caller guarantees the
         default path is the safest possible choice.
 
-        Uses the class-level existence cache so repeated calls don't re-stat.
+        Uses the class-level existence cache so repeated calls don't re-stat —
+        and now also skips rebuilding the absolute path, which is a string join
+        per actor per frame on the render-snapshot path.
         """
         if custom_path:
-            abs_custom = os.path.join(project_root, custom_path)
-            if Monster._path_exists_cached(abs_custom):
+            cache = Monster._resolved_custom_cache
+            resolved = cache.get(custom_path)
+            if resolved is None:
+                abs_custom = os.path.join(project_root, custom_path)
+                resolved = Monster._path_exists_cached(abs_custom)
+                cache[custom_path] = resolved
+                if not resolved:
+                    print(f"[Monster] Custom sprite not found, using default: {custom_path}")
+            if resolved:
                 return custom_path
-            print(f"[Monster] Custom sprite not found, using default: {custom_path}")
         return default_path
 
     @classmethod
@@ -1583,6 +1609,113 @@ class Portal(Thing):
 # =============================================================================
 # KEY/VALUE STORE ENTITY
 # =============================================================================
+
+# ===========================================================================
+# Large-world streaming settings
+# ===========================================================================
+
+
+class BigWorldSettings(Thing):
+    """Map-level world-streaming configuration (one per map, optional).
+
+    Placing one of these in a map is how the map opts into the engine's
+    large-world path: cell streaming, activation radii and the simulation-LOD
+    band that follows them. A map without one loads and plays exactly as before,
+    with the whole world resident. It holds *config only* — the behaviour lives
+    in :mod:`engine.world_streaming`.
+
+    The type string stays ``bigworldsettings`` because that is what existing map
+    files on disk contain; it is a data format, not a code boundary.
+
+    Properties
+    ----------
+    enabled:              master switch for streaming on this map (default True).
+    activation_radius:    world units; cells within this of the player activate.
+    deactivation_radius:  world units; active cells drop only beyond this
+                          (the hysteresis band that prevents boundary thrash).
+    show_cell_debug:      draw the Big World debug overlay / cell grid in play.
+    terrain_fill:         if the map has a procedural terrain, expand it to cover
+                          every cell of the world and stream its chunks around
+                          the player instead of tessellating the whole grid
+                          up-front (default False — terrain is left as authored).
+    terrain_infinite:     with terrain_fill on, stream the terrain **forever**
+                          around the camera/player instead of stopping at the
+                          world's content bounds — so you never walk off an edge
+                          (default False). Heights are a pure function of world
+                          position, so the ground is deterministic everywhere.
+    terrain_stream_radius: world units of terrain kept resident around the
+                          player; 0 derives it from the activation radius.
+    """
+
+    #: Reused by the property panel / manager to key its schema.
+    TYPE = "bigworldsettings"
+
+    #: 2D-view sprite. Without this the entity draws nothing and is invisible /
+    #: unselectable in the top/front/side views.
+    pixmap_path = "assets/sprites/bigworldsettings.png"
+
+    def __init__(self, pos=None, properties=None):
+        super().__init__(pos, properties)
+        self.properties.setdefault("type", self.TYPE)
+        self.properties.setdefault("enabled", True)
+        self.properties.setdefault("activation_radius", 2048.0)
+        self.properties.setdefault("deactivation_radius", 2304.0)
+        self.properties.setdefault("show_cell_debug", True)
+        self.properties.setdefault("terrain_fill", False)
+        self.properties.setdefault("terrain_infinite", False)
+        self.properties.setdefault("terrain_stream_radius", 0.0)
+        self.properties.setdefault("disk_streaming", False)
+
+    # -- typed accessors ----------------------------------------------------
+    def disk_streaming(self) -> bool:
+        val = self.properties.get("disk_streaming", False)
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+    def is_enabled(self) -> bool:
+        val = self.properties.get("enabled", True)
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+    def activation_radius(self) -> float:
+        try:
+            return float(self.properties.get("activation_radius", 2048.0))
+        except (TypeError, ValueError):
+            return 2048.0
+
+    def deactivation_radius(self) -> float:
+        try:
+            r = float(self.properties.get("deactivation_radius", 2304.0))
+        except (TypeError, ValueError):
+            r = 2304.0
+        return max(r, self.activation_radius())
+
+    def show_cell_debug(self) -> bool:
+        val = self.properties.get("show_cell_debug", True)
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+    def terrain_fill(self) -> bool:
+        val = self.properties.get("terrain_fill", False)
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+    def terrain_infinite(self) -> bool:
+        val = self.properties.get("terrain_infinite", False)
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+    def terrain_stream_radius(self) -> float:
+        try:
+            return float(self.properties.get("terrain_stream_radius", 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+
 
 class LogicKeyValueStore(Thing):
     """

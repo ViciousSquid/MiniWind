@@ -549,7 +549,13 @@ class Renderer_F(BaseRenderer):
         allocated per frame. Lights and portals are always retained, and anything
         without a readable position is kept (fail-open). The caller passes the
         results to ``_sort_objects`` only, leaving the original ``brushes`` /
-        ``things`` lists (used by the shadow and portal passes) untouched."""
+        ``things`` lists (used by the shadow and portal passes) untouched.
+
+        This is the *unculled-input* path — the editor viewport driving the
+        renderer straight off the scene. In a threaded play session the logic
+        thread has already culled to the camera's relevance region, tighter than
+        this radius, so running it again there would be the same distance
+        measured twice; ``render_scene`` skips it in that case."""
         if camera_pos is None:
             return brushes, things
         cx, cz = _cull_camera_xz(camera_pos)
@@ -591,13 +597,17 @@ class Renderer_F(BaseRenderer):
             gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
         self.draw_grid(projection, view, self.grid_indices_count,
                       config.get('play_mode', False), config.get('grid_visible', True))
-        # MiniWind broad-phase distance cull (main camera pass only): feed
-        # _sort_objects a range-limited view of the scene, on top of the frustum
-        # cull it already applies downstream. The original brushes/things lists
-        # are left intact for the shadow and portal passes below. Enabled in play
-        # mode by default; a caller can force it on/off via 'camera_distance_cull'.
+        # Broad-phase distance cull for the main camera pass — but only when the
+        # scene arrived unculled. A threaded play session hands the renderer
+        # lists the logic thread already narrowed to the camera's relevance
+        # region (a box derived from the real view volume, tighter than this
+        # radius), and measuring the same distance a second time would buy
+        # nothing. `camera_relevance_box` on the config is how the viewport says
+        # the culling has been done.
         cull_brushes, cull_things = brushes, things
-        if config.get('camera_distance_cull', config.get('play_mode', False)):
+        _pre_culled = config.get('camera_relevance_box') is not None
+        if config.get('camera_distance_cull',
+                      config.get('play_mode', False) and not _pre_culled):
             cull_brushes, cull_things = self._camera_distance_cull(brushes, things, camera_pos)
         opaque_brushes, transparent_brushes, sprite_things, fog_volumes, water_brushes, glass_brushes, glow_brushes = \
             self._sort_objects(cull_brushes, cull_things, config)
@@ -618,8 +628,16 @@ class Renderer_F(BaseRenderer):
         if current_mode == RENDER_MODE_LIT and self.shadows_enabled:
             shadow_lights = [l for l in lights if _light_casts_shadows(l)]
             if shadow_lights:
-                shadow_brushes = config.get('all_brushes', brushes)
-                shadow_things = config.get('all_things', things)
+                # The caster set: everything within reach of a light that can
+                # reach the view. The logic thread narrows it from the same cell
+                # index the geometry cull uses; without one (editor preview) it
+                # falls back to the whole world, as it always did.
+                shadow_brushes = config.get('shadow_brushes')
+                if shadow_brushes is None:
+                    shadow_brushes = config.get('all_brushes', brushes)
+                shadow_things = config.get('shadow_things')
+                if shadow_things is None:
+                    shadow_things = config.get('all_things', things)
                 self.render_shadow_maps(shadow_lights, shadow_brushes, shadow_things, config, camera_pos)
 
         terrain = config.get('terrain', None)

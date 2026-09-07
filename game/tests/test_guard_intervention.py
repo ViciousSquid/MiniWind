@@ -60,11 +60,20 @@ class _Session:
     _refresh_actor_cache = MiniwindSession._refresh_actor_cache
     _fight_to_break_up = MiniwindSession._fight_to_break_up
     _nearest_hostile = MiniwindSession._nearest_hostile
+    # Perception now asks the engine's authoritative actor index first (see
+    # engine/world_index.py). This stub has no live logic thread behind it, so
+    # it takes the scalar fallback — which is the point: the two paths must
+    # answer identically.
+    _world_index = MiniwindSession._world_index
     _decide = MiniwindSession._decide
     _is_combatant = staticmethod(MiniwindSession._is_combatant)
+    # The decision pass indexes the watch once per pass rather than re-scanning
+    # the scene per frightened villager; the stub needs the same predicate.
+    _is_guard = staticmethod(MiniwindSession._is_guard)
 
     def __init__(self, things=(), player=None):
         self.things = list(things)
+        self._wi_cache = None
         self._actors = []
         self._dead_actors = []
         self._fights = []

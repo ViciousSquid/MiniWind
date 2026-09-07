@@ -285,7 +285,7 @@ def _patch_view_2d():
                     sep = QAction(menu_self)
                     sep.setSeparator(True)
                     menu_self.insertAction(before, sep)
-                # Optional plugins (BigWorld, …) stay in their own submenu — they
+                # Optional gameplay plugins stay in their own submenu — they
                 # are separate from the game, not part of the entity list.
                 if entries:
                     menu_self.addSeparator()

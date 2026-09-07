@@ -16,6 +16,8 @@ from editor.debug_console import debug_log
 from engine import combat_loadout
 from engine.facing import face_heading
 from game.diceroll import DICE_TYPES
+from .constants import is_water_brush
+from .world_index import TIER_ACTIVE, TIER_DISTANT, TIER_DORMANT, TIER_NEAR
 from .monster_constants import (
     MONSTER_SIGHT_RANGE,
     MONSTER_SHOOT_INTERVAL,
@@ -70,6 +72,9 @@ class MonsterAI:
         # resolved once per distinct team — so a spread-out population is no
         # longer quadratic. Rebuilt at the top of update(); see _build_ai_snapshot.
         self._ai_snapshot = None
+        #: Reusable buffer holding the actors this tick's simulation LOD kept
+        #: live. Cleared and refilled each update() so a tick allocates no list.
+        self._active_buf: List = []
 
     def set_spatial_grid(self, grid):
         """Called by LogicThread after populating the grid."""
@@ -191,6 +196,27 @@ class MonsterAI:
         monster_things = getattr(self.lt, '_monster_things', None)
         if monster_things is None:
             monster_things = [t for t in self.lt.things if isinstance(t, MonsterThing)]
+
+        # ---- Simulation LOD -------------------------------------------------
+        # Only actors the engine's world index put in the player's vicinity
+        # (TIER_NEAR / TIER_ACTIVE) get the combat AI at all. Beyond that the
+        # player cannot see, hear, be seen by or reach them, so chasing, sight
+        # lines, gravity settling and patrol stepping are pure waste — and they
+        # are the per-actor costs that made this the most expensive thing in the
+        # frame on a large world. The tier is read from the actor's own
+        # properties (stamped by LogicThread._rebuild_world_index) rather than
+        # from the index arrays, because the AI runs on its own thread: a dict
+        # read races with nothing.
+        #
+        # A world with no index behind it — the editor, a headless test, LOD
+        # switched off — leaves every actor at TIER_NEAR, i.e. exactly the
+        # pre-LOD behaviour.
+        active = self._active_buf
+        del active[:]
+        for t in monster_things:
+            if t.properties.get('_sim_tier', TIER_NEAR) <= TIER_ACTIVE:
+                active.append(t)
+        monster_things = active
 
         # PERF: build the per-tick actor snapshot + spatial hash once so every
         # team-targeting query below is a local cell walk instead of a full

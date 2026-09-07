@@ -7,8 +7,8 @@ modify → free → reload and modify → save → load → stream cycle purely 
 the persistent registry (the freed objects are re-instantiated from the source
 and the saved delta re-applied by UUID).
 
-Run: ``python plugins/bigworld/tests/test_bigworld_disk.py`` or
-``python -m pytest plugins/bigworld/tests/test_bigworld_disk.py``.
+Run: ``python engine/tests/test_world_streaming_disk.py`` or
+``python -m pytest engine/tests/test_world_streaming_disk.py``.
 """
 
 import copy
@@ -16,10 +16,11 @@ import os
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
+from engine.world_streaming import StreamingHost   # noqa: E402
 from engine import savegame                                    # noqa: E402
-from plugins.bigworld.streaming import (DiskStreamingSession,   # noqa: E402
+from engine.world_streaming_disk import (DiskStreamingSession,   # noqa: E402
                                         MemoryCellSource)
 
 
@@ -54,8 +55,9 @@ class FakeMonsterAI:
         self.monster_states = {}
 
 
-class FakeLogic:
+class FakeLogic(StreamingHost):
     def __init__(self, player_pos):
+        super().__init__()
         self.play_mode = True
         self.things = []
         self.brushes = []
@@ -82,7 +84,7 @@ class FakeLogic:
         self.mover_states = {}
         self.monster_ai = FakeMonsterAI()
         self._monster_things = []
-        self._bigworld = None
+        self.streaming = None
 
     def _build_entity_caches(self):
         self._monster_things = [t for t in self.things
@@ -113,7 +115,7 @@ def make_source():
 
 def new_session(logic, source):
     s = DiskStreamingSession(logic, source, load_radius=600.0, evict_radius=700.0)
-    logic._bigworld = s
+    logic.streaming = s
     return s
 
 

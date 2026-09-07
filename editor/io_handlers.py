@@ -714,21 +714,32 @@ def register_all_input_handlers(io_manager: IOManager):
     # (Brushes are dicts — these handlers work for brush, door, mover, trigger)
     # ==========================================================================
 
+    def _visibility_changed(logic):
+        """Tell the render-state builder its cached non-hidden brush list is
+        stale. It keeps that whole-world list across frames (rebuilding it every
+        frame costs O(total brushes) for a set that almost never changes), so a
+        Show/Hide has to say so — otherwise it would not take effect until the
+        next periodic re-validation."""
+        logic.notify_visibility_changed()
+
     def brush_hide(entity, param, logic):
         """Hide a brush (set hidden flag — renderer skips it)."""
         entity['hidden'] = True
+        _visibility_changed(logic)
         name = entity.get('name', 'unnamed')
         debug_log('IO', f"Brush '{name}' hidden")
 
     def brush_show(entity, param, logic):
         """Show a brush (clear hidden flag)."""
         entity['hidden'] = False
+        _visibility_changed(logic)
         name = entity.get('name', 'unnamed')
         debug_log('IO', f"Brush '{name}' shown")
 
     def brush_toggle_vis(entity, param, logic):
         """Toggle brush visibility."""
         entity['hidden'] = not entity.get('hidden', False)
+        _visibility_changed(logic)
         name = entity.get('name', 'unnamed')
         state = "hidden" if entity.get('hidden') else "visible"
         debug_log('IO', f"Brush '{name}' toggled → {state}")
@@ -780,18 +791,21 @@ def register_all_input_handlers(io_manager: IOManager):
     def thing_hide(entity, param, logic):
         """Hide a thing entity."""
         entity.properties['hidden'] = True
+        _visibility_changed(logic)
         name = entity.properties.get('name', 'unnamed')
         debug_log('IO', f"Entity '{name}' hidden")
 
     def thing_show(entity, param, logic):
         """Show a thing entity."""
         entity.properties['hidden'] = False
+        _visibility_changed(logic)
         name = entity.properties.get('name', 'unnamed')
         debug_log('IO', f"Entity '{name}' shown")
 
     def thing_toggle_vis(entity, param, logic):
         """Toggle thing visibility."""
         entity.properties['hidden'] = not entity.properties.get('hidden', False)
+        _visibility_changed(logic)
         name = entity.properties.get('name', 'unnamed')
         state = "hidden" if entity.properties.get('hidden') else "visible"
         debug_log('IO', f"Entity '{name}' toggled → {state}")

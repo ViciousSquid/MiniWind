@@ -23,7 +23,7 @@ game/          the integrated MiniWind game (built-in, not a plugin)
 
 engine/        generic Fio technology (renderer, terrain, monster AI, save/load, …) — unchanged
 editor/        the Fio editor, presented as the MiniWind RPG Editor
-plugins/       generic plugin system + BigWorld (optional plugin) — plugin system unchanged
+plugins/       generic plugin system, for optional gameplay (world management is core — see §7)
 maps/          village.json  (the living settlement, generated from game/data)
 ```
 
@@ -74,7 +74,7 @@ Boot path:
 ```
 main.py → import editor.main_window
         → editor/__init__.py:
-              load_plugins()               # discovers BigWorld only
+              load_plugins()               # optional gameplay plugins only
               plugins.integration.apply()  # generic plugin editor hooks
               game.install()               # <-- MiniWind, native
                   get_manager().register_builtin_game(GAME)   # entities/props/IO
@@ -110,12 +110,60 @@ fantasy combat rules, lore) lives in `game/`. The one new generic-shaped
 capability — the manager's built-in-game surface — is kept clean enough to
 backport.
 
-## 7. BigWorld remains a separate, optional plugin
+## 7. World management is a core engine subsystem
 
-`plugins/bigworld/` is untouched: still discovered as a normal `FioPlugin`,
-still disabled-by-default, still demonstrating the plugin API. MiniWind does not
-depend on it — the settlement fits comfortably in Fio's ordinary world
-representation and spatial grid, so no massive-world streaming was added.
+This was once `plugins/bigworld/`, a disabled-by-default plugin. It is now
+engine code, and it moved for architectural reasons rather than tidiness: *which
+part of the world is live* is a question the renderer, the collision grid, the
+AI, the simulation scheduler and the save system all have to agree on, and the
+engine was already reaching past the plugin boundary to find the answer
+(`logic._bigworld` inside `engine/savegame.py`). Keeping a fundamental
+capability behind an optional abstraction cost a per-frame plugin dispatch and,
+worse, licensed four systems to answer the same spatial question their own way.
+
+```
+engine/cells.py             the 512-unit XZ grid, defined once and imported by
+                            SpatialGrid, the actor index, the renderer's region
+                            cull and the streamer
+engine/world_index.py       actors: NumPy position/team/alive buffers rebuilt
+                            once per tick, vectorised radius queries, and the
+                            simulation-LOD tier (NEAR / ACTIVE / DISTANT /
+                            DORMANT) with hysteresis
+engine/world_cells.py       the static partition: brushes, entities and lights
+                            by UUID and by cell; which cells are active
+engine/world_streaming.py   applies activation to a live session; StreamingHost
+                            documents what a host must provide
+engine/world_streaming_disk.py   the variant that genuinely frees unloaded cells
+engine/world_persistence.py the per-cell delta registry a streamed save is made of
+engine/streaming_debug.py   the stats panel + active-cell minimap
+tools/world/generate_world.py    the synthetic world generator and benchmark
+```
+
+[`engine/WORLD_STREAMING.md`](engine/WORLD_STREAMING.md) is the full guide:
+cells, activation and hysteresis, terrain fill, the per-cell save format, disk
+streaming, and the measured scaling numbers.
+
+`LogicThread` owns the session, builds it at play start from the map's
+`BigWorldSettings` entity (a core editor entity now), ticks it directly from
+`_tick_play_mode`, and tears it down at play stop. A map without that entity
+keeps the whole world resident and behaves exactly as before.
+
+The layering the rest of the engine consumes:
+
+* **spatial system** → relevance (`WorldIndex`: who is near, which tier)
+* **streaming** → loaded state (`WorldCellIndex` + the session's `hidden` /
+  `disabled` parking, which the renderer, AI and pickup handlers already read)
+* **simulation scheduler** → LOD (`_sim_tier`, read by `MonsterAI.update` and
+  `MiniwindSession.tick`)
+* **renderer** → visual visibility (the camera relevance box, derived once per
+  frame in `_prepare_render_state` and passed forward on the render state)
+
+Gameplay consumes those classifications; it does not recompute them. A streaming
+map's activation radius also sets the simulation-LOD band, so there is one
+answer to "how far out is the world still live".
+
+What stayed optional is what is genuinely game-specific: the plugin system
+itself remains for optional gameplay, and the world *generator* is a tool.
 
 ## 8. Moddable content format
 
@@ -141,10 +189,9 @@ authored markers, with the threat starting hostile and outside the settlement.
 
 ## 10. Tests
 
-`python -m pytest game/tests engine/tests plugins/bigworld/tests -q` → **95 pass**
-(43 MiniWind incl. the new settlement suite, 52 engine + BigWorld), all headless
-(no Qt/OpenGL). PyQt-dependent editor/engine UI paths cannot run in a headless
-CI and are exercised structurally only.
+`python -m pytest editor/tests game/tests engine/tests -q` → **508 pass, 5
+skipped**, all headless (no OpenGL). The editor suites need PyQt5 and skip
+cleanly without it; GL paths are exercised structurally only.
 
 ## 11. Living world, combat and the Aurora-style editor (later pass)
 

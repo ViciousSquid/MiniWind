@@ -1,13 +1,13 @@
 """
-Runtime glue for Big World: :class:`BigWorldSession`.
+World streaming: :class:`WorldStreamingSession`.
 
-The :class:`~plugins.bigworld.manager.BigWorldManager` is pure bookkeeping — it
-knows which cells and objects are active but touches no engine state. The
-session is the thin layer that *applies* that knowledge to a live Fio play
-session, and it does so by cooperating with machinery Fio already has rather
-than by rewriting any subsystem:
+:class:`~engine.world_cells.WorldCellIndex` is pure bookkeeping — it knows which
+cells and objects are relevant but touches no engine state. The session is the
+layer that *applies* that knowledge to a live play session, and it does so by
+driving machinery the engine already has rather than by rewriting any
+subsystem:
 
-* **Rendering.** An inactive brush is flagged ``hidden``; Fio's per-frame cull
+* **Rendering.** An inactive brush is flagged ``hidden``; the engine's per-frame cull
   already drops hidden brushes before they reach the draw path
   (``not b.get('hidden')`` in ``LogicThread._prepare_render_state``), so only
   active-cell geometry is ever submitted to the renderer — no renderer change.
@@ -17,7 +17,7 @@ than by rewriting any subsystem:
   queried, so inactive static geometry costs nothing. The session additionally
   parks inactive dynamic brushes (movers/doors) so they don't animate off-screen.
 * **Entities.** An inactive entity is flagged ``disabled`` (and ``hidden``),
-  which Fio's monster AI and pickup handlers already treat as "skip me" — so an
+  which the engine's monster AI and pickup handlers already treat as "skip me" — so an
   NPC or pickup in a distant cell drops out of per-frame processing. Persistent
   globals are never touched.
 * **Lights.** An inactive light is hidden and switched off, keeping the count of
@@ -37,10 +37,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .cell import cell_of_point
-from .manager import (BigWorldManager, DEFAULT_ACTIVATION_RADIUS,
-                      DEFAULT_DEACTIVATION_RADIUS)
-from .persistence import (build_cell_delta_registry, flatten_cell_delta_registry,
+from .cells import cell_of_point
+from .world_cells import (WorldCellIndex, DEFAULT_ACTIVATION_RADIUS,
+                          DEFAULT_DEACTIVATION_RADIUS)
+from .world_index import TIER_ACTIVE_RADIUS, TIER_NEAR_RADIUS
+from .world_persistence import (build_cell_delta_registry, flatten_cell_delta_registry,
                           normalize_streaming_state)
 
 # Marker keys the session writes onto objects it parks, so it can restore the
@@ -49,12 +50,45 @@ _HID_MARK = "_bw_parked_hidden"      # present ⇒ BW set `hidden`; value = prio
 _DIS_MARK = "_bw_parked_disabled"    # present ⇒ BW set `disabled`; value = prior
 
 
+class StreamingHost:
+    """The minimal host surface a :class:`WorldStreamingSession` drives.
+
+    :class:`~engine.logic_thread.LogicThread` is the real host and provides a
+    superset of this; the class exists so the contract is written down in one
+    place next to the code that depends on it, and so headless tests and the
+    world-generation benchmark can stand in for the logic thread without a live
+    play session. A host must additionally expose ``brushes``, ``things`` and a
+    ``player`` — those come from the scene, so they are the caller's to supply.
+    """
+
+    def __init__(self):
+        #: Simulation-LOD bands. A streaming session overrides the outer one on
+        #: start so the tier boundary and the streaming boundary can never
+        #: disagree about how far out the world is live.
+        self.sim_near_radius = TIER_NEAR_RADIUS
+        self.sim_active_radius = TIER_ACTIVE_RADIUS
+        #: Counts, so a test can assert the engine was *told* rather than only
+        #: that the flags moved.
+        self.visibility_changes = 0
+        self.world_changes = 0
+
+    def notify_visibility_changed(self) -> None:
+        """Some object's ``hidden`` flag moved: the render-state builder's
+        cached whole-world non-hidden brush list is stale."""
+        self.visibility_changes += 1
+
+    def notify_world_changed(self) -> None:
+        """Objects entered or left the world: every index built from the
+        brush/entity lists has to be re-derived."""
+        self.world_changes += 1
+
+
 def _xz(pos):
     """(x, z) from a glm.vec3 / list / tuple position."""
     return float(pos[0]), float(pos[2])
 
 
-class BigWorldSession:
+class WorldStreamingSession:
     """Per-play-session controller that streams cells as the player moves."""
 
     #: World half-extent (units) used when terrain is streamed "forever". Large
@@ -69,7 +103,7 @@ class BigWorldSession:
                  terrain_infinite: bool = False,
                  terrain_stream_radius: float = 0.0):
         self.logic = logic
-        self.manager = BigWorldManager(
+        self.cells = WorldCellIndex(
             activation_radius=activation_radius,
             deactivation_radius=deactivation_radius,
         )
@@ -121,7 +155,7 @@ class BigWorldSession:
         """
         brushes = list(getattr(self.logic, "brushes", None) or [])
         things = list(getattr(self.logic, "things", None) or [])
-        self.manager.index_world(brushes, things)
+        self.cells.index_world(brushes, things)
 
         # Snapshot the pristine world *before* parking/gameplay mutates anything —
         # this is the base every cell delta is measured against.
@@ -143,17 +177,19 @@ class BigWorldSession:
         for brush in brushes:
             self._set_brush_active(brush, False)
         for thing in things:
-            if self.manager._is_persistent(thing):
+            if self.cells._is_persistent(thing):
                 thing.properties["bw_active"] = True
                 continue
-            if self.manager._is_light(thing):
+            if self.cells._is_light(thing):
                 self._set_light_active(thing, False)
             else:
                 self._set_thing_active(thing, False)
 
         if pos is not None:
-            self.manager.update(pos, force=True)
+            self.cells.update(pos, force=True)
             self._apply_active_snapshot()
+        self._notify_visibility_changed()
+        self._publish_relevance_radii()
         self._started = True
 
     def stop(self) -> None:
@@ -172,6 +208,7 @@ class BigWorldSession:
         self._parked_things.clear()
         self._parked_lights.clear()
         self._restore_terrain()
+        self._notify_visibility_changed()
         self._started = False
 
     def tick(self, player_pos=None) -> bool:
@@ -187,7 +224,7 @@ class BigWorldSession:
         pos = player_pos if player_pos is not None else self._player_pos()
         if pos is None:
             return False
-        delta = self.manager.update(pos)
+        delta = self.cells.update(pos)
         if not delta.changed:
             return False
         # Commit the persistent state of every cell that is about to leave the
@@ -207,15 +244,49 @@ class BigWorldSession:
             self._set_light_active(light, False)
         for light in delta.lights_entering:
             self._set_light_active(light, True)
+        self._notify_visibility_changed()
         return True
+
+    def _publish_relevance_radii(self) -> None:
+        """Hand this map's activation radius to the engine's simulation LOD.
+
+        There must be exactly one answer to "how far out is the world still
+        live". The engine's world index classifies actors into simulation tiers
+        from its own radii; a streaming map overrides its activation radius, so
+        the tier boundary and the streaming boundary have to move together —
+        otherwise a map that streams 8192 units would still stop simulating at
+        the stock 2048, or a map that streams 1024 would keep paying full
+        simulation for actors it has already parked.
+
+        The near band keeps its own meaning (perception range) but is never
+        allowed past the active band. Guarded, so the session still runs against
+        an engine that has no simulation LOD.
+        """
+        logic = self.logic
+        active = float(self.cells.activation_radius)
+        if active <= 0.0:
+            return
+        logic.sim_active_radius = active
+        if logic.sim_near_radius > active:
+            logic.sim_near_radius = active
+
+    def _notify_visibility_changed(self) -> None:
+        """Tell the render-state builder that parked geometry moved.
+
+        The builder caches the whole-world non-hidden brush list between frames
+        — rebuilding it every frame is O(total brushes), which is precisely the
+        cost streaming exists to avoid. Streaming a cell in or out is the one
+        thing that legitimately changes that set, so it says so.
+        """
+        self.logic.notify_visibility_changed()
 
     def _apply_active_snapshot(self) -> None:
         """Turn on everything the manager currently marks active (post-start)."""
-        for brush in self.manager.active_brushes():
+        for brush in self.cells.active_brushes():
             self._set_brush_active(brush, True)
-        for thing in self.manager.active_things():
+        for thing in self.cells.active_things():
             self._set_thing_active(thing, True)
-        for light in self.manager.active_lights():
+        for light in self.cells.active_lights():
             self._set_light_active(light, True)
 
     # ------------------------------------------------------------------
@@ -264,7 +335,7 @@ class BigWorldSession:
         if radius <= 0.0:
             # Keep roughly a cell-radius of terrain resident around the player,
             # matched to how far brush/entity cells activate.
-            radius = self.manager.activation_radius
+            radius = self.cells.activation_radius
         terrain.set_streaming(True, radius)
 
     def _restore_terrain(self) -> None:
@@ -299,10 +370,10 @@ class BigWorldSession:
         if self.terrain_infinite:
             h = self.INFINITE_HALF_EXTENT
             return (-h, -h, h, h)
-        cells = getattr(self.manager, "cells", None)
+        cells = getattr(self.cells, "cells", None)
         if not cells:
             return None
-        cs = self.manager.cell_size
+        cs = self.cells.cell_size
         xs = [c[0] for c in cells]
         zs = [c[1] for c in cells]
         min_cx, max_cx = min(xs), max(xs)
@@ -425,13 +496,13 @@ class BigWorldSession:
         if self._base_level is None:
             return
         coord = (int(coord[0]), int(coord[1]))
-        cell = self.manager.cells.get(coord)
+        cell = self.cells.cells.get(coord)
         key = f"{coord[0]},{coord[1]}"
         self.registry.pop(key, None)
         if cell is None:
             return
         live = normalize_streaming_state(self._cell_live_level(cell))
-        sub = build_cell_delta_registry(self._base_level, live, self.manager.cell_size)
+        sub = build_cell_delta_registry(self._base_level, live, self.cells.cell_size)
         for k, entry in sub.items():
             if entry.get("things") or entry.get("brushes"):
                 self.registry[k] = entry
@@ -449,7 +520,7 @@ class BigWorldSession:
             self._capture_base()
         live = normalize_streaming_state(self._live_level())
         self.registry = build_cell_delta_registry(
-            self._base_level, live, self.manager.cell_size)
+            self._base_level, live, self.cells.cell_size)
         return self.registry
 
     def serialize_registry(self) -> dict:
@@ -496,12 +567,12 @@ class BigWorldSession:
     def player_cell(self):
         pos = self._player_pos()
         if pos is None:
-            return self.manager._last_player_cell
+            return self.cells._last_player_cell
         x, z = _xz(pos)
-        return cell_of_point(x, z, self.manager.cell_size)
+        return cell_of_point(x, z, self.cells.cell_size)
 
     def stats(self) -> dict:
-        s = self.manager.stats()
+        s = self.cells.stats()
         terrain = self._terrain
         if terrain is not None:
             s["terrain_fill"] = True

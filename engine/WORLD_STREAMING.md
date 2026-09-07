@@ -1,31 +1,36 @@
-# Big World — cell streaming for very large Fio maps
+# World streaming — cell streaming for very large maps
 
-Big World lets a single Fio map hold **hundreds of thousands of brushes and
+Cell streaming lets a single map hold **hundreds of thousands of brushes and
 entities** while keeping only the area around the player active. The world is
 divided into streamable **cells**; only the cells intersecting the player's
 activation radius (default **2048 units**) take part in runtime rendering,
 collision, entity processing and lighting. Distant cells stay stored in the map
 but inactive — costing nothing per frame.
 
-Crucially, Big World is a **runtime scalability layer, not a new world format**.
-It builds on the systems Fio already has instead of replacing them: no BVH,
-octree, BSP, ECS, or renderer rewrite. Objects keep their existing UUIDs and
-positions; the plugin only decides, each frame, which of them are *live*.
+Crucially, this is a **runtime scalability layer, not a new world format**.
+It builds on the systems the engine already has instead of replacing them: no
+BVH, octree, BSP, ECS, or renderer rewrite. Objects keep their existing UUIDs
+and positions; the streamer only decides, each frame, which of them are *live*.
+
+It is a **core engine subsystem**, not a plugin — see
+[`ARCHITECTURE.md`](../ARCHITECTURE.md) §7 for why it moved. `LogicThread` owns
+the session, builds it at play start from the map's `BigWorldSettings` entity
+and ticks it directly.
 
 **Contents**
 
 - [The idea](#the-idea)
 - [Quick start](#quick-start)
 - [Architecture](#architecture)
-  - [Cells](#cells-cellpy)
-  - [Manager](#manager-managerpy)
-  - [Runtime](#runtime-runtimepy)
+  - [Cells](#cells)
+  - [Cell index](#cell-index)
+  - [Session](#session)
   - [Terrain fill](#terrain-fill)
-  - [Persistence](#persistence-persistencepy)
+  - [Persistence](#persistence)
 - [Editor vs. runtime](#editor-vs-runtime)
 - [Configuration](#configuration-the-bigworldsettings-entity)
 - [Measured performance](#measured-performance)
-- [How it uses the plugin API](#how-it-uses-the-plugin-api)
+- [Simulation LOD](#simulation-lod)
 - [Isolation & compatibility](#isolation--compatibility)
 - [Generating and benchmarking worlds](#generating-and-benchmarking-worlds)
 - [Files](#files)
@@ -39,10 +44,10 @@ positions; the plugin only decides, each frame, which of them are *live*.
                 Fio World
                     │
           ┌─────────┴─────────┐
-          │ Existing 512 Grid │   (engine/physics.py SpatialGrid — reused, not replaced)
+          │ Shared 512 Grid   │   (engine/cells.py — one definition, imported)
           └─────────┬─────────┘
                     │
-              Big World Plugin
+            World cell index   
                     │
           ┌─────────┴─────────┐
           │   Cell Manager    │
@@ -69,10 +74,12 @@ Work each frame is proportional to **active cells + objects in active cells** �
 
 ## Quick start
 
-1. Open a map in Fio and place a **Big World Settings** entity
-   (**Plugins ▸ Big World**). Its mere presence turns streaming on for that map;
-   its properties set the radii. A map *without* one loads and plays exactly as
-   before — see [Isolation & compatibility](#isolation--compatibility).
+1. Open a map in the editor and place a **Big World Settings** entity. Its mere
+   presence turns streaming on for that map; its properties set the radii. A map
+   *without* one loads and plays exactly as before — see
+   [Isolation & compatibility](#isolation--compatibility). (The entity keeps its
+   original type name because that is what existing map files contain: a data
+   format, not a code boundary.)
 2. Enter play mode. Only cells within the activation radius of the player are
    active; walking moves the active set with you.
 3. The debug overlay (top-left) shows live cell/brush/entity counts and a minimap
@@ -84,7 +91,9 @@ settings entity.
 
 ```bash
 # run the headless test suite
-python -m plugins.bigworld.tests.test_bigworld
+python -m pytest engine/tests/test_world_streaming.py \
+    engine/tests/test_world_streaming_saves.py \
+    engine/tests/test_world_streaming_disk.py -q
 ```
 
 Generating and benchmarking large synthetic worlds is covered
@@ -94,7 +103,7 @@ Generating and benchmarking large synthetic worlds is covered
 
 ## Architecture
 
-### Cells (`cell.py`)
+### Cells (`engine/cells.py`)
 
 A cell is addressed by **integer** coordinates `(cell_x, cell_z)` — never floats
 — and covers a fixed `512 × 512` column in X/Z, using `floor(coord / 512)`,
@@ -112,13 +121,13 @@ For this milestone the whole map is resident in RAM, so a cell is only ever
 `INACTIVE` or `ACTIVE`. The `LOADING`/`UNLOADING` states and the
 `load_cell`/`unload_cell` API exist so true asynchronous disk streaming can be
 layered on later **without reshaping the runtime above it** (see
-[Roadmap](#roadmap)). `BigWorldCell` exposes `key()`, `is_active()`,
+[Roadmap](#roadmap)). `WorldCell` exposes `key()`, `is_active()`,
 `is_loaded()`, `object_count()`, `bounds()` and `clear()`; `CELL_SIZE` and the
 `CellState` enum are the shared constants.
 
-### Manager (`manager.py`)
+### Manager (`engine/world_cells.py`)
 
-`BigWorldManager` owns the index and the active-set calculation.
+`WorldCellIndex` owns the index and the active-set calculation.
 
 - `index_world(brushes, things)` builds a UUID-addressed index and groups objects
   into cells: brushes into **every** cell their footprint overlaps (spanning
@@ -140,9 +149,9 @@ layered on later **without reshaping the runtime above it** (see
   changed state; `active_brushes()`, `active_things()`, `active_lights()`,
   `is_brush_active()`, `is_thing_active()` and `stats()` expose the live set.
 
-### Runtime (`runtime.py`)
+### Runtime (`engine/world_streaming.py`)
 
-`BigWorldSession` applies the manager's active set to the live engine by
+`WorldStreamingSession` applies the manager's active set to the live engine by
 cooperating with existing machinery — every change is tracked and **fully
 reversed on play-stop**:
 
@@ -181,10 +190,10 @@ the entire grid up-front**:
   thread: a bounds change defers its chunk prune to the next render frame.
 
 Terrain streaming is a plain `engine.terrain.Terrain` feature (off by default,
-`set_streaming` / `set_world_extent`) that works with or without this plugin; Big
-World just drives it from the same player position it already tracks.
+`set_streaming` / `set_world_extent`) that works with or without cell streaming;
+the session just drives it from the same player position it already tracks.
 
-### Persistence (`persistence.py`)
+### Persistence (`engine/world_persistence.py`)
 
 Almost nothing new needs saving, by design:
 
@@ -207,7 +216,7 @@ Standard Fio map  → Full save
 Big World map      → Forced delta save (world_mode = "bigworld")
 ```
 
-The live `BigWorldSession` keeps a **persistent cell delta registry** —
+The live `WorldStreamingSession` keeps a **persistent cell delta registry** —
 `{"cx,cz": {"things": [...], "brushes": [...]}}` — that records each cell's
 gameplay changes *relative to that cell's base state*, keyed by the same
 `(cell_x, cell_z)` cell id the streaming manager uses, and by stable **UUID**
@@ -233,17 +242,16 @@ On load the save is auto-detected as a Big World delta, the base world is
 validated, player/runtime state is restored, and every cell's UUID-keyed changes
 are overlaid onto the freshly-loaded world (and the registry handed back to the
 live session, so a cell streamed in later still carries its saved changes). This
-reuses the core delta machinery in
-[`engine/savegame.py`](../../engine/savegame.py) — Big World only adds the
-per-cell bucketing (`build_cell_delta_registry`) and streaming normalisation, so
-there is no second persistence subsystem and **no plugin-API bump**. Ordinary
-maps are untouched and keep their full-snapshot saves.
+reuses the delta machinery in [`engine/savegame.py`](savegame.py) — streaming
+only adds the per-cell bucketing (`build_cell_delta_registry`) and streaming
+normalisation, so there is no second persistence subsystem. Ordinary maps are
+untouched and keep their full-snapshot saves.
 
 #### Disk streaming — actually freeing unloaded cells (opt-in)
 
 The default session keeps every object resident and only toggles flags, so an
 unloaded cell's changes are trivially still in memory. The **disk-streaming**
-milestone ([`streaming.py`](streaming.py), enabled by the
+milestone ([`engine/world_streaming_disk.py`](world_streaming_disk.py), enabled by the
 `disk_streaming` setting) is the real thing: an unloaded cell's objects are
 **removed from the live scene and freed**, and re-instantiated from a *cell
 source* (its "disk") when the cell streams back in.
@@ -283,7 +291,7 @@ two cells is freed only when its **last** loaded cell leaves. The base world is
 fingerprinted to fail a load safely against the wrong world.
 
 > Scope: the streaming/free/base-capture/registry/save-load logic is complete and
-> covered by [`tests/test_bigworld_disk.py`](tests/test_bigworld_disk.py). The
+> covered by [`tests/test_bigworld_disk.py`](tests/test_world_streaming_disk.py). The
 > remaining engine-side work is live integration — mutating the scene's
 > `things`/`brushes` lists mid-frame and invalidating the renderer/physics caches
 > for freed objects — so the setting ships **experimental** and off by default,
@@ -315,7 +323,7 @@ properties tune the behaviour:
 | `terrain_stream_radius` | `0` | World units of terrain kept resident around the player. `0` derives it from the activation radius. |
 
 The schema is declared with typed
-[`prop()`](../API.md#propertyspec-and-prop) specs (ranged floats, checkboxes,
+[`prop()`](../plugins/API.md#propertyspec-and-prop) specs (ranged floats, checkboxes,
 tooltips), so the editor renders proper widgets for each field.
 
 **Persistent (never-streamed) entities.** Mark any single entity persistent with
@@ -328,7 +336,7 @@ no matter where the player stands.
 
 ## Measured performance
 
-`python -m plugins.bigworld.tools.generate_world benchmark` on the reference
+`python -m tools.world.generate_world benchmark` on the reference
 machine:
 
 ```
@@ -352,40 +360,70 @@ milestone: async disk streaming, discussed in the [Roadmap](#roadmap).
 
 ---
 
-## How it uses the plugin API
+## Simulation LOD
 
-Big World is a good tour of the open-ended half of the
-[plugin API](../API.md) — it adds almost nothing to place, and instead hooks the
-engine:
+Streaming decides what is *loaded*. It does not, by itself, decide how much of
+what is loaded gets simulated — that is
+[`engine/world_index.py`](world_index.py), and the two are deliberately
+separate systems that share one answer rather than one system doing both.
 
-- **`register`** declares the single `BigWorldSettings` entity and its typed
-  property schema. That entity's presence is the map's opt-in.
-- **`on_play_start` / `on_tick` / `on_play_stop`** build, advance and tear down a
-  `BigWorldSession`, restoring the world exactly.
-- **`connect(host)`** subscribes to the **`render.overlay`** event to draw the
-  debug panel + minimap with the live `QPainter`, and publishes the live session
-  as a **`bigworld` service** (`host.provide("bigworld", session)`) that the
-  renderer, other plugins, or tools can look up via `host.service("bigworld")`.
-- It declares **`api_version = "1.2.0"`** because it needs the
-  [`PluginHost`](../API.md#pluginhost--the-open-ended-engine-seam) / event-bus
-  surface, and ships **`enabled = False`** so the manager only auto-enables it for
-  maps that actually contain a `BigWorldSettings` entity.
+The link between them is the `disabled` flag this session already writes: an
+actor the streamer has parked classifies as `TIER_DORMANT`, which means no
+simulation *and* no classification — the world index is built only from the
+unparked set, rebuilt when a cell streams in or out rather than rescanned each
+tick. And a streaming map's activation radius becomes the engine's simulation-LOD
+outer band on `start()`, so "how far out is the world still live" has exactly one
+answer whichever system is asking.
 
-No core engine file is edited: it hooks the play lifecycle, listens on the
-`render.overlay` event, and cooperates with existing flags (`hidden` /
-`disabled`).
+The tiers inside the loaded region:
+
+| Tier | Where | What runs |
+|---|---|---|
+| `TIER_NEAR` | player vicinity | everything |
+| `TIER_ACTIVE` | near world | staggered decisions; still moves every tick |
+| `TIER_DISTANT` | distant world | schedules and needs on the clock, one coarse step per pass, no perception |
+| `TIER_DORMANT` | streamed out | nothing; state persists |
+
+---
+
+## How the engine drives it
+
+`LogicThread` owns the session — there is no plugin between the engine and its
+own world manager:
+
+- **`_start_world_streaming`** (from `set_play_mode(True)`) finds the map's
+  `BigWorldSettings` entity, builds a `WorldStreamingSession` (or a
+  `DiskStreamingSession`), and publishes its radius to simulation LOD.
+- **`_tick_play_mode`** calls `session.tick()` directly, first thing in the
+  tick. A single cell-of-point compare early-outs until the player crosses a
+  boundary.
+- **`_stop_world_streaming`** (from `set_play_mode(False)`) restores the world
+  exactly.
+- **`notify_visibility_changed` / `notify_world_changed`** are the two calls the
+  session makes back into the engine: the first says the cached non-hidden brush
+  list and live-actor partition are stale, the second says objects entered or
+  left the world and every index built from those lists must be re-derived.
+  `StreamingHost` in [`engine/world_streaming.py`](world_streaming.py) writes
+  that contract down; `LogicThread` implements a superset of it.
+- The debug overlay lives in
+  [`engine/streaming_debug.py`](streaming_debug.py) and is drawn by the viewport
+  when the map's settings entity asks for it.
 
 ---
 
 ## Isolation & compatibility
 
-- **Zero cost when unused.** Ships **disabled by default**, auto-enabled only for
-  maps that contain a `BigWorldSettings` entity, so ordinary small maps incur no
-  overhead and behave exactly as before.
-- **Fails safe.** Every host call is guarded; a failure never takes down a frame —
-  including the debug overlay, which draws nothing rather than raising.
-- **Non-invasive.** Touches no core engine file. It cooperates with machinery Fio
-  already has rather than duplicating it.
+- **Zero cost when unused.** A map without a `BigWorldSettings` entity never
+  builds a session at all, keeps its whole world resident, and behaves exactly as
+  before.
+- **Fails safe.** The disk-streaming path falls back to the in-RAM session if
+  anything about a map defeats it, and the debug overlay draws nothing rather
+  than raising.
+- **Reuses, never duplicates.** The cell grid is
+  [`engine/cells.py`](cells.py) — the same one the collision grid, the actor
+  index and the renderer's region cull use. Parking is expressed through the
+  `hidden` / `disabled` flags the renderer, AI and pickup handlers already read.
+  There is no second spatial structure and no second persistence subsystem.
 
 ---
 
@@ -396,15 +434,14 @@ benchmark headlessly:
 
 ```bash
 # scaling report across 10k / 50k / 100k / 250k / 500k brushes
-python -m plugins.bigworld.tools.generate_world benchmark
+python -m tools.world.generate_world benchmark
 
 # write a streaming-enabled map file
-python -m plugins.bigworld.tools.generate_world generate --brushes 100000 \
+python -m tools.world.generate_world generate --brushes 100000 \
     --out maps/bigworld_100k.json
 ```
 
-The generated maps include a `BigWorldSettings` entity, so they auto-enable the
-plugin on load.
+The generated maps include a `BigWorldSettings` entity, so they stream on load.
 
 ---
 
@@ -412,15 +449,17 @@ plugin on load.
 
 | File | Role |
 |------|------|
-| `cell.py` | `BigWorldCell`, the `CellState` streaming states, shared 512-grid coordinate maths. |
-| `manager.py` | `BigWorldManager` — UUID index, active-cell calc, hysteresis, streaming API, stats. |
-| `runtime.py` | `BigWorldSession` — applies the active set to the live engine (reversible); persistent cell delta registry. |
-| `streaming.py` | `DiskStreamingSession` + `CellSource`/`MemoryCellSource`/`DirectoryCellSource` — disk streaming that frees unloaded cells, captures each cell's base on first stream-in. |
-| `entities.py` | `BigWorldSettings` — the map-level opt-in / config entity. |
-| `persistence.py` | Config extraction, save hygiene, UUID-stability verification, cell delta registry + streaming normalisation. |
-| `plugin.py` | `FioPlugin` wiring + the debug overlay. |
-| `tools/generate_world.py` | Synthetic map generator + benchmark harness. |
-| `tests/test_bigworld.py` | Headless test suite. |
+| `engine/cells.py` | `WorldCell`, the `CellState` streaming states, shared 512-grid coordinate maths. |
+| `engine/world_cells.py` | `WorldCellIndex` — UUID index, active-cell calc, hysteresis, streaming API, stats. |
+| `engine/world_streaming.py` | `WorldStreamingSession` — applies the active set to the live engine (reversible); persistent cell delta registry. |
+| `engine/world_streaming_disk.py` | `DiskStreamingSession` + `CellSource`/`MemoryCellSource`/`DirectoryCellSource` — disk streaming that frees unloaded cells, captures each cell's base on first stream-in. |
+| `editor/things.py` | `BigWorldSettings` — the map-level opt-in / config entity. |
+| `engine/world_persistence.py` | Config extraction, save hygiene, UUID-stability verification, cell delta registry + streaming normalisation. |
+| `engine/logic_thread.py` | Owns the session: start, per-tick advance, stop, and the change notifications. |
+| `engine/streaming_debug.py` | The stats panel + active-cell minimap. |
+| `engine/world_index.py` | The actor index and simulation LOD that consume the loaded set. |
+| `tools/world/generate_world.py` | Synthetic map generator + benchmark harness. |
+| `engine/tests/test_world_streaming*.py` | Headless test suites. |
 
 ---
 

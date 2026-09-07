@@ -707,7 +707,15 @@ def restore_auto(logic, data: dict, *, current_map_name: str = "") -> dict:
     if not isinstance(data, dict) or not data.get(_MAGIC):
         raise ValueError("not a Fio save file")
 
-    # Big World delta save: a per-cell registry rather than a flat delta level.
+    # A restore can move any object's `hidden`/`disabled` state, which is what
+    # the engine's cached non-hidden brush list and live-actor partition are
+    # built from. Announce it up front so every path below lands on the next
+    # frame rather than at the next periodic re-validation.
+    notify = getattr(logic, "notify_visibility_changed", None)
+    if notify is not None:
+        notify()
+
+    # A streamed delta save: a per-cell registry rather than a flat delta level.
     if data.get("world_mode") == WORLD_MODE_BIGWORLD:
         return _restore_bigworld(logic, data, current_map_name)
 
@@ -790,7 +798,7 @@ def _restore_bigworld(logic, data: dict, current_map_name: str = "") -> dict:
     # Disk-streaming session: the world isn't fully resident, so it can't be
     # overlaid wholesale — hand off to the session, which streams cells in and
     # re-applies each cell's delta as it loads.
-    session = getattr(logic, "_bigworld", None)
+    session = getattr(logic, "streaming", None)
     if session is not None and getattr(session, "is_disk_streaming", False):
         return session.restore_saved(data, current_map_name=current_map_name)
 
@@ -813,12 +821,9 @@ def _restore_bigworld(logic, data: dict, current_map_name: str = "") -> dict:
     # Hand the registry to the live streaming session so a cell streamed in later
     # re-applies its saved changes (belt-and-braces for a disk-streamed future;
     # in the in-RAM model the overlay above already reached every resident cell).
-    session = getattr(logic, "_bigworld", None)
+    session = getattr(logic, "streaming", None)
     if session is not None:
-        try:
-            session.registry = cell_deltas
-        except Exception:
-            pass
+        session.registry = cell_deltas
 
     warning = ""
     if cls == BASE_RELATED:

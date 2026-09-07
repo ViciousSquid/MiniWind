@@ -1,12 +1,12 @@
 """
-Headless tests for the Big World plugin.
+Headless tests for the engine's world-streaming subsystem.
 
 Runs without a display, OpenGL or PyQt: it exercises the cell maths, the
 activation/hysteresis logic, UUID stability, the reversible runtime effects and
-the plugin's discovery/registration. No renderer is touched.
+the fact that all of this is now core engine machinery rather than a plugin. No
+renderer is touched.
 
-Run with:  python -m plugins.bigworld.tests.test_bigworld   (from the repo root)
-or under pytest.
+Run with:  python -m pytest engine/tests/test_world_streaming.py -q
 """
 
 import math
@@ -14,25 +14,20 @@ import os
 import sys
 import uuid as _uuidlib
 
-_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from engine.world_streaming import StreamingHost
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-# Load plugins FIRST so plugin discovery owns the initial import of the bigworld
-# package. Importing a bigworld submodule directly (below) would otherwise pull
-# in editor.things, whose bootstrap re-enters discovery while bigworld is still
-# half-imported and skips it. In the real editor this never happens — the editor
-# package is imported before any plugin — so this ordering is a test-only guard.
-from plugins.manager import load_plugins as _load_plugins
-_load_plugins()
 
-from plugins.bigworld.cell import (CELL_SIZE, CellState, cell_of_point,
+from engine.world_cells import (CELL_SIZE, CellState, cell_of_point,
                                     cells_for_aabb, cell_distance_sq)
-from plugins.bigworld.manager import BigWorldManager
-from plugins.bigworld.runtime import BigWorldSession
-from plugins.bigworld import persistence
+from engine.world_cells import WorldCellIndex
+from engine.world_streaming import WorldStreamingSession
+from engine import world_persistence as persistence
 
 
 def _check(cond, msg):
@@ -63,8 +58,9 @@ class FakePlayer:
         self.pos = list(pos)
 
 
-class FakeLogic:
+class FakeLogic(StreamingHost):
     def __init__(self, brushes, things, player_pos=(0, 0, 0), terrain=None):
+        super().__init__()
         self.brushes = brushes
         self.things = things
         self.player = FakePlayer(player_pos)
@@ -147,7 +143,7 @@ def test_multi_cell_spanning():
     xs = {c[0] for c in cells}
     _check(-1 in xs and 0 in xs and 1 in xs, "spans cells x=-1,0,1")
 
-    mgr = BigWorldManager()
+    mgr = WorldCellIndex()
     big = make_brush(400, 0, 0, sx=1024, sy=64, sz=64)  # x in [-112, 912]
     mgr.add_brush(big)
     touching = [coord for coord, cell in mgr.cells.items() if big in cell.brushes]
@@ -162,7 +158,7 @@ def test_multi_cell_spanning():
 
 def test_circular_activation():
     print("[3] activation region is a circle, not the bounding square")
-    mgr = BigWorldManager(activation_radius=2048.0)
+    mgr = WorldCellIndex(activation_radius=2048.0)
     # Fill a wide field of brushes so every candidate cell exists.
     brushes = []
     for cx in range(-8, 9):
@@ -187,7 +183,7 @@ def test_circular_activation():
 
 def test_incremental_streaming():
     print("[4] crossing a cell boundary streams only the delta")
-    mgr = BigWorldManager(activation_radius=1024.0, deactivation_radius=1024.0)
+    mgr = WorldCellIndex(activation_radius=1024.0, deactivation_radius=1024.0)
     brushes = []
     for cx in range(-6, 7):
         for cz in range(-6, 7):
@@ -219,7 +215,7 @@ def test_incremental_streaming():
 
 def test_hysteresis_no_thrash():
     print("[5] hysteresis stops boundary thrashing")
-    mgr = BigWorldManager(activation_radius=2048.0, deactivation_radius=2304.0)
+    mgr = WorldCellIndex(activation_radius=2048.0, deactivation_radius=2304.0)
     brushes = [make_brush(cx * 512 + 256, 0, 256) for cx in range(-1, 12)]
     mgr.index_world(brushes, [])
     mgr.update((0, 0, 0), force=True)
@@ -253,7 +249,7 @@ def test_hysteresis_no_thrash():
 
 def test_spanning_refcount():
     print("[6] a spanning brush stays active while any active cell references it")
-    mgr = BigWorldManager(activation_radius=600.0, deactivation_radius=600.0)
+    mgr = WorldCellIndex(activation_radius=600.0, deactivation_radius=600.0)
     # Brush spans cells (0,0) and (1,0).
     span = make_brush(512, 0, 128, sx=512, sy=64, sz=64)  # x in [256, 768]
     mgr.index_world([span], [])
@@ -275,7 +271,7 @@ def test_spanning_refcount():
 
 def test_persistent_entities():
     print("[7] persistent / global entities stay active regardless of cell")
-    mgr = BigWorldManager(activation_radius=512.0, deactivation_radius=512.0)
+    mgr = WorldCellIndex(activation_radius=512.0, deactivation_radius=512.0)
     world_mgr = FakeThing(100000, 0, 100000, ttype="worldmanager")   # type-based
     tagged = FakeThing(90000, 0, 90000, ttype="monster", bw_persistent=True)  # property
     near = FakeThing(10, 0, 10, ttype="monster")
@@ -301,7 +297,7 @@ def test_session_effects_and_restore():
     far_pre_hidden = make_brush(60000, 0, 0, hidden=True)  # user already hid it
     logic = FakeLogic([near, far, far_pre_hidden], [near_mon, far_mon], player_pos=(0, 0, 0))
 
-    session = BigWorldSession(logic, activation_radius=2048.0, deactivation_radius=2048.0)
+    session = WorldStreamingSession(logic, activation_radius=2048.0, deactivation_radius=2048.0)
     session.start()
 
     _check(not near.get("hidden", False), "near brush is visible (active)")
@@ -309,8 +305,8 @@ def test_session_effects_and_restore():
     _check(far_mon.properties.get("disabled", False), "far monster disabled (skipped by AI)")
     _check(not near_mon.properties.get("disabled", False), "near monster stays enabled")
     # Active-set queries.
-    _check(session.manager.is_brush_active(near), "manager reports near brush active")
-    _check(not session.manager.is_brush_active(far), "manager reports far brush inactive")
+    _check(session.cells.is_brush_active(near), "manager reports near brush active")
+    _check(not session.cells.is_brush_active(far), "manager reports far brush inactive")
 
     print("[9] play-stop restores the exact prior state (nothing lost, no leaks)")
     session.stop()
@@ -328,11 +324,11 @@ def test_streaming_moves_active_set():
     for cx in range(0, 40):
         brushes.append(make_brush(cx * 512 + 256, 0, 256))
     logic = FakeLogic(brushes, [], player_pos=(0, 0, 0))
-    session = BigWorldSession(logic, activation_radius=1024.0, deactivation_radius=1024.0)
+    session = WorldStreamingSession(logic, activation_radius=1024.0, deactivation_radius=1024.0)
     session.start()
 
     def active_xs():
-        return sorted({c[0] for c in session.manager.active_cells})
+        return sorted({c[0] for c in session.cells.active_cells})
 
     start_cols = active_xs()
     # Teleport-walk far east.
@@ -356,7 +352,7 @@ def test_uuid_stability():
     logic = FakeLogic(brushes, things, player_pos=(0, 0, 0))
 
     before = persistence.collect_uuids(brushes, things)
-    session = BigWorldSession(logic, activation_radius=800.0, deactivation_radius=800.0)
+    session = WorldStreamingSession(logic, activation_radius=800.0, deactivation_radius=800.0)
     session.start()
     # Stream around a bit.
     for x in (400, 2000, 6000, 0):
@@ -418,7 +414,7 @@ def test_scaling_active_is_local():
         for j in range(side):
             brushes.append(make_brush(i * 200, 0, j * 200))
     t0 = time.perf_counter()
-    mgr = BigWorldManager(activation_radius=2048.0)
+    mgr = WorldCellIndex(activation_radius=2048.0)
     mgr.index_world(brushes, [])
     t_index = time.perf_counter() - t0
 
@@ -448,35 +444,35 @@ def test_scaling_active_is_local():
 # 14. Plugin discovery / registration
 # --------------------------------------------------------------------------
 
-def test_plugin_registers():
-    print("[14] plugin discovery + registration")
+def test_streaming_is_a_core_engine_subsystem():
+    """No plugin sits between the engine and its world management.
+
+    Streaming decides what is resident, and the renderer, the collision grid,
+    the simulation scheduler and the save system all depend on that answer — so
+    the logic thread owns and drives the session itself. This test pins that
+    down: nothing named bigworld is discoverable as a plugin any more, and the
+    engine exposes the whole surface directly.
+    """
     from plugins.manager import get_manager, load_plugins
     load_plugins()
-    mgr = get_manager()
-    names = [p.name for p in mgr.plugins]
-    _check("bigworld" in names, f"bigworld plugin discovered (loaded: {names})")
+    names = [p.name for p in get_manager().plugins]
+    _check("bigworld" not in names,
+           f"streaming is not a plugin (loaded: {names})")
 
-    plugin = mgr.find_plugin("bigworld")
-    _check(plugin is not None and plugin.enabled is False,
-           "ships disabled by default (ordinary maps pay nothing)")
+    from engine.logic_thread import LogicThread
+    for attr in ("streaming", "_start_world_streaming", "_stop_world_streaming",
+                 "notify_world_changed", "notify_visibility_changed"):
+        _check(hasattr(LogicThread, attr) or attr in LogicThread.__init__.__code__.co_names,
+               f"LogicThread exposes {attr}")
 
-    # Auto-enable when a map carries a BigWorldSettings entity.
+    # A map opts in by carrying the settings entity, which is a core editor
+    # entity — the engine reads it with no plugin involved.
+    from editor.things import BigWorldSettings
+    _check(BigWorldSettings.TYPE == "bigworldsettings", "settings entity type is stable")
     map_data = {"things": [{"type": "bigworldsettings",
                             "properties": {"type": "bigworldsettings"}}]}
-    newly = mgr.auto_enable_for_map(map_data)
-    _check(plugin in newly or plugin.enabled,
-           "auto-enabled for a map containing BigWorldSettings")
+    _check(persistence.map_has_bigworld(map_data), "settings entity opts the map in")
 
-    try:
-        from editor.things import ENTITY_TYPES
-        _check("BigWorldSettings" in ENTITY_TYPES, "BigWorldSettings registered as an entity")
-    except Exception as exc:
-        print(f"  skip: editor.things unavailable ({exc})")
-
-
-# --------------------------------------------------------------------------
-# 15. Terrain fill: expand + stream terrain, reversibly
-# --------------------------------------------------------------------------
 
 def test_terrain_fill_expands_and_restores():
     print("[15] terrain fill expands terrain to the world and restores it")
@@ -487,7 +483,7 @@ def test_terrain_fill_expands_and_restores():
     terrain = FakeTerrain(min_x=-2, max_x=2, min_z=-2, max_z=2)
     logic = FakeLogic(brushes, [], player_pos=(0, 0, 0), terrain=terrain)
 
-    session = BigWorldSession(logic, activation_radius=2048.0,
+    session = WorldStreamingSession(logic, activation_radius=2048.0,
                               deactivation_radius=2304.0, terrain_fill=True)
     # Capture the authored terrain state to compare against after stop().
     orig = (terrain.streaming, terrain.stream_radius,
@@ -498,7 +494,7 @@ def test_terrain_fill_expands_and_restores():
     _check(terrain.streaming is True, "terrain streaming turned on during play")
     _check(len(terrain.extent_calls) == 1, "terrain sized to the world exactly once")
     # The extent must enclose the brush field's cell bounding box.
-    mgr = session.manager
+    mgr = session.cells
     xs = [c[0] for c in mgr.cells]
     zs = [c[1] for c in mgr.cells]
     exp = (min(xs) * mgr.cell_size, min(zs) * mgr.cell_size,
@@ -526,7 +522,7 @@ def test_terrain_fill_opt_in_and_safe():
     # (a) terrain_fill off ⇒ terrain untouched.
     terrain = FakeTerrain()
     logic = FakeLogic(brushes, [], terrain=terrain)
-    s = BigWorldSession(logic, terrain_fill=False)
+    s = WorldStreamingSession(logic, terrain_fill=False)
     s.start()
     _check(terrain.streaming is False and not terrain.extent_calls,
            "terrain left exactly as authored when fill is off")
@@ -534,7 +530,7 @@ def test_terrain_fill_opt_in_and_safe():
 
     # (b) terrain_fill on but no terrain present ⇒ no crash, no-op.
     logic2 = FakeLogic(brushes, [], terrain=None)
-    s2 = BigWorldSession(logic2, terrain_fill=True)
+    s2 = WorldStreamingSession(logic2, terrain_fill=True)
     s2.start()
     s2.stop()
     _check(True, "terrain fill with no terrain present is a safe no-op")
@@ -542,7 +538,7 @@ def test_terrain_fill_opt_in_and_safe():
     # (c) explicit stream radius is honoured over the derived default.
     terrain3 = FakeTerrain()
     logic3 = FakeLogic(brushes, [], terrain=terrain3)
-    s3 = BigWorldSession(logic3, activation_radius=2048.0, terrain_fill=True,
+    s3 = WorldStreamingSession(logic3, activation_radius=2048.0, terrain_fill=True,
                          terrain_stream_radius=777.0)
     s3.start()
     _check(terrain3.stream_radius == 777.0, "explicit terrain_stream_radius honoured")
@@ -570,10 +566,10 @@ def test_terrain_infinite_streams_forever():
     brushes = [make_brush(0, 0, 0), make_brush(400, 0, 400)]
     terrain = FakeTerrain(min_x=-2, max_x=2, min_z=-2, max_z=2)
     logic = FakeLogic(brushes, [], player_pos=(0, 0, 0), terrain=terrain)
-    session = BigWorldSession(logic, terrain_fill=True, terrain_infinite=True)
+    session = WorldStreamingSession(logic, terrain_fill=True, terrain_infinite=True)
     session.start()
     _check(terrain.streaming is True, "streaming on for infinite terrain")
-    h = BigWorldSession.INFINITE_HALF_EXTENT
+    h = WorldStreamingSession.INFINITE_HALF_EXTENT
     _check(terrain.extent_calls and terrain.extent_calls[0] == (-h, -h, h, h),
            "terrain sized to the huge origin-centred extent")
     # Bounds dwarf the tiny content bounding box → no edge to walk off.

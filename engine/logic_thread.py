@@ -24,6 +24,37 @@ from .threaded_game_state import ThreadedGameState, RenderState
 from .player import Player
 from .camera import Camera
 from .constants import is_water_brush, brush_aabb_bounds
+from .world_index import (WorldIndex, TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
+                          TIER_DORMANT, TIER_NEAR_RADIUS, TIER_ACTIVE_RADIUS)
+from .cells import CELL_SIZE as CULL_CELL_SIZE
+from .world_persistence import config_from_settings, find_settings_thing
+from .world_streaming import WorldStreamingSession
+from .render_cull import (CAMERA_RENDER_CULL_DISTANCE,
+                          CAMERA_RENDER_CULL_DISTANCE_SQ, visible_xz_bounds)
+
+#: NDC corners of the far plane, transformed by inverse(proj*view) to get the
+#: view volume's far corners in world space. Built once, never per frame.
+_FAR_PLANE_NDC = (glm.vec4(-1.0, -1.0, 1.0, 1.0), glm.vec4(1.0, -1.0, 1.0, 1.0),
+                  glm.vec4(-1.0, 1.0, 1.0, 1.0), glm.vec4(1.0, 1.0, 1.0, 1.0))
+
+#: Below this many actors, classifying them into simulation tiers costs more
+#: than simulating all of them, so the world index is left empty and everything
+#: runs fully. MiniWind's authored settlement sits well under it; a crowd, a
+#: streamed world or a spawner-fed map goes over and starts paying by relevance.
+SIM_LOD_MIN_ACTORS = 32
+
+#: How far outside the camera's relevance box an actor's *centre* may sit and
+#: still be drawn. Generous enough for the widest billboard the game uses, so a
+#: sprite straddling the edge of the view never pops out.
+ACTOR_CULL_MARGIN = 256.0
+
+#: Shared empty row array — a cull query that matches nothing allocates nothing.
+_EMPTY_ROWS = np.empty(0, dtype=np.intp)
+
+
+def _np_empty_rows():
+    return _EMPTY_ROWS
+
 from .brush_geometry import build_collision_mesh, brush_has_geometry, GEO_RUNTIME_KEYS
 
 # Import Thing subclasses for type checking
@@ -207,12 +238,57 @@ class LogicThread(threading.Thread):
         # static/dynamic split are built once (see _build_cull_cache) and only
         # the mover/door center rows are refreshed each frame — the per-frame
         # Python gather loop and NumPy array rebuild are skipped entirely.
+        # The engine's one authoritative actor spatial index + simulation-LOD
+        # classifier (engine/world_index.py). Rebuilt once per play tick from
+        # the precomputed monster list and consumed by the AI, the gameplay
+        # layer, the streamer and the render-state builder — so "who is near
+        # the player" is answered in exactly one place instead of four.
+        self.world_index = WorldIndex()
+        #: The live world-streaming session for this play session, or None when
+        #: the map did not opt in (no BigWorldSettings entity) — in which case
+        #: the whole world stays resident, exactly as a small map always did.
+        #: Owned and driven here, not dispatched to through a plugin: which part
+        #: of the world is live is something the renderer, the collision grid,
+        #: the simulation scheduler and the save system all depend on.
+        self.streaming = None
+        #: Set False to disable simulation LOD entirely (everything stays
+        #: TIER_NEAR). Exposed for the debug console and for tests that want
+        #: the pre-LOD behaviour.
+        self.sim_lod_enabled = True
+        self.sim_near_radius = TIER_NEAR_RADIUS
+        self.sim_active_radius = TIER_ACTIVE_RADIUS
+        #: Actor count below which relevance is not worth computing (see
+        #: SIM_LOD_MIN_ACTORS). Settable so a crowded map, a profiling run or a
+        #: test can move the crossover.
+        self.sim_lod_min_actors = SIM_LOD_MIN_ACTORS
+        #: Whether any actor currently carries a `_sim_tier` stamp, so dropping
+        #: below SIM_LOD_MIN_ACTORS clears them exactly once instead of every
+        #: tick (a stale stamp would wrongly skip simulation).
+        self._sim_lod_stamped = False
+        #: The unparked actors, and the bookkeeping that keeps that partition
+        #: honest. See _live_actors.
+        self._live_actors_cache = None
+        self._live_actors_epoch = -1
+        self._live_actors_countdown = 0
+
         self._cull_valid = False
         self._cull_n = 0
         self._cull_centers = None          # (N,3) float64
         self._cull_halves = None           # (N,3) float64
         self._cull_row_refs = None         # (N,) object: per-brush render ref
         self._cull_dynamic_rows = None     # list[int]: indices of movers/doors
+        self._cull_cells = {}              # (cx,cz) -> rows, shared 512 grid
+        self._cull_y_min = 0.0             # world geometry's vertical slab
+        self._cull_y_max = 0.0
+        self._cull_oversized = _np_empty_rows()   # rows too big to bin
+        self._cull_keep = None             # (N,) bool: not hidden
+        self._all_brushes_cache = None     # cached whole-world non-hidden list
+        self._all_brushes_dynamic = []     # [(row, slot)] for movers/doors
+        self._visibility_epoch = 0
+        self._visibility_applied = -1
+        self._visibility_countdown = 0
+        self._all_things_cache = []
+        self._all_things_token = None
 
         # Editor camera
         self.editor_camera = Camera()
@@ -474,6 +550,9 @@ class LogicThread(threading.Thread):
         # every entity in the level on every AI tick.
         self._monster_things = [t for t in self.things if MonsterThing and isinstance(t, MonsterThing)]
         self._monster_by_id = {id(t): t for t in self._monster_things}
+        # The actor set itself changed, so the live/parked partition over it is
+        # meaningless until it is re-derived.
+        self._live_actors_cache = None
 
     def _find_entity_by_name(self, name: str):
         if not name:
@@ -955,6 +1034,15 @@ class LogicThread(threading.Thread):
             # Clear gunfire events
             self._gunfire_events.clear()
 
+            # ---- World streaming ------------------------------------------
+            # Must come after the caches, the collision grid and the cull
+            # buffers exist: starting a session parks most of the world, and the
+            # parking is expressed through the same `hidden`/`disabled` flags
+            # those systems already read. Only a map that authored a
+            # BigWorldSettings entity streams; every other map keeps the whole
+            # world resident and pays nothing.
+            self._start_world_streaming()
+
             # Fire OnPlayerSpawn
             self._fire_player_spawn_outputs()
             
@@ -966,6 +1054,7 @@ class LogicThread(threading.Thread):
             
         else:
             self._stop_monster_ai()
+            self._stop_world_streaming()
             self.player_in_triggers.clear()
             self.fired_once_triggers.clear()
             self.collected_pickups.clear()
@@ -991,6 +1080,11 @@ class LogicThread(threading.Thread):
             self.muzzle_flash_active = False
 
             # Clear spatial grid
+            # Simulation LOD radii are per-session (a streaming map overrides
+            # the outer band on play start), so reset them with the session.
+            self.sim_near_radius = TIER_NEAR_RADIUS
+            self.sim_active_radius = TIER_ACTIVE_RADIUS
+            self.world_index.rebuild([], None)
             self.monster_ai.set_spatial_grid(None)
             if hasattr(self, '_spatial_grid'):
                 self._spatial_grid.clear()
@@ -1063,10 +1157,10 @@ class LogicThread(threading.Thread):
             return False, "Nothing to save — not in play mode."
         try:
             from engine import savegame
-            # Big World maps force a delta save: never a full world snapshot.
+            # A streaming map forces a delta save: never a full world snapshot.
             # The live streaming session owns the persistent per-cell registry.
-            session = getattr(self, "_bigworld", None)
-            if session is not None and getattr(session, "streaming", False):
+            session = self.streaming
+            if session is not None and session.streaming:
                 session.commit_all()   # flush every cell, loaded or unloaded
                 snapshot = savegame.build_snapshot(
                     self, map_name=map_name,
@@ -1116,6 +1210,66 @@ class LogicThread(threading.Thread):
         except Exception as exc:
             return False, f"Load failed: {exc}"
 
+    def _start_world_streaming(self):
+        """Start cell streaming if this map opted into it.
+
+        The map opts in by carrying a ``BigWorldSettings`` entity; its radii
+        drive both which cells are resident *and* the simulation-LOD band, so
+        streaming and simulation can never disagree about how far out the world
+        is live. A map without one leaves ``self.streaming`` as None and behaves
+        exactly as it always did.
+        """
+        self.streaming = None
+        settings = find_settings_thing(self.things)
+        if settings is None:
+            return
+        cfg = config_from_settings(settings)
+        if not cfg["enabled"]:
+            return
+        session = None
+        if cfg.get("disk_streaming"):
+            # Disk streaming genuinely frees unloaded cells and re-streams them
+            # from a pristine partition of the map. Fails safe to the in-RAM
+            # session if anything about the map defeats it.
+            try:
+                from .world_streaming_disk import (DiskStreamingSession,
+                                                   MemoryCellSource)
+                source = MemoryCellSource.from_logic(self)
+                session = DiskStreamingSession(
+                    self, source,
+                    load_radius=cfg["activation_radius"],
+                    evict_radius=cfg["deactivation_radius"])
+                session.start()
+            except Exception:
+                import traceback
+                debug_log("Streaming",
+                          "disk streaming failed, falling back to in-RAM:\n"
+                          + traceback.format_exc())
+                session = None
+        if session is None:
+            session = WorldStreamingSession(
+                self,
+                activation_radius=cfg["activation_radius"],
+                deactivation_radius=cfg["deactivation_radius"],
+                terrain_fill=cfg["terrain_fill"],
+                terrain_infinite=cfg["terrain_infinite"],
+                terrain_stream_radius=cfg["terrain_stream_radius"])
+            session.start()
+        session.show_cell_debug = cfg["show_cell_debug"]
+        self.streaming = session
+
+    def _stop_world_streaming(self):
+        """Tear the streaming session down, restoring the world exactly."""
+        session = self.streaming
+        if session is not None:
+            try:
+                session.stop()
+            except Exception:
+                import traceback
+                debug_log("Streaming",
+                          "error stopping streaming session:\n" + traceback.format_exc())
+            self.streaming = None
+
     def _start_monster_ai(self):
         """Start the monster AI processing thread."""
         self._stop_monster_ai()
@@ -1140,6 +1294,15 @@ class LogicThread(threading.Thread):
                 continue
             thing.properties.pop('is_shooting', None)
             thing.properties.pop('_vel_y', None)
+            # Transient simulation-LOD tier, stamped each tick by the world
+            # index. Cleared with the session so a fresh play start simulates
+            # everything until the first index rebuild classifies it, and so it
+            # never rides along into a saved map.
+            thing.properties.pop('_sim_tier', None)
+            # Cached identity slug (game.rpg.disposition.mem_key). Derived from
+            # the entity's own id/name, so it is regenerated on demand; dropped
+            # here so it never rides along into a saved map.
+            thing.properties.pop('_mem_key', None)
             # Whatever it switched to mid-fight last session; the next one starts
             # from the authored kit (see engine/combat_loadout.py).
             thing.properties.pop('_active_weapon', None)
@@ -1517,10 +1680,104 @@ class LogicThread(threading.Thread):
                 speed *= self.EDITOR_CAMERA_FAST_MULT
             self.editor_camera.pos += move_dir * speed * delta
 
+    def _live_actors(self):
+        """The actors the streamer has not parked, cached between changes.
+
+        A streamed-out actor is not merely simulated less — it is not simulated
+        at all, and that has to include *classifying* it. On a large streamed
+        world almost every actor is parked, so re-reading a thousand positions
+        each tick to conclude "still dormant" is the exact shape of work this
+        pass exists to remove.
+
+        The partition is event-driven: it is rebuilt when something announces a
+        visibility change (streaming a cell in or out, an I/O Show/Hide, the
+        console), with the same periodic re-validation the non-hidden brush list
+        uses as a backstop for any path that forgets to say so. Parked actors
+        keep a TIER_DORMANT stamp, so every consumer still gets a correct answer
+        without the index carrying a row for them.
+        """
+        all_actors = getattr(self, '_monster_things', None) or []
+        if (self._live_actors_cache is not None
+                and self._live_actors_epoch == self._visibility_epoch
+                and self._live_actors_countdown > 0):
+            self._live_actors_countdown -= 1
+            return self._live_actors_cache
+        live = []
+        for a in all_actors:
+            props = a.properties
+            if props.get('hidden') or props.get('disabled'):
+                props['_sim_tier'] = TIER_DORMANT
+            else:
+                live.append(a)
+        self._live_actors_cache = live
+        self._live_actors_epoch = self._visibility_epoch
+        self._live_actors_countdown = self.VISIBILITY_REVALIDATE_TICKS
+        return live
+
+    def _rebuild_world_index(self):
+        """Refresh the authoritative actor index + simulation tiers.
+
+        Cheap and unconditional: one Python pass to fill the reusable position
+        buffers, then the distance/tier classification for every actor at once.
+        The focus point is the player (the camera in a cinematic, since that is
+        what the viewer can actually observe). With LOD disabled, or with no
+        focus, every loaded actor classifies as TIER_NEAR — i.e. exactly the
+        pre-LOD behaviour, which is what the editor and headless tests want.
+        """
+        actors = self._live_actors()
+        # The crossover is about the size of the *cast*, not of whatever
+        # survives streaming: a world of a thousand actors with six of them
+        # loaded is precisely the case relevance exists for, and reading its
+        # empty live set as "too small to bother" would hand the gameplay layer
+        # the whole population again through its scalar fallbacks.
+        if len(getattr(self, '_monster_things', None) or ()) < self.sim_lod_min_actors:
+            # Too few actors for relevance to be worth computing: simulating all
+            # of them costs less than sorting them into tiers. Measured, not
+            # assumed — at settlement scale (a dozen or two townsfolk) the index
+            # rebuild is a larger cost than everything it would save, while the
+            # scalar paths it replaces are short-list walks. So the index stays
+            # empty, every actor reads TIER_NEAR, and the gameplay layer takes
+            # the same scalar route it always did.
+            if self._sim_lod_stamped:
+                for a in actors:
+                    a.properties.pop('_sim_tier', None)
+                self._sim_lod_stamped = False
+            self.world_index.rebuild((), None)
+            return
+        self._sim_lod_stamped = True
+        focus = None
+        if self.sim_lod_enabled:
+            cs = self.cinematic_state
+            if cs and 'cam_pos' in cs:
+                cp = cs['cam_pos']
+                focus = (float(cp[0]), float(cp[2]))
+            elif self.player is not None:
+                p = self.player.pos
+                focus = (float(p[0]), float(p[2]))
+        self.world_index.rebuild(actors, focus,
+                                 near_radius=self.sim_near_radius,
+                                 active_radius=self.sim_active_radius)
+
     def _tick_play_mode(self, delta):
         if not self.player:
             return
-        
+
+        # ---- World streaming ----------------------------------------------
+        # A single cell-of-point compare early-outs until the player crosses a
+        # cell boundary, so a stationary or slow-moving player pays almost
+        # nothing; on a crossing only the objects that entered or left the
+        # region are toggled. Called directly — this is a core engine service,
+        # not something to dispatch to through the plugin bus every frame.
+        if self.streaming is not None:
+            self.streaming.tick()
+
+        # ---- Spatial relevance, once per tick, for the whole engine --------
+        # Everything downstream — the AI's activation, the gameplay layer's
+        # perception, the render-state builder's culling — reads its answer to
+        # "who is near the player" from here. One pass, contiguous NumPy
+        # buffers, no per-system rescan.
+        self._rebuild_world_index()
+
         # Update movers & doors first (for platform carrying)
         self._update_respawns(delta)
         self._update_movers(delta)
@@ -3237,14 +3494,254 @@ class LogicThread(threading.Thread):
         dist = c @ normals.T + h @ np.abs(normals).T + d  # (N, 6)
         return np.all(dist >= 0.0, axis=1)
 
+    #: Brushes below this count are cheaper to test whole than to look up
+    #: through cell bins, so the spatial pre-cull only engages above it.
+    CULL_BIN_THRESHOLD = 512
+    #: A brush whose footprint covers more cells than this is not binned at all
+    #: — it goes in the always-considered "oversized" list, exactly as a huge
+    #: floor brush would otherwise blow up every cell in the world.
+    CULL_MAX_CELLS_PER_BRUSH = 64
+    #: Ticks between full re-validations of the non-hidden brush set. Runtime
+    #: visibility changes normally announce themselves through
+    #: :meth:`notify_visibility_changed`; this is the belt-and-braces sweep that
+    #: heals anything that did not, within about a second.
+    VISIBILITY_REVALIDATE_TICKS = 30
+
+    def notify_visibility_changed(self):
+        """Tell the render-state builder that some brush's ``hidden`` changed.
+
+        The non-hidden brush set (``all_brushes``, which feeds the shadow and
+        portal passes and the second splitscreen view) is a whole-world list, so
+        rebuilding it every frame costs O(total brushes) for a set that changes
+        only when something is actually shown or hidden. Callers that do that —
+        the I/O Show/Hide handlers, the console, the streamer parking a cell —
+        call this and the next frame rebuilds. Cheap: an integer bump.
+        """
+        self._visibility_epoch += 1
+
+    def notify_world_changed(self):
+        """Re-derive every core index after the world's object set changed.
+
+        Streaming a cell in or out genuinely adds and removes brushes and
+        entities, which invalidates *all* of the engine's precomputed indexes at
+        once: the name/id caches, the actor list the AI and the world index are
+        built from, the collision grid, the collision-brush cache and the cull
+        buffers. Before this existed the streamer only toggled ``hidden`` /
+        ``disabled`` flags and any path that genuinely swapped objects (the
+        disk-streaming session) left the caches pointing at objects that were no
+        longer in the world.
+
+        Rebuilding is proportional to what is *resident*, not to the size of the
+        world, and it only runs on a cell crossing — which is the whole point of
+        streaming. Safe to call outside play mode: the play-only pieces are
+        skipped.
+        """
+        self._build_entity_caches()
+        if not self.play_mode:
+            self.notify_visibility_changed()
+            return
+        self._refresh_collision_brushes_cache()
+        self._build_cull_cache()
+        grid = getattr(self, '_spatial_grid', None)
+        if grid is not None:
+            grid.populate(self.brushes + self._model_collision_brushes)
+
+    def _build_brush_cells(self):
+        """Bin brush rows into the engine's shared 512-unit XZ cells.
+
+        Same convention as :class:`engine.physics.SpatialGrid` and the world
+        index, so a cell means the same patch of ground everywhere. This is what
+        lets the per-frame cull start from *the camera's region* instead of from
+        every brush in the world: with a top-down camera the visible region is a
+        small box, and everything outside it never reaches the frustum test, the
+        hidden test or the draw list.
+        """
+        self._cull_cells = {}
+        self._cull_oversized = _np_empty_rows()
+        n = self._cull_n
+        if n < self.CULL_BIN_THRESHOLD:
+            return
+        centers = self._cull_centers
+        halves = self._cull_halves
+        cs = CULL_CELL_SIZE
+        inv = 1.0 / cs
+        cx0 = np.floor((centers[:, 0] - halves[:, 0]) * inv).astype(np.int64)
+        cx1 = np.floor((centers[:, 0] + halves[:, 0]) * inv).astype(np.int64)
+        cz0 = np.floor((centers[:, 2] - halves[:, 2]) * inv).astype(np.int64)
+        cz1 = np.floor((centers[:, 2] + halves[:, 2]) * inv).astype(np.int64)
+        span = (cx1 - cx0 + 1) * (cz1 - cz0 + 1)
+        oversized = np.nonzero(span > self.CULL_MAX_CELLS_PER_BRUSH)[0]
+        self._cull_oversized = oversized
+        buckets = {}
+        for i in np.nonzero(span <= self.CULL_MAX_CELLS_PER_BRUSH)[0].tolist():
+            for gx in range(int(cx0[i]), int(cx1[i]) + 1):
+                for gz in range(int(cz0[i]), int(cz1[i]) + 1):
+                    b = buckets.get((gx, gz))
+                    if b is None:
+                        buckets[(gx, gz)] = [i]
+                    else:
+                        b.append(i)
+        self._cull_cells = {k: np.asarray(v, dtype=np.intp)
+                            for k, v in buckets.items()}
+
+    def _camera_relevance_box(self, cam_pos, proj_view):
+        """The XZ box the camera can actually see this frame.
+
+        One authoritative answer, derived from the live camera and the world's
+        vertical slab (see :func:`engine.render_cull.visible_xz_bounds`), used
+        by everything downstream: which brush cells are consulted, which actors
+        get a render snapshot, and what the renderer is told its region is. A
+        fixed radius cannot do this job — MiniWind's camera looks almost
+        straight down, so its visible ground is a box a couple of thousand units
+        across, while the same radius has to cover a first-person view running
+        to the far plane.
+        """
+        try:
+            inv = glm.inverse(proj_view)
+        except Exception:
+            # A degenerate matrix must never blank the frame: fall back to the
+            # hard ceiling, which is always conservative.
+            r = CAMERA_RENDER_CULL_DISTANCE
+            return (cam_pos.x - r, cam_pos.z - r, cam_pos.x + r, cam_pos.z + r)
+        corners = []
+        for ndc in _FAR_PLANE_NDC:
+            p = inv * ndc
+            w = p.w
+            if abs(w) < 1e-9:
+                continue
+            corners.append((p.x / w, p.y / w, p.z / w))
+        if not corners:
+            r = CAMERA_RENDER_CULL_DISTANCE
+            return (cam_pos.x - r, cam_pos.z - r, cam_pos.x + r, cam_pos.z + r)
+        return visible_xz_bounds(
+            (cam_pos.x, cam_pos.y, cam_pos.z), corners,
+            self._cull_y_min, self._cull_y_max)
+
+    def _camera_candidate_rows(self, box):
+        """Brush rows whose footprint touches the camera's relevance *box*.
+
+        ``None`` means "no useful narrowing — test them all", which is what a
+        small level or a cache miss gets. The oversized brushes (too big to bin)
+        are always included.
+        """
+        cells = self._cull_cells
+        if not cells:
+            return None
+        cs = CULL_CELL_SIZE
+        inv = 1.0 / cs
+        gx0 = int(math.floor(box[0] * inv))
+        gz0 = int(math.floor(box[1] * inv))
+        gx1 = int(math.floor(box[2] * inv))
+        gz1 = int(math.floor(box[3] * inv))
+        parts = []
+        for gx in range(gx0, gx1 + 1):
+            for gz in range(gz0, gz1 + 1):
+                b = cells.get((gx, gz))
+                if b is not None:
+                    parts.append(b)
+        if self._cull_oversized.size:
+            parts.append(self._cull_oversized)
+        if not parts:
+            return _np_empty_rows()
+        rows = parts[0] if len(parts) == 1 else np.concatenate(parts)
+        # A brush spanning several cells appears once per cell it touches.
+        return np.unique(rows)
+
+    def _shadow_casters(self, box, light_reach, all_brushes, visible_things):
+        """The brushes and model entities the shadow pass could possibly need.
+
+        A shadow-casting light survives the entity cull only if its influence
+        sphere reaches the camera's region, and a caster only matters within one
+        radius of that light — so everything that can cast a visible shadow lies
+        inside the region grown by twice the largest surviving light's reach.
+        The rows come from the same 512-unit cell index the geometry cull uses;
+        there is no second partition and no second distance calculation.
+
+        Falls back to the full lists when there is no usable index (the editor,
+        a cache miss), which is what the renderer always used to get.
+        """
+        if (not self.play_mode or not self.culling_enabled
+                or not self._cull_cells or self._cull_keep is None):
+            return all_brushes, visible_things
+        if light_reach <= 0.0:
+            # No shadow-casting light reaches the view, so the pass has nothing
+            # to gather geometry for. An empty list, not a fallback: the caller
+            # distinguishes "narrowed to nothing" from "never narrowed".
+            return [], []
+        grow = 2.0 * float(light_reach)
+        grown = (box[0] - grow, box[1] - grow, box[2] + grow, box[3] + grow)
+        rows = self._camera_candidate_rows(grown)
+        if rows is None:
+            return all_brushes, visible_things
+        rows = rows[self._cull_keep[rows]]
+        if rows.size == 0:
+            return [], visible_things
+        return self._cull_row_refs[rows].tolist(), visible_things
+
+    def _all_things_list(self):
+        """The full entity list handed to the render state, cached.
+
+        The renderer wants a stable snapshot it can read while the logic thread
+        runs on, but the list only changes when an entity is spawned or removed
+        — so rebuild it then, not every frame. The ``(id, len)`` token catches
+        both a membership change and a whole-list swap, the same cheap test the
+        gameplay layer's type index uses.
+        """
+        things = self.things
+        token = (id(things), len(things))
+        if token != self._all_things_token:
+            self._all_things_token = token
+            self._all_things_cache = list(things)
+        return self._all_things_cache
+
+    def _refresh_all_brushes(self, brushes, row_refs):
+        """The whole-world non-hidden brush list, rebuilt only when it changes.
+
+        ``all_brushes`` feeds the shadow pass, the portal pass and the second
+        splitscreen view, all of which legitimately want the world rather than
+        the camera's region — but the set only changes when something is shown
+        or hidden, which is rare, while rebuilding it costs O(total brushes)
+        every frame. So it is cached, refreshed on a visibility change (or the
+        periodic re-validation), and patched in place for the handful of
+        mover/door rows whose render snapshot is replaced each frame.
+        """
+        due = (self._visibility_epoch != self._visibility_applied
+               or self._visibility_countdown <= 0
+               or self._all_brushes_cache is None)
+        if due:
+            keep = np.fromiter(
+                (not b.get('hidden', False) for b in brushes),
+                dtype=bool, count=self._cull_n)
+            self._visibility_applied = self._visibility_epoch
+            self._visibility_countdown = self.VISIBILITY_REVALIDATE_TICKS
+            prev = self._cull_keep
+            if (prev is None or prev.shape != keep.shape
+                    or not np.array_equal(prev, keep)):
+                self._cull_keep = keep
+                self._all_brushes_cache = row_refs[keep].tolist()
+                # Where each dynamic row landed in the cached list, so a mover's
+                # fresh snapshot can be written straight into it.
+                kept_rows = np.nonzero(keep)[0]
+                pos_of = {int(r): i for i, r in enumerate(kept_rows.tolist())}
+                self._all_brushes_dynamic = [
+                    (i, pos_of[i]) for i in self._cull_dynamic_rows if i in pos_of]
+        else:
+            self._visibility_countdown -= 1
+        cache = self._all_brushes_cache
+        for row, slot in self._all_brushes_dynamic:
+            cache[slot] = row_refs[row]
+        return cache
+
     def _build_cull_cache(self):
         """Precompute persistent per-brush cull buffers for a play session.
 
         Called once on entering play mode, when the brush set is fixed. Builds
-        NumPy AABB center/half-size arrays and the static-vs-dynamic split so
-        ``_prepare_render_state`` can vectorize culling without rebuilding any
-        Python lists per frame. ``hidden`` is intentionally NOT baked in — it
-        can still toggle at runtime (I/O Show/Hide) and is read per frame.
+        NumPy AABB center/half-size arrays, the static-vs-dynamic split and the
+        512-unit cell bins, so ``_prepare_render_state`` can start from the
+        camera's region and finish with two vectorized NumPy operations —
+        without rebuilding any Python list per frame. ``hidden`` is intentionally
+        NOT baked in: it can still toggle at runtime (I/O Show/Hide), so it is
+        tracked separately by :meth:`_refresh_all_brushes`.
         """
         brushes = self.brushes
         n = len(brushes)
@@ -3267,6 +3764,16 @@ class LogicThread(threading.Thread):
                 row_refs[i] = b
             else:
                 row_refs[i] = b  # static: the live dict, ref never changes
+        # Vertical slab the world's geometry actually occupies. The top-down
+        # camera's cone leaves this slab almost immediately, which is what makes
+        # its visible ground box a few thousand units across instead of the tens
+        # of thousands a 10,000-unit far plane would imply.
+        if n:
+            self._cull_y_min = float((centers[:, 1] - halves[:, 1]).min())
+            self._cull_y_max = float((centers[:, 1] + halves[:, 1]).max())
+        else:
+            self._cull_y_min = 0.0
+            self._cull_y_max = 0.0
         self._cull_centers = centers
         self._cull_halves = halves
         self._cull_row_refs = row_refs
@@ -3274,6 +3781,11 @@ class LogicThread(threading.Thread):
         self._cull_dynamic_rows = dynamic_rows
         self._cull_n = n
         self._cull_valid = True
+        self._cull_keep = None
+        self._all_brushes_cache = None
+        self._all_brushes_dynamic = []
+        self._build_brush_cells()
+        self.notify_visibility_changed()
 
     def _invalidate_cull_cache(self):
         self._cull_valid = False
@@ -3282,6 +3794,12 @@ class LogicThread(threading.Thread):
         self._cull_row_refs = None
         self._cull_dynamic_rows = None
         self._cull_n = 0
+        self._cull_cells = {}
+        self._cull_oversized = _np_empty_rows()
+        self._cull_keep = None
+        self._all_brushes_cache = None
+        self._all_brushes_dynamic = []
+        self.notify_visibility_changed()
 
     # =========================================================================
     # RENDER STATE PREPARATION
@@ -3355,7 +3873,13 @@ class LogicThread(threading.Thread):
                 write_state.player_angle = player_angle
                 write_state.player_pitch = player_pitch
         else:
-            write_state.editor_camera_pos = glm.vec3(self.editor_camera.pos)
+            # Editor mode: the free camera *is* the camera. Bind cam_pos here as
+            # well as on the play branches — everything downstream (the relevance
+            # region, and through it the brush and entity culls) measures from
+            # it, so leaving it to the play path alone left it unbound the moment
+            # the editor drew a frame.
+            cam_pos = glm.vec3(self.editor_camera.pos)
+            write_state.editor_camera_pos = glm.vec3(cam_pos)
             write_state.editor_camera_yaw = self.editor_camera.yaw
             write_state.editor_camera_pitch = self.editor_camera.pitch
             write_state.editor_camera_fov = self.editor_camera.fov
@@ -3392,6 +3916,13 @@ class LogicThread(threading.Thread):
         proj_view = projection * view_matrix
         frustum_planes = self._extract_frustum_planes(proj_view)
 
+        # The one relevance region for this frame. Everything that follows —
+        # which brush cells are consulted, which actors are snapshotted, what
+        # the renderer is told to draw — measures against this box, so there is
+        # a single answer to "what can the player see from here".
+        relevance_box = self._camera_relevance_box(cam_pos, proj_view)
+        write_state.camera_relevance_box = relevance_box
+
         brushes = self.brushes
 
         if self.play_mode and self._cull_valid and self._cull_n == len(brushes):
@@ -3418,19 +3949,36 @@ class LogicThread(threading.Thread):
                     b_ref['original_pos'] = list(b['original_pos'])
                 row_refs[i] = b_ref
 
-            # `hidden` can toggle at runtime (I/O Show/Hide), so read it fresh.
-            keep = np.fromiter(
-                (not b.get('hidden', False) for b in brushes),
-                dtype=bool, count=total_count)
+            # The whole-world non-hidden list (shadows / portals / splitscreen),
+            # rebuilt only when something is actually shown or hidden.
+            all_brushes = self._refresh_all_brushes(brushes, row_refs)
+            keep = self._cull_keep
 
             if self.culling_enabled:
-                in_frustum = self._aabb_in_frustum_batch(frustum_planes, centers, halves)
-                visible_mask = keep & in_frustum
+                # ---- world -> spatial partition -> camera region -> frustum --
+                # Start from the cells the camera's relevance box touches, not
+                # from every brush in the world: on a large map that turns a
+                # 30,000-row frustum matmul into a few-hundred-row one, and the
+                # rows outside the region never reach the hidden test or the
+                # draw list at all. `None` means the level is small enough that
+                # testing it whole is cheaper than the lookup.
+                rows = self._camera_candidate_rows(relevance_box)
+                if rows is None:
+                    visible_mask = keep & self._aabb_in_frustum_batch(
+                        frustum_planes, centers, halves)
+                    visible_brushes = row_refs[visible_mask].tolist()
+                elif rows.size == 0:
+                    visible_brushes = []
+                else:
+                    rows = rows[keep[rows]]
+                    if rows.size == 0:
+                        visible_brushes = []
+                    else:
+                        in_frustum = self._aabb_in_frustum_batch(
+                            frustum_planes, centers[rows], halves[rows])
+                        visible_brushes = row_refs[rows[in_frustum]].tolist()
             else:
-                visible_mask = keep
-
-            all_brushes = row_refs[keep].tolist()
-            visible_brushes = row_refs[visible_mask].tolist()
+                visible_brushes = all_brushes
             culled_count = total_count - len(visible_brushes)
         else:
             # ---- General path (editor mode / cache miss) --------------------
@@ -3479,19 +4027,78 @@ class LogicThread(threading.Thread):
         write_state.total_brushes = total_count
         write_state.culled_brushes = culled_count
 
+        # ---- Entities: cull to the camera's region *before* snapshotting ----
+        # Every actor used to get a full render snapshot every frame — a dict
+        # build plus a sprite-path resolve — however far away it was, and the
+        # renderer then threw most of them away at its own distance cull. The
+        # test moves in front of the snapshot instead: an actor the camera
+        # cannot reach never costs anything. The radius is the renderer's own
+        # CAMERA_RENDER_CULL_DISTANCE, so the set the main pass draws is
+        # unchanged. Lights, portals and every other non-actor entity are
+        # untouched here (the renderer keeps them regardless, for lighting,
+        # shadows and portal discovery).
         visible_things = []
+        _append = visible_things.append
+        cull_things = self.play_mode and self.culling_enabled
+        max_light_reach = 0.0
+        if cull_things:
+            # The same box the geometry used, grown by the widest sprite an
+            # actor can wear so a billboard whose centre is just outside the
+            # view but whose edge is inside is never dropped.
+            bx0 = relevance_box[0] - ACTOR_CULL_MARGIN
+            bz0 = relevance_box[1] - ACTOR_CULL_MARGIN
+            bx1 = relevance_box[2] + ACTOR_CULL_MARGIN
+            bz1 = relevance_box[3] + ACTOR_CULL_MARGIN
         for thing in self.things:
             if self.play_mode and Pickup and isinstance(thing, Pickup) and id(thing) in self.collected_pickups:
                 continue
-            if hasattr(thing.pos, 'x'):
-                thing.pos = [thing.pos.x, thing.pos.y, thing.pos.z]
+            pos = thing.pos
+            if hasattr(pos, 'x'):
+                pos = [pos.x, pos.y, pos.z]
+                thing.pos = pos
             if isinstance(thing, MonsterThing):
-                visible_things.append(thing.get_render_snapshot())
+                if cull_things:
+                    x = pos[0]
+                    z = pos[2]
+                    if x < bx0 or x > bx1 or z < bz0 or z > bz1:
+                        continue
+                _append(thing.get_render_snapshot())
             else:
-                visible_things.append(thing)
+                if cull_things:
+                    x = pos[0]
+                    z = pos[2]
+                    if Light is not None and isinstance(thing, Light):
+                        # A light reaches exactly as far as its radius, so that
+                        # is how much of the world outside the view can still be
+                        # lit by it. Exact, not a guess — and it is what stops a
+                        # thousand lamps on the far side of a large map being
+                        # considered (and shadow-mapped) every frame.
+                        r = thing.get_radius()
+                        if (x < bx0 - r or x > bx1 + r
+                                or z < bz0 - r or z > bz1 + r):
+                            continue
+                        # Only a shadow-caster's reach widens the caster set —
+                        # an ordinary lamp needs no geometry gathered for it.
+                        if r > max_light_reach and thing.properties.get('casts_shadows'):
+                            max_light_reach = r
+                    elif Portal is None or not isinstance(thing, Portal):
+                        # Portals are discovered from the full entity list, so
+                        # their own pass is unaffected; everything else here is
+                        # drawn as a sprite and cannot matter outside the view.
+                        if x < bx0 or x > bx1 or z < bz0 or z > bz1:
+                            continue
+                _append(thing)
 
         write_state.visible_things = visible_things
-        write_state.all_things = list(self.things)
+        write_state.all_things = self._all_things_list()
+        # The shadow pass casts from the lights that survived above, and a
+        # caster has to be within one light radius of one of them. Handing it
+        # the whole world instead meant a Python walk of every brush in the map,
+        # per shadow light, every frame — the single most expensive thing left
+        # in the renderer on a large map.
+        write_state.shadow_brushes, write_state.shadow_things = \
+            self._shadow_casters(relevance_box, max_light_reach,
+                                 all_brushes, visible_things)
         write_state.timestamp = time.perf_counter()
 
         # ── Player 2 render state ─────────────────────────────────────────────
