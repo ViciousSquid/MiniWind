@@ -207,19 +207,6 @@ if __name__ == "__main__":
 
     QSurfaceFormat.setDefaultFormat(fmt)
 
-    # ---------------------------------------------------------
-    # High-DPI scaling
-    # ---------------------------------------------------------
-    # Both attributes must be set before the QApplication exists, which is why
-    # they live here rather than in the main window. AA_EnableHighDpiScaling is
-    # what makes [Display] high_dpi_scaling actually do something (the Settings
-    # window already tells the user it needs a restart); AA_UseHighDpiPixmaps
-    # keeps icons and the splash sharp on a scaled display either way. With it
-    # on, every size expressed in logical pixels — the splash, the launcher and
-    # the editor alike — is scaled by Qt for the display it lands on.
-    if config.getboolean("Display", "high_dpi_scaling", fallback=False):
-        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     # ---------------------------------------------------------
     # Splash screen
