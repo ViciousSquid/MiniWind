@@ -89,9 +89,10 @@ def test_build_produces_loadable_map():
     assert types.count("playerstart") == 1
     assert types.count("miniwindsettings") == 1
     assert types.count("marker") == len(data.load("settlement")["markers"])
-    # townsfolk are NPCs; threats are Creatures — distinct entities
+    # townsfolk are NPCs; threats and livestock are Creatures — distinct entities
     assert types.count("npc") == 6
-    assert types.count("creature") == 3
+    assert types.count("creature") == (len(data.load("settlement")["threats"])
+                                       + len(data.load("settlement")["livestock"]))
     # every thing carries a stable UUID and a type (persistence contract)
     for t in world["things"]:
         assert t["properties"].get("id") and t["properties"].get("type")
@@ -292,3 +293,24 @@ def test_dialogue_reflects_a_relatives_death():
     texts2 = [r["text"] for r in runner2.view()["responses"]]
     assert any("Kestrel fell" in t for t in texts2)
     assert not any("keeps you company" in t for t in texts2)
+
+
+# --- livestock: systemic objects, not scripted content ---------------------
+def test_settlement_livestock_are_owned_producers():
+    """Millbrook ships with livestock so the slice has systemic *objects*.
+
+    Nothing in the game knows what milk is. The cow yields an ordinary item, the
+    item inherits the cow's owner, and taking it is a theft with a witness, a
+    bounty and a farmer who remembers — all from two data fields."""
+    from game.sim import ownership, production
+    world = _built()
+    beasts = [t for t in world["things"]
+              if t["properties"].get("npc_role") in ("cow", "hen", "sheep")]
+    assert beasts, "the settlement places livestock"
+    owners = {n["name"] for n in data.load("settlement")["npcs"]}
+    for b in beasts:
+        p = b["properties"]
+        assert production.is_producer(p), f"{p['name']} produces nothing"
+        assert ownership.is_owned(p), f"{p['name']} belongs to nobody"
+        assert p["owner_name"] in owners, f"{p['name']} has no such owner"
+        assert not p.get("combatant"), "livestock do not fight"

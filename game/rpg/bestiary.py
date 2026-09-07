@@ -29,7 +29,9 @@ class Creature:
     def __init__(self, role, name, health, damage, attack_style=MELEE,
                  faction="monsters", loot="", scale=112, aggression="hostile",
                  sight=1024, speed=90.0, level=1, xp=10, resistances=None,
-                 kind=CREATURE, weapon=""):
+                 kind=CREATURE, weapon="", produces="",
+                 produce_every_hours=0.0, produce_into="world",
+                 produce_quantity=1):
         self.role = role
         self.name = name
         self.health = health
@@ -47,6 +49,13 @@ class Creature:
         self.weapon = weapon
         #: 'npc' (townsperson/quest actor) or 'creature' (monster/animal).
         self.kind = kind
+        #: Production (see :mod:`game.sim.production`): an item id this role
+        #: yields on a clock, and how. Authored as ordinary bestiary content, so
+        #: a cow, a hen or an alchemist's still is a data row, not a system.
+        self.produces = produces
+        self.produce_every_hours = produce_every_hours
+        self.produce_into = produce_into
+        self.produce_quantity = produce_quantity
 
 
 def _load_bestiary() -> Dict[str, Creature]:
@@ -76,7 +85,10 @@ def _load_bestiary() -> Dict[str, Creature]:
             resistances=row.pop("resistances", None),
             kind=row.pop("kind", CREATURE),
             weapon=row.pop("weapon", ""),
-
+            produces=row.pop("produces", ""),
+            produce_every_hours=row.pop("produce_every_hours", 0.0),
+            produce_into=row.pop("produce_into", "world"),
+            produce_quantity=row.pop("produce_quantity", 1),
         )
     return out
 

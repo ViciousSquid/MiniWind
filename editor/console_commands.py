@@ -98,6 +98,9 @@ class ConsoleCommandHandler:
             'quest': self.cmd_quest,
             'quests': self.cmd_quest,
 
+            # Reactive simulation (game.sim)
+            'sim': self.cmd_sim,
+
             'r_list': self.cmd_render_list,
             'r_wireframe': self.cmd_render_wireframe,
             'r_shadows': self.cmd_render_shadows,
@@ -1742,6 +1745,140 @@ class ConsoleCommandHandler:
         debug_log("Info" if ok else "Error", msg)
         if ok:
             self.main_window.show_toast(f"Saved: {os.path.basename(path)}")
+
+    def cmd_sim(self, args):
+        """sim [events | why <name> | knows <name> | tell <name> <id> | emit <kind> [actor] [target] [item] | crimes | forget <name>]
+
+        Inspect and drive MiniWind's reactive simulation from the console — the
+        same director the World Simulation window shows, so anything here is
+        also visible there.
+
+          sim events            the world history, newest first, with the
+                                consequence each event caused
+          sim crimes            crimes nobody has reported to the watch yet
+          sim actors            every actor's current intent and the reason
+          sim why <name>        why that actor is doing what it is doing
+          sim knows <name>      what that actor believes, and how sure it is
+          sim tell <name> <id>  hand an actor a belief about event <id>
+          sim forget <name>     wipe an actor's knowledge
+          sim emit <kind> [actor] [target] [item]
+                                inject an event through the real pipeline
+        """
+        if not self._in_play_mode():
+            debug_log("Error", "sim: enter Play Mode first.")
+            return
+        lt = self._logic_thread()
+        session = getattr(lt, "_miniwind", None) if lt is not None else None
+        director = getattr(session, "director", None) if session is not None else None
+        if director is None:
+            debug_log("Error", "sim: no active MiniWind session.")
+            return
+        from game.sim import crime as _crime, knowledge as _know
+        from game.sim.director import actor_key as _key
+
+        parts = args.split()
+        sub = (parts[0].lower() if parts else "events")
+        rest = parts[1:]
+
+        def _find(name):
+            want = str(name or "").strip().lower()
+            for a in session._sim_actors():
+                p = getattr(a, "properties", {}) or {}
+                if want in (str(p.get("display_name", "")).lower(),
+                            str(p.get("name", "")).lower(), _key(a)):
+                    return a
+            return None
+
+        if sub in ("events", "history", ""):
+            lines = director.report_lines(limit=25)
+            for line in lines or ["(nothing has happened yet)"]:
+                debug_log("Info", line)
+            return
+
+        if sub == "crimes":
+            open_crimes = _crime.unsolved(director.store, director.bus)
+            for ev in open_crimes or []:
+                debug_log("Info", f"#{ev.id} [{ev.timestamp()}] {ev.describe()} "
+                                  f"— unreported")
+            if not open_crimes:
+                debug_log("Info", "No unreported crimes: the watch knows about "
+                                  "everything that has happened.")
+            return
+
+        if sub == "actors":
+            for a in session._sim_actors():
+                p = getattr(a, "properties", {}) or {}
+                intents = director.intents(a)
+                top = intents[0] if intents else None
+                debug_log("Info", f"{p.get('display_name', '?')}  "
+                                  f"[{p.get('sched_state', '')}]  "
+                                  f"{top.label if top else '—'}"
+                                  f"{' — ' + top.reason if top else ''}")
+            return
+
+        if sub in ("why", "knows", "forget", "tell") and not rest:
+            debug_log("Error", f"sim {sub}: name an actor.")
+            return
+
+        thing = _find(rest[0]) if rest else None
+        if sub in ("why", "knows", "forget", "tell") and thing is None:
+            debug_log("Error", f"sim {sub}: no actor called '{rest[0]}'.")
+            return
+
+        if sub == "why":
+            debug_log("Info", director.why(thing))
+            for it in director.intents(thing):
+                debug_log("Info", f"   {it.priority:>3}  {it.label} — {it.reason}")
+            return
+
+        if sub == "knows":
+            lines = director.knowledge_lines(thing, limit=20)
+            for line in lines or ["(knows nothing of note)"]:
+                debug_log("Info", line)
+            return
+
+        if sub == "forget":
+            _know.forget_all(director.store, _key(thing))
+            director.invalidate(thing)
+            debug_log("Info", f"{rest[0]} remembers nothing.")
+            return
+
+        if sub == "tell":
+            if len(rest) < 2 or not rest[1].lstrip('#').isdigit():
+                debug_log("Error", "sim tell <name> <event id>  (see 'sim events')")
+                return
+            event = director.bus.get(int(rest[1].lstrip('#')))
+            if event is None:
+                debug_log("Error", f"sim tell: no event #{rest[1]}.")
+                return
+            fact = _know.fact_from_event(event, 0.8, _know.SOURCE_TOLD)
+            if event.kind == "theft":
+                fact["value"] = int(event.data.get("value", 0) or 0)
+            _know.learn(director.store, _key(thing), fact)
+            director.invalidate(thing)
+            debug_log("Info", f"{rest[0]} now believes: {event.describe()}")
+            debug_log("Info", f"   -> {director.why(thing)}")
+            return
+
+        if sub == "emit":
+            if not rest:
+                debug_log("Error", "sim emit <kind> [actor] [target] [item]")
+                return
+            kind = rest[0]
+            actor = _find(rest[1]) if len(rest) > 1 else None
+            target = _find(rest[2]) if len(rest) > 2 else None
+            data = {}
+            if len(rest) > 3:
+                data["item"] = rest[3]
+                data["item_name"] = rest[3].replace("_", " ").title()
+            event = session.emit_event(kind, actor=actor, target=target, **data)
+            director.resolve_reports(session._sim_actors())
+            debug_log("Info", f"#{event.id} {event.describe()}")
+            for c in event.consequences:
+                debug_log("Info", f"   -> {c}")
+            return
+
+        debug_log("Error", f"sim: unknown subcommand '{sub}'. Try 'sim events'.")
 
     def cmd_quest(self, args):
         """quest [list | start <id> | advance <id> | complete <id> | reset <id>]

@@ -125,6 +125,12 @@ class PluginManager:
         # property tabs. Both keyed/filtered by normalised entity type.
         self._extra_fields: dict = {}       # type -> list[PropertySpec]
         self._property_tabs: list = []      # list[(label, factory, type_or_None)]
+        # list[(label, factory, type_or_None, expanded)] — editors that belong
+        # inside the Properties tab as a collapsible section rather than as a
+        # tab of their own. A tab is right for a workspace (a dialogue tree);
+        # a section is right for a handful of fields that read as part of the
+        # entity's properties (appearance).
+        self._property_sections: list = []
         # Disabled plugin names (by directory or plugin.name). Populated from
         # the FIO_DISABLED_PLUGINS env var, comma-separated.
         self._disabled = {
@@ -679,6 +685,29 @@ class PluginManager:
         """List of ``(label, factory)`` custom tabs that apply to *entity_type*."""
         norm = self._normalise_type(entity_type)
         return [(label, factory) for (label, factory, t) in self._property_tabs
+                if t is None or t == norm]
+
+    def register_property_section(self, label: str, factory, entity_type=None,
+                                  expanded: bool = False):
+        """Register a collapsible section inside the Properties tab.
+
+        The same ``factory(thing) -> widget`` contract as
+        :meth:`register_property_tab`; the difference is placement. Use a
+        section for an editor that reads as part of the entity's properties
+        rather than as a workspace of its own — it keeps the tab bar short and
+        the panel scannable, and *expanded* False means it costs no vertical
+        space until somebody opens it.
+        """
+        self._property_sections.append(
+            (label, factory,
+             self._normalise_type(entity_type) if entity_type else None,
+             bool(expanded)))
+
+    def property_sections_for(self, entity_type: str):
+        """``(label, factory, expanded)`` sections that apply to *entity_type*."""
+        norm = self._normalise_type(entity_type)
+        return [(label, factory, exp)
+                for (label, factory, t, exp) in self._property_sections
                 if t is None or t == norm]
 
     # -- lifecycle dispatch -------------------------------------------------

@@ -48,7 +48,8 @@ from .rpg import factions
 # Art: which committed sprite/portrait a role uses (unknown roles fall back).
 # ---------------------------------------------------------------------------
 _ART_ROLES = {"villager", "guard", "merchant", "blacksmith", "farmer",
-              "beggar", "bandit", "cultist", "wolf", "monster"}
+              "beggar", "bandit", "cultist", "wolf", "monster",
+              "cow", "sheep", "hen"}
 #: roles without their own art borrow another role's billboard
 _ART_ALIAS = {
     "bandit_archer": "bandit", "bandit_chief": "bandit",
@@ -71,7 +72,7 @@ _DEFAULT_WEAPON = {
     "magic": "apprentice_staff",
 }
 # Creature roles that should NOT receive a default metal weapon
-_ANIMAL_ROLES = {"wolf", "bear", "boar", "mudcrab"}
+_ANIMAL_ROLES = {"wolf", "bear", "boar", "mudcrab", "cow", "sheep", "hen"}
 
 
 def _art_role(role: str) -> str:
@@ -151,8 +152,15 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
         p["aggression"] = aggression = "defensive"
     if "health" not in _authored:
         p["health"] = tmpl.health if tmpl else 60
-    # Full-health baseline (used by health bars / balance).
-    p.setdefault("max_health", p["health"])
+    # Full-health baseline (used by health bars / balance). This has to be an
+    # assignment, not a setdefault: the engine's Monster base class already
+    # seeds max_health from *its* generic default health, so a setdefault here
+    # never fires and a 120-health guard would show a bar that maxes at 100.
+    # Only a value the map actually authored wins.
+    if "max_health" in _authored:
+        p.setdefault("max_health", p["health"])
+    else:
+        p["max_health"] = p["health"]
     if "damage" not in _authored:
         p["damage"] = tmpl.damage if tmpl else 6
     if "attack_style" not in _authored:
@@ -189,6 +197,16 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
         "child": 0.1,
     }
     p.setdefault("courage", _COURAGE_DEFAULTS.get(role, 0.3))
+
+    # Production (game.sim.production): a role that makes something — a cow, a
+    # hen, a sheep — carries it on the template, so placing the entity is all
+    # the authoring there is. What it makes is an ordinary item that inherits
+    # this actor's owner, which is what makes taking it a theft.
+    if tmpl is not None and tmpl.produces:
+        p.setdefault("produces", tmpl.produces)
+        p.setdefault("produce_every_hours", tmpl.produce_every_hours)
+        p.setdefault("produce_into", tmpl.produce_into)
+        p.setdefault("produce_quantity", tmpl.produce_quantity)
 
     # top-down art: the idle and the attack ('shoot') frame use the role's own
     # billboard, so an attacking NPC never flips to the stock human sprite. There
@@ -314,7 +332,10 @@ if _HAVE_EDITOR:
     class GameSettings(Thing):
         """Per-map RPG settings + game-clock config. Presence = RPG map opt-in."""
         map_type = "miniwindsettings"
-        pixmap_path = "assets/sprites/logic_keyvalue.png"
+        # Its own icon (a cog around a clock), not the Key/Value Store's: the
+        # one entity that configures the whole map should not be
+        # indistinguishable from a logic node in the 2D views.
+        pixmap_path = f"{_SPRITE_DIR}/settings.png"
 
         def __init__(self, pos=None, properties=None):
             super().__init__(pos, properties)

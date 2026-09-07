@@ -378,6 +378,15 @@ class SettingsWindow(QDialog):
         )
         layout.addWidget(self.launch_in_editor_checkbox)
 
+        self.show_launcher_checkbox = QCheckBox("Show the launcher on startup")
+        self.show_launcher_checkbox.setToolTip(
+            "After the splash screen, show the launcher: set the display mode\n"
+            "and resolution above, then choose PLAY or EDIT. The launcher\n"
+            "writes the same settings this window does. Turn it off to go\n"
+            "straight to the editor."
+        )
+        layout.addWidget(self.show_launcher_checkbox)
+
         self.kiosk_mode_combo.currentTextChanged.connect(self._toggle_resolution_visibility)
         self._toggle_resolution_visibility()
 
@@ -641,6 +650,8 @@ class SettingsWindow(QDialog):
             self.kiosk_mode_combo.setCurrentIndex(idx)
         self.kiosk_res_w.setValue(self.config.getint('Kiosk', 'res_width', fallback=1280))
         self.kiosk_res_h.setValue(self.config.getint('Kiosk', 'res_height', fallback=720))
+        self.show_launcher_checkbox.setChecked(
+            self.config.getboolean('Startup', 'show_launcher', fallback=True))
         self.launch_in_editor_checkbox.setChecked(
             self.config.getboolean('Kiosk', 'launch_in_editor', fallback=False)
         )
@@ -752,6 +763,10 @@ class SettingsWindow(QDialog):
         self.config.set('Kiosk', 'window_mode', self.kiosk_mode_combo.currentText())
         self.config.set('Kiosk', 'res_width', str(self.kiosk_res_w.value()))
         self.config.set('Kiosk', 'res_height', str(self.kiosk_res_h.value()))
+        if not self.config.has_section('Startup'):
+            self.config.add_section('Startup')
+        self.config.set('Startup', 'show_launcher',
+                        str(self.show_launcher_checkbox.isChecked()))
         self.config.set('Kiosk', 'launch_in_editor',
                         str(self.launch_in_editor_checkbox.isChecked()))
 

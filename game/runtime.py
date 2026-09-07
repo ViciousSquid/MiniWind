@@ -34,6 +34,13 @@ from .rpg import needs as rpg_needs
 from .rpg import daily as rpg_daily
 from .rpg import quests as _quests
 from .rpg.gametime import GameClock
+from . import sim
+from .sim import appraisal as sim_appraisal
+from .sim import crime as sim_crime
+from .sim import knowledge as sim_knowledge
+from .sim import ownership as sim_own
+from .sim import production as sim_prod
+from .sim.director import Director, PLAYER_KEY, actor_key
 from .rpg.dialogue import DialogueRunner
 from .rpg import inventory as inv
 from .rpg.game_state import GameState
@@ -72,6 +79,9 @@ PRISON_ARRIVE_RADIUS = 96.0
 PRISON_MARKER_NAME = "prison"
 #: How close a hostile must be before a non-combatant NPC breaks off and flees.
 FLEE_SIGHT = 480.0
+#: How near a witness must stand to a guard to give their account (mirrors the
+#: director's own TELL_RADIUS, which is what actually resolves the report).
+REPORT_ARRIVE_RADIUS = 200.0
 _RALLY_THRESHOLD = 0.5
 _FLEE_THRESHOLD = -0.2
 #: Seconds a struck actor flashes red (mirrors engine MONSTER_HIT_FLASH_TIME).
@@ -111,6 +121,43 @@ WISP_COLOURS = [
     [250, 240, 170],   # pale yellow
     [255, 180, 215],   # pink
 ]
+
+
+class _PlayerActor:
+    """The player, wearing the same shape every other simulation actor has.
+
+    :mod:`game.sim` reasons about anything with ``.pos`` and ``.properties``.
+    Giving the player that shape is what lets an NPC witness the player, form a
+    belief about the player, gossip about the player and appraise the player
+    through exactly the same code paths it uses for a bandit — instead of the
+    game carrying a parallel "what the player did" system.
+
+    The properties dict is refreshed from the live character/session rather than
+    copied once, so sneaking, the carried torch and the player's name are always
+    current when perception asks.
+    """
+
+    def __init__(self, session):
+        self._session = session
+        self.properties = {"is_player": True, "faction": "player",
+                           "team": "player", "display_name": "You",
+                           "name": "player", "combatant": True, "courage": 1.0}
+
+    @property
+    def pos(self):
+        return self._session._player_pos()
+
+    def refresh(self):
+        s = self._session
+        p = self.properties
+        try:
+            char = s.game.character
+            p["display_name"] = str(getattr(char, "name", "") or "You")
+        except Exception:
+            pass
+        p["sneaking"] = bool(getattr(s.game, "sneaking", False))
+        p["dead"] = bool(getattr(s.logic, "player_dead", False))
+        return self
 
 
 class StateStore:
@@ -256,6 +303,24 @@ class MiniwindSession:
         self.game.add_roll_listener(self._on_dice_roll)
         self._attack_anim_time = 0.0   # player stab animation remaining (seconds)
 
+        # ------------------------------------------------------------------
+        # The reactive simulation (game.sim). Everything notable the player or
+        # the world does is emitted here as a WorldEvent; the director runs
+        # perception → knowledge → interpretation and hands back ranked intents
+        # that _decide honours above the daily schedule. The session injects the
+        # game's real faction matrix, opinion model and bounty purse so the sim
+        # package itself stays engine- and rules-agnostic.
+        self.director = Director(
+            store=self.store, clock=self.clock, rng=self.rng,
+            hostile=factions.is_hostile,
+            disposition=self._sim_disposition,
+            on_bounty=self._sim_on_bounty,
+            on_message=self.game.message)
+        #: Accumulated game-hours since the last simulation tick, so rumour
+        #: propagation and production advance on world time rather than frames.
+        self._sim_hours = 0.0
+        self._sim_last_hour = float(self.clock.hour)
+
     def _editor_config(self):
         """Best-effort handle on the live editor config (settings.ini), or None."""
         config = getattr(self.logic, "editor_config", None)
@@ -321,6 +386,12 @@ class MiniwindSession:
         self.floaters = []
         self.dice_animation = None
         self._deaths_seen = set()
+        # A new game means a world with no history and nobody who remembers
+        # anything: the store wipe above already erased every actor's knowledge,
+        # so only the in-memory event log and intent cache remain.
+        self.director.bus.clear()
+        self.director.invalidate()
+        self._sim_hours = 0.0
         if self.logic is not None:
             try:
                 self.logic.gameplay_paused = True
@@ -551,6 +622,11 @@ class MiniwindSession:
         # life (merchant restock, debts, mourning fade, harvest, memory decay)
         # and log it — the world moves on between the player's visits.
         self._resolve_day_rollover()
+
+        # The reactive simulation: rumours spread on foot traffic, witnesses
+        # reach the watch, and producing objects (a cow, a hen, a well) make
+        # their goods. Runs on game hours, so it is unaffected by frame rate.
+        self._tick_sim(delta)
 
         # world placeables: item pickups, spellbooks and quest triggers
         self._tick_pickups()
@@ -960,8 +1036,29 @@ class MiniwindSession:
                 iid = p.get("item_id", "gold")
                 qty = int(p.get("quantity", 1))
                 stack = rpg_items.make(iid, qty) or inv.make_item(iid, qty=qty)
+                name = stack.get("name", iid)
+                # Taking an *owned* item is a theft, with everything that
+                # follows: witnesses, a report, a bounty, an owner who
+                # remembers. Taking an unowned one is just picking it up. One
+                # call decides which, so no item needs special handling.
+                event = self.director.take(
+                    p, self.player_actor, target_thing=self._sim_actor_by_key(
+                        sim_own.owner_of(p)),
+                    observers=self._sim_observers(), item_id=iid, item_name=name,
+                    value=int(stack.get("value", 0) or 0) * max(1, qty),
+                    pos=list(it.pos))
+                if event is not None and event.kind == "theft":
+                    sim_own.mark_stolen(stack, sim_own.owner_of(p),
+                                        sim_own.owner_name_of(p))
+                    self.notify(f"Stole {name}")
+                else:
+                    self.notify(f"Picked up {name}")
                 inv.add_item(self.game.character.inventory, stack)
-                self.notify(f"Picked up {stack.get('name', iid)}")
+                # Let a producer know one of its outstanding yields was taken so
+                # it starts making the next one.
+                producer = self._sim_producer_of(p)
+                if producer is not None:
+                    sim_prod.note_collected(producer.properties, 1)
                 p["dead"] = True
                 p["hidden"] = True
 
@@ -1600,13 +1697,12 @@ class MiniwindSession:
         *separate* from its faction (who counts as an enemy) and from the
         civilian flee reaction. A guard is a combatant; a merchant is not, even
         though both share the villagers/guards side. Authored via the
-        ``combatant`` property (defaulted from aggression/role by the entity)."""
-        p = npc.properties
-        if "combatant" in p:
-            return bool(p.get("combatant"))
-        return (str(p.get("aggression")) in ("defensive", "hostile")
-                or p.get("can_defend")
-                or str(p.get("npc_role", "")).lower().startswith("guard"))
+        ``combatant`` property (defaulted from aggression/role by the entity).
+
+        The rule itself lives in :func:`game.sim.appraisal.is_combatant` so the
+        settlement AI and the reactive simulation cannot drift apart on who
+        counts as a fighter."""
+        return sim_appraisal.is_combatant(npc.properties)
 
     def _reap_dead(self) -> None:
         """Turn NPC deaths into persistent settlement consequences, once each.
@@ -1661,11 +1757,30 @@ class MiniwindSession:
         # other systems and dialogue can key off.
         if str(p.get("npc_role", "")).lower().startswith("guard"):
             self.store.set("town.unprotected", "1")
-        # If the player struck this NPC down, their kin remember it — every
-        # surviving townsperson who names the dead in their relationships turns
-        # colder toward the player (a durable, per-NPC disposition wound).
-        if str(self.store.get("killed_by_player." + name, "false")).lower() in (
-                "1", "true", "yes"):
+        # Emit the death into the reactive simulation. This is the same call
+        # whoever did the killing — the player, a bandit, a wolf — so grief,
+        # witnesses, rumour and the murder charge all fall out of one event
+        # instead of a per-killer branch. Whether it is *murder* depends on
+        # whether the victim was at war with the killer.
+        by_player = str(self.store.get("killed_by_player." + name, "false")).lower() \
+            in ("1", "true", "yes")
+        # For a death the player had no hand in, attribute it to whoever was
+        # standing over the body: the nearest actor hostile to the victim. It is
+        # a heuristic rather than damage bookkeeping, but it is the same one a
+        # bystander would use, and it is what lets a settlement blame the right
+        # bandit without the engine tracking every blow.
+        killer = (self.player_actor if by_player
+                  else self._sim_actor_by_key(self._slug(p.get("_killed_by", "")))
+                  or self._nearest_hostile(npc, DEFEND_SIGHT))
+        self.director.emit(
+            "death", actor=killer, target=npc, pos=list(npc.pos),
+            observers=self._sim_observers(),
+            crime=(self._sim_is_crime_against(npc) if by_player else
+                   bool(killer is not None and self._sim_is_crime_against(npc))))
+        # The kin-grief wound stays: it is the *authored relationship* reacting,
+        # which the settlement already models, and it applies even to relatives
+        # who were nowhere near and only hear of it later.
+        if by_player:
             self._remember_kin_grief(name)
 
     def _remember_kin_grief(self, dead_name: str) -> None:
@@ -1925,6 +2040,275 @@ class MiniwindSession:
         self.notify("You have been escorted to prison. Your bounty is cleared.", 5.0)
         self._clear_arrest()
 
+    # ==================================================== reactive simulation
+    # The seam between the live scene and :mod:`game.sim`. Everything below is
+    # glue: identity, who can observe, emitting events at the points where the
+    # game already knows something happened, and turning the director's ranked
+    # intents into the same movement/combat handles the schedule already uses.
+    # No scenario logic lives here — a new event kind or a new reaction needs
+    # no change to this file beyond the one line that emits it.
+
+    def _sim_disposition(self, observer_props: Dict, other_key: str) -> int:
+        """How *observer_props* feels about another actor, for appraisal.
+
+        Reuses the existing opinion model (:mod:`game.rpg.disposition`) rather
+        than inventing a second one; only the player has a modelled standing, so
+        anyone else reads as neutral."""
+        if other_key == PLAYER_KEY:
+            try:
+                return disp.of(self.game.character, observer_props, self.store)
+            except Exception:
+                return 50
+        return 50
+
+    def _sim_on_bounty(self, amount: int, event, reporter_key: str) -> None:
+        """A charge was laid against the player: add it to the existing bounty.
+
+        The bounty purse, the arrest flow and the guard escort are all already
+        MiniWind systems (see ``_update_arrest``); the simulation only decides
+        *whether and when* a crime reaches them."""
+        amount = max(0, int(amount))
+        if amount <= 0:
+            return
+        self.game.character.bounty += amount
+        kind = getattr(event, "kind", "crime")
+        self.notify(f"Word reaches the watch: your bounty rises by {amount} gold "
+                    f"({kind}).", 5.0)
+        self.game.message(f"A witness reported the {kind} to the watch "
+                          f"(+{amount} bounty).")
+
+    @property
+    def player_actor(self):
+        """The player as an ordinary simulation actor.
+
+        Wrapping the engine player in the same ``.pos`` / ``.properties`` shape
+        every other actor has is what lets NPCs witness, remember and gossip
+        about the player with no player-specific branch anywhere in
+        :mod:`game.sim`."""
+        actor = getattr(self, "_player_actor", None)
+        if actor is None:
+            actor = _PlayerActor(self)
+            self._player_actor = actor
+        actor.refresh()
+        return actor
+
+    def _sim_actors(self) -> List:
+        """Everyone the simulation considers: living NPCs, creatures, the player.
+
+        Built from the same cached type index the rest of the tick uses, so it
+        costs no extra scan of the scene."""
+        buckets = self._type_buckets()
+        out = [t for t in _chain(buckets.get("npc", ()), buckets.get("creature", ()),
+                                 buckets.get("monster", ()))
+               if not t.properties.get("dead", False)]
+        player = self.player_actor
+        if player.pos is not None:
+            out.append(player)
+        return out
+
+    def _sim_observers(self) -> List:
+        """Who could perceive an event right now.
+
+        The dead are excluded by ``_sim_actors``; perception itself decides who
+        was near enough, awake enough and sighted enough."""
+        return self._sim_actors()
+
+    def _sim_producer_of(self, item_props: Dict):
+        """The producing object an item pickup came from, if it is still there.
+
+        Used to tell a cow its milk was collected so it starts on the next one —
+        the only coupling between production and the world item it made."""
+        pid = item_props.get("_produced_by")
+        if not pid:
+            return None
+        for thing in self._sim_actors():
+            if id(thing) == pid:
+                return thing
+        return None
+
+    def _sim_actor_by_key(self, key: str):
+        """Resolve an identity key back to a live actor, or None if they are
+        gone — which is exactly how a vendetta against a dead man expires."""
+        if not key:
+            return None
+        if key == PLAYER_KEY:
+            return self.player_actor
+        for thing in self._sim_actors():
+            if actor_key(thing) == key:
+                return thing
+        return None
+
+    def _sim_is_crime_against(self, target) -> bool:
+        """Whether harming *target* is an offence rather than legitimate combat.
+
+        One rule for every attacker: hurting somebody your side is not at war
+        with is a crime. A guard cutting down a bandit is not; the player
+        cutting down a farmer is. No list of protected characters, no quest
+        flags."""
+        tp = getattr(target, "properties", {}) or {}
+        if tp.get("aggression") == "hostile":
+            return False
+        team = tp.get("team") or tp.get("faction")
+        return not factions.is_hostile("player", team)
+
+    def emit_event(self, kind: str, actor=None, target=None, **data):
+        """Emit a world event through the director (the one public entry point).
+
+        Console commands, the editor's *Simulate Event* tool and the runtime's
+        own choke points all come through here, so an injected event is
+        indistinguishable from one the game produced."""
+        if actor is None:
+            actor = self.player_actor
+        return self.director.emit(kind, actor=actor, target=target,
+                                  observers=self._sim_observers(), **data)
+
+    def _tick_sim(self, delta: float) -> None:
+        """Advance rumour propagation, crime reporting and production.
+
+        Driven by *game hours* rather than frames so the world's information
+        network runs at the same pace whatever the frame rate or time scale."""
+        hour = float(self.clock.hour)
+        elapsed = hour - self._sim_last_hour
+        if elapsed < 0:
+            elapsed += 24.0          # midnight wrap
+        self._sim_last_hour = hour
+        self._sim_hours += elapsed
+        if self._sim_hours < 0.01:
+            return
+        hours, self._sim_hours = self._sim_hours, 0.0
+        actors = self._sim_actors()
+        self.director.tick(actors, hours)
+        for producer, yielded in self.director.drain_yields():
+            self._place_yield(producer, yielded)
+
+    def _place_yield(self, producer, yielded) -> None:
+        """Put a produced item into the world as an ordinary Item pickup.
+
+        The yield is a normal MiniWind ``ItemPickup`` carrying the producer's
+        owner, so from here on it is just an item: it can be taken, and taking
+        it is a theft if it was not yours. No special "milk" handling exists
+        anywhere in the game."""
+        into = str(producer.properties.get("produce_into", sim_prod.INTO_WORLD))
+        if into == sim_prod.INTO_SELF:
+            stack = rpg_items.make(yielded.item_id, yielded.quantity) or \
+                inv.make_item(yielded.item_id, qty=yielded.quantity)
+            inv.add_item(inv.get_inventory(producer), stack)
+            sim_prod.note_collected(producer.properties, 1)
+            return
+        try:
+            from .entities import ItemPickup
+        except Exception:
+            return
+        try:
+            offset = self.rng.uniform(-40.0, 40.0)
+            pos = [producer.pos[0] + offset, producer.pos[1],
+                   producer.pos[2] + self.rng.uniform(-40.0, 40.0)]
+            item = ItemPickup(pos)
+            item.properties.update({
+                "item_id": yielded.item_id,
+                "quantity": yielded.quantity,
+                "display_name": yielded.item_id.replace("_", " ").title(),
+                "_produced_by": id(producer),
+            })
+            sim_own.set_owner(item.properties, yielded.owner, yielded.owner_name,
+                              yielded.owner_faction)
+            self.logic.things.append(item)
+            self._type_index_token = None      # force the type index to rebuild
+        except Exception:
+            return
+        self.director.emit("produce", actor=producer, pos=list(producer.pos),
+                           observers=self._sim_observers(),
+                           item=yielded.item_id,
+                           item_name=item.properties["display_name"])
+
+    # -- turning intents into behaviour --------------------------------------
+    def _apply_sim_intent(self, npc) -> bool:
+        """Let what this NPC *knows* override its daily schedule.
+
+        Returns True when the intent claimed this decision tick. Every branch
+        reuses a movement/combat handle the settlement AI already has
+        (``_aggro_target``, ``_dest``, ``aggression``, ``sched_state``), so the
+        simulation never needs its own mover or its own combat."""
+        p = npc.properties
+        intent = self.director.top_intent(npc)
+        if intent is None:
+            p.pop("_sim_reason", None)
+            p.pop("_sim_intent", None)
+            return False
+        # Always publish the reasoning, even for intents that do not seize
+        # control — this is what the Live Simulation Inspector reads.
+        p["_sim_intent"] = intent.reaction
+        p["_sim_reason"] = intent.reason
+        p["_sim_target"] = intent.target_name
+
+        offender = self._sim_actor_by_key(intent.target)
+        if offender is None:
+            return False
+
+        if intent.reaction in (sim_appraisal.FIGHT, sim_appraisal.ARREST):
+            # An ARREST of the player is the existing bounty/arrest flow's job
+            # (a guard should not simply murder a wanted man), so it is left to
+            # ``_update_arrest``; everything else is ordinary combat.
+            if intent.reaction == sim_appraisal.ARREST and offender is self.player_actor:
+                return False
+            return self._sim_engage(npc, offender)
+
+        if intent.reaction == sim_appraisal.FLEE:
+            p["sched_state"] = sched.FLEE
+            p["_flee"] = True
+            p.pop("_rally", None)
+            p["_dest"] = self._refuge_point(npc, offender)
+            return True
+
+        if intent.reaction == sim_appraisal.REPORT:
+            return self._sim_go_report(npc)
+
+        if intent.reaction == sim_appraisal.CONFRONT:
+            if offender is self.player_actor or offender.properties.get("dead"):
+                return False
+            p["sched_state"] = sched.CONFRONT
+            p["_dest"] = list(offender.pos)
+            return True
+
+        # MOURN / WARM / IGNORE colour how an NPC feels and reads in the
+        # inspector, but they do not seize the body — grief should not freeze a
+        # town for a week, and gratitude is expressed through disposition.
+        return False
+
+    def _sim_engage(self, npc, offender) -> bool:
+        """Send *npc* after *offender* using the engine's live combat AI."""
+        p = npc.properties
+        p["awake"] = True
+        p["triggered"] = False
+        p["sched_state"] = sched.COMBAT
+        p.pop("_flee", None)
+        p.pop("_rally", None)
+        if offender is self.player_actor:
+            # The engine MonsterAI hunts the player when an actor is hostile.
+            p["aggression"] = "hostile"
+            p["wake_on_sight"] = True
+        else:
+            p["_aggro_target"] = id(offender)
+        return True
+
+    def _sim_go_report(self, npc) -> bool:
+        """Walk a witness to the nearest guard so they can give their account.
+
+        The report itself is resolved by the director when the two are close
+        enough — so a witness cut down on the way never testifies, and one who
+        makes it does. That is the whole mechanism."""
+        p = npc.properties
+        guard = self._nearest_of(npc, lambda t: self._is_guard(t))
+        if guard is None:
+            return False
+        if self._dist2d(npc.pos, guard.pos) <= REPORT_ARRIVE_RADIUS:
+            p["sched_state"] = sched.REPORT
+            p.pop("_dest", None)
+            return True
+        p["sched_state"] = sched.REPORT
+        p["_dest"] = list(guard.pos)
+        return True
+
     def _decide(self, npc) -> None:
         p = npc.properties
 
@@ -2013,6 +2397,16 @@ class MiniwindSession:
                 p["awake"] = False
                 p.pop("_rally", None)
             p.pop("_flee", None)
+
+        # (c.7) REACTIVE SIMULATION: nothing physically urgent is happening —
+        #     no arrest, no enemy in reach, nothing to flee from. Now what this
+        #     actor *knows* gets its say. A witness walks to the watch; a
+        #     grieving brother goes after the killer; a coward stays hidden.
+        #     Deliberately placed after the immediate combat/flee reactions (a
+        #     bandit in the square outranks a week-old grudge) and before the
+        #     schedule, because a person with a reason does not go to work.
+        if self._apply_sim_intent(npc):
+            return
 
         # (b.5) COMPANION FOLLOW: nothing more urgent above claimed this tick
         #     (not arrested, not itself hostile, no nearby enemy to defend
@@ -2225,9 +2619,14 @@ class MiniwindSession:
 
     @staticmethod
     def _is_guard(thing) -> bool:
+        """A living actor who acts on crime — the settlement's law.
+
+        Recognised by :func:`game.sim.crime.is_lawful` (guard role, the guards
+        faction, or an authored ``lawful`` flag), so an authored bailiff or a
+        modded temple warden is a guard everywhere at once: refuge-seeking,
+        arrests and crime reporting all ask the same question."""
         p = thing.properties
-        return (str(p.get("npc_role", "")).lower().startswith("guard")
-                and not p.get("dead"))
+        return sim_crime.is_lawful(p) and not p.get("dead")
 
     @staticmethod
     def _marker_kind(thing) -> str:
@@ -2923,13 +3322,14 @@ class MiniwindSession:
         follow_player companion joins in against that same target."""
         tp = target.properties
         tp["_hit_flash"] = HIT_FLASH_TIME    # red flash on a landed player hit
-        team = tp.get("team") or tp.get("faction")
-        if factions.is_friendly("player", team) and str(tp.get("aggression")) != "hostile":
-            # attacking innocents earns a bounty and their wrath — and this NPC
-            # remembers the assault even if it later calms or the player flees.
-            self.game.character.bounty += 40
-            self.notify("Your bounty has increased!")
-            disp.remember(self.store, tp, "assaulted")
+        # The strike is emitted as a world event rather than being punished on
+        # the spot: whether it costs a bounty now depends on who saw it and
+        # whether word reaches the watch (game.sim.crime). The victim's own
+        # memory of the assault is written by the director when they perceive
+        # it — which they always do, being the one who was hit.
+        self.director.emit("attack", actor=self.player_actor, target=target,
+                           observers=self._sim_observers(),
+                           crime=self._sim_is_crime_against(target))
         tp["aggression"] = "hostile"
         tp["triggered"] = False
         tp["awake"] = True
@@ -3198,8 +3598,23 @@ class MiniwindSession:
         if not (0 <= index < len(items)):
             return False
         stack = items.pop(index)
+        name = stack.get("name", stack.get("id", ""))
+        # A chest with an owner makes emptying it a theft, exactly like a world
+        # item — the container needed no code of its own to become stealable.
+        props = self.container_thing.properties if self.container_thing else {}
+        event = self.director.take(
+            props, self.player_actor,
+            target_thing=self._sim_actor_by_key(sim_own.owner_of(props)),
+            observers=self._sim_observers(), item_id=str(stack.get("id", "")),
+            item_name=name, value=int(stack.get("value", 0) or 0),
+            pos=list(self.container_thing.pos) if self.container_thing else None)
+        if event is not None and event.kind == "theft":
+            sim_own.mark_stolen(stack, sim_own.owner_of(props),
+                                sim_own.owner_name_of(props))
+            self.notify(f"Stole {name}")
+        else:
+            self.notify(f"Took {name}")
         inv.add_item(self.game.character.inventory, stack)
-        self.notify(f"Took {stack.get('name', stack.get('id',''))}")
         return True
 
     def store_in_container(self, index: int) -> bool:
@@ -3251,10 +3666,13 @@ class MiniwindSession:
         return True
 
     def _remember_trade(self) -> None:
-        """Honest business slowly warms a merchant to the player (memory)."""
+        """Honest business slowly warms a merchant to the player (memory), and
+        is seen by whoever is in the shop — which is how an alibi works."""
         npc = self.merchant_npc
         if npc is not None:
             disp.remember(self.store, getattr(npc, "properties", {}) or {}, "traded")
+            self.director.emit("trade", actor=self.player_actor, target=npc,
+                               observers=self._sim_observers())
 
     def _price(self, base_value: int, buying: bool, npc=None) -> int:
         c = self.game.character
@@ -3283,8 +3701,16 @@ class MiniwindSession:
         if force or (now - self._last_persist) >= 1.0:
             self._last_persist = now
             self.game.save_to_store()
+            # The world's event history rides along in the same store, so a
+            # save carries what happened and what it caused — everything else
+            # the simulation knows (who believes what, who was wronged, which
+            # crimes were charged) already lives in the store as it is written.
+            self.director.persist()
 
     def restore(self) -> None:
+        # The event history first, so anything that reads it during the rest of
+        # the restore sees the world's past rather than an empty log.
+        self.director.restore()
         hour = self.store.get("_clock_hour", None)
         day = self.store.get("_clock_day", None)
         if hour not in (None, "false"):

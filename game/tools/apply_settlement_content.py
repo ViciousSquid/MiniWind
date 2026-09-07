@@ -9,7 +9,10 @@ untouched, and only refreshes the authored *content* of the townsfolk from
 
 * dialogue trees (so mourning / relationship branches appear),
 * ``relationships`` (the authored social web),
-* ``patrol_markers`` for anyone the data gives a ``patrol`` circuit.
+* ``patrol_markers`` for anyone the data gives a ``patrol`` circuit,
+* and, for any livestock the map already places by name, its ``owner`` and its
+  production settings — so a cow keeps making the right goods for the right
+  farmer without the tool ever moving it.
 
 Matching is by NPC ``name``. Anything the map has and the data doesn't is left
 alone; anything the data has for a name not in the map is ignored. Exact
@@ -33,6 +36,13 @@ import os
 from game import data
 
 
+def _slug(text) -> str:
+    """The identity key ownership and memory are filed under (matches
+    :func:`game.sim.director.actor_key`)."""
+    return "".join(ch.lower() if ch.isalnum() else "_"
+                   for ch in str(text)).strip("_")
+
+
 def _dedupe(things):
     """Drop exact-duplicate things (same type, name and rounded position)."""
     seen = set()
@@ -48,13 +58,33 @@ def _dedupe(things):
     return out
 
 
+#: Livestock content refreshed onto creatures the map already places. Placement
+#: stays the designer's, exactly like every other entity this tool touches —
+#: only what the thing *is* comes from the data.
+_LIVESTOCK_FIELDS = ("produces", "produce_every_hours", "produce_into",
+                     "produce_quantity", "produce_max", "owner_faction")
+
+
 def apply_content(world: dict, settlement: dict) -> dict:
     by_name = {n["name"]: n for n in settlement.get("npcs", [])}
+    beasts = {b["name"]: b for b in settlement.get("livestock", [])}
     upgraded = 0
     for t in world.get("things", []):
-        if str(t.get("properties", {}).get("type", "")) != "npc":
+        p = t.get("properties", {})
+        # Livestock: refresh ownership and production so a cow the designer
+        # placed keeps making the right thing for the right owner.
+        beast = beasts.get(p.get("name"))
+        if beast is not None:
+            for field in _LIVESTOCK_FIELDS:
+                if field in beast:
+                    p[field] = beast[field]
+            if beast.get("owner"):
+                p["owner"] = _slug(beast["owner"])
+                p["owner_name"] = beast["owner"]
+            upgraded += 1
             continue
-        p = t["properties"]
+        if str(p.get("type", "")) != "npc":
+            continue
         src = by_name.get(p.get("name"))
         if not src:
             continue
@@ -85,7 +115,7 @@ def main():
     out = args.out or args.map
     with open(out, "w") as f:
         json.dump(world, f, indent=2)
-    print(f"upgraded {n} NPC(s) with settlement content -> {out} "
+    print(f"upgraded {n} NPC(s)/livestock with settlement content -> {out} "
           f"({len(world['things'])} things after de-duplication)")
 
 

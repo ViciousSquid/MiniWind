@@ -70,6 +70,13 @@ def _npc_schedule(npc, markers):
     return entries
 
 
+def _slug(text) -> str:
+    """The identity key MiniWind files an actor's memory and ownership under
+    (matches :func:`game.sim.director.actor_key`)."""
+    return "".join(ch.lower() if ch.isalnum() else "_"
+                   for ch in str(text)).strip("_")
+
+
 def build(settlement: dict, base: dict) -> dict:
     markers = settlement.get("markers", {})
 
@@ -159,6 +166,34 @@ def build(settlement: dict, base: dict) -> dict:
         world["things"].append(_thing("npc", home_pos, props))
 
     # --- the threat outside the settlement (hostile creatures, core MonsterAI) ---
+    # --- livestock -------------------------------------------------------
+    # Ordinary Creature entities that happen to produce something and belong to
+    # somebody. Nothing in the game knows what milk is: the cow yields an item,
+    # the item inherits the cow's owner, and taking it is a theft with a witness,
+    # a bounty and a farmer who remembers. Add a row here and a settlement gains
+    # a new economy; there is no quest to write.
+    for beast in settlement.get("livestock", []):
+        role = beast.get("role", "cow")
+        props = _art({
+            "name": beast["name"],
+            "display_name": beast.get("display_name", beast["name"]),
+            "npc_role": role,
+            "aggression": "passive",
+            "combatant": False,
+            "sight_range": beast.get("sight_range", 400),
+        }, role)
+        owner = beast.get("owner", "")
+        if owner:
+            props["owner"] = _slug(owner)
+            props["owner_name"] = owner
+        if beast.get("owner_faction"):
+            props["owner_faction"] = beast["owner_faction"]
+        for key in ("produces", "produce_every_hours", "produce_into",
+                    "produce_quantity", "produce_max"):
+            if key in beast:
+                props[key] = beast[key]
+        world["things"].append(_thing("creature", beast["pos"], props))
+
     for threat in settlement.get("threats", []):
         role = threat.get("role", "bandit")
         world["things"].append(_thing("creature", threat["pos"], _art({
@@ -203,7 +238,8 @@ def main():
     print(f"wrote {out} with {len(world['things'])} things "
           f"({len(settlement.get('markers', {}))} markers, "
           f"{len(settlement.get('npcs', []))} NPCs, "
-          f"{len(settlement.get('threats', []))} threats)")
+          f"{len(settlement.get('threats', []))} threats, "
+          f"{len(settlement.get('livestock', []))} livestock)")
 
 
 if __name__ == "__main__":

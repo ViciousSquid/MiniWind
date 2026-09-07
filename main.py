@@ -208,6 +208,20 @@ if __name__ == "__main__":
     QSurfaceFormat.setDefaultFormat(fmt)
 
     # ---------------------------------------------------------
+    # High-DPI scaling
+    # ---------------------------------------------------------
+    # Both attributes must be set before the QApplication exists, which is why
+    # they live here rather than in the main window. AA_EnableHighDpiScaling is
+    # what makes [Display] high_dpi_scaling actually do something (the Settings
+    # window already tells the user it needs a restart); AA_UseHighDpiPixmaps
+    # keeps icons and the splash sharp on a scaled display either way. With it
+    # on, every size expressed in logical pixels — the splash, the launcher and
+    # the editor alike — is scaled by Qt for the display it lands on.
+    if config.getboolean("Display", "high_dpi_scaling", fallback=False):
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+
+    # ---------------------------------------------------------
     # Splash screen
     # ---------------------------------------------------------
     class ProgressSplashScreen(QWidget):
@@ -260,6 +274,14 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyleSheet(dark_stylesheet)
 
+    # The user's font size, applied up front so the splash and the launcher
+    # match the editor rather than only the main window honouring it. Every
+    # launcher dimension is a multiple of this font, so it is also what makes
+    # the launcher scale on a high-DPI display.
+    app_font = app.font()
+    app_font.setPointSize(config.getint("Display", "font_size", fallback=11))
+    app.setFont(app_font)
+
     # ---------------------------------------------------------
     # Set application icon
     # ---------------------------------------------------------
@@ -306,6 +328,34 @@ if __name__ == "__main__":
         "Configuring OpenGL..."
     )
 
+    # ---------------------------------------------------------
+    # Launcher
+    # ---------------------------------------------------------
+    # MiniWind is both a game and the editor that builds it, so the launcher
+    # asks which one you came for and lets you set up the display first. It
+    # writes straight back to settings.ini, so anything chosen here is what the
+    # editor, the Settings window and the next launch all see — which is why it
+    # runs *before* the main window is built. Turn it off with
+    # [Startup] show_launcher = False.
+    launch_choice = "edit"
+    if config.getboolean("Startup", "show_launcher", fallback=True):
+        from editor.launcher import launch as show_launcher, PLAY, QUIT
+
+        splash.hide()
+        QApplication.processEvents()
+        launch_choice = show_launcher(root_directory,
+                                      os.path.join(root_directory, "settings.ini"))
+        if launch_choice == QUIT:
+            sys.exit(0)
+
+        # Re-read what the launcher wrote and re-apply the parts that must be
+        # set before the first OpenGL widget exists.
+        config.read("settings.ini")
+        fmt.setSwapInterval(
+            1 if config.getboolean("Display", "vsync", fallback=True) else 0)
+        QSurfaceFormat.setDefaultFormat(fmt)
+        splash.show()
+
     splash.set_progress(
         25,
         "Building editor UI..."
@@ -348,5 +398,13 @@ if __name__ == "__main__":
 
     window.show()
     splash.finish(window)
+
+    if launch_choice == "play":
+        # Deferred by one event-loop turn so the default map (queued by the
+        # main window with its own singleShot) has finished loading and the
+        # scene has a Player Start to spawn at. enter_kiosk_mode hides the
+        # editor UI and presents the window per [Kiosk] window_mode.
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(0, window.enter_kiosk_mode)
 
     sys.exit(app.exec_())
