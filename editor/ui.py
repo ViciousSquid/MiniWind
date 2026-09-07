@@ -157,10 +157,12 @@ class Ui_MainWindow(object):
 
         MainWindow.asset_browser_dock.setWidget(MainWindow.asset_browser)
         
-        # CHANGED: Allow docking and set initial visibility
+        # Dockable anywhere, but closed to begin with: it is a tool you open
+        # (T, or View ▸ Asset Browser) rather than a pane you work in, and it
+        # was eating a strip of the 3D view on every launch.
         MainWindow.asset_browser_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         MainWindow.asset_browser_dock.setFloating(False)
-        MainWindow.asset_browser_dock.setVisible(True)
+        MainWindow.asset_browser_dock.setVisible(False)
 
         # CHANGED: Dock logic to match screenshot (Under 3D View)
         # We add it to the Right area first (same as others) then split the 3D view vertically

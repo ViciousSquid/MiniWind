@@ -422,12 +422,18 @@ def register_all_input_handlers(io_manager: IOManager):
         # Queue the sound for the main thread to play (thread-safe). ``looping``
         # asks the mixer to repeat it until an explicit StopSound; ``entity_id``
         # lets that stop find and silence this speaker's channel.
+        # Where it is and how far it carries travel with the request: the view
+        # mixes by distance from the listener (see engine/sound_falloff.py) and
+        # keeps a looping speaker's volume up to date as the player walks.
         game_state.queue_sound({
             'action': 'play',
             'file': sound_file,
             'volume': volume,
             'looping': looping,
             'entity_id': speaker_id,
+            'pos': [float(entity.pos[0]), float(entity.pos[1]), float(entity.pos[2])],
+            'radius': float(entity.properties.get('radius', 512.0) or 0.0),
+            'global': bool(entity.properties.get('global', False)),
         })
         debug_log('Speaker', f"  Queued '{sound_file}'" + (" (looping)" if looping else ""))
 

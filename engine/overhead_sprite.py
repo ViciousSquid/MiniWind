@@ -413,6 +413,7 @@ class OverheadSpriteRenderer:
         y_offset: float,
         rotation_offset: float = 0.0,
         tint=(0.0, 0.0, 0.0, 0.0),
+        depth_write: bool = True,
     ) -> None:
         try:
             gl = self._gl
@@ -473,9 +474,21 @@ class OverheadSpriteRenderer:
             )
             gl.glDisable(gl.GL_CULL_FACE)
 
-            gl.glBindVertexArray(self._vao)
-            gl.glDrawArrays(gl.GL_TRIANGLES, 0, 6)
-            gl.glBindVertexArray(0)
+            # Ground decals draw without writing depth. Two blood pools lying in
+            # the same plane otherwise z-fight each other — the first writes its
+            # depth and the second half-passes GL_LESS across the overlap, which
+            # is the flicker. Reading depth is still on, so a decal is still
+            # hidden by walls and by anything in front of it; it just blends in
+            # draw order against its neighbours instead of fighting them.
+            if not depth_write:
+                gl.glDepthMask(gl.GL_FALSE)
+            try:
+                gl.glBindVertexArray(self._vao)
+                gl.glDrawArrays(gl.GL_TRIANGLES, 0, 6)
+                gl.glBindVertexArray(0)
+            finally:
+                if not depth_write:
+                    gl.glDepthMask(gl.GL_TRUE)
             gl.glUseProgram(0)
 
         except Exception:
@@ -498,6 +511,7 @@ class OverheadSpriteRenderer:
         facing: float,
         frame_key: str,
         tint=(0.0, 0.0, 0.0, 0.0),
+        depth_write: bool = True,
     ) -> None:
         if not self._ready():
             return
@@ -519,6 +533,7 @@ class OverheadSpriteRenderer:
                 # raw facing and must not inherit this half-turn.
                 rotation_offset=math.radians(HEAD_FACING_OFFSET_DEG),
                 tint=tint,
+                depth_write=depth_write,
             )
 
     def draw_weapon(

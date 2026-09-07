@@ -600,7 +600,13 @@ class Monster(Thing):
             # 3D view matches the 2D view for slain head actors instead of falling
             # back to the monster-type's plain dead.png.
             'sprite_path': self.get_sprite_path(),
-            'weapon_id': self.properties.get(
+            # What is in this actor's hand right now. `_active_weapon` is the
+            # transient one the combat AI switched to when it changed range
+            # (see engine/combat_loadout.py); it wins over the authored
+            # `equipped_weapon`, which stays untouched so re-saving the map
+            # never overwrites the author's choice.
+            'weapon_id': self.properties.get('_active_weapon')
+            or self.properties.get(
                 'equipped_weapon',
                 (self.properties.get('equipment') or {}).get('weapon', '')
                 if isinstance(self.properties.get('equipment'), dict) else ''),

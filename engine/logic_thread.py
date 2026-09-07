@@ -104,6 +104,8 @@ from .monster_constants import (
     BLOOD_STAIN_SIZE_MAX,
     MAX_BLOOD_STAINS,
     BLOOD_MIN_DAMAGE,
+    BLOOD_STAIN_LAYER_STEP,
+    BLOOD_STAIN_LAYERS,
 )
 
 # Import the extracted MonsterAI class and new thread
@@ -382,6 +384,9 @@ class LogicThread(threading.Thread):
         # Blood stains — ground decals dropped when a character is wounded
         # (any damaging hit, not only a gib death), sized by wound severity.
         self.blood_stains: list = []
+        #: Rotating counter giving each new stain its own height step (see
+        #: add_blood_stain).
+        self._blood_stain_layer = 0
 
         # Gunfire sound events for AI hearing (list of dicts with pos, time, source)
         self._gunfire_events: list = []
@@ -1135,6 +1140,9 @@ class LogicThread(threading.Thread):
                 continue
             thing.properties.pop('is_shooting', None)
             thing.properties.pop('_vel_y', None)
+            # Whatever it switched to mid-fight last session; the next one starts
+            # from the authored kit (see engine/combat_loadout.py).
+            thing.properties.pop('_active_weapon', None)
             if clear_dead:
                 thing.properties.pop('dead', None)
                 thing.properties.pop('gibbed', None)   # a revived body isn't gore
@@ -2962,7 +2970,8 @@ class LogicThread(threading.Thread):
         ]
         write_state.blood_stains = [
             {'pos': list(e['pos']), 'sprite': e.get('sprite', ''),
-             'size': e.get('size', BLOOD_STAIN_SIZE_MIN), 'yaw': e.get('yaw', 0.0)}
+             'size': e.get('size', BLOOD_STAIN_SIZE_MIN), 'yaw': e.get('yaw', 0.0),
+             'y_bias': e.get('y_bias', 0.0)}
             for e in self.blood_stains
         ]
 
@@ -3100,7 +3109,13 @@ class LogicThread(threading.Thread):
             'sprite': sprite,
             'size': float(size),
             'yaw': random.uniform(0.0, 360.0),
+            # Each stain sits a hair above the one before it, cycling through a
+            # few steps. Pools that overlap then have a definite order rather
+            # than sharing one plane and flickering against each other.
+            'y_bias': (self._blood_stain_layer % BLOOD_STAIN_LAYERS)
+                      * BLOOD_STAIN_LAYER_STEP,
         }
+        self._blood_stain_layer += 1
         self.blood_stains.append(entry)
         overflow = len(self.blood_stains) - MAX_BLOOD_STAINS
         if overflow > 0:

@@ -3609,13 +3609,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Layout saved.", 2000)
 
     #: The editor's default dock proportions, as fractions of the window width:
-    #: the scene tree down the left, the 3D view taking the bulk of the middle,
-    #: and the Properties / Debug Console column on the right. The 2D views dock
-    #: shares the right-hand column when it is shown, so the column as a whole is
-    #: what gets DEFAULT_PROPERTIES_FRACTION.
+    #: the scene tree down the left, then the 3D view and the Properties / Debug
+    #: Console column splitting the rest evenly. The 2D views dock shares the
+    #: right-hand column when it is shown, so the column as a whole is what gets
+    #: DEFAULT_PROPERTIES_FRACTION.
     DEFAULT_SCENE_FRACTION = 0.10
-    DEFAULT_VIEW_3D_FRACTION = 0.60
-    DEFAULT_PROPERTIES_FRACTION = 0.30
+    DEFAULT_VIEW_3D_FRACTION = 0.45
+    DEFAULT_PROPERTIES_FRACTION = 0.45
 
     def has_saved_layout(self):
         """True when settings.ini carries a layout the user asked us to keep.
@@ -3631,10 +3631,12 @@ class MainWindow(QMainWindow):
     def apply_default_layout(self):
         """Lay the docks out at the editor's default proportions.
 
-        Scene 10% | 3D view 60% | Properties + Debug Console 30% of the window
-        width. Used on first run (no saved layout) and by View ▸ Restore Layout,
-        so there is always one keystroke back to a sane arrangement no matter how
-        far the docks have been dragged.
+        Scene 10% of the window width, then the 3D view and the Properties /
+        Debug Console column 50:50 across what is left. The asset browser is a
+        tool you open when you want it, so it starts hidden. Used on first run
+        (no saved layout) and by View ▸ Restore Layout, so there is always one
+        keystroke back to a sane arrangement no matter how far the docks have
+        been dragged.
         """
         try:
             # Re-establish the arrangement first: the docks may have been torn
@@ -3652,6 +3654,9 @@ class MainWindow(QMainWindow):
                 self.asset_browser_dock.setFloating(False)
                 self.splitDockWidget(self.view_3d_dock, self.asset_browser_dock,
                                      Qt.Vertical)
+                # A tool, not part of the working layout: T (or View ▸ Asset
+                # Browser) brings it up when it is wanted.
+                self.asset_browser_dock.setVisible(False)
 
             self.view_3d_dock.setVisible(True)
             if self.menuBar():

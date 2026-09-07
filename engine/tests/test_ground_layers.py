@@ -54,3 +54,31 @@ def test_the_renderer_defaults_to_the_actor_layer():
     import inspect
     default = inspect.signature(osp.OverheadSpriteRenderer).parameters["y_offset"].default
     assert default == osp.ACTOR_Y
+
+
+def test_decals_can_be_drawn_without_writing_depth():
+    """Two pools in one plane must blend, not fight.
+
+    Clearing the floor was not enough on its own: coplanar decals still wrote
+    depth and half-failed GL_LESS against each other across the overlap, which
+    is the flicker. The draw call takes depth_write so the decal pass can turn
+    it off.
+    """
+    import inspect
+    for method in (osp.OverheadSpriteRenderer.draw,
+                   osp.OverheadSpriteRenderer._draw_texture):
+        params = inspect.signature(method).parameters
+        assert "depth_write" in params
+        assert params["depth_write"].default is True    # actors still write
+
+
+def test_each_new_stain_is_laid_a_step_above_the_last():
+    """So overlapping pools have a definite order instead of one shared plane."""
+    from engine.monster_constants import BLOOD_STAIN_LAYER_STEP, BLOOD_STAIN_LAYERS
+
+    assert BLOOD_STAIN_LAYER_STEP > 0.0
+    assert BLOOD_STAIN_LAYERS > 1
+    highest = osp.DECAL_Y + (BLOOD_STAIN_LAYERS - 1) * BLOOD_STAIN_LAYER_STEP
+    # The whole climb has to stay under the layer above, or blood would end up
+    # over the gib splatter it caused.
+    assert highest < osp.GIB_Y

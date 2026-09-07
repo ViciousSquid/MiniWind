@@ -13,6 +13,7 @@ import json
 from html import escape
 from typing import Dict, List, Any, Optional, Tuple
 from editor.debug_console import debug_log
+from engine import combat_loadout
 from engine.facing import face_heading
 from game.diceroll import DICE_TYPES
 from .monster_constants import (
@@ -126,6 +127,44 @@ class MonsterAI:
         except AttributeError:
             dx, dz = float(direction[0]), float(direction[2])
         face_heading(thing.properties, dx, dz, delta)
+
+    # -------------------------------------------------------------------------
+    # Choosing a weapon
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _attack_style_for(thing, state, in_melee: bool) -> str:
+        """How this actor is fighting right now — blade, bow or spell.
+
+        An actor that carries more than one option switches between them: it
+        draws a blade once the target is inside its reach and reaches for a
+        spell or a bow when the target is away. One that carries a single option
+        is untouched and keeps behaving exactly as the map authored it.
+
+        **This runs every tick, so it does almost nothing.** The choice depends
+        only on which side of melee range the target is, so all a normal tick
+        does is compare that band against the last one. Only when the band
+        actually flips — a handful of times in a fight — is the loadout rebuilt
+        from the inventory and a style picked (see engine/combat_loadout.py).
+        Rebuilding on that edge, rather than caching it for the session, is also
+        what makes a kit picked up mid-fight take effect with no invalidation
+        bookkeeping and nothing polling for changes.
+        """
+        band = bool(in_melee)
+        if state.get('style_band') is not band:
+            state['style_band'] = band
+            loadout = combat_loadout.build_loadout(thing.properties)
+            style = combat_loadout.choose_style(loadout, band)
+            state['attack_style'] = style
+            # Show what it is actually holding. Written to a transient key so
+            # the authored `equipped_weapon` survives — the renderer prefers
+            # `_active_weapon` when it is set (see Monster.get_render_snapshot).
+            if combat_loadout.has_choice(loadout):
+                thing.properties['_active_weapon'] = combat_loadout.weapon_for(
+                    loadout, style)
+            return style
+        return state.get('attack_style') or str(
+            thing.properties.get('attack_style', '') or '').lower()
 
     # -------------------------------------------------------------------------
     # Main update entry point
@@ -478,9 +517,9 @@ class MonsterAI:
                 # behaviour (flying = projectile, human = hitscan) is kept so
                 # pre-existing non-fantasy maps are unchanged.
                 state['shoot_timer'] -= delta
-                attack_style = str(thing.properties.get('attack_style', '')).lower()
                 melee_range = float(thing.properties.get('melee_range', MONSTER_MELEE_RANGE))
                 in_melee = distance_sq <= melee_range * melee_range
+                attack_style = self._attack_style_for(thing, state, in_melee)
 
                 if attack_style == 'melee':
                     ready = state['shoot_timer'] <= 0.0 and in_melee

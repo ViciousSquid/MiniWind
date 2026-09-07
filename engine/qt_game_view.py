@@ -51,6 +51,7 @@ from editor.debug_console import DebugConsole, get_debug_logger
 from .sysmon import SysMon
 from .floating_windows import WindowManager, NpcDebugWindow
 from .pause_menu import PauseMenu
+from . import sound_falloff
 
 # Pygame for gamepad support
 import pygame
@@ -74,6 +75,11 @@ def perspective_projection(fov, aspect, near, far):
 
 
 class QtGameView(QOpenGLWidget):
+    #: Seconds between re-mixing live speakers for the listener's new position
+    #: (see _update_speaker_volumes). ~15 Hz: far finer than an ear notices a
+    #: volume ramp, and a fraction of the work of doing it every frame.
+    SPEAKER_VOLUME_INTERVAL = 1.0 / 15.0
+
     def __init__(self, editor):
         super().__init__(editor)
 
@@ -619,6 +625,11 @@ class QtGameView(QOpenGLWidget):
             props = getattr(actor_or_snapshot, "properties", {})
         if not isinstance(props, dict):
             return ""
+        # The weapon the combat AI switched to at this range beats everything
+        # else — it is what the actor is actually swinging (combat_loadout).
+        active = props.get("_active_weapon")
+        if active:
+            return str(active)
         equipment = props.get("equipment")
         if isinstance(equipment, dict) and equipment.get("weapon"):
             return str(equipment["weapon"])
@@ -723,10 +734,12 @@ class QtGameView(QOpenGLWidget):
                     continue
                 spos = st.get("pos", [0.0, 0.0, 0.0])
                 gspos = (float(spos[0]), float(spos[1]), float(spos[2]))
-                _renderer(sprite, y_offset=DECAL_Y,
+                _renderer(sprite,
+                          y_offset=DECAL_Y + float(st.get("y_bias", 0.0)),
                           size=float(st.get("size", 32.0))).draw(
                     self.projection_matrix, self.view_matrix, gspos,
-                    float(st.get("yaw", 0.0)), SpriteController.IDLE)
+                    float(st.get("yaw", 0.0)), SpriteController.IDLE,
+                    depth_write=False)
 
             dead_overlay_rel = "assets/sprites/heads/dead.png"
             hover_id = (id(self.inspect_hover)
@@ -766,10 +779,11 @@ class QtGameView(QOpenGLWidget):
                         or (str(p.get("sprite_path", "")) if snapshot else "")
                     if stain:
                         # Splatter is a decal: it belongs under every actor, on
-                        # its own layer just above the blood it made.
+                        # its own layer just above the blood it made, and like
+                        # the blood it blends rather than writing depth.
                         _renderer(stain, y_offset=GIB_Y).draw(
                             self.projection_matrix, self.view_matrix, gpos,
-                            facing, SpriteController.IDLE)
+                            facing, SpriteController.IDLE, depth_write=False)
                         continue
                 if dead and is_head:
                     # Keep the identity: draw the living head, then paint the
@@ -932,6 +946,7 @@ class QtGameView(QOpenGLWidget):
         if self.play_mode:
             self._sync_play_cursor()
         self._process_sound_queue()
+        self._update_speaker_volumes()
         self._process_console_command_queue()
         if self.use_threading and self.logic_thread:
             keys = (set() if (self.console_overlay_active or self.pause_menu.active)
@@ -946,31 +961,51 @@ class QtGameView(QOpenGLWidget):
         else:
             self.repaint()
 
+    def _listener_pos(self):
+        """Where the player's ears are, as a plain ``[x, y, z]``.
+
+        In play mode ``self.camera`` is synced to the player each frame, so it
+        is the listener; in the editor the viewport camera stands in, which is
+        what makes a speaker audible while you fly around auditioning it.
+        """
+        pos = getattr(self.camera, 'pos', None)
+        if pos is None:
+            return None
+        try:
+            return [float(pos.x), float(pos.y), float(pos.z)]
+        except AttributeError:
+            return [float(pos[0]), float(pos[1]), float(pos[2])]
+
     def _process_sound_queue(self):
         """Drain the logic thread's sound queue and play via pygame mixer.
 
-        Speaker requests carry an ``action`` ('play'/'stop'), a ``looping`` flag
-        and an ``entity_id``. Looping speakers play with ``loops=-1`` and their
-        channel is remembered under the entity id so a later StopSound can
-        actually silence them; plain one-shot sounds (no entity id) just play."""
+        Speaker requests carry an ``action`` ('play'/'stop'), a ``looping`` flag,
+        an ``entity_id`` and where the speaker stands (``pos``/``radius``/
+        ``global``). Volume is mixed by distance from the listener — a linear
+        fade to silence at the speaker's radius, see engine/sound_falloff.py.
+        Looping speakers play with ``loops=-1`` and are remembered under the
+        entity id so a later StopSound can silence them and so
+        :meth:`_update_speaker_volumes` can keep re-mixing them as the player
+        moves; plain one-shot sounds are mixed once, where they were fired.
+        """
         speaker_channels = getattr(self, "_speaker_channels", None)
         if speaker_channels is None:
             speaker_channels = self._speaker_channels = {}
+        listener = self._listener_pos()
         for request in self.game_state.consume_sounds():
             action = request.get('action', 'play')
             entity_id = request.get('entity_id')
 
             if action == 'stop':
-                channel = speaker_channels.pop(entity_id, None)
-                if channel is not None:
+                live = speaker_channels.pop(entity_id, None)
+                if live is not None:
                     try:
-                        channel.stop()
+                        live['channel'].stop()
                     except Exception:
                         pass
                 continue
 
             sound_file = request.get('file')
-            volume = request.get('volume', 1.0)
             if not sound_file:
                 continue
 
@@ -985,14 +1020,54 @@ class QtGameView(QOpenGLWidget):
                 prev = speaker_channels.pop(entity_id, None)
                 if prev is not None:
                     try:
-                        prev.stop()
+                        prev['channel'].stop()
                     except Exception:
                         pass
+            speaker = {
+                'volume': request.get('volume', 1.0),
+                'pos': request.get('pos'),
+                'radius': request.get('radius', 0.0),
+                'global': request.get('global', False),
+            }
+            volume = sound_falloff.volume_for(listener, speaker)
+            # Out of range and not looping: nothing to hear, so don't take a
+            # mixer channel for it at all.
+            if loops == 0 and volume <= sound_falloff.SILENCE_EPSILON:
+                continue
             channel = sound.play(loops=loops)
             if channel:
                 channel.set_volume(volume)
                 if entity_id is not None and loops != 0:
-                    speaker_channels[entity_id] = channel
+                    speaker['channel'] = channel
+                    speaker_channels[entity_id] = speaker
+
+    def _update_speaker_volumes(self):
+        """Re-mix live looping speakers for where the listener is now.
+
+        Walking away from a fountain has to make it quieter, which means the
+        volume cannot be set once at play time. Only looping speakers are
+        tracked (a one-shot is over before it matters), there are rarely more
+        than a handful, and the pass is throttled — volume does not need
+        frame-accurate updates, and this is per-frame work in the render loop.
+        """
+        speaker_channels = getattr(self, "_speaker_channels", None)
+        if not speaker_channels:
+            return
+        self._speaker_volume_accum = (getattr(self, '_speaker_volume_accum', 0.0)
+                                     + getattr(self, '_last_frame_dt', 0.016))
+        if self._speaker_volume_accum < self.SPEAKER_VOLUME_INTERVAL:
+            return
+        self._speaker_volume_accum = 0.0
+        listener = self._listener_pos()
+        for entity_id, speaker in list(speaker_channels.items()):
+            channel = speaker.get('channel')
+            try:
+                if channel is None or not channel.get_busy():
+                    speaker_channels.pop(entity_id, None)
+                    continue
+                channel.set_volume(sound_falloff.volume_for(listener, speaker))
+            except Exception:
+                speaker_channels.pop(entity_id, None)
 
     def _process_console_command_queue(self):
         """Run any console commands queued by the I/O system on the UI thread.

@@ -46,8 +46,11 @@ K_JOURNAL = "j"
 K_SPELLS = "p"
 K_LEVELUP = "l"
 K_MAP = "m"
-K_DICE_ROLL = "d"
-K_DICE_TYPE = "y"
+# No key rolls dice by hand. 'd' is strafe-right — the movement key the engine
+# reads directly — and a manual roller sitting on it meant the player rolled a
+# die every time they side-stepped. Gameplay rolls (attacks, casts, loot) go
+# through MiniwindSession.request_roll and animate on their own, so there is
+# nothing a roll key adds.
 K_QUEST = "q"          # show the current quest (objective + how to complete)
 
 
@@ -725,10 +728,6 @@ class MiniwindGame:
             session.do_attack()
         if K_CAST in just:
             session.do_cast()
-        if K_DICE_TYPE in just:
-            session.cycle_dice_type()
-        if K_DICE_ROLL in just:
-            session.roll_dice()
         if K_NEXT_SPELL in just:
             session.next_spell()
         if K_SNEAK in just:
