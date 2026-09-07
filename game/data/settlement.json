@@ -172,6 +172,18 @@
       },
       "inventory": [
         {
+          "id": "scythe",
+          "qty": 1
+        },
+        {
+          "id": "pitchfork",
+          "qty": 2
+        },
+        {
+          "id": "shovel",
+          "qty": 2
+        },
+        {
           "id": "iron_longsword",
           "qty": 1
         },
@@ -325,6 +337,14 @@
       },
       "inventory": [
         {
+          "id": "bucket",
+          "qty": 3
+        },
+        {
+          "id": "shovel",
+          "qty": 1
+        },
+        {
           "id": "potion_heal",
           "qty": 3
         },
@@ -419,6 +439,14 @@
         "Elowen": "customer"
       },
       "inventory": [
+        {
+          "id": "pitchfork",
+          "qty": 1
+        },
+        {
+          "id": "bucket",
+          "qty": 1
+        },
         {
           "id": "bread",
           "qty": 3

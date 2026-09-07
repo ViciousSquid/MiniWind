@@ -425,7 +425,7 @@ class BaseRenderer:
             fs_src = DEFAULT_SHADERS.get('sprite.frag', '')
             self.shaders['sprite'] = self.shader_loader.compile_from_source(vs_src, fs_src)
             self.uniforms['sprite'] = UniformCache(self.shaders['sprite'])
-            self.uniforms['sprite'].preload(['projection', 'view', 'sprite_texture', 'sprite_pos_world', 'sprite_size', 'sprite_tint', 'sprite_rot'])
+            self.uniforms['sprite'].preload(['projection', 'view', 'sprite_texture', 'sprite_pos_world', 'sprite_size', 'sprite_tint', 'sprite_rot', 'sprite_opacity'])
 
             # depth_cube – renders scene depth into a point light's cube-map for
             # omnidirectional shadow mapping (replaces the old projected shadows).
@@ -972,8 +972,11 @@ class BaseRenderer:
         pos_loc, size_loc = uniforms['sprite_pos_world'], uniforms['sprite_size']
         tint_loc = uniforms['sprite_tint']
         rot_loc = uniforms['sprite_rot']   # -1 if the shader lacks it (safe no-op)
+        opacity_loc = uniforms.get('sprite_opacity', -1)
         gl.glUniform4f(tint_loc, 0.0, 0.0, 0.0, 0.0)   # no tint by default
         gl.glUniform1f(rot_loc, 0.0)                   # upright by default
+        if opacity_loc >= 0:
+            gl.glUniform1f(opacity_loc, 1.0)           # solid by default
         gl.glBindVertexArray(self.vaos['sprite'])
 
         # Billboard right/up basis (world space) — the plane a sprite rotates in.
@@ -1002,6 +1005,7 @@ class BaseRenderer:
         current_tex = None
         _tinted = False   # whether the last draw left a non-zero tint set
         _rotated = False  # whether the last draw left a non-zero rotation set
+        _faded = False    # whether the last draw left a partial opacity set
         for thing in things_to_draw:
             if Portal is not None and isinstance(thing, Portal):
                 continue
@@ -1098,17 +1102,30 @@ class BaseRenderer:
                 elif _tinted:
                     gl.glUniform4f(tint_loc, 0.0, 0.0, 0.0, 0.0)
                     _tinted = False
+                # An actor mid-fade (the reaper arriving or leaving) draws
+                # translucent; everything else stays solid.
+                if opacity_loc >= 0:
+                    opacity = float(thing.get('opacity', 1.0) or 0.0)
+                    if opacity < 0.999:
+                        gl.glUniform1f(opacity_loc, opacity)
+                        _faded = True
+                    elif _faded:
+                        gl.glUniform1f(opacity_loc, 1.0)
+                        _faded = False
                 gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
                 continue
 
-            # Any non-monster sprite below must not inherit a monster's flash or
-            # rotation.
+            # Any non-monster sprite below must not inherit a monster's flash,
+            # rotation or fade.
             if _tinted:
                 gl.glUniform4f(tint_loc, 0.0, 0.0, 0.0, 0.0)
                 _tinted = False
             if _rotated:
                 gl.glUniform1f(rot_loc, 0.0)
                 _rotated = False
+            if _faded:
+                gl.glUniform1f(opacity_loc, 1.0)
+                _faded = False
 
             tex_id = None
             if instance_textures:

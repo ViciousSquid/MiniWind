@@ -216,6 +216,14 @@ MiniWind as the RPG-semantics layer:
   struck actor flashes red (a `sprite_tint` uniform on the sprite shader driven
   by a decaying `_hit_flash`). Speech bubbles ('!' quest / '…' talk) float over
   nearby interactable NPCs, projected with the live render matrices.
+* **Actors can fade.** A `sprite_opacity` uniform (billboards) and a matching
+  `opacity` one (the overhead ground quads and their weapon overlay) multiply a
+  whole sprite's alpha, driven by a `_opacity` property carried through
+  `Monster.get_render_snapshot`. Solid is the default everywhere and every pass
+  on the shared sprite program re-establishes it, so nothing else changed. It is
+  what lets **the reaper** — sent to one NPC death in four — fade in a random
+  way off, glide to the body, take it with a stroke of his scythe and fade out
+  again. He is `disabled`, so the combat AI never sees him, and unattackable.
 * **Aurora-style editor, composed not monolithic.** Property schemas render in
   sections via a `group` field on `PropertySpec`. Authoring is a set of
   *reusable components* — an inventory table, a schedule table, and a branching

@@ -149,6 +149,9 @@ class Renderer_F(BaseRenderer):
         gl.glUniform1i(uniforms['sprite_texture'], 0)
         gl.glUniform4f(uniforms['sprite_tint'], 0.0, 0.0, 0.0, 0.0)
         gl.glUniform1f(uniforms['sprite_rot'], 0.0)  # weapons are upright
+        _op_loc = uniforms.get('sprite_opacity', -1)
+        if _op_loc >= 0:
+            gl.glUniform1f(_op_loc, 1.0)             # solid, whatever drew last
 
         gl.glBindVertexArray(self.vaos['sprite'])
 

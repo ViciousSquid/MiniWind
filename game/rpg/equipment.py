@@ -86,10 +86,18 @@ def unequip(character, slot: str) -> bool:
     return False
 
 
+#: Two-handers from before the item data carried the fact itself. Kept so an
+#: older items.json (or a mod's) still classifies them correctly.
+_LEGACY_TWO_HANDED = ("iron_warhammer", "iron_battleaxe")
+
+
 def _is_two_handed(item_def) -> bool:
     if item_def.get("kind") == items.KIND_BOW:
         return True
-    return item_def.id in ("iron_warhammer", "iron_battleaxe")
+    # A weapon says so itself where the data has it (scythe, pitchfork, shovel).
+    if item_def.get("two_handed"):
+        return True
+    return item_def.id in _LEGACY_TWO_HANDED
 
 
 def _refresh_weapon_kind(character) -> None:
