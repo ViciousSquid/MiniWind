@@ -204,9 +204,10 @@ Play — so a designer builds rules and watches what they produce rather than
 writing what should happen.
 
 * **NPC inspector** — the existing Properties tabs cover identity, role, faction,
-  personality, courage, disposition and relationships; the new **Simulation**
-  tab adds what this actor *knows*, its ranked intents, and the plain-English
-  reason behind the one it is acting on.
+  personality, courage, disposition and relationships (Appearance is a collapsed
+  section inside Properties); the new **Simulation** tab adds what this actor
+  *knows*, its ranked intents, and the plain-English reason behind the one it is
+  acting on.
 * **Object inspector** — an **Ownership & Production** tab on items, containers
   and creatures: who owns it, and what it makes.
 * **Live Simulation Inspector** — click-to-inspect in play now shows a **Why**
@@ -266,7 +267,7 @@ plugins/                  the generic plugin system + optional plugins (BigWorld
 ```bash
 python -m pytest game/tests -q            # MiniWind: 224 headless tests
 python -m pytest editor/tests game/tests engine/tests plugins/bigworld/tests -q
-# 316 with PyQt5 installed; 284 + 2 skipped without it (editor/tests needs Qt,
+# 339 with PyQt5 installed; 284 + 3 skipped without it (editor/tests needs Qt,
 # and skips cleanly — everything else stays headless).
 ```
 

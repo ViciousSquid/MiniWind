@@ -466,6 +466,7 @@ def main():
         draw_topdown(role).save(os.path.join(sdir, f"{role}.png"))
         draw_portrait(role).save(os.path.join(pdir, f"{role}.png"))
     draw_magicbolt().save(os.path.join(sdir, "magicbolt.png"))
+    draw_game_settings().save(os.path.join(sdir, "settings.png"))
     for kind in _MARKER_STYLE:
         draw_marker(kind).save(os.path.join(sdir, f"marker_{kind}.png"))
     draw_marker("idle").save(os.path.join(sdir, "marker.png"))   # generic fallback
@@ -479,7 +480,8 @@ def main():
     for i, (name, sev) in enumerate(DISINTEGRATE_STAINS, start=1):
         draw_disintegration(seed=i, severity=sev).save(
             os.path.join(disint_dir, f"{name}.png"))
-    print(f"wrote {len(ROLES)} sprites (+ magicbolt, {len(_MARKER_STYLE)} markers, "
+    print(f"wrote {len(ROLES)} sprites (+ magicbolt, settings, "
+          f"{len(_MARKER_STYLE)} markers, "
           f"{len(GIB_STAINS)} blood stains, {len(DISINTEGRATE_STAINS)} "
           f"disintegration splatters) -> {sdir}")
     print(f"wrote {len(ROLES)} portraits -> {pdir}")
@@ -578,6 +580,51 @@ def draw_container(kind: str = "chest", size: int = 64):
         d.rectangle([size * 0.46, size * 0.36, size * 0.54, size * 0.48], fill=band + (255,),
                     outline=dark + (255,))
     return img
+
+
+def draw_game_settings(size: int = 64):
+    """The Game Settings entity's own icon: a cog around a clock face.
+
+    It used to borrow the Key/Value Store's sprite, which made the one entity
+    that configures the whole map indistinguishable from a logic node in the 2D
+    views. A cog (settings) around a clock (this entity owns the game clock)
+    says what it is at icon size."""
+    import math
+    from PIL import ImageDraw
+
+    img = Image.new("RGBA", (size * SS, size * SS), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    S = size * SS
+    cx = cy = S / 2.0
+    body = (198, 156, 74)          # the same brass the 'location' marker uses
+    dark = (110, 84, 34)
+    face = (38, 40, 48)
+
+    # --- cog teeth ---
+    teeth, outer, inner = 8, S * 0.46, S * 0.34
+    half = math.radians(360 / teeth) * 0.30
+    for i in range(teeth):
+        a = math.radians(i * 360 / teeth)
+        pts = []
+        for r, aa in ((inner, a - half * 1.7), (outer, a - half),
+                      (outer, a + half), (inner, a + half * 1.7)):
+            pts.append((cx + math.cos(aa) * r, cy + math.sin(aa) * r))
+        d.polygon(pts, fill=body + (255,))
+
+    # --- cog body + clock face ---
+    d.ellipse([cx - inner, cy - inner, cx + inner, cy + inner],
+              fill=body + (255,), outline=dark + (255,), width=int(S * 0.02))
+    r = S * 0.24
+    d.ellipse([cx - r, cy - r, cx + r, cy + r],
+              fill=face + (255,), outline=dark + (255,), width=int(S * 0.015))
+
+    # --- hands, reading a little after eight (MiniWind's default start hour) ---
+    d.line([cx, cy, cx, cy - r * 0.68], fill=body + (255,), width=int(S * 0.030))
+    d.line([cx, cy, cx + r * 0.52, cy + r * 0.34], fill=body + (255,),
+           width=int(S * 0.030))
+    d.ellipse([cx - S * 0.018, cy - S * 0.018, cx + S * 0.018, cy + S * 0.018],
+              fill=(250, 244, 230, 255))
+    return img.resize((size, size), Image.LANCZOS)
 
 
 def draw_magicbolt(size: int = 48):

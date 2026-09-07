@@ -21,6 +21,7 @@ never pulls in Qt.
 
 from __future__ import annotations
 
+from . import editor_ui
 from .sim import crime as sim_crime
 from .sim import knowledge as sim_knowledge
 from .sim import ownership as sim_own
@@ -103,7 +104,7 @@ def make_simulation_tab(thing):
         QtWidgets, QtCore = _qt()
     except Exception:  # pragma: no cover - headless
         return None
-    return _SimulationTab(thing, QtWidgets, QtCore)
+    return editor_ui.apply_dark(_SimulationTab(thing, QtWidgets, QtCore))
 
 
 def _SimulationTab(thing, QtWidgets, QtCore):
@@ -128,29 +129,31 @@ def _SimulationTab(thing, QtWidgets, QtCore):
             self.intents.setHorizontalHeaderLabels(["Pri", "Intent", "Reason"])
             self.intents.horizontalHeader().setStretchLastSection(True)
             self.intents.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+            editor_ui.style_table(self.intents, max_rows=6)
             bl.addWidget(self.intents)
             layout.addWidget(box)
 
             # --- Knowledge -------------------------------------------------
             kbox = QtWidgets.QGroupBox("What it knows")
             kl = QtWidgets.QVBoxLayout(kbox)
-            self.knowledge = QtWidgets.QTableWidget(0, 4)
-            self.knowledge.setHorizontalHeaderLabels(
-                ["Event", "Source", "Sure", "Day"])
-            self.knowledge.horizontalHeader().setStretchLastSection(True)
-            self.knowledge.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-            kl.addWidget(self.knowledge)
-            krow = QtWidgets.QHBoxLayout()
+
+            # Actions above the list, so they stay reachable when it is empty —
+            # the same rule the I/O editor and the other MiniWind tabs follow.
             teach = QtWidgets.QPushButton("Tell it about an event…")
             teach.setToolTip("Hand this actor a belief about something in the "
                              "world history and watch what it decides to do.")
             teach.clicked.connect(self._teach)
             forget = QtWidgets.QPushButton("Wipe its memory")
             forget.clicked.connect(self._forget)
-            krow.addWidget(teach)
-            krow.addWidget(forget)
-            krow.addStretch(1)
-            kl.addLayout(krow)
+            kl.addLayout(editor_ui.action_row(QtWidgets, teach, forget))
+
+            self.knowledge = QtWidgets.QTableWidget(0, 4)
+            self.knowledge.setHorizontalHeaderLabels(
+                ["Event", "Source", "Sure", "Day"])
+            self.knowledge.horizontalHeader().setStretchLastSection(True)
+            self.knowledge.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+            editor_ui.style_table(self.knowledge, max_rows=8)
+            kl.addWidget(self.knowledge)
             layout.addWidget(kbox)
 
             # --- Standing --------------------------------------------------
@@ -204,6 +207,7 @@ def _SimulationTab(thing, QtWidgets, QtCore):
             for r, it in enumerate(intents):
                 for c, text in enumerate((str(it.priority), it.label, it.reason)):
                     self.intents.setItem(r, c, QtWidgets.QTableWidgetItem(text))
+            editor_ui.fit_to_rows(self.intents, max_rows=6)
 
         def _fill_knowledge(self, director):
             store = getattr(director, "store", None)
@@ -223,6 +227,7 @@ def _SimulationTab(thing, QtWidgets, QtCore):
                          str(f.get("day", "")))
                 for c, text in enumerate(cells):
                     self.knowledge.setItem(r, c, QtWidgets.QTableWidgetItem(text))
+            editor_ui.fit_to_rows(self.knowledge, max_rows=8)
 
         def _fill_standing(self, session):
             try:
@@ -283,7 +288,7 @@ def make_object_tab(thing):
         QtWidgets, QtCore = _qt()
     except Exception:  # pragma: no cover - headless
         return None
-    return _ObjectTab(thing, QtWidgets, QtCore)
+    return editor_ui.apply_dark(_ObjectTab(thing, QtWidgets, QtCore))
 
 
 def _ObjectTab(thing, QtWidgets, QtCore):
@@ -405,7 +410,7 @@ def open_world_window(main_window=None):
         return None
     parent = main_window or _main_window()
     if _world_window is None:
-        _world_window = _WorldWindow(parent, QtWidgets, QtCore)
+        _world_window = editor_ui.apply_dark(_WorldWindow(parent, QtWidgets, QtCore))
     _world_window.show()
     _world_window.raise_()
     _world_window.activateWindow()
@@ -447,6 +452,9 @@ def _WorldWindow(parent, QtWidgets, QtCore):
             self.actors.horizontalHeader().setStretchLastSection(True)
             self.actors.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
             self.actors.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+            self.actors.setStyleSheet(editor_ui.TABLE_STYLE)
+            self.actors.setAlternatingRowColors(True)
+            self.actors.verticalHeader().setVisible(False)
             self.actors.itemSelectionChanged.connect(self._select_actor)
             l.addWidget(self.actors)
             return w
@@ -486,6 +494,7 @@ def _WorldWindow(parent, QtWidgets, QtCore):
             self.history = QtWidgets.QTreeWidget()
             self.history.setHeaderLabels(["When", "What happened"])
             self.history.setColumnWidth(0, 150)
+            self.history.setStyleSheet(editor_ui.TABLE_STYLE)
             l.addWidget(self.history)
             return w
 

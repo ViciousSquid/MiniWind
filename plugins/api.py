@@ -442,6 +442,19 @@ class EditorAPI:
         """
         self._manager.register_property_tab(label, factory, entity_type)
 
+    def register_property_section(self, label: str, factory, entity_type=None,
+                                  expanded: bool = False):
+        """Register a collapsible section inside the entity's Properties tab.
+
+        Same ``factory(thing) -> widget`` contract as
+        :meth:`register_property_tab`, but the editor drops it into the
+        Properties tab as a titled, click-to-collapse section instead of adding
+        a tab. Use it for a small editor that belongs with the entity's other
+        properties; use a tab for something that needs the room.
+        """
+        self._manager.register_property_section(label, factory, entity_type,
+                                                expanded)
+
     def register_singleton_entity(self, entity_type: str) -> None:
         """Mark *entity_type* as a per-map singleton (at most one instance).
 

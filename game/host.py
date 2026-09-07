@@ -492,8 +492,15 @@ class MiniwindGame:
 
         try:
             from . import editor_ui
-            api.register_property_tab("Appearance", editor_ui.make_appearance_tab, entity_type="npc")
-            api.register_property_tab("Appearance", editor_ui.make_appearance_tab, entity_type="creature")
+            # Appearance is a handful of fields about *this entity*, not a
+            # workspace — it belongs with the rest of the properties rather
+            # than costing a tab. Collapsed by default: it is set once and
+            # rarely revisited.
+            for _etype in ("npc", "creature"):
+                api.register_property_section("Appearance",
+                                              editor_ui.make_appearance_tab,
+                                              entity_type=_etype,
+                                              expanded=False)
             api.register_property_tab("Inventory", editor_ui.make_inventory_tab, entity_type="npc")
             api.register_property_tab("Dialogue", editor_ui.make_dialogue_tab, entity_type="npc")
             api.register_property_tab("Schedule", editor_ui.make_schedule_tab, entity_type="npc")

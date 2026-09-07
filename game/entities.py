@@ -332,7 +332,10 @@ if _HAVE_EDITOR:
     class GameSettings(Thing):
         """Per-map RPG settings + game-clock config. Presence = RPG map opt-in."""
         map_type = "miniwindsettings"
-        pixmap_path = "assets/sprites/logic_keyvalue.png"
+        # Its own icon (a cog around a clock), not the Key/Value Store's: the
+        # one entity that configures the whole map should not be
+        # indistinguishable from a logic node in the 2D views.
+        pixmap_path = f"{_SPRITE_DIR}/settings.png"
 
         def __init__(self, pos=None, properties=None):
             super().__init__(pos, properties)

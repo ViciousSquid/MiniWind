@@ -38,6 +38,178 @@ def _qt():
     return QtWidgets, QtCore
 
 
+# ===========================================================================
+# Shared layout rules for every MiniWind property tab
+#
+# The engine's own I/O editor (editor/io_editor_widget.py) already sets the
+# house style for an editable list: a compact view that is exactly as tall as
+# its contents, its action buttons right beside it, and everything packed to
+# the top so empty space falls at the bottom. These helpers apply that same
+# rule here, so no tab presents a huge empty box with its Add/Remove buttons
+# pushed off the bottom of the panel.
+# ===========================================================================
+
+#: Dark header/rows for tables and trees. Qt's default header is near-white,
+#: which is unreadable against the editor's light-on-dark palette — the same
+#: styling the I/O editor uses, kept in one place so every tab matches.
+TABLE_STYLE = """
+QHeaderView::section {
+    background-color: #3A3A3A;
+    color: #E6E6E6;
+    padding: 4px;
+    border: 1px solid #2A2A2A;
+    font-weight: bold;
+}
+QTableWidget, QTreeWidget {
+    background-color: #2A2A2A;
+    alternate-background-color: #252525;
+    color: #E6E6E6;
+    border: 1px solid #3A3A3A;
+}
+QTableWidget::item, QTreeWidget::item {
+    color: #E6E6E6;
+    padding: 3px 5px;
+}
+QTableWidget::item:selected, QTreeWidget::item:selected {
+    background-color: #3d5f5d;
+    color: #FFFFFF;
+}
+QTableCornerButton::section { background-color: #3A3A3A; border: 1px solid #2A2A2A; }
+"""
+
+
+#: Everything the application's own dark theme (main.dark_stylesheet) does not
+#: cover. It styles QWidget, buttons, inputs, menus, tabs and scrollbars — but
+#: not item views, group boxes or checkbox indicators, which Qt then paints from
+#: the platform palette and which therefore come out light against a dark panel.
+#: Applied to every MiniWind tab root by :func:`apply_dark`, so a tab matches
+#: the property editor around it without each widget having to remember.
+PANEL_STYLE = TABLE_STYLE + """
+QAbstractScrollArea, QScrollArea { background-color: #2b2b2b; border: none; }
+QAbstractScrollArea > QWidget > QWidget { background-color: #2b2b2b; }
+QListWidget {
+    background-color: #2A2A2A;
+    color: #E6E6E6;
+    border: 1px solid #3A3A3A;
+}
+QListWidget::item { color: #E6E6E6; }
+QListWidget::item:selected { background-color: #3d5f5d; color: #FFFFFF; }
+QGroupBox {
+    color: #d8dae0;
+    border: 1px solid #3A3D44;
+    border-radius: 4px;
+    margin-top: 10px;
+    padding-top: 6px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 8px;
+    padding: 0 4px;
+    color: #9aa;
+}
+QCheckBox, QRadioButton { color: #d8dae0; }
+QCheckBox::indicator, QRadioButton::indicator {
+    width: 13px; height: 13px;
+    background-color: #2A2A2A;
+    border: 1px solid #5a5d66;
+}
+QCheckBox::indicator:checked, QRadioButton::indicator:checked {
+    background-color: #C41E3A;
+    border: 1px solid #8d1529;
+}
+QRadioButton::indicator { border-radius: 7px; }
+QHeaderView { background-color: #3A3A3A; }
+QToolTip { background-color: #2A2A2A; color: #E6E6E6; border: 1px solid #555; }
+"""
+
+
+def apply_dark(widget):
+    """Give a MiniWind panel the styling the application theme leaves out.
+
+    Called at the end of every tab factory, so no tab can be built light by
+    forgetting a widget. Returns *widget* so a factory can ``return
+    apply_dark(Tab())``."""
+    if widget is not None and not getattr(widget, "_mw_dark", False):
+        try:
+            widget.setStyleSheet(PANEL_STYLE + widget.styleSheet())
+            widget._mw_dark = True
+        except Exception:                   # pragma: no cover - defensive
+            pass
+    return widget
+
+
+def action_row(QtWidgets, *buttons, label=""):
+    """A right-aligned row of action buttons, to sit directly above its list.
+
+    Placing them at the top is the point: an empty list must never push its own
+    Add button below the fold. An optional *label* takes the left of the row so
+    the group still names itself."""
+    row = QtWidgets.QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(4)
+    if label:
+        lbl = QtWidgets.QLabel(label)
+        lbl.setStyleSheet("color:#9aa; font-weight:bold;")
+        row.addWidget(lbl)
+    row.addStretch(1)
+    for button in buttons:
+        row.addWidget(button)
+    return row
+
+
+def fit_to_rows(view, min_rows=1, max_rows=10):
+    """Size a table/tree to its own contents, within *min_rows*..*max_rows*.
+
+    Mirrors ``IOEditorWidget._update_table_height``: an empty list is a header
+    and nothing else rather than a wall of blank space, and a full one grows
+    until it hits the cap and starts scrolling."""
+    try:
+        rows = view.rowCount()
+    except AttributeError:
+        rows = view.topLevelItemCount() if hasattr(view, "topLevelItemCount") else 0
+    row_h = view.fontMetrics().height() + 12
+    try:
+        header = view.horizontalHeader()
+        header_h = header.height()
+        view.verticalHeader().setDefaultSectionSize(row_h)
+        view.verticalHeader().setMinimumSectionSize(row_h)
+    except AttributeError:                     # a QTreeWidget
+        header_h = view.header().height()
+    shown = max(int(min_rows), min(int(max_rows), int(rows)))
+    view.setFixedHeight(header_h + view.frameWidth() * 2 + shown * row_h)
+
+
+def style_table(view, min_rows=1, max_rows=10):
+    """Apply the shared dark styling and content-fitting to a table/tree."""
+    view.setStyleSheet(TABLE_STYLE)
+    try:
+        view.setAlternatingRowColors(True)
+        view.verticalHeader().setVisible(False)
+    except AttributeError:
+        pass
+    fit_to_rows(view, min_rows, max_rows)
+    return view
+
+
+def collapsible(QtWidgets, title, expanded=True):
+    """A titled, click-to-collapse container for one group inside a tab.
+
+    Reuses the property panel's own :class:`~editor.property_editor.CollapsibleSection`
+    so a section in a MiniWind tab looks and behaves exactly like one in the
+    Properties tab. Falls back to a plain group box where the editor package is
+    not importable (a tool or player context), so a tab still renders."""
+    try:
+        from editor.property_editor import CollapsibleSection
+        return CollapsibleSection(title, expanded=expanded)
+    except Exception:                       # pragma: no cover - no editor pkg
+        box = QtWidgets.QGroupBox(title)
+        inner = QtWidgets.QVBoxLayout(box)
+        box.addWidget = inner.addWidget
+        box.addLayout = inner.addLayout
+        return box
+
+
 def _hint_label(QtWidgets, text):
     """A small, word-wrapped help label sized in *points* (relative to the app
     font) rather than px, so it scales correctly on high-DPI displays."""
@@ -183,7 +355,7 @@ def make_appearance_tab(thing):
             else:
                 self.preview.setText(hid or "(random head\nassigned at play)")
 
-    return Tab()
+    return apply_dark(Tab())
 
 
 def make_inventory_tab(thing):
@@ -191,7 +363,7 @@ def make_inventory_tab(thing):
         QtWidgets, QtCore = _qt()
     except Exception:  # pragma: no cover
         return None
-    return _InventoryTab(thing, QtWidgets, QtCore)
+    return apply_dark(_InventoryTab(thing, QtWidgets, QtCore))
 
 
 def _InventoryTab(thing, QtWidgets, QtCore):
@@ -259,25 +431,44 @@ def _InventoryTab(thing, QtWidgets, QtCore):
         return f
 
     class InventoryGrid(QtWidgets.QListWidget):
+        """One item per row: the icon at its usual size, the whole name beside it.
+
+        A tiled icon grid had to elide names to fit the cell ("Lo…", "Iron…"),
+        which is the one thing an item list has to get right. A row gives the
+        name the full width of the panel, and stacks read down the list the way
+        an inventory actually reads."""
+
         orderChanged = QtCore.pyqtSignal()
+
+        #: Breathing room around the icon, and the resulting row height.
+        PAD = 6
+        ROW = ICON + PAD * 2
 
         def __init__(self):
             super().__init__()
             self.setFont(_compact_font())
-            self.setViewMode(QtWidgets.QListView.IconMode)
+            self.setViewMode(QtWidgets.QListView.ListMode)
             self.setIconSize(QtCore.QSize(ICON, ICON))
-            # Cell wide/tall enough for the icon + two wrapped lines of the name.
-            self.setGridSize(QtCore.QSize(96, ICON + 46))
             self.setResizeMode(QtWidgets.QListView.Adjust)
-            self.setMovement(QtWidgets.QListView.Snap)
+            # Movement stays Static: Snap makes QListView lay rows out on an
+            # icon grid (centred text above the icon) even in ListMode, and
+            # reordering is handled by InternalMove through the model anyway.
+            self.setMovement(QtWidgets.QListView.Static)
             self.setDragDropMode(QtWidgets.QAbstractItemView.InternalMove)
+            self.setDefaultDropAction(QtCore.Qt.MoveAction)
             self.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-            self.setSpacing(6)
-            self.setWordWrap(True)
+            self.setSpacing(2)
+            self.setWordWrap(False)
             self.setUniformItemSizes(True)
+            self.setTextElideMode(QtCore.Qt.ElideNone)
+            self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+            # Horizontal padding only: the row's height comes from the item's
+            # own size hint, so vertical padding here would double-count it.
             self.setStyleSheet(
-                "QListWidget { background:#2b2d33; border:1px solid #3a3d44; border-radius:6px; }"
-                "QListWidget::item { color:#d8dae0; padding:4px; border-radius:6px; }"
+                "QListWidget { background:#2b2d33; border:1px solid #3a3d44;"
+                " border-radius:6px; }"
+                "QListWidget::item { color:#d8dae0; padding:0px 8px; margin:1px;"
+                " border-radius:6px; background:#32343b; }"
                 "QListWidget::item:selected { background:#3d5f5d; color:#fff; }")
 
         def dropEvent(self, e):
@@ -292,23 +483,24 @@ def _InventoryTab(thing, QtWidgets, QtCore):
             root = QtWidgets.QVBoxLayout(self)
             root.setSpacing(6)
 
+            # Actions first, so an empty inventory never buries its own Add
+            # button under a wall of blank grid (the I/O editor's rule).
+            self.add_btn = QtWidgets.QPushButton("＋ Add Item…")
+            self.rem_btn = QtWidgets.QPushButton("🗑 Remove")
+            self.add_btn.clicked.connect(self._pick_item)
+            self.rem_btn.clicked.connect(self._remove)
+            root.addLayout(action_row(QtWidgets, self.add_btn, self.rem_btn,
+                                      label="Items"))
+
             root.addWidget(_hint_label(
-                QtWidgets, "Drag icons to reorder. Add items from the catalogue; "
+                QtWidgets, "Drag rows to reorder. Add items from the catalogue; "
                 "select one to edit its quantity below."))
 
             self.grid = InventoryGrid()
             self.grid.orderChanged.connect(self._on_reordered)
             self.grid.currentItemChanged.connect(lambda *_: self._sync_detail())
             self.grid.itemDoubleClicked.connect(lambda *_: self._focus_qty())
-            root.addWidget(self.grid, 1)
-
-            btns = QtWidgets.QHBoxLayout()
-            add = QtWidgets.QPushButton("＋ Add Item…")
-            rem = QtWidgets.QPushButton("🗑 Remove")
-            add.clicked.connect(self._pick_item)
-            rem.clicked.connect(self._remove)
-            btns.addWidget(add); btns.addWidget(rem); btns.addStretch(1)
-            root.addLayout(btns)
+            root.addWidget(self.grid)
 
             # Inline detail editor for the selected stack.
             self.detail = QtWidgets.QGroupBox("Selected item")
@@ -328,7 +520,23 @@ def _InventoryTab(thing, QtWidgets, QtCore):
             self.summary.setStyleSheet("color:#9aa; padding:2px;")
             root.addWidget(self.summary)
 
+            # Everything is packed to the top; slack falls at the bottom.
+            root.addStretch(1)
+
             self._reload()
+
+        def _fit_grid(self):
+            """Grow the list with its contents instead of reserving a slab.
+
+            One row when empty (so it still reads as a drop target), up to five
+            before it starts scrolling. The row height is Qt's own measurement
+            where there is a row to measure, so padding and margins can change
+            in the stylesheet without this drifting out of step."""
+            count = self.grid.count()
+            row = (self.grid.sizeHintForRow(0) if count
+                   else InventoryGrid.ROW) + self.grid.spacing() * 2
+            rows = max(1, min(5, count))
+            self.grid.setFixedHeight(rows * row + self.grid.frameWidth() * 2 + 4)
 
         # -- data <-> view ------------------------------------------------
         def _reload(self):
@@ -337,18 +545,18 @@ def _InventoryTab(thing, QtWidgets, QtCore):
             for stack in inv.get_inventory(self.thing):
                 self._add_tile(stack)
             self._loading = False
+            self._fit_grid()
             self._sync_detail()
             self._update_summary()
 
         def _add_tile(self, stack):
             name = stack.get("name") or str(stack.get("id", "item")).replace("_", " ").title()
             it = QtWidgets.QListWidgetItem(_badged_icon(stack), name)
+            # A card: icon on the left, the whole name beside it, never elided.
+            it.setSizeHint(QtCore.QSize(0, InventoryGrid.ROW))
+            it.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             it.setData(ROLE_STACK, stack)
             it.setToolTip(self._tooltip(stack))
-            it.setTextAlignment(Qt.AlignHCenter | Qt.AlignTop)
-            # Explicit size hint so the name wraps at the cell width (IconMode
-            # otherwise wraps at the icon width and clips longer names).
-            it.setSizeHint(QtCore.QSize(90, ICON + 44))
             self.grid.addItem(it)
             return it
 
@@ -549,7 +757,7 @@ def make_spawn_tab(thing):
         QtWidgets, QtCore = _qt()
     except Exception:  # pragma: no cover
         return None
-    return _SpawnTab(thing, QtWidgets, QtCore)
+    return apply_dark(_SpawnTab(thing, QtWidgets, QtCore))
 
 
 def _roles_for_kind(kind):
@@ -743,17 +951,11 @@ def dialogue_tree_widget(thing, QtWidgets, QtCore):
             self.thing.properties.setdefault("dialogue", {})
             self._loading = False
             root = QtWidgets.QVBoxLayout(self)
+            root.setSpacing(6)
 
-            split = QtWidgets.QHBoxLayout()
-            # -- left: the conversation tree + structural buttons --
-            left = QtWidgets.QVBoxLayout()
-            left.addWidget(QtWidgets.QLabel("Conversation tree:"))
-            self.tree = QtWidgets.QTreeWidget()
-            self.tree.setHeaderLabels(["Node / response"])
-            self.tree.setColumnCount(1)
-            self.tree.currentItemChanged.connect(lambda *_: self._select())
-            left.addWidget(self.tree)
-            btns = QtWidgets.QHBoxLayout()
+            # The structural actions run across the top, where they are always
+            # reachable — they used to sit under the tree and get squeezed off
+            # the bottom of the panel with an empty conversation.
             b_node = QtWidgets.QPushButton("Add Node")
             b_resp = QtWidgets.QPushButton("Add Response")
             b_start = QtWidgets.QPushButton("Set Start")
@@ -762,19 +964,43 @@ def dialogue_tree_widget(thing, QtWidgets, QtCore):
             b_resp.clicked.connect(self._add_response)
             b_start.clicked.connect(self._set_start)
             b_del.clicked.connect(self._delete)
-            for b in (b_node, b_resp, b_start, b_del):
-                btns.addWidget(b)
-            left.addLayout(btns)
-            split.addLayout(left, 3)
+            root.addLayout(action_row(QtWidgets, b_node, b_resp, b_start, b_del))
+
+            split = QtWidgets.QHBoxLayout()
+            # -- left: the conversation tree --
+            self.tree = QtWidgets.QTreeWidget()
+            self.tree.setHeaderLabels(["Node / response"])
+            self.tree.setColumnCount(1)
+            self.tree.currentItemChanged.connect(lambda *_: self._select())
+            style_table(self.tree, min_rows=3, max_rows=14)
+            split.addWidget(self.tree, 3, QtCore.Qt.AlignTop)
 
             # -- right: details form (swaps between node and response) --
             self.details = QtWidgets.QStackedWidget()
             self.details.addWidget(self._build_node_form())      # index 0
             self.details.addWidget(self._build_resp_form())      # index 1
             self.details.addWidget(QtWidgets.QLabel("Select a node or response."))  # 2
-            split.addWidget(self.details, 4)
+            split.addWidget(self.details, 4, QtCore.Qt.AlignTop)
             root.addLayout(split)
+            root.addStretch(1)
             self._reload()
+
+        def _fit_tree(self):
+            """Grow the tree with the conversation, counting expanded children."""
+            def _visible(item):
+                n = 1
+                if item.isExpanded():
+                    for i in range(item.childCount()):
+                        n += _visible(item.child(i))
+                return n
+
+            rows = sum(_visible(self.tree.topLevelItem(i))
+                       for i in range(self.tree.topLevelItemCount()))
+            row_h = self.tree.fontMetrics().height() + 12
+            shown = max(3, min(14, rows))
+            self.tree.setFixedHeight(self.tree.header().height()
+                                     + self.tree.frameWidth() * 2
+                                     + shown * row_h)
 
         # ---- data helpers ----
         def _tree_data(self):
@@ -837,6 +1063,7 @@ def dialogue_tree_widget(thing, QtWidgets, QtCore):
                     item.addChild(child)
                 self.tree.addTopLevelItem(item)
             self.tree.expandAll()
+            self._fit_tree()
             self._refresh_goto_choices()
             self._loading = False
 
@@ -991,7 +1218,7 @@ def dialogue_tree_widget(thing, QtWidgets, QtCore):
                     del node["responses"][idx]
             self._reload()
 
-    return Tab()
+    return apply_dark(Tab())
 
 
 # ===========================================================================
@@ -1005,7 +1232,7 @@ def make_schedule_tab(thing):
         QtWidgets, QtCore = _qt()
     except Exception:  # pragma: no cover
         return None
-    return _ScheduleTab(thing, QtWidgets, QtCore)
+    return apply_dark(_ScheduleTab(thing, QtWidgets, QtCore))
 
 
 def _ScheduleTab(thing, QtWidgets, QtCore):
@@ -1015,24 +1242,31 @@ def _ScheduleTab(thing, QtWidgets, QtCore):
             self.thing = thing
             self._loading = False
             layout = QtWidgets.QVBoxLayout(self)
-            layout.addWidget(QtWidgets.QLabel(
-                "Daily schedule — each entry starts at its hour and runs until "
-                "the next. 'Location' is a World Marker name, or home/work."))
+            layout.setSpacing(6)
+
+            add = QtWidgets.QPushButton("Add Entry")
+            rem = QtWidgets.QPushButton("Remove Selected")
+            srt = QtWidgets.QPushButton("Sort by Hour")
+            add.clicked.connect(self._add)
+            rem.clicked.connect(self._remove)
+            srt.clicked.connect(self._sort)
+            layout.addLayout(action_row(QtWidgets, add, rem, srt,
+                                        label="Daily schedule"))
+
+            layout.addWidget(_hint_label(
+                QtWidgets,
+                "Each entry starts at its hour and runs until the next. "
+                "'Location' is a World Marker name, or home/work."))
+
             self.table = QtWidgets.QTableWidget(0, 3)
             self.table.setHorizontalHeaderLabels(["Hour", "State", "Location"])
             self.table.horizontalHeader().setStretchLastSection(True)
+            self.table.setSelectionBehavior(
+                QtWidgets.QAbstractItemView.SelectRows)
+            style_table(self.table, max_rows=12)
             layout.addWidget(self.table)
-            btns = QtWidgets.QHBoxLayout()
-            add = QtWidgets.QPushButton("Add Entry")
-            rem = QtWidgets.QPushButton("Remove Selected")
-            up = QtWidgets.QPushButton("Sort by Hour")
-            add.clicked.connect(self._add)
-            rem.clicked.connect(self._remove)
-            up.clicked.connect(self._sort)
-            for b in (add, rem, up):
-                btns.addWidget(b)
-            btns.addStretch(1)
-            layout.addLayout(btns)
+            layout.addStretch(1)
+
             self.table.itemChanged.connect(self._write_back)
             self._reload()
 
@@ -1058,6 +1292,7 @@ def _ScheduleTab(thing, QtWidgets, QtCore):
                 combo.currentTextChanged.connect(lambda _t, row=r: self._write_back())
                 self.table.setCellWidget(r, 1, combo)
                 self.table.setItem(r, 2, QtWidgets.QTableWidgetItem(str(e.get("location", "home"))))
+            fit_to_rows(self.table, max_rows=12)
             self._loading = False
 
         def _add(self):
@@ -1119,7 +1354,7 @@ def make_ties_tab(thing):
         QtWidgets, QtCore = _qt()
     except Exception:  # pragma: no cover
         return None
-    return _TiesTab(thing, QtWidgets, QtCore)
+    return apply_dark(_TiesTab(thing, QtWidgets, QtCore))
 
 
 def _TiesTab(thing, QtWidgets, QtCore):
@@ -1130,34 +1365,33 @@ def _TiesTab(thing, QtWidgets, QtCore):
             self._loading = False
             layout = QtWidgets.QVBoxLayout(self)
 
-            # --- Relationships -------------------------------------------------
-            layout.addWidget(QtWidgets.QLabel(
-                "Relationships — social ties to other named NPCs. The other's "
-                "name must match an NPC's Name. Drives kin reactions and dialogue."))
-            self.rel_table = QtWidgets.QTableWidget(0, 2)
-            self.rel_table.setHorizontalHeaderLabels(["NPC name", "Relation"])
-            self.rel_table.horizontalHeader().setStretchLastSection(True)
-            layout.addWidget(self.rel_table)
-            rbtns = QtWidgets.QHBoxLayout()
+            layout.setSpacing(6)
+
+            # Two unrelated things share this tab — who an NPC knows, and where
+            # a guard walks. Each gets its own collapsible section so the one
+            # you are not using folds away instead of taking half the panel.
+            # --- Ties ----------------------------------------------------------
+            self.ties_section = collapsible(QtWidgets, "Ties", expanded=True)
             radd = QtWidgets.QPushButton("Add Tie")
             rrem = QtWidgets.QPushButton("Remove Selected")
             radd.clicked.connect(self._rel_add)
             rrem.clicked.connect(self._rel_remove)
-            for b in (radd, rrem):
-                rbtns.addWidget(b)
-            rbtns.addStretch(1)
-            layout.addLayout(rbtns)
+            self.ties_section.addLayout(action_row(QtWidgets, radd, rrem))
+            self.ties_section.addWidget(_hint_label(
+                QtWidgets, "Social ties to other named NPCs. The other's name "
+                "must match an NPC's Name. Drives kin reactions and dialogue."))
+            self.rel_table = QtWidgets.QTableWidget(0, 2)
+            self.rel_table.setHorizontalHeaderLabels(["NPC name", "Relation"])
+            self.rel_table.horizontalHeader().setStretchLastSection(True)
+            self.rel_table.setSelectionBehavior(
+                QtWidgets.QAbstractItemView.SelectRows)
+            style_table(self.rel_table, max_rows=8)
+            self.ties_section.addWidget(self.rel_table)
             self.rel_table.itemChanged.connect(self._write_back)
+            layout.addWidget(self.ties_section)
 
-            # --- Patrol circuit ------------------------------------------------
-            layout.addWidget(QtWidgets.QLabel(
-                "Patrol circuit — ordered World Marker names a guard/combatant "
-                "walks between while on duty. Leave empty for no patrol."))
-            self.pat_table = QtWidgets.QTableWidget(0, 1)
-            self.pat_table.setHorizontalHeaderLabels(["Marker name"])
-            self.pat_table.horizontalHeader().setStretchLastSection(True)
-            layout.addWidget(self.pat_table)
-            pbtns = QtWidgets.QHBoxLayout()
+            # --- Patrol --------------------------------------------------------
+            self.patrol_section = collapsible(QtWidgets, "Patrol", expanded=True)
             padd = QtWidgets.QPushButton("Add Waypoint")
             prem = QtWidgets.QPushButton("Remove Selected")
             pup = QtWidgets.QPushButton("Move Up")
@@ -1166,11 +1400,21 @@ def _TiesTab(thing, QtWidgets, QtCore):
             prem.clicked.connect(self._pat_remove)
             pup.clicked.connect(lambda: self._pat_move(-1))
             pdn.clicked.connect(lambda: self._pat_move(1))
-            for b in (padd, prem, pup, pdn):
-                pbtns.addWidget(b)
-            pbtns.addStretch(1)
-            layout.addLayout(pbtns)
+            self.patrol_section.addLayout(action_row(QtWidgets, padd, prem, pup, pdn))
+            self.patrol_section.addWidget(_hint_label(
+                QtWidgets, "Ordered World Marker names a guard/combatant walks "
+                "between while on duty. Leave empty for no patrol."))
+            self.pat_table = QtWidgets.QTableWidget(0, 1)
+            self.pat_table.setHorizontalHeaderLabels(["Marker name"])
+            self.pat_table.horizontalHeader().setStretchLastSection(True)
+            self.pat_table.setSelectionBehavior(
+                QtWidgets.QAbstractItemView.SelectRows)
+            style_table(self.pat_table, max_rows=8)
+            self.patrol_section.addWidget(self.pat_table)
             self.pat_table.itemChanged.connect(self._write_back)
+            layout.addWidget(self.patrol_section)
+
+            layout.addStretch(1)
 
             self._reload()
 
@@ -1206,6 +1450,8 @@ def _TiesTab(thing, QtWidgets, QtCore):
             self.pat_table.setRowCount(len(patrol))
             for r, name in enumerate(patrol):
                 self.pat_table.setItem(r, 0, QtWidgets.QTableWidgetItem(str(name)))
+            fit_to_rows(self.rel_table, max_rows=8)
+            fit_to_rows(self.pat_table, max_rows=8)
             self._loading = False
 
         # -- relationship edits ---------------------------------------------
@@ -1535,7 +1781,7 @@ def make_player_spells_tab(thing):
             n = len(self.thing.properties.get("player_spells") or [])
             self.summary.setText(f"{n} spell(s) granted to the player at start")
 
-    return Tab()
+    return apply_dark(Tab())
 
 
 def make_spells_tab(thing):
@@ -1543,7 +1789,7 @@ def make_spells_tab(thing):
         QtWidgets, QtCore = _qt()
     except Exception:  # pragma: no cover
         return None
-    return _SpellsTab(thing, QtWidgets, QtCore)
+    return apply_dark(_SpellsTab(thing, QtWidgets, QtCore))
 
 
 def _SpellsTab(thing, QtWidgets, QtCore):
@@ -2083,14 +2329,14 @@ def make_quests_tab(thing):
         from . import quest_editor
         launcher = quest_editor.make_quests_launcher(thing)
         if launcher is not None:
-            return launcher
+            return apply_dark(launcher)
     except Exception:
         pass
     try:
         QtWidgets, QtCore = _qt()
     except Exception:  # pragma: no cover
         return None
-    return _QuestsTab(thing, QtWidgets, QtCore)
+    return apply_dark(_QuestsTab(thing, QtWidgets, QtCore))
 
 
 def _QuestsTab(thing, QtWidgets, QtCore):
