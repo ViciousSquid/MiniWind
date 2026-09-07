@@ -104,6 +104,18 @@ def _add_tools_menu_entries(MainWindow):
         spell_action.triggered.connect(lambda _checked=False: _open_spell_editor(MainWindow))
         tools._miniwind_spell_editor_added = True
 
+    if not getattr(tools, "_miniwind_world_sim_added", False):
+        world_action = tools.addAction("World Simulation…")
+        world_action.setToolTip(
+            "Watch the living world: every actor's current intent and the "
+            "reason for it, the causal history of what has happened, and a "
+            "Simulate Event tool for injecting an action and seeing the "
+            "simulation respond.")
+        world_action.setShortcut("Ctrl+Shift+W")
+        world_action.triggered.connect(
+            lambda _checked=False: _open_world_sim(MainWindow))
+        tools._miniwind_world_sim_added = True
+
     if not getattr(tools, "_miniwind_dice_test_added", False):
         dice_action = tools.addAction("Dice Roll Test…")
         dice_action.setToolTip("Roll a tabletop dice expression and print the result in "
@@ -121,6 +133,15 @@ def _open_spell_editor(MainWindow):
             MainWindow.show_toast("Spells saved to game/data/spells.json")
     except Exception as exc:
         _log(f"Spell Editor failed to open: {exc}")
+
+def _open_world_sim(MainWindow):
+    """Open the World Simulation window (actors · history · simulate event)."""
+    try:
+        from . import sim_editor
+        sim_editor.open_world_window(MainWindow)
+    except Exception as exc:
+        _log(f"World Simulation window failed to open: {exc}")
+
 
 def _open_dice_test(MainWindow):
     """Open the dice test dialog and route each roll through the Debug Console."""

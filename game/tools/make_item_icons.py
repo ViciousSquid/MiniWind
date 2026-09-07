@@ -321,6 +321,28 @@ def draw_ingredient(d, item_id):
             y = S * 0.34 + math.sin(rad) * S * 0.14
             d.ellipse([x - S * 0.08, y - S * 0.08, x + S * 0.08, y + S * 0.08], fill=col)
         d.ellipse([cx - S * 0.05, S * 0.29, cx + S * 0.05, S * 0.39], fill=(240, 220, 90))
+    elif "milk" in item_id:   # a wooden pail, brim-full
+        cx = S * 0.5
+        d.polygon([(cx - S * 0.22, S * 0.42), (cx + S * 0.22, S * 0.42),
+                   (cx + S * 0.16, S * 0.80), (cx - S * 0.16, S * 0.80)],
+                  fill=(160, 124, 84), outline=(96, 70, 44), width=SS)
+        d.ellipse([cx - S * 0.22, S * 0.34, cx + S * 0.22, S * 0.50],
+                  fill=(246, 244, 238), outline=(96, 70, 44), width=SS)
+        d.arc([cx - S * 0.24, S * 0.20, cx + S * 0.24, S * 0.52], 180, 360,
+              fill=(96, 70, 44), width=SS * 2)
+    elif "egg" in item_id:
+        cx = S * 0.5
+        d.ellipse([cx - S * 0.16, S * 0.34, cx + S * 0.16, S * 0.76],
+                  fill=(242, 232, 208), outline=(180, 160, 128), width=SS)
+        d.arc([cx - S * 0.12, S * 0.38, cx + S * 0.04, S * 0.60], 140, 260,
+              fill=(255, 252, 242), width=SS * 2)
+    elif "wool" in item_id:   # a bundled fleece
+        cx = S * 0.5
+        for dx, dy, r in ((-0.10, 0.56, 0.16), (0.10, 0.56, 0.16),
+                          (0.0, 0.44, 0.18), (0.0, 0.66, 0.15)):
+            d.ellipse([cx + dx * S - r * S, dy * S - r * S,
+                       cx + dx * S + r * S, dy * S + r * S],
+                      fill=(238, 234, 224), outline=(186, 178, 160), width=SS)
     else:  # bonemeal / pelt / generic pouch
         cx = S * 0.5
         d.rounded_rectangle([cx - S * 0.18, S * 0.40, cx + S * 0.18, S * 0.80],

@@ -646,5 +646,26 @@
     "value": 1,
     "weight": 0.0,
     "desc": "The coin of the realm."
+  },
+  "milk": {
+    "name": "Bucket of Milk",
+    "category": "ingredient",
+    "value": 6,
+    "weight": 8.0,
+    "desc": "A wooden pail of fresh milk, still warm."
+  },
+  "egg": {
+    "name": "Egg",
+    "category": "ingredient",
+    "value": 2,
+    "weight": 0.5,
+    "desc": "A speckled hen's egg."
+  },
+  "wool": {
+    "name": "Fleece",
+    "category": "ingredient",
+    "value": 12,
+    "weight": 6.0,
+    "desc": "A bundle of raw wool, newly shorn."
   }
 }

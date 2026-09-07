@@ -50,6 +50,13 @@ PATROL = "PATROL"
 #: A follow_player companion walking to keep pace with the player when it
 #: isn't fighting (see RuntimeSession._follow_player_dest).
 FOLLOW = "FOLLOW"
+#: Two more runtime-only overrides, applied by the reactive simulation
+#: (:mod:`game.sim`) when what an NPC *knows* outranks what its schedule says:
+#: REPORT is a witness walking to the nearest guard to give their account;
+#: CONFRONT is someone marching up to whoever wronged them. Both clear
+#: themselves once the reason is gone (the charge is laid, the fact fades).
+REPORT = "REPORT"
+CONFRONT = "CONFRONT"
 
 #: Ready-made schedules keyed by ``npc_role`` (§4), loaded from editable content
 #: (``game/data/schedules.json`` + mods). A map can also author a bespoke

@@ -83,6 +83,71 @@ def _miniwind_kv_suggestions():
     return out
 
 
+def _ownership_props(faction_choices, help_suffix=""):
+    """The ownership fields, declared once and reused by every entity that can
+    belong to somebody.
+
+    Ownership is the whole of MiniWind's property model: an owner turns taking a
+    thing into a theft, which is a crime, which needs a witness, which produces
+    a bounty and an owner who remembers — all through
+    :mod:`game.sim.ownership` and :mod:`game.sim.crime`, with nothing authored
+    per object."""
+    return [
+        prop("owner", "string", "Owner", default="", group="OWNERSHIP",
+             help="Identity of the owner (an NPC's name). Taking this without "
+                  "permission is a theft" + help_suffix),
+        prop("owner_name", "string", "Owner display name", default="",
+             group="OWNERSHIP",
+             help="Shown to the player and in the event history. Defaults to "
+                  "the owner id."),
+        prop("owner_faction", "enum", "Owned by faction", default="",
+             choices=[""] + list(faction_choices), group="OWNERSHIP",
+             help="Any member of this faction may take it freely; everyone "
+                  "else is stealing."),
+    ]
+
+
+def _production_props():
+    """The production fields (:mod:`game.sim.production`), shared by every
+    entity that can make something on a clock — livestock, a well, a still.
+
+    The yield is an ordinary item that inherits this object's owner, so a farm
+    animal becomes a source of stealable goods with no code and no quest."""
+    return [
+        prop("produces", "string", "Produces item", default="",
+             group="PRODUCTION",
+             help="Item id yielded on a clock (e.g. 'milk'). Blank = produces "
+                  "nothing."),
+        prop("produce_every_hours", "float", "Every (game hours)", default=8.0,
+             min=0.05, max=1000.0, group="PRODUCTION"),
+        prop("produce_quantity", "int", "Quantity per yield", default=1, min=1,
+             max=1000, group="PRODUCTION"),
+        prop("produce_into", "enum", "Yield goes", default="world",
+             choices=["world", "self"], group="PRODUCTION",
+             help="'world' drops a takeable item beside it; 'self' fills its "
+                  "own inventory."),
+        prop("produce_max", "int", "Max uncollected", default=3, min=1, max=99,
+             group="PRODUCTION",
+             help="It stops once this many yields are waiting, and resumes "
+                  "when one is taken."),
+    ]
+
+
+def _perception_props():
+    """Fields the reactive simulation reads when deciding who noticed what and
+    who acts on it (:mod:`game.sim.perception`, :mod:`game.sim.crime`)."""
+    return [
+        prop("lawful", "bool", "Acts on crime (law)", default=False,
+             group="SIMULATION",
+             help="This actor charges crimes they know about themselves, "
+                  "instead of having to find a guard. True for guards by role."),
+        prop("stealth", "float", "Stealth", default=0.0, min=0.0, max=1.0,
+             group="SIMULATION",
+             help="How hard this actor is to notice: shrinks everyone else's "
+                  "effective sight range against them."),
+    ]
+
+
 def _miniwind_inspector_snapshot(thing, monster_state, logic_thread):
     """Build the MiniWind mental-state snapshot for the debug inspector popup.
 
@@ -165,7 +230,7 @@ class MiniwindGame:
                  max=100000.0, group="ITEM"),
             prop("respawn", "bool", "Respawns after taken", default=False,
                  group="ITEM"),
-        ])
+        ] + _ownership_props(factions, " the owner will remember."))
         spell_ids = sorted(rpg_magic.SPELLS.keys())
         api.register_properties("spellbook", [
             prop("spell", "enum", "Teaches spell", default="flare",
@@ -235,7 +300,7 @@ class MiniwindGame:
                  help="Drives the sprite (chest / barrel / crate / sack / urn)."),
             prop("use_radius", "float", "Use radius", default=120.0, group="CONTAINER",
                  help="How close the player must be to open it with E."),
-        ])
+        ] + _ownership_props(factions, " — emptying it is burglary."))
 
         # NPC — a social/quest actor, organised into Aurora-style sections.
         api.register_properties("npc", [
@@ -325,7 +390,7 @@ class MiniwindGame:
                  help="Loot-table id rolled on death (see game/rpg/loot)."),
             prop("respawn", "bool", "Respawns when killed", default=False, group="STATE"),
             prop("persistent", "bool", "Persistent identity", default=True, group="STATE"),
-        ])
+        ] + _production_props() + _perception_props())
 
         # Creature — a monster/animal: combat, loot, respawn (no schedule/dialogue).
         api.register_properties("creature", [
@@ -381,7 +446,8 @@ class MiniwindGame:
                  help="Loot-table id rolled on death (see game/rpg/loot)."),
             prop("respawn", "bool", "Respawns when killed", default=False, group="STATE"),
             prop("persistent", "bool", "Persistent identity", default=True, group="STATE"),
-        ])
+        ] + _ownership_props(factions, " (a farmer's cow, a merchant's mule).")
+          + _production_props() + _perception_props())
         api.register_properties("miniwindsettings", [
             prop("region_name", "string", "Region name",
                  default="The Vale of Miniwind", group="WORLD"),
@@ -432,6 +498,18 @@ class MiniwindGame:
             api.register_property_tab("Dialogue", editor_ui.make_dialogue_tab, entity_type="npc")
             api.register_property_tab("Schedule", editor_ui.make_schedule_tab, entity_type="npc")
             api.register_property_tab("Ties & Patrol", editor_ui.make_ties_tab, entity_type="npc")
+            # The reactive simulation, exposed per entity: what this actor
+            # knows, what it intends and *why* — live and editable during Play.
+            from . import sim_editor
+            api.register_property_tab("Simulation", sim_editor.make_simulation_tab,
+                                      entity_type="npc")
+            api.register_property_tab("Simulation", sim_editor.make_simulation_tab,
+                                      entity_type="creature")
+            # Ownership + production for the objects a settlement is made of.
+            for _etype in ("creature", "itempickup", "container"):
+                api.register_property_tab("Ownership & Production",
+                                          sim_editor.make_object_tab,
+                                          entity_type=_etype)
             api.register_property_tab("Spells", editor_ui.make_spells_tab, entity_type="npc")
             api.register_property_tab("Loot", editor_ui.make_inventory_tab, entity_type="creature")
             api.register_property_tab("Spells", editor_ui.make_spells_tab, entity_type="creature")

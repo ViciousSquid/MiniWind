@@ -48,7 +48,8 @@ from .rpg import factions
 # Art: which committed sprite/portrait a role uses (unknown roles fall back).
 # ---------------------------------------------------------------------------
 _ART_ROLES = {"villager", "guard", "merchant", "blacksmith", "farmer",
-              "beggar", "bandit", "cultist", "wolf", "monster"}
+              "beggar", "bandit", "cultist", "wolf", "monster",
+              "cow", "sheep", "hen"}
 #: roles without their own art borrow another role's billboard
 _ART_ALIAS = {
     "bandit_archer": "bandit", "bandit_chief": "bandit",
@@ -71,7 +72,7 @@ _DEFAULT_WEAPON = {
     "magic": "apprentice_staff",
 }
 # Creature roles that should NOT receive a default metal weapon
-_ANIMAL_ROLES = {"wolf", "bear", "boar", "mudcrab"}
+_ANIMAL_ROLES = {"wolf", "bear", "boar", "mudcrab", "cow", "sheep", "hen"}
 
 
 def _art_role(role: str) -> str:
@@ -189,6 +190,16 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
         "child": 0.1,
     }
     p.setdefault("courage", _COURAGE_DEFAULTS.get(role, 0.3))
+
+    # Production (game.sim.production): a role that makes something — a cow, a
+    # hen, a sheep — carries it on the template, so placing the entity is all
+    # the authoring there is. What it makes is an ordinary item that inherits
+    # this actor's owner, which is what makes taking it a theft.
+    if tmpl is not None and tmpl.produces:
+        p.setdefault("produces", tmpl.produces)
+        p.setdefault("produce_every_hours", tmpl.produce_every_hours)
+        p.setdefault("produce_into", tmpl.produce_into)
+        p.setdefault("produce_quantity", tmpl.produce_quantity)
 
     # top-down art: the idle and the attack ('shoot') frame use the role's own
     # billboard, so an attacking NPC never flips to the stock human sprite. There

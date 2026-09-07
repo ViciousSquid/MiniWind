@@ -193,6 +193,13 @@ def test_assault_is_remembered_and_survives_save_load():
     session._provoke(elowen)
     assert disp.has_flag(session.store, elowen.properties, "wronged")
     assert disp.delta(session.store, elowen.properties) <= -30
+    # The bounty is no longer an automatic tax on the swing: it is levied when a
+    # witness reaches the watch (game.sim.crime). Elowen saw it happen to her,
+    # so putting her next to a guard is all it takes.
+    guard = _find(things, "Kestrel")
+    guard.pos = list(elowen.pos)
+    session.director.resolve_reports(session._sim_actors())
+    session.director.resolve_reports(session._sim_actors())
     assert session.game.character.bounty >= 40
     # Reloading the same map (same UUIDs) over the same persistent store still
     # remembers the assault — the wound is durable, not session-local.

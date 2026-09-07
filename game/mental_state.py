@@ -33,6 +33,11 @@ PRI_FLEE = 90
 PRI_RALLY = 80
 PRI_ALERT = 70
 PRI_INVESTIGATE = 60
+#: The reactive simulation's errands: acting on knowledge rather than sight.
+#: They outrank the daily schedule (a person with a reason does not go to work)
+#: but yield to anything physically happening in front of the actor.
+PRI_CONFRONT = 55
+PRI_REPORT = 50
 PRI_SCHEDULE = 40
 PRI_WANDER = 20
 PRI_IDLE = 10
@@ -50,6 +55,8 @@ _STATE_BLURB = {
     "RALLY": "Rallying against a threat",
     "WANDER": "Wandering",
     "PATROL": "Patrolling",
+    "REPORT": "Going to tell the watch",
+    "CONFRONT": "Going to confront someone",
 }
 
 
@@ -164,6 +171,25 @@ def snapshot(thing, monster_state: Optional[dict] = None,
         ("AI State", ai),
     ]
 
+    # ---- Why (the reactive simulation's own explanation) --------------------
+    # The single most useful line in the inspector: what this actor knows that
+    # is driving it, in the words the decision itself produced. Written onto the
+    # entity by MiniwindSession._apply_sim_intent, so it can never drift out of
+    # step with the behaviour it explains.
+    reason = props.get("_sim_reason")
+    if reason:
+        why = [("Wants to", str(props.get("_sim_intent", "?")).title()),
+               ("Because", str(reason))]
+        if props.get("_sim_target"):
+            why.append(("About", str(props["_sim_target"])))
+        sections.insert(0, ("Why", why))
+        ai.insert(0, ("Driving intent",
+                      f"{props.get('_sim_intent', '?')} — {reason}"))
+
+    # ---- Knowledge (what this actor believes, and how sure) ----------------
+    if session is not None:
+        sections.extend(_knowledge_sections(thing, session))
+
     # ---- Player standing (this NPC's remembered feelings toward the player) --
     if session is not None and not dead:
         try:
@@ -202,6 +228,33 @@ def snapshot(thing, monster_state: Optional[dict] = None,
     }
 
 
+def _knowledge_sections(thing, session):
+    """The 'what does this person know?' and 'what do they intend?' sections.
+
+    Reads the live director rather than the properties, so a designer can watch
+    a rumour arrive and the reaction change in the same panel."""
+    out = []
+    director = getattr(session, "director", None)
+    if director is None:
+        return out
+    try:
+        lines = director.knowledge_lines(thing, limit=8)
+        if lines:
+            out.append(("Knowledge",
+                        [(f"{i + 1}.", line) for i, line in enumerate(lines)]))
+    except Exception:
+        pass
+    try:
+        intents = director.intents(thing)
+        if intents:
+            out.append(("Intents (ranked)",
+                        [(f"{i.priority}", f"{i.label} — {i.reason}")
+                         for i in intents[:6]]))
+    except Exception:
+        pass
+    return out
+
+
 def _build_tasks(props, sched_state, target, investigating, confidence):
     """Synthesise a ranked task list from the actor's current situation.
 
@@ -226,11 +279,18 @@ def _build_tasks(props, sched_state, target, investigating, confidence):
         tasks.append((PRI_RALLY, "Rally with nearby friendlies", False))
     if sched_state == "ALERT":
         tasks.append((PRI_ALERT, "Hold and stay alert", False))
+    # Simulation-driven errands: acting on something known rather than seen.
+    if sched_state == "REPORT":
+        tasks.append((PRI_REPORT, "Report what they know to the watch", False))
+    if sched_state == "CONFRONT":
+        tasks.append((PRI_CONFRONT,
+                      f"Confront {props.get('_sim_target', 'someone')}", False))
     if investigating:
         tasks.append((PRI_INVESTIGATE, "Investigate a noise", False))
 
     # Daily schedule (the standing job when nothing urgent is happening).
-    if sched_state and sched_state not in ("FLEE", "RALLY", "ALERT"):
+    if sched_state and sched_state not in ("FLEE", "RALLY", "ALERT",
+                                           "REPORT", "CONFRONT"):
         loc = props.get("work_location") or "home"
         blurb = _STATE_BLURB.get(sched_state, sched_state.title())
         if sched_state in ("GOING_TO_WORK", "WORKING"):

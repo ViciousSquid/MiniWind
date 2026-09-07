@@ -53,7 +53,20 @@ ROLES = {
                       cloth=(120, 116, 112), cloth2=(80, 76, 74),  accent=(230, 230, 235)),
     "monster":   dict(skin=(120, 150, 90),  hair=(70, 96, 54),
                       cloth=(96, 128, 72),  cloth2=(60, 84, 48),   accent=(200, 70, 70)),
+    # Livestock: passive, productive animals (see game/data/bestiary.json).
+    # They exist so a settlement has systemic *objects* — a cow makes milk that
+    # belongs to its owner, and everything interesting follows from that.
+    "cow":       dict(skin=(240, 238, 234), hair=(60, 54, 50),
+                      cloth=(238, 236, 232), cloth2=(60, 54, 50),  accent=(40, 36, 34)),
+    "sheep":     dict(skin=(240, 236, 226), hair=(70, 66, 62),
+                      cloth=(232, 228, 218), cloth2=(70, 66, 62),  accent=(40, 36, 34)),
+    "hen":       dict(skin=(226, 196, 150), hair=(150, 60, 50),
+                      cloth=(216, 186, 140), cloth2=(190, 70, 55), accent=(230, 170, 60)),
 }
+
+#: Roles drawn as a top-down quadruped rather than a cloaked biped. One shape
+#: serves every animal; the palette tells them apart.
+QUADRUPEDS = {"wolf", "cow", "sheep", "hen"}
 
 
 def _lighten(c, f):
@@ -86,7 +99,7 @@ def draw_topdown(role: str) -> Image.Image:
     sh = sh.filter(ImageFilter.GaussianBlur(S * 0.02))
     img.alpha_composite(sh)
 
-    if role == "wolf":
+    if role in QUADRUPEDS:
         return _draw_wolf(img, d, cx, cy, S, p)
 
     # --- cloak / body (seen from above), an egg wider at the shoulders ---
