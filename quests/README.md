@@ -3,9 +3,7 @@
 Every quest in MiniWind lives here as its own **`.quest` file** — human-readable
 JSON you can open, hand-edit, diff and version-control. This folder is the single
 source of truth: the **MiniWind Quest Editor** writes these files, and the
-running game loads them at play start. Quests are *no longer* stored inside the
-map's `Game Settings` entity (a map that still carries the old in-entity list is
-migrated into this folder the first time you open it in the Quest Editor).
+running game loads them at play start.
 
 ## File format
 
