@@ -3654,9 +3654,9 @@
         },
         {
             "pos": [
-                1600,
-                192,
-                -3856
+                1600.0,
+                192.0,
+                -3856.0
             ],
             "size": [
                 944.0,
@@ -3706,18 +3706,158 @@
             "uv_angle": {
                 "top": 0.0
             },
-            "id": "be2caa72-093d-4e14-80df-b470e9bf5641"
+            "id": "be2caa72-093d-4e14-80df-b470e9bf5641",
+            "geometry": {
+                "planes": [
+                    {
+                        "n": [
+                            1.0,
+                            0.0,
+                            0.0
+                        ],
+                        "d": 2072.0,
+                        "texture": "nodraw.jpg",
+                        "uv_scale": [
+                            4.25,
+                            0.125
+                        ],
+                        "face": "east"
+                    },
+                    {
+                        "n": [
+                            -1.0,
+                            0.0,
+                            0.0
+                        ],
+                        "d": -1128.0,
+                        "texture": "nodraw.jpg",
+                        "uv_scale": [
+                            4.25,
+                            0.125
+                        ],
+                        "face": "west"
+                    },
+                    {
+                        "n": [
+                            0.0,
+                            1.0,
+                            0.0
+                        ],
+                        "d": 240.0,
+                        "texture": "house03.png",
+                        "uv_scale": [
+                            1.0,
+                            1.0
+                        ],
+                        "face": "top"
+                    },
+                    {
+                        "n": [
+                            0.0,
+                            -1.0,
+                            0.0
+                        ],
+                        "d": -144.0,
+                        "texture": "nodraw.jpg",
+                        "uv_scale": [
+                            4.0,
+                            4.25
+                        ],
+                        "face": "down"
+                    },
+                    {
+                        "n": [
+                            0.0,
+                            0.0,
+                            1.0
+                        ],
+                        "d": -3392.0,
+                        "texture": "nodraw.jpg",
+                        "uv_scale": [
+                            4.0,
+                            0.125
+                        ],
+                        "face": "north"
+                    },
+                    {
+                        "n": [
+                            0.0,
+                            0.0,
+                            -1.0
+                        ],
+                        "d": 4320.0,
+                        "texture": "nodraw.jpg",
+                        "uv_scale": [
+                            4.0,
+                            0.125
+                        ],
+                        "face": "south"
+                    },
+                    {
+                        "n": [
+                            -0.6709133239691263,
+                            -0.0,
+                            0.7415357791237712
+                        ],
+                        "d": -3468.4100175549192,
+                        "texture": "nodraw.jpg",
+                        "uv_scale": [
+                            4.25,
+                            0.125
+                        ]
+                    },
+                    {
+                        "n": [
+                            0.8422714006615114,
+                            0.0,
+                            0.5390536964233673
+                        ],
+                        "d": -283.54224431869125,
+                        "texture": "nodraw.jpg",
+                        "uv_scale": [
+                            4.25,
+                            0.125
+                        ]
+                    },
+                    {
+                        "n": [
+                            0.8240419241993676,
+                            0.0,
+                            0.5665288228870652
+                        ],
+                        "d": -453.22305830965206,
+                        "texture": "nodraw.jpg",
+                        "uv_scale": [
+                            4.25,
+                            0.125
+                        ]
+                    },
+                    {
+                        "n": [
+                            0.8770962678415019,
+                            0.0,
+                            0.48031462286558435
+                        ],
+                        "d": -81.52818642031481,
+                        "texture": "nodraw.jpg",
+                        "uv_scale": [
+                            4.25,
+                            0.125
+                        ]
+                    }
+                ]
+            }
         },
         {
             "pos": [
-                952.0,
+                852.0,
                 176,
-                -2648.0
+                -3056.0
             ],
             "size": [
-                1136.0,
+                1320.0,
                 128,
-                1136.0
+                1312.0
             ],
             "textures": {
                 "north": "trigger.jpg",
@@ -6537,7 +6677,7 @@
             "pos": [
                 1056,
                 272,
-                -2624
+                -3264
             ],
             "properties": {
                 "display_name": "Sheep",
@@ -6596,16 +6736,17 @@
                 "_bleed_last_hp": 25.0,
                 "handed": "right",
                 "_was_shooting": false,
-                "_produce_progress": 0.98
+                "_produce_progress": 0.98,
+                "dead": false
             },
             "io_connections": []
         },
         {
             "type": "creature",
             "pos": [
-                1008,
+                1264,
                 240,
-                -2560
+                -3312
             ],
             "properties": {
                 "display_name": "Sheep",
@@ -6674,7 +6815,7 @@
             "pos": [
                 1008,
                 240,
-                -2736
+                -2976
             ],
             "properties": {
                 "display_name": "Sheep",
@@ -6733,23 +6874,24 @@
                 "_bleed_last_hp": 25.0,
                 "handed": "left",
                 "_was_shooting": false,
-                "_produce_progress": 0.98
+                "_produce_progress": 0.98,
+                "dead": false
             },
             "io_connections": []
         },
         {
             "type": "speaker",
             "pos": [
-                944,
+                848,
                 288,
-                -2656
+                -3056
             ],
             "properties": {
                 "type": "speaker",
                 "name": "sheep_speaker",
                 "id": "0de8bedd-8d5d-43c4-b191-c66101c43062",
                 "sound_file": "",
-                "radius": 512.0,
+                "radius": 650.0,
                 "global": false,
                 "show_radius": true,
                 "volume": 1.0,
@@ -6792,9 +6934,9 @@
         {
             "type": "creature",
             "pos": [
-                864,
+                1120,
                 240,
-                -2496
+                -3488
             ],
             "properties": {
                 "display_name": "Sheep",
@@ -6853,16 +6995,17 @@
                 "_bleed_last_hp": 25.0,
                 "handed": "right",
                 "_was_shooting": false,
-                "_produce_progress": 0.98
+                "_produce_progress": 0.98,
+                "dead": false
             },
             "io_connections": []
         },
         {
             "type": "creature",
             "pos": [
-                512,
+                528,
                 224,
-                -2688
+                -2656
             ],
             "properties": {
                 "display_name": "Sheep",
@@ -6921,16 +7064,17 @@
                 "_bleed_last_hp": 30.0,
                 "handed": "right",
                 "_was_shooting": false,
-                "_produce_progress": 0.98
+                "_produce_progress": 0.98,
+                "dead": false
             },
             "io_connections": []
         },
         {
             "type": "creature",
             "pos": [
-                816,
+                640,
                 240,
-                -2928
+                -3408
             ],
             "properties": {
                 "display_name": "Sheep",
@@ -6989,7 +7133,9 @@
                 "_bleed_last_hp": 25.0,
                 "handed": "right",
                 "_was_shooting": false,
-                "_produce_progress": 0.98
+                "_produce_progress": 0.98,
+                "dead": false,
+                "spells": []
             },
             "io_connections": []
         },
@@ -7269,6 +7415,36 @@
                 ],
                 "intensity": 1.5,
                 "radius": 2048.0,
+                "state": "on",
+                "show_radius": false,
+                "casts_shadows": false,
+                "parent_mover": "",
+                "parent_offset": [
+                    0.0,
+                    0.0,
+                    0.0
+                ]
+            },
+            "io_connections": []
+        },
+        {
+            "type": "light",
+            "pos": [
+                1584,
+                416,
+                -3840
+            ],
+            "properties": {
+                "type": "light",
+                "name": "Light_13",
+                "id": "7ded711e-c875-41f9-839b-a69ef640ac16",
+                "colour": [
+                    255,
+                    255,
+                    255
+                ],
+                "intensity": 0.7,
+                "radius": 1024.0,
                 "state": "on",
                 "show_radius": false,
                 "casts_shadows": false,
