@@ -1561,6 +1561,13 @@ class QtGameView(QOpenGLWidget):
         self._render_config["show_sprites_in_play_mode"] = self.show_sprites_in_play_mode
         self._render_config["grid_visible"] = getattr(self, 'grid_visible', True) and not self.play_mode
         self._render_config["terrain"] = getattr(self.editor, 'terrain', None)
+        # The camera's relevance region, computed once on the logic thread and
+        # already applied to visible_brushes/visible_things. Its presence tells
+        # the renderer the scene arrived culled, so it does not repeat the same
+        # distance test; in the unthreaded editor path it stays None.
+        self._render_config["camera_relevance_box"] = (
+            getattr(render_state, 'camera_relevance_box', None)
+            if render_state is not None else None)
         if render_state and hasattr(render_state, 'all_brushes'):
             self._render_config["all_brushes"] = render_state.all_brushes
         else:

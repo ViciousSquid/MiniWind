@@ -67,9 +67,13 @@ class _Session:
     _world_index = MiniwindSession._world_index
     _decide = MiniwindSession._decide
     _is_combatant = staticmethod(MiniwindSession._is_combatant)
+    # The decision pass indexes the watch once per pass rather than re-scanning
+    # the scene per frightened villager; the stub needs the same predicate.
+    _is_guard = staticmethod(MiniwindSession._is_guard)
 
     def __init__(self, things=(), player=None):
         self.things = list(things)
+        self._wi_cache = None
         self._actors = []
         self._dead_actors = []
         self._fights = []

@@ -105,7 +105,7 @@ class WorldIndex:
     __slots__ = (
         "cell_size", "actors", "n", "_cap",
         "px", "pz", "py", "alive", "dead", "team_ids", "tiers", "dist2", "_scratch",
-        "team_names", "_team_of_name", "_bins", "_binned",
+        "team_names", "_team_of_name", "_bins", "_binned", "_prev_tiers",
         "_row_of", "_derived", "_focus",
     )
 
@@ -133,7 +133,14 @@ class WorldIndex:
         self._team_of_name: Dict[str, int] = {}
         self._bins: Dict[tuple, np.ndarray] = {}
         self._binned = False
-        self._row_of: Dict[int, int] = {}
+        #: Last tick's tiers, so only actual transitions are written back onto
+        #: the actors. None until the first classification, and dropped whenever
+        #: the actor list changes shape.
+        self._prev_tiers: Optional[np.ndarray] = None
+        #: ``id(actor) -> row``, built on first use. Most ticks only move
+        #: actors and never ask, so building it in every rebuild was a dict of
+        #: N entries per tick that nothing read.
+        self._row_of: Optional[Dict[int, int]] = None
         self._derived: Dict[str, np.ndarray] = {}
         self._focus = (0.0, 0.0)
 
@@ -171,12 +178,18 @@ class WorldIndex:
         whole batch at once.
         """
         n = len(actors)
+        if self._prev_tiers is not None and (n != self._prev_tiers.shape[0]
+                                             or actors is not self.actors):
+            # A different actor list (or a different length) means row i is no
+            # longer the same actor: last tick's tiers cannot be compared to
+            # this tick's, so stamp them all.
+            self._prev_tiers = None
         self.actors = actors
         self.n = n
         self._bins = {}
         self._binned = False
         self._derived = {}
-        self._row_of = {}
+        self._row_of = None
         if n == 0:
             return
         self._ensure_capacity(n)
@@ -184,7 +197,6 @@ class WorldIndex:
         alive, dead, team_ids = self.alive, self.dead, self.team_ids
         team_of_name = self._team_of_name
         team_names = self.team_names
-        row_of = self._row_of
         dormant = []
         for i in range(n):
             a = actors[i]
@@ -208,7 +220,6 @@ class WorldIndex:
                 team_names.append(team)
                 team_of_name[team] = tid
             team_ids[i] = tid
-            row_of[id(a)] = i
 
         d2 = self.dist2[:n]
         if focus_xz is None:
@@ -269,8 +280,19 @@ class WorldIndex:
                 tiers[i] = prev
         for i in dormant:
             tiers[i] = TIER_DORMANT
-        for i in range(n):
-            actors[i].properties["_sim_tier"] = int(tiers[i])
+        # Stamp the tier onto the actors — this is how the AI thread reads it
+        # without touching these arrays across threads. Only the rows that
+        # actually changed are written: in a settled world almost nobody changes
+        # tier in a given tick, so this is a handful of dict writes rather than
+        # one per actor per tick.
+        prev = self._prev_tiers
+        if prev is None or prev.shape[0] < n:
+            for i in range(n):
+                actors[i].properties["_sim_tier"] = int(tiers[i])
+        else:
+            for i in np.nonzero(prev[:n] != tiers[:n])[0].tolist():
+                actors[i].properties["_sim_tier"] = int(tiers[i])
+        self._prev_tiers = tiers[:n].copy()
 
     # ------------------------------------------------------------------
     # Bins
@@ -411,9 +433,18 @@ class WorldIndex:
     # Row / tier helpers
     # ------------------------------------------------------------------
 
+    def _rows(self) -> Dict[int, int]:
+        """The ``id(actor) -> row`` map, built on demand."""
+        rows = self._row_of
+        if rows is None:
+            actors = self.actors
+            rows = {id(actors[i]): i for i in range(self.n)}
+            self._row_of = rows
+        return rows
+
     def row_of(self, actor) -> int:
         """The row holding *actor*, or ``-1`` if it is not in the index."""
-        return self._row_of.get(id(actor), -1)
+        return self._rows().get(id(actor), -1)
 
     def tier_of(self, actor) -> int:
         """The simulation tier of *actor*.
@@ -422,7 +453,7 @@ class WorldIndex:
         when it is not in the current index, so a caller never accidentally
         skips simulating something the index has not seen yet.
         """
-        row = self._row_of.get(id(actor), -1)
+        row = self._rows().get(id(actor), -1)
         if row < 0:
             return int(actor.properties.get("_sim_tier", TIER_NEAR))
         return int(self.tiers[row])
@@ -433,7 +464,7 @@ class WorldIndex:
         Mirrors the AI's old ``_snapshot_mark_dead``: a kill resolved mid-tick
         must not still be targetable by a later query in the same tick.
         """
-        row = self._row_of.get(id(actor), -1)
+        row = self._rows().get(id(actor), -1)
         if row >= 0:
             self.alive[row] = False
             self.dead[row] = True

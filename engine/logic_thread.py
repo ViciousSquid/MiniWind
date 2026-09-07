@@ -29,7 +29,18 @@ from .world_index import (WorldIndex, TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
 from .cells import CELL_SIZE as CULL_CELL_SIZE
 from .world_persistence import config_from_settings, find_settings_thing
 from .world_streaming import WorldStreamingSession
-from .render_cull import CAMERA_RENDER_CULL_DISTANCE, CAMERA_RENDER_CULL_DISTANCE_SQ
+from .render_cull import (CAMERA_RENDER_CULL_DISTANCE,
+                          CAMERA_RENDER_CULL_DISTANCE_SQ, visible_xz_bounds)
+
+#: NDC corners of the far plane, transformed by inverse(proj*view) to get the
+#: view volume's far corners in world space. Built once, never per frame.
+_FAR_PLANE_NDC = (glm.vec4(-1.0, -1.0, 1.0, 1.0), glm.vec4(1.0, -1.0, 1.0, 1.0),
+                  glm.vec4(-1.0, 1.0, 1.0, 1.0), glm.vec4(1.0, 1.0, 1.0, 1.0))
+
+#: How far outside the camera's relevance box an actor's *centre* may sit and
+#: still be drawn. Generous enough for the widest billboard the game uses, so a
+#: sprite straddling the edge of the view never pops out.
+ACTOR_CULL_MARGIN = 256.0
 
 #: Shared empty row array — a cull query that matches nothing allocates nothing.
 _EMPTY_ROWS = np.empty(0, dtype=np.intp)
@@ -248,6 +259,8 @@ class LogicThread(threading.Thread):
         self._cull_row_refs = None         # (N,) object: per-brush render ref
         self._cull_dynamic_rows = None     # list[int]: indices of movers/doors
         self._cull_cells = {}              # (cx,cz) -> rows, shared 512 grid
+        self._cull_y_min = 0.0             # world geometry's vertical slab
+        self._cull_y_max = 0.0
         self._cull_oversized = _np_empty_rows()   # rows too big to bin
         self._cull_keep = None             # (N,) bool: not hidden
         self._all_brushes_cache = None     # cached whole-world non-hidden list
@@ -1264,6 +1277,10 @@ class LogicThread(threading.Thread):
             # everything until the first index rebuild classifies it, and so it
             # never rides along into a saved map.
             thing.properties.pop('_sim_tier', None)
+            # Cached identity slug (game.rpg.disposition.mem_key). Derived from
+            # the entity's own id/name, so it is regenerated on demand; dropped
+            # here so it never rides along into a saved map.
+            thing.properties.pop('_mem_key', None)
             # Whatever it switched to mid-fight last session; the next one starts
             # from the authored kit (see engine/combat_loadout.py).
             thing.properties.pop('_active_weapon', None)
@@ -3493,25 +3510,55 @@ class LogicThread(threading.Thread):
         self._cull_cells = {k: np.asarray(v, dtype=np.intp)
                             for k, v in buckets.items()}
 
-    def _camera_candidate_rows(self, cam_x, cam_z):
-        """Brush rows that could possibly be visible from ``(cam_x, cam_z)``.
+    def _camera_relevance_box(self, cam_pos, proj_view):
+        """The XZ box the camera can actually see this frame.
+
+        One authoritative answer, derived from the live camera and the world's
+        vertical slab (see :func:`engine.render_cull.visible_xz_bounds`), used
+        by everything downstream: which brush cells are consulted, which actors
+        get a render snapshot, and what the renderer is told its region is. A
+        fixed radius cannot do this job — MiniWind's camera looks almost
+        straight down, so its visible ground is a box a couple of thousand units
+        across, while the same radius has to cover a first-person view running
+        to the far plane.
+        """
+        try:
+            inv = glm.inverse(proj_view)
+        except Exception:
+            # A degenerate matrix must never blank the frame: fall back to the
+            # hard ceiling, which is always conservative.
+            r = CAMERA_RENDER_CULL_DISTANCE
+            return (cam_pos.x - r, cam_pos.z - r, cam_pos.x + r, cam_pos.z + r)
+        corners = []
+        for ndc in _FAR_PLANE_NDC:
+            p = inv * ndc
+            w = p.w
+            if abs(w) < 1e-9:
+                continue
+            corners.append((p.x / w, p.y / w, p.z / w))
+        if not corners:
+            r = CAMERA_RENDER_CULL_DISTANCE
+            return (cam_pos.x - r, cam_pos.z - r, cam_pos.x + r, cam_pos.z + r)
+        return visible_xz_bounds(
+            (cam_pos.x, cam_pos.y, cam_pos.z), corners,
+            self._cull_y_min, self._cull_y_max)
+
+    def _camera_candidate_rows(self, box):
+        """Brush rows whose footprint touches the camera's relevance *box*.
 
         ``None`` means "no useful narrowing — test them all", which is what a
-        small level or a cache miss gets. Otherwise the returned rows are every
-        brush whose footprint touches the camera's relevance box (the same
-        :data:`engine.render_cull.CAMERA_RENDER_CULL_DISTANCE` the renderer
-        already drops beyond), plus the oversized brushes that are never binned.
+        small level or a cache miss gets. The oversized brushes (too big to bin)
+        are always included.
         """
         cells = self._cull_cells
         if not cells:
             return None
-        r = CAMERA_RENDER_CULL_DISTANCE
         cs = CULL_CELL_SIZE
         inv = 1.0 / cs
-        gx0 = int(math.floor((cam_x - r) * inv))
-        gx1 = int(math.floor((cam_x + r) * inv))
-        gz0 = int(math.floor((cam_z - r) * inv))
-        gz1 = int(math.floor((cam_z + r) * inv))
+        gx0 = int(math.floor(box[0] * inv))
+        gz0 = int(math.floor(box[1] * inv))
+        gx1 = int(math.floor(box[2] * inv))
+        gz1 = int(math.floor(box[3] * inv))
         parts = []
         for gx in range(gx0, gx1 + 1):
             for gz in range(gz0, gz1 + 1):
@@ -3612,6 +3659,16 @@ class LogicThread(threading.Thread):
                 row_refs[i] = b
             else:
                 row_refs[i] = b  # static: the live dict, ref never changes
+        # Vertical slab the world's geometry actually occupies. The top-down
+        # camera's cone leaves this slab almost immediately, which is what makes
+        # its visible ground box a few thousand units across instead of the tens
+        # of thousands a 10,000-unit far plane would imply.
+        if n:
+            self._cull_y_min = float((centers[:, 1] - halves[:, 1]).min())
+            self._cull_y_max = float((centers[:, 1] + halves[:, 1]).max())
+        else:
+            self._cull_y_min = 0.0
+            self._cull_y_max = 0.0
         self._cull_centers = centers
         self._cull_halves = halves
         self._cull_row_refs = row_refs
@@ -3748,6 +3805,13 @@ class LogicThread(threading.Thread):
         proj_view = projection * view_matrix
         frustum_planes = self._extract_frustum_planes(proj_view)
 
+        # The one relevance region for this frame. Everything that follows —
+        # which brush cells are consulted, which actors are snapshotted, what
+        # the renderer is told to draw — measures against this box, so there is
+        # a single answer to "what can the player see from here".
+        relevance_box = self._camera_relevance_box(cam_pos, proj_view)
+        write_state.camera_relevance_box = relevance_box
+
         brushes = self.brushes
 
         if self.play_mode and self._cull_valid and self._cull_n == len(brushes):
@@ -3787,8 +3851,7 @@ class LogicThread(threading.Thread):
                 # rows outside the region never reach the hidden test or the
                 # draw list at all. `None` means the level is small enough that
                 # testing it whole is cheaper than the lookup.
-                cam = write_state.player_pos if self.play_mode else self.editor_camera.pos
-                rows = self._camera_candidate_rows(float(cam.x), float(cam.z))
+                rows = self._camera_candidate_rows(relevance_box)
                 if rows is None:
                     visible_mask = keep & self._aabb_in_frustum_batch(
                         frustum_planes, centers, halves)
@@ -3867,8 +3930,13 @@ class LogicThread(threading.Thread):
         _append = visible_things.append
         cull_actors = self.play_mode and self.culling_enabled
         if cull_actors:
-            _cam = write_state.player_pos
-            cam_x, cam_z = float(_cam.x), float(_cam.z)
+            # The same box the geometry used, grown by the widest sprite an
+            # actor can wear so a billboard whose centre is just outside the
+            # view but whose edge is inside is never dropped.
+            bx0 = relevance_box[0] - ACTOR_CULL_MARGIN
+            bz0 = relevance_box[1] - ACTOR_CULL_MARGIN
+            bx1 = relevance_box[2] + ACTOR_CULL_MARGIN
+            bz1 = relevance_box[3] + ACTOR_CULL_MARGIN
         for thing in self.things:
             if self.play_mode and Pickup and isinstance(thing, Pickup) and id(thing) in self.collected_pickups:
                 continue
@@ -3878,9 +3946,9 @@ class LogicThread(threading.Thread):
                 thing.pos = pos
             if isinstance(thing, MonsterThing):
                 if cull_actors:
-                    dx = pos[0] - cam_x
-                    dz = pos[2] - cam_z
-                    if dx * dx + dz * dz > CAMERA_RENDER_CULL_DISTANCE_SQ:
+                    x = pos[0]
+                    z = pos[2]
+                    if x < bx0 or x > bx1 or z < bz0 or z > bz1:
                         continue
                 _append(thing.get_render_snapshot())
             else:

@@ -311,6 +311,14 @@ class MiniwindSession:
         #: Fights in progress, as (actor, who it is swinging at) pairs. Rebuilt
         #: once per decision pass by _refresh_actor_cache.
         self._fights = []
+        #: The live watch, rebuilt alongside _actors. See _refresh_actor_cache.
+        self._guards: List = []
+        #: Markers grouped by their authored kind, rebuilt only when the scene
+        #: changes. See _markers_of_kind.
+        self._marker_kinds: Dict[str, list] = {}
+        self._marker_kinds_token = None
+        #: The engine's world index, resolved once per tick (see _world_index).
+        self._wi_cache = None
         #: Alternates 0/1 each decision pass. TIER_ACTIVE NPCs decide on the
         #: pass matching their row parity, so half of the near world re-plans
         #: each pass and the cost is spread instead of spiking.
@@ -615,6 +623,11 @@ class MiniwindSession:
 
     # ================================================================= tick
     def tick(self, delta: float) -> None:
+        # The logic thread rebuilt the world index immediately before this call,
+        # so resolve it once here rather than through a getattr chain at every
+        # one of the tens of thousands of asks a settlement tick makes.
+        self._wi_cache = None
+        self._world_index()
         self.clock.advance(delta)
         self.game.tick(delta)
         if self._attack_cooldown > 0:
@@ -704,10 +717,16 @@ class MiniwindSession:
         # Detect NPC/creature attacks by watching the engine's is_shooting flag.
         # When it flips from False -> True we start a 0.2 s stab animation.
         # PERF: iterate only the actor buckets (npc/creature/monster) from the
-        # cached type index instead of scanning + normalising the whole scene.
+        # cached type index instead of scanning + normalising the whole scene —
+        # and only those the player could actually watch swing. An attack
+        # animation is a purely visual 0.2 s decay; running it for an actor
+        # outside the camera's reach changes nothing anyone sees.
         buckets = self._type_buckets()
+        tier_of = self._tier_of
         for t in _chain(buckets.get("npc", ()), buckets.get("creature", ()),
                         buckets.get("monster", ())):
+            if tier_of(t) > TIER_ACTIVE:
+                continue
             tp = t.properties
             was = tp.get("_was_shooting", False)
             now = tp.get("is_shooting", False)
@@ -899,6 +918,12 @@ class MiniwindSession:
         if pdef is not None and ppos is not None:
             desired["player"] = (ppos, pdef)
         for npc in self.npcs():
+            # A torch is a dynamic light. One carried beyond the player's
+            # vicinity illuminates nothing the camera can see, and each costs a
+            # Light entity plus a renderer light slot, so distant holders simply
+            # do not carry a lit one. It relights the moment they come near.
+            if self._tier_of(npc) > TIER_ACTIVE:
+                continue
             tdef = self._npc_torch_def(npc.properties, night)
             if tdef is not None:
                 desired[id(npc)] = (list(npc.pos), tdef)
@@ -1898,9 +1923,8 @@ class MiniwindSession:
         his post and stood there. Name is still accepted as a fallback for maps
         that authored a plain entity called "prison".
         """
-        for marker in self._things_of_type("marker"):
-            if self._marker_kind(marker) == "prison":
-                return marker
+        for marker in self._markers_of_kind("prison"):
+            return marker
         return self._find_named(PRISON_MARKER_NAME)
 
     def _prison_position(self):
@@ -2431,7 +2455,7 @@ class MiniwindSession:
         enough — so a witness cut down on the way never testifies, and one who
         makes it does. That is the whole mechanism."""
         p = npc.properties
-        guard = self._nearest_of(npc, lambda t: self._is_guard(t))
+        guard = self._nearest_guard(npc)
         if guard is None:
             return False
         if self._dist2d(npc.pos, guard.pos) <= REPORT_ARRIVE_RADIUS:
@@ -2745,10 +2769,10 @@ class MiniwindSession:
         candidates: List[List[float]] = []
         if isinstance(home, (list, tuple)) and len(home) == 3:
             candidates.append([home[0], npc.pos[1], home[2]])
-        guard = self._nearest_of(npc, lambda t: self._is_guard(t))
+        guard = self._nearest_guard(npc)
         if guard is not None:
             candidates.append([guard.pos[0], npc.pos[1], guard.pos[2]])
-        post = self._nearest_of(npc, lambda t: self._marker_kind(t) == "guardpost")
+        post = self._nearest_in(self._markers_of_kind("guardpost"), npc)
         if post is not None:
             candidates.append([post.pos[0], npc.pos[1], post.pos[2]])
 
@@ -2782,8 +2806,52 @@ class MiniwindSession:
             return ""
         return str(p.get("marker_kind", "")).lower()
 
+    def _markers_of_kind(self, kind: str) -> list:
+        """Markers with the given authored ``marker_kind``, grouped and cached.
+
+        Markers are static scenery: their kinds only change when the scene does.
+        Grouping them once turns "where is the nearest guard post" from a walk
+        of every entity in the world — re-normalising each one's type string —
+        into a lookup plus a short list, which matters because a panicking
+        townsperson asks it every decision pass.
+        """
+        markers = self._things_of_type("marker")
+        token = (id(markers), len(markers))
+        if token != self._marker_kinds_token:
+            groups: Dict[str, list] = {}
+            for m in markers:
+                k = str(m.properties.get("marker_kind", "")).lower()
+                groups.setdefault(k, []).append(m)
+            self._marker_kinds = groups
+            self._marker_kinds_token = token
+        return self._marker_kinds.get(kind, ())
+
+    @staticmethod
+    def _nearest_in(pool, npc):
+        """Nearest thing in *pool* (2D XZ), excluding *npc* itself."""
+        best, best_d = None, float("inf")
+        npos = npc.pos
+        for t in pool:
+            if t is npc:
+                continue
+            dx = t.pos[0] - npos[0]
+            dz = t.pos[2] - npos[2]
+            d = dx * dx + dz * dz
+            if d < best_d:
+                best, best_d = t, d
+        return best
+
+    def _nearest_guard(self, npc):
+        """The nearest member of the watch, from the decision pass's snapshot."""
+        return self._nearest_in(self._guards, npc)
+
     def _nearest_of(self, npc, predicate):
-        """Nearest live thing (2D) satisfying *predicate*, excluding *npc*."""
+        """Nearest live thing (2D) satisfying *predicate*, excluding *npc*.
+
+        The general form, kept for callers with a one-off predicate. The two
+        that ran every decision pass — "nearest guard" and "nearest guard post"
+        — have their own indexed versions above and no longer come through here.
+        """
         best, best_d = None, float("inf")
         npos = npc.pos
         for t in getattr(self.logic, "things", None) or []:
@@ -2865,6 +2933,10 @@ class MiniwindSession:
         self._actors = actors
         self._dead_actors = dead
         self._fights = fights
+        # The watch, indexed once. A frightened villager looks for the nearest
+        # guard to shelter behind and a witness looks for one to report to, and
+        # both used to walk every entity in the scene to find one.
+        self._guards = [t for t in actors if self._is_guard(t)]
 
     def _fight_to_break_up(self, npc, radius: float):
         """Whom a guard should take on to stop a fight near him, or None.
@@ -2905,6 +2977,13 @@ class MiniwindSession:
                 continue                    # he is already in this one
             if first is player or second is player:
                 continue                    # the player's fights are the arrest flow's
+            # Distance first: a brawl across the settlement is not this guard's
+            # business, and finding that out with two subtractions is far
+            # cheaper than reasoning about who is lawful and whose faction is
+            # whose. With several guards on duty that reasoning was being redone
+            # for every fight in the world, per guard, every decision pass.
+            if _dist2(first) > best_d and _dist2(second) > best_d:
+                continue
             candidates = [a for a in (first, second)
                           if not sim_crime.is_lawful(a.properties)]
             if not candidates:
@@ -2920,17 +2999,20 @@ class MiniwindSession:
         return best
 
     # ------------------------------------------------- spatial relevance
-    def _tier_of(self, actor) -> int:
-        """This actor's simulation tier, from the engine's world index.
+    @staticmethod
+    def _tier_of(actor) -> int:
+        """This actor's simulation tier.
 
-        With no index behind the session (a headless unit test, or before the
-        first play tick) everything is TIER_NEAR — i.e. fully simulated, the
-        pre-LOD behaviour — so no test or tool silently loses simulation.
+        Read straight off the actor, where the world index stamped it during
+        this tick's rebuild: a single dict get, rather than hashing ``id(actor)``
+        into the index and indexing a NumPy array — which matters because the
+        tick asks this once or twice for every actor in the world.
+
+        An actor the index has not classified (a headless unit test, the very
+        first tick, LOD switched off) reads TIER_NEAR — fully simulated, the
+        pre-LOD behaviour — so nothing ever silently loses simulation.
         """
-        wi = self._world_index()
-        if wi is None:
-            return TIER_NEAR
-        return wi.tier_of(actor)
+        return actor.properties.get("_sim_tier", TIER_NEAR)
 
     def _world_index(self):
         """The engine's authoritative actor index, or None.
@@ -2941,10 +3023,18 @@ class MiniwindSession:
         session with a stub logic object, or the very first tick before the
         index has been built — the scalar scans below run exactly as they did
         before, so behaviour is identical either way.
+
+        Resolved once per tick and cached on the session: this is asked tens of
+        thousands of times a second, and a ``getattr`` chain per ask is real
+        money at settlement scale.
         """
+        wi = self._wi_cache
+        if wi is not None:
+            return wi
         wi = getattr(getattr(self, "logic", None), "world_index", None)
         if wi is None or getattr(wi, "n", 0) == 0:
             return None
+        self._wi_cache = wi
         return wi
 
     def _rel_mask(self, wi, my_faction, want):

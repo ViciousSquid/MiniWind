@@ -76,19 +76,44 @@ def _slug(text) -> str:
                    for ch in str(text)).strip("_")
 
 
+#: Where the computed key is cached on the actor's own properties. The key is
+#: derived from identity fields that do not change during a session (the UUID,
+#: failing that the name), so it is computed once per actor and read thereafter.
+_MEM_KEY_CACHE = "_mem_key"
+
+
 def mem_key(npc_props: Dict) -> str:
     """A stable per-NPC memory key.
 
     Prefers the entity's UUID (``properties['id']``) so two townsfolk who share
     a display name still remember the player separately; falls back to a slug of
-    the name / display name / role for hand-built fixtures with no id."""
+    the name / display name / role for hand-built fixtures with no id.
+
+    PERF: this is the identity every reactive-simulation pass files things
+    under, so it is asked for every actor several times per settlement tick —
+    and it used to rebuild the slug character by character each time. The answer
+    is cached on the properties dict it was derived from; call
+    :func:`forget_mem_key` if an actor is ever renamed at runtime.
+    """
     if not isinstance(npc_props, dict):
         return ""
+    cached = npc_props.get(_MEM_KEY_CACHE)
+    if cached is not None:
+        return cached
+    key = ""
     for field in ("id", "name", "display_name", "npc_role"):
         v = npc_props.get(field)
         if v:
-            return _slug(v)
-    return ""
+            key = _slug(v)
+            break
+    npc_props[_MEM_KEY_CACHE] = key
+    return key
+
+
+def forget_mem_key(npc_props: Dict) -> None:
+    """Drop a cached identity key after renaming or re-identifying an actor."""
+    if isinstance(npc_props, dict):
+        npc_props.pop(_MEM_KEY_CACHE, None)
 
 
 def _base(key: str) -> str:

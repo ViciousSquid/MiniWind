@@ -51,6 +51,12 @@ class RenderState:
         self.visible_brushes = []
         self.all_brushes = []
         self.visible_things = []
+        #: (min_x, min_z, max_x, max_z) — the XZ region this camera can actually
+        #: see, derived from the live view volume and the world's height slab
+        #: (engine/render_cull.py). The logic thread has already culled
+        #: visible_brushes/visible_things to it; the renderer reads it so its own
+        #: passes measure against the same region instead of re-deriving one.
+        self.camera_relevance_box = None
         
         # HUD / Gameplay
         self.collected_keys = set()
