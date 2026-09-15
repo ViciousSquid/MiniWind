@@ -2,7 +2,7 @@
 # <img src="https://github.com/user-attachments/assets/83dc0282-4d1f-4c2c-90f9-7fdd571cabc3f" width="200">
 
 
-# A small living fantasy RPG, built on Fio
+# A small living fantasy RPG, powered by [Fio](https://github.com/ViciousSquid/Fio)
 
 > # Early alpha work-in-progress
 
