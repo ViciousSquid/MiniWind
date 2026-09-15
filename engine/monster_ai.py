@@ -17,7 +17,7 @@ from engine import combat_loadout
 from engine.facing import face_heading
 from game.diceroll import DICE_TYPES
 from .constants import is_water_brush
-from .world_index import TIER_ACTIVE, TIER_DISTANT, TIER_DORMANT, TIER_NEAR
+from .spatial import TIER_ACTIVE, TIER_DISTANT, TIER_DORMANT, TIER_NEAR
 from .monster_constants import (
     MONSTER_SIGHT_RANGE,
     MONSTER_SHOOT_INTERVAL,
@@ -204,7 +204,7 @@ class MonsterAI:
         # lines, gravity settling and patrol stepping are pure waste — and they
         # are the per-actor costs that made this the most expensive thing in the
         # frame on a large world. The tier is read from the actor's own
-        # properties (stamped by LogicThread._rebuild_world_index) rather than
+        # properties (stamped by Fio Big World on cell crossings) rather than
         # from the index arrays, because the AI runs on its own thread: a dict
         # read races with nothing.
         #

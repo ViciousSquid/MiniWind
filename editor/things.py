@@ -1631,7 +1631,7 @@ class BigWorldSettings(Thing):
     large-world path: cell streaming, activation radii and the simulation-LOD
     band that follows them. A map without one loads and plays exactly as before,
     with the whole world resident. It holds *config only* — the behaviour lives
-    in :mod:`engine.world_streaming`.
+    in :mod:`plugins.bigworld.runtime`.
 
     The type string stays ``bigworldsettings`` because that is what existing map
     files on disk contain; it is a data format, not a code boundary.

@@ -24,11 +24,11 @@ from .threaded_game_state import ThreadedGameState, RenderState
 from .player import Player
 from .camera import Camera
 from .constants import is_water_brush, brush_aabb_bounds
-from .world_index import (WorldIndex, TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
-                          TIER_DORMANT, TIER_NEAR_RADIUS, TIER_ACTIVE_RADIUS)
-from .cells import CELL_SIZE as CULL_CELL_SIZE
-from .world_persistence import config_from_settings, find_settings_thing
-from .world_streaming import WorldStreamingSession
+from .world_index import WorldIndex
+from .spatial import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT, TIER_DORMANT,
+                      tier_of)
+from .spatial import CELL_SIZE as CULL_CELL_SIZE
+
 from .render_cull import (CAMERA_RENDER_CULL_DISTANCE,
                           CAMERA_RENDER_CULL_DISTANCE_SQ, visible_xz_bounds)
 
@@ -255,8 +255,11 @@ class LogicThread(threading.Thread):
         #: TIER_NEAR). Exposed for the debug console and for tests that want
         #: the pre-LOD behaviour.
         self.sim_lod_enabled = True
-        self.sim_near_radius = TIER_NEAR_RADIUS
-        self.sim_active_radius = TIER_ACTIVE_RADIUS
+        # Defaults for a map with no Big World session. When there is one it
+        # publishes its own, so there is exactly one answer to "how far out is
+        # the world live" (§13).
+        self.sim_near_radius = 1024.0
+        self.sim_active_radius = 2048.0
         #: Actor count below which relevance is not worth computing (see
         #: SIM_LOD_MIN_ACTORS). Settable so a crowded map, a profiling run or a
         #: test can move the crossover.
@@ -1082,9 +1085,9 @@ class LogicThread(threading.Thread):
             # Clear spatial grid
             # Simulation LOD radii are per-session (a streaming map overrides
             # the outer band on play start), so reset them with the session.
-            self.sim_near_radius = TIER_NEAR_RADIUS
-            self.sim_active_radius = TIER_ACTIVE_RADIUS
-            self.world_index.rebuild([], None)
+            self.sim_near_radius = 1024.0
+            self.sim_active_radius = 2048.0
+            self.world_index.rebuild(())
             self.monster_ai.set_spatial_grid(None)
             if hasattr(self, '_spatial_grid'):
                 self._spatial_grid.clear()
@@ -1211,64 +1214,40 @@ class LogicThread(threading.Thread):
             return False, f"Load failed: {exc}"
 
     def _start_world_streaming(self):
-        """Start cell streaming if this map opted into it.
+        """Hand play-start to Fio's Big World plugin.
 
-        The map opts in by carrying a ``BigWorldSettings`` entity; its radii
-        drive both which cells are resident *and* the simulation-LOD band, so
-        streaming and simulation can never disagree about how far out the world
-        is live. A map without one leaves ``self.streaming`` as None and behaves
-        exactly as it always did.
+        MiniWind does not decide whether a map streams, how it opts in, which
+        session type it gets or how it fails back — that is the plugin's
+        lifecycle, and it is the same code Fio itself runs. Calling it here
+        rather than dispatching through the plugin bus keeps streaming a
+        directly-driven service (MiniWind ticks it itself, below) without
+        forking a second copy of the decision.
+
+        ``self.streaming`` is the name MiniWind's call sites already use; it is
+        the session the plugin built, not a wrapper around one.
         """
-        self.streaming = None
-        settings = find_settings_thing(self.things)
-        if settings is None:
-            return
-        cfg = config_from_settings(settings)
-        if not cfg["enabled"]:
-            return
-        session = None
-        if cfg.get("disk_streaming"):
-            # Disk streaming genuinely frees unloaded cells and re-streams them
-            # from a pristine partition of the map. Fails safe to the in-RAM
-            # session if anything about the map defeats it.
-            try:
-                from .world_streaming_disk import (DiskStreamingSession,
-                                                   MemoryCellSource)
-                source = MemoryCellSource.from_logic(self)
-                session = DiskStreamingSession(
-                    self, source,
-                    load_radius=cfg["activation_radius"],
-                    evict_radius=cfg["deactivation_radius"])
-                session.start()
-            except Exception:
-                import traceback
-                debug_log("Streaming",
-                          "disk streaming failed, falling back to in-RAM:\n"
-                          + traceback.format_exc())
-                session = None
-        if session is None:
-            session = WorldStreamingSession(
-                self,
-                activation_radius=cfg["activation_radius"],
-                deactivation_radius=cfg["deactivation_radius"],
-                terrain_fill=cfg["terrain_fill"],
-                terrain_infinite=cfg["terrain_infinite"],
-                terrain_stream_radius=cfg["terrain_stream_radius"])
-            session.start()
-        session.show_cell_debug = cfg["show_cell_debug"]
-        self.streaming = session
+        from plugins.bigworld import PLUGIN as _BIGWORLD
+        try:
+            _BIGWORLD.on_play_start(self)
+        except Exception:
+            import traceback
+            debug_log("Streaming",
+                      "Big World start failed; running unstreamed:\n"
+                      + traceback.format_exc())
+            self._bigworld = None
+        self.streaming = getattr(self, "_bigworld", None)
 
     def _stop_world_streaming(self):
-        """Tear the streaming session down, restoring the world exactly."""
-        session = self.streaming
-        if session is not None:
-            try:
-                session.stop()
-            except Exception:
-                import traceback
-                debug_log("Streaming",
-                          "error stopping streaming session:\n" + traceback.format_exc())
-            self.streaming = None
+        """Tear the session down through the plugin, restoring the world exactly."""
+        try:
+            from plugins.bigworld import PLUGIN as _BIGWORLD
+            _BIGWORLD.on_play_stop(self)
+        except Exception:
+            import traceback
+            debug_log("Streaming",
+                      "error stopping streaming session:\n" + traceback.format_exc())
+        self._bigworld = None
+        self.streaming = None
 
     def _start_monster_ai(self):
         """Start the monster AI processing thread."""
@@ -1705,9 +1684,7 @@ class LogicThread(threading.Thread):
         live = []
         for a in all_actors:
             props = a.properties
-            if props.get('hidden') or props.get('disabled'):
-                props['_sim_tier'] = TIER_DORMANT
-            else:
+            if not (props.get('hidden') or props.get('disabled')):
                 live.append(a)
         self._live_actors_cache = live
         self._live_actors_epoch = self._visibility_epoch
@@ -1715,48 +1692,27 @@ class LogicThread(threading.Thread):
         return live
 
     def _rebuild_world_index(self):
-        """Refresh the authoritative actor index + simulation tiers.
+        """Refresh MiniWind's actor index for this tick.
 
-        Cheap and unconditional: one Python pass to fill the reusable position
-        buffers, then the distance/tier classification for every actor at once.
-        The focus point is the player (the camera in a cinematic, since that is
-        what the viewer can actually observe). With LOD disabled, or with no
-        focus, every loaded actor classifies as TIER_NEAR — i.e. exactly the
-        pre-LOD behaviour, which is what the editor and headless tests want.
+        A snapshot, not a classification. Simulation tiers are Fio's answer now:
+        Big World assigns them to cells on the crossings that already recompute
+        residency and stamps the entities of the cells whose band changed, so
+        the cost is proportional to how far the player moved rather than to the
+        size of the cast. This fills the position/team/liveness buffers the
+        gameplay layer's perception and combat queries run over, and reads the
+        tier through :func:`engine.spatial.tier_of` when it needs one.
+
+        Below ``sim_lod_min_actors`` the index is left empty: at settlement
+        scale (a dozen or two townsfolk) building it costs more than the
+        short-list walks it replaces, and the gameplay layer takes its scalar
+        route. That is a decision about *this index*, not about tiers — the Big
+        World stamps stand either way, so nothing here adds or removes one.
         """
         actors = self._live_actors()
-        # The crossover is about the size of the *cast*, not of whatever
-        # survives streaming: a world of a thousand actors with six of them
-        # loaded is precisely the case relevance exists for, and reading its
-        # empty live set as "too small to bother" would hand the gameplay layer
-        # the whole population again through its scalar fallbacks.
         if len(getattr(self, '_monster_things', None) or ()) < self.sim_lod_min_actors:
-            # Too few actors for relevance to be worth computing: simulating all
-            # of them costs less than sorting them into tiers. Measured, not
-            # assumed — at settlement scale (a dozen or two townsfolk) the index
-            # rebuild is a larger cost than everything it would save, while the
-            # scalar paths it replaces are short-list walks. So the index stays
-            # empty, every actor reads TIER_NEAR, and the gameplay layer takes
-            # the same scalar route it always did.
-            if self._sim_lod_stamped:
-                for a in actors:
-                    a.properties.pop('_sim_tier', None)
-                self._sim_lod_stamped = False
-            self.world_index.rebuild((), None)
+            self.world_index.rebuild(())
             return
-        self._sim_lod_stamped = True
-        focus = None
-        if self.sim_lod_enabled:
-            cs = self.cinematic_state
-            if cs and 'cam_pos' in cs:
-                cp = cs['cam_pos']
-                focus = (float(cp[0]), float(cp[2]))
-            elif self.player is not None:
-                p = self.player.pos
-                focus = (float(p[0]), float(p[2]))
-        self.world_index.rebuild(actors, focus,
-                                 near_radius=self.sim_near_radius,
-                                 active_radius=self.sim_active_radius)
+        self.world_index.rebuild(actors)
 
     def _tick_play_mode(self, delta):
         if not self.player:

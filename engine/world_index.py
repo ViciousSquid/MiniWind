@@ -1,39 +1,55 @@
 """
-The engine's authoritative spatial index of the world's *actors*.
+MiniWind's actor index: vectorised "who is near whom" for the gameplay layer.
 
-Fio already owns one authoritative index of static geometry —
-:class:`engine.physics.SpatialGrid`, 512-unit XZ cells, ``floor(coord/cell)``.
-It never had an equivalent for the things that move, so every system that
-needed to know "who is near whom" grew its own answer:
+This is a **game-side acceleration structure**, not world infrastructure. The
+question it answers — *which live, hostile, non-corpse actor is nearest this
+one?* — is combat and perception policy, and the state it answers from (team,
+faction, liveness, corpse-hood) is MiniWind's. None of it belongs in Fio, and
+none of it is upstreamed.
 
-* :meth:`engine.monster_ai.MonsterAI._build_ai_snapshot` binned actors into a
-  private 1024-unit hash, once per AI tick;
-* ``game.runtime.MiniwindSession`` walked its whole actor list per NPC per
-  decision pass (an O(N^2) scan that dominated the settlement profile);
-* the world streamer indexed the same objects again into its own 512-unit
-  cells to decide what to stream;
-* ``LogicThread._prepare_render_state`` decided visibility from a fourth pass.
+What it no longer does
+----------------------
+It used to classify simulation tiers as well, once per logic tick, by measuring
+every live actor's distance from the player. That is the per-frame global scan a
+large persistent world cannot afford: its cost scales with the cast, not with
+what is near enough to matter.
 
-This module is the one place that question is answered. It is a **core engine
-service** (``LogicThread.world_index``), not a plugin: world-scale relevance is
-what the renderer, the AI, the gameplay layer and the streamer all consume, so
-it cannot live behind an optional abstraction.
+Tiers now come from Fio's Big World plugin, which assigns them to *cells* on the
+crossings that already recompute residency and stamps the entities of the cells
+whose band changed. So the work is proportional to how far the player moved, and
+this class simply *reads* the stamp:
 
-What it provides
-----------------
+.. code-block:: text
+
+    Big World cell residency  →  _sim_tier stamp  →  WorldIndex.tier_of()
+                                                  →  MiniWind scheduling
+
+:meth:`WorldIndex.rebuild` therefore takes no radii and computes no tiers. It
+snapshots positions, teams and liveness into reusable buffers, and reads the
+tier Fio already decided.
+
+A tier is cell-granular, so it is conservative by up to one cell. Where MiniWind
+wants a sharper line than that it draws its own, with :meth:`rows_near` — which
+is exactly the right division: Fio stops a million dormant objects from being
+considered, MiniWind decides the metre at which an NPC stops looking around.
+
+What it still provides
+----------------------
 * Contiguous NumPy arrays of every actor's position, team id and liveness,
   rebuilt in a single pass per logic tick into **reusable buffers** — no
   per-frame array construction and no Python/NumPy round-tripping per actor.
 * Vectorised radius queries (:meth:`WorldIndex.rows_near`,
-  :meth:`WorldIndex.nearest`) over 512-unit cell bins that share the spatial
-  grid's coordinate convention exactly, so an index cell and a grid cell cover
-  the same patch of world.
-* A **simulation LOD tier** per actor (:data:`TIER_NEAR` … :data:`TIER_DORMANT`),
-  derived from the radii the engine already uses, with hysteresis so an actor
-  loitering on a boundary does not flap between tiers.
+  :meth:`WorldIndex.nearest`) over 512-unit cell bins that share Fio's cell
+  convention exactly (:mod:`engine.spatial`), so an index cell and a Big World
+  cell cover the same patch of world.
+* Team-name interning and :meth:`team_relation_table`, so a faction predicate is
+  called once per distinct team rather than once per actor pair.
+* :meth:`derived`, so the game layer can memoise its own per-row classifications
+  for a tick.
 
 Callers hold row indices, never copies: :attr:`WorldIndex.actors` maps a row
-back to the live object. Nothing here mutates an actor.
+back to the live object. Nothing here mutates an actor except
+:meth:`mark_dead`.
 
 Dependency-light on purpose — NumPy only, no Qt/GL/glm — so it imports in the
 editor, the standalone player and headless tests alike.
@@ -46,37 +62,23 @@ from typing import Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 
-# One grid convention across the engine: the collision grid, this index, the
-# renderer's camera-region brush cull and the Big World streamer all address
-# cells through engine/cells.py, so cell (3, -2) means the same patch of ground
-# to every one of them.
-from .cells import CELL_SIZE
+# One grid convention across the engine: Fio's collision grid, Big World's cell
+# streaming, the renderer's region cull and this index all address cells through
+# engine/spatial.py, so cell (3, -2) means the same patch of ground to every one
+# of them. The tier names come from there too — Fio defines what a tier *means*;
+# what MiniWind does at each one is decided in game/runtime.py.
+from .spatial import (CELL_SIZE, PARKED_DISABLED_KEY, PARKED_HIDDEN_KEY,
+                      TIER_NEAR, tier_of as _stamped_tier)
 
-# --- Simulation LOD tiers ---------------------------------------------------
-#: Player vicinity. Full simulation: AI, perception, schedules, movement,
-#: combat, animation, needs, collision.
-TIER_NEAR = 0
-#: Near world. Reduced simulation: schedules and coarse movement, staggered
-#: decisions, no per-frame perception.
-TIER_ACTIVE = 1
-#: Distant world. No normal per-frame simulation — coarse time advancement and
-#: event-driven state changes only.
-TIER_DISTANT = 2
-#: Unloaded / streamed out. No simulation at all; state persists.
-TIER_DORMANT = 3
 
-#: Outer edge of :data:`TIER_NEAR`. ``MONSTER_SIGHT_RANGE`` — the radius inside
-#: which an actor can see the player or be seen by it, so anything that could
-#: interact this tick is fully simulated. Not an invented number: it is the
-#: engine's own perception range.
-TIER_NEAR_RADIUS = 1024.0
-#: Outer edge of :data:`TIER_ACTIVE`. Matches ``bigworld``'s default activation
-#: radius — the region the engine already considers streamed-in and live.
-TIER_ACTIVE_RADIUS = 2048.0
-#: Fraction of a tier radius an actor must travel *beyond* the boundary before
-#: it is demoted, mirroring the activation/deactivation hysteresis the streamer
-#: uses (2048 -> 2304). Stops an actor pacing a boundary from flapping tiers.
-TIER_HYSTERESIS = 0.125
+def _is_parked(props: dict) -> bool:
+    """Whether Big World has parked this actor — not whether it is hidden.
+
+    The engine's parking markers are what separate "the streamer put this away"
+    from "the mapper hid it" or "map logic disabled it". Only the first means
+    the actor is absent from the world.
+    """
+    return PARKED_HIDDEN_KEY in props or PARKED_DISABLED_KEY in props
 
 #: Below this many actors the cell bins cost more to build than they save, so
 #: radius queries run as one vectorised pass over every row instead. Measured,
@@ -104,54 +106,42 @@ class WorldIndex:
 
     __slots__ = (
         "cell_size", "actors", "n", "_cap",
-        "px", "pz", "py", "alive", "dead", "team_ids", "tiers", "dist2", "_scratch",
-        "team_names", "_team_of_name", "_bins", "_binned", "_prev_tiers",
-        "authoritative",
-        "_row_of", "_derived", "_focus",
+        "px", "pz", "py", "alive", "dead", "team_ids",
+        "team_names", "_team_of_name", "_bins", "_binned",
+        "_row_of", "_derived", "authoritative",
     )
 
     def __init__(self, cell_size: float = CELL_SIZE):
         self.cell_size = float(cell_size)
         self.actors: List = []
         self.n = 0
-        #: Whether this index actually classified a world this tick. False means
-        #: "no relevance information" — no focus point (the editor, a headless
-        #: test) or the engine deliberately skipped classification for a cast
-        #: too small to be worth it. Consumers must fall back to their scalar
-        #: paths in that case; they must NOT read an empty index as "nothing is
-        #: relevant", because an *authoritative* empty index means exactly that
-        #: and the two are opposite answers.
-        self.authoritative = False
+        #: Kept for callers that ask whether relevance information exists.
+        #: It always does now: Big World stamps a tier on every entity it
+        #: streams, and an entity nobody stamped reads TIER_NEAR, so "no rows"
+        #: means *nothing is nearby* rather than *we do not know*. The old
+        #: "there was no focus point this tick" case cannot arise — this index
+        #: no longer takes one.
+        self.authoritative = True
         self._cap = 0
-        # Reusable coordinate/state buffers, grown geometrically and sliced to
-        # ``n`` — a steady-state tick allocates nothing here.
         self.px = np.empty(0, dtype=np.float64)
         self.py = np.empty(0, dtype=np.float64)
         self.pz = np.empty(0, dtype=np.float64)
         self.alive = np.empty(0, dtype=bool)
         #: Per-row "this actor is a corpse" flag. Distinct from ``not alive``,
-        #: which also covers hidden/streamed-out actors — a body still on the
-        #: ground is something the living can see and react to.
+        #: which also covers an actor the streamer has parked: a corpse is
+        #: lootable and targetable-by-some-systems, a parked actor is not there.
         self.dead = np.empty(0, dtype=bool)
         self.team_ids = np.empty(0, dtype=np.int32)
-        self.tiers = np.empty(0, dtype=np.int8)
-        self.dist2 = np.empty(0, dtype=np.float64)
-        self._scratch = np.empty(0, dtype=np.float64)
         #: Distinct team strings in scene order; ``team_ids`` indexes into it.
         self.team_names: List[str] = []
         self._team_of_name: Dict[str, int] = {}
         self._bins: Dict[tuple, np.ndarray] = {}
         self._binned = False
-        #: Last tick's tiers, so only actual transitions are written back onto
-        #: the actors. None until the first classification, and dropped whenever
-        #: the actor list changes shape.
-        self._prev_tiers: Optional[np.ndarray] = None
         #: ``id(actor) -> row``, built on first use. Most ticks only move
         #: actors and never ask, so building it in every rebuild was a dict of
         #: N entries per tick that nothing read.
         self._row_of: Optional[Dict[int, int]] = None
         self._derived: Dict[str, np.ndarray] = {}
-        self._focus = (0.0, 0.0)
 
     # ------------------------------------------------------------------
     # Build
@@ -167,33 +157,23 @@ class WorldIndex:
         self.alive = np.empty(cap, dtype=bool)
         self.dead = np.empty(cap, dtype=bool)
         self.team_ids = np.empty(cap, dtype=np.int32)
-        self.tiers = np.empty(cap, dtype=np.int8)
-        self.dist2 = np.empty(cap, dtype=np.float64)
-        self._scratch = np.empty(cap, dtype=np.float64)
         self._cap = cap
 
-    def rebuild(self, actors: Sequence, focus_xz=None,
-                near_radius: float = TIER_NEAR_RADIUS,
-                active_radius: float = TIER_ACTIVE_RADIUS) -> None:
-        """Snapshot *actors* into the index and classify their sim tiers.
+    def rebuild(self, actors: Sequence) -> None:
+        """Snapshot *actors* into the index for this tick.
 
-        *focus_xz* is the point relevance is measured from — the player, or the
-        camera when there is no player. ``None`` leaves every loaded actor at
-        :data:`TIER_NEAR` (the safe answer: full simulation), which is what a
-        headless test or an editor preview wants.
+        One Python pass over the actor list fills the coordinate, team and
+        liveness buffers. Positions are frozen here, so every consumer in a tick
+        agrees about where everyone is.
 
-        One Python pass over the actor list fills the coordinate buffers; the
-        tier classification, distances and cell keys are then computed for the
-        whole batch at once.
+        No radii, no focus point and no tier classification: relevance is
+        decided by Big World on cell crossings and read back through
+        :meth:`tier_of`. An actor the streamer has parked is not alive for query
+        purposes — it is not in the world right now — which is read from the
+        engine's parking markers rather than from ``hidden``/``disabled``, so a
+        mapper-hidden actor is not mistaken for a parked one.
         """
-        self.authoritative = focus_xz is not None
         n = len(actors)
-        if self._prev_tiers is not None and (n != self._prev_tiers.shape[0]
-                                             or actors is not self.actors):
-            # A different actor list (or a different length) means row i is no
-            # longer the same actor: last tick's tiers cannot be compared to
-            # this tick's, so stamp them all.
-            self._prev_tiers = None
         self.actors = actors
         self.n = n
         self._bins = {}
@@ -207,7 +187,6 @@ class WorldIndex:
         alive, dead, team_ids = self.alive, self.dead, self.team_ids
         team_of_name = self._team_of_name
         team_names = self.team_names
-        dormant = []
         for i in range(n):
             a = actors[i]
             p = a.pos
@@ -216,13 +195,9 @@ class WorldIndex:
             pz[i] = p[2]
             props = a.properties
             is_dead = bool(props.get("dead"))
-            # An actor the streamer parked (`disabled`) or the map hid is not
-            # part of the live world at all — dormant, whatever its distance.
-            parked = bool(props.get("hidden") or props.get("disabled"))
+            parked = _is_parked(props)
             dead[i] = is_dead
             alive[i] = not (is_dead or parked)
-            if parked:
-                dormant.append(i)
             team = props.get("team") or props.get("faction") or ""
             tid = team_of_name.get(team)
             if tid is None:
@@ -230,79 +205,6 @@ class WorldIndex:
                 team_names.append(team)
                 team_of_name[team] = tid
             team_ids[i] = tid
-
-        d2 = self.dist2[:n]
-        if focus_xz is None:
-            d2[:] = 0.0
-            self.tiers[:n] = TIER_NEAR
-            self._focus = (0.0, 0.0)
-            for i in dormant:
-                self.tiers[i] = TIER_DORMANT
-            for i in range(n):
-                actors[i].properties["_sim_tier"] = int(self.tiers[i])
-            return
-        else:
-            fx = float(focus_xz[0])
-            fz = float(focus_xz[1])
-            self._focus = (fx, fz)
-            # d2 = (px-fx)^2 + (pz-fz)^2, computed in place on the reusable
-            # buffer so no temporary array is allocated per tick.
-            np.subtract(px[:n], fx, out=d2)
-            np.multiply(d2, d2, out=d2)
-            tmp = self._scratch[:n]
-            np.subtract(pz[:n], fz, out=tmp)
-            np.multiply(tmp, tmp, out=tmp)
-            np.add(d2, tmp, out=d2)
-            self._classify(n, d2, actors, dormant,
-                           float(near_radius), float(active_radius))
-
-    def _classify(self, n: int, d2: np.ndarray, actors: Sequence,
-                  dormant: Sequence[int],
-                  near_radius: float, active_radius: float) -> None:
-        """Fill ``tiers[:n]`` from squared distance, with hysteresis.
-
-        Promotion uses the plain radius; demotion needs the actor to be a
-        :data:`TIER_HYSTERESIS` band beyond it. The previous tier lives on the
-        actor (``_sim_tier``) so it survives an index rebuild, and a boundary
-        loiterer stays put instead of re-planning every tick.
-
-        *dormant* holds the rows the streamer has parked. They are forced to
-        :data:`TIER_DORMANT` **before** the tier is stamped onto the actors, so
-        the AI (which reads the stamp, not the array) sees the same answer the
-        index does.
-        """
-        tiers = self.tiers
-        near2 = near_radius * near_radius
-        act2 = active_radius * active_radius
-        h = 1.0 + TIER_HYSTERESIS
-        near_out2 = near2 * h * h
-        act_out2 = act2 * h * h
-        # Batch the three bands, then fix up only the rows sitting inside a
-        # hysteresis band — normally a handful, so the Python touch-up is tiny.
-        raw = np.where(d2 <= near2, TIER_NEAR,
-                       np.where(d2 <= act2, TIER_ACTIVE, TIER_DISTANT))
-        tiers[:n] = raw
-        band = np.nonzero(((d2 > near2) & (d2 <= near_out2)) |
-                          ((d2 > act2) & (d2 <= act_out2)))[0]
-        for i in band:
-            prev = actors[i].properties.get("_sim_tier")
-            if prev is not None and prev < tiers[i]:
-                tiers[i] = prev
-        for i in dormant:
-            tiers[i] = TIER_DORMANT
-        # Stamp the tier onto the actors — this is how the AI thread reads it
-        # without touching these arrays across threads. Only the rows that
-        # actually changed are written: in a settled world almost nobody changes
-        # tier in a given tick, so this is a handful of dict writes rather than
-        # one per actor per tick.
-        prev = self._prev_tiers
-        if prev is None or prev.shape[0] < n:
-            for i in range(n):
-                actors[i].properties["_sim_tier"] = int(tiers[i])
-        else:
-            for i in np.nonzero(prev[:n] != tiers[:n])[0].tolist():
-                actors[i].properties["_sim_tier"] = int(tiers[i])
-        self._prev_tiers = tiers[:n].copy()
 
     # ------------------------------------------------------------------
     # Bins
@@ -457,16 +359,14 @@ class WorldIndex:
         return self._rows().get(id(actor), -1)
 
     def tier_of(self, actor) -> int:
-        """The simulation tier of *actor*.
+        """The simulation tier Big World gave *actor*.
 
-        Falls back to the tier stamped on the actor (then :data:`TIER_NEAR`)
-        when it is not in the current index, so a caller never accidentally
-        skips simulating something the index has not seen yet.
+        Read straight off the actor, not out of a local array: the stamp is the
+        contract, it survives a rebuild, and an actor nobody has stamped reads
+        :data:`~engine.spatial.TIER_NEAR` — full simulation, which is what an
+        ordinary map, the editor and a headless test all want.
         """
-        row = self._rows().get(id(actor), -1)
-        if row < 0:
-            return int(actor.properties.get("_sim_tier", TIER_NEAR))
-        return int(self.tiers[row])
+        return _stamped_tier(actor, TIER_NEAR)
 
     def mark_dead(self, actor) -> None:
         """Flag *actor* not-alive in this tick's snapshot.
@@ -480,14 +380,24 @@ class WorldIndex:
             self.dead[row] = True
 
     def rows_of_tier(self, tier: int) -> np.ndarray:
-        """Rows whose simulation tier is exactly *tier*."""
-        if self.n == 0:
+        """Rows whose simulation tier is exactly *tier*.
+
+        Built from the stamps on demand rather than kept as a column: tiers
+        change on cell crossings, not per tick, so most ticks would maintain a
+        column nothing reads.
+        """
+        n = self.n
+        if n == 0:
             return _NO_ROWS
-        return np.nonzero(self.tiers[:self.n] == tier)[0]
+        actors = self.actors
+        return np.fromiter(
+            (i for i in range(n) if _stamped_tier(actors[i], TIER_NEAR) == tier),
+            dtype=np.intp)
 
     def counts_by_tier(self) -> Dict[int, int]:
         """``{tier: count}`` — the numbers a perf overlay wants."""
-        if self.n == 0:
-            return {}
-        vals, counts = np.unique(self.tiers[:self.n], return_counts=True)
-        return {int(v): int(c) for v, c in zip(vals, counts)}
+        counts: Dict[int, int] = {}
+        for a in self.actors[:self.n]:
+            t = _stamped_tier(a, TIER_NEAR)
+            counts[t] = counts.get(t, 0) + 1
+        return counts

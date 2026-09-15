@@ -1,4 +1,10 @@
 """
+NOTE: the simulation-tier classification tests that used to live here have moved
+to ``plugins/bigworld/tests/test_bigworld_tiers.py`` along with the classifier
+itself. Tiers are Fio's answer now, assigned to cells on residency crossings;
+what remains here is MiniWind's own render-state, visibility and actor-index
+behaviour.
+
 Simulation LOD and camera-region culling, end to end through a live LogicThread.
 
 The rule this pins down: *the engine must not spend CPU simulating, preparing or
@@ -32,8 +38,14 @@ import pytest
 
 from engine.render_cull import CAMERA_RENDER_CULL_DISTANCE
 from engine.threaded_game_state import ThreadedGameState
-from engine.world_index import (TIER_ACTIVE, TIER_ACTIVE_RADIUS, TIER_DISTANT,
-                                TIER_DORMANT, TIER_NEAR, TIER_NEAR_RADIUS)
+from engine.spatial import (TIER_ACTIVE, TIER_DISTANT, TIER_DORMANT, TIER_NEAR,
+                            tier_of)
+
+# The tier radii used to live in this repo's own classifier. They are Big
+# World's configuration now; these are the engine defaults the tests below
+# measure against.
+TIER_NEAR_RADIUS = 1024.0
+TIER_ACTIVE_RADIUS = 2048.0
 
 try:
     from editor.things import Monster
@@ -101,23 +113,33 @@ def _logic(things=(), brushes=()):
 
 # --- tiering through a real session ---------------------------------------
 
-def test_a_play_tick_tiers_every_actor_by_distance_from_the_player():
-    near = _monster("near", TIER_NEAR_RADIUS * 0.5, 0)
-    active = _monster("active", (TIER_NEAR_RADIUS + TIER_ACTIVE_RADIUS) * 0.5, 0)
-    far = _monster("far", TIER_ACTIVE_RADIUS * 5, 0)
-    lt = _logic([near, active, far])
+def _render_things(lt):
     lt._rebuild_world_index()
-    assert lt.world_index.tier_of(near) == TIER_NEAR
-    assert lt.world_index.tier_of(active) == TIER_ACTIVE
-    assert lt.world_index.tier_of(far) == TIER_DISTANT
-    # The tier is also stamped on the actor, which is how the AI thread reads it
-    # without touching the index's arrays across threads.
-    assert far.properties["_sim_tier"] == TIER_DISTANT
+    lt._prepare_render_state()
+    return lt.game_state.get_write_state()
+
+
+def _light(x, z, radius=512.0, casts=False, name=None):
+    from editor.things import Light
+    l = Light()
+    l.pos = [float(x), 128.0, float(z)]
+    l.properties.update({"id": name or f"l{x}_{z}_{radius:.0f}",
+                         "radius": float(radius),
+                         "state": "on", "casts_shadows": casts})
+    return l
 
 
 def test_the_combat_ai_only_touches_actors_in_the_players_vicinity():
+    """MiniWind's side of the tier contract: the AI honours the stamp.
+
+    Who *gets* which tier is Big World's decision and is tested upstream. What
+    belongs here is that the combat AI reads the stamp and acts on it -- so the
+    tiers are set directly, exactly as a streaming session would set them.
+    """
     near = _monster("near", 200, 0)
     far = _monster("far", TIER_ACTIVE_RADIUS * 6, 0)
+    near.properties["_sim_tier"] = TIER_NEAR
+    far.properties["_sim_tier"] = TIER_DISTANT
     lt = _logic([near, far])
     lt._rebuild_world_index()
     lt.monster_ai.update(1.0 / 30.0)
@@ -126,22 +148,20 @@ def test_the_combat_ai_only_touches_actors_in_the_players_vicinity():
     assert id(far) not in seen
 
 
-def test_switching_lod_off_restores_the_pre_lod_behaviour():
+def test_an_unstreamed_map_simulates_everything():
+    """No Big World session means no stamps, and no stamps means full fidelity.
+
+    The safe direction, and the one that keeps an ordinary map behaving exactly
+    as it did before any of this existed.
+    """
+    near = _monster("near", 200, 0)
     far = _monster("far", TIER_ACTIVE_RADIUS * 6, 0)
-    lt = _logic([far])
-    lt.sim_lod_enabled = False
+    lt = _logic([near, far])
     lt._rebuild_world_index()
-    assert lt.world_index.tier_of(far) == TIER_NEAR
+    assert tier_of(far) == TIER_NEAR
     lt.monster_ai.update(1.0 / 30.0)
-    assert id(far) in {id(t) for t in lt.monster_ai._active_buf}
-
-
-# --- render-state culling --------------------------------------------------
-
-def _render_things(lt):
-    lt._rebuild_world_index()
-    lt._prepare_render_state()
-    return lt.game_state.get_write_state()
+    seen = {id(t) for t in lt.monster_ai._active_buf}
+    assert id(near) in seen and id(far) in seen
 
 
 def test_only_actors_the_camera_can_reach_are_snapshotted():
@@ -209,46 +229,6 @@ def test_a_moving_door_keeps_a_fresh_snapshot_in_the_cached_world_list():
     assert snap["pos"][1] == pytest.approx(128.0)
 
 
-def test_a_streamed_out_actor_is_dormant_and_never_simulated():
-    parked = _monster("parked", 100, 0)
-    parked.properties["disabled"] = True
-    lt = _logic([parked])
-    lt._rebuild_world_index()
-    assert lt.world_index.tier_of(parked) == TIER_DORMANT
-    lt.monster_ai.update(1.0 / 30.0)
-    assert id(parked) not in {id(t) for t in lt.monster_ai._active_buf}
-
-
-# --- streaming as a core engine subsystem ---------------------------------
-
-def test_a_map_with_a_settings_entity_streams_without_any_plugin():
-    """The whole point of the move: the logic thread owns the streaming session
-    and drives it from its own tick — no plugin discovery, no per-frame plugin
-    dispatch, no `getattr` probing between the engine and its world manager."""
-    from editor.things import BigWorldSettings
-
-    settings = BigWorldSettings()
-    settings.properties.update({"id": "bw", "enabled": True,
-                                "activation_radius": 1024.0,
-                                "deactivation_radius": 1024.0,
-                                "show_cell_debug": False})
-    near = _brush(0, 0)
-    far = _brush(40000, 0)
-    lt = _logic([settings], [near, far])
-    lt.set_play_mode(True)
-    try:
-        assert lt.streaming is not None, "the map opted in, so a session exists"
-        assert not near.get("hidden", False), "local geometry stays live"
-        assert far.get("hidden", False), "distant geometry is parked"
-        # Streaming's radius is now the simulation-LOD outer band too: one
-        # answer to 'how far out is the world live'.
-        assert lt.sim_active_radius == 1024.0
-    finally:
-        lt.set_play_mode(False)
-    assert lt.streaming is None
-    assert not far.get("hidden", False), "play stop restores the world exactly"
-
-
 def test_a_map_without_a_settings_entity_never_pays_for_streaming():
     b = _brush(40000, 0)
     lt = _logic([], [b])
@@ -258,39 +238,6 @@ def test_a_map_without_a_settings_entity_never_pays_for_streaming():
         assert not b.get("hidden", False)
     finally:
         lt.set_play_mode(False)
-
-
-def test_a_parked_entity_is_dormant_so_streaming_and_simulation_agree():
-    """Streaming decides what is loaded; the world index decides the tier. The
-    link between them is the `disabled` flag, not a second distance test."""
-    from editor.things import BigWorldSettings
-
-    settings = BigWorldSettings()
-    settings.properties.update({"id": "bw", "enabled": True,
-                                "activation_radius": 1024.0,
-                                "deactivation_radius": 1024.0,
-                                "show_cell_debug": False})
-    far_actor = _monster("far", 40000, 0)
-    lt = _logic([settings, far_actor], [_brush(0, 0)])
-    lt.set_play_mode(True)
-    try:
-        assert far_actor.properties.get("disabled") is True
-        lt._rebuild_world_index()
-        assert lt.world_index.tier_of(far_actor) == TIER_DORMANT
-    finally:
-        lt.set_play_mode(False)
-
-
-# --- lights and the shadow pass -------------------------------------------
-
-def _light(x, z, radius=512.0, casts=False, name=None):
-    from editor.things import Light
-    l = Light()
-    l.pos = [float(x), 128.0, float(z)]
-    l.properties.update({"id": name or f"l{x}_{z}_{radius:.0f}",
-                         "radius": float(radius),
-                         "state": "on", "casts_shadows": casts})
-    return l
 
 
 def test_a_light_survives_exactly_as_far_as_it_reaches():
@@ -350,39 +297,6 @@ def test_a_tiny_cast_is_simulated_whole_rather_than_classified():
         "with no tiers, everything is simulated — the pre-LOD behaviour"
 
 
-def test_falling_below_the_crossover_clears_stale_tier_stamps():
-    """A stamp left over from a larger scene would silently stop an actor being
-    simulated, so switching to the whole-cast path must wipe them."""
-    a = _monster("a", 0, 0)
-    far = _monster("far", TIER_ACTIVE_RADIUS * 8, 0)
-    lt = _logic([a, far], [_brush(0, 0)])
-    lt._rebuild_world_index()
-    assert far.properties["_sim_tier"] == TIER_DISTANT
-    lt.sim_lod_min_actors = 100                     # scene is now "tiny"
-    lt._rebuild_world_index()
-    assert "_sim_tier" not in far.properties
-
-
-# --- dormant costs nothing at all -----------------------------------------
-
-def test_a_parked_actor_is_not_even_classified():
-    """TIER_DORMANT means no work, and that has to include the work of
-    deciding it is dormant. On a streamed world almost every actor is parked, so
-    re-reading a thousand positions per tick to conclude "still dormant" is
-    exactly the cost streaming exists to avoid."""
-    here = _monster("here", 100, 0)
-    parked = _monster("parked", 200, 0)
-    parked.properties["disabled"] = True
-    lt = _logic([here, parked], [_brush(0, 0)])
-    lt._rebuild_world_index()
-    assert lt.world_index.n == 1, "only the live actor holds a row"
-    assert lt.world_index.actors[0] is here
-    # …and the parked one still answers correctly for every consumer.
-    assert parked.properties["_sim_tier"] == TIER_DORMANT
-    lt.monster_ai.update(1.0 / 30.0)
-    assert id(parked) not in {id(t) for t in lt.monster_ai._active_buf}
-
-
 def test_unparking_an_actor_brings_it_back_on_the_next_frame():
     """The partition is cached, so whatever unparks an actor has to say so —
     otherwise it would stand still until the periodic re-validation."""
@@ -428,17 +342,6 @@ def test_an_empty_live_set_is_not_read_as_no_information():
         "an empty index is still an answer: nothing is relevant"
 
 
-def test_an_index_with_no_focus_point_is_not_authoritative():
-    """No player, no relevance. Consumers must take their scalar paths rather
-    than read the index's 'everything is NEAR' as a classification."""
-    lt = _logic([_monster("a", 0, 0)], [_brush(0, 0)])
-    lt.sim_lod_enabled = False
-    lt._rebuild_world_index()
-    assert not lt.world_index.authoritative
-
-
-# --- the render state must build from every camera the engine has ----------
-
 def test_the_editor_camera_builds_a_render_state():
     """The regression: the relevance region is measured from the camera, and
     `cam_pos` was only ever bound on the play-mode branches — so the first frame
@@ -469,14 +372,3 @@ def test_play_mode_without_a_player_still_builds_a_render_state():
     assert lt.game_state.get_write_state().camera_relevance_box is not None
 
 
-def test_a_cinematic_camera_defines_the_relevance_region():
-    """During a cinematic the camera is somewhere else entirely, and what the
-    viewer can see is what matters — so the region follows the camera, not the
-    player standing off-screen."""
-    lt = _logic([_monster("a", 0, 0)], [_brush(0, 0)])
-    lt.cinematic_state = {"cam_pos": [8000.0, 400.0, 0.0], "cam_angle": 0.0,
-                          "cam_pitch": -1.2, "fov": 90.0}
-    lt._prepare_render_state()
-    box = lt.game_state.get_write_state().camera_relevance_box
-    assert box[0] <= 8000.0 <= box[2], "the region follows the cinematic camera"
-    assert box[2] < 20000.0

@@ -1,24 +1,20 @@
 """
-The engine's static world partition: :class:`WorldCellIndex`.
+:class:`BigWorldManager` — the cell manager at the heart of Big World.
 
-This is the authoritative index of *where everything in the world is*. It builds
-a UUID-addressed record of every brush, entity and light, groups them into the
-engine's shared 512-unit cells (:mod:`engine.cells` — the same cells the
-collision grid, the actor index and the renderer's region cull use), and answers
-the question the streaming system asks each time the player moves: *which cells
-are relevant, and what just entered or left that set?*
-
-It used to live in ``plugins/bigworld/manager.py``. Large-world operation is not
-optional behaviour layered on top of the engine — the renderer, the collision
-grid, the simulation scheduler and the save system all need to agree about which
-part of the world is live — so it is a core subsystem, owned and driven by
-:class:`~engine.logic_thread.LogicThread` rather than dispatched to per frame
-through a plugin.
+It builds a UUID-addressed index of the world's brushes, entities and lights,
+groups them into 512-unit cells (the same grid :class:`engine.physics.SpatialGrid`
+uses), and answers the only question the runtime asks each time the player
+moves: *which cells are active, and what just entered or left the active set?*
 
 Design constraints honoured here
 --------------------------------
-* **One partition, not several.** Cell coordinates and the multi-cell spanning
-  rule come from :mod:`engine.cells`. No BVH / octree / BSP, and no second grid.
+* **Reuse, don't replace.** Cell coordinates, the multi-cell spanning rule and
+  the radius query are the engine's, imported from :mod:`engine.spatial` — the
+  same module :class:`engine.physics.SpatialGrid` buckets collision brushes
+  with. There is no second grid here: the cell buckets below *are* an engine
+  :class:`~engine.spatial.CellIndex`, and this class adds only the streaming
+  lifecycle (state, activation, reference counting) on top of it. No BVH /
+  octree / BSP.
 * **Identity is the UUID, cells are metadata.** Every object is keyed by its
   stable UUID (``brush['id']`` / ``thing.properties['id']``). Streaming a cell
   in or out never changes an object's UUID, and a brush that spans several cells
@@ -28,20 +24,19 @@ Design constraints honoured here
   cells (and the objects in them) that entered or left the active region — never
   the whole world. Objects spanning several cells are reference-counted so a
   brush stays active while *any* active cell still references it.
-* **Dependency-light.** Plain Python only, so it runs in the editor, the
-  standalone player and headless tests alike. Lights and persistent globals are
-  recognised by their ``type`` string / a marker property, not by importing
+* **Dependency-light.** Plain Python only, so the manager runs in the editor,
+  the standalone player and headless tests alike. Lights and persistent globals
+  are recognised by their ``type`` string / a marker property, not by importing
   editor classes.
 """
 
 from __future__ import annotations
 
-import math
 from collections import Counter
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from .cells import (CELL_SIZE, CellCoord, cell_bounds, cell_distance_sq,
-                    cell_of_point, cells_for_aabb)
+from .cell import (CELL_SIZE, BigWorldCell, CellCoord, CellState,
+                   cell_of_point, cells_for_aabb, cells_within)
 
 #: Default radius (world units) of the player's active region.
 DEFAULT_ACTIVATION_RADIUS = 2048.0
@@ -65,97 +60,8 @@ def _normalise_type(type_name) -> str:
     return str(type_name or "").replace("_", "").lower()
 
 
-# ---------------------------------------------------------------------------
-# Streaming lifecycle
-# ---------------------------------------------------------------------------
-
-class CellState:
-    """The streaming lifecycle of a cell.
-
-    ``UNLOADED``  — the cell's contents are not in memory (a future disk-streaming
-                    milestone; for the in-RAM milestone a cell is loaded as soon
-                    as the world is indexed).
-    ``LOADING``   — contents are being brought in (async disk load; transient).
-    ``INACTIVE``  — loaded and stored, but outside the activation radius: it takes
-                    part in *no* runtime rendering, collision or entity ticking.
-    ``ACTIVE``    — inside the activation radius: submitted to the normal Fio
-                    render / physics / entity pipeline.
-    ``UNLOADING`` — being evicted from memory (async disk unload; transient).
-
-    The distinction that matters for the first milestone is **ACTIVE vs
-    INACTIVE**; the LOADING/UNLOADING states exist so true asynchronous disk
-    streaming can be layered on later without reshaping the runtime.
-    """
-
-    UNLOADED = "unloaded"
-    LOADING = "loading"
-    INACTIVE = "inactive"
-    ACTIVE = "active"
-    UNLOADING = "unloading"
-
-
-# ---------------------------------------------------------------------------
-# Cell
-# ---------------------------------------------------------------------------
-
-class WorldCell:
-    """One streamable 512x512 column of the world, addressed by ``(cell_x, cell_z)``.
-
-    A cell holds *references* to the world objects whose footprint touches it,
-    grouped by kind so the runtime can activate/deactivate rendering, collision,
-    entity ticking and lighting independently:
-
-    * ``brushes`` — static/geometry brush dicts (the same dicts the editor owns).
-    * ``things``  — gameplay entities (pickups, monsters, triggers, movers…).
-    * ``lights``  — light entities whose influence radius reaches this cell.
-
-    An object appears in every cell its footprint overlaps (a brush spanning a
-    cell boundary is referenced from each side) but is stored once in the
-    manager's UUID index, so its identity is never split or duplicated.
-    """
-
-    __slots__ = ("cell_x", "cell_z", "state", "brushes", "things", "lights")
-
-    def __init__(self, cell_x: int, cell_z: int):
-        self.cell_x = int(cell_x)
-        self.cell_z = int(cell_z)
-        self.state = CellState.INACTIVE
-        self.brushes: List[dict] = []
-        self.things: List = []
-        self.lights: List = []
-
-    @property
-    def key(self) -> CellCoord:
-        """The cell's integer address, the key it is stored under."""
-        return (self.cell_x, self.cell_z)
-
-    @property
-    def is_active(self) -> bool:
-        return self.state == CellState.ACTIVE
-
-    @property
-    def is_loaded(self) -> bool:
-        """True once the cell's contents are in memory (not UN/LOADING)."""
-        return self.state in (CellState.INACTIVE, CellState.ACTIVE)
-
-    def object_count(self) -> int:
-        return len(self.brushes) + len(self.things) + len(self.lights)
-
-    def bounds(self, cell_size: float = CELL_SIZE):
-        return cell_bounds(self.cell_x, self.cell_z, cell_size)
-
-    def clear(self) -> None:
-        self.brushes.clear()
-        self.things.clear()
-        self.lights.clear()
-
-    def __repr__(self) -> str:  # pragma: no cover - cosmetic
-        return (f"<WorldCell ({self.cell_x},{self.cell_z}) {self.state} "
-                f"b={len(self.brushes)} t={len(self.things)} l={len(self.lights)}>")
-
-
 class ActivationDelta:
-    """What one :meth:`WorldCellIndex.update` changed.
+    """What one :meth:`BigWorldManager.update` changed.
 
     ``changed`` is False when the player has not crossed a cell boundary (the
     overwhelmingly common per-frame case), in which case every list is empty and
@@ -190,8 +96,8 @@ class ActivationDelta:
                 f"light +{len(self.lights_entering)}/-{len(self.lights_leaving)}>")
 
 
-class WorldCellIndex:
-    """Indexes the world into cells and tracks which of them are active."""
+class BigWorldManager:
+    """Indexes a world into cells and streams the active set as the player moves."""
 
     def __init__(self, cell_size: float = CELL_SIZE,
                  activation_radius: float = DEFAULT_ACTIVATION_RADIUS,
@@ -206,8 +112,8 @@ class WorldCellIndex:
             _normalise_type(t) for t in (persistent_types or DEFAULT_PERSISTENT_TYPES)
         }
 
-        # (cell_x, cell_z) -> WorldCell
-        self.cells: Dict[CellCoord, WorldCell] = {}
+        # (cell_x, cell_z) -> BigWorldCell
+        self.cells: Dict[CellCoord, BigWorldCell] = {}
         # UUID -> object, the single source of identity for each kind.
         self._brush_by_id: Dict[str, dict] = {}
         self._thing_by_id: Dict[str, object] = {}
@@ -235,16 +141,30 @@ class WorldCellIndex:
 
     @staticmethod
     def brush_uuid(brush: dict) -> str:
-        """The persistent UUID of a brush (``brush['id']``)."""
-        return str(brush.get("id", ""))
+        """The identity a brush is streamed under.
+
+        Normally its persistent UUID (``brush['id']``). A brush that has not been
+        given one yet — a box drawn in the editor and not saved since — falls
+        back to a key derived from the live object, valid for this session only.
+        That is deliberate: :meth:`BigWorldSession.start` parks *every* brush, so
+        a brush this index refused to file could never be activated again and
+        would simply vanish from play. Streaming an unsaved brush under a
+        session-local key is right; losing it is not.
+        """
+        uuid = brush.get("id")
+        if uuid:
+            return str(uuid)
+        return "#%d" % id(brush)
 
     @staticmethod
     def thing_uuid(thing) -> str:
-        """The persistent UUID of an entity (``thing.properties['id']``)."""
+        """The identity an entity is streamed under (see :meth:`brush_uuid`)."""
         props = getattr(thing, "properties", None)
         if isinstance(props, dict):
-            return str(props.get("id", ""))
-        return ""
+            uuid = props.get("id")
+            if uuid:
+                return str(uuid)
+        return "#%d" % id(thing)
 
     def _is_light(self, thing) -> bool:
         return _normalise_type(getattr(thing, "properties", {}).get("type")) == "light"
@@ -259,10 +179,10 @@ class WorldCellIndex:
     # Build / index
     # ------------------------------------------------------------------
 
-    def _cell(self, coord: CellCoord) -> WorldCell:
+    def _cell(self, coord: CellCoord) -> BigWorldCell:
         cell = self.cells.get(coord)
         if cell is None:
-            cell = WorldCell(coord[0], coord[1])
+            cell = BigWorldCell(coord[0], coord[1])
             self.cells[coord] = cell
         return cell
 
@@ -297,8 +217,6 @@ class WorldCellIndex:
     def add_brush(self, brush: dict) -> None:
         """Index one brush into every cell its XZ footprint overlaps."""
         uuid = self.brush_uuid(brush)
-        if not uuid:
-            return  # untracked; the editor backfills IDs, so this is rare
         self._brush_by_id[uuid] = brush
         pos = brush.get("pos", (0.0, 0.0, 0.0))
         size = brush.get("size", (0.0, 0.0, 0.0))
@@ -329,23 +247,21 @@ class WorldCellIndex:
             return
 
         if self._is_light(thing):
-            if uuid:
-                self._light_by_id[uuid] = thing
+            self._light_by_id[uuid] = thing
             radius = float(getattr(thing, "properties", {}).get("radius", self.cell_size))
             min_x, max_x = pos[0] - radius, pos[0] + radius
             min_z, max_z = pos[2] - radius, pos[2] + radius
             for coord in cells_for_aabb(min_x, min_z, max_x, max_z, self.cell_size):
                 self._cell(coord).lights.append(thing)
         else:
-            if uuid:
-                self._thing_by_id[uuid] = thing
+            self._thing_by_id[uuid] = thing
             self._cell(cell_of_point(pos[0], pos[2], self.cell_size)).things.append(thing)
 
     # ------------------------------------------------------------------
     # Streaming API (state transitions; future disk streaming slots in here)
     # ------------------------------------------------------------------
 
-    def load_cell(self, cell_x: int, cell_z: int) -> WorldCell:
+    def load_cell(self, cell_x: int, cell_z: int) -> BigWorldCell:
         """Ensure a cell's contents are in memory.
 
         For the in-RAM milestone the whole map is already resident, so this only
@@ -457,22 +373,7 @@ class WorldCellIndex:
         """
         r = self.activation_radius if radius is None else float(radius)
         px, pz = float(player_pos[0]), float(player_pos[2])
-        return self._cells_within(px, pz, r)
-
-    def _cells_within(self, px: float, pz: float, radius: float) -> Set[CellCoord]:
-        r2 = radius * radius
-        # Candidate square: every cell the bounding box of the circle touches.
-        reach = int(math.ceil(radius / self.cell_size)) + 1
-        base = cell_of_point(px, pz, self.cell_size)
-        out: Set[CellCoord] = set()
-        for dx in range(-reach, reach + 1):
-            for dz in range(-reach, reach + 1):
-                coord = (base[0] + dx, base[1] + dz)
-                if coord not in self.cells:
-                    continue  # empty cells never need activating
-                if cell_distance_sq(coord[0], coord[1], px, pz, self.cell_size) <= r2:
-                    out.add(coord)
-        return out
+        return cells_within(self.cells, px, pz, r, self.cell_size)
 
     def update(self, player_pos, force: bool = False) -> ActivationDelta:
         """Recompute the active set for the player's position; stream the diff.
@@ -517,28 +418,20 @@ class WorldCellIndex:
     def _compute_active_with_hysteresis(self, px: float, pz: float) -> Set[CellCoord]:
         """Cells that should be active given the current active set (hysteresis).
 
-        Within one pass over the deactivation-radius candidate square: a cell
-        already active is retained while it stays inside the *deactivation*
-        radius; a currently-inactive cell is added only once inside the tighter
-        *activation* radius.
+        Two radius queries against the engine's grid helper: everything inside
+        the tighter *activation* radius joins the active set, and a cell that is
+        already active is retained while it stays inside the wider
+        *deactivation* radius. The gap between them is what stops a player
+        loitering on a boundary from thrashing cells on and off.
+
+        Only ever reached on a cell crossing, never per frame, so the two walks
+        cost nothing worth having a second hand-rolled grid traversal for.
         """
-        act_r2 = self.activation_radius * self.activation_radius
-        deact_r2 = self.deactivation_radius * self.deactivation_radius
-        reach = int(math.ceil(self.deactivation_radius / self.cell_size)) + 1
-        base = cell_of_point(px, pz, self.cell_size)
-        out: Set[CellCoord] = set()
-        for dx in range(-reach, reach + 1):
-            for dz in range(-reach, reach + 1):
-                coord = (base[0] + dx, base[1] + dz)
-                if coord not in self.cells:
-                    continue
-                d2 = cell_distance_sq(coord[0], coord[1], px, pz, self.cell_size)
-                if coord in self.active_cells:
-                    if d2 <= deact_r2:
-                        out.add(coord)
-                elif d2 <= act_r2:
-                    out.add(coord)
-        return out
+        entering = cells_within(self.cells, px, pz, self.activation_radius,
+                                self.cell_size)
+        retained = cells_within(self.cells, px, pz, self.deactivation_radius,
+                                self.cell_size) & self.active_cells
+        return entering | retained
 
     # ------------------------------------------------------------------
     # Queries the runtime / renderer consume

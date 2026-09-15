@@ -17,7 +17,7 @@ Big World adds almost nothing new to persist, and by design:
 The only genuinely new datum is the map's Big World *config* (whether streaming
 is on and the two radii). That travels as an ordinary :class:`BigWorldSettings`
 entity, so it round-trips through Fio's normal save/load with no core change —
-see :mod:`engine.world_streaming.entities`.
+see :mod:`plugins.bigworld.entities`.
 
 This module provides small, pure functions for reading that config out of a
 loaded map dict (or a live ``things`` list), plus verification helpers the tests
@@ -30,14 +30,15 @@ from __future__ import annotations
 import copy
 from typing import Dict, List, Optional
 
-from .cells import CELL_SIZE, cell_of_point
+from .cell import CELL_SIZE, cell_of_point
 
 _SETTINGS_TYPE = "bigworldsettings"
 
 #: The runtime marker keys the session writes onto objects while they are parked.
 #: They must never be persisted — they are transient streaming state, not map
 #: data. :func:`strip_runtime_keys` removes them before a save.
-RUNTIME_KEYS = ("_bw_parked_hidden", "_bw_parked_disabled", "bw_active")
+RUNTIME_KEYS = ("_bw_parked_hidden", "_bw_parked_disabled", "bw_active",
+                "_sim_tier")
 
 #: The two park markers hold an object's *real* (pre-streaming) hidden/disabled
 #: value while it is parked in an inactive cell. Delta comparison must resolve
@@ -118,6 +119,7 @@ def config_from_settings(settings) -> Dict:
         "terrain_infinite": _b("terrain_infinite", False),
         "terrain_stream_radius": _f("terrain_stream_radius", 0.0),
         "disk_streaming": _b("disk_streaming", False),
+        "sim_near_radius": _f("sim_near_radius", 1024.0),
     }
 
 

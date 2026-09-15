@@ -23,7 +23,7 @@ from itertools import chain as _chain
 from typing import Dict, List, Optional
 
 from engine.facing import face_heading
-from engine.world_index import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
+from engine.spatial import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
                                 TIER_DORMANT)
 from .rpg import factions
 from .rpg import schedule as sched

@@ -5,8 +5,8 @@ a world is streamed, cells are modified and unloaded, the world is saved, and a
 fresh world is loaded — proving that a cell's gameplay changes survive
 unload → save → load → re-stream, which is the core Big World invariant.
 
-Run: ``python -m pytest engine/tests/test_world_streaming_saves.py`` or
-``python engine/tests/test_world_streaming_saves.py``.
+Run: ``python -m pytest plugins/bigworld/tests/test_bigworld_saves.py`` or
+``python plugins/bigworld/tests/test_bigworld_saves.py``.
 """
 
 import copy
@@ -14,12 +14,11 @@ import os
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
 
-from engine.world_streaming import StreamingHost   # noqa: E402
 from engine import savegame                       # noqa: E402
-from engine import world_persistence as persistence          # noqa: E402
-from engine.world_streaming import WorldStreamingSession  # noqa: E402
+from plugins.bigworld import persistence          # noqa: E402
+from plugins.bigworld.runtime import BigWorldSession  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -69,9 +68,8 @@ class FakeMonsterAI:
         self.monster_states = {}
 
 
-class FakeLogic(StreamingHost):
+class FakeLogic:
     def __init__(self, things, brushes, player_pos):
-        super().__init__()
         self.play_mode = True
         self.things = things
         self.brushes = brushes
@@ -100,7 +98,7 @@ class FakeLogic(StreamingHost):
         self.mover_states = {}
         self.monster_ai = FakeMonsterAI()
         self._monster_things = [t for t in things if t.properties.get("type") == "monster"]
-        self.streaming = None
+        self._bigworld = None
 
     def _build_entity_caches(self):
         pass
@@ -132,8 +130,8 @@ def make_world():
 
 
 def new_session(logic):
-    s = WorldStreamingSession(logic, activation_radius=600.0, deactivation_radius=700.0)
-    logic.streaming = s
+    s = BigWorldSession(logic, activation_radius=600.0, deactivation_radius=700.0)
+    logic._bigworld = s
     return s
 
 
