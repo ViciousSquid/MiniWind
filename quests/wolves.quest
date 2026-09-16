@@ -26,8 +26,14 @@
     {
       "index": 0,
       "journal": "Bryn asked me to thin the wolf pack harassing his flock. Kill five wolves.",
-      "objective": "Kill 5 wolves (0/5)",
-      "finishes": false
+      "objective": "Kill 5 wolves",
+      "finishes": false,
+      "condition": {
+        "kind": "kill",
+        "target": "wolf",
+        "count": 5
+      },
+      "waypoint": "wolf"
     },
     {
       "index": 10,

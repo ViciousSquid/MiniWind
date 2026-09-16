@@ -1,0 +1,62 @@
+{
+  "id": "frostcap_yeti",
+  "name": "The Beast of Frostcap",
+  "giver": "Fenwick",
+  "faction": "town",
+  "desc": "A white beast haunts the summit of Frostcap Tor.",
+  "xp": 80,
+  "rewards": {
+    "gold": 200,
+    "items": [
+      [
+        "elven_bow",
+        1
+      ],
+      [
+        "elven_arrow",
+        30
+      ]
+    ],
+    "rep": [
+      "town",
+      15
+    ]
+  },
+  "stages": [
+    {
+      "index": 0,
+      "journal": "Fenwick the hunter wants the beast on Frostcap Tor dead. The Tor lies far north-east.",
+      "objective": "Climb Frostcap Tor",
+      "finishes": false,
+      "condition": {
+        "kind": "visit",
+        "target": "Frostcap Tor",
+        "count": 1
+      }
+    },
+    {
+      "index": 10,
+      "journal": "The summit. Something huge has been sleeping here.",
+      "objective": "Slay the Frostcap Yeti",
+      "finishes": false,
+      "condition": {
+        "kind": "kill",
+        "target": "Frostcap Yeti",
+        "count": 1
+      },
+      "waypoint": "Frostcap Yeti"
+    },
+    {
+      "index": 20,
+      "journal": "The yeti is dead. Fenwick won't believe it.",
+      "objective": "Return to Fenwick",
+      "finishes": false
+    },
+    {
+      "index": 30,
+      "journal": "Fenwick gave me his elven bow.",
+      "objective": "Fenwick gave me his elven bow.",
+      "finishes": true
+    }
+  ]
+}

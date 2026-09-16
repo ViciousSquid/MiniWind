@@ -21,13 +21,19 @@
   "stages": [
     {
       "index": 0,
-      "journal": "Elowen asked me to find her grandmother's amulet, lost in the woods.",
+      "journal": "Elowen asked me to find her grandmother's amulet, lost in the woods. Fenwick the hunter might know where.",
       "objective": "Find the silver amulet",
-      "finishes": false
+      "finishes": false,
+      "condition": {
+        "kind": "fetch",
+        "target": "silver_amulet",
+        "count": 1
+      },
+      "waypoint": "silver_amulet"
     },
     {
       "index": 10,
-      "journal": "I found the amulet. I should bring it back to Elowen.",
+      "journal": "I found the amulet at an abandoned camp in Greywood. I should bring it back to Elowen.",
       "objective": "Return the amulet to Elowen",
       "finishes": false
     },

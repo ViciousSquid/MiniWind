@@ -1,0 +1,47 @@
+{
+  "id": "greenskin_warcamp",
+  "name": "Greenskins at the Gate",
+  "giver": "Captain Roderick",
+  "faction": "town",
+  "desc": "A greenskin warcamp threatens Hollin's Cross.",
+  "xp": 60,
+  "rewards": {
+    "gold": 160,
+    "items": [
+      [
+        "steel_shield",
+        1
+      ]
+    ],
+    "rep": [
+      "town",
+      15
+    ]
+  },
+  "stages": [
+    {
+      "index": 0,
+      "journal": "Captain Roderick needs the greenskin warcamp east of Hollin's Cross thinned out.",
+      "objective": "Kill 6 greenskins",
+      "finishes": false,
+      "condition": {
+        "kind": "kill",
+        "target": "Greenskin",
+        "count": 6
+      },
+      "waypoint": "Greenskin"
+    },
+    {
+      "index": 10,
+      "journal": "The warcamp is broken. Roderick will want to hear it.",
+      "objective": "Return to Captain Roderick",
+      "finishes": false
+    },
+    {
+      "index": 20,
+      "journal": "Roderick gave me a steel shield and the thanks of the Cross.",
+      "objective": "Roderick gave me a steel shield and the thanks of the Cross.",
+      "finishes": true
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "id": "nettle_nightshade",
+  "name": "Nightshade for Nettle",
+  "giver": "Nettle",
+  "faction": "town",
+  "desc": "Mother Nettle needs nightshade for her brews.",
+  "xp": 20,
+  "rewards": {
+    "gold": 30,
+    "items": [
+      [
+        "potion_heal",
+        2
+      ],
+      [
+        "potion_cure",
+        1
+      ]
+    ],
+    "rep": [
+      "town",
+      5
+    ]
+  },
+  "stages": [
+    {
+      "index": 0,
+      "journal": "Mother Nettle wants five nightshade blooms from the slopes of her knoll.",
+      "objective": "Gather 5 nightshade",
+      "finishes": false,
+      "condition": {
+        "kind": "fetch",
+        "target": "ingr_nightshade",
+        "count": 5
+      },
+      "waypoint": "ingr_nightshade"
+    },
+    {
+      "index": 10,
+      "journal": "I have five blooms. Back to Nettle.",
+      "objective": "Bring the nightshade to Mother Nettle",
+      "finishes": false
+    },
+    {
+      "index": 20,
+      "journal": "Nettle traded me potions for the nightshade.",
+      "objective": "Nettle traded me potions for the nightshade.",
+      "finishes": true
+    }
+  ]
+}

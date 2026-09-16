@@ -1,0 +1,62 @@
+{
+  "id": "mirrormere_smugglers",
+  "name": "The Mirrormere Smugglers",
+  "giver": "Maud",
+  "faction": "town",
+  "desc": "Smugglers on the south shore of Mirrormere.",
+  "xp": 45,
+  "rewards": {
+    "gold": 130,
+    "items": [
+      [
+        "potion_heal",
+        2
+      ],
+      [
+        "steel_arrow",
+        20
+      ]
+    ],
+    "rep": [
+      "town",
+      10
+    ]
+  },
+  "stages": [
+    {
+      "index": 0,
+      "journal": "Old Maud of Reedhollow says smugglers are camped on Mirrormere's south shore.",
+      "objective": "Find Smugglers' Cove",
+      "finishes": false,
+      "condition": {
+        "kind": "visit",
+        "target": "Smugglers' Cove",
+        "count": 1
+      }
+    },
+    {
+      "index": 10,
+      "journal": "I found the smugglers' cove.",
+      "objective": "Kill 4 smugglers",
+      "finishes": false,
+      "condition": {
+        "kind": "kill",
+        "target": "Smuggler",
+        "count": 4
+      },
+      "waypoint": "Smuggler"
+    },
+    {
+      "index": 20,
+      "journal": "The smugglers are broken. Maud will be glad.",
+      "objective": "Return to Old Maud",
+      "finishes": false
+    },
+    {
+      "index": 30,
+      "journal": "Maud paid me, and swears the fish taste better already.",
+      "objective": "Maud paid me, and swears the fish taste better already.",
+      "finishes": true
+    }
+  ]
+}

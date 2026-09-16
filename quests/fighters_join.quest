@@ -15,13 +15,19 @@
   "stages": [
     {
       "index": 0,
-      "journal": "Grunn of the Fighters Guild will admit me if I clear the skeletons from the barrow.",
-      "objective": "Clear the barrow",
-      "finishes": false
+      "journal": "Grunn of the Fighters Guild will admit me if I clear the skeletons from Barrow Hill, north of Millbrook.",
+      "objective": "Destroy 6 skeletons",
+      "finishes": false,
+      "condition": {
+        "kind": "kill",
+        "target": "skeleton",
+        "count": 6
+      },
+      "waypoint": "skeleton"
     },
     {
       "index": 10,
-      "journal": "The barrow is cleared. I should report to Grunn.",
+      "journal": "The barrow is cleared. I should report to Grunn at the Tipsy Hollin.",
       "objective": "Report to Grunn",
       "finishes": false
     },

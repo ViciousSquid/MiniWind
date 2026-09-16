@@ -1,0 +1,62 @@
+{
+  "id": "silk_and_venom",
+  "name": "Silk and Venom",
+  "giver": "Ysolde",
+  "faction": "town",
+  "desc": "Giant spiders infest Webwood, south of Hollin's Cross.",
+  "xp": 50,
+  "rewards": {
+    "gold": 100,
+    "items": [
+      [
+        "long_bow",
+        1
+      ],
+      [
+        "steel_arrow",
+        25
+      ]
+    ],
+    "rep": [
+      "town",
+      10
+    ]
+  },
+  "stages": [
+    {
+      "index": 0,
+      "journal": "Ysolde Steelhand wants Webwood cleared. It lies at the end of the south road.",
+      "objective": "Find Webwood",
+      "finishes": false,
+      "condition": {
+        "kind": "visit",
+        "target": "Webwood",
+        "count": 1
+      }
+    },
+    {
+      "index": 10,
+      "journal": "Webwood. Webs everywhere, and things moving in them.",
+      "objective": "Kill 6 giant spiders",
+      "finishes": false,
+      "condition": {
+        "kind": "kill",
+        "target": "Giant Spider",
+        "count": 6
+      },
+      "waypoint": "Giant Spider"
+    },
+    {
+      "index": 20,
+      "journal": "The spiders are dead. Ysolde will want to know.",
+      "objective": "Return to Ysolde",
+      "finishes": false
+    },
+    {
+      "index": 30,
+      "journal": "Ysolde gave me a longbow for my trouble.",
+      "objective": "Ysolde gave me a longbow for my trouble.",
+      "finishes": true
+    }
+  ]
+}

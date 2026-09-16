@@ -1,0 +1,51 @@
+{
+  "id": "blight_in_the_barley",
+  "name": "Blight in the Barley",
+  "giver": "Hobb",
+  "faction": "town",
+  "desc": "Wild boar are tearing up Oakridge Farm's fields.",
+  "xp": 20,
+  "rewards": {
+    "gold": 55,
+    "items": [
+      [
+        "bread",
+        5
+      ],
+      [
+        "potion_heal_minor",
+        2
+      ]
+    ],
+    "rep": [
+      "town",
+      6
+    ]
+  },
+  "stages": [
+    {
+      "index": 0,
+      "journal": "Hobb Oakridge wants four wild boars dead before they ruin his harvest.",
+      "objective": "Kill 4 wild boars",
+      "finishes": false,
+      "condition": {
+        "kind": "kill",
+        "target": "boar",
+        "count": 4
+      },
+      "waypoint": "boar"
+    },
+    {
+      "index": 10,
+      "journal": "The boars are dead. Hobb will want to hear.",
+      "objective": "Return to Hobb",
+      "finishes": false
+    },
+    {
+      "index": 20,
+      "journal": "Hobb paid me in coin and bread.",
+      "objective": "Hobb paid me in coin and bread.",
+      "finishes": true
+    }
+  ]
+}

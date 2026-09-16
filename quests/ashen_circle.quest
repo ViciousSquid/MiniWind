@@ -1,0 +1,62 @@
+{
+  "id": "ashen_circle",
+  "name": "The Ashen Circle",
+  "giver": "Ansel",
+  "faction": "town",
+  "desc": "Cultists burn offerings in a stone circle east of Hollin's Cross.",
+  "xp": 55,
+  "rewards": {
+    "gold": 120,
+    "items": [
+      [
+        "potion_shield",
+        2
+      ],
+      [
+        "potion_magicka",
+        2
+      ]
+    ],
+    "rep": [
+      "town",
+      12
+    ]
+  },
+  "stages": [
+    {
+      "index": 0,
+      "journal": "Brother Ansel asked me to find the cultists' stone circle east of Hollin's Cross.",
+      "objective": "Find the Ashen Circle",
+      "finishes": false,
+      "condition": {
+        "kind": "visit",
+        "target": "Ashen Circle",
+        "count": 1
+      }
+    },
+    {
+      "index": 10,
+      "journal": "The circle is real, and so are its keepers.",
+      "objective": "Kill 5 cultists",
+      "finishes": false,
+      "condition": {
+        "kind": "kill",
+        "target": "cultist",
+        "count": 5
+      },
+      "waypoint": "cultist"
+    },
+    {
+      "index": 20,
+      "journal": "The Ashen Circle is broken. I should tell Brother Ansel.",
+      "objective": "Return to Brother Ansel",
+      "finishes": false
+    },
+    {
+      "index": 30,
+      "journal": "Ansel blessed me and gave me his wards.",
+      "objective": "Ansel blessed me and gave me his wards.",
+      "finishes": true
+    }
+  ]
+}

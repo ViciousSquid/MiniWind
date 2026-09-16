@@ -3,7 +3,7 @@
   "name": "Trouble at the Old Mill",
   "giver": "Aldric",
   "faction": "town",
-  "desc": "Bandits have seized the old mill east of the village.",
+  "desc": "Bandits have seized the old mill north-east of Millbrook.",
   "xp": 40,
   "rewards": {
     "gold": 150,
@@ -21,18 +21,35 @@
   "stages": [
     {
       "index": 0,
-      "journal": "Aldric asked me to clear the bandits out of the old mill east of Miniwind.",
-      "objective": "Clear the old mill of bandits",
-      "finishes": false
+      "journal": "Aldric the Reeve at Hollin's Cross asked me to clear the bandits out of the old mill north-east of Millbrook.",
+      "objective": "Find the Old Mill",
+      "finishes": false,
+      "condition": {
+        "kind": "visit",
+        "target": "Old Mill",
+        "count": 1
+      }
     },
     {
       "index": 10,
+      "journal": "I found the mill. Bandits everywhere.",
+      "objective": "Kill 4 bandits at the mill",
+      "finishes": false,
+      "condition": {
+        "kind": "kill",
+        "target": "bandit",
+        "count": 4
+      },
+      "waypoint": "bandit"
+    },
+    {
+      "index": 20,
       "journal": "The bandits at the mill are dead. I should return to Aldric.",
       "objective": "Return to Aldric",
       "finishes": false
     },
     {
-      "index": 20,
+      "index": 30,
       "journal": "Aldric thanked me and paid me for clearing the mill.",
       "objective": "Aldric thanked me and paid me for clearing the mill.",
       "finishes": true
