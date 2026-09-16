@@ -30,8 +30,10 @@ from OpenGL.GL.shaders import compileProgram, compileShader
 
 from engine.constants import RENDER_MODE_LIT, RENDER_MODE_UNLIT, RENDER_MODE_WIREFRAME, RENDER_MODE_VERTEX, is_water_brush
 from engine import brush_geometry
+from engine import shaders
 from engine.shaders import DEFAULT_SHADERS
 from engine.terrain import TERRAIN_VERTEX_SHADER, TERRAIN_FRAGMENT_SHADER
+from engine.view_distance import ViewDistance
 from editor.things import (
     Thing, PathNode, Portal, Pickup, Monster, LogicGate, LogicRelay,
     LogicTimer, LevelChanger, Light, LogicSpawner, LogicCamera,
@@ -213,9 +215,22 @@ def normalize_color(rgb, default=None):
     return [c / 255.0 if c > 1.0 else c for c in rgb[:3]]
 
 
+#: Light-array capacity of each lighting shader, so the renderer can never set
+#: ``active_lights`` higher than the shader has room for.  Anything absent from
+#: this map holds the full ``BaseRenderer.MAX_LIGHTS``.
+_SHADER_LIGHT_CAPS = {
+    'water': shaders.MAX_LIGHTS_WATER,
+    'terrain': shaders.MAX_LIGHTS_TERRAIN,
+}
+
+
 # ---------- Base Renderer ----------
 class BaseRenderer:
-    MAX_LIGHTS = 8
+    # The dynamic-light budget, taken from the shaders rather than written down
+    # again here: the renderer must never tell a shader about more lights than
+    # that shader declared room for.  Per-shader caps below cover the ones that
+    # are deliberately smaller (water, terrain, the ARM variants).
+    MAX_LIGHTS = shaders.MAX_LIGHTS
     MAX_PORTALS = 4      # maximum portal apertures rendered per frame
 
     # How many times a portal may be seen recursively through another portal.
@@ -232,9 +247,18 @@ class BaseRenderer:
     PORTAL_NEAR_STRADDLE = 24.0
 
     # --- Depth cube-map shadow mapping (omnidirectional point-light shadows) ---
-    MAX_SHADOW_LIGHTS = 4          # must match the GLSL sampler-array capacity
+    # Taken from the shaders, like MAX_LIGHTS: the lit shaders declare
+    # `samplerCube shadowMaps[MAX_SHADOW_LIGHTS]`, and a slot past that array
+    # binds a cube-map no shader can sample.
+    MAX_SHADOW_LIGHTS = shaders.MAX_SHADOW_LIGHTS
     SHADOW_MAP_SIZE = 384         # per-face resolution of each depth cube-map
     SHADOW_TEXTURE_UNIT_BASE = 4   # shadow cube-maps bind to units 4..(4+MAX_SHADOW_LIGHTS-1)
+
+    #: Uniform names of the shared distance-fog / global-ambient block
+    #: (engine.shaders.FOG_GLSL). Preloaded for every shader that splices it in,
+    #: and uploaded together by :meth:`_upload_env_uniforms`.
+    ENV_UNIFORMS = ('uFogEnabled', 'uFogColor', 'uFogStart', 'uFogEnd',
+                    'uFogDensity', 'uFogCamPos', 'uAmbient')
 
     def __init__(self, texture_loader, initial_grid_size, initial_world_size, config=None):
         self.texture_manager = {}
@@ -245,18 +269,37 @@ class BaseRenderer:
         self.render_stats = RenderStats()
         self.lod_manager = LODManager()
 
-        # Performance flags
-        is_arm = self._detect_arm_platform()
+        # How far this camera draws, and the fog that hides its far plane.
+        # A renderer/camera setting, never a world-streaming one: it changes
+        # what is on screen and nothing about what is loaded or simulated.
+        # The viewport replaces this with the instance it shares with the
+        # editor spinbox and the console, so a change there reaches the next
+        # frame with no rebuild -- see QtGameView._sync_view_distance.
+        self.view_distance = ViewDistance()
+        # Camera position for the current frame, cached by render_scene so the
+        # passes that do not receive one (sprites) can still fog correctly.
+        self._frame_camera_pos = (0.0, 0.0, 0.0)
+
+        # Performance flags.  `lowpower_mode` picks the cheaper lighting shaders, and
+        # it defaults from the hardware rather than being pinned on: it used to
+        # default to True everywhere, so an x86-64 desktop ran the low-power
+        # shaders (and their smaller light budget) for no reason.  settings.ini
+        # still overrides the guess either way.
+        is_low_power, _ = shaders.detect_low_power_arm()
         if config is not None:
-            self.arm_mode = config.getboolean('Renderer', 'arm_mode', fallback=True)
-            self.shadows_enabled = config.getboolean('Renderer', 'shadows_enabled', fallback=not is_arm)
+            # `arm_mode` is the setting's old name; an existing settings.ini
+            # keeps whatever its owner chose.
+            legacy = config.getboolean('Renderer', 'arm_mode', fallback=is_low_power)
+            self.lowpower_mode = config.getboolean('Renderer', 'lowpower_mode',
+                                                   fallback=legacy)
+            self.shadows_enabled = config.getboolean('Renderer', 'shadows_enabled', fallback=not is_low_power)
             try:
                 shadow_size = config.getint('Renderer', 'shadow_map_size', fallback=self.SHADOW_MAP_SIZE)
             except Exception:
                 shadow_size = self.SHADOW_MAP_SIZE
         else:
-            self.arm_mode = True
-            self.shadows_enabled = not is_arm
+            self.lowpower_mode = is_low_power
+            self.shadows_enabled = not is_low_power
             shadow_size = self.SHADOW_MAP_SIZE
         # Clamp to a sane, power-of-two-ish range. Lower = faster, blockier.
         self.shadow_map_size = max(256, min(2048, int(shadow_size)))
@@ -325,6 +368,18 @@ class BaseRenderer:
         self._conn_line_vbo = None
         self.face_highlight_vao = None
         self.face_highlight_vbo = None
+        # Component-edit handle overlay (editor only).  The buffer is refilled
+        # only when the editor's overlay version changes, never per frame.
+        self._component_overlay_vao = None
+        self._component_overlay_vbo = None
+        self._component_overlay_data = None
+        self._component_overlay_counts = None
+        self._component_overlay_version = None
+        self._component_overlay_dirty = False
+        # Driver limits for wide lines / big points, queried once on first use
+        # (they need a live context, and glGetFloatv stalls the pipeline).
+        self._line_width_range = None
+        self._point_size_range = None
         self._cube_vbo = None
         self._sprite_vbo = None
         self._grid_vbo = None
@@ -391,21 +446,15 @@ class BaseRenderer:
     # --------------------------------------------------------------------------
     # Platform detection
     # --------------------------------------------------------------------------
-    def _detect_arm_platform(self):
-        import platform
-        import sys
-        machine = platform.machine().lower()
-        if 'arm' in machine or 'aarch' in machine:
-            return True
-        if sys.platform == 'win32':
-            if os.environ.get('PROCESSOR_ARCHITECTURE', '').upper() == 'ARM64':
-                return True
-            if os.environ.get('PROCESSOR_ARCHITEW6432', '').upper() == 'ARM64':
-                return True
-            proc_id = os.environ.get('PROCESSOR_IDENTIFIER', '').lower()
-            if 'qualcomm' in proc_id or 'snapdragon' in proc_id or 'arm' in proc_id:
-                return True
-        return False
+    @staticmethod
+    def _detect_lowpower_platform():
+        """Whether this machine wants the low-power lighting shaders.
+
+        Delegates to :func:`engine.shaders.detect_low_power_arm`, which is where
+        the rule lives now — the renderer and the Settings window used to detect
+        this separately and could reach different answers about one machine.
+        """
+        return shaders.detect_low_power_arm()[0]
 
     # --------------------------------------------------------------------------
     # Shader compilation helpers
@@ -425,7 +474,9 @@ class BaseRenderer:
             fs_src = DEFAULT_SHADERS.get('sprite.frag', '')
             self.shaders['sprite'] = self.shader_loader.compile_from_source(vs_src, fs_src)
             self.uniforms['sprite'] = UniformCache(self.shaders['sprite'])
-            self.uniforms['sprite'].preload(['projection', 'view', 'sprite_texture', 'sprite_pos_world', 'sprite_size', 'sprite_tint', 'sprite_rot', 'sprite_opacity'])
+            self.uniforms['sprite'].preload(['projection', 'view', 'sprite_texture', 'sprite_pos_world', 'sprite_size',
+                                             'sprite_tint', 'sprite_rot', 'sprite_opacity'])
+            self.uniforms['sprite'].preload(self.ENV_UNIFORMS)
 
             # depth_cube – renders scene depth into a point light's cube-map for
             # omnidirectional shadow mapping (replaces the old projected shadows).
@@ -450,6 +501,7 @@ class BaseRenderer:
             self.uniforms['glass'].preload(['projection', 'view', 'model', 'viewPos', 'waterColor',
                                             'distortionStrength', 'causticStrength', 'glassOpacity',
                                             'refractionIndex', 'roughness', 'normalMatrix'])
+            self.uniforms['glass'].preload(self.ENV_UNIFORMS)
 
             # fog – use ARM‑optimised fragment shader (works everywhere)
             fog_vert = DEFAULT_SHADERS.get('fog.vert', '')
@@ -470,6 +522,7 @@ class BaseRenderer:
                     'texGrass', 'texRock', 'texSand', 'texSnow',
                     'biomeWeights', 'terrainHeightScale'
                 ])
+                self.uniforms['terrain'].preload(self.ENV_UNIFORMS)
                 for i in range(self.MAX_LIGHTS):
                     self.uniforms['terrain'].preload([
                         f'lights[{i}].position', f'lights[{i}].color',
@@ -481,7 +534,7 @@ class BaseRenderer:
                 self.shaders['terrain'] = None
 
             # lit and textured shaders (needed for forward fallback in Deferred)
-            if self.arm_mode:
+            if self.lowpower_mode:
                 self._compile_arm_shaders()
             else:
                 self._compile_standard_shaders()
@@ -524,6 +577,7 @@ class BaseRenderer:
     def _preload_lit_uniforms(self, shader_name):
         uniforms = self.uniforms[shader_name]
         uniforms.preload(['projection', 'view', 'model', 'object_color', 'alpha', 'active_lights'])
+        uniforms.preload(self.ENV_UNIFORMS)
         for i in range(self.MAX_LIGHTS):
             uniforms.preload([f'lights[{i}].position', f'lights[{i}].color',
                               f'lights[{i}].intensity', f'lights[{i}].radius'])
@@ -532,6 +586,7 @@ class BaseRenderer:
         uniforms = self.uniforms['water']
         uniforms.preload(['projection', 'view', 'model', 'time', 'viewPos', 'normalMap', 'waterOpacity',
                           'waterReflectivity', 'waterTint', 'normalMatrix', 'waveAmp', 'brushSize'])
+        uniforms.preload(self.ENV_UNIFORMS)
 
     def _preload_fog_uniforms(self):
         uniforms = self.uniforms['fog']
@@ -729,6 +784,7 @@ class BaseRenderer:
             shadow_cubemaps=(self._shadow_cubemaps if self.shadows_enabled else None),
             shadow_index_map=self._light_shadow_index,
             shadow_unit_base=self.SHADOW_TEXTURE_UNIT_BASE,
+            env_uniforms=self.env_uniform_values(),
         )
 
     # --------------------------------------------------------------------------
@@ -965,6 +1021,10 @@ class BaseRenderer:
 
         shader, uniforms = self.shaders['sprite'], self.uniforms['sprite']
         gl.glUseProgram(shader)
+        # Billboards are unlit, so they never reach _upload_lights_once — they
+        # still need fogging, or a distant monster would hang un-faded in front
+        # of fully fogged geometry.
+        self._upload_env_uniforms('sprite')
         gl.glUniformMatrix4fv(uniforms['projection'], 1, gl.GL_FALSE, glm.value_ptr(projection))
         gl.glUniformMatrix4fv(uniforms['view'], 1, gl.GL_FALSE, glm.value_ptr(view))
         gl.glActiveTexture(gl.GL_TEXTURE0)
@@ -1286,6 +1346,10 @@ class BaseRenderer:
             return
         shader, uniforms = self.shaders['glass'], self.uniforms['glass']
         gl.glUseProgram(shader)
+        # Glass lights itself from the view angle rather than from the light
+        # list, so it never reaches _upload_lights_once — but a distant pane
+        # still has to fog with everything around it.
+        self._upload_env_uniforms('glass')
         gl.glUniformMatrix4fv(uniforms['projection'], 1, gl.GL_FALSE, glm.value_ptr(projection))
         gl.glUniformMatrix4fv(uniforms['view'], 1, gl.GL_FALSE, glm.value_ptr(view))
         gl.glUniform3fv(uniforms['viewPos'], 1, glm.value_ptr(camera_pos))
@@ -1483,17 +1547,90 @@ class BaseRenderer:
             return (pos1[0]-pos2.x)**2 + (pos1[1]-pos2.y)**2 + (pos1[2]-pos2.z)**2
         return (pos1.x-pos2.x)**2 + (pos1.y-pos2.y)**2 + (pos1.z-pos2.z)**2
 
+    def _shader_light_cap(self, shader_name):
+        """How many lights ``shader_name``'s ``lights[]`` array actually holds.
+
+        The shader loops to ``active_lights``, so uploading a larger count than
+        the array can hold used to make it index past the end — undefined
+        behaviour, and the surplus lights never worked anyway.  Water and
+        terrain are sized smaller on purpose; the ARM variants trade array size
+        for uniform storage.
+        """
+        cap = _SHADER_LIGHT_CAPS.get(shader_name, self.MAX_LIGHTS)
+        if self.lowpower_mode and shader_name in ('lit', 'textured'):
+            cap = min(cap, shaders.MAX_LIGHTS_ARM)
+        return cap
+
+    def env_uniform_values(self):
+        """The fog/ambient block as a ``{uniform_name: value}`` dict.
+
+        For subsystems that own their GL program and uniform table rather than
+        going through :attr:`uniforms` — the terrain is the one that does.
+        Types are meaningful: ``int`` uploads as ``glUniform1i``, ``float`` as
+        ``glUniform1f``, a 3-sequence as ``glUniform3f``.
+        """
+        vd = self.view_distance
+        start, end = vd.resolve()
+        return {
+            'uFogEnabled': 1 if vd.fog_enabled else 0,
+            'uFogColor': tuple(vd.fog_color),
+            'uFogStart': float(start),
+            'uFogEnd': float(end),
+            'uFogDensity': float(vd.fog_density),
+            'uFogCamPos': tuple(self._frame_camera_pos),
+            'uAmbient': tuple(vd.ambient),
+        }
+
+    def _upload_env_uniforms(self, shader_name):
+        """Upload the distance-fog and global-ambient block to *shader_name*.
+
+        Cheap and unconditional -- seven uniform writes for a shader that reads
+        them, and seven no-ops (location -1) for one that does not, which is
+        what makes it safe to call for every shader without tracking which
+        splice in ``FOG_GLSL``. Being unconditional is also what makes the
+        editor spinbox update the fog live: there is no cached state between
+        :class:`~engine.view_distance.ViewDistance` and the next frame's draw.
+        """
+        uniforms = self.uniforms.get(shader_name)
+        if uniforms is None:
+            return
+        vd = self.view_distance
+        start, end = vd.resolve()
+        cam = self._frame_camera_pos
+        gl.glUniform1i(uniforms['uFogEnabled'], 1 if vd.fog_enabled else 0)
+        gl.glUniform3f(uniforms['uFogColor'], *vd.fog_color)
+        gl.glUniform1f(uniforms['uFogStart'], start)
+        gl.glUniform1f(uniforms['uFogEnd'], end)
+        gl.glUniform1f(uniforms['uFogDensity'], vd.fog_density)
+        gl.glUniform3f(uniforms['uFogCamPos'], cam[0], cam[1], cam[2])
+        gl.glUniform3f(uniforms['uAmbient'], *vd.ambient)
+
+    @staticmethod
+    def _camera_xyz(camera_pos):
+        """``(x, y, z)`` from a glm vec, a sequence, or ``None``."""
+        if camera_pos is None:
+            return (0.0, 0.0, 0.0)
+        if hasattr(camera_pos, 'x'):
+            return (float(camera_pos.x), float(camera_pos.y), float(camera_pos.z))
+        return (float(camera_pos[0]), float(camera_pos[1]), float(camera_pos[2]))
+
     def _upload_lights_once(self, shader_name, lights):
         if shader_name not in self.uniforms:
             return
+        # Fog and ambient ride along with the light upload: every lighting pass
+        # already calls this immediately after binding its program, and it must
+        # happen *before* the same-lights early-out below, or a frame that
+        # reuses last frame's light list would also reuse last frame's fog.
+        self._upload_env_uniforms(shader_name)
+        cap = self._shader_light_cap(shader_name)
         # Skip if this shader already received this exact light list this
         # frame (portal passes may use a different list, so key on ids).
-        key = tuple(map(id, lights[:self.MAX_LIGHTS]))
+        key = tuple(map(id, lights[:cap]))
         if self._frame_lights_uploaded.get(shader_name) == key:
             return
         self._frame_lights_uploaded[shader_name] = key
         uniforms = self.uniforms[shader_name]
-        num_lights = min(len(lights), self.MAX_LIGHTS)
+        num_lights = min(len(lights), cap)
         gl.glUniform1i(uniforms['active_lights'], num_lights)
         shadow_index_map = self._light_shadow_index
         light_names = self._light_uniform_names
@@ -1848,6 +1985,62 @@ class BaseRenderer:
     # --------------------------------------------------------------------------
     # Editor helpers (outlines, gizmo, etc.)
     # --------------------------------------------------------------------------
+    def _set_line_width(self, width):
+        """Set the line width, clamped to what this driver actually supports.
+
+        A core profile only has to support a width of 1.0, and plenty of
+        hardware reports exactly ``[1, 1]`` for ``GL_ALIASED_LINE_WIDTH_RANGE``
+        — asking for 2.0 there raises ``GL_INVALID_VALUE`` and takes the frame
+        with it.  The range is queried once and cached, since ``glGetFloatv``
+        stalls the pipeline and the limit never changes for a context.
+
+        Returns the width actually set, so callers can tell when they did not
+        get the emphasis they asked for.
+        """
+        if self._line_width_range is None:
+            try:
+                values = (gl.GLfloat * 2)()
+                gl.glGetFloatv(gl.GL_ALIASED_LINE_WIDTH_RANGE, values)
+                low, high = float(values[0]), float(values[1])
+                if not (high >= low > 0.0):
+                    low = high = 1.0
+            except Exception:
+                low = high = 1.0
+            self._line_width_range = (low, high)
+        low, high = self._line_width_range
+        clamped = max(low, min(high, float(width)))
+        try:
+            gl.glLineWidth(clamped)
+        except Exception:
+            # A driver that refuses even the clamped value: keep drawing at
+            # whatever width it is already using rather than losing the frame.
+            return 1.0
+        return clamped
+
+    def _set_point_size(self, size):
+        """Set the point size, clamped to the driver's supported range.
+
+        Same story as :meth:`_set_line_width`: the guaranteed range is narrow
+        and an out-of-range value is a GL error, not a silent clamp.
+        """
+        if self._point_size_range is None:
+            try:
+                values = (gl.GLfloat * 2)()
+                gl.glGetFloatv(gl.GL_ALIASED_POINT_SIZE_RANGE, values)
+                low, high = float(values[0]), float(values[1])
+                if not (high >= low > 0.0):
+                    low = high = 1.0
+            except Exception:
+                low = high = 1.0
+            self._point_size_range = (low, high)
+        low, high = self._point_size_range
+        clamped = max(low, min(high, float(size)))
+        try:
+            gl.glPointSize(clamped)
+        except Exception:
+            return 1.0
+        return clamped
+
     def draw_selected_brush_outline(self, projection, view, brush):
         if 'simple' not in self.shaders:
             return
@@ -1903,6 +2096,18 @@ class BaseRenderer:
         gl.glUniform3f(uniforms['color'], 0.8, 0.2, 0.9)
         gl.glUniform1f(uniforms['alpha'], 0.4)
 
+        # Angled (clipped) brushes: highlight the real convex face polygon so
+        # the sloped cut face lights up under the cursor, not an AABB side.
+        if brush_geometry.brush_has_geometry(brush):
+            verts = self._geo_face_highlight_verts(brush, face_name)
+            if not verts:
+                gl.glUseProgram(0)
+                return
+            self._draw_face_highlight_verts(verts, uniforms)
+            gl.glDisable(gl.GL_BLEND)
+            gl.glUseProgram(0)
+            return
+
         pos, size = brush['pos'], brush['size']
         hx, hy, hz = size[0]/2, size[1]/2, size[2]/2
         cx, cy, cz = pos[0], pos[1], pos[2]
@@ -1935,30 +2140,158 @@ class BaseRenderer:
         if not verts:
             return
 
-        v_data = np.array(verts, dtype=np.float32)
+        self._draw_face_highlight_verts(verts, uniforms)
+        gl.glDisable(gl.GL_BLEND)
+        gl.glUseProgram(0)
+
+    @staticmethod
+    def _geo_face_highlight_verts(brush, face_name):
+        """Triangle-fan positions (world space, nudged outward) for one convex
+        face of an angled brush, or ``None`` when the face can't be resolved."""
+        convex = brush_geometry.get_convex(brush)
+        if convex is None or not convex.is_valid:
+            return None
+        face = None
+        for f in convex.faces:
+            if brush_geometry.face_key(f) == face_name:
+                face = f
+                break
+        if face is None:
+            return None
+        idx = face['indices']
+        if len(idx) < 3:
+            return None
+        ring = convex.verts[idx] + np.array(face['normal']) * 0.5   # bias off surface
+        out = []
+        v0 = ring[0]
+        for k in range(1, len(idx) - 1):
+            for p in (v0, ring[k], ring[k + 1]):
+                out.extend((float(p[0]), float(p[1]), float(p[2])))
+        return out
+
+    def _draw_face_highlight_verts(self, verts, uniforms):
+        """Upload and draw a fill+wire face highlight for arbitrary geometry."""
+        v_data = np.asarray(verts, dtype=np.float32)
+        n = len(v_data) // 3
         if self.face_highlight_vao is None:
             self.face_highlight_vao = gl.glGenVertexArrays(1)
             self.face_highlight_vbo = gl.glGenBuffers(1)
             gl.glBindVertexArray(self.face_highlight_vao)
             gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.face_highlight_vbo)
-            gl.glBufferData(gl.GL_ARRAY_BUFFER, 6*3*4, None, gl.GL_DYNAMIC_DRAW)
+            gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, None)
+            gl.glEnableVertexAttribArray(0)
+            gl.glBindVertexArray(0)
+        gl.glBindVertexArray(self.face_highlight_vao)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.face_highlight_vbo)
+        # Orphan-and-refill so the buffer resizes for any face vertex count.
+        gl.glBufferData(gl.GL_ARRAY_BUFFER, v_data.nbytes, v_data, gl.GL_DYNAMIC_DRAW)
+        gl.glDrawArrays(gl.GL_TRIANGLES, 0, n)
+        gl.glUniform3f(uniforms['color'], 1.0, 1.0, 1.0)
+        gl.glUniform1f(uniforms['alpha'], 1.0)
+        gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_LINE)
+        gl.glDrawArrays(gl.GL_TRIANGLES, 0, n)
+        gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
+        gl.glBindVertexArray(0)
+
+    def draw_component_overlay(self, projection, view, overlay, version=None):
+        """Draw vertex/edge/face handles for the brushes being component-edited.
+
+        ``overlay`` is the dict the editor's ComponentController hands over:
+        ``points`` / ``hot_points`` (N, 3) and ``lines`` / ``hot_lines``
+        (M, 2, 3), already ``float32``.  Nothing is computed here — the arrays
+        are built by the editor when the selection or geometry changes and are
+        uploaded again only when ``version`` moves, so hovering costs one
+        integer comparison and a draw call rather than a geometry rebuild.
+        """
+        if 'simple' not in self.shaders or not overlay:
+            return
+        points = overlay.get('points')
+        hot_points = overlay.get('hot_points')
+        lines = overlay.get('lines')
+        hot_lines = overlay.get('hot_lines')
+        if not (len(points) or len(hot_points) or len(lines) or len(hot_lines)):
+            return
+
+        if version is None or self._component_overlay_version != version:
+            # One interleaved buffer for the whole overlay: four contiguous
+            # runs (cold lines, hot lines, cold points, hot points) so the
+            # draw below is four glDrawArrays with no per-handle work.
+            def _flat(arr):
+                return (np.asarray(arr, dtype=np.float32).reshape(-1)
+                        if len(arr) else np.zeros(0, dtype=np.float32))
+            cold_l, hot_l = _flat(lines), _flat(hot_lines)
+            cold_p, hot_p = _flat(points), _flat(hot_points)
+            data = np.concatenate((cold_l, hot_l, cold_p, hot_p)) \
+                if (len(cold_l) or len(hot_l) or len(cold_p) or len(hot_p)) \
+                else np.zeros(0, dtype=np.float32)
+            self._component_overlay_data = data
+            self._component_overlay_counts = (
+                len(cold_l) // 3, len(hot_l) // 3,
+                len(cold_p) // 3, len(hot_p) // 3)
+            self._component_overlay_version = version
+            self._component_overlay_dirty = True
+
+        counts = self._component_overlay_counts
+        if not counts or not any(counts):
+            return
+
+        shader, uniforms = self.shaders['simple'], self.uniforms['simple']
+        gl.glUseProgram(shader)
+        gl.glUniformMatrix4fv(uniforms['projection'], 1, gl.GL_FALSE, glm.value_ptr(projection))
+        gl.glUniformMatrix4fv(uniforms['view'], 1, gl.GL_FALSE, glm.value_ptr(view))
+        gl.glUniformMatrix4fv(uniforms['model'], 1, gl.GL_FALSE, glm.value_ptr(self._identity_mat4))
+        gl.glUniform1f(uniforms['alpha'], 1.0)
+
+        if self._component_overlay_vao is None:
+            self._component_overlay_vao = gl.glGenVertexArrays(1)
+            self._component_overlay_vbo = gl.glGenBuffers(1)
+            gl.glBindVertexArray(self._component_overlay_vao)
+            gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._component_overlay_vbo)
             gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, None)
             gl.glEnableVertexAttribArray(0)
             gl.glBindVertexArray(0)
 
-        gl.glBindVertexArray(self.face_highlight_vao)
-        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.face_highlight_vbo)
-        gl.glBufferSubData(gl.GL_ARRAY_BUFFER, 0, v_data.nbytes, v_data)
-        gl.glDrawArrays(gl.GL_TRIANGLES, 0, 6)
+        gl.glBindVertexArray(self._component_overlay_vao)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._component_overlay_vbo)
+        if self._component_overlay_dirty:
+            data = self._component_overlay_data
+            gl.glBufferData(gl.GL_ARRAY_BUFFER, data.nbytes, data,
+                            gl.GL_DYNAMIC_DRAW)
+            self._component_overlay_dirty = False
 
-        gl.glUniform3f(uniforms['color'], 1.0, 1.0, 1.0)
-        gl.glUniform1f(uniforms['alpha'], 1.0)
-        gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_LINE)
-        gl.glDrawArrays(gl.GL_TRIANGLES, 0, 6)
-        gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
-
+        cold_lines, hot_lines_n, cold_points, hot_points_n = counts
+        # Handles are editor furniture: they must stay visible through the
+        # geometry they belong to, so the depth test is off for this pass.
+        depth_was_on = gl.glIsEnabled(gl.GL_DEPTH_TEST)
+        gl.glDisable(gl.GL_DEPTH_TEST)
+        offset = 0
+        if cold_lines:
+            gl.glUniform3f(uniforms['color'], 0.45, 0.78, 1.0)
+            self._set_line_width(1.0)
+            gl.glDrawArrays(gl.GL_LINES, offset, cold_lines)
+        offset += cold_lines
+        if hot_lines_n:
+            gl.glUniform3f(uniforms['color'], 1.0, 0.66, 0.16)
+            # Hardware that cannot draw a wide line reports a range of [1, 1],
+            # and the highlight then reads by colour alone — which is why the
+            # hot and cold colours are far apart rather than two shades of one.
+            self._set_line_width(2.0)
+            gl.glDrawArrays(gl.GL_LINES, offset, hot_lines_n)
+        offset += hot_lines_n
+        if cold_points:
+            gl.glUniform3f(uniforms['color'], 0.45, 0.78, 1.0)
+            self._set_point_size(6.0)
+            gl.glDrawArrays(gl.GL_POINTS, offset, cold_points)
+        offset += cold_points
+        if hot_points_n:
+            gl.glUniform3f(uniforms['color'], 1.0, 0.66, 0.16)
+            self._set_point_size(9.0)
+            gl.glDrawArrays(gl.GL_POINTS, offset, hot_points_n)
+        self._set_line_width(1.0)
+        self._set_point_size(1.0)
+        if depth_was_on:
+            gl.glEnable(gl.GL_DEPTH_TEST)
         gl.glBindVertexArray(0)
-        gl.glDisable(gl.GL_BLEND)
         gl.glUseProgram(0)
 
     def draw_path_node_cubes(self, projection, view, things):
@@ -2119,14 +2452,10 @@ class BaseRenderer:
         gl.glUniformMatrix4fv(uniforms['model'], 1, gl.GL_FALSE, glm.value_ptr(self._identity_mat4))
         gl.glUniform1f(uniforms['alpha'], 1.0)
         
-        # Query and clamp line width to supported range
-        # glLineWidth > 1.0 is deprecated in core profile
-        widths = (gl.GLfloat * 2)()
-        gl.glGetFloatv(gl.GL_ALIASED_LINE_WIDTH_RANGE, widths)
-        min_width, max_width = float(widths[0]), float(widths[1])
-        desired_width = 2.0
-        clamped_width = max(min_width, min(max_width, desired_width))
-        gl.glLineWidth(clamped_width)
+        # Clamp the line width to what the driver supports (a core profile is
+        # only required to offer 1.0).  The helper caches the queried range,
+        # so this no longer stalls the pipeline with a glGetFloatv per call.
+        self._set_line_width(2.0)
         
         for brush in brushes:
             if not brush.get('_model_collision'):
@@ -2745,13 +3074,13 @@ class BaseRenderer:
     @staticmethod
     def _geo_uv_axes(n):
         """World axes a face's planar UVs project onto, by dominant normal
-        axis.  Matches the cube VAO's orientation (v runs up walls)."""
-        ax, ay, az = abs(n[0]), abs(n[1]), abs(n[2])
-        if ay >= ax and ay >= az:                        # floor / ceiling
-            return (1.0, 0.0, 0.0), (0.0, 0.0, -1.0)
-        if ax >= az:                                     # X-facing wall
-            return (0.0, 0.0, 1.0), (0.0, 1.0, 0.0)
-        return (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)          # Z-facing wall
+        axis.  Matches the cube VAO's orientation (v runs up walls).
+
+        The rule itself lives in brush_geometry so the geometry layer can
+        materialise the same basis when it locks a face's texture to a
+        rotation; this stays as the renderer's name for it.
+        """
+        return brush_geometry.render_uv_axes(n)
 
     def _build_geo_mesh(self, brush, convex, key):
         pos = brush.get('pos', [0, 0, 0])
@@ -2786,11 +3115,11 @@ class BaseRenderer:
             ln = n * scale
             ll = math.sqrt(float(ln @ ln))
             ln = ln / ll if ll > 1e-9 else n
-            ua, va = self._geo_uv_axes(n)
-            us = ring_w @ np.array(ua)
-            vs = ring_w @ np.array(va)
-            u0, eu = float(us.min()), max(float(us.max() - us.min()), 1e-6)
-            v0, ev = float(vs.min()), max(float(vs.max() - vs.min()), 1e-6)
+            # Projection along the face's own texture basis when it has one
+            # (a rotated face carries a basis that turned with the brush), and
+            # along world axes when it does not — exactly as before.
+            us, vs, (u0, eu), (v0, ev) = brush_geometry.face_uv_projection(
+                ring_w, face)
             first = vert_count
             for k in range(1, len(idx) - 1):
                 for j in (0, k, k + 1):
@@ -2799,7 +3128,7 @@ class BaseRenderer:
                                  (us[j] - u0) / eu, (vs[j] - v0) / ev))
             vert_count += (len(idx) - 2) * 3
             runs.append({'face': face.get('face'), 'texture': face.get('texture'),
-                         'uv_scale': face.get('uv_scale'),
+                         'uv_scale': face.get('uv_scale'), 'plane': face.get('plane'),
                          'first': first, 'count': vert_count - first,
                          'extent': (eu, ev)})
             if top:
@@ -2858,17 +3187,35 @@ class BaseRenderer:
         return mesh
 
     @staticmethod
+    def _geo_run_plane(brush, run):
+        """Live plane dict backing this run, or ``None``.
+
+        Reading the plane live (rather than the value baked into the mesh at
+        build time) lets the Face tool's texture / scale edits on a cut face
+        show immediately — the mesh signature ignores texture, so it isn't
+        rebuilt on a texture change.
+        """
+        pidx = run.get('plane')
+        if pidx is None:
+            return None
+        planes = brush.get('geometry', {}).get('planes')
+        if planes and 0 <= pidx < len(planes):
+            return planes[pidx]
+        return None
+
+    @staticmethod
     def _geo_run_texture(brush, run):
         """Texture name for one face of an angled brush.
 
         The brush's live ``textures`` dict wins for faces that kept their box
-        face tag (so editor texture changes apply immediately); cut faces fall
-        back to the texture stored on their plane, then to any brush texture.
+        face tag (so editor texture changes apply immediately); cut faces read
+        the texture stored live on their plane, then any brush texture.
         """
         tag = run['face']
         if tag:
             return brush.get('textures', {}).get(tag) or run['texture'] or 'default.png'
-        tex = run['texture']
+        plane = BaseRenderer._geo_run_plane(brush, run)
+        tex = (plane.get('texture') if plane else None) or run['texture']
         if not tex:
             # Untagged cut face with no stored texture: borrow any brush
             # texture rather than showing the default checkerboard.
@@ -2878,22 +3225,62 @@ class BaseRenderer:
                     break
         return tex or 'default.png'
 
+    def _geo_run_tex_transform(self, brush, run):
+        """``(angle_radians, shift_u, shift_v)`` for one angled-brush face.
+
+        Same precedence as :meth:`_geo_run_tex_scale`: a tagged side reads the
+        brush's per-tag dicts, a cut face reads its own plane live so Surface
+        Inspector edits show up without rebuilding the mesh.  Angled faces used
+        to have both of these forced to zero, which is why rotating or shifting
+        a texture did nothing once a brush stopped being a box.
+        """
+        tag = run['face']
+        if tag:
+            angle = brush.get('uv_angle', {}).get(tag, 0.0)
+            shift = brush.get('uv_shift', {}).get(tag, (0.0, 0.0))
+        else:
+            plane = BaseRenderer._geo_run_plane(brush, run)
+            if plane is None:
+                return 0.0, 0.0, 0.0
+            angle = plane.get('uv_angle', 0.0)
+            shift = plane.get('uv_shift', (0.0, 0.0))
+        return math.radians(float(angle)), float(shift[0]), float(shift[1])
+
     def _geo_run_tex_scale(self, brush, run, tex_name):
         """UV repeat factors for one face, mirroring the box-face priorities:
         live per-face uv_scale, then the plane's stored uv_scale, then
         texture_tiling (1px = 1 world unit over the face's extent), then FIT."""
         tag = run['face']
+        plane = None if tag else BaseRenderer._geo_run_plane(brush, run)
+
+        # Natural is a live mode: the repeats come from the face's *current*
+        # extent every frame, so resizing the brush shows more of the texture
+        # at the same texel size rather than stretching it.  It therefore wins
+        # over any stored uv_scale (which is only kept as a fallback).
+        if brush_geometry.face_uses_natural_scale(brush, tag, plane):
+            return brush_geometry.natural_repeats(
+                run['extent'][0], run['extent'][1],
+                self._texture_pixel_size(tex_name))
+
         uv = brush.get('uv_scale', {}).get(tag) if tag else None
+        if uv is None and plane is not None:
+            # Cut face: read its plane's uv_scale live so Surface Inspector
+            # edits apply without a mesh rebuild.
+            uv = plane.get('uv_scale')
         if uv is None:
             uv = run['uv_scale']
         if uv is not None:
             return float(uv[0]), float(uv[1])
         if brush.get('texture_tiling', False):
-            tex_cache_name = os.path.join('textures', tex_name)
-            tex_w, tex_h = getattr(self, '_texture_dimensions', {}).get(tex_cache_name, (128, 128))
             eu, ev = run['extent']
-            return eu / max(tex_w, 1), ev / max(tex_h, 1)
+            return brush_geometry.natural_repeats(
+                eu, ev, self._texture_pixel_size(tex_name))
         return 1.0, 1.0
+
+    def _texture_pixel_size(self, tex_name):
+        """Pixel dimensions of a loaded texture, with the usual 128 fallback."""
+        cache_name = os.path.join('textures', tex_name)
+        return getattr(self, '_texture_dimensions', {}).get(cache_name, (128, 128))
 
     # --------------------------------------------------------------------------
     # VAO creation
@@ -3052,6 +3439,26 @@ class BaseRenderer:
         for mesh in self._geo_mesh_cache.values():
             self._delete_geo_mesh(mesh)
         self._geo_mesh_cache.clear()
+        # Shadow resources. These are owned by this renderer alone and nothing
+        # outside it holds their names, so they have to be released here or a
+        # renderer rebuild (a render-mode or shadow-quality change) strands the
+        # whole cube-map pool -- MAX_SHADOW_LIGHTS cube-maps at shadow_map_size,
+        # tens of megabytes of VRAM, every time.
+        if self._shadow_cubemaps:
+            try:
+                gl.glDeleteTextures(self._shadow_cubemaps)
+            except Exception:
+                pass
+            self._shadow_cubemaps = []
+        if self._shadow_fbo:
+            try:
+                gl.glDeleteFramebuffers(1, [self._shadow_fbo])
+            except Exception:
+                pass
+            self._shadow_fbo = None
+        self._shadow_slot_owner = [None] * self.MAX_SHADOW_LIGHTS
+        self._shadow_slot_sig = [None] * self.MAX_SHADOW_LIGHTS
+        self._light_shadow_index = {}
         if self._cube_vbo:
             gl.glDeleteBuffers(1, [self._cube_vbo])
         if self._sprite_vbo:

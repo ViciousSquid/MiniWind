@@ -1,4 +1,4 @@
-import time
+import os
 import json
 from PyQt5.QtWidgets import QMessageBox
 
@@ -17,7 +17,7 @@ except ImportError:
     # debug_log("Warning", "I/O system not fully loaded in console")
 
 # For spawn command
-from game.diceroll import DiceRoller
+from editor.things import Pickup, Light, PlayerStart, LevelChanger
 
 
 class ConsoleCommandHandler:
@@ -26,9 +26,10 @@ class ConsoleCommandHandler:
     """
     def __init__(self, main_window):
         self.main_window = main_window
-        self._console_dice = DiceRoller()
+        self.editor_state = main_window.state
 
-        self.commands = {            'bind': self.cmd_bind,
+        self.commands = {
+            'bind': self.cmd_bind,
             'help': self.cmd_help,
             'list': self.cmd_list_entities,
             'entities': self.cmd_list_entities,
@@ -78,8 +79,7 @@ class ConsoleCommandHandler:
             'god': self.cmd_god,
             'buddha': self.cmd_buddha,
             'clear': self.cmd_clear,
-            'diceroll': self.cmd_diceroll,
-            'dice': self.cmd_diceroll,
+            'fps': self.cmd_fps,
             'map': self.cmd_map,
 
             # Save / load a play session
@@ -94,13 +94,6 @@ class ConsoleCommandHandler:
             'saves': self.cmd_list_saves,
             'listsaves': self.cmd_list_saves,
 
-            # Quest testing
-            'quest': self.cmd_quest,
-            'quests': self.cmd_quest,
-
-            # Reactive simulation (game.sim)
-            'sim': self.cmd_sim,
-
             'r_list': self.cmd_render_list,
             'r_wireframe': self.cmd_render_wireframe,
             'r_shadows': self.cmd_render_shadows,
@@ -114,6 +107,20 @@ class ConsoleCommandHandler:
             'r_reloadshaders': self.cmd_reload_shaders,
             'r_info': self.cmd_render_info,
 
+            # View distance & far-plane fog. These are the commands the I/O
+            # system drives: a logic_command entity firing RunCommand with
+            # e.g. "r_fogcolor 40 30 60" is how a map changes the weather.
+            'r_viewdistance': self.cmd_view_distance,
+            'r_culldistance': self.cmd_view_distance,
+            'r_distancefog': self.cmd_distance_fog,
+            'r_fogdistance': self.cmd_fog_distance,
+            'r_fogstart': self.cmd_fog_start,
+            'r_fogend': self.cmd_fog_end,
+            'r_fogdensity': self.cmd_fog_density,
+            'r_fogcolor': self.cmd_fog_color,
+            'r_fogcolour': self.cmd_fog_color,
+            'r_ambient': self.cmd_ambient,
+
             # Short aliases
             'wireframe': self.cmd_render_wireframe,
             'shadows': self.cmd_render_shadows,
@@ -124,6 +131,18 @@ class ConsoleCommandHandler:
             'deferred': self.cmd_render_deferred,
             'vsync': self.cmd_render_vsync,
             'reloadshaders': self.cmd_reload_shaders,
+            'viewdistance': self.cmd_view_distance,
+            'culldistance': self.cmd_view_distance,
+            'farplane': self.cmd_view_distance,
+            'distancefog': self.cmd_distance_fog,
+            'fogdistance': self.cmd_fog_distance,
+            'fogdist': self.cmd_fog_distance,
+            'fogstart': self.cmd_fog_start,
+            'fogend': self.cmd_fog_end,
+            'fogdensity': self.cmd_fog_density,
+            'fogcolor': self.cmd_fog_color,
+            'fogcolour': self.cmd_fog_color,
+            'ambient': self.cmd_ambient,
 
             # Visibility & Tint
             'hide': self.cmd_hide,
@@ -181,11 +200,13 @@ class ConsoleCommandHandler:
             view_3d = getattr(self.main_window, 'view_3d', None)
             lt = getattr(view_3d, 'logic_thread', None) if view_3d else None
             play = bool(getattr(view_3d, 'play_mode', False))
-            handled, reply = mgr.dispatch_console_command(cmd, args, lt, play_mode=play)
+            handled, reply = mgr.dispatch_console_command(
+                cmd, args, lt, play_mode=play, main_window=self.main_window)
             if handled and reply:
                 debug_log("Info", str(reply))
             return handled
-        except Exception:
+        except Exception as exc:
+            debug_log("Error", f"console command '{cmd}' dispatch failed: {exc}")
             return False
 
     def _plugin_manager(self):
@@ -195,11 +216,6 @@ class ConsoleCommandHandler:
             return get_manager()
         except Exception:
             return None
-
-    @property
-    def editor_state(self):
-        """EditorState instance. MainWindow stores this as `.state`, not `.editor_state`."""
-        return self.main_window.state
 
     def cmd_bind(self, args):
         """bind <key> <command>   or   bind (opens dialog)"""
@@ -407,22 +423,19 @@ class ConsoleCommandHandler:
         debug_log("Info", f"'{name}' is now hidden")
 
     def _notify_visibility_changed(self):
-        """Tell a live play session that a brush's ``hidden`` flag moved.
+        """Tell a live play session an object's *authored* ``hidden`` moved.
 
-        The render-state builder caches the whole-world non-hidden brush list
-        between frames, so a console show/hide has to announce itself for the
-        change to land on the very next frame rather than at the next periodic
-        re-validation. Fully guarded — no play session, no logic thread, or an
-        engine without the hook all no-op.
+        Uses Fio's ``notify_authored_visibility_changed`` so the cull buffers
+        and the collision grid both follow the console Show/Hide on the next
+        frame. No play session, or an engine without the hook, is a no-op.
         """
-        try:
-            view_3d = getattr(self.main_window, 'view_3d', None)
-            lt = getattr(view_3d, 'logic_thread', None) if view_3d else None
-            notify = getattr(lt, 'notify_visibility_changed', None)
-            if notify is not None:
+        lt = self._logic_thread()
+        notify = getattr(lt, 'notify_authored_visibility_changed', None) if lt else None
+        if notify is not None:
+            try:
                 notify()
-        except Exception:
-            pass
+            except Exception as exc:
+                debug_log("Error", f"visibility notify failed: {exc}")
 
     def cmd_show(self, args):
         """show <name> — Clear hidden flag on a brush or entity."""
@@ -751,7 +764,7 @@ class ConsoleCommandHandler:
 
 <b style="color:orange;">clear</b> — Clear console<br>
 <b style="color:orange;">help</b> — Show this help<br>
-<b style="color:orange;">diceroll</b> [NdM[+/-modifier]…] [--animate] — Roll dice in Editor or Play mode<br>
+<b style="color:orange;">fps</b> — Toggle FPS display<br>
 <b style="color:orange;">map</b> &lt;name&gt; — Load a different map<br>
 <b style="color:cyan;">=== Save / Load (Play Session) ===</b><br>
 <b style="color:orange;">save</b> [name] — Save the current play session (Play Mode only)<br>
@@ -789,10 +802,22 @@ class ConsoleCommandHandler:
 <b style="color:orange;">r_list</b> — Show all current render settings<br>
 <b style="color:orange;">r_wireframe</b>{sep}<b style="color:orange;">wireframe</b> — Toggle wireframe mode<br>
 <b style="color:orange;">r_shadows</b>{sep}<b style="color:orange;">shadows</b> — Toggle shadows<br>
-<b style="color:orange;">r_fog</b>{sep}<b style="color:orange;">fog</b> — Toggle volumetric fog<br>
+<b style="color:orange;">r_fog</b>{sep}<b style="color:orange;">fog</b> — Toggle volumetric fog (fog brushes)<br>
 <b style="color:orange;">r_lighting</b>{sep}<b style="color:orange;">lighting</b> — Toggle real-time lighting<br>
 <b style="color:orange;">r_reloadshaders</b> — Hot-reload all shaders<br>
 <b style="color:orange;">r_clearcolor</b> r g b — Set background colour<br>
+<b style="color:cyan;">=== View Distance &amp; Far-Plane Fog ===</b><br>
+<i>Fog always reaches full opacity before the clip, so pulling the view
+distance in never makes geometry pop. Fire these from a logic_command
+entity to drive them from the I/O system.</i><br>
+<b style="color:orange;">r_viewdistance</b>{sep}<b style="color:orange;">culldistance</b>{sep}<b style="color:orange;">farplane</b> &lt;units&gt; — Max render distance (also the far plane)<br>
+<b style="color:orange;">r_distancefog</b>{sep}<b style="color:orange;">distancefog</b> [on|off] — Toggle far-plane fog<br>
+<b style="color:orange;">r_fogdistance</b>{sep}<b style="color:orange;">fogdist</b> &lt;start&gt; &lt;end&gt;{sep}<b style="color:orange;">auto</b> — Where fog ramps up and goes opaque<br>
+<b style="color:orange;">r_fogstart</b> &lt;units&gt;{sep}<b style="color:orange;">auto</b> — Where fog begins<br>
+<b style="color:orange;">r_fogend</b> &lt;units&gt;{sep}<b style="color:orange;">auto</b> — Where fog is fully opaque<br>
+<b style="color:orange;">r_fogdensity</b> &lt;value&gt; — 0 = linear ramp; higher thickens the near half<br>
+<b style="color:orange;">r_fogcolor</b> &lt;R&gt; &lt;G&gt; &lt;B&gt; — Fog colour, and the sky behind it<br>
+<b style="color:orange;">ambient</b> &lt;level&gt;{sep}&lt;R&gt; &lt;G&gt; &lt;B&gt;{sep}<b style="color:orange;">off</b> — Global omnidirectional light (no entity added)<br>
 <b style="color:cyan;">=== Movement & Physics ===</b><br>
 <b style="color:orange;">physics</b> on/off/toggle<br>
 <b style="color:orange;">setpos</b>{sep}<b style="color:orange;">teleport</b> x y z<br>
@@ -811,6 +836,7 @@ class ConsoleCommandHandler:
 <b style="color:orange;">buddha</b> — Toggle buddha mode (health cannot go below 2)<br>
 <b style="color:orange;">noclip</b> — Toggle noclip<br>
 <b style="color:orange;">notarget</b> — Toggle notarget (monsters ignore the player)<br>
+<b style="color:orange;">inspect</b>{sep}<b style="color:orange;">mind</b> — Pause and click an actor to inspect it<br>
 """
         # Append any console commands plugins registered (API 1.4.0).
         try:
@@ -819,64 +845,14 @@ class ConsoleCommandHandler:
         except Exception:
             cmds = []
         if cmds:
-            help_text += '<b style="color:cyan;">=== Plugin Commands ===</b><br>'
+            help_text += '<b style="color:cyan;">=== Game &amp; Plugin Commands ===</b><br>'
             for name, chelp in cmds:
                 suffix = f" — {chelp}" if chelp else ""
                 help_text += f'<b style="color:orange;">{name}</b>{suffix}<br>'
         debug_log("Info", help_text)
 
-    def cmd_diceroll(self, args):
-        """Roll a dice expression and optionally show the native HUD animation."""
-        tokens = str(args or "").split()
-        animate = any(token.lower() in ("--animate", "animate") for token in tokens)
-        notation_tokens = [token for token in tokens
-                           if token.lower() not in ("--animate", "animate")]
-        notation = "".join(notation_tokens) or "1d20"
-
-        try:
-            visualise = animate
-            if not visualise:
-                try:
-                    visualise = self.main_window.config.getboolean(
-                        "GAME", "visualise_dice_rolls", fallback=False)
-                except (AttributeError, TypeError, ValueError):
-                    visualise = False
-            view_3d = getattr(self.main_window, "view_3d", None)
-            logic = getattr(view_3d, "logic_thread", None) if view_3d else None
-            session = getattr(logic, "_miniwind", None) if logic is not None else None
-            if session is not None:
-                if not animate:
-                    session.dice_animation = None
-                    result = session.game.request_roll(notation, source="console")
-                else:
-                    result = session.roll_dice(notation)
-                source_label = "play session"
-            else:
-                view_3d = getattr(self.main_window, "view_3d", None)
-                if view_3d is not None and not visualise:
-                    view_3d._editor_dice_animation = None
-                result = self._console_dice.request_roll(notation, source="console")
-                source_label = "editor"
-                if visualise:
-                    view_3d = getattr(self.main_window, "view_3d", None)
-                    if view_3d is not None:
-                        view_3d._editor_dice_animation = {
-                            "result": result,
-                            "started_at": time.monotonic(),
-                        }
-                        view_3d.update()
-                    if not animate:
-                        debug_log("Info", "Dice roll completed; showing editor preview from GAME settings.")
-                    else:
-                        debug_log("Info", "Dice roll completed; showing editor preview.")
-
-            details = ", ".join(str(value) for value in result.get("roll_details", []))
-            debug_log("Roll", f"{result['dice_notation']} => total {result['roll_result']} "
-                               f"(rolls: [{details}], source: {source_label}"
-                               f"{', animated' if visualise else ''})")
-        except (ValueError, TypeError) as exc:
-            debug_log("Error", f"Dice roll failed: {exc}")
-
+    # ===================================================================
+    # HELPER: Get renderer safely
     # ===================================================================
     def _get_renderer(self):
         """Safely retrieve the active renderer from the 3D view."""
@@ -920,11 +896,18 @@ class ConsoleCommandHandler:
         add_line("Glass Shader", "ON" if getattr(renderer, 'glass_enabled', True) else "OFF")
         add_line("Real-time Lighting", "ON" if getattr(renderer, 'lighting_enabled', True) else "OFF")
         add_line("Deferred Rendering", "ON" if getattr(renderer, 'use_deferred', False) else "OFF")
-        add_line("ARM Mode", "ON" if getattr(renderer, 'arm_mode', True) else "OFF")
+        add_line("Low-power Mode", "ON" if getattr(renderer, "lowpower_mode", False) else "OFF")
 
         # Clear color
         cc = getattr(renderer, 'clear_color', [0.02, 0.02, 0.05])
         add_line("Clear Color", f"[{cc[0]:.2f}, {cc[1]:.2f}, {cc[2]:.2f}]")
+
+        # View distance and the far-plane fog that hides its clip.
+        vd = getattr(getattr(self.main_window, 'view_3d', None), 'view_distance', None)
+        if vd is not None:
+            lines.append("<b>--- View Distance &amp; Fog ---</b>")
+            for name, value in vd.describe():
+                add_line(name, value)
 
         debug_log("Info", "<br>".join(lines))
 
@@ -1002,6 +985,276 @@ class ConsoleCommandHandler:
                 debug_log("Error", "Usage: r_clearcolor r g b   (values 0.0 to 1.0)")
         except Exception:
             debug_log("Error", "Usage: r_clearcolor r g b")
+
+    # ===================================================================
+    # VIEW DISTANCE & FAR-PLANE FOG
+    # -------------------------------------------------------------------
+    # One camera setting (the view distance) and the fog that hides its far
+    # plane. Everything here writes engine.view_distance.ViewDistance, which
+    # the viewport, the renderer and the logic thread all hold by reference,
+    # so a change is on screen on the next frame.
+    #
+    # These are renderer/camera controls, not world-streaming ones: they change
+    # how much of the level is drawn and nothing about what is loaded, awake or
+    # simulated.
+    #
+    # The I/O system reaches all of them through a logic_command entity
+    # (RunCommand), so a trigger brush can raise the fog as the player enters a
+    # valley without a line of Python.
+    # ===================================================================
+
+    def _get_view_distance(self):
+        """The shared ViewDistance object, or None if the 3D view isn't up."""
+        try:
+            vd = self.main_window.view_3d.view_distance
+        except AttributeError:
+            vd = None
+        if vd is None:
+            debug_log("Error", "View distance not accessible (no 3D view).")
+        return vd
+
+    def _refresh_view(self):
+        """Repaint the 3D view so a console change is visible immediately."""
+        try:
+            self.main_window.view_3d.update()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _parse_color(parts):
+        """Three numbers as an RGB triple in 0..1, or None if unparseable.
+
+        Accepts either convention the rest of the console uses: 0-255 bytes
+        (like ``tint`` and ``portal_color``) or 0.0-1.0 floats (like
+        ``r_clearcolor``). Any component above 1.0 means the caller meant
+        bytes — "200 180 140" is not a plausible float colour.
+        """
+        try:
+            vals = [float(x) for x in parts]
+        except ValueError:
+            return None
+        if len(vals) != 3:
+            return None
+        if max(vals) > 1.0:
+            vals = [v / 255.0 for v in vals]
+        return [max(0.0, min(1.0, v)) for v in vals]
+
+    @staticmethod
+    def _parse_switch(arg):
+        """'on'/'off'/'toggle' (and the usual synonyms) -> True/False/None."""
+        a = arg.strip().lower()
+        if a in ('on', '1', 'true', 'yes', 'enable', 'enabled'):
+            return True
+        if a in ('off', '0', 'false', 'no', 'disable', 'disabled'):
+            return False
+        return None
+
+    def _report_fog_band(self, vd):
+        """Log the resolved fog band and where it sits against the far plane."""
+        start, end = vd.resolve()
+        debug_log("Info",
+                  f"Fog: {start:.0f} \u2192 {end:.0f} (opaque), "
+                  f"clip at {vd.far_plane:.0f}")
+
+    def cmd_view_distance(self, args):
+        """r_viewdistance [units] - max render distance; also moves the far plane."""
+        vd = self._get_view_distance()
+        if vd is None:
+            return
+        arg = args.strip()
+        if not arg:
+            debug_log("Info", f"View distance: {vd.distance:.0f} units")
+            self._report_fog_band(vd)
+            return
+        try:
+            requested = float(arg)
+        except ValueError:
+            debug_log("Error", "Usage: r_viewdistance <units>")
+            return
+        # Go through the viewport rather than writing ViewDistance directly: it
+        # is the one place that also refreshes the LOD bands and the logic
+        # thread, and it clamps to the supported span.
+        self.main_window.view_3d.set_cull_distance(requested)
+        # Keep the editor's "Cull Dist" spinbox showing the truth. setValue on
+        # the value it already holds emits nothing, so this cannot recurse.
+        spin = getattr(self.main_window, 'cull_dist_spinbox', None)
+        if spin is not None:
+            spin.setValue(int(vd.distance))
+        if abs(vd.distance - requested) > 0.5:
+            debug_log("Warning",
+                      f"View distance clamped to {vd.distance:.0f} units.")
+        else:
+            debug_log("Info", f"View distance: {vd.distance:.0f} units")
+        self._report_fog_band(vd)
+
+    def cmd_distance_fog(self, args):
+        """r_distancefog [on|off] - far-plane fog (distinct from volumetric fog)."""
+        vd = self._get_view_distance()
+        if vd is None:
+            return
+        wanted = self._parse_switch(args) if args.strip() else None
+        vd.fog_enabled = (not vd.fog_enabled) if wanted is None else wanted
+        self._refresh_view()
+        debug_log("Info", f"Distance fog: {'ON' if vd.fog_enabled else 'OFF'}")
+        if not vd.fog_enabled:
+            debug_log("Warning",
+                      "With fog off, geometry will pop at the far plane "
+                      f"({vd.far_plane:.0f} units).")
+
+    def cmd_fog_distance(self, args):
+        """r_fogdistance <start> <end> | <end> | auto - where fog ramps up."""
+        vd = self._get_view_distance()
+        if vd is None:
+            return
+        parts = args.split()
+        if not parts:
+            self._report_fog_band(vd)
+            return
+        if parts[0].lower() == 'auto':
+            vd.fog_start = None
+            vd.fog_end = None
+            self._refresh_view()
+            debug_log("Info", "Fog distance tracking the view distance again.")
+            self._report_fog_band(vd)
+            return
+        try:
+            values = [float(x) for x in parts[:2]]
+        except ValueError:
+            debug_log("Error", "Usage: r_fogdistance <start> <end> | <end> | auto")
+            return
+        if len(values) == 1:
+            vd.fog_end = values[0]
+        else:
+            vd.fog_start, vd.fog_end = values[0], values[1]
+        self._refresh_view()
+        self._warn_if_clamped(vd, values)
+
+    def _warn_if_clamped(self, vd, requested):
+        """Say so when the fog band had to be moved to stay ahead of the clip."""
+        start, end = vd.resolve()
+        asked_end = requested[-1]
+        if asked_end - end > 0.5:
+            debug_log("Warning",
+                      f"Fog end pulled back to {end:.0f}: it must go opaque "
+                      f"before the {vd.far_plane:.0f} clip, or geometry pops.")
+        self._report_fog_band(vd)
+
+    def cmd_fog_start(self, args):
+        """r_fogstart <units> | auto - where fog begins."""
+        vd = self._get_view_distance()
+        if vd is None:
+            return
+        arg = args.strip()
+        if not arg:
+            self._report_fog_band(vd)
+            return
+        if arg.lower() == 'auto':
+            vd.fog_start = None
+        else:
+            try:
+                vd.fog_start = float(arg)
+            except ValueError:
+                debug_log("Error", "Usage: r_fogstart <units> | auto")
+                return
+        self._refresh_view()
+        self._report_fog_band(vd)
+
+    def cmd_fog_end(self, args):
+        """r_fogend <units> | auto - where fog becomes fully opaque."""
+        vd = self._get_view_distance()
+        if vd is None:
+            return
+        arg = args.strip()
+        if not arg:
+            self._report_fog_band(vd)
+            return
+        if arg.lower() == 'auto':
+            vd.fog_end = None
+            self._refresh_view()
+            self._report_fog_band(vd)
+            return
+        try:
+            asked = float(arg)
+        except ValueError:
+            debug_log("Error", "Usage: r_fogend <units> | auto")
+            return
+        vd.fog_end = asked
+        self._refresh_view()
+        self._warn_if_clamped(vd, [asked])
+
+    def cmd_fog_density(self, args):
+        """r_fogdensity <value> - 0 for a linear ramp, higher thickens the near half."""
+        vd = self._get_view_distance()
+        if vd is None:
+            return
+        arg = args.strip()
+        if not arg:
+            debug_log("Info", f"Fog density: {vd.fog_density:.4f}"
+                              f"{'  (linear ramp)' if vd.fog_density <= 0.0 else ''}")
+            return
+        try:
+            vd.fog_density = float(arg)
+        except ValueError:
+            debug_log("Error", "Usage: r_fogdensity <value>   (0 = linear ramp)")
+            return
+        self._refresh_view()
+        debug_log("Info", f"Fog density: {vd.fog_density:.4f}")
+
+    def cmd_fog_color(self, args):
+        """r_fogcolor <r> <g> <b> - fog colour, and the colour of the sky behind it."""
+        vd = self._get_view_distance()
+        if vd is None:
+            return
+        parts = args.split()
+        if not parts:
+            r, g, b = vd.fog_color
+            debug_log("Info", f"Fog color: [{r:.2f}, {g:.2f}, {b:.2f}]")
+            return
+        color = self._parse_color(parts)
+        if color is None:
+            debug_log("Error", "Usage: r_fogcolor <r> <g> <b>   (0-255 or 0.0-1.0)")
+            return
+        vd.fog_color = color
+        self._refresh_view()
+        r, g, b = vd.fog_color
+        debug_log("Info", f"Fog color: [{r:.2f}, {g:.2f}, {b:.2f}] "
+                          "(also the background past the far plane)")
+
+    def cmd_ambient(self, args):
+        """ambient <level> | <r> <g> <b> | off - global omnidirectional light.
+
+        A level-wide Light entity in effect without one in the world: no
+        position, no falloff, no shadows, nothing added to the map and nothing
+        saved with it. Added on top of each shader's own baked ambient, so
+        ``ambient 0`` restores exactly the stock look.
+        """
+        vd = self._get_view_distance()
+        if vd is None:
+            return
+        parts = args.split()
+        if not parts:
+            r, g, b = vd.ambient
+            debug_log("Info", f"Ambient light: [{r:.2f}, {g:.2f}, {b:.2f}]")
+            return
+        if parts[0].lower() in ('off', 'none'):
+            vd.ambient = (0.0, 0.0, 0.0)
+        elif len(parts) == 1:
+            try:
+                level = float(parts[0])
+            except ValueError:
+                debug_log("Error", "Usage: ambient <level> | <r> <g> <b> | off")
+                return
+            # A lone number above 1 is a 0-255 byte, matching _parse_color.
+            vd.set_ambient_level(level / 255.0 if level > 1.0 else level)
+        else:
+            color = self._parse_color(parts[:3])
+            if color is None:
+                debug_log("Error", "Usage: ambient <level> | <r> <g> <b> | off")
+                return
+            vd.ambient = color
+        self._refresh_view()
+        r, g, b = vd.ambient
+        debug_log("Info", f"Ambient light: [{r:.2f}, {g:.2f}, {b:.2f}]")
 
     def cmd_reload_shaders(self, args):
         renderer = self._get_renderer()
@@ -1508,13 +1761,13 @@ class ConsoleCommandHandler:
             debug_log("Info", f"Camera switched to {new_mode}")
 
     def cmd_inspect(self, args):
-        """inspect | mind   — pause and click a monster/NPC for a live mental-state popup.
+        """inspect | mind   — pause and click an actor for a live inspector popup.
 
         Pauses the world and frees the mouse, then arms a one-shot picker: the
-        next left-click on a monster or NPC in the 3D view opens a draggable
-        inspector window showing its identity, AI state, needs, standing toward
-        the player and prioritised internal task (job) list. Esc cancels and
-        unpauses. Play Mode only."""
+        next left-click on an actor in the 3D view opens a draggable inspector
+        window showing whatever snapshot the game layer supplies (see
+        ``EditorAPI.register_entity_inspector``), with a generic AI fallback.
+        Esc cancels and unpauses. Play Mode only."""
         if not self._require_play_mode("inspect"):
             return
         view_3d = getattr(self.main_window, 'view_3d', None)
@@ -1523,8 +1776,8 @@ class ConsoleCommandHandler:
             return
         view_3d.enter_inspect_mode()
         if hasattr(self.main_window, 'show_toast'):
-            self.main_window.show_toast("Inspect (paused): click a monster / NPC (Esc to cancel)")
-        debug_log("Info", "Inspect mode armed — world paused; click a monster or NPC.")
+            self.main_window.show_toast("Inspect (paused): click an actor (Esc to cancel)")
+        debug_log("Info", "Inspect mode armed — world paused; click an actor.")
 
     def cmd_noclip(self, args):
         if not self._require_play_mode("noclip"):
@@ -1765,209 +2018,6 @@ class ConsoleCommandHandler:
         debug_log("Info" if ok else "Error", msg)
         if ok:
             self.main_window.show_toast(f"Saved: {os.path.basename(path)}")
-
-    def cmd_sim(self, args):
-        """sim [events | why <name> | knows <name> | tell <name> <id> | emit <kind> [actor] [target] [item] | crimes | forget <name>]
-
-        Inspect and drive MiniWind's reactive simulation from the console — the
-        same director the World Simulation window shows, so anything here is
-        also visible there.
-
-          sim events            the world history, newest first, with the
-                                consequence each event caused
-          sim crimes            crimes nobody has reported to the watch yet
-          sim actors            every actor's current intent and the reason
-          sim why <name>        why that actor is doing what it is doing
-          sim knows <name>      what that actor believes, and how sure it is
-          sim tell <name> <id>  hand an actor a belief about event <id>
-          sim forget <name>     wipe an actor's knowledge
-          sim emit <kind> [actor] [target] [item]
-                                inject an event through the real pipeline
-        """
-        if not self._in_play_mode():
-            debug_log("Error", "sim: enter Play Mode first.")
-            return
-        lt = self._logic_thread()
-        session = getattr(lt, "_miniwind", None) if lt is not None else None
-        director = getattr(session, "director", None) if session is not None else None
-        if director is None:
-            debug_log("Error", "sim: no active MiniWind session.")
-            return
-        from game.sim import crime as _crime, knowledge as _know
-        from game.sim.director import actor_key as _key
-
-        parts = args.split()
-        sub = (parts[0].lower() if parts else "events")
-        rest = parts[1:]
-
-        def _find(name):
-            want = str(name or "").strip().lower()
-            for a in session._sim_actors():
-                p = getattr(a, "properties", {}) or {}
-                if want in (str(p.get("display_name", "")).lower(),
-                            str(p.get("name", "")).lower(), _key(a)):
-                    return a
-            return None
-
-        if sub in ("events", "history", ""):
-            lines = director.report_lines(limit=25)
-            for line in lines or ["(nothing has happened yet)"]:
-                debug_log("Info", line)
-            return
-
-        if sub == "crimes":
-            open_crimes = _crime.unsolved(director.store, director.bus)
-            for ev in open_crimes or []:
-                debug_log("Info", f"#{ev.id} [{ev.timestamp()}] {ev.describe()} "
-                                  f"— unreported")
-            if not open_crimes:
-                debug_log("Info", "No unreported crimes: the watch knows about "
-                                  "everything that has happened.")
-            return
-
-        if sub == "actors":
-            for a in session._sim_actors():
-                p = getattr(a, "properties", {}) or {}
-                intents = director.intents(a)
-                top = intents[0] if intents else None
-                debug_log("Info", f"{p.get('display_name', '?')}  "
-                                  f"[{p.get('sched_state', '')}]  "
-                                  f"{top.label if top else '—'}"
-                                  f"{' — ' + top.reason if top else ''}")
-            return
-
-        if sub in ("why", "knows", "forget", "tell") and not rest:
-            debug_log("Error", f"sim {sub}: name an actor.")
-            return
-
-        thing = _find(rest[0]) if rest else None
-        if sub in ("why", "knows", "forget", "tell") and thing is None:
-            debug_log("Error", f"sim {sub}: no actor called '{rest[0]}'.")
-            return
-
-        if sub == "why":
-            debug_log("Info", director.why(thing))
-            for it in director.intents(thing):
-                debug_log("Info", f"   {it.priority:>3}  {it.label} — {it.reason}")
-            return
-
-        if sub == "knows":
-            lines = director.knowledge_lines(thing, limit=20)
-            for line in lines or ["(knows nothing of note)"]:
-                debug_log("Info", line)
-            return
-
-        if sub == "forget":
-            _know.forget_all(director.store, _key(thing))
-            director.invalidate(thing)
-            debug_log("Info", f"{rest[0]} remembers nothing.")
-            return
-
-        if sub == "tell":
-            if len(rest) < 2 or not rest[1].lstrip('#').isdigit():
-                debug_log("Error", "sim tell <name> <event id>  (see 'sim events')")
-                return
-            event = director.bus.get(int(rest[1].lstrip('#')))
-            if event is None:
-                debug_log("Error", f"sim tell: no event #{rest[1]}.")
-                return
-            fact = _know.fact_from_event(event, 0.8, _know.SOURCE_TOLD)
-            if event.kind == "theft":
-                fact["value"] = int(event.data.get("value", 0) or 0)
-            _know.learn(director.store, _key(thing), fact)
-            director.invalidate(thing)
-            debug_log("Info", f"{rest[0]} now believes: {event.describe()}")
-            debug_log("Info", f"   -> {director.why(thing)}")
-            return
-
-        if sub == "emit":
-            if not rest:
-                debug_log("Error", "sim emit <kind> [actor] [target] [item]")
-                return
-            kind = rest[0]
-            actor = _find(rest[1]) if len(rest) > 1 else None
-            target = _find(rest[2]) if len(rest) > 2 else None
-            data = {}
-            if len(rest) > 3:
-                data["item"] = rest[3]
-                data["item_name"] = rest[3].replace("_", " ").title()
-            event = session.emit_event(kind, actor=actor, target=target, **data)
-            director.resolve_reports(session._sim_actors())
-            debug_log("Info", f"#{event.id} {event.describe()}")
-            for c in event.consequences:
-                debug_log("Info", f"   -> {c}")
-            return
-
-        debug_log("Error", f"sim: unknown subcommand '{sub}'. Try 'sim events'.")
-
-    def cmd_quest(self, args):
-        """quest [list | start <id> | advance <id> | complete <id> | reset <id>]
-
-        Test MiniWind quests in Play Mode. With no argument (or 'list') it prints
-        every authored quest and its live state. 'start' makes a quest active on
-        the player so its stage conditions begin tracking; 'advance' bumps it to
-        the next stage; 'complete' finishes it and pays the rewards; 'reset'
-        clears its state so you can run it again.
-        """
-        if not self._in_play_mode():
-            debug_log("Error", "quest: enter Play Mode first.")
-            return
-        lt = self._logic_thread()
-        session = getattr(lt, "_miniwind", None) if lt is not None else None
-        if session is None:
-            debug_log("Error", "quest: no active MiniWind session.")
-            return
-        try:
-            from game.rpg import quests as _q
-        except Exception as exc:
-            debug_log("Error", f"quest: {exc}")
-            return
-
-        parts = args.split()
-        sub = parts[0].lower() if parts else "list"
-        qid = parts[1] if len(parts) > 1 else ""
-        log = session.game.quests
-
-        if sub in ("list", "ls", ""):
-            if not _q.QUESTS:
-                debug_log("Info", "No quests are defined on this map "
-                                  "(author them on Game Settings ▸ Quests).")
-                return
-            for q in _q.QUESTS.values():
-                state = log.state_of(q.id) or "inactive"
-                obj = log.current_objective(q.id)
-                line = f"{q.id}  [{state}]"
-                if state == "active" and obj:
-                    line += f"  — {obj}"
-                debug_log("Info", line)
-            return
-
-        if not qid:
-            debug_log("Error", f"quest {sub}: needs a quest id (see 'quest list').")
-            return
-        if _q.get(qid) is None:
-            debug_log("Error", f"quest: unknown quest '{qid}' (see 'quest list').")
-            return
-
-        if sub == "start":
-            if session.game.start_quest(qid):
-                session.notify(f"Quest started: {_q.get(qid).name}")
-                debug_log("Info", f"Started quest '{qid}'.")
-            else:
-                debug_log("Info", f"Quest '{qid}' is already active or complete "
-                                  f"(use 'quest reset {qid}' first).")
-        elif sub == "advance":
-            log.advance(qid)
-            debug_log("Info", f"Advanced '{qid}' to stage {log.stage_of(qid)}.")
-        elif sub == "complete":
-            session.game.complete_quest(qid)
-            debug_log("Info", f"Completed quest '{qid}' (rewards paid).")
-        elif sub == "reset":
-            session.store.set(f"quest.{qid}.state", "")
-            session.store.set(f"quest.{qid}.stage", "-1")
-            debug_log("Info", f"Reset quest '{qid}'.")
-        else:
-            debug_log("Error", "quest: use list | start | advance | complete | reset.")
 
     def cmd_quicksave(self, args):
         """quicksave — Save to the quicksave slot (saves/quicksave.fiosave)."""

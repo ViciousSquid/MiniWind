@@ -22,6 +22,10 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from engine import combat_loadout as cl
+from game import combat_styles
+
+# The weapon lookup is MiniWind's; install it the way importing `game` does.
+combat_styles.register()
 
 
 def _guard():
@@ -134,18 +138,13 @@ def test_the_weapon_follows_the_style():
 
 def test_no_game_item_database_means_no_switching():
     """The engine runs maps with no MiniWind layer; those keep their style."""
-    real = cl._item_style
-
-    def _blind(_item_id):
-        return None                     # as if game.rpg.items were unavailable
-
-    cl._item_style = _blind
+    cl.set_item_style_resolver(None)    # no game layer installed
     try:
         loadout = cl.build_loadout(_guard())
         assert cl.has_choice(loadout) is False
         assert cl.choose_style(loadout, in_melee=False) == cl.MELEE
     finally:
-        cl._item_style = real
+        combat_styles.register()
 
 
 # ----------------------------------------------------------------------- cost

@@ -49,8 +49,10 @@ Qt = QtCore.Qt
 
 
 @pytest.fixture(scope="module")
-def app():
-    yield QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+def app(qt_app):
+    # The session-wide QApplication (root conftest). A module-local one would be
+    # destroyed with the module and abort the next Qt test that builds a widget.
+    yield qt_app
 
 
 class _PauseMenu:
@@ -167,13 +169,13 @@ def test_no_plugin_means_escape_belongs_to_play_mode(win):
 
 
 def test_a_screen_that_closes_on_escape_gets_the_key(win):
-    win.view_3d.logic_thread = mock.Mock(_miniwind=_Session(closes=True))
+    win.view_3d.logic_thread = mock.Mock(game_session=_Session(closes=True))
     assert win._game_modal_wants_escape() is True
 
 
 def test_a_screen_that_refuses_escape_does_not_get_the_key(win):
     """Character creation would swallow it and leave the player stuck."""
-    win.view_3d.logic_thread = mock.Mock(_miniwind=_Session(closes=False))
+    win.view_3d.logic_thread = mock.Mock(game_session=_Session(closes=False))
     assert win._game_modal_wants_escape() is False
 
 
@@ -182,7 +184,7 @@ def test_an_older_session_falls_back_to_anything_open(win):
     session = mock.Mock(spec=["open_screen", "dialogue"])
     session.open_screen = "inventory"
     session.dialogue = None
-    win.view_3d.logic_thread = mock.Mock(_miniwind=session)
+    win.view_3d.logic_thread = mock.Mock(game_session=session)
     assert win._game_modal_wants_escape() is True
     session.open_screen = None
     assert win._game_modal_wants_escape() is False
@@ -193,7 +195,7 @@ def test_a_session_that_raises_is_not_allowed_to_trap_the_player(win):
     session.escape_closes_modal.side_effect = RuntimeError("boom")
     session.open_screen = None
     session.dialogue = None
-    win.view_3d.logic_thread = mock.Mock(_miniwind=session)
+    win.view_3d.logic_thread = mock.Mock(game_session=session)
     assert win._game_modal_wants_escape() is False
 
 
@@ -217,7 +219,7 @@ def test_saying_no_keeps_playing(win):
 
 def test_escape_out_of_character_creation_still_offers_the_way_out(win):
     """The bug: the key used to disappear into a screen that never closes."""
-    win.view_3d.logic_thread = mock.Mock(_miniwind=_Session(closes=False))
+    win.view_3d.logic_thread = mock.Mock(game_session=_Session(closes=False))
     with _answer(yes=True) as question:
         win.keyPressEvent(_key(Qt.Key_Escape))
     assert question.called
@@ -225,7 +227,7 @@ def test_escape_out_of_character_creation_still_offers_the_way_out(win):
 
 
 def test_escape_inside_an_ordinary_screen_belongs_to_the_game(win):
-    win.view_3d.logic_thread = mock.Mock(_miniwind=_Session(closes=True))
+    win.view_3d.logic_thread = mock.Mock(game_session=_Session(closes=True))
     with _answer(yes=True) as question:
         win.keyPressEvent(_key(Qt.Key_Escape))
     assert not question.called
@@ -236,7 +238,7 @@ def test_escape_inside_an_ordinary_screen_belongs_to_the_game(win):
 def test_the_prompt_pauses_the_world_and_thaws_it_again_on_no(win):
     logic = mock.Mock(gameplay_paused=False, _menu_paused=False)
     win.view_3d.logic_thread = logic
-    del logic._miniwind                       # no game plugin, just the thread
+    del logic.game_session                    # no game layer, just the thread
     with _answer(yes=False):
         win.keyPressEvent(_key(Qt.Key_Escape))
     assert logic._menu_paused is False

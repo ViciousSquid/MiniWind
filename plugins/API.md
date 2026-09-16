@@ -60,8 +60,8 @@ implements; `API_VERSION_INFO` is the same value as an `(int, int, int)` tuple.
 
 | Value | Introduced |
 |-------|------------|
-| `API_VERSION` | `"1.3.0"` |
-| `API_VERSION_INFO` | `(1, 3, 0)` |
+| `API_VERSION` | `"1.4.0"` |
+| `API_VERSION_INFO` | `(1, 4, 0)` |
 
 History:
 
@@ -70,6 +70,10 @@ History:
 - **1.3.0** — render hooks (`render.*` events), swappable-renderer registration
   (`register_renderer`), editor-UI extensions (extra property fields on any
   entity, custom property tabs), and the `FIO_NO_PLUGINS` kill-switch.
+- **1.4.0** — console commands (`register_console_command`, `ConsoleContext`),
+  collapsible property sections, State Store key suggestions and actor
+  inspector snapshots, so a game layer extends the editor without the editor
+  importing it.
 
 A plugin declares the minimum it needs with `FioPlugin.api_version`. If that is
 **newer** than the host's `API_VERSION`, the manager refuses to load the plugin
@@ -297,6 +301,30 @@ mode. *cls* must implement the renderer interface (`render_scene`,
 `draw_models`, `cleanup`, a `lod_manager`, …). Returns `True` if registered,
 `False` in a headless/player context with no viewport. This is how a whole new
 renderer ships as a plugin.
+
+### Editor extensions for a game layer (API 1.4.0)
+
+```python
+def register_console_command(self, name: str, handler, help: str = "") -> None
+```
+Add a debug-console command. `handler(ctx, args)` receives a `ConsoleContext`
+(`logic_thread`, `play_mode`, `main_window`) and the raw argument string, and
+may return a reply for the console to print. Built-in commands win over a
+registered one of the same name; a disabled plugin's commands are not offered.
+
+```python
+def register_property_section(self, label, factory, entity_type=None, expanded=False) -> None
+```
+Like `register_property_tab`, but placed as a collapsible section inside the
+Properties tab — for a handful of fields that read as part of the entity.
+
+```python
+def register_kv_suggestions(self, provider) -> None
+def register_entity_inspector(self, provider) -> None
+```
+`provider() -> [(label, key, default_value, tooltip)]` fills the State Store
+editor's *Preset key* row. `provider(thing, monster_state, logic_thread) -> dict`
+supplies the snapshot the in-game `inspect` popup shows for an actor.
 
 ### Global store & logging
 
@@ -601,12 +629,12 @@ def prop(name, type="string", label="", default=None,
 Terse, keyword-friendly constructor for a `PropertySpec`. Example:
 
 ```python
-api.register_properties("beacontower", [
-    prop("enabled", "bool", "Beacon lit", default=True,
-         help="Whether this tower's beacon is burning."),
-    prop("signal_radius", "float", "Signal radius", default=2048.0,
+api.register_properties("bigworldsettings", [
+    prop("enabled", "bool", "Streaming enabled", default=True,
+         help="Turn cell streaming on for this map."),
+    prop("activation_radius", "float", "Activation radius", default=2048.0,
          min=256.0, max=65536.0,
-         help="How far the beacon can be seen from."),
+         help="Cells within this distance of the player become active."),
 ])
 ```
 
@@ -615,15 +643,18 @@ api.register_properties("beacontower", [
 ## `GlobalStore` — cross-level storage
 
 Process-wide, cross-level key/value storage for plugins. When the editor package
-is present it binds to the **same** persistent registry that map
-`LogicKeyValueStore` entities use, so a plugin's globals live alongside — and can
-share stores with — map state, persisting across level loads within a session.
-In the dependency-light player it falls back to a plain process-local
-dict-of-dicts with the same API. Values are stored as **strings**, matching the
-map store.
+is present it binds to the **same** persistent registry that map `LogicState`
+entities use, so a plugin's globals live alongside — and can share stores with — map
+state, persisting across level loads within a session. In the dependency-light
+player it falls back to a plain process-local dict-of-dicts with the same API.
+
+Values are read back as **strings**, as they always have been. Since 2.4 a map
+store holds values with their types (an integer counter really is an `int`), so
+this API converts on the way out: a plugin sees `"5"` and `"true"` whatever the
+map wrote. There is still exactly one registry — nothing is copied or mirrored.
 
 Keys are grouped by *store* name (default `"plugins"`). Pass a store name a map's
-`LogicKeyValueStore` uses to read/write the exact same values.
+`LogicState` uses to read/write the exact same values.
 
 ```python
 def get(self, key, default=None, store="plugins")
@@ -812,11 +843,10 @@ def on_tick(self, logic, ctx):
   per-tick dispatch is cached and gated so a map whose active plugins don't tick
   pays almost nothing.
 - **Restore what you mutate.** If you move, hide or disable entities during play,
-  put them back in `on_play_stop` so the edited map is unchanged (the engine's
-  own `WorldStreamingSession.stop` is the reference for doing this exactly).
+  put them back in `on_play_stop` so the edited map is unchanged (see
+  `TidySession.stop` and `BigWorldSession.stop`).
 - **Never make an OpenGL call off the render thread.** If a change needs GL work,
-  defer it to a render frame (the engine's world streaming defers its terrain
-  chunk prune this way).
+  defer it to a render frame (BigWorld defers its terrain chunk prune this way).
 - **The player runtime is dependency-free.** No PyGLM, no PyQt in the runtime
   path — plugin entities fall back to `plugins/entitybase.py` when the editor
   package is absent, so the same plugin loads in the editor, the desktop player
@@ -830,6 +860,5 @@ def on_tick(self, logic, ctx):
 - [`plugins/api.py`](api.py) — the annotated source these docs mirror.
 - [`plugins/host.py`](host.py) — the `PluginHost` / `EventBus` source.
 - [`plugins/tidy/`](tidy/) — a complete worked gameplay plugin.
-- [`engine/world_streaming.py`](../engine/world_streaming.py) — world streaming,
-  which used to be a plugin and is now a core engine subsystem (see
-  [`ARCHITECTURE.md`](../ARCHITECTURE.md) §7 for why).
+- [`plugins/bigworld/README.md`](bigworld/README.md) — a runtime-scalability
+  plugin that uses the event bus, services and host wrapping.

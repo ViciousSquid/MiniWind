@@ -84,7 +84,15 @@ def test_structured_behaviour_tabs_are_registered_for_npcs():
     assert "Schedule" in tabs and "Dialogue" in tabs
 
 
-def test_creation_wizards_registered_and_headless_safe():
+def test_creation_wizards_registered_and_headless_safe(monkeypatch):
+    # "Headless" is decided by whether a QApplication exists. In a full run the
+    # session-wide one does, and the real modal wizard would block forever, so
+    # present this test with the headless process it is about.
+    from game import editor_wizards
+
+    def _headless():
+        raise RuntimeError("no QApplication: this process is headless")
+    monkeypatch.setattr(editor_wizards, "_qt", _headless)
     m = _mgr()
     npc_w = m.entity_wizard_for("npc")
     cre_w = m.entity_wizard_for("creature")

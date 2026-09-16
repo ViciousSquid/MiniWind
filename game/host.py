@@ -18,6 +18,7 @@ it. Every rule and every stat lives in the engine-agnostic :mod:`game.rpg` core
 and the :mod:`game.ui` screens; this file is just the seam.
 """
 
+import json
 import time
 
 # Generic Fio API helpers (entity-I/O and property descriptors, the per-tick
@@ -63,7 +64,7 @@ WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 10))
 # so generic Fio editor/engine code stays game-agnostic).
 # ---------------------------------------------------------------------------
 def _miniwind_kv_suggestions():
-    """Key/value quick-insert templates for the LogicKeyValueStore editor.
+    """Key/value quick-insert templates for the State Store (LogicState) editor.
 
     Returns ``(menu_label, key, default_value, tooltip)`` rows for the store keys
     MiniWind actually uses — quest ``state``/``stage`` (one pair per authored
@@ -193,6 +194,13 @@ class MiniwindGame:
     is_builtin_game = True
 
     # ------------------------------------------------------------------ load
+    # ----------------------------------------------------- editor hooks
+    def reset_progress(self, main_window) -> None:
+        """Clear MiniWind's persisted progress (called by the editor's generic
+        reset, e.g. the pause menu's New Game) and reset any live session."""
+        from . import integration as _integration
+        _integration._clear_miniwind_progress(main_window)
+
     def register(self, api):
         from .entities import (NPC, Creature, GameSettings, MiniwindSettings,
                                Marker, MARKER_KINDS, ItemPickup, CreatureSpawn,
@@ -549,13 +557,20 @@ class MiniwindGame:
 
         # Route MiniWind-specific editor extensions through the generic
         # registration surface so no MiniWind knowledge lives in generic Fio
-        # editor/engine code: the KeyValue editor's quest-key quick-insert and
+        # editor/engine code: the State Store editor's quest-key quick-insert and
         # the debug inspector's mental-state snapshot are supplied here.
         try:
             api.register_kv_suggestions(_miniwind_kv_suggestions)
             api.register_entity_inspector(_miniwind_inspector_snapshot)
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[MiniWind] editor extension registration failed: {exc}")
+        # Console commands (diceroll / quest / sim) go through Fio's console
+        # command surface rather than living in editor.console_commands.
+        try:
+            from . import console as _console
+            _console.register(api)
+        except Exception as exc:
+            print(f"[MiniWind] console command registration failed: {exc}")
 
     # --------------------------------------------------------- runtime I/O
     def register_runtime(self, api):
@@ -576,6 +591,36 @@ class MiniwindGame:
                 from .rpg import items as rpg_items
                 stack = rpg_items.make(item_id, qty) or inv.make_item(item_id, qty=qty)
                 inv.add_item(inv.get_inventory(entity), stack)
+
+        def _roll_dice(entity, param, logic):
+            """RollDice ``notation[,target]``: roll on the session's dice and
+            pass the JSON result through OnDiceRolled (and OnDiceSuccess /
+            OnDiceFailure when a target was given)."""
+            session = getattr(logic, "_miniwind", None)
+            if session is None:
+                return None
+            parts = [part.strip() for part in str(param or "").split(",", 1)]
+            notation = parts[0] or "1d20"
+            target = None
+            if len(parts) > 1 and parts[1]:
+                try:
+                    target = int(parts[1])
+                except ValueError:
+                    print(f"[MiniWind] RollDice: invalid target {parts[1]!r}")
+                    return None
+            name = str(entity.properties.get("name", "io"))
+            try:
+                result = session.game.dice.request_roll(
+                    notation, target=target, source=f"io:{name}")
+            except (ValueError, TypeError) as exc:
+                print(f"[MiniWind] RollDice rejected: {exc}")
+                return None
+            value = json.dumps(result, separators=(",", ":"), sort_keys=True)
+            api.fire_output(entity, "OnDiceRolled", value)
+            if target is not None:
+                api.fire_output(entity, "OnDiceSuccess" if result.get("success")
+                                else "OnDiceFailure", value)
+            return result
 
         def _set_faction(entity, param, logic):
             team = str(param or "").strip().lower()
@@ -604,6 +649,7 @@ class MiniwindGame:
             api.register_input_handler(etype, "startquest", _start_quest)
             api.register_input_handler(etype, "kill", _kill)
             api.register_input_handler(etype, "wake", _wake)
+            api.register_input_handler(etype, "rolldice", _roll_dice)
 
     # ------------------------------------------------------------ host wiring
     def connect(self, host):
@@ -613,6 +659,7 @@ class MiniwindGame:
     # ------------------------------------------------------------- lifecycle
     def on_play_start(self, logic):
         logic._miniwind = None
+        logic.game_session = None
         settings = self._find_settings(logic)
         cfg = dict(settings.properties) if settings is not None else {}
         host = getattr(self, "_host", None)
@@ -626,6 +673,7 @@ class MiniwindGame:
             # character-creation screen before the first plugin tick.
             logic.gameplay_paused = True
         logic._miniwind = session
+        logic.game_session = session
         self._prev_keys = frozenset()
         if host is not None:
             try:
@@ -640,6 +688,7 @@ class MiniwindGame:
             session.persist(force=True)
             session.uninstall()
             logic._miniwind = None
+            logic.game_session = None
         host = getattr(self, "_host", None)
         if host is not None:
             try:
@@ -718,15 +767,9 @@ class MiniwindGame:
     def _handle_gameplay_input(self, session, just, ctx):
         # held: block
         session.toggle_block(ctx.key_down(K_BLOCK))
-        # Mouse combat intents (left = attack, right = cast) posted from the UI
-        # thread and consumed here on the logic thread. Keyboard equivalents
-        # (K_ATTACK / K_CAST) still work.
-        gs = getattr(getattr(ctx, "logic", None), "game_state", None)
-        if gs is not None:
-            if gs.consume_rpg_attack():
-                session.do_attack()
-            if gs.consume_rpg_cast():
-                session.do_cast()
+        # Mouse fire buttons reach the session through the engine's shot path
+        # (LogicThread._handle_shooting -> MiniwindSession.fire_player_weapon),
+        # so there is nothing to poll here. Keyboard equivalents follow.
         # edge actions
         if K_ATTACK in just or "space" in just:
             session.do_attack()

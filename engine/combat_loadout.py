@@ -21,6 +21,11 @@ per-tick decision**:
 
 The authored style always wins when there is nothing to choose between — an
 actor with one option keeps behaving exactly as the map said.
+
+Which items are weapons, and which style each drives, is the game's knowledge,
+not the engine's: a game layer installs it with :func:`set_item_style_resolver`
+(MiniWind does so from :mod:`game.combat_styles`). With no resolver, no carried
+item counts as a weapon and every actor keeps its authored style.
 """
 
 from __future__ import annotations
@@ -33,31 +38,33 @@ MAGIC = "magic"
 #: the spell — it is the more characterful choice and usually the stronger one.
 RANGED_PREFERENCE = (MAGIC, BOW)
 
-#: Weapon ``kind`` (from the item database) → the attack style it drives.
-_KIND_STYLES = {
-    "melee": MELEE,
-    "bow": BOW,
-    "staff": MAGIC,
-}
+#: ``resolver(item_id) -> style | None`` supplied by the game layer.
+_item_style_resolver = None
+
+
+def set_item_style_resolver(resolver) -> None:
+    """Install (or, with None, remove) the game's weapon-style lookup.
+
+    *resolver* takes an item id and returns :data:`MELEE`, :data:`BOW`,
+    :data:`MAGIC` or None when the item is not a weapon.
+    """
+    global _item_style_resolver
+    _item_style_resolver = resolver
 
 
 def _item_style(item_id):
-    """The attack style a weapon id drives, or None if it is not a weapon.
-
-    Resolved through the game's item database when there is one. The engine runs
-    without it (a map with no MiniWind game layer), in which case no inventory
-    weapon is recognised and the actor simply keeps its authored style.
-    """
+    """The attack style a weapon id drives, or None if it is not a weapon."""
     if not item_id:
         return None
+    resolver = _item_style_resolver
+    if resolver is None:
+        return None
     try:
-        from game.rpg import items
-    except Exception:
+        style = resolver(str(item_id))
+    except Exception as exc:
+        print(f"[combat_loadout] item style resolver failed for {item_id!r}: {exc}")
         return None
-    definition = items.get(str(item_id))
-    if definition is None or definition.category != items.WEAPON:
-        return None
-    return _KIND_STYLES.get(str(definition.get("kind", "")).lower())
+    return style if style in (MELEE, BOW, MAGIC) else None
 
 
 def _stack_id(stack):

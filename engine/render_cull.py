@@ -3,9 +3,14 @@ Camera render-distance cull -- the pure, GL-free geometry of it.
 
 The renderer's main camera pass runs this cheap broad-phase cull *before*
 ``_sort_objects`` (and on top of the frustum cull it already does): any object
-whose centre lies farther than :data:`CAMERA_RENDER_CULL_DISTANCE` world units
-from the camera on the XZ plane is dropped. Distances are compared squared, so
-no square root runs per object.
+whose centre lies farther than the camera's view distance on the XZ plane is
+dropped. Distances are compared squared, so no square root runs per object.
+
+The radius itself is *not* here any more. It is a live camera setting the
+editor and the console can move mid-session, so it lives on
+:class:`engine.view_distance.ViewDistance` and the renderer reads it per frame;
+:data:`CAMERA_RENDER_CULL_DISTANCE` below is only that setting's default value,
+kept under its old name for callers and tests that want the number.
 
 The logic lives here, apart from :mod:`engine.renderer_F`, for two reasons: it
 carries no OpenGL/glm/Qt dependency, so it is unit-testable headlessly; and it
@@ -19,13 +24,19 @@ from __future__ import annotations
 import math
 from typing import Callable, List, Optional, Sequence
 
-#: Hard outer limit (world units) on the XZ plane, measured from the camera
+from engine.view_distance import DEFAULT_VIEW_DISTANCE
+
+#: Default outer limit (world units) on the XZ plane, measured from the camera
 #: centre. A *ceiling*, not the working radius: :func:`visible_xz_bounds`
 #: derives the actual relevant region from the live camera, which for a
 #: steeply-angled or top-down view is several times tighter. The ceiling still
 #: matters -- it is what bounds a first-person view whose frustum runs all the
 #: way to the far plane.
-CAMERA_RENDER_CULL_DISTANCE = 4096.0
+#:
+#: Aliased from :mod:`engine.view_distance` so the default draw distance is
+#: written down once; a running camera's actual radius is read from its
+#: ViewDistance, not from here.
+CAMERA_RENDER_CULL_DISTANCE = DEFAULT_VIEW_DISTANCE
 #: Precomputed squared radius -- the value the per-object test actually compares.
 CAMERA_RENDER_CULL_DISTANCE_SQ = CAMERA_RENDER_CULL_DISTANCE * CAMERA_RENDER_CULL_DISTANCE
 
@@ -39,24 +50,41 @@ def visible_xz_bounds(cam, corners, y_min, y_max,
                       max_dist=CAMERA_RENDER_CULL_DISTANCE):
     """The XZ box the camera can actually see, given the world's height slab.
 
-    A camera looking steeply down has a frustum that leaves the world's vertical
-    slab almost immediately: the ground it covers is a box a couple of thousand
-    units across, not the tens of thousands a far plane at 10,000 would suggest.
-    A fixed radius cannot express that -- it is either too loose looking down
-    (drawing a ring of world nobody can see) or too tight in first person.
+    Fio has two play cameras and the player switches between them mid-session, so
+    one fixed radius cannot serve both.  Overhead floats ``overhead_height``
+    above the player raked by ``overhead_tilt``: its frustum leaves the world's
+    vertical slab almost immediately, and the ground it covers is a box a couple
+    of thousand units across rather than the tens of thousands a far plane at
+    10,000 would suggest.  First person sits at the player and looks out to the
+    ceiling.  A radius wide enough for the second draws a ring of world nobody
+    can see in the first.
 
-    So the region is derived from the live camera instead. *corners* are the four
-    far-plane corner points in world space; each is clipped as a segment from
-    *cam*, first to *max_dist* and then to the slab ``[y_min, y_max]`` the
-    world's geometry occupies. The XZ bounds of what survives is the answer, plus
-    the camera's own XZ when it sits inside the slab, so nothing directly beneath
-    a first-person camera is ever dropped.
+    So the region is derived from the live camera instead.  *corners* are the
+    four far-plane corner points in world space; each is clipped as a segment
+    from *cam*, first to *max_dist* and then to the slab ``[y_min, y_max]`` the
+    world's geometry occupies.  The XZ bounds of what survives is the answer,
+    plus the camera's own XZ when it sits inside the slab, so nothing directly
+    beneath a first-person camera is ever dropped.
 
-    This is a *visibility* answer, not a residency one. Big World decides what is
-    resident; the renderer decides what of that is visible. Narrowing this box
-    never unloads anything and never suppresses simulation -- see §15.
+    Both modes are served by the same arithmetic, and the degenerate one is the
+    safe one: at low pitch the corner rays stay inside the slab for their whole
+    length, the slab clip does nothing, and the result collapses to the
+    far-plane footprint bounded by *max_dist* -- the distance ceiling Fio culled
+    by before.  So this can be called unconditionally; it tightens the overhead
+    case and reproduces the old behaviour in first person.  It is stateless, so
+    a mid-play mode switch cannot leave it stale -- but a *caller* that caches
+    the box against the player's position can, because the box changes on a
+    switch while the player has not moved.
 
-    Returns ``(min_x, min_z, max_x, max_z)``. Conservative by construction: the
+    This is a *visibility* answer, not a residency one (§15).  Big World decides
+    what is resident, from the **player's** position; this decides what of that
+    is drawn, from the **camera's**.  Keeping those two inputs separate is what
+    stops a camera toggle from streaming cells in or out: in first person the
+    visible box can reach past the activation radius, and it must not drag the
+    world's resident set out with it.  Narrowing this box never unloads anything
+    and never suppresses simulation.
+
+    Returns ``(min_x, min_z, max_x, max_z)``.  Conservative by construction: the
     bounding box of the visible volume, never smaller than it.
 
     Pure arithmetic -- no glm, no GL -- so it is unit-testable headlessly.
@@ -71,7 +99,23 @@ def visible_xz_bounds(cam, corners, y_min, y_max,
         min_x = min_z = float("inf")
         max_x = max_z = float("-inf")
 
-    for corner in corners:
+    # The corner rays bound the *lateral* extent, but not the forward one: they
+    # leave the eye at the frustum's widest angle, so they are much longer than
+    # the view axis and clipping them to `max_dist` stops short of it.  At a 75
+    # degree FOV that lands the box a little over half way to the ceiling, which
+    # would wrongly cull something dead ahead -- invisible in an overhead view,
+    # where the slab clip dominates long before the ceiling does, and plainly
+    # wrong in first person.  The axis ray is what reaches furthest forward, and
+    # for a symmetric frustum it passes through the centroid of the four far
+    # corners, so sampling that alongside them bounds both extents.
+    samples = list(corners)
+    if len(samples) >= 3:
+        inv_n = 1.0 / len(samples)
+        samples.append((sum(float(c[0]) for c in samples) * inv_n,
+                        sum(float(c[1]) for c in samples) * inv_n,
+                        sum(float(c[2]) for c in samples) * inv_n))
+
+    for corner in samples:
         dx = float(corner[0]) - cx
         dy = float(corner[1]) - cy
         dz = float(corner[2]) - cz

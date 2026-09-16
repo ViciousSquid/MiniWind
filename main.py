@@ -154,6 +154,13 @@ if __name__ == "__main__":
     from PyQt5.QtGui import QPixmap, QSurfaceFormat, QIcon
     from PyQt5.QtCore import Qt
     from editor.main_window import MainWindow
+    # MiniWind is the game layer of this build: register it with Fio's plugin
+    # manager (entities, properties, I/O, console commands, play lifecycle)
+    # and apply its editor integration *before* the main window builds its
+    # menus. It lives here, in the application bootstrap, so Fio's editor and
+    # engine packages never import the game.
+    import game as _miniwind
+    _miniwind.install()
 
     # ---------------------------------------------------------
     # PATH RESOLUTION

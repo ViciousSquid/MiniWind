@@ -60,38 +60,47 @@ def _debug(message: str):
 class PluginManager:
     def __init__(self):
         self.plugins: List[FioPlugin] = []
-        # Built-in game layers (e.g. the MiniWind RPG on this branch). Unlike a
-        # discovered plugin these are *not* a plugin: they are always on, never
-        # toggled, never api-version gated, never listed in the Plugins menu, and
-        # are installed natively by the application bootstrap rather than
-        # discovered on disk. They still take part in the generic engine
-        # extension surface (entity/property/IO registration, runtime attach,
-        # host bind, and the play-lifecycle / per-tick dispatch) so a branch can
-        # ship a first-class game without wearing the plugin machinery. This
-        # capability is generic and could be backported to mainline Fio.
-        self._builtin_games: list = []
         self._loaded = False
         self._loading = False
+        # Package names already loaded, so a retried discovery pass cannot
+        # register the same plugin twice.
+        self._loaded_modules: set = set()
+        # Package names that were mid-import when discovery reached them (see
+        # _load_one). While this is non-empty the manager does not consider
+        # itself loaded, so the next load_plugins() call finishes the job.
+        self._deferred: set = set()
         # (plugin, label, ThingClass) placement entries for the editor menu.
         self._menu_entries: List[Tuple[FioPlugin, str, type]] = []
-        # Placement entries for built-in game entities, kept apart from the
-        # plugin entries above so they surface under a native game menu rather
-        # than the "Plugins" menu.
+        # Built-in layers installed natively by the application bootstrap rather
+        # than discovered on disk. Unlike a plugin these are always on, never
+        # toggled, never api-version gated and never listed in the Plugins menu,
+        # but they still take part in the generic extension surface (entity /
+        # property / IO registration, runtime attach, host bind and the
+        # play-lifecycle and per-tick dispatch). This lets a branch ship a
+        # first-class layer without wearing the plugin machinery.
+        self._builtin_games: list = []
+        # Placement entries declared by a built-in layer, kept apart from the
+        # plugin entries above so they can surface under their own menu rather
+        # than the "Plugins" submenu.
         self._builtin_menu_entries: List[Tuple[object, str, type]] = []
         # Normalised entity-type -> creation wizard factory (see
         # register_entity_wizard). Used by the editor to configure an entity that
         # needs setup instead of dropping the user into raw properties.
         self._entity_wizards: dict = {}
-        # Normalised entity-type names that may exist at most once per map
-        # (e.g. the MiniWind GameSettings marker). Placement paths consult this.
+        # Normalised entity-type names that may exist at most once per map.
+        # Placement paths consult this.
         self._singleton_types: set = set()
-        # Generic editor-extension providers, so game-specific editor behaviour
-        # lives in the owning built-in game (registered via the EditorAPI) rather
-        # than in generic Fio editor code:
-        #   * key/value quick-insert suggestions for the LogicKeyValueStore editor
-        #   * a live "inspector" snapshot for a monster/NPC (the debug popup)
+        # Editor-extension providers a game layer registers through the
+        # EditorAPI, so game-specific editor behaviour lives with the game
+        # rather than in generic editor code:
+        #   * key/value quick-insert suggestions for the State Store editor
+        #   * a live inspector snapshot for an actor's debug popup
         self._kv_suggestion_providers: list = []
         self._inspector_providers: list = []
+        # Registered debug-console commands: lower-cased name -> (owner,
+        # handler, help). Offered by editor.console_commands only for names
+        # its built-in table does not already answer.
+        self._console_commands: dict = {}
         # Normalised entity-type name -> owning plugin (for package export).
         # Keyed the same way editor.things.from_dict matches: class name,
         # lowercased, underscores stripped.
@@ -102,7 +111,7 @@ class PluginManager:
         # Normalised entity-type name -> list[PropertySpec]. Optional typed
         # schemas plugins declare for their entities' editable properties.
         self._property_schemas: dict = {}
-        # Cross-level key/value store shared with map LogicKeyValueStores in the
+        # Cross-level key/value store shared with map LogicState stores in the
         # editor, and a process-local dict in the dependency-light player.
         self.global_store = GlobalStore()
         # The open-ended extension surface: a process-wide event bus the engine
@@ -125,11 +134,10 @@ class PluginManager:
         # property tabs. Both keyed/filtered by normalised entity type.
         self._extra_fields: dict = {}       # type -> list[PropertySpec]
         self._property_tabs: list = []      # list[(label, factory, type_or_None)]
-        # list[(label, factory, type_or_None, expanded)] — editors that belong
+        # list[(label, factory, type_or_None, expanded)] -- editors that belong
         # inside the Properties tab as a collapsible section rather than as a
-        # tab of their own. A tab is right for a workspace (a dialogue tree);
-        # a section is right for a handful of fields that read as part of the
-        # entity's properties (appearance).
+        # tab of their own. A tab suits a workspace; a section suits a handful
+        # of fields that read as part of the entity's own properties.
         self._property_sections: list = []
         # Disabled plugin names (by directory or plugin.name). Populated from
         # the FIO_DISABLED_PLUGINS env var, comma-separated.
@@ -167,6 +175,7 @@ class PluginManager:
 
         package_dir = os.path.dirname(os.path.abspath(__file__))
         found = 0
+        self._deferred.clear()
         for entry in sorted(pkgutil.iter_modules([package_dir])):
             mod_name = entry.name
             if not entry.ispkg:
@@ -176,11 +185,21 @@ class PluginManager:
             if mod_name.lower() in self._disabled:
                 self._debug(f"Skipping disabled plugin package '{mod_name}'")
                 continue
+            if mod_name in self._loaded_modules:
+                continue          # already loaded by an earlier, partial pass
             self._load_one(mod_name)
             found += 1
 
-        self._loaded = True
         self._loading = False
+        # A plugin whose own import triggered this discovery could not be read
+        # yet (see _load_one). Leaving _loaded False means the next call - the
+        # one the outer import makes once it has finished - picks it up, instead
+        # of the plugin being dropped for the life of the process.
+        self._loaded = not self._deferred
+        if self._deferred:
+            self._debug("Deferring %s until their import completes"
+                        % ", ".join(sorted(self._deferred)))
+            return
 
         self._verify_requirements()
 
@@ -195,6 +214,17 @@ class PluginManager:
             module = importlib.import_module(f"plugins.{mod_name}")
         except Exception:
             self._log(f"Failed to import plugin '{mod_name}':\n{traceback.format_exc()}")
+            return
+
+        # A plugin package whose own import reached back into the host and
+        # started discovery (tidy's entities import `editor`, whose package
+        # initialiser calls load_plugins) is still mid-import here: Python hands
+        # back the partially-initialised module, which has no PLUGIN yet.
+        # Skipping it quietly would drop that plugin for the life of the
+        # process, so it is recorded and retried by the outer call instead.
+        if getattr(getattr(module, "__spec__", None), "_initializing", False):
+            self._deferred.add(mod_name)
+            self._debug(f"Plugin '{mod_name}' is still importing; will retry")
             return
 
         plugin = getattr(module, "PLUGIN", None)
@@ -249,6 +279,7 @@ class PluginManager:
             self._log(f"menu_entries() failed for '{plugin.name}':\n{traceback.format_exc()}")
 
         self.plugins.append(plugin)
+        self._loaded_modules.add(mod_name)
         self._enabled_generation += 1
 
     def _verify_requirements(self):
@@ -271,134 +302,6 @@ class PluginManager:
                     f"{', '.join(missing)}; disabling it.")
                 self.set_enabled(plugin, False)
 
-    # -- built-in game registration ----------------------------------------
-    def register_builtin_game(self, game) -> None:
-        """Install a built-in game layer (see :attr:`_builtin_games`).
-
-        The *game* is any object exposing the same lifecycle surface a plugin
-        does (``register``/``register_runtime``/``connect``/``on_play_start``/
-        ``on_tick``/``on_play_stop``) plus ``name``/``version``/``category``
-        attributes, but it is **not** a :class:`FioPlugin`: it carries no
-        ``enabled``/``requires``/``api_version`` and is never discovered,
-        toggled or shown in the Plugins menu. Registration is idempotent.
-
-        Called once by the branch bootstrap (``editor/__init__``) so MiniWind is
-        a native, always-on part of the branch rather than a loaded plugin.
-        """
-        for existing in self._builtin_games:
-            if existing is game or type(existing) is type(game):
-                return
-        # Mark it so the shared registries can route its menu entries to the
-        # built-in list instead of the plugin list.
-        try:
-            game.is_builtin_game = True
-        except Exception:
-            pass
-        self._builtin_games.append(game)
-        try:
-            game.register(EditorAPI(self, game))
-        except Exception:
-            self._log(f"register() failed for built-in game "
-                      f"'{getattr(game, 'name', '?')}':\n{traceback.format_exc()}")
-        # Pick up any property schemas the game declares for its entities.
-        describe = getattr(game, "describe_properties", None)
-        if callable(describe):
-            try:
-                for entity_type, specs in (describe() or {}).items():
-                    self._record_property_schema(entity_type, specs)
-            except Exception:
-                self._log(f"describe_properties() failed for built-in game "
-                          f"'{getattr(game, 'name', '?')}':\n{traceback.format_exc()}")
-        self._enabled_generation += 1
-
-    def builtin_games(self) -> list:
-        """The registered built-in game layers (usually just MiniWind)."""
-        return list(self._builtin_games)
-
-    def builtin_menu_entries(self) -> List[Tuple[object, str, type]]:
-        """Placement entries a built-in game declared, for a native game menu."""
-        return list(self._builtin_menu_entries)
-
-    def register_entity_wizard(self, type_name: str, factory) -> None:
-        """Register a creation *wizard* for an entity type.
-
-        ``factory(parent) -> dict | None`` runs a dialog and returns the initial
-        properties for a new entity (or ``None`` if cancelled). When present, the
-        editor launches it instead of dropping the user straight into raw
-        properties for an entity that needs configuring. Generic mechanism; the
-        built-in game supplies the wizards.
-        """
-        self._entity_wizards[self._normalise_type(type_name)] = factory
-
-    def entity_wizard_for(self, type_name: str):
-        """The creation wizard registered for *type_name*, or None."""
-        return self._entity_wizards.get(self._normalise_type(type_name))
-
-    def register_singleton_entity(self, type_name: str) -> None:
-        """Mark an entity type as a per-map singleton (at most one instance).
-
-        Generic mechanism; the built-in game marks its GameSettings entity so a
-        map can never carry two. Placement paths check :meth:`is_singleton_entity`
-        and refuse a second one."""
-        self._singleton_types.add(self._normalise_type(type_name))
-
-    def is_singleton_entity(self, type_name: str) -> bool:
-        return self._normalise_type(type_name) in self._singleton_types
-
-    # -- generic editor-extension providers ---------------------------------
-    def register_kv_suggestion_provider(self, provider) -> None:
-        """Register a key/value quick-insert provider for the KeyValue editor.
-
-        ``provider() -> list[(label, key, default_value, tooltip)]`` supplies the
-        store keys a built-in game uses (e.g. MiniWind quest flags), so the
-        generic LogicKeyValueStore editor carries no game-specific knowledge."""
-        if callable(provider):
-            self._kv_suggestion_providers.append(provider)
-
-    def kv_key_suggestions(self) -> list:
-        """Aggregate every registered game's key/value quick-insert suggestions."""
-        out: list = []
-        for provider in self._kv_suggestion_providers:
-            try:
-                out.extend(provider() or [])
-            except Exception:
-                continue
-        return out
-
-    def register_inspector_provider(self, provider) -> None:
-        """Register a monster/NPC *inspector* snapshot builder for the debug popup.
-
-        ``provider(thing, monster_state, logic_thread) -> dict | None`` returns a
-        display snapshot (see the debug inspector), letting the owning game supply
-        its own mental-state view without the engine importing the game."""
-        if callable(provider):
-            self._inspector_providers.append(provider)
-
-    def inspector_snapshot(self, thing, monster_state=None, logic_thread=None):
-        """First non-empty inspector snapshot from a registered provider, or None."""
-        for provider in self._inspector_providers:
-            try:
-                snap = provider(thing, monster_state, logic_thread)
-                if snap:
-                    return snap
-            except Exception:
-                continue
-        return None
-
-    def _participants(self, hook: str) -> list:
-        """Enabled plugins + built-in games that implement *hook*.
-
-        Built-in games are always active (no enable gate, no api gate); a plugin
-        must be enabled. Both must actually define the hook so an idle one costs
-        nothing on the per-tick path.
-        """
-        out = [p for p in self.plugins
-               if self.is_enabled(p) and self._overrides(p, hook)]
-        for game in self._builtin_games:
-            if getattr(type(game), hook, None) is not None:
-                out.append(game)
-        return out
-
     # -- property schema ----------------------------------------------------
     def _record_property_schema(self, entity_type: str, specs):
         """Store a typed property schema for *entity_type* (normalised key)."""
@@ -410,10 +313,189 @@ class PluginManager:
         """Return the list of ``PropertySpec`` for *type_name*, or ``None``."""
         return self._property_schemas.get(self._normalise_type(type_name))
 
+    # -- built-in layer registration ----------------------------------------
+    def register_builtin_game(self, game) -> None:
+        """Install a built-in layer (see :attr:`_builtin_games`).
+
+        The *game* is any object exposing the same lifecycle surface a plugin
+        does (``register``/``register_runtime``/``connect``/``on_play_start``/
+        ``on_tick``/``on_play_stop``) plus ``name``/``version``/``category``
+        attributes, but it is **not** a :class:`FioPlugin`: it carries no
+        ``enabled``/``requires``/``api_version`` and is never discovered,
+        toggled or shown in the Plugins menu. Registration is idempotent.
+
+        Intended to be called once by an application bootstrap, after the editor
+        package is fully constructed.
+        """
+        for existing in self._builtin_games:
+            if existing is game or type(existing) is type(game):
+                return
+        # Mark it so the shared registries can route its menu entries to the
+        # built-in list instead of the plugin list.
+        try:
+            game.is_builtin_game = True
+        except Exception as exc:
+            self._log(f"could not tag built-in layer "
+                      f"'{getattr(game, 'name', '?')}': {exc}")
+        self._builtin_games.append(game)
+        try:
+            game.register(EditorAPI(self, game))
+        except Exception:
+            self._log(f"register() failed for built-in layer "
+                      f"'{getattr(game, 'name', '?')}':\n{traceback.format_exc()}")
+        # Pick up any property schemas the layer declares for its entities.
+        describe = getattr(game, "describe_properties", None)
+        if callable(describe):
+            try:
+                for entity_type, specs in (describe() or {}).items():
+                    self._record_property_schema(entity_type, specs)
+            except Exception:
+                self._log(f"describe_properties() failed for built-in layer "
+                          f"'{getattr(game, 'name', '?')}':\n{traceback.format_exc()}")
+        self._enabled_generation += 1
+
+    def builtin_games(self) -> list:
+        """The registered built-in layers."""
+        return list(self._builtin_games)
+
+    def builtin_menu_entries(self) -> List[Tuple[object, str, type]]:
+        """Placement entries a built-in layer declared, for its own menu."""
+        return list(self._builtin_menu_entries)
+
+    def register_entity_wizard(self, type_name: str, factory) -> None:
+        """Register a creation *wizard* for an entity type.
+
+        ``factory(parent) -> dict | None`` runs a dialog and returns the initial
+        properties for a new entity (or ``None`` if cancelled). When present, the
+        editor launches it instead of dropping the user straight into raw
+        properties for an entity that needs configuring.
+        """
+        self._entity_wizards[self._normalise_type(type_name)] = factory
+
+    def entity_wizard_for(self, type_name: str):
+        """The creation wizard registered for *type_name*, or None."""
+        return self._entity_wizards.get(self._normalise_type(type_name))
+
+    def register_singleton_entity(self, type_name: str) -> None:
+        """Mark an entity type as a per-map singleton (at most one instance).
+
+        Placement paths check :meth:`is_singleton_entity` and refuse a second
+        one, selecting the existing instance instead.
+        """
+        self._singleton_types.add(self._normalise_type(type_name))
+
+    def is_singleton_entity(self, type_name: str) -> bool:
+        return self._normalise_type(type_name) in self._singleton_types
+
+    # -- editor-extension providers -----------------------------------------
+    def register_kv_suggestion_provider(self, provider) -> None:
+        """Register a key/value quick-insert provider for the State Store editor.
+
+        ``provider() -> list[(label, key, default_value, tooltip)]`` supplies the
+        store keys a game layer uses, so the generic editor carries no
+        game-specific knowledge.
+        """
+        if callable(provider):
+            self._kv_suggestion_providers.append(provider)
+
+    def kv_key_suggestions(self) -> list:
+        """Every registered provider's key/value quick-insert suggestions."""
+        out: list = []
+        for provider in self._kv_suggestion_providers:
+            try:
+                out.extend(provider() or [])
+            except Exception:
+                self._log(f"kv suggestion provider failed:\n{traceback.format_exc()}")
+        return out
+
+    def register_inspector_provider(self, provider) -> None:
+        """Register an actor *inspector* snapshot builder for the debug popup.
+
+        ``provider(thing, monster_state, logic_thread) -> dict | None`` returns
+        a display snapshot, letting a game supply its own view of an actor
+        without the engine importing the game.
+        """
+        if callable(provider):
+            self._inspector_providers.append(provider)
+
+    def inspector_snapshot(self, thing, monster_state=None, logic_thread=None):
+        """First non-empty snapshot from a registered provider, or None."""
+        for provider in self._inspector_providers:
+            try:
+                snap = provider(thing, monster_state, logic_thread)
+                if snap:
+                    return snap
+            except Exception:
+                self._log(f"inspector provider failed:\n{traceback.format_exc()}")
+        return None
+
+    # -- console commands (API 1.4.0) ---------------------------------------
+    def register_console_command(self, name: str, handler, help: str = "",
+                                 owner=None) -> None:
+        """Register ``handler(ctx, args)`` as the console command *name*."""
+        key = str(name or "").strip().lower()
+        if not key or not callable(handler):
+            return
+        if key in self._console_commands:
+            prev_owner = self._console_commands[key][0]
+            if prev_owner is not owner:
+                self._log(f"console command '{key}' re-registered by "
+                          f"'{getattr(owner, 'name', '?')}' (was "
+                          f"'{getattr(prev_owner, 'name', '?')}')")
+        self._console_commands[key] = (owner, handler, str(help or ""))
+
+    def _console_owner_active(self, owner) -> bool:
+        if owner is None or getattr(owner, "is_builtin_game", False):
+            return True
+        return self.is_enabled(owner)
+
+    def has_console_command(self, name: str) -> bool:
+        entry = self._console_commands.get(str(name or "").lower())
+        return entry is not None and self._console_owner_active(entry[0])
+
+    def console_commands(self) -> list:
+        """``(name, help)`` for every command an active owner registered."""
+        return sorted((name, entry[2]) for name, entry in self._console_commands.items()
+                      if self._console_owner_active(entry[0]))
+
+    def dispatch_console_command(self, name: str, args: str, logic_thread=None,
+                                 play_mode: bool = False, main_window=None):
+        """Run a registered command. Returns ``(handled, reply)``.
+
+        A handler that raises is still *handled* -- the failure is logged with
+        its traceback rather than reported as an unknown command.
+        """
+        entry = self._console_commands.get(str(name or "").lower())
+        if entry is None or not self._console_owner_active(entry[0]):
+            return False, None
+        from .api import ConsoleContext
+        ctx = ConsoleContext(logic_thread=logic_thread, play_mode=bool(play_mode),
+                             main_window=main_window)
+        try:
+            reply = entry[1](ctx, args or "")
+        except Exception:
+            self._log(f"console command '{name}' failed:\n{traceback.format_exc()}")
+            return True, None
+        return True, reply
+
+    def _participants(self, hook: str) -> list:
+        """Enabled plugins + built-in layers that implement *hook*.
+
+        Built-in layers are always active (no enable gate, no api gate); a
+        plugin must be enabled. Both must actually define the hook so an idle
+        one costs nothing on the per-tick path.
+        """
+        out = [p for p in self.plugins
+               if self.is_enabled(p) and self._overrides(p, hook)]
+        for game in self._builtin_games:
+            if getattr(type(game), hook, None) is not None:
+                out.append(game)
+        return out
+
     # -- editor menu --------------------------------------------------------
     def _add_menu_entry(self, plugin: FioPlugin, label: str, cls: type):
-        # A built-in game's entities surface under a native game menu, not the
-        # "Plugins" menu, so keep them in a separate list.
+        # A built-in layer's entities surface under their own menu, not the
+        # "Plugins" submenu, so keep them in a separate list.
         if getattr(plugin, "is_builtin_game", False):
             self._builtin_menu_entries.append((plugin, label, cls))
         else:
@@ -692,11 +774,10 @@ class PluginManager:
         """Register a collapsible section inside the Properties tab.
 
         The same ``factory(thing) -> widget`` contract as
-        :meth:`register_property_tab`; the difference is placement. Use a
-        section for an editor that reads as part of the entity's properties
-        rather than as a workspace of its own — it keeps the tab bar short and
-        the panel scannable, and *expanded* False means it costs no vertical
-        space until somebody opens it.
+        :meth:`register_property_tab`; the difference is placement. A section
+        is for an editor that reads as part of the entity's properties rather
+        than a workspace of its own, and *expanded* False means it costs no
+        vertical space until somebody opens it.
         """
         self._property_sections.append(
             (label, factory,

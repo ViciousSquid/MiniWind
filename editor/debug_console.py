@@ -1,9 +1,9 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextBrowser, QPushButton, 
-    QLabel, QCheckBox, QComboBox, QFrame, QLineEdit, QSplitter, QScrollArea,
-    QSizePolicy
+    QLabel, QCheckBox, QComboBox, QFrame, QLineEdit, QSplitter, QScrollArea
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject, QUrl
+from PyQt5 import sip
 from PyQt5.QtGui import QFont, QTextCursor, QColor, QDesktopServices, QPainter, QPixmap
 from collections import deque
 import re
@@ -19,6 +19,13 @@ class DebugLogger(QObject):
     _instance = None
 
     def __new__(cls):
+        # A QObject whose C++ side has been destroyed leaves its Python
+        # wrapper behind.  Without this check the singleton hands that corpse
+        # back for the rest of the process, and every later
+        # `logger.message_logged.connect(...)` raises -- which means the
+        # Debug Console can never be built again.
+        if cls._instance is not None and sip.isdeleted(cls._instance):
+            cls._instance = None
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
@@ -60,40 +67,11 @@ class DebugLogger(QObject):
 # Global logger instance
 _debug_logger = None
 
-
-def _logger_is_dead(logger) -> bool:
-    """Whether *logger*'s underlying C++ QObject has already been destroyed.
-
-    The logger is a process-wide singleton, but it is a QObject: destroying the
-    QApplication that owned it (which happens whenever the editor is torn down
-    and rebuilt in one process — the headless test suite does exactly that)
-    reaps the C++ side while the Python wrapper lives on. Emitting its signal
-    afterwards raises, and it raises *inside whatever was logging* — which on
-    the engine's boot path meant a dead console took the logic thread with it.
-    """
-    if not isinstance(logger, DebugLogger):
-        return False                 # a stand-in (tests swap one in) is never dead
-    for module in ("PyQt5.sip", "sip"):
-        try:
-            sip = __import__(module, fromlist=["isdeleted"])
-            return bool(sip.isdeleted(logger))
-        except Exception:
-            continue
-    try:
-        logger.objectName()          # cheapest call that touches the C++ side
-        return False
-    except RuntimeError:
-        return True
-
-
 def get_debug_logger() -> DebugLogger:
-    """Get the global debug logger instance, rebuilding it if Qt reaped it."""
+    """Get the global debug logger instance, rebuilding a destroyed one."""
     global _debug_logger
-    if _debug_logger is not None and _logger_is_dead(_debug_logger):
-        # Drop the singleton behind it too, or __new__ hands back the dead one.
-        DebugLogger._instance = None
-        _debug_logger = None
-    if _debug_logger is None:
+    if (_debug_logger is None
+            or (isinstance(_debug_logger, DebugLogger) and sip.isdeleted(_debug_logger))):
         _debug_logger = DebugLogger()
     return _debug_logger
 
@@ -198,8 +176,9 @@ class DebugConsole(QWidget):
         'Info': '#FFFFFF',      # White
         'MonsterAI': '#FF7043', # Deep orange — monster combat / sight / attack
         'Pathfinding': '#26A69A', # Teal — monster patrol / navigation
-        'Roll': '#FFD54F',     # Combat and tabletop roll output
-        'Dice': '#FFD54F',     # Legacy tabletop roll category
+        'Roll': '#FFD54F',      # Combat and tabletop roll output (MiniWind)
+        'Dice': '#FFD54F',      # Legacy tabletop roll category (MiniWind)
+        'Plugins': '#42A5F5',   # Blue — plugin debug / init (default; loads/errors recoloured per-message)
     }
 
     # Per-message colours for the 'Plugins' category. All plugin messages share
@@ -233,7 +212,13 @@ class DebugConsole(QWidget):
 
     @classmethod
     def get_instance(cls, parent=None, logo_path="assets/logo.png"):
-        """Return the singleton DebugConsole, creating it on first call."""
+        """Return the singleton DebugConsole, creating it on first call.
+
+        A console whose widget has been destroyed is rebuilt rather than
+        handed back dead, for the same reason as the logger above.
+        """
+        if cls._instance is not None and sip.isdeleted(cls._instance):
+            cls._instance = None
         if cls._instance is None:
             cls._instance = cls(parent, logo_path)
         return cls._instance
@@ -405,32 +390,32 @@ class DebugConsole(QWidget):
         """)
         toolbar.addWidget(self._filter_btn)
 
-        # The toolbar is a single non-wrapping row of controls, so its combined
-        # width used to become the console's minimum width — nearly a thousand
-        # pixels, which in turn forced the whole Properties / Debug Console dock
-        # that wide and made the editor's 30% side column impossible (see
-        # MainWindow.apply_default_layout). Parking it in a scroll strip breaks
-        # that floor: at a comfortable width it looks exactly as before, and in
-        # a narrow dock the row scrolls sideways instead of shoving the pane open.
-        toolbar_strip = QWidget()
-        toolbar_strip.setLayout(toolbar)
+        # The toolbar is a dozen controls on one row, and their minimums add
+        # up to something wider than the console has any need to be.  Left as
+        # a plain layout that sum becomes the console's minimum width, and
+        # since the console is tabbed into the dock column beneath the 2D
+        # views, it set the width of that whole column -- squeezing the 3D
+        # view to a slot no dock ratio could widen.  In a scroller the row
+        # keeps its natural size and scrolls when there is no room for it.
+        toolbar_row = QWidget()
+        toolbar_row.setLayout(toolbar)
         toolbar_scroll = QScrollArea()
-        toolbar_scroll.setWidget(toolbar_strip)
+        toolbar_scroll.setWidget(toolbar_row)
         toolbar_scroll.setWidgetResizable(True)
         toolbar_scroll.setFrameShape(QFrame.NoFrame)
         toolbar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         toolbar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        toolbar_scroll.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-        # Tall enough for the row plus the slim scrollbar that only shows when
-        # the dock is too narrow for every control.
-        toolbar_scroll.setFixedHeight(toolbar_strip.sizeHint().height() + 14)
-        toolbar_scroll.setStyleSheet("""
-            QScrollArea { background: transparent; }
-            QScrollBar:horizontal { height: 8px; background: #2b2b2b; margin: 0; }
-            QScrollBar::handle:horizontal { background: #4b4d4d; border-radius: 4px;
-                                            min-width: 24px; }
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
-        """)
+        toolbar_scroll.setMinimumWidth(0)
+        toolbar_scroll.setStyleSheet("QScrollArea { background: transparent; }")
+        self._toolbar_scroll = toolbar_scroll
+        self._toolbar_row = toolbar_row
+        # The scroll bar lives *inside* the scroll area, so its height has to
+        # be allowed for or it covers the row it is scrolling.  Only when it
+        # is actually needed, though: reserving the space always would leave a
+        # gap under the toolbar whenever the console is wide enough.
+        toolbar_scroll.horizontalScrollBar().rangeChanged.connect(
+            self._fit_toolbar_height)
+        self._fit_toolbar_height()
         layout.addWidget(toolbar_scroll)
 
         # --- Middle area: console + right-side filter column (resizable) ---
@@ -615,6 +600,13 @@ class DebugConsole(QWidget):
         self._refresh_console()
 
     # ------------------------------------------------------------------
+
+    def _fit_toolbar_height(self, *_range):
+        """Make room for the toolbar's scroll bar only when there is one."""
+        bar = self._toolbar_scroll.horizontalScrollBar()
+        extra = bar.sizeHint().height() if bar.maximum() > 0 else 0
+        self._toolbar_scroll.setFixedHeight(
+            self._toolbar_row.sizeHint().height() + extra + 2)
 
     def _connect_logger(self):
         """Connect to the global debug logger."""

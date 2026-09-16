@@ -34,7 +34,7 @@ A dialogue tree is plain JSON-friendly data stored on an NPC under
 **Conditions** gate whether a response is shown; **actions** run when a response
 is chosen; ``on_enter`` actions run when a node is displayed. Both read and
 write persistent world state through a small ``store`` interface — in the plugin
-that store is backed by Fio's :class:`LogicKeyValueStore` registry via the
+that store is backed by Fio's :class:`LogicState` registry via the
 plugin ``GlobalStore`` (§9), so quest flags set in dialogue are the *same*
 values map logic and other plugins see, and they persist through save/load.
 
@@ -56,7 +56,7 @@ class DictStore:
     """A minimal string key/value store — the interface the runner needs.
 
     In the plugin this is replaced by an adapter over the engine
-    ``GlobalStore`` / ``LogicKeyValueStore``; here it doubles as the test double
+    ``GlobalStore`` / ``LogicState``; here it doubles as the test double
     and a safe fallback.
     """
 

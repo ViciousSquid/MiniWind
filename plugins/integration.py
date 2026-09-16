@@ -88,8 +88,8 @@ def _singleton_blocked(main_window, editor_state, ttype) -> bool:
             main_window.show_toast(
                 "Only one of this entity is allowed per map — selected the existing one.",
                 is_error=True)
-    except Exception:
-        pass
+    except Exception as exc:
+        _log(f"singleton select failed ({exc})")
     return True
 
 
@@ -323,16 +323,17 @@ def _patch_view_2d():
             if getattr(self, "view_type", None) == "top":
                 pos_3d[1] = 40
 
-            # If this entity type registered a creation wizard, run it so the
-            # author configures the essentials instead of landing in raw
-            # properties. The wizard returns *authored* props only; the entity
-            # derives the rest (sprite, stats) from them. Cancel -> no placement.
+            # A probe instance gives us the entity's type token without
+            # duplicating the class->type mapping here.
             probe = cls(pos=pos_3d)
             ttype = probe.properties.get("type") if hasattr(probe, "properties") else None
-            # Enforce per-map singletons (e.g. MiniWind's Game Settings): if one
-            # already exists, select it and abort instead of adding a duplicate.
+            # Per-map singletons: if one already exists, select it and abort
+            # instead of adding a duplicate.
             if _singleton_blocked(self.main_window, self.editor.state, ttype):
                 return
+            # If this entity type registered a creation wizard, run it so the
+            # author configures the essentials instead of landing in raw
+            # properties. Cancel -> no placement.
             wiz = None
             try:
                 wiz = get_manager().entity_wizard_for(ttype) if ttype else None
@@ -509,6 +510,8 @@ def _place_plugin_entity(MainWindow, plugin, cls, label):
                                   is_error=True)
         return
     try:
+        # Probe and singleton-check BEFORE save_state, so a refused placement
+        # never leaves a spurious entry on the undo stack.
         probe = cls(pos=[0, 40, 0])
         ttype = probe.properties.get("type") if hasattr(probe, "properties") else None
         if _singleton_blocked(MainWindow, MainWindow.state, ttype):
@@ -654,10 +657,10 @@ def _patch_property_editor():
                 lay.setContentsMargins(0, 0, 0, 0)
                 idx = widget.addTab(placeholder, label)
                 pending[idx] = (placeholder, factory)
-            widget._mw_pending_tabs = pending
+            widget._fio_pending_tabs = pending
 
             def _build_pending(index, w=widget, th=thing):
-                p = getattr(w, "_mw_pending_tabs", None)
+                p = getattr(w, "_fio_pending_tabs", None)
                 if not p or index not in p:
                     return
                 placeholder, factory = p.pop(index)
@@ -673,8 +676,8 @@ def _patch_property_editor():
             # If a custom tab happens to be the current one (e.g. a restored tab
             # index), build it now so it isn't left blank.
             _build_pending(widget.currentIndex())
-        except Exception:
-            pass
+        except Exception as exc:
+            _log(f"custom property tabs failed ({exc})")
 
     PropertyEditor.populate_for_thing = populate_for_thing
     PropertyEditor._fio_plugins_patched = True
@@ -829,7 +832,7 @@ def _render_schema_rows(editor_self, form, thing, specs):
     # current value's type — so declaring a partial schema never hides a field.
     _uncovered = [(k, v) for k, v in sorted(thing.properties.items())
                   if k not in _HIDDEN and k not in covered]
-    if _uncovered:
+    if _uncovered and current_group is not None:
         form.addRow(_section_header("Other"))
     for key, value in _uncovered:
         label = key.replace("_", " ").title() + ":"

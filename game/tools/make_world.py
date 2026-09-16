@@ -63,7 +63,7 @@ def build(base_path: str) -> dict:
         "start_scenario": "prompt", "region_name": "The Vale of Miniwind",
         "state_store": "miniwind",
     }))
-    world["things"].append(_thing("logic_keyvalue", at(40, -40), {
+    world["things"].append(_thing("logic_state", at(40, -40), {
         "name": "miniwind", "store_name": "miniwind", "initial_data": {},
     }))
 

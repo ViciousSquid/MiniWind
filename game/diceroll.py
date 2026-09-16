@@ -7,6 +7,7 @@ random stream. UI animation is intentionally separate from this module.
 
 from __future__ import annotations
 
+import math
 import json
 import random
 from collections import defaultdict
@@ -173,6 +174,23 @@ def parse_dice_notation(dice_notation: str) -> Tuple[List[DiceTerm], str]:
     return terms, source
 
 
+def notation_for_maximum(maximum: int) -> str:
+    """The fewest-dice expression whose maximum covers *maximum*.
+
+    Only the real tabletop solids in :data:`DICE_TYPES` are used. Ties on the
+    ceiling prefer fewer dice, then larger dice, so a 20 is ``1d20`` rather
+    than ``2d10``. Used to turn an actor's flat damage ceiling into a roll.
+    """
+    maximum = max(1, int(maximum))
+    best = None
+    for sides in DICE_TYPES:
+        count = max(1, math.ceil(maximum / sides))
+        candidate = (count * sides, count, -sides, sides)
+        if best is None or candidate[:3] < best[:3]:
+            best = candidate
+    return f"{best[1]}d{best[3]}"
+
+
 class DiceRoller:
     """Roll and inspect tabletop dice while retaining the last five results."""
 
@@ -196,6 +214,11 @@ class DiceRoller:
         """Stop sending roll notifications to *listener*."""
         if listener in self._roll_listeners:
             self._roll_listeners.remove(listener)
+
+    @staticmethod
+    def notation_for_maximum(maximum: int) -> str:
+        """See the module-level :func:`notation_for_maximum`."""
+        return notation_for_maximum(maximum)
 
     def request_roll(self, dice_notation: str, target: Optional[int] = None,
                      source: str = "gameplay", context: Optional[Dict] = None) -> Dict:

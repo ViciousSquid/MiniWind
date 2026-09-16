@@ -24,37 +24,6 @@ from .threaded_game_state import ThreadedGameState, RenderState
 from .player import Player
 from .camera import Camera
 from .constants import is_water_brush, brush_aabb_bounds
-from .world_index import WorldIndex
-from .spatial import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT, TIER_DORMANT,
-                      tier_of)
-from .spatial import CELL_SIZE as CULL_CELL_SIZE
-
-from .render_cull import (CAMERA_RENDER_CULL_DISTANCE,
-                          CAMERA_RENDER_CULL_DISTANCE_SQ, visible_xz_bounds)
-
-#: NDC corners of the far plane, transformed by inverse(proj*view) to get the
-#: view volume's far corners in world space. Built once, never per frame.
-_FAR_PLANE_NDC = (glm.vec4(-1.0, -1.0, 1.0, 1.0), glm.vec4(1.0, -1.0, 1.0, 1.0),
-                  glm.vec4(-1.0, 1.0, 1.0, 1.0), glm.vec4(1.0, 1.0, 1.0, 1.0))
-
-#: Below this many actors, classifying them into simulation tiers costs more
-#: than simulating all of them, so the world index is left empty and everything
-#: runs fully. MiniWind's authored settlement sits well under it; a crowd, a
-#: streamed world or a spawner-fed map goes over and starts paying by relevance.
-SIM_LOD_MIN_ACTORS = 32
-
-#: How far outside the camera's relevance box an actor's *centre* may sit and
-#: still be drawn. Generous enough for the widest billboard the game uses, so a
-#: sprite straddling the edge of the view never pops out.
-ACTOR_CULL_MARGIN = 256.0
-
-#: Shared empty row array — a cull query that matches nothing allocates nothing.
-_EMPTY_ROWS = np.empty(0, dtype=np.intp)
-
-
-def _np_empty_rows():
-    return _EMPTY_ROWS
-
 from .brush_geometry import build_collision_mesh, brush_has_geometry, GEO_RUNTIME_KEYS
 
 # Import Thing subclasses for type checking
@@ -211,6 +180,10 @@ class LogicThread(threading.Thread):
         # Frustum culling settings
         self.culling_enabled = True
         self.frustum_aspect = 16.0 / 9.0
+        # Shared with the viewport and the renderer (set_view_distance). Held
+        # as None until the viewport hands one over, so a LogicThread built in
+        # a test without one still culls against the historical far plane.
+        self.view_distance = None
 
         # Play-mode camera mode: "First Person" (default) or "Overhead" (a
         # native top-down camera, GTA 1 / Alien Swarm style). Controlled by the
@@ -238,60 +211,12 @@ class LogicThread(threading.Thread):
         # static/dynamic split are built once (see _build_cull_cache) and only
         # the mover/door center rows are refreshed each frame — the per-frame
         # Python gather loop and NumPy array rebuild are skipped entirely.
-        # The engine's one authoritative actor spatial index + simulation-LOD
-        # classifier (engine/world_index.py). Rebuilt once per play tick from
-        # the precomputed monster list and consumed by the AI, the gameplay
-        # layer, the streamer and the render-state builder — so "who is near
-        # the player" is answered in exactly one place instead of four.
-        self.world_index = WorldIndex()
-        #: The live world-streaming session for this play session, or None when
-        #: the map did not opt in (no BigWorldSettings entity) — in which case
-        #: the whole world stays resident, exactly as a small map always did.
-        #: Owned and driven here, not dispatched to through a plugin: which part
-        #: of the world is live is something the renderer, the collision grid,
-        #: the simulation scheduler and the save system all depend on.
-        self.streaming = None
-        #: Set False to disable simulation LOD entirely (everything stays
-        #: TIER_NEAR). Exposed for the debug console and for tests that want
-        #: the pre-LOD behaviour.
-        self.sim_lod_enabled = True
-        # Defaults for a map with no Big World session. When there is one it
-        # publishes its own, so there is exactly one answer to "how far out is
-        # the world live" (§13).
-        self.sim_near_radius = 1024.0
-        self.sim_active_radius = 2048.0
-        #: Actor count below which relevance is not worth computing (see
-        #: SIM_LOD_MIN_ACTORS). Settable so a crowded map, a profiling run or a
-        #: test can move the crossover.
-        self.sim_lod_min_actors = SIM_LOD_MIN_ACTORS
-        #: Whether any actor currently carries a `_sim_tier` stamp, so dropping
-        #: below SIM_LOD_MIN_ACTORS clears them exactly once instead of every
-        #: tick (a stale stamp would wrongly skip simulation).
-        self._sim_lod_stamped = False
-        #: The unparked actors, and the bookkeeping that keeps that partition
-        #: honest. See _live_actors.
-        self._live_actors_cache = None
-        self._live_actors_epoch = -1
-        self._live_actors_countdown = 0
-
         self._cull_valid = False
         self._cull_n = 0
         self._cull_centers = None          # (N,3) float64
         self._cull_halves = None           # (N,3) float64
         self._cull_row_refs = None         # (N,) object: per-brush render ref
         self._cull_dynamic_rows = None     # list[int]: indices of movers/doors
-        self._cull_cells = {}              # (cx,cz) -> rows, shared 512 grid
-        self._cull_y_min = 0.0             # world geometry's vertical slab
-        self._cull_y_max = 0.0
-        self._cull_oversized = _np_empty_rows()   # rows too big to bin
-        self._cull_keep = None             # (N,) bool: not hidden
-        self._all_brushes_cache = None     # cached whole-world non-hidden list
-        self._all_brushes_dynamic = []     # [(row, slot)] for movers/doors
-        self._visibility_epoch = 0
-        self._visibility_applied = -1
-        self._visibility_countdown = 0
-        self._all_things_cache = []
-        self._all_things_token = None
 
         # Editor camera
         self.editor_camera = Camera()
@@ -306,11 +231,27 @@ class LogicThread(threading.Thread):
         self.god_mode = False
         self.buddha_mode = False
         self.notarget = False
-        # A game plugin can freeze the *world* (monsters, player physics, combat,
-        # clock) while a modal screen is open — e.g. character creation or the
-        # inventory — without stopping the plugin tick that drives those menus.
+        # A game layer can freeze the *world* (monsters, player physics,
+        # combat, clock) while a modal screen is open -- character creation, an
+        # inventory -- without stopping the plugin tick that drives those menus.
         self.gameplay_paused = False
-        
+        #: Installed by a game layer to own what the fire buttons do:
+        #: ``handler(logic, mode) -> bool`` with *mode* ``"primary"`` or
+        #: ``"secondary"``. Returning True means the shot was handled (a bow
+        #: loosed, a spell cast, a swing taken) and the stock hitscan weapon
+        #: path is skipped. None leaves Fio's own weapons in charge.
+        self.player_fire_handler = None
+        #: The running game layer's play session, published by the game so
+        #: engine code can duck-type against it (pose, dice service) without
+        #: importing the game. None when no game layer is running.
+        self.game_session = None
+        #: Optional ``filter(damage, damage_kind) -> damage`` a game layer
+        #: installs so its armour and resistances apply before health drops.
+        self._player_damage_filter = None
+        #: Blood-stain decal sprites, mild to severe. Supplied by the game
+        #: layer (its gore art); with none, stains are recorded without art.
+        self.blood_stain_sprites = ()
+
         # I/O System
         self.io_manager = None
         if IO_AVAILABLE and IOManager:
@@ -353,8 +294,10 @@ class LogicThread(threading.Thread):
         # Logic Gate State
         self.gate_inputs = {}
         
-        # Timer states for logic_timer entities
-        self.timer_states: Dict[int, Dict[str, float]] = {}
+        # Countdown state for logic_timer entities, keyed by the timer's UUID
+        # (see LogicThread._timer_key) so it survives a save and can never be
+        # confused with another entity's.
+        self.timer_states: Dict[str, Dict[str, float]] = {}
 
         # Active light FadeIn/FadeOut transitions, keyed by id(light entity)
         self.light_fade_states: Dict[int, Dict[str, Any]] = {}
@@ -397,6 +340,10 @@ class LogicThread(threading.Thread):
         # PERF: cached self.brushes + self._model_collision_brushes (see
         # _refresh_collision_brushes_cache)
         self._collision_brushes_cache: list = []
+        # Bumped every time the set of drawable objects changes, so a consumer
+        # that caches across frames can tell whether its cache still describes
+        # this world.  See notify_visibility_changed().
+        self.visibility_changes = 0
 
         # Global toggle for model collision (F6 in play mode)
         self.model_collision_enabled = True
@@ -439,6 +386,10 @@ class LogicThread(threading.Thread):
         self._levelchanger_things = []
         self._monster_things = []
         self._monster_by_id = {}
+        self._timer_things = []
+        # Authored health per monster UUID, captured on play-mode enter so the
+        # Respawn input has a value to restore (see _reset_all_monsters).
+        self._monster_spawn_health: Dict[str, int] = {}
 
         # ── Portal transit state ───────────────────────────────────────────
         self._portal_cooldowns: Dict[int, float] = {}
@@ -456,11 +407,11 @@ class LogicThread(threading.Thread):
         # Monster projectiles (flying monster ranged attacks)
         self._monster_projectiles: list = []
 
-        # Player arrows embedded in the world (walls, monster hitboxes) once
-        # a bow shot lands — persistent physical props, not transient FX.
+        # Arrows embedded in the world (walls, actor hitboxes) once a shot
+        # lands -- persistent physical props, not transient FX.
         self.stuck_arrows: list = []
 
-        # Blood stains — ground decals dropped when a character is wounded
+        # Blood stains -- ground decals dropped when a character is wounded
         # (any damaging hit, not only a gib death), sized by wound severity.
         self.blood_stains: list = []
         #: Rotating counter giving each new stain its own height step (see
@@ -553,9 +504,11 @@ class LogicThread(threading.Thread):
         # every entity in the level on every AI tick.
         self._monster_things = [t for t in self.things if MonsterThing and isinstance(t, MonsterThing)]
         self._monster_by_id = {id(t): t for t in self._monster_things}
-        # The actor set itself changed, so the live/parked partition over it is
-        # meaningless until it is re-derived.
-        self._live_actors_cache = None
+
+        # PERF: the timer list, for the same reason — _update_logic_timers is
+        # the one per-frame path the logic system has, and it should walk the
+        # timers, not the level.
+        self._timer_things = [t for t in self.things if LogicTimer and isinstance(t, LogicTimer)]
 
     def _find_entity_by_name(self, name: str):
         if not name:
@@ -893,6 +846,42 @@ class LogicThread(threading.Thread):
         """
         self._collision_brushes_cache = self.brushes + self._model_collision_brushes
 
+    # -- visibility invalidation ------------------------------------------
+    #
+    # Two notifications, because "what is drawn" and "what is collided with"
+    # go stale at different costs.  Both are the *host* side of the streaming
+    # contract in ``plugins.bigworld.runtime.StreamingHost``; neither knows
+    # anything about a particular streaming layer.
+
+    def notify_visibility_changed(self):
+        """The set of drawable objects changed.
+
+        Cheap by contract — a counter bump and the per-frame cull buffers —
+        because a streaming layer calls it every time the player crosses a cell
+        boundary.  The cull buffers are rebuilt lazily on the next frame, and
+        `hidden` itself is read fresh there, so this costs nothing until a frame
+        actually wants it.
+        """
+        self.visibility_changes += 1
+        self._invalidate_cull_cache()
+
+    def notify_authored_visibility_changed(self):
+        """An object's *authored* hidden/disabled state changed.
+
+        The expensive one, and the one streaming must never need: parking
+        stashes an object's authored ``hidden`` rather than overwriting it
+        (``engine.spatial.authored_hidden``), precisely so the collision grid
+        can outlive a cell going in and out.  An *authored* change is different
+        — an editor edit, an I/O Show/Hide, a save being restored over the live
+        world — and the grid is built from exactly that, once, so it has to be
+        rebuilt or the world collides like the map it used to be.
+        """
+        self.notify_visibility_changed()
+        self._refresh_collision_brushes_cache()
+        grid = getattr(self, '_spatial_grid', None)
+        if grid is not None:
+            grid.populate(self._collision_brushes_cache)
+
     # =========================================================================
     # PLAYER & MODE MANAGEMENT
     # =========================================================================
@@ -1037,15 +1026,6 @@ class LogicThread(threading.Thread):
             # Clear gunfire events
             self._gunfire_events.clear()
 
-            # ---- World streaming ------------------------------------------
-            # Must come after the caches, the collision grid and the cull
-            # buffers exist: starting a session parks most of the world, and the
-            # parking is expressed through the same `hidden`/`disabled` flags
-            # those systems already read. Only a map that authored a
-            # BigWorldSettings entity streams; every other map keeps the whole
-            # world resident and pays nothing.
-            self._start_world_streaming()
-
             # Fire OnPlayerSpawn
             self._fire_player_spawn_outputs()
             
@@ -1057,7 +1037,6 @@ class LogicThread(threading.Thread):
             
         else:
             self._stop_monster_ai()
-            self._stop_world_streaming()
             self.player_in_triggers.clear()
             self.fired_once_triggers.clear()
             self.collected_pickups.clear()
@@ -1082,16 +1061,15 @@ class LogicThread(threading.Thread):
             self.player_dead = False
             self.muzzle_flash_active = False
 
-            # Clear spatial grid
-            # Simulation LOD radii are per-session (a streaming map overrides
-            # the outer band on play start), so reset them with the session.
-            self.sim_near_radius = 1024.0
-            self.sim_active_radius = 2048.0
-            self.world_index.rebuild(())
+            # Clear spatial grid. Guarded on the *value*, not on the attribute
+            # existing: after one exit the attribute is present and None, so a
+            # second stop (a teardown path, or Stop pressed twice) used to raise
+            # AttributeError here and abandon the rest of the cleanup below.
             self.monster_ai.set_spatial_grid(None)
-            if hasattr(self, '_spatial_grid'):
-                self._spatial_grid.clear()
-                self._spatial_grid = None
+            grid = getattr(self, '_spatial_grid', None)
+            if grid is not None:
+                grid.clear()
+            self._spatial_grid = None
 
             # Reset mover path / cinematic state
             self.mover_path_states = {}
@@ -1160,10 +1138,10 @@ class LogicThread(threading.Thread):
             return False, "Nothing to save — not in play mode."
         try:
             from engine import savegame
-            # A streaming map forces a delta save: never a full world snapshot.
+            # Big World maps force a delta save: never a full world snapshot.
             # The live streaming session owns the persistent per-cell registry.
-            session = self.streaming
-            if session is not None and session.streaming:
+            session = getattr(self, "_bigworld", None)
+            if session is not None and getattr(session, "streaming", False):
                 session.commit_all()   # flush every cell, loaded or unloaded
                 snapshot = savegame.build_snapshot(
                     self, map_name=map_name,
@@ -1213,42 +1191,6 @@ class LogicThread(threading.Thread):
         except Exception as exc:
             return False, f"Load failed: {exc}"
 
-    def _start_world_streaming(self):
-        """Hand play-start to Fio's Big World plugin.
-
-        MiniWind does not decide whether a map streams, how it opts in, which
-        session type it gets or how it fails back — that is the plugin's
-        lifecycle, and it is the same code Fio itself runs. Calling it here
-        rather than dispatching through the plugin bus keeps streaming a
-        directly-driven service (MiniWind ticks it itself, below) without
-        forking a second copy of the decision.
-
-        ``self.streaming`` is the name MiniWind's call sites already use; it is
-        the session the plugin built, not a wrapper around one.
-        """
-        from plugins.bigworld import PLUGIN as _BIGWORLD
-        try:
-            _BIGWORLD.on_play_start(self)
-        except Exception:
-            import traceback
-            debug_log("Streaming",
-                      "Big World start failed; running unstreamed:\n"
-                      + traceback.format_exc())
-            self._bigworld = None
-        self.streaming = getattr(self, "_bigworld", None)
-
-    def _stop_world_streaming(self):
-        """Tear the session down through the plugin, restoring the world exactly."""
-        try:
-            from plugins.bigworld import PLUGIN as _BIGWORLD
-            _BIGWORLD.on_play_stop(self)
-        except Exception:
-            import traceback
-            debug_log("Streaming",
-                      "error stopping streaming session:\n" + traceback.format_exc())
-        self._bigworld = None
-        self.streaming = None
-
     def _start_monster_ai(self):
         """Start the monster AI processing thread."""
         self._stop_monster_ai()
@@ -1264,27 +1206,35 @@ class LogicThread(threading.Thread):
             self.monster_ai_thread = None
 
     def _reset_all_monsters(self, clear_dead=True):
-        """Reset all monster AI state. Called when entering or exiting play mode."""
+        """Reset all monster AI state. Called when entering or exiting play mode.
+
+        Also records each monster's authored health, keyed by UUID, so the
+        Respawn input has something to restore to: the live ``health`` property
+        is what damage mutates, so by the time a monster is dead the number the
+        map authored is gone.  One dict filled during a pass that already walks
+        every monster — no extra scan, and nothing new on the entity itself.
+        """
         self.monster_ai.monster_states = {}
         if not MonsterThing:
             return
+        if clear_dead:
+            self._monster_spawn_health = {}
         for thing in self.things:
             if not isinstance(thing, MonsterThing):
                 continue
+            if clear_dead:
+                try:
+                    self._monster_spawn_health[thing.properties.get('id')] = \
+                        int(thing.properties.get('health', 100))
+                except (TypeError, ValueError):
+                    pass
             thing.properties.pop('is_shooting', None)
             thing.properties.pop('_vel_y', None)
-            # Transient simulation-LOD tier, stamped each tick by the world
-            # index. Cleared with the session so a fresh play start simulates
-            # everything until the first index rebuild classifies it, and so it
-            # never rides along into a saved map.
-            thing.properties.pop('_sim_tier', None)
-            # Cached identity slug (game.rpg.disposition.mem_key). Derived from
-            # the entity's own id/name, so it is regenerated on demand; dropped
-            # here so it never rides along into a saved map.
-            thing.properties.pop('_mem_key', None)
-            # Whatever it switched to mid-fight last session; the next one starts
-            # from the authored kit (see engine/combat_loadout.py).
+            # Whatever the actor switched to mid-fight last session; the next
+            # one starts from the authored kit (see engine/combat_loadout.py).
             thing.properties.pop('_active_weapon', None)
+            # Per-actor bleed bookkeeping (see _update_blood_stains).
+            thing.properties.pop('_bleed_last_hp', None)
             if clear_dead:
                 thing.properties.pop('dead', None)
                 thing.properties.pop('gibbed', None)   # a revived body isn't gore
@@ -1306,19 +1256,30 @@ class LogicThread(threading.Thread):
                 self._plugin_emit("player_spawn", start=thing)
                 break
     
+    @staticmethod
+    def _timer_key(thing):
+        """A timer's countdown is filed under its UUID, not its memory address.
+
+        ``id(thing)`` is not an identity: it changes on every load, so a
+        countdown could never be saved, and CPython reuses addresses, so a
+        freed entity's slot could be inherited by an unrelated one.
+        """
+        return thing.properties.get('id') or thing.properties.get('name', '')
+
     def _init_logic_timers(self):
         if not LogicTimer:
             return
-        for thing in self.things:
-            if isinstance(thing, LogicTimer):
-                if thing.properties.get('start_on', False):
-                    entity_id = id(thing)
-                    interval = float(thing.properties.get('interval', 1.0))
-                    thing.properties['timer_enabled'] = True
-                    self.timer_states[entity_id] = {
-                        'remaining': interval,
-                        'interval': interval
-                    }
+        for thing in self._timer_things:
+            if thing.properties.get('start_on', False):
+                try:
+                    interval = max(0.01, float(thing.properties.get('interval', 1.0)))
+                except (TypeError, ValueError):
+                    interval = 1.0
+                thing.properties['timer_enabled'] = True
+                self.timer_states[self._timer_key(thing)] = {
+                    'remaining': interval,
+                    'interval': interval
+                }
     
     def set_terrain(self, terrain):
         self.terrain = terrain
@@ -1334,6 +1295,18 @@ class LogicThread(threading.Thread):
 
     def set_frustum_aspect(self, aspect: float):
         self.frustum_aspect = aspect
+
+    def set_view_distance(self, view_distance):
+        """Adopt the viewport's shared view-distance settings.
+
+        The frustum this thread culls against must use the same far plane the
+        renderer draws with. If it kept a larger one it would keep feeding the
+        renderer brushes the far plane then clips -- harmless but wasted work
+        every frame; a smaller one would cull something still on screen. The
+        object is shared, not copied, so a spinbox or console change is picked
+        up on the next tick.
+        """
+        self.view_distance = view_distance
 
     def set_camera_mode(self, mode: str):
         """Select the play-mode camera: 'First Person' or 'Overhead'."""
@@ -1545,8 +1518,11 @@ class LogicThread(threading.Thread):
                     'distance': distance,
                     'direction': direction,
                     # Scalar unit-direction tuple (DOOR_DIRECTION_MAP entries are
-                    # already unit vectors); used by the per-tick scalar offset.
-                    '_direction_np': (float(direction[0]), float(direction[1]), float(direction[2])),
+                    # already unit vectors). Kept as plain Python floats -- not a
+                    # NumPy array -- so the per-tick offset maths below produces
+                    # ordinary floats and brush['pos'] stays JSON-serialisable.
+                    '_direction_np': (float(direction[0]), float(direction[1]),
+                                      float(direction[2])),
                 }
         # PERF: cache the brush-only view of self.doors — was rebuilt via a
         # list comprehension every tick in _tick_play_mode.
@@ -1594,13 +1570,14 @@ class LogicThread(threading.Thread):
                 try:
                     self._tick(self.TICK_DURATION)
                 except Exception:
-                    # A single bad tick (e.g. a broken gameplay handler) must
-                    # not silently kill the whole logic thread — that freezes
-                    # the game and stops every other system (monster AI,
-                    # projectiles, etc.) with no visible error. Log and keep
-                    # ticking instead.
+                    # A single bad tick (e.g. a broken entity handler) must not
+                    # silently kill the whole logic thread -- that freezes the
+                    # game and stops every other system with no visible error.
+                    # The full traceback is logged, so this isolates the failure
+                    # without hiding it; it is never a bare pass.
                     import traceback
-                    debug_log("LogicThread", "Unhandled exception in _tick:\n" + traceback.format_exc())
+                    debug_log("LogicThread",
+                              "Unhandled exception in _tick:\n" + traceback.format_exc())
                 accumulator -= self.TICK_DURATION
                 self._update_tps_counter()
                 
@@ -1659,81 +1636,10 @@ class LogicThread(threading.Thread):
                 speed *= self.EDITOR_CAMERA_FAST_MULT
             self.editor_camera.pos += move_dir * speed * delta
 
-    def _live_actors(self):
-        """The actors the streamer has not parked, cached between changes.
-
-        A streamed-out actor is not merely simulated less — it is not simulated
-        at all, and that has to include *classifying* it. On a large streamed
-        world almost every actor is parked, so re-reading a thousand positions
-        each tick to conclude "still dormant" is the exact shape of work this
-        pass exists to remove.
-
-        The partition is event-driven: it is rebuilt when something announces a
-        visibility change (streaming a cell in or out, an I/O Show/Hide, the
-        console), with the same periodic re-validation the non-hidden brush list
-        uses as a backstop for any path that forgets to say so. Parked actors
-        keep a TIER_DORMANT stamp, so every consumer still gets a correct answer
-        without the index carrying a row for them.
-        """
-        all_actors = getattr(self, '_monster_things', None) or []
-        if (self._live_actors_cache is not None
-                and self._live_actors_epoch == self._visibility_epoch
-                and self._live_actors_countdown > 0):
-            self._live_actors_countdown -= 1
-            return self._live_actors_cache
-        live = []
-        for a in all_actors:
-            props = a.properties
-            if not (props.get('hidden') or props.get('disabled')):
-                live.append(a)
-        self._live_actors_cache = live
-        self._live_actors_epoch = self._visibility_epoch
-        self._live_actors_countdown = self.VISIBILITY_REVALIDATE_TICKS
-        return live
-
-    def _rebuild_world_index(self):
-        """Refresh MiniWind's actor index for this tick.
-
-        A snapshot, not a classification. Simulation tiers are Fio's answer now:
-        Big World assigns them to cells on the crossings that already recompute
-        residency and stamps the entities of the cells whose band changed, so
-        the cost is proportional to how far the player moved rather than to the
-        size of the cast. This fills the position/team/liveness buffers the
-        gameplay layer's perception and combat queries run over, and reads the
-        tier through :func:`engine.spatial.tier_of` when it needs one.
-
-        Below ``sim_lod_min_actors`` the index is left empty: at settlement
-        scale (a dozen or two townsfolk) building it costs more than the
-        short-list walks it replaces, and the gameplay layer takes its scalar
-        route. That is a decision about *this index*, not about tiers — the Big
-        World stamps stand either way, so nothing here adds or removes one.
-        """
-        actors = self._live_actors()
-        if len(getattr(self, '_monster_things', None) or ()) < self.sim_lod_min_actors:
-            self.world_index.rebuild(())
-            return
-        self.world_index.rebuild(actors)
-
     def _tick_play_mode(self, delta):
         if not self.player:
             return
-
-        # ---- World streaming ----------------------------------------------
-        # A single cell-of-point compare early-outs until the player crosses a
-        # cell boundary, so a stationary or slow-moving player pays almost
-        # nothing; on a crossing only the objects that entered or left the
-        # region are toggled. Called directly — this is a core engine service,
-        # not something to dispatch to through the plugin bus every frame.
-        if self.streaming is not None:
-            self.streaming.tick()
-
-        # ---- Spatial relevance, once per tick, for the whole engine --------
-        # Everything downstream — the AI's activation, the gameplay layer's
-        # perception, the render-state builder's culling — reads its answer to
-        # "who is near the player" from here. One pass, contiguous NumPy
-        # buffers, no per-system rescan.
-        self._rebuild_world_index()
-
+        
         # Update movers & doors first (for platform carrying)
         self._update_respawns(delta)
         self._update_movers(delta)
@@ -1762,6 +1668,7 @@ class LogicThread(threading.Thread):
             self.game_state.consume_mouse_delta()
             self.game_state.consume_use_key()
             self.game_state.consume_shot()
+            self.game_state.consume_secondary_shot()
             return
 
         # ---- Player dead: freeze all gameplay input ----
@@ -1769,6 +1676,7 @@ class LogicThread(threading.Thread):
             self.game_state.consume_mouse_delta()
             self.game_state.consume_use_key()
             self.game_state.consume_shot()
+            self.game_state.consume_secondary_shot()
             return
 
         # ---- Level Complete UI: freeze player input ----
@@ -1776,16 +1684,18 @@ class LogicThread(threading.Thread):
             self.game_state.consume_mouse_delta()
             self.game_state.consume_use_key()
             self.game_state.consume_shot()
+            self.game_state.consume_secondary_shot()
             return
 
         # ---- World paused (a game menu / character creation is open) ----
-        # Freeze the world — no player look/move, no shooting, no monster/
-        # projectile updates — but STILL tick the plugin so its menus receive
-        # input. The MonsterAI thread checks the same flag and idles.
-        if getattr(self, 'gameplay_paused', False):
+        # Freeze the world -- no player look/move, no shooting, no monster or
+        # projectile updates -- but STILL tick the plugins so a game's menus
+        # receive input. The MonsterAI thread checks the same flag and idles.
+        if self.gameplay_paused:
             self.game_state.consume_mouse_delta()
             use_key = self.game_state.consume_use_key()
             self.game_state.consume_shot()
+            self.game_state.consume_secondary_shot()
             if self.plugins is not None and self.plugins.wants_tick():
                 self.plugins.tick(
                     self, use_pressed=use_key, interaction_consumed=False,
@@ -1806,15 +1716,14 @@ class LogicThread(threading.Thread):
         self.player.pitch -= mouse_dy * SENSITIVITY
         self.player.pitch = max(-1.5, min(1.5, self.player.pitch))
 
-        # Mouse control (Settings ▸ GAME ▸ Mouse control) with an overhead
-        # camera: the pointer lands on the ground, so the head can face it
-        # exactly rather than being steered toward it. The view publishes the
-        # heading each frame; None means pointer aiming is off and yaw stays
-        # entirely with the mouse-delta look above.
+        # Pointer aiming (a game's mouse-control mode) with an overhead camera:
+        # the pointer lands on the ground, so the player can face it exactly
+        # rather than being steered toward it. The view publishes the heading
+        # each frame; None leaves yaw entirely with the mouse-delta look above.
         aim_yaw = self.game_state.get_aim_yaw()
         if aim_yaw is not None:
             self.player.angle = aim_yaw
-        
+
         # Movement
         move_dir = glm.vec3(0)
         if Key_W in keys: move_dir.z += 1
@@ -1861,9 +1770,11 @@ class LogicThread(threading.Thread):
         # post-physics position is the one tested against portal planes.
         self._update_portals(delta)
         
-        # Player shooting
+        # Player shooting: primary and secondary fire
         if self.game_state.consume_shot():
             self._handle_shooting()
+        if self.game_state.consume_secondary_shot():
+            self._handle_shooting(secondary=True)
             
         self._update_bullet_marks()
 
@@ -1878,7 +1789,7 @@ class LogicThread(threading.Thread):
         # syncs the decal list to the render state, so new blood shows the same
         # frame (projectile-inflicted wounds land on the next frame's scan).
         self._update_blood_stains()
-        # Update monster projectiles (flying monster ranged attacks)
+        # Update projectiles (monster ranged attacks and the player's own shots)
         # NOTE: Monster AI itself now runs in MonsterAIThread
         self._update_monster_projectiles(delta)
         self._update_stuck_arrows()
@@ -2126,26 +2037,48 @@ class LogicThread(threading.Thread):
     # =========================================================================
     
     def _update_logic_timers(self, delta: float):
-        if not LogicTimer:
+        """Advance the running timers.  The only clock Fio's logic has.
+
+        Walks a precomputed list of timer entities rather than isinstance-testing
+        every thing in the level each frame, and an *enabled* timer is the only
+        thing it touches — a level full of timers that are switched off costs a
+        flag read each, and a level with none costs nothing at all.
+
+        This is not a logic tick: no state is scanned, no condition is
+        evaluated, and nothing else in the logic system has a per-frame path.
+        Time is simply the one event source that has to come from somewhere.
+        """
+        if not self._timer_things:
             return
-        
-        for thing in self.things:
-            if not isinstance(thing, LogicTimer):
-                continue
+
+        for thing in self._timer_things:
             if not thing.properties.get('timer_enabled', False):
                 continue
-            entity_id = id(thing)
-            if entity_id not in self.timer_states:
-                interval = float(thing.properties.get('interval', 1.0))
-                self.timer_states[entity_id] = {
-                    'remaining': interval,
-                    'interval': interval
-                }
-            state = self.timer_states[entity_id]
+            key = self._timer_key(thing)
+            state = self.timer_states.get(key)
+            if state is None:
+                try:
+                    interval = max(0.01, float(thing.properties.get('interval', 1.0)))
+                except (TypeError, ValueError):
+                    interval = 1.0
+                state = {'remaining': interval, 'interval': interval}
+                self.timer_states[key] = state
             state['remaining'] -= delta
-            if state['remaining'] <= 0:
+            if state['remaining'] > 0:
+                continue
+
+            if self.io_manager:
+                self.io_manager.fire_output(thing, 'OnTimer')
+            # A one-shot timer stops itself rather than being stopped by the
+            # chain it drives, so a map does not have to remember to wire the
+            # Disable back — and OnFinished says it happened, for a chain that
+            # wants to know.
+            if thing.properties.get('one_shot', False):
+                thing.properties['timer_enabled'] = False
+                self.timer_states.pop(key, None)
                 if self.io_manager:
-                    self.io_manager.fire_output(thing, 'OnTimer')
+                    self.io_manager.fire_output(thing, 'OnFinished')
+            else:
                 state['remaining'] = state['interval']
 
     # =========================================================================
@@ -2189,8 +2122,9 @@ class LogicThread(threading.Thread):
             
         player_pos = self.player.pos
         currently_in = set()
-        # PERF: hoist player position to scalars and use cached float32 AABB
-        # bounds (bit-identical to glm.vec3(pos) ± size/2) so the per-trigger
+
+        # PERF: hoist player position to scalars and use the cached float32 AABB
+        # bounds (bit-identical to glm.vec3(pos) +/- size/2) so the per-trigger
         # containment test allocates no throwaway glm.vec3 every tick.
         px, py, pz = player_pos.x, player_pos.y, player_pos.z
 
@@ -2243,32 +2177,31 @@ class LogicThread(threading.Thread):
         self.player_in_triggers = currently_in
 
     def _apply_player_damage(self, damage, damage_kind="physical"):
-        # A game plugin (e.g. the Miniwind RPG) can install a mitigation filter
-        # that turns raw incoming damage into a post-armour/-resistance amount,
-        # so deep RPG defences apply before health is reduced. Identity by
-        # default, so the stock engine is unchanged.
-        filt = getattr(self, "_player_damage_filter", None)
+        # A game layer can install a mitigation filter that turns raw incoming
+        # damage into a post-armour/-resistance amount, so its defences apply
+        # before health is reduced. Identity when none is installed.
+        filt = self._player_damage_filter
         if filt is not None:
             try:
                 damage = filt(damage, damage_kind)
             except Exception:
-                pass
+                import traceback
+                debug_log("Error", "player damage filter failed:\n"
+                          + traceback.format_exc())
         with self._player_damage_lock:
             if self.god_mode:
                 return
             was_alive = self.player_health > 0
-            max_hp = max(1, int(getattr(self, "player_max_health", 0) or self.player_health or 1))
+            max_hp = max(1, int(getattr(self, "player_max_health", 0)
+                                or self.player_health or 1))
             self.player_health = max(0, self.player_health - damage)
             if self.buddha_mode and self.player_health < 2:
                 self.player_health = 2
             became_dead = was_alive and self.player_health <= 0
         # The player bleeds too: a ground stain under their feet, sized by the
-        # wound (guarded so a blood failure never interrupts the damage path).
-        try:
-            if damage >= BLOOD_MIN_DAMAGE and self.player is not None:
-                self.add_blood_stain(self.player.pos, damage, max_hp)
-        except Exception:
-            pass
+        # wound.
+        if damage >= BLOOD_MIN_DAMAGE and self.player is not None:
+            self.add_blood_stain(self.player.pos, damage, max_hp)
         # Emit outside the lock so a handler can't deadlock on the damage path.
         self._plugin_emit("player_damage", damage=damage, health=self.player_health)
         if became_dead:
@@ -2535,7 +2468,7 @@ class LogicThread(threading.Thread):
             distance = brush.get('distance', 128.0)
             # PERF: mover direction is static during play — normalize once
             # (via NumPy, for identical rounding) and cache as a plain scalar
-            # tuple so the per-tick offset math below is pure Python and never
+            # tuple so the per-tick offset maths below is pure Python and never
             # rebuilds a small NumPy array each frame.
             direction = state.get('_direction_np')
             if direction is None:
@@ -2565,7 +2498,8 @@ class LogicThread(threading.Thread):
             t = state['progress']
             eased = 4 * t * t * t if t < 0.5 else 1 - pow(-2 * t + 2, 3) / 2
             # PERF: scalar offset — bit-identical to the old NumPy expression
-            # (original + direction*distance*eased), no per-tick array alloc.
+            # (original + direction*distance*eased, which associates as
+            # (direction*distance)*eased), with no per-tick array allocation.
             original = brush['original_pos']
             cur = brush['pos']
             nx = original[0] + (direction[0] * distance) * eased
@@ -2724,7 +2658,7 @@ class LogicThread(threading.Thread):
             open_time = brush.get('open_time', 3.0)
             # PERF: direction is precomputed (already unit-length) in
             # _init_doors — no need to renormalize every tick. Cached as a
-            # scalar tuple so the offset math below allocates no NumPy arrays.
+            # scalar tuple so the offset maths below allocates no NumPy arrays.
             direction = state.get('_direction_np')
             if direction is None:
                 d = np.array(state.get('direction', [0, 1, 0]), dtype=float)
@@ -2880,20 +2814,39 @@ class LogicThread(threading.Thread):
     # PLAYER SHOOTING
     # =========================================================================
 
-    def _handle_shooting(self):
-        # Guns are removed in the Miniwind fantasy conversion: the player never
-        # carries a firearm and all combat (melee, bows, spells) is driven by the
-        # RPG plugin. This hitscan path is left inert rather than deleted so the
-        # save/threaded-state plumbing that references active_weapon stays intact.
-        return
-        if not self.player or not self.active_weapon:
+    def _handle_shooting(self, secondary=False):
+        """Resolve one press of a fire button.
+
+        A game layer that installed :attr:`player_fire_handler` owns what a
+        shot *is* -- MiniWind looses arrows, casts spell projectiles and swings
+        melee weapons -- and every shot it handles goes through the engine's
+        projectile pipeline (:meth:`_update_monster_projectiles`). Without a
+        handler, primary fire is Fio's hitscan weapon and secondary fire does
+        nothing.
+        """
+        if not self.player:
+            return
+        handler = self.player_fire_handler
+        if handler is not None:
+            mode = "secondary" if secondary else "primary"
+            try:
+                handled = bool(handler(self, mode))
+            except Exception:
+                import traceback
+                debug_log("Error", "player fire handler failed:\n"
+                          + traceback.format_exc())
+                handled = True
+            if handled:
+                self._plugin_emit("player_shoot", weapon=self.active_weapon, mode=mode)
+                return
+        if secondary or not self.active_weapon:
             return
         # Non-firing weapons (e.g. cig) never fire: no muzzle flash, no
         # hitscan/projectile, no damage, and no gunfire noise event.
         if self.active_weapon in NON_FIRING_WEAPONS:
             return
         self.muzzle_flash_active = True
-        self._plugin_emit("player_shoot", weapon=self.active_weapon)
+        self._plugin_emit("player_shoot", weapon=self.active_weapon, mode="primary")
         yaw_rad = self.player.angle
         if self.is_overhead():
             # Top-down aiming is planar: the player rotates to face a target and
@@ -3072,7 +3025,7 @@ class LogicThread(threading.Thread):
             p_pos = glm.vec3(proj['pos'][0], proj['pos'][1], proj['pos'][2])
 
             # ---- Collision with player ----
-            # A player-cast projectile must not strike the player who fired it.
+            # A player-fired projectile must not strike the player who fired it.
             if (self.player and not self.god_mode and not self.player_dead
                     and not proj.get('owner_is_player')):
                 player_pos = self.player.pos
@@ -3113,13 +3066,15 @@ class LogicThread(threading.Thread):
                 if hit_monster is not None:
                     on_hit = proj.get('on_hit')
                     if callable(on_hit):
-                        # The spawner (e.g. a player bow shot) resolves its own
-                        # damage/skill/crit math at the moment of impact rather
-                        # than a flat number — see game/runtime.py.
+                        # The shooter (a player bow shot, a spell) resolves its
+                        # own damage at the moment of impact rather than a flat
+                        # number baked in at fire time.
                         try:
                             on_hit(hit_monster)
                         except Exception:
-                            pass
+                            import traceback
+                            debug_log("Error", "projectile on_hit failed:\n"
+                                      + traceback.format_exc())
                         if self.monster_ai.monster_debug_active:
                             name = hit_monster.properties.get('name', '?')
                             debug_log("MonsterAI", f"Projectile hit {name}")
@@ -3198,8 +3153,8 @@ class LogicThread(threading.Thread):
         ]
 
     def _embed_projectile(self, proj, pos, *, hit_wall: bool = False, hit_monster=None):
-        """Leave a persistent, physical arrow shaft where a player arrow
-        struck a wall or a creature.
+        """Leave a persistent, physical arrow shaft where an embedding
+        projectile (``embeds=True``) struck a wall or an actor.
 
         Only a random trailing fraction of the shaft is left visible
         (``visible_frac``) — the "head" end is treated as buried in whatever
@@ -3285,19 +3240,6 @@ class LogicThread(threading.Thread):
     # =========================================================================
     # BLOOD STAINS (ground decals from wounds — not only gib deaths)
     # =========================================================================
-    def _blood_stain_paths(self):
-        """The physical blood-stain sprites (mild → severe), listed once and
-        cached — the on-disk lookup is not repeated per wound."""
-        paths = getattr(self, '_blood_stain_paths_cache', None)
-        if paths is None:
-            try:
-                from game.rpg import gib
-                paths = gib.stain_paths(magical=False)
-            except Exception:
-                paths = []
-            self._blood_stain_paths_cache = paths
-        return paths
-
     def add_blood_stain(self, pos, damage, max_hp):
         """Drop a ground blood decal for a wound of *damage* on a *max_hp* body.
 
@@ -3316,7 +3258,7 @@ class LogicThread(threading.Thread):
         # Severity 0..1: a single blow removing ~40% of the health bar or more
         # reads as the severest spatter; smaller nicks scale down from there.
         sev = max(0.0, min(1.0, (dmg / mh) / 0.4))
-        paths = self._blood_stain_paths()
+        paths = self.blood_stain_sprites
         sprite = ""
         if paths:
             idx = int(round(sev * (len(paths) - 1)))
@@ -3459,254 +3401,14 @@ class LogicThread(threading.Thread):
         dist = c @ normals.T + h @ np.abs(normals).T + d  # (N, 6)
         return np.all(dist >= 0.0, axis=1)
 
-    #: Brushes below this count are cheaper to test whole than to look up
-    #: through cell bins, so the spatial pre-cull only engages above it.
-    CULL_BIN_THRESHOLD = 512
-    #: A brush whose footprint covers more cells than this is not binned at all
-    #: — it goes in the always-considered "oversized" list, exactly as a huge
-    #: floor brush would otherwise blow up every cell in the world.
-    CULL_MAX_CELLS_PER_BRUSH = 64
-    #: Ticks between full re-validations of the non-hidden brush set. Runtime
-    #: visibility changes normally announce themselves through
-    #: :meth:`notify_visibility_changed`; this is the belt-and-braces sweep that
-    #: heals anything that did not, within about a second.
-    VISIBILITY_REVALIDATE_TICKS = 30
-
-    def notify_visibility_changed(self):
-        """Tell the render-state builder that some brush's ``hidden`` changed.
-
-        The non-hidden brush set (``all_brushes``, which feeds the shadow and
-        portal passes and the second splitscreen view) is a whole-world list, so
-        rebuilding it every frame costs O(total brushes) for a set that changes
-        only when something is actually shown or hidden. Callers that do that —
-        the I/O Show/Hide handlers, the console, the streamer parking a cell —
-        call this and the next frame rebuilds. Cheap: an integer bump.
-        """
-        self._visibility_epoch += 1
-
-    def notify_world_changed(self):
-        """Re-derive every core index after the world's object set changed.
-
-        Streaming a cell in or out genuinely adds and removes brushes and
-        entities, which invalidates *all* of the engine's precomputed indexes at
-        once: the name/id caches, the actor list the AI and the world index are
-        built from, the collision grid, the collision-brush cache and the cull
-        buffers. Before this existed the streamer only toggled ``hidden`` /
-        ``disabled`` flags and any path that genuinely swapped objects (the
-        disk-streaming session) left the caches pointing at objects that were no
-        longer in the world.
-
-        Rebuilding is proportional to what is *resident*, not to the size of the
-        world, and it only runs on a cell crossing — which is the whole point of
-        streaming. Safe to call outside play mode: the play-only pieces are
-        skipped.
-        """
-        self._build_entity_caches()
-        if not self.play_mode:
-            self.notify_visibility_changed()
-            return
-        self._refresh_collision_brushes_cache()
-        self._build_cull_cache()
-        grid = getattr(self, '_spatial_grid', None)
-        if grid is not None:
-            grid.populate(self.brushes + self._model_collision_brushes)
-
-    def _build_brush_cells(self):
-        """Bin brush rows into the engine's shared 512-unit XZ cells.
-
-        Same convention as :class:`engine.physics.SpatialGrid` and the world
-        index, so a cell means the same patch of ground everywhere. This is what
-        lets the per-frame cull start from *the camera's region* instead of from
-        every brush in the world: with a top-down camera the visible region is a
-        small box, and everything outside it never reaches the frustum test, the
-        hidden test or the draw list.
-        """
-        self._cull_cells = {}
-        self._cull_oversized = _np_empty_rows()
-        n = self._cull_n
-        if n < self.CULL_BIN_THRESHOLD:
-            return
-        centers = self._cull_centers
-        halves = self._cull_halves
-        cs = CULL_CELL_SIZE
-        inv = 1.0 / cs
-        cx0 = np.floor((centers[:, 0] - halves[:, 0]) * inv).astype(np.int64)
-        cx1 = np.floor((centers[:, 0] + halves[:, 0]) * inv).astype(np.int64)
-        cz0 = np.floor((centers[:, 2] - halves[:, 2]) * inv).astype(np.int64)
-        cz1 = np.floor((centers[:, 2] + halves[:, 2]) * inv).astype(np.int64)
-        span = (cx1 - cx0 + 1) * (cz1 - cz0 + 1)
-        oversized = np.nonzero(span > self.CULL_MAX_CELLS_PER_BRUSH)[0]
-        self._cull_oversized = oversized
-        buckets = {}
-        for i in np.nonzero(span <= self.CULL_MAX_CELLS_PER_BRUSH)[0].tolist():
-            for gx in range(int(cx0[i]), int(cx1[i]) + 1):
-                for gz in range(int(cz0[i]), int(cz1[i]) + 1):
-                    b = buckets.get((gx, gz))
-                    if b is None:
-                        buckets[(gx, gz)] = [i]
-                    else:
-                        b.append(i)
-        self._cull_cells = {k: np.asarray(v, dtype=np.intp)
-                            for k, v in buckets.items()}
-
-    def _camera_relevance_box(self, cam_pos, proj_view):
-        """The XZ box the camera can actually see this frame.
-
-        One authoritative answer, derived from the live camera and the world's
-        vertical slab (see :func:`engine.render_cull.visible_xz_bounds`), used
-        by everything downstream: which brush cells are consulted, which actors
-        get a render snapshot, and what the renderer is told its region is. A
-        fixed radius cannot do this job — MiniWind's camera looks almost
-        straight down, so its visible ground is a box a couple of thousand units
-        across, while the same radius has to cover a first-person view running
-        to the far plane.
-        """
-        try:
-            inv = glm.inverse(proj_view)
-        except Exception:
-            # A degenerate matrix must never blank the frame: fall back to the
-            # hard ceiling, which is always conservative.
-            r = CAMERA_RENDER_CULL_DISTANCE
-            return (cam_pos.x - r, cam_pos.z - r, cam_pos.x + r, cam_pos.z + r)
-        corners = []
-        for ndc in _FAR_PLANE_NDC:
-            p = inv * ndc
-            w = p.w
-            if abs(w) < 1e-9:
-                continue
-            corners.append((p.x / w, p.y / w, p.z / w))
-        if not corners:
-            r = CAMERA_RENDER_CULL_DISTANCE
-            return (cam_pos.x - r, cam_pos.z - r, cam_pos.x + r, cam_pos.z + r)
-        return visible_xz_bounds(
-            (cam_pos.x, cam_pos.y, cam_pos.z), corners,
-            self._cull_y_min, self._cull_y_max)
-
-    def _camera_candidate_rows(self, box):
-        """Brush rows whose footprint touches the camera's relevance *box*.
-
-        ``None`` means "no useful narrowing — test them all", which is what a
-        small level or a cache miss gets. The oversized brushes (too big to bin)
-        are always included.
-        """
-        cells = self._cull_cells
-        if not cells:
-            return None
-        cs = CULL_CELL_SIZE
-        inv = 1.0 / cs
-        gx0 = int(math.floor(box[0] * inv))
-        gz0 = int(math.floor(box[1] * inv))
-        gx1 = int(math.floor(box[2] * inv))
-        gz1 = int(math.floor(box[3] * inv))
-        parts = []
-        for gx in range(gx0, gx1 + 1):
-            for gz in range(gz0, gz1 + 1):
-                b = cells.get((gx, gz))
-                if b is not None:
-                    parts.append(b)
-        if self._cull_oversized.size:
-            parts.append(self._cull_oversized)
-        if not parts:
-            return _np_empty_rows()
-        rows = parts[0] if len(parts) == 1 else np.concatenate(parts)
-        # A brush spanning several cells appears once per cell it touches.
-        return np.unique(rows)
-
-    def _shadow_casters(self, box, light_reach, all_brushes, visible_things):
-        """The brushes and model entities the shadow pass could possibly need.
-
-        A shadow-casting light survives the entity cull only if its influence
-        sphere reaches the camera's region, and a caster only matters within one
-        radius of that light — so everything that can cast a visible shadow lies
-        inside the region grown by twice the largest surviving light's reach.
-        The rows come from the same 512-unit cell index the geometry cull uses;
-        there is no second partition and no second distance calculation.
-
-        Falls back to the full lists when there is no usable index (the editor,
-        a cache miss), which is what the renderer always used to get.
-        """
-        if (not self.play_mode or not self.culling_enabled
-                or not self._cull_cells or self._cull_keep is None):
-            return all_brushes, visible_things
-        if light_reach <= 0.0:
-            # No shadow-casting light reaches the view, so the pass has nothing
-            # to gather geometry for. An empty list, not a fallback: the caller
-            # distinguishes "narrowed to nothing" from "never narrowed".
-            return [], []
-        grow = 2.0 * float(light_reach)
-        grown = (box[0] - grow, box[1] - grow, box[2] + grow, box[3] + grow)
-        rows = self._camera_candidate_rows(grown)
-        if rows is None:
-            return all_brushes, visible_things
-        rows = rows[self._cull_keep[rows]]
-        if rows.size == 0:
-            return [], visible_things
-        return self._cull_row_refs[rows].tolist(), visible_things
-
-    def _all_things_list(self):
-        """The full entity list handed to the render state, cached.
-
-        The renderer wants a stable snapshot it can read while the logic thread
-        runs on, but the list only changes when an entity is spawned or removed
-        — so rebuild it then, not every frame. The ``(id, len)`` token catches
-        both a membership change and a whole-list swap, the same cheap test the
-        gameplay layer's type index uses.
-        """
-        things = self.things
-        token = (id(things), len(things))
-        if token != self._all_things_token:
-            self._all_things_token = token
-            self._all_things_cache = list(things)
-        return self._all_things_cache
-
-    def _refresh_all_brushes(self, brushes, row_refs):
-        """The whole-world non-hidden brush list, rebuilt only when it changes.
-
-        ``all_brushes`` feeds the shadow pass, the portal pass and the second
-        splitscreen view, all of which legitimately want the world rather than
-        the camera's region — but the set only changes when something is shown
-        or hidden, which is rare, while rebuilding it costs O(total brushes)
-        every frame. So it is cached, refreshed on a visibility change (or the
-        periodic re-validation), and patched in place for the handful of
-        mover/door rows whose render snapshot is replaced each frame.
-        """
-        due = (self._visibility_epoch != self._visibility_applied
-               or self._visibility_countdown <= 0
-               or self._all_brushes_cache is None)
-        if due:
-            keep = np.fromiter(
-                (not b.get('hidden', False) for b in brushes),
-                dtype=bool, count=self._cull_n)
-            self._visibility_applied = self._visibility_epoch
-            self._visibility_countdown = self.VISIBILITY_REVALIDATE_TICKS
-            prev = self._cull_keep
-            if (prev is None or prev.shape != keep.shape
-                    or not np.array_equal(prev, keep)):
-                self._cull_keep = keep
-                self._all_brushes_cache = row_refs[keep].tolist()
-                # Where each dynamic row landed in the cached list, so a mover's
-                # fresh snapshot can be written straight into it.
-                kept_rows = np.nonzero(keep)[0]
-                pos_of = {int(r): i for i, r in enumerate(kept_rows.tolist())}
-                self._all_brushes_dynamic = [
-                    (i, pos_of[i]) for i in self._cull_dynamic_rows if i in pos_of]
-        else:
-            self._visibility_countdown -= 1
-        cache = self._all_brushes_cache
-        for row, slot in self._all_brushes_dynamic:
-            cache[slot] = row_refs[row]
-        return cache
-
     def _build_cull_cache(self):
         """Precompute persistent per-brush cull buffers for a play session.
 
         Called once on entering play mode, when the brush set is fixed. Builds
-        NumPy AABB center/half-size arrays, the static-vs-dynamic split and the
-        512-unit cell bins, so ``_prepare_render_state`` can start from the
-        camera's region and finish with two vectorized NumPy operations —
-        without rebuilding any Python list per frame. ``hidden`` is intentionally
-        NOT baked in: it can still toggle at runtime (I/O Show/Hide), so it is
-        tracked separately by :meth:`_refresh_all_brushes`.
+        NumPy AABB center/half-size arrays and the static-vs-dynamic split so
+        ``_prepare_render_state`` can vectorize culling without rebuilding any
+        Python lists per frame. ``hidden`` is intentionally NOT baked in — it
+        can still toggle at runtime (I/O Show/Hide) and is read per frame.
         """
         brushes = self.brushes
         n = len(brushes)
@@ -3729,16 +3431,6 @@ class LogicThread(threading.Thread):
                 row_refs[i] = b
             else:
                 row_refs[i] = b  # static: the live dict, ref never changes
-        # Vertical slab the world's geometry actually occupies. The top-down
-        # camera's cone leaves this slab almost immediately, which is what makes
-        # its visible ground box a few thousand units across instead of the tens
-        # of thousands a 10,000-unit far plane would imply.
-        if n:
-            self._cull_y_min = float((centers[:, 1] - halves[:, 1]).min())
-            self._cull_y_max = float((centers[:, 1] + halves[:, 1]).max())
-        else:
-            self._cull_y_min = 0.0
-            self._cull_y_max = 0.0
         self._cull_centers = centers
         self._cull_halves = halves
         self._cull_row_refs = row_refs
@@ -3746,11 +3438,6 @@ class LogicThread(threading.Thread):
         self._cull_dynamic_rows = dynamic_rows
         self._cull_n = n
         self._cull_valid = True
-        self._cull_keep = None
-        self._all_brushes_cache = None
-        self._all_brushes_dynamic = []
-        self._build_brush_cells()
-        self.notify_visibility_changed()
 
     def _invalidate_cull_cache(self):
         self._cull_valid = False
@@ -3759,12 +3446,6 @@ class LogicThread(threading.Thread):
         self._cull_row_refs = None
         self._cull_dynamic_rows = None
         self._cull_n = 0
-        self._cull_cells = {}
-        self._cull_oversized = _np_empty_rows()
-        self._cull_keep = None
-        self._all_brushes_cache = None
-        self._all_brushes_dynamic = []
-        self.notify_visibility_changed()
 
     # =========================================================================
     # RENDER STATE PREPARATION
@@ -3838,13 +3519,7 @@ class LogicThread(threading.Thread):
                 write_state.player_angle = player_angle
                 write_state.player_pitch = player_pitch
         else:
-            # Editor mode: the free camera *is* the camera. Bind cam_pos here as
-            # well as on the play branches — everything downstream (the relevance
-            # region, and through it the brush and entity culls) measures from
-            # it, so leaving it to the play path alone left it unbound the moment
-            # the editor drew a frame.
-            cam_pos = glm.vec3(self.editor_camera.pos)
-            write_state.editor_camera_pos = glm.vec3(cam_pos)
+            write_state.editor_camera_pos = glm.vec3(self.editor_camera.pos)
             write_state.editor_camera_yaw = self.editor_camera.yaw
             write_state.editor_camera_pitch = self.editor_camera.pitch
             write_state.editor_camera_fov = self.editor_camera.fov
@@ -3877,16 +3552,10 @@ class LogicThread(threading.Thread):
             if current_time - m['time'] < self.BULLET_FADE_TIME
         ]
 
-        projection = glm.perspective(glm.radians(fov), self.frustum_aspect, 1.0, 10000.0)
+        _far = self.view_distance.far_plane if self.view_distance is not None else 10000.0
+        projection = glm.perspective(glm.radians(fov), self.frustum_aspect, 1.0, _far)
         proj_view = projection * view_matrix
         frustum_planes = self._extract_frustum_planes(proj_view)
-
-        # The one relevance region for this frame. Everything that follows —
-        # which brush cells are consulted, which actors are snapshotted, what
-        # the renderer is told to draw — measures against this box, so there is
-        # a single answer to "what can the player see from here".
-        relevance_box = self._camera_relevance_box(cam_pos, proj_view)
-        write_state.camera_relevance_box = relevance_box
 
         brushes = self.brushes
 
@@ -3914,36 +3583,19 @@ class LogicThread(threading.Thread):
                     b_ref['original_pos'] = list(b['original_pos'])
                 row_refs[i] = b_ref
 
-            # The whole-world non-hidden list (shadows / portals / splitscreen),
-            # rebuilt only when something is actually shown or hidden.
-            all_brushes = self._refresh_all_brushes(brushes, row_refs)
-            keep = self._cull_keep
+            # `hidden` can toggle at runtime (I/O Show/Hide), so read it fresh.
+            keep = np.fromiter(
+                (not b.get('hidden', False) for b in brushes),
+                dtype=bool, count=total_count)
 
             if self.culling_enabled:
-                # ---- world -> spatial partition -> camera region -> frustum --
-                # Start from the cells the camera's relevance box touches, not
-                # from every brush in the world: on a large map that turns a
-                # 30,000-row frustum matmul into a few-hundred-row one, and the
-                # rows outside the region never reach the hidden test or the
-                # draw list at all. `None` means the level is small enough that
-                # testing it whole is cheaper than the lookup.
-                rows = self._camera_candidate_rows(relevance_box)
-                if rows is None:
-                    visible_mask = keep & self._aabb_in_frustum_batch(
-                        frustum_planes, centers, halves)
-                    visible_brushes = row_refs[visible_mask].tolist()
-                elif rows.size == 0:
-                    visible_brushes = []
-                else:
-                    rows = rows[keep[rows]]
-                    if rows.size == 0:
-                        visible_brushes = []
-                    else:
-                        in_frustum = self._aabb_in_frustum_batch(
-                            frustum_planes, centers[rows], halves[rows])
-                        visible_brushes = row_refs[rows[in_frustum]].tolist()
+                in_frustum = self._aabb_in_frustum_batch(frustum_planes, centers, halves)
+                visible_mask = keep & in_frustum
             else:
-                visible_brushes = all_brushes
+                visible_mask = keep
+
+            all_brushes = row_refs[keep].tolist()
+            visible_brushes = row_refs[visible_mask].tolist()
             culled_count = total_count - len(visible_brushes)
         else:
             # ---- General path (editor mode / cache miss) --------------------
@@ -3992,78 +3644,19 @@ class LogicThread(threading.Thread):
         write_state.total_brushes = total_count
         write_state.culled_brushes = culled_count
 
-        # ---- Entities: cull to the camera's region *before* snapshotting ----
-        # Every actor used to get a full render snapshot every frame — a dict
-        # build plus a sprite-path resolve — however far away it was, and the
-        # renderer then threw most of them away at its own distance cull. The
-        # test moves in front of the snapshot instead: an actor the camera
-        # cannot reach never costs anything. The radius is the renderer's own
-        # CAMERA_RENDER_CULL_DISTANCE, so the set the main pass draws is
-        # unchanged. Lights, portals and every other non-actor entity are
-        # untouched here (the renderer keeps them regardless, for lighting,
-        # shadows and portal discovery).
         visible_things = []
-        _append = visible_things.append
-        cull_things = self.play_mode and self.culling_enabled
-        max_light_reach = 0.0
-        if cull_things:
-            # The same box the geometry used, grown by the widest sprite an
-            # actor can wear so a billboard whose centre is just outside the
-            # view but whose edge is inside is never dropped.
-            bx0 = relevance_box[0] - ACTOR_CULL_MARGIN
-            bz0 = relevance_box[1] - ACTOR_CULL_MARGIN
-            bx1 = relevance_box[2] + ACTOR_CULL_MARGIN
-            bz1 = relevance_box[3] + ACTOR_CULL_MARGIN
         for thing in self.things:
             if self.play_mode and Pickup and isinstance(thing, Pickup) and id(thing) in self.collected_pickups:
                 continue
-            pos = thing.pos
-            if hasattr(pos, 'x'):
-                pos = [pos.x, pos.y, pos.z]
-                thing.pos = pos
+            if hasattr(thing.pos, 'x'):
+                thing.pos = [thing.pos.x, thing.pos.y, thing.pos.z]
             if isinstance(thing, MonsterThing):
-                if cull_things:
-                    x = pos[0]
-                    z = pos[2]
-                    if x < bx0 or x > bx1 or z < bz0 or z > bz1:
-                        continue
-                _append(thing.get_render_snapshot())
+                visible_things.append(thing.get_render_snapshot())
             else:
-                if cull_things:
-                    x = pos[0]
-                    z = pos[2]
-                    if Light is not None and isinstance(thing, Light):
-                        # A light reaches exactly as far as its radius, so that
-                        # is how much of the world outside the view can still be
-                        # lit by it. Exact, not a guess — and it is what stops a
-                        # thousand lamps on the far side of a large map being
-                        # considered (and shadow-mapped) every frame.
-                        r = thing.get_radius()
-                        if (x < bx0 - r or x > bx1 + r
-                                or z < bz0 - r or z > bz1 + r):
-                            continue
-                        # Only a shadow-caster's reach widens the caster set —
-                        # an ordinary lamp needs no geometry gathered for it.
-                        if r > max_light_reach and thing.properties.get('casts_shadows'):
-                            max_light_reach = r
-                    elif Portal is None or not isinstance(thing, Portal):
-                        # Portals are discovered from the full entity list, so
-                        # their own pass is unaffected; everything else here is
-                        # drawn as a sprite and cannot matter outside the view.
-                        if x < bx0 or x > bx1 or z < bz0 or z > bz1:
-                            continue
-                _append(thing)
+                visible_things.append(thing)
 
         write_state.visible_things = visible_things
-        write_state.all_things = self._all_things_list()
-        # The shadow pass casts from the lights that survived above, and a
-        # caster has to be within one light radius of one of them. Handing it
-        # the whole world instead meant a Python walk of every brush in the map,
-        # per shadow light, every frame — the single most expensive thing left
-        # in the renderer on a large map.
-        write_state.shadow_brushes, write_state.shadow_things = \
-            self._shadow_casters(relevance_box, max_light_reach,
-                                 all_brushes, visible_things)
+        write_state.all_things = list(self.things)
         write_state.timestamp = time.perf_counter()
 
         # ── Player 2 render state ─────────────────────────────────────────────

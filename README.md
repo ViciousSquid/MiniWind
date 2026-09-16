@@ -19,11 +19,11 @@ lighting, collision and the team-aware Monster AI — and adds the RPG on top as
 integrated `game/` layer, not a plugin.
 
 The generic Fio **plugin system remains** for genuinely optional gameplay;
-MiniWind simply no longer travels through it — it is built in and always on. So
-is **world management**: spatial relevance, cell streaming and simulation LOD
-are core engine subsystems (`engine/world_index.py`, `engine/world_cells.py`,
-`engine/world_streaming.py`), because the renderer, the collision grid, the AI
-and the save system all have to agree about which part of the world is live.
+MiniWind simply no longer travels through it — it is built in and always on.
+**World management is Fio's**: cell streaming, residency, dormant entities,
+per-cell persistence and simulation tiers all come from Fio's core Big World
+plugin (`plugins/bigworld/`). MiniWind adds game meaning to those primitives; it
+does not reimplement them. See [ARCHITECTURE.md §7](ARCHITECTURE.md).
 
 ## Author causality, not stories
 
@@ -91,7 +91,7 @@ the game.
 | Schedules & autonomy | movement uses the existing position/grid path | low-frequency decision tick, `schedule.evaluate()`, local wander, bounded civilian flee-to-refuge |
 | World markers | named entities + UUID persistence | authorable `Marker` entity referenced by name |
 | Inventory / items | serialized for free via `properties` | `inventory` model + data-driven item DB |
-| Dialogue | `LogicKeyValueStore` registry for state | `DialogueRunner` + an Aurora-style **dialogue tree** editor |
+| Dialogue | `LogicState` registry for state | `DialogueRunner` + an Aurora-style **dialogue tree** editor |
 | Perception & witnesses | per-entity `sight_range`, the top-down positions | `sim.perception`: sight vs hearing, sleep, darkness, stealth |
 | Memory & knowledge | the persistent KV store, `disposition`'s per-NPC identity | `sim.knowledge`: beliefs with certainty + source, rumour spread, decay |
 | Crime & bounty | `character.bounty`, the guard arrest/escort flow | `sim.crime`: a charge only exists once a witness reaches the law |
@@ -317,28 +317,29 @@ editor/                   the Fio editor, presented as the MiniWind RPG Editor
 plugins/                  the generic plugin system, for optional gameplay
 ```
 
-### World management is core, not a plugin
+### Ownership: Fio underneath, MiniWind on top
 
-Everything that decides *how much of the world is live* lives in `engine/`:
+The dependency runs one way. `engine/`, `editor/`, `plugins/` and `player/`
+never import `game/`; `main.py` installs the game at startup, and the game
+reaches the engine through duck-typed hooks it sets on the logic thread
+(`game_session`, `player_fire_handler`, `_player_damage_filter`,
+`blood_stain_sprites`) and the plugin API.
 
-```
-engine/cells.py             the 512-unit XZ grid — one definition, imported by
-                            the collision grid, the actor index, the renderer's
-                            region cull and the streamer
-engine/world_index.py       the actor index: contiguous NumPy position/team
-                            buffers rebuilt once per tick, vectorised radius
-                            queries, and a simulation-LOD tier per actor
-engine/world_cells.py       the static world partition: brushes/entities/lights
-                            by UUID and by cell, and which cells are active
-engine/world_streaming.py   applies that to a live session (+ the disk-streaming
-                            variant and the per-cell persistence registry)
-engine/render_cull.py       the camera's relevance region, derived from the live
-                            view volume and the world's height slab
-```
+| Concern | Owner |
+|---|---|
+| World streaming / residency, dormant entities, per-cell persistence | Fio — `plugins/bigworld` |
+| Entity persistence, UUID identity | Fio |
+| Typed state | Fio — `LogicState` |
+| Legacy string-facing game state | MiniWind — `GlobalStore` boundary |
+| Rendering visibility / culling | Fio — `engine/render_cull.py`, renderer |
+| Simulation relevance | Fio — Big World tiers (`_sim_tier` stamps) |
+| Qt / editor event routing | Fio |
+| Gameplay meaning of routed input (fire buttons, keys) | MiniWind |
+| RPG rules, quests, dialogue, factions | MiniWind — `game/` |
+| Branding / UI identity | MiniWind |
+| Mobile player runtime | Fio — `player/`, untouched |
 
-Full guide: [`engine/WORLD_STREAMING.md`](engine/WORLD_STREAMING.md).
-
-The simulation tiers, in order of how much the player can observe:
+The simulation tiers Big World stamps, and what MiniWind does with them:
 
 | Tier | Where | What runs |
 |---|---|---|
@@ -347,19 +348,17 @@ The simulation tiers, in order of how much the player can observe:
 | `TIER_DISTANT` | distant world | schedules and needs on the clock, one coarse collision-checked step per pass, no perception |
 | `TIER_DORMANT` | streamed out | nothing; the state persists and resumes when the region becomes relevant |
 
-A map opts into cell streaming by carrying a `BigWorldSettings` entity, and its
-activation radius sets the tier boundary too — so streaming and simulation can
-never disagree about how far out the world is live. A map without one keeps the
-whole world resident and behaves exactly as it always did.
-
+A map opts into streaming by carrying Big World's `BigWorldSettings` entity. A
+map without one keeps the whole world resident. MiniWind's own actor index
+(`game/world_index.py`) is a query accelerator for perception and combat that
+reads those tiers; it is built only for casts large enough to benefit.
 
 ## Tests
 
 ```bash
-python -m pytest game/tests -q            # MiniWind: 363 headless tests
-python -m pytest editor/tests game/tests engine/tests -q
-# 659 passed with PyQt5 installed. Without it the editor tests skip
-# cleanly — everything else stays headless.
+python -m pytest game/tests -q            # MiniWind's headless game tests
+python -m pytest -q                       # everything: Fio + MiniWind
+# 2898 passed, 49 skipped with PyQt5 installed (offscreen Qt, no GPU).
 ```
 
 Covers the **reactive simulation** end to end (`game/tests/test_sim.py`) — that
@@ -381,13 +380,9 @@ reflects a relative's death, speech-bubble cues, the editor authoring wiring
 (grouped schemas + creation wizards), and the world placeables (item pickup,
 quest trigger, creature spawn) — all headless, like the engine's own tests.
 
-The engine side covers **world management and relevance**
-(`engine/tests/test_world_index.py`, `test_sim_lod.py`, `test_render_cull.py`,
-`test_world_streaming*.py`): that every system addresses the same 512-unit
-cells, that radius queries agree with a brute-force scan on both the small and
-the binned path, that tier boundaries have hysteresis so a loiterer does not
-flap, that the camera's derived region is tight overhead yet never smaller than
-what is really visible, that only actors the camera can reach are snapshotted
-and only lights whose radius reaches the view survive, that a hidden brush still
-disappears on the very next frame despite the world list being cached, and that
-a streaming map parks its distant world and restores it exactly on play stop.
+World management, relevance and culling are covered by Fio's own suites
+(`plugins/bigworld/tests`, `tests/`). `tests/integration/test_miniwind_boundaries.py`
+pins the ownership above: that Fio's packages never import the game, that there
+is no parallel streaming layer or `LogicKeyValueStore`, that the fire buttons go
+through the engine's shot path, and that Fio 2.4.1's geometry and editor
+features survived the merge.

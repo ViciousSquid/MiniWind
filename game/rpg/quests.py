@@ -218,7 +218,7 @@ class QuestLog:
 
     ``store`` needs ``get(key, default)`` and ``set(key, value)`` — the same
     interface dialogue uses. In the game that's the Fio ``GlobalStore`` /
-    ``LogicKeyValueStore`` so quests persist and are visible to map logic.
+    ``LogicState`` so quests persist and are visible to map logic.
     """
 
     def __init__(self, store):

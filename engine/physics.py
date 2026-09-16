@@ -41,11 +41,11 @@ class SpatialGrid:
         and again whenever the static brush list changes (rare)."""
         self.clear()
         for brush in brushes:
-            # `authored_hidden` rather than `hidden`: Big World parks
-            # out-of-range brushes by hiding them, and this grid outlives that —
-            # rebuilding it mid-play (a model-collision toggle) would otherwise
-            # drop every parked brush from collision for good, even after its
-            # cell came back. That is a player falling through the world.
+            # `authored_hidden` rather than `hidden`: a cell-streaming layer
+            # parks out-of-range brushes by hiding them, and this grid outlives
+            # that — rebuilding it mid-play (a model-collision toggle) would
+            # otherwise drop every parked brush from collision for good, even
+            # after its cell came back.
             if authored_hidden(brush) or brush.get('is_fog'):
                 continue
             if is_water_brush(brush):
@@ -69,17 +69,9 @@ class SpatialGrid:
                     pos = [(min_b[i] + max_b[i]) / 2.0 for i in range(3)]
                     size = [max_b[i] - min_b[i] for i in range(3)]
 
-            min_x = int(math.floor((pos[0] - size[0] * 0.5) / self.cell_size))
-            max_x = int(math.floor((pos[0] + size[0] * 0.5) / self.cell_size))
-            min_z = int(math.floor((pos[2] - size[2] * 0.5) / self.cell_size))
-            max_z = int(math.floor((pos[2] + size[2] * 0.5) / self.cell_size))
-
-            for x in range(min_x, max_x + 1):
-                for z in range(min_z, max_z + 1):
-                    cell = (x, z)
-                    if cell not in self.cells:
-                        self.cells[cell] = []
-                    self.cells[cell].append(brush)
+            self._index.insert(brush,
+                               pos[0] - size[0] * 0.5, pos[2] - size[2] * 0.5,
+                               pos[0] + size[0] * 0.5, pos[2] + size[2] * 0.5)
 
     # ------------------------------------------------------------------
     # Player queries  (unchanged API)
@@ -92,6 +84,10 @@ class SpatialGrid:
         min_z = int(math.floor(player_min.z / self.cell_size))
         max_z = int(math.floor(player_max.z / self.cell_size))
 
+        # PERF: the overwhelmingly common case is an AABB inside one cell, where
+        # no de-duplication is needed at all -- return that cell's bucket
+        # directly. Elsewhere, `cells.get(...)` replaces the `in` + `[]` pair so
+        # each cell costs one dict lookup instead of two.
         cells = self.cells
         if min_x == max_x and min_z == max_z:
             return list(cells.get((min_x, min_z), ()))
@@ -151,8 +147,8 @@ class SpatialGrid:
 
         cells = self.cells
         if min_cx == max_cx and min_cz == max_cz:
-            brushes = cells.get((min_cx, min_cz), ())
-            for brush in brushes:
+            # Single-cell fast path: no de-duplication set needed.
+            for brush in cells.get((min_cx, min_cz), ()):
                 pos = brush['pos']
                 size = brush['size']
                 bx_min = pos[0] - size[0] * 0.5
@@ -230,7 +226,8 @@ class SpatialGrid:
         # PERF: hoist the ray endpoints/direction to scalars once and inline the
         # slab test below (bit-identical to intersect_ray_aabb_fn). This avoids
         # two throwaway glm.vec3 constructions + a Python call per brush along
-        # the ray — the dominant cost of monster line-of-sight at 30 Hz.
+        # the ray -- the dominant cost of AI line-of-sight at tick rate. The
+        # signature keeps intersect_ray_aabb_fn so existing callers are unchanged.
         ox, oy, oz = start.x, start.y, start.z
         rdx, rdy, rdz = ray_dir.x, ray_dir.y, ray_dir.z
         limit = ray_len - 0.1

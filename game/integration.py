@@ -91,13 +91,21 @@ def _patch_editor_menu():
 
 
 def _add_tools_menu_entries(MainWindow):
-    """Add MiniWind's spell editor and dice test tool to the Tools menu."""
+    """Add MiniWind's quest editor, spell editor, world simulation and dice test tools."""
     tools = getattr(MainWindow, "tools_menu", None)
     if tools is None:
         return
 
-    if not getattr(tools, "_miniwind_spell_editor_added", False):
+    if not getattr(tools, "_miniwind_quest_editor_added", False):
         tools.addSeparator()
+        quest_action = tools.addAction("Quest Editor…")
+        quest_action.setToolTip("Open the MiniWind Quest Editor (it has its own button to "
+                                "launch the guided Quest Wizard)")
+        quest_action.triggered.connect(lambda _checked=False: _open_quest_editor(MainWindow))
+        MainWindow.quest_editor_action = quest_action
+        tools._miniwind_quest_editor_added = True
+
+    if not getattr(tools, "_miniwind_spell_editor_added", False):
         spell_action = tools.addAction("Spell Editor…")
         spell_action.setToolTip("Edit MiniWind spell definitions — name, element, projectile "
                                 "colour, damage, cost and speed.")
@@ -123,6 +131,29 @@ def _add_tools_menu_entries(MainWindow):
         dice_action.triggered.connect(lambda _checked=False: _open_dice_test(MainWindow))
         tools._miniwind_dice_test_added = True
 
+
+
+def _open_quest_editor(MainWindow):
+    """Open the Quest Editor on the map's Game Settings entity.
+
+    Quests are stored on that entity (see game/quest_editor.py), so this finds
+    it and hands it to the same dialog its Quests property tab opens -- the
+    editor itself, not the guided wizard, which the editor launches from its
+    own 'New Quest (Wizard)' button.
+    """
+    from PyQt5.QtWidgets import QMessageBox
+    from .entities import GameSettings
+    from . import quest_editor
+    state = getattr(MainWindow, "state", None)
+    settings_things = [t for t in getattr(state, "things", []) or []
+                       if isinstance(t, GameSettings)]
+    if not settings_things:
+        QMessageBox.information(
+            MainWindow, "Quest Editor",
+            "This map has no Game Settings entity yet — place one from the "
+            "MiniWind palette first (quests are authored and stored on it).")
+        return
+    quest_editor.open_quest_editor(settings_things[0], parent=MainWindow)
 
 
 def _open_spell_editor(MainWindow):
@@ -334,8 +365,8 @@ def _progress_registries():
     """The dict-of-dicts KV registries MiniWind persists progress into."""
     regs = []
     try:
-        from editor.things import LogicKeyValueStore
-        regs.append(LogicKeyValueStore._persistent_registry)
+        from editor.things import LogicState
+        regs.append(LogicState._persistent_registry)
     except Exception:
         pass
     try:

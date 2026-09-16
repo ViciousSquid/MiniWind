@@ -40,8 +40,10 @@ except Exception as exc:                       # pragma: no cover - env-specific
 
 
 @pytest.fixture(scope="module")
-def app():
-    yield QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+def app(qt_app):
+    # The session-wide QApplication (root conftest). A module-local one would be
+    # destroyed with the module and abort the next Qt test that builds a widget.
+    yield qt_app
 
 
 class _Window(QtWidgets.QMainWindow):

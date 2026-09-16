@@ -14,7 +14,7 @@ model on top of that: given two team names, what is their default relationship?
 Deliberately not a reputation simulator (§2). It answers one question so AI
 target selection and combat can branch on it, while leaving room to grow: the
 matrix is data, and per-pair overrides can be layered in later (or fed from the
-``LogicKeyValueStore`` for quest-driven faction changes) without touching call
+``LogicState`` for quest-driven faction changes) without touching call
 sites.
 
 Pure Python, no Qt / NumPy — safe to import in the editor, the engine and the

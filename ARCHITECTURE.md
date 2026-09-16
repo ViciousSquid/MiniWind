@@ -100,7 +100,7 @@ The branch remains recognisably Fio. Retained generic technology, used as-is:
 renderer, terrain, brushes, spatial grid, collision, top-down/overhead camera,
 billboard rendering, lighting/shadows, the team-aware `engine.monster_ai`
 (MiniWind combat *is* this AI), UUID persistence and the `.fiosave` serializer,
-the `LogicKeyValueStore`/`GlobalStore`, the plugin system itself, and the
+the `LogicState`/`GlobalStore`, the plugin system itself, and the
 PyQt-free `plugins.entitybase.Thing` used as the headless entity base. None of
 this was replaced — MiniWind is glue over it.
 
@@ -110,60 +110,65 @@ fantasy combat rules, lore) lives in `game/`. The one new generic-shaped
 capability — the manager's built-in-game surface — is kept clean enough to
 backport.
 
-## 7. World management is a core engine subsystem
+## 7. Fio owns the world; MiniWind gives it meaning
 
-This was once `plugins/bigworld/`, a disabled-by-default plugin. It is now
-engine code, and it moved for architectural reasons rather than tidiness: *which
-part of the world is live* is a question the renderer, the collision grid, the
-AI, the simulation scheduler and the save system all have to agree on, and the
-engine was already reaching past the plugin boundary to find the answer
-(`logic._bigworld` inside `engine/savegame.py`). Keeping a fundamental
-capability behind an optional abstraction cost a per-frame plugin dispatch and,
-worse, licensed four systems to answer the same spatial question their own way.
+MiniWind runs on Fio 2.4.1. The rule the merge was built on: **MiniWind adds game
+meaning to Fio primitives; it does not reimplement Fio's infrastructure.**
 
 ```
-engine/cells.py             the 512-unit XZ grid, defined once and imported by
-                            SpatialGrid, the actor index, the renderer's region
-                            cull and the streamer
-engine/world_index.py       actors: NumPy position/team/alive buffers rebuilt
-                            once per tick, vectorised radius queries, and the
-                            simulation-LOD tier (NEAR / ACTIVE / DISTANT /
-                            DORMANT) with hysteresis
-engine/world_cells.py       the static partition: brushes, entities and lights
-                            by UUID and by cell; which cells are active
-engine/world_streaming.py   applies activation to a live session; StreamingHost
-                            documents what a host must provide
-engine/world_streaming_disk.py   the variant that genuinely frees unloaded cells
-engine/world_persistence.py the per-cell delta registry a streamed save is made of
-engine/streaming_debug.py   the stats panel + active-cell minimap
-tools/world/generate_world.py    the synthetic world generator and benchmark
+                         FIO 2.4
+                           │
+        ┌──────────────────┼──────────────────┐
+     Renderer           LogicState         BigWorld
+        │                  │           ┌──────┴──────┐
+   visibility          typed state   streaming   persistence
+        └──────────┬───────┘
+                MiniWind
+       ┌───────────┼────────────┐
+     quests     dialogue     factions
+       └───────────┼────────────┘
+              GlobalStore
+             compatibility
 ```
 
-[`engine/WORLD_STREAMING.md`](engine/WORLD_STREAMING.md) is the full guide:
-cells, activation and hysteresis, terrain fill, the per-cell save format, disk
-streaming, and the measured scaling numbers.
+**World streaming is Big World's.** `plugins/bigworld/` — cells, tiers, dormant
+entities, the streaming lifecycle and per-cell persistence — is a core Fio
+plugin and authoritative. MiniWind has no streaming layer of its own and no
+parallel `BigWorldSettings` entity; a map opts in with Big World's.
 
-`LogicThread` owns the session, builds it at play start from the map's
-`BigWorldSettings` entity (a core editor entity now), ticks it directly from
-`_tick_play_mode`, and tears it down at play stop. A map without that entity
-keeps the whole world resident and behaves exactly as before.
+**Simulation relevance is Big World's tiers.** Big World stamps `_sim_tier` on
+entities as cell residency changes. `MonsterAI.update` and `MiniwindSession`
+read the stamp; neither measures distances to decide it. `game/world_index.py`
+is MiniWind's actor index — NumPy position/team/alive buffers for "nearest
+hostile" style queries — rebuilt by the session each tick from the engine's
+actor list, only when the cast is at least `WORLD_INDEX_MIN_ACTORS`.
 
-The layering the rest of the engine consumes:
+**Rendering visibility is Fio's.** The logic thread's frustum cull and
+`engine/render_cull.py` decide what is drawn. MiniWind adds sprite meaning
+(directional heads, weapon overlays, hit tint) through the sprite shader's
+`sprite_rot` / `sprite_tint` / `sprite_opacity` uniforms, not a culling scheme.
 
-* **spatial system** → relevance (`WorldIndex`: who is near, which tier)
-* **streaming** → loaded state (`WorldCellIndex` + the session's `hidden` /
-  `disabled` parking, which the renderer, AI and pickup handlers already read)
-* **simulation scheduler** → LOD (`_sim_tier`, read by `MonsterAI.update` and
-  `MiniwindSession.tick`)
-* **renderer** → visual visibility (the camera relevance box, derived once per
-  frame in `_prepare_render_state` and passed forward on the render state)
+**Typed state is `LogicState`.** The pre-2.4 key/value store is removed, with its
+type tokens. `GlobalStore` (plugin API) stays the string-facing boundary the
+game's quest, dialogue and faction code reads and writes through.
 
-Gameplay consumes those classifications; it does not recompute them. A streaming
-map's activation radius also sets the simulation-LOD band, so there is one
-answer to "how far out is the world still live".
+**Input routing is Fio's; its meaning is MiniWind's.** Qt and the editor route
+keys and clicks. The fire buttons are the engine's shot path: the view queues a
+primary or secondary shot, `LogicThread._handle_shooting` hands it to
+`player_fire_handler`, and `MiniwindSession.fire_player_weapon` decides what it
+is — a swing, an arrow, a spell. Arrows and bolts fly through the engine's
+projectile pipeline (`on_hit`, embedding, stuck arrows).
 
-What stayed optional is what is genuinely game-specific: the plugin system
-itself remains for optional gameplay, and the world *generator* is a tool.
+**The dependency runs one way.** `engine/`, `editor/`, `plugins/` and `player/`
+import nothing from `game/`. `main.py` calls `game.install()`; the game then
+publishes itself on the logic thread (`game_session`, `player_fire_handler`,
+`_player_damage_filter`, `_faction_hostile`, `blood_stain_sprites`), registers
+its weapon lookup with `engine.combat_loadout`, and extends the editor through
+the plugin API (property sections, key suggestions, inspector snapshots, console
+commands — API 1.4.0) and a built-in game's `reset_progress` hook.
+`tests/integration/test_miniwind_boundaries.py` enforces this.
+
+**Fio's player runtime** (`player/`) is Fio's and left untouched.
 
 ## 8. Moddable content format
 

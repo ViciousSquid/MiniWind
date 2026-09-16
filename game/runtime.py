@@ -26,6 +26,7 @@ from engine.facing import face_heading
 from engine.spatial import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
                                 TIER_DORMANT)
 from .rpg import factions
+from .rpg import gib
 from .rpg import schedule as sched
 from .rpg import combat as rpg_combat
 from .rpg import equipment as eq
@@ -37,6 +38,7 @@ from .rpg import needs as rpg_needs
 from .rpg import daily as rpg_daily
 from .rpg import quests as _quests
 from .rpg.gametime import GameClock
+from .world_index import WorldIndex
 from . import sim
 from .sim import appraisal as sim_appraisal
 from .sim import crime as sim_crime
@@ -50,6 +52,12 @@ from .rpg.game_state import GameState
 from .diceroll_anim import SHAKE_DURATION, ROLL_DURATION, FADE_DURATION
 
 _current_session = None
+
+#: Below this many actors the vectorised index costs more to build than the
+#: scalar scans it replaces, so the session leaves it unbuilt and every query
+#: takes its scalar route. MiniWind's authored settlement sits under it; a
+#: crowd, a streamed world or a spawner-fed map goes over.
+WORLD_INDEX_MIN_ACTORS = 32
 
 DECISION_INTERVAL = 0.4
 NPC_WALK_SPEED = 90.0
@@ -356,7 +364,12 @@ class MiniwindSession:
         #: changes. See _markers_of_kind.
         self._marker_kinds: Dict[str, list] = {}
         self._marker_kinds_token = None
-        #: The engine's world index, resolved once per tick (see _world_index).
+        #: MiniWind's actor index (game/world_index.py), rebuilt at the top of
+        #: every tick by _rebuild_world_index and resolved once per tick
+        #: through _world_index. Fio decides relevance (Big World's _sim_tier
+        #: stamps); this only snapshots positions/teams/liveness for queries.
+        self.world_index = WorldIndex()
+        self._wi_live = False
         self._wi_cache = None
         #: Alternates 0/1 each decision pass. TIER_ACTIVE NPCs decide on the
         #: pass matching their row parity, so half of the near world re-plans
@@ -450,7 +463,6 @@ class MiniwindSession:
         self.rng = random.Random()
         self.game = GameState(self.store, rng=self.rng)
         self.game.add_roll_listener(self._on_dice_roll)
-        self._bind_dice_service()
         self.needs_char_creation = True
         self.open_screen = "charcreate"
         self.dialogue = None
@@ -481,26 +493,25 @@ class MiniwindSession:
         return {"easy": 0.6, "normal": 1.0, "hard": 1.5}.get(self.difficulty, 1.0)
 
     # ================================================================= setup
-    def _bind_dice_service(self) -> None:
-        """Expose this session's dice service to the engine I/O manager."""
-        io_manager = getattr(self.logic, "io_manager", None)
-        if io_manager is not None:
-            try:
-                io_manager.set_dice_roller(self.game.dice)
-            except AttributeError:
-                pass
-
     def install(self) -> None:
         """Attach the RPG to the logic thread (damage filter, faction model)."""
         global _current_session
         _current_session = self
         logic = self.logic
         logic._player_damage_filter = self._mitigate_incoming
+        # Both mouse fire buttons are the engine's shooting: it queues the
+        # press and hands it here, and the bow's arrows and the spell bolts
+        # fly through its projectile pipeline.
+        logic.player_fire_handler = self.fire_player_weapon
+        # Wound decals use MiniWind's gore art.
+        try:
+            logic.blood_stain_sprites = tuple(gib.stain_paths(magical=False))
+        except Exception as exc:
+            print(f"[MiniWind] blood stain art unavailable: {exc}")
         # Teach the engine's team-aware MonsterAI MiniWind's faction relationships
         # so wild animals stay neutral to villagers while bandits are hostile to
         # both — instead of "every different team is an enemy".
         logic._faction_hostile = factions.is_hostile
-        self._bind_dice_service()
         self.spawn_creature_points()   # materialise CreatureSpawn points once
         self._assign_npc_handedness()  # random handedness (left rare) where unset
         self._wire_quest_givers()      # make quest givers offer their quests
@@ -511,14 +522,10 @@ class MiniwindSession:
         _current_session = None
         self._remove_wisp()
         self._remove_all_torch_lights()
-        io_manager = getattr(self.logic, "io_manager", None)
-        if io_manager is not None:
-            try:
-                io_manager.set_dice_roller(None)
-            except AttributeError:
-                pass
         if getattr(self.logic, "_player_damage_filter", None) is self._mitigate_incoming:
             self.logic._player_damage_filter = None
+        if getattr(self.logic, "player_fire_handler", None) == self.fire_player_weapon:
+            self.logic.player_fire_handler = None
         if getattr(self.logic, "_faction_hostile", None) is factions.is_hostile:
             self.logic._faction_hostile = None
 
@@ -563,7 +570,6 @@ class MiniwindSession:
                                        head=head)
         self.game.character.handed = "left" if str(handed).lower() == "left" else "right"
         self.game.add_roll_listener(self._on_dice_roll)
-        self._bind_dice_service()
         # Author-granted starting spells (Game Settings → Player Spells).
         c = self.game.character
         for sid in self._player_start_spells:
@@ -665,10 +671,26 @@ class MiniwindSession:
             pass
 
     # ================================================================= tick
+    def _rebuild_world_index(self) -> None:
+        """Snapshot this tick's actors into :attr:`world_index`.
+
+        The actor list is the engine's precomputed monster list; parked actors
+        stay in it and are marked not-alive by the index itself, from Big
+        World's parking markers. Below :data:`WORLD_INDEX_MIN_ACTORS` nothing
+        is built and :meth:`_world_index` answers None.
+        """
+        actors = getattr(getattr(self, "logic", None), "_monster_things", None) or ()
+        if len(actors) < WORLD_INDEX_MIN_ACTORS:
+            self._wi_live = False
+            return
+        self.world_index.rebuild(list(actors))
+        self._wi_live = True
+
     def tick(self, delta: float) -> None:
-        # The logic thread rebuilt the world index immediately before this call,
-        # so resolve it once here rather than through a getattr chain at every
-        # one of the tens of thousands of asks a settlement tick makes.
+        # Rebuild the actor index once, then resolve it once here rather than
+        # through an attribute chain at each of the tens of thousands of asks a
+        # settlement tick makes.
+        self._rebuild_world_index()
         self._wi_cache = None
         self._world_index()
         self.clock.advance(delta)
@@ -685,8 +707,8 @@ class MiniwindSession:
         self._update_arrest()
 
         # ---- decisions + movement, under simulation LOD --------------------
-        # The engine's world index (engine/world_index.py) has already sorted
-        # every actor into a tier by how near the player it is. What each tier
+        # Fio's Big World has already stamped every actor with a tier by how
+        # near the player it is (read through _tier_of). What each tier
         # costs per tick:
         #
         #   TIER_NEAR    full — decide every pass, move every tick
@@ -3387,19 +3409,13 @@ class MiniwindSession:
         return actor.properties.get("_sim_tier", TIER_NEAR)
 
     def _world_index(self):
-        """The engine's authoritative actor index, or None.
+        """This tick's actor index, or None.
 
-        There is deliberately no fallback index here: relevance is a *core*
-        engine service (``engine/world_index.py``), built once per play tick by
-        the logic thread. When it is absent — a headless unit test poking the
-        session with a stub logic object, or the very first tick before the
-        index has been built — the scalar scans below run exactly as they did
-        before, so behaviour is identical either way.
-
-        An index that exists but is not *authoritative* — no focus point, or a
-        cast too small for the engine to bother classifying — is the same as no
-        index. An authoritative index that happens to be empty is the opposite
-        answer, and means nothing in the world is currently relevant.
+        None when the cast is too small to be worth indexing, or when a headless
+        test pokes the session through a stub with no index: the scalar scans
+        below then run exactly as they would without one. A built index that
+        holds no live actors is the opposite answer, and means nothing in the
+        world is currently relevant.
 
         Resolved once per tick and cached on the session: this is asked tens of
         thousands of times a second, and a ``getattr`` chain per ask is real
@@ -3408,8 +3424,10 @@ class MiniwindSession:
         wi = self._wi_cache
         if wi is not None:
             return wi
-        wi = getattr(getattr(self, "logic", None), "world_index", None)
-        if wi is None or not getattr(wi, "authoritative", False):
+        if not getattr(self, "_wi_live", False):
+            return None
+        wi = getattr(self, "world_index", None)
+        if wi is None:
             return None
         self._wi_cache = wi
         return wi
@@ -3846,6 +3864,22 @@ class MiniwindSession:
                 best = t
         return best
 
+    def fire_player_weapon(self, logic, mode: str) -> bool:
+        """The engine's fire buttons, given MiniWind meaning.
+
+        Primary fire uses the equipped weapon -- a bow looses an arrow, a staff
+        channels its spell, a blade swings. Secondary fire casts the active
+        spell. Returns True: MiniWind always owns the shot, so Fio's hitscan
+        weapon path never runs underneath it.
+        """
+        if getattr(self.game.character, "is_dead", False):
+            return True
+        if mode == "secondary":
+            self.do_cast()
+        else:
+            self.do_attack()
+        return True
+
     def do_attack(self) -> bool:
         """Player swings a melee weapon / looses an arrow / casts if staff."""
         c = self.game.character
@@ -4164,6 +4198,12 @@ class MiniwindSession:
         if not hasattr(lt, "_monster_projectiles"):
             lt._monster_projectiles = []
         lt._monster_projectiles.append(proj)
+
+    def overhead_player_weapon(self):
+        """``(weapon_id, handed)`` for the viewport's overhead weapon overlay."""
+        c = self.game.character
+        return (eq.equipped_id(c, "weapon") or "",
+                str(getattr(c, "handed", "right") or "right"))
 
     def overhead_pose(self):
         c = self.game.character

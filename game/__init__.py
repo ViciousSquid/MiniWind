@@ -14,6 +14,10 @@ optional gameplay plugins; MiniWind no longer travels through it.
 from __future__ import annotations
 
 from .host import MiniwindGame
+from . import combat_styles as _combat_styles
+
+# The engine's combat loadout learns which items are weapons from MiniWind.
+_combat_styles.register()
 
 #: The process-wide built-in game instance.
 GAME = MiniwindGame()

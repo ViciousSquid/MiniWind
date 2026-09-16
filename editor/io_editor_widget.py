@@ -19,11 +19,18 @@ try:
     from .io_system import (
         OutputConnection, get_outputs, get_inputs, get_output_names,
         get_input_names, get_connections, add_connection, remove_connection,
-        get_entity_type_for_io, IO_REGISTRY
+        get_entity_type_for_io, IO_REGISTRY,
+        validate_connection, PROBLEM_UNKNOWN_INPUT, PROBLEM_UNKNOWN_OUTPUT,
     )
     IO_AVAILABLE = True
 except ImportError:
     IO_AVAILABLE = False
+
+    def validate_connection(conn, entity, target, source_type=None):
+        return []
+
+    PROBLEM_UNKNOWN_INPUT = 'unknown_input'
+    PROBLEM_UNKNOWN_OUTPUT = 'unknown_output'
 
 
 # ── Random name generator for unnamed entities ──
@@ -512,6 +519,7 @@ class IOEditorWidget(QWidget):
             }
         """)
         layout.addWidget(header)
+
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(4)
         
@@ -543,10 +551,16 @@ class IOEditorWidget(QWidget):
         self.table.setShowGrid(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setWordWrap(False)
+
+        # Compact, non-expanding table: fixed row height, height recalculated
+        # after every refresh so it hugs exactly the visible connections.
+        # Height is derived from the table's actual font metrics (plus cell
+        # padding) rather than a guessed constant, so rows aren't clipped.
         self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.table.verticalHeader().setDefaultSectionSize(self.table.fontMetrics().height() + 12)
-        self.table.verticalHeader().setMinimumSectionSize(self.table.fontMetrics().height() + 12)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._row_height = self.table.fontMetrics().height() + 12
+        self.table.verticalHeader().setDefaultSectionSize(self._row_height)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
         
         # === FIX: enforce readable header contrast ===
         self.table.setStyleSheet("""
@@ -586,7 +600,6 @@ class IOEditorWidget(QWidget):
         self.table.customContextMenuRequested.connect(self._show_context_menu)
         
         layout.addWidget(self.table)
-    
 
         # Spacer to push console button to the right
         btn_layout.addStretch()
@@ -599,24 +612,16 @@ class IOEditorWidget(QWidget):
         btn_layout.addWidget(self.console_btn)
         
         layout.addLayout(btn_layout)
+        layout.addStretch()
         
         self.table.itemSelectionChanged.connect(self._update_button_states)
         self._update_button_states()
+        self._update_table_height()
     
     def set_entity(self, entity):
         self.current_entity = entity
         self._refresh_table()
     
-    def _update_table_height(self):
-        """Keep the output list compact while showing every connection row."""
-        header_height = self.table.horizontalHeader().height()
-        frame_height = self.table.frameWidth() * 2
-        _row_height = self.table.fontMetrics().height() + 12
-        self.table.verticalHeader().setDefaultSectionSize(_row_height)
-        self.table.verticalHeader().setMinimumSectionSize(_row_height)
-        table_height = header_height + frame_height + (self.table.rowCount() * _row_height)
-        self.table.setFixedHeight(table_height)
-
     def _refresh_table(self):
         self.table.setRowCount(0)
         
@@ -649,8 +654,21 @@ class IOEditorWidget(QWidget):
                 target_item.setForeground(QColor(255, 100, 100))
                 target_item.setToolTip("Target entity not found!")
             self.table.setItem(row, 1, target_item)
-            
-            self.table.setItem(row, 2, QTableWidgetItem(conn.input_name))
+
+            # A connection naming an input the target does not accept used to
+            # fail in silence — nothing at edit time, one line in the console at
+            # run time. Flag it here, where the mistake was made.
+            input_item = QTableWidgetItem(conn.input_name)
+            output_item = self.table.item(row, 0)
+            for code, message in validate_connection(
+                    conn, self.current_entity, resolved):
+                if code == PROBLEM_UNKNOWN_INPUT:
+                    input_item.setForeground(QColor(255, 170, 60))
+                    input_item.setToolTip(message)
+                elif code == PROBLEM_UNKNOWN_OUTPUT and output_item is not None:
+                    output_item.setForeground(QColor(255, 170, 60))
+                    output_item.setToolTip(message)
+            self.table.setItem(row, 2, input_item)
             
             param_text = conn.parameter if conn.parameter else "-"
             self.table.setItem(row, 3, QTableWidgetItem(param_text))
@@ -659,9 +677,21 @@ class IOEditorWidget(QWidget):
             if conn.fire_once:
                 delay_text += " (once)"
             self.table.setItem(row, 4, QTableWidgetItem(delay_text))
-
-        self._update_table_height()
+        
         self._update_button_states()
+        self._update_table_height()
+
+    def _update_table_height(self):
+        """
+        Size the table to exactly fit its current rows (plus header/frame)
+        so it never expands beyond its content, leaving the action row
+        directly beneath it instead of pushed to the bottom of the tab.
+        """
+        row_count = self.table.rowCount()
+        header_height = self.table.horizontalHeader().height()
+        frame = 2 * self.table.frameWidth()
+        total_height = header_height + (row_count * self._row_height) + frame
+        self.table.setFixedHeight(total_height)
     
     @staticmethod
     def _entity_display_name(entity):

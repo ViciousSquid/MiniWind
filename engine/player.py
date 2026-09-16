@@ -825,15 +825,15 @@ class Player:
             return True  # No bounds or no overlap → pass through
 
         # Standard AABB check for solid world brushes.
-        # PERF: cached float32 bounds (bit-identical to glm.vec3(pos)±size*0.5)
-        # instead of constructing four throwaway glm.vec3 per brush per axis.
+        # PERF: cached float32 bounds (bit-identical to glm.vec3(pos) +/- size*0.5)
+        # instead of constructing four throwaway glm.vec3 per brush per axis pass.
         b = brush_aabb_bounds(brush)
 
         if (player_max.x > b[0] and player_min.x < b[3] and
             player_max.y > b[1] and player_min.y < b[4] and
             player_max.z > b[2] and player_min.z < b[5]):
             return False
-
+            
         return True
 
     def _resolve_collision(self, brushes, axis, delta, ignore_brush=None):
@@ -925,20 +925,20 @@ class Player:
             player_min = self.pos - half
             player_max = self.pos + half
 
-            # PERF: cached float32 bounds (bit-identical to glm.vec3(pos)±size*0.5)
-            # instead of four throwaway glm.vec3 per brush per axis.
-            b = brush_aabb_bounds(brush)
-            b_min_x, b_min_y, b_min_z, b_max_x, b_max_y, b_max_z = b
+            pos   = glm.vec3(brush['pos'])
+            size  = glm.vec3(brush['size'])
+            b_min = pos - size * 0.5
+            b_max = pos + size * 0.5
 
-            if (player_max.x < b_min_x or player_min.x > b_max_x or
-                    player_max.y < b_min_y or player_min.y > b_max_y or
-                    player_max.z < b_min_z or player_min.z > b_max_z):
+            if (player_max.x < b_min.x or player_min.x > b_max.x or
+                    player_max.y < b_min.y or player_min.y > b_max.y or
+                    player_max.z < b_min.z or player_min.z > b_max.z):
                 continue
 
             # Resolve on the relevant axis
             if axis == 'x':
-                dx1 = player_max.x - b_min_x
-                dx2 = b_max_x - player_min.x
+                dx1 = player_max.x - b_min.x
+                dx2 = b_max.x - player_min.x
                 if dx1 < dx2:
                     self.pos.x -= dx1 + 0.001
                 else:
@@ -946,8 +946,8 @@ class Player:
                 self.velocity.x = 0
 
             elif axis == 'z':
-                dz1 = player_max.z - b_min_z
-                dz2 = b_max_z - player_min.z
+                dz1 = player_max.z - b_min.z
+                dz2 = b_max.z - player_min.z
                 if dz1 < dz2:
                     self.pos.z -= dz1 + 0.001
                 else:
@@ -955,8 +955,8 @@ class Player:
                 self.velocity.z = 0
 
             elif axis == 'y':
-                dy1 = player_max.y - b_min_y
-                dy2 = b_max_y - player_min.y
+                dy1 = player_max.y - b_min.y
+                dy2 = b_max.y - player_min.y
                 if dy1 < dy2:
                     self.pos.y -= dy1 + 0.001
                     if self.velocity.y > 0:
@@ -1014,12 +1014,14 @@ class Player:
                                     return True
                 continue
 
-            # PERF: cached float32 bounds instead of throwaway glm.vec3 pairs.
-            b = brush_aabb_bounds(brush)
+            pos   = glm.vec3(brush['pos'])
+            size  = glm.vec3(brush['size'])
+            b_min = pos - size * 0.5
+            b_max = pos + size * 0.5
 
-            if (player_max.x > b[0] and player_min.x < b[3] and
-                    player_max.y > b[1] and player_min.y < b[4] and
-                    player_max.z > b[2] and player_min.z < b[5]):
+            if (player_max.x > b_min.x and player_min.x < b_max.x and
+                    player_max.y > b_min.y and player_min.y < b_max.y and
+                    player_max.z > b_min.z and player_min.z < b_max.z):
                 return True
 
         return False

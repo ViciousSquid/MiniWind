@@ -54,7 +54,7 @@ from __future__ import annotations
 import math
 import time as _time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type
+from typing import Any, Callable, List, Optional, Tuple, Type
 
 
 #: Version of the plugin API surface this module implements. Compare against
@@ -65,8 +65,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 #: * 1.3.0 — render hooks (``render.*`` events), swappable-renderer registration
 #:   (``register_renderer``), editor-UI extensions (extra property fields on any
 #:   entity, custom property tabs), and the ``FIO_NO_PLUGINS`` kill-switch.
-API_VERSION = "1.3.0"
-API_VERSION_INFO = (1, 3, 0)
+API_VERSION = "1.4.0"
+API_VERSION_INFO = (1, 4, 0)
 
 
 def version_tuple(value: str) -> tuple:
@@ -219,8 +219,8 @@ class PropertySpec:
     choices: Optional[List[Any]] = None
     help: str = ""
     #: Optional section name. When an editor renders a schema it may group
-    #: consecutive specs under a heading (e.g. "IDENTITY", "STATS", "SCHEDULE"),
-    #: turning a flat property list into an organised, form-like panel.
+    #: consecutive specs under a heading, turning a flat property list into an
+    #: organised, form-like panel. Empty means "no heading".
     group: str = ""
 
     def apply_default(self, properties: dict) -> None:
@@ -277,21 +277,22 @@ def prop(name: str, type: str = "string", label: str = "", default: Any = None,
 
 
 # ---------------------------------------------------------------------------
-# Global key/value store (cross-level, shared with map LogicKeyValueStores)
+# Global key/value store (cross-level, shared with map LogicState stores)
 # ---------------------------------------------------------------------------
 
 class GlobalStore:
     """Process-wide, cross-level key/value storage for plugins.
 
     When the editor package is present this binds to the *same* persistent
-    registry the map ``LogicKeyValueStore`` entities use, so a plugin's globals
+    registry the map ``LogicState`` entities use, so a plugin's globals
     live alongside — and can share stores with — map state (persisting across
     level loads within a session). In the dependency-light player the editor is
     absent, so it falls back to a plain process-local dict-of-dicts with the
-    same API. Values are stored as strings, matching the map store.
+    same API. Values are read back as strings; a map store may hold them
+    typed, and this converts on the way out rather than keeping a copy.
 
     Keys are grouped by *store* name (default ``"plugins"``); pass a store name
-    a map's ``LogicKeyValueStore`` uses to read/write the exact same values.
+    a map's ``LogicState`` uses to read/write the exact same values.
     """
 
     #: Fallback registry used when the editor store is unavailable (player).
@@ -299,13 +300,34 @@ class GlobalStore:
 
     def _registry(self) -> dict:
         try:
-            from editor.things import LogicKeyValueStore
-            return LogicKeyValueStore._persistent_registry
+            from editor.things import LogicState
+            return LogicState._persistent_registry
         except Exception:
             return GlobalStore._fallback
 
+    @staticmethod
+    def _as_text(value):
+        """A stored value as the string this API has always returned.
+
+        Map stores hold typed values as of 2.4 — an integer counter really is
+        an ``int`` — but this API's contract is strings, and a plugin written
+        against it would break on a value a map happened to set.  Converting on
+        the way out keeps that contract without needing a second copy of the
+        data: there is still exactly one registry.
+        """
+        if value is None or isinstance(value, str):
+            return value
+        try:
+            from editor.state_values import format_value
+            return format_value(value)
+        except Exception:
+            return str(value)
+
     def get(self, key, default=None, store: str = "plugins"):
-        return self._registry().get(str(store), {}).get(str(key), default)
+        data = self._registry().get(str(store), {})
+        if str(key) not in data:
+            return default
+        return self._as_text(data[str(key)])
 
     def set(self, key, value, store: str = "plugins") -> None:
         self._registry().setdefault(str(store), {})[str(key)] = str(value)
@@ -318,7 +340,8 @@ class GlobalStore:
         return False
 
     def all(self, store: str = "plugins") -> dict:
-        return dict(self._registry().get(str(store), {}))
+        return {k: self._as_text(v)
+                for k, v in self._registry().get(str(store), {}).items()}
 
     def keys(self, store: str = "plugins") -> list:
         return list(self._registry().get(str(store), {}).keys())
@@ -327,6 +350,19 @@ class GlobalStore:
 # ---------------------------------------------------------------------------
 # Editor-time API (passed to FioPlugin.register)
 # ---------------------------------------------------------------------------
+
+@dataclass
+class ConsoleContext:
+    """What a registered console command is handed when it runs.
+
+    ``logic_thread`` is the live play session's logic thread (None in the
+    editor), ``play_mode`` whether a play session is running, and
+    ``main_window`` the editor window hosting the console (None headless).
+    """
+    logic_thread: Any = None
+    play_mode: bool = False
+    main_window: Any = None
+
 
 class EditorAPI:
     """Handed to :meth:`FioPlugin.register` exactly once when the plugin loads.
@@ -459,17 +495,37 @@ class EditorAPI:
         """Mark *entity_type* as a per-map singleton (at most one instance).
 
         Placement paths refuse to add a second one and select the existing
-        instance instead. Used by the built-in game for its GameSettings marker.
+        instance instead.
         """
         self._manager.register_singleton_entity(entity_type)
 
+    def register_entity_wizard(self, entity_type: str, factory) -> None:
+        """Register a creation wizard for *entity_type*.
+
+        ``factory(parent) -> dict | None`` runs a dialog and returns the initial
+        properties for the new entity, or None to cancel placement. Lets an
+        entity that needs configuring be authored properly instead of dropping
+        the user into raw properties.
+        """
+        self._manager.register_entity_wizard(entity_type, factory)
+
     def register_kv_suggestions(self, provider) -> None:
-        """Provide key/value quick-insert suggestions for the KeyValue editor.
+        """Provide key/value quick-insert suggestions for the State Store editor.
 
         ``provider() -> list[(label, key, default_value, tooltip)]``. Lets a game
         surface the store keys it uses without the generic editor knowing them.
         """
         self._manager.register_kv_suggestion_provider(provider)
+
+    def register_console_command(self, name: str, handler, help: str = "") -> None:
+        """Add a debug-console command (API 1.4.0).
+
+        ``handler(ctx, args)`` receives a :class:`ConsoleContext` and the raw
+        argument string, and may return a reply string for the console to
+        print. Built-in console commands always win over a registered one of
+        the same name, and a disabled plugin's commands are not offered.
+        """
+        self._manager.register_console_command(name, handler, help, owner=self._plugin)
 
     def register_entity_inspector(self, provider) -> None:
         """Provide the live inspector snapshot for a monster/NPC debug popup.
@@ -558,15 +614,10 @@ class RuntimeAPI:
 
         self.io_manager.register_input_handler(entity_type, input_name, gated)
 
-    def request_dice_roll(self, dice_notation: str, target: Optional[int] = None,
-                          source_entity=None, output_name: str = "OnDiceRolled",
-                          context: Optional[Dict] = None):
-        """Request a shared gameplay roll and optionally route it through I/O."""
-        if self.io_manager is None:
-            return None
-        return self.io_manager.request_dice_roll(
-            dice_notation, target=target, source_entity=source_entity,
-            output_name=output_name, context=context)
+    def fire_output(self, entity, output_name: str, value: Optional[str] = None):
+        """Fire an output from *entity* through the I/O system (if available)."""
+        if self.io_manager is not None:
+            self.io_manager.fire_output(entity, output_name, value)
 
     # -- scene queries ------------------------------------------------------
     def _things(self):

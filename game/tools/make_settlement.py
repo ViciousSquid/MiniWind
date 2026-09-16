@@ -114,7 +114,7 @@ def build(settlement: dict, base: dict) -> dict:
     }))
 
     # --- persistent quest/clock store ---
-    world["things"].append(_thing("logic_keyvalue",
+    world["things"].append(_thing("logic_state",
                                   [ps["pos"][0] + 40, ps["pos"][1], ps["pos"][2] - 40], {
         "name": "miniwind", "store_name": "miniwind", "initial_data": {}}))
 

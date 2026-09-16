@@ -60,8 +60,8 @@ class _Session:
     _refresh_actor_cache = MiniwindSession._refresh_actor_cache
     _fight_to_break_up = MiniwindSession._fight_to_break_up
     _nearest_hostile = MiniwindSession._nearest_hostile
-    # Perception now asks the engine's authoritative actor index first (see
-    # engine/world_index.py). This stub has no live logic thread behind it, so
+    # Perception asks the session's actor index first (see
+    # game/world_index.py). This stub has no live logic thread behind it, so
     # it takes the scalar fallback — which is the point: the two paths must
     # answer identically.
     _world_index = MiniwindSession._world_index

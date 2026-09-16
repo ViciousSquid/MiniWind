@@ -33,7 +33,7 @@ actual code (paths cited), not assumptions. Phase 1 (the vertical slice) is
   **any awake monster targets the player by default** (`monster_ai.py:276-278`).
 - **Teams** — a plain `properties['team']` string; the AI reads it directly.
   There is no faction layer yet.
-- **Global state** — `editor.things.LogicKeyValueStore` (`things.py:1438`) is a
+- **Global state** — `editor.things.LogicState` (`things.py:1438`) is a
   named, string-valued store with a process-wide `_persistent_registry` that
   survives level transitions and **serializes itself** into saves via a custom
   `to_dict`/`from_dict` embedding `runtime_data` (`things.py:1586-1607`).
@@ -156,7 +156,7 @@ per-role behaviour from `team` + `aggression` + `npc_role` with zero core edits.
   drawn top-right via `render.overlay`.
 - **Core changes:** none.
 - **Save/load:** the clock is mirrored into the KV store (`_clock_hour`,
-  `_clock_day`) which persists via a map `LogicKeyValueStore` — no new format.
+  `_clock_day`) which persists via a map `LogicState` — no new format.
 - **Frequency:** a couple of float adds per tick.
 - **Cell unload:** the clock is global, unaffected.
 - **Editor:** `MiniwindSettings` entity (`start_hour`, `minutes_per_day`, …).
@@ -217,10 +217,10 @@ per-role behaviour from `team` + `aggression` + `npc_role` with zero core edits.
 
 ## 9. Reuse the logic system for state (§9)
 
-- **Extends:** `LogicKeyValueStore` / `GlobalStore` — *the* persistent global
+- **Extends:** `LogicState` / `GlobalStore` — *the* persistent global
   RPG state, not a second system.
 - **Hook:** `runtime.StateStore` adapts `host.globals` to the dialogue store;
-  dialogue conditions read it and actions write it. A map `LogicKeyValueStore`
+  dialogue conditions read it and actions write it. A map `LogicState`
   named after `state_store` makes those values durable and shareable with map
   logic (its I/O `SetValue`/`TestValue` see the same keys).
 - **Core changes:** none.

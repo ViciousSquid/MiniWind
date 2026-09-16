@@ -12,10 +12,17 @@ import math
 import json
 from html import escape
 from typing import Dict, List, Any, Optional, Tuple
-from editor.debug_console import debug_log
+# The debug console is a Qt widget and lives in the editor package; the AI only
+# wants somewhere to write a line.  Guarded exactly like the rest of the engine
+# (see logic_thread) so the AI still runs - and is still testable - in the
+# head-less player, where neither the editor package nor PyQt5 exists.
+try:
+    from editor.debug_console import debug_log
+except ImportError:  # pragma: no cover - exercised by the head-less player
+    def debug_log(category, message):
+        print(f"[{category}] {message}")
 from engine import combat_loadout
 from engine.facing import face_heading
-from game.diceroll import DICE_TYPES
 from .constants import is_water_brush
 from .spatial import TIER_ACTIVE, TIER_DISTANT, TIER_DORMANT, TIER_NEAR
 from .monster_constants import (
@@ -54,6 +61,28 @@ except ImportError:
     MonsterThing = None
 
 
+def _flatten_to_ground(direction):
+    """A unit *horizontal* direction from a 3D one, or ``None`` when there is none.
+
+    Ground monsters walk in XZ only, so their movement direction is the 3D
+    direction with Y dropped and renormalised.  When the target is directly
+    above or below - a flying player over a grunt's head, a monster standing on
+    the player's own column - that leaves the zero vector, and ``glm.normalize``
+    of the zero vector is NaN, not an error.  The NaN then flows into the
+    monster's position and out into ``SpatialGrid.overlaps_wall``, which raises
+    ``ValueError: cannot convert float NaN to integer`` on the AI thread and
+    stops every monster in the level.
+
+    Returning ``None`` for that case lets the caller simply not move this tick,
+    which is the right answer: there is no horizontal direction to move in.
+    """
+    flat = glm.vec3(direction.x, 0.0, direction.z)
+    length = glm.length(flat)
+    if length < 1e-6:
+        return None
+    return flat / length
+
+
 class MonsterAI:
     """Handles all monster AI updates, patrol, sight, combat, and debug visualisation."""
 
@@ -80,29 +109,26 @@ class MonsterAI:
         """Called by LogicThread after populating the grid."""
         self._grid = grid
 
-    @staticmethod
-    def _attack_damage_notation(maximum: int) -> str:
-        """Return a supported dice expression whose maximum covers *maximum*."""
-        maximum = max(1, int(maximum))
-        best = None
-        for sides in DICE_TYPES:
-            count = max(1, math.ceil(maximum / sides))
-            candidate = (count * sides, count, -sides, sides)
-            if best is None or candidate[:3] < best[:3]:
-                best = candidate
-        return f"{best[1]}d{best[3]}"
-
     def _roll_attack_damage(self, attacker, maximum: int, attack_style: str):
-        """Roll an actor's damage through MiniWind's shared dice service."""
+        """Roll an actor's damage through the running game's dice service.
+
+        The engine knows only the service's shape: ``notation_for_maximum`` turns
+        a damage ceiling into a dice expression and ``request_roll`` rolls it.
+        Which dice exist is the game's rule (``game.diceroll``). With no service
+        bound the flat maximum is dealt, exactly as before dice existed.
+        """
         maximum = int(maximum)
         if maximum < 2:
             return max(0, maximum), None
-        session = getattr(self.lt, "_miniwind", None)
+        session = getattr(self.lt, "game_session", None)
         dice = getattr(getattr(session, "game", None), "dice", None)
         if dice is None:
             return maximum, None
         name = str(attacker.properties.get("name", "monster"))
-        notation = self._attack_damage_notation(maximum)
+        notation_for = getattr(dice, "notation_for_maximum", None)
+        if notation_for is None:
+            return maximum, None
+        notation = notation_for(maximum)
         result = dice.request_roll(
             notation, source="monster.attack",
             context={"attacker": name, "attack_style": attack_style})
@@ -160,6 +186,12 @@ class MonsterAI:
             state['style_band'] = band
             loadout = combat_loadout.build_loadout(thing.properties)
             style = combat_loadout.choose_style(loadout, band)
+            # Nothing authored and nothing to choose between: keep the legacy
+            # per-type attack (flying = projectile, others = hitscan). The
+            # loadout's MELEE fallback is for actors that do have a style.
+            if (not combat_loadout.has_choice(loadout)
+                    and not str(thing.properties.get('attack_style', '') or '').strip()):
+                style = ''
             state['attack_style'] = style
             # Show what it is actually holding. Written to a transient key so
             # the authored `equipped_weapon` survives — the renderer prefers
@@ -198,7 +230,7 @@ class MonsterAI:
             monster_things = [t for t in self.lt.things if isinstance(t, MonsterThing)]
 
         # ---- Simulation LOD -------------------------------------------------
-        # Only actors the engine's world index put in the player's vicinity
+        # Only actors Big World's tier classifier put in the player's vicinity
         # (TIER_NEAR / TIER_ACTIVE) get the combat AI at all. Beyond that the
         # player cannot see, hear, be seen by or reach them, so chasing, sight
         # lines, gravity settling and patrol stepping are pure waste — and they
@@ -520,7 +552,8 @@ class MonsterAI:
                     if dir_len > 0.001:
                         direction = direction / dir_len
                         if mtype != 'flying':
-                            direction = glm.normalize(glm.vec3(direction.x, 0.0, direction.z))
+                            direction = _flatten_to_ground(direction)
+                    if dir_len > 0.001 and direction is not None:
                         step = direction * MONSTER_MOVE_SPEED * delta
                         new_pos = thing_pos + step
 
@@ -1197,7 +1230,8 @@ class MonsterAI:
         if dir_len > 0.001:
             direction = direction / dir_len
             if mtype != 'flying':
-                direction = glm.normalize(glm.vec3(direction.x, 0.0, direction.z))
+                direction = _flatten_to_ground(direction)
+        if dir_len > 0.001 and direction is not None:
             self._face_dir(monster, direction, delta)
             step = direction * MONSTER_MOVE_SPEED * delta
             new_pos = thing_pos + step
@@ -1417,7 +1451,9 @@ class MonsterAI:
             return
         direction = to_node / dir_len
         if mtype != 'flying':
-            direction = glm.normalize(glm.vec3(direction.x, 0.0, direction.z))
+            direction = _flatten_to_ground(direction)
+            if direction is None:
+                return      # the node is directly overhead; no way to walk to it
         self._face_dir(monster, direction, delta)
 
         step = direction * MONSTER_MOVE_SPEED * speed_mult * delta
@@ -1449,20 +1485,23 @@ class MonsterAI:
                         debug_log("Pathfinding", f"'{mname}' DETOUR: blocked at '{current_node_name}', switching to '{detour}'")
 
     def _advance_patrol_index(self, monster, state: Dict, chain: List[str], patrol_mode: str, mname: str):
-        """Advance patrol index and fire OnMonsterLeft on the node we leave."""
+        """Advance the patrol index, firing OnMonsterLeft on the node left behind.
+
+        The next index is worked out *before* anything is announced, because
+        two cases advance to nowhere and must not announce a departure:
+
+        * a ``once`` patrol that has reached the end holds at its final node;
+        * a one-node chain advances back onto the node it is already standing
+          on.  Announcing that would emit an OnMonsterLeft/OnMonsterArrived
+          pair on every tick for the rest of the level - a logic counter wired
+          to the node would count 30 arrivals a second.
+        """
         if not chain:
             return
 
         old_idx = state.get('patrol_chain_idx', 0)
         old_name = chain[old_idx] if old_idx < len(chain) else ''
         direction = state.get('patrol_chain_dir', 1)
-
-        if old_name:
-            old_node = self._find_path_node_by_name(old_name)
-            if old_node is not None and self.lt.io_manager:
-                self.lt.io_manager.fire_output(old_node, 'OnMonsterLeft')
-        state['patrol_at_target'] = False
-        state['patrol_walking_to'] = ''
 
         new_idx = old_idx + direction
 
@@ -1492,6 +1531,16 @@ class MonsterAI:
                 state['patrol_finished'] = True
                 debug_log("Pathfinding", f"'{mname}' completed 'once' patrol – holding at '{old_name}'")
                 return
+
+        if new_idx == old_idx:
+            return      # nowhere to advance to; the monster has not left
+
+        if old_name:
+            old_node = self._find_path_node_by_name(old_name)
+            if old_node is not None and self.lt.io_manager:
+                self.lt.io_manager.fire_output(old_node, 'OnMonsterLeft')
+        state['patrol_at_target'] = False
+        state['patrol_walking_to'] = ''
 
         state['patrol_chain_idx'] = new_idx
         next_name = chain[new_idx] if new_idx < len(chain) else ''

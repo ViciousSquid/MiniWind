@@ -3,22 +3,25 @@ A tiny floating-window manager for QtGameView overlays.
 
 SysMon (``engine.sysmon``) is a single draggable/collapsible overlay painted on
 top of the 3D view. This module generalises that idea so the view can host
-*several* such popups — each clickable, draggable and collapsible exactly like
-SysMon — managed together with correct z-ordering and mouse routing.
+*several* such popups -- each clickable, draggable and collapsible exactly like
+SysMon -- managed together with correct z-ordering and mouse routing.
 
 Pieces:
-  * :class:`FloatingWindow` — the reusable chrome (title bar, drag, collapse,
+  * :class:`FloatingWindow` -- the reusable chrome (title bar, drag, collapse,
     close). Subclass it and override :meth:`content_height` / :meth:`draw_body`.
-  * :class:`WindowManager` — owns a stack of windows, paints them back-to-front,
+  * :class:`WindowManager` -- owns a stack of windows, paints them back-to-front,
     and routes mouse events front-to-back (topmost wins, and is raised).
-  * :class:`NpcDebugWindow` — a concrete window that renders a monster/NPC's
-    live snapshot dict (identity/state/task-list). The snapshot is supplied by a
-    caller-provided callable, so this engine widget stays game-agnostic and never
-    imports a game.
+  * :class:`CallbackWindow` -- a window whose body is painted by a supplied
+    callback, so a caller can present its own overlay through the same manager
+    without subclassing anything.
+  * :class:`NpcDebugWindow` -- renders an actor's live snapshot dict
+    (identity / state / task list). The snapshot comes from a caller-supplied
+    callable, so the widget stays game-agnostic and never imports a game.
 
-All Qt drawing mirrors SysMon's look so the popups feel native beside it. The
+All Qt drawing mirrors SysMon's look so the popups feel like one family. The
 manager is deliberately engine-light: it only needs a QPainter to draw and Qt
-mouse events to route, so QtGameView can drop it in with a few lines.
+mouse events to route, so QtGameView can drop it in with a few lines. It holds
+no engine, editor or game imports.
 """
 
 from PyQt5.QtCore import Qt, QRect, QPoint
@@ -40,7 +43,7 @@ _BAR_BG = QColor(45, 45, 55)
 
 
 class FloatingWindow:
-    """Draggable, collapsible, closable overlay panel — SysMon-style chrome."""
+    """Draggable, collapsible, closable overlay panel -- SysMon-style chrome."""
 
     HEADER_H = 25
     MIN_W = 180
@@ -103,7 +106,7 @@ class FloatingWindow:
         painter.drawText(header.adjusted(10, 0, 0, 0),
                          Qt.AlignVCenter | Qt.AlignLeft, title)
         painter.drawText(QRect(rect.right() - 50, rect.y(), 25, self.HEADER_H),
-                         Qt.AlignCenter, "▼" if self.expanded else "▶")
+                         Qt.AlignCenter, "\u25bc" if self.expanded else "\u25b6")
         painter.drawText(QRect(rect.right() - 25, rect.y(), 25, self.HEADER_H),
                          Qt.AlignCenter, "[X]")
 
@@ -126,8 +129,8 @@ class FloatingWindow:
             self.active = False
             try:
                 self.on_close()
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"[FloatingWindow] on_close failed for '{self.title}': {exc}")
             return True
         # Title bar: collapse toggle or drag
         title_bar = QRect(rect.x(), rect.y(), rect.width(), self.HEADER_H)
@@ -138,13 +141,13 @@ class FloatingWindow:
             self.dragging = True
             self.drag_offset = event.pos() - QPoint(rect.x(), rect.y())
             return True
-        # Body click: let a subclass act on it (tabs, list rows…), then swallow
-        # it so it never leaks to the game beneath.
+        # Body click: let a subclass act on it (tabs, list rows...), then swallow
+        # it so it never leaks to the view beneath.
         if self.expanded:
             try:
                 self.handle_body_click(event.x(), event.y())
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"[FloatingWindow] body click failed for '{self.title}': {exc}")
         return True
 
     def handle_body_click(self, x, y):
@@ -203,7 +206,8 @@ class WindowManager:
             try:
                 if predicate(w):
                     return w
-            except Exception:
+            except Exception as exc:
+                print(f"[WindowManager] find predicate failed: {exc}")
                 continue
         return None
 
@@ -215,8 +219,11 @@ class WindowManager:
             if getattr(w, "active", False):
                 try:
                     w.draw(painter, focused=(w is top))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # One misbehaving overlay must not abort the whole frame's
+                    # paint, but the failure is still reported.
+                    print(f"[WindowManager] draw failed for "
+                          f"'{getattr(w, 'title', '?')}': {exc}")
 
     # -- mouse routing (topmost first) --------------------------------
     def handle_mouse_press(self, event):
@@ -245,11 +252,11 @@ class WindowManager:
 class CallbackWindow(FloatingWindow):
     """A floating window whose body is painted by a supplied callback.
 
-    Lets a game host present its own overlay popups (dialogue, character
-    creation, inventory…) as draggable / collapsible / closable windows through
-    the same :class:`WindowManager` that hosts the NPC inspector — the popup
-    keeps drawing with the live QPainter each frame, so it stays in sync with
-    game state, while the manager provides the chrome and mouse routing.
+    Lets a caller present its own overlay popups as draggable / collapsible /
+    closable windows through the same :class:`WindowManager`, without
+    subclassing. The popup keeps drawing with the live QPainter each frame, so
+    it stays in sync with whatever state it reads, while the manager provides
+    the chrome and mouse routing.
 
     ``draw_fn(painter, x, y, w, h)`` paints the body (top-left ``x, y``).
     ``on_close_cb`` (optional) is called when the window's [X] is clicked.
@@ -276,14 +283,15 @@ class CallbackWindow(FloatingWindow):
     def draw_body(self, painter, x, y, w):
         try:
             self._draw_fn(painter, x, y, w, self.content_height())
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[CallbackWindow] draw_fn failed for '{self.key}': {exc}")
 
     def handle_body_click(self, x, y):
         if self._on_body_click_cb is not None:
             try:
                 return bool(self._on_body_click_cb(x, y))
-            except Exception:
+            except Exception as exc:
+                print(f"[CallbackWindow] body click failed for '{self.key}': {exc}")
                 return False
         return False
 
@@ -291,8 +299,8 @@ class CallbackWindow(FloatingWindow):
         if self._on_close_cb is not None:
             try:
                 self._on_close_cb()
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"[CallbackWindow] on_close failed for '{self.key}': {exc}")
 
 
 class NpcDebugWindow(FloatingWindow):
@@ -319,8 +327,8 @@ class NpcDebugWindow(FloatingWindow):
         try:
             if self._provider is not None:
                 return self._provider()
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[NpcDebugWindow] snapshot provider failed: {exc}")
         return {"title": "Inspector", "subtitle": "", "sections": [], "tasks": []}
 
     def refresh(self):

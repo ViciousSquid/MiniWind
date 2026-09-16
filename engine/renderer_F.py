@@ -10,24 +10,23 @@ import math
 import os
 
 from .renderer_core import BaseRenderer, normalize_color
-from engine.brush_geometry import brush_has_geometry, geometry_signature
-from engine.facing import get_heading
+from engine.brush_geometry import (brush_has_geometry, face_uses_natural_scale,
+                                   geometry_signature, natural_repeats)
 from engine.constants import RENDER_MODE_LIT, RENDER_MODE_UNLIT, RENDER_MODE_WIREFRAME, RENDER_MODE_VERTEX
 from editor.things import Thing, Light, PathNode, Portal, Pickup, Monster, LogicGate, LogicRelay, LogicTimer, LevelChanger
-from game.runtime import _current_session as miniwind_session
+
+# Camera render-distance cull. The pure per-object geometry lives in
+# engine.render_cull (GL-free, so it is unit-testable without a GL context) and
+# the live radius on self.view_distance (engine.view_distance); this module
+# applies the pair to the MAIN camera pass only -- never to the shadow or portal
+# passes, which keep using the full scene. See _camera_distance_cull below.
+from engine.render_cull import (
+    camera_xz as _cull_camera_xz, cull_by_distance as _cull_by_distance)
 
 # Beyond this distance from the camera a portal's virtual view is not rendered
 # (the aperture just shows its fade/rim). Portals are still discovered for I/O
 # and transit regardless.
 PORTAL_RENDER_DISTANCE = 2048.0
-
-# MiniWind camera render-distance cull. The threshold and the pure per-object
-# geometry live in engine.render_cull (GL-free, so it is unit-testable without a
-# GL context); this module applies it to the MAIN camera pass only — never to the
-# shadow or portal passes, which keep using the full scene. See _camera_distance_cull.
-from engine.render_cull import (
-    CAMERA_RENDER_CULL_DISTANCE, CAMERA_RENDER_CULL_DISTANCE_SQ,
-    camera_xz as _cull_camera_xz, cull_by_distance as _cull_by_distance)
 
 # Cube face order — index maps to the face's 6-vertex run in the cube VAO
 # (face_idx * 6). Kept as a module constant so the per-frame texture batch
@@ -51,7 +50,6 @@ class Renderer_F(BaseRenderer):
         super().__init__(texture_loader, initial_grid_size, initial_world_size, config)
         self._current_shader = None
         self._frame_lights_uploaded = {}
-        self._weapon_textures = {}
 
         # Texture batch cache for draw_textured_brushes_optimized.
         # Key: tuple of (brush_id, sorted_tex_items) per brush.
@@ -129,108 +127,6 @@ class Renderer_F(BaseRenderer):
             return glm.transpose(glm.inverse(glm.mat3(model_matrix)))
         except Exception:
             return self._identity_mat3
-
-    def _draw_actor_weapons(self, projection, view, actors, now):
-        session = miniwind_session
-        if session is None:
-            return
-
-        shader = self.shaders.get('sprite')
-        if shader is None:
-            return
-        uniforms = self.uniforms['sprite']
-
-        gl.glUseProgram(shader)
-        proj_ptr = glm.value_ptr(projection)
-        view_ptr = glm.value_ptr(view)
-        gl.glUniformMatrix4fv(uniforms['projection'], 1, gl.GL_FALSE, proj_ptr)
-        gl.glUniformMatrix4fv(uniforms['view'], 1, gl.GL_FALSE, view_ptr)
-        gl.glActiveTexture(gl.GL_TEXTURE0)
-        gl.glUniform1i(uniforms['sprite_texture'], 0)
-        gl.glUniform4f(uniforms['sprite_tint'], 0.0, 0.0, 0.0, 0.0)
-        gl.glUniform1f(uniforms['sprite_rot'], 0.0)  # weapons are upright
-        _op_loc = uniforms.get('sprite_opacity', -1)
-        if _op_loc >= 0:
-            gl.glUniform1f(_op_loc, 1.0)             # solid, whatever drew last
-
-        gl.glBindVertexArray(self.vaos['sprite'])
-
-        current_tex = None
-
-        for actor in actors:
-            # Skip if not a Thing with NPC/Creature type
-            if not isinstance(actor, Thing):
-                continue
-            ttype = str(actor.properties.get('type', '')).replace('_', '').lower()
-            if ttype not in ('npc', 'creature'):
-                continue
-
-            weapon_path, attacking, progress = session.get_actor_weapon_draw_info(actor)
-            if weapon_path is None:
-                continue
-
-            # Load texture
-            tex_id = self._weapon_textures.get(weapon_path)
-            if tex_id is None:
-                # Load from assets/sprites/items/
-                # weapon_path already absolute path, but we can load via load_texture
-                # However, load_texture expects a filename and subfolder; we'll handle manually.
-                try:
-                    from PIL import Image
-                    img = Image.open(weapon_path).convert("RGBA")
-                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
-                    tex_id = gl.glGenTextures(1)
-                    gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
-                    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
-                    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
-                    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
-                    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
-                    gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, img.width, img.height, 0,
-                                    gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, img.tobytes())
-                    self._weapon_textures[weapon_path] = tex_id
-                except Exception as e:
-                    continue
-
-            if tex_id != current_tex:
-                gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
-                current_tex = tex_id
-
-            # Position: above head, offset to the right
-            pos = actor.pos
-            # The live heading the actor is turning to (engine/facing.py), not
-            # the design-time 'angle' — the weapon has to swing round with the
-            # head it is drawn beside.
-            facing = get_heading(actor.properties)
-            forward_x = math.sin(facing)
-            forward_z = math.cos(facing)
-            right_x = forward_z
-            right_z = -forward_x
-
-            # Resting offset: 42 units to the right, 28 units above head (adjust as needed)
-            right_offset = 42.0
-            up_offset = 28.0  # above the actor's base
-
-            weapon_x = pos[0] + right_x * right_offset
-            weapon_z = pos[2] + right_z * right_offset
-            weapon_y = pos[1] + up_offset
-
-            # Attack thrust: push forward by up to 72 units based on progress
-            if attacking:
-                thrust = progress * 72.0
-                weapon_x += forward_x * thrust
-                weapon_z += forward_z * thrust
-
-            # Set shader uniforms
-            gl.glUniform3f(uniforms['sprite_pos_world'], weapon_x, weapon_y, weapon_z)
-            # Weapon size: adjust to your sprites (e.g., 32x32)
-            weapon_size = 32.0
-            gl.glUniform2f(uniforms['sprite_size'], weapon_size, weapon_size)
-
-            gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
-            self.render_stats.draw_calls += 1
-
-        gl.glBindVertexArray(0)
-        gl.glUseProgram(0)
 
     # ------------------------------------------------------------------
 
@@ -396,6 +292,14 @@ class Renderer_F(BaseRenderer):
         self._portal_begin_cull(is_geo=False)
 
         current_tex = None
+        # PERF: a brush appears in this loop once per textured face (up to six
+        # times), and each visit re-derived the same two uniform pointers. The
+        # matrices themselves are already memoised on the brush dict by
+        # _brush_model_matrix / _compute_normal_matrix, so only the glm.value_ptr
+        # calls remained; cache those per brush for the duration of this draw.
+        # Holding the pointers is safe precisely because the brush dict keeps the
+        # backing matrix objects alive (_mat_cache / _nmat_cache) -- do not reuse
+        # this pattern anywhere the matrix is a temporary.
         brush_uniform_ptrs = {}
         for tex_id, items in batches.items():
             if tex_id != current_tex:
@@ -411,7 +315,8 @@ class Renderer_F(BaseRenderer):
                     model_ptr = glm.value_ptr(model_matrix)
                     normal_ptr = None
                     if normal_mat_loc > 0:
-                        normal_ptr = glm.value_ptr(self._compute_normal_matrix(model_matrix, brush))
+                        normal_ptr = glm.value_ptr(
+                            self._compute_normal_matrix(model_matrix, brush))
                     uniform_ptrs = (model_ptr, normal_ptr)
                     brush_uniform_ptrs[brush_id] = uniform_ptrs
                 gl.glUniformMatrix4fv(model_loc, 1, gl.GL_FALSE, uniform_ptrs[0])
@@ -426,25 +331,30 @@ class Renderer_F(BaseRenderer):
                     gl.glUniform2f(tex_shift_loc, shift[0], shift[1])
                 if tex_scale_loc != -1:
                     size = brush.get('size', [64, 64, 64])
-                    # --- PRIORITY 1: Use pre-computed uv_scale from editor ---
                     uv_scale = brush.get('uv_scale', {}).get(face_key)
-                    if uv_scale is not None:
-                        scale_x, scale_y = uv_scale[0], uv_scale[1]
-                    # --- PRIORITY 2: Fallback to texture_tiling with actual dimensions ---
-                    elif brush.get('texture_tiling', False):
+                    # --- PRIORITY 1: Natural, a live mode ---
+                    # Recomputed from the brush's current size every frame, so
+                    # resizing reveals more texture at a constant texel size
+                    # instead of stretching what is there.  A brush-wide
+                    # texture_tiling flag means the same thing for every face.
+                    natural = face_uses_natural_scale(brush, face_key) \
+                        or (uv_scale is None and brush.get('texture_tiling', False))
+                    if natural:
                         tex_name = brush.get('textures', {}).get(face_key, 'default.png')
-                        tex_cache_name = self._tex_cache_path(tex_name)
-                        tex_w, tex_h = getattr(self, '_texture_dimensions', {}).get(tex_cache_name, (128, 128))
-                        tex_w = max(tex_w, 1)
-                        tex_h = max(tex_h, 1)
-
+                        tex_w, tex_h = getattr(self, '_texture_dimensions', {}).get(
+                            self._tex_cache_path(tex_name), (128, 128))
                         fi = face_idx
                         if fi == 0 or fi == 1:   # south, north
-                            scale_x, scale_y = size[0] / tex_w, size[1] / tex_h
+                            extent = (size[0], size[1])
                         elif fi == 2 or fi == 3:  # west, east
-                            scale_x, scale_y = size[2] / tex_w, size[1] / tex_h
+                            extent = (size[2], size[1])
                         else:                      # down, top
-                            scale_x, scale_y = size[0] / tex_w, size[2] / tex_h
+                            extent = (size[0], size[2])
+                        scale_x, scale_y = natural_repeats(
+                            extent[0], extent[1], (tex_w, tex_h))
+                    # --- PRIORITY 2: an explicit scale set in the editor ---
+                    elif uv_scale is not None:
+                        scale_x, scale_y = uv_scale[0], uv_scale[1]
                     # --- PRIORITY 3: FIT mode (stretch 0→1) ---
                     else:
                         scale_x, scale_y = 1.0, 1.0
@@ -453,10 +363,8 @@ class Renderer_F(BaseRenderer):
                 self.render_stats.draw_calls += 1
 
         # ---- Angled brushes: one draw per convex face --------------------
-        if tex_angle_loc != -1:
-            gl.glUniform1f(tex_angle_loc, 0.0)  # angled faces use raw UVs; reset
-        if tex_shift_loc != -1:
-            gl.glUniform2f(tex_shift_loc, 0.0, 0.0)
+        # Angled faces carry the same per-face rotation and shift box faces do;
+        # they are set per run below rather than forced to zero here.
         # Convex-geometry meshes wind the opposite way to the cube (GL_BACK).
         self._portal_set_cull(is_geo=True)
         for brush in geo_brushes:
@@ -483,6 +391,12 @@ class Renderer_F(BaseRenderer):
                 if tex_scale_loc != -1:
                     su, sv = self._geo_run_tex_scale(brush, run, tex_name)
                     gl.glUniform2f(tex_scale_loc, su, sv)
+                if tex_angle_loc != -1 or tex_shift_loc != -1:
+                    angle, shift_u, shift_v = self._geo_run_tex_transform(brush, run)
+                    if tex_angle_loc != -1:
+                        gl.glUniform1f(tex_angle_loc, angle)
+                    if tex_shift_loc != -1:
+                        gl.glUniform2f(tex_shift_loc, shift_u, shift_v)
                 gl.glDrawArrays(gl.GL_TRIANGLES, run['first'], run['count'])
                 self.render_stats.visible_tris += run['count'] // 3
                 self.render_stats.draw_calls += 1
@@ -544,8 +458,13 @@ class Renderer_F(BaseRenderer):
         return isinstance(t, Light) or (Portal is not None and isinstance(t, Portal))
 
     def _camera_distance_cull(self, brushes, things, camera_pos):
-        """Broad-phase distance cull for the MAIN camera pass (see
-        :data:`engine.render_cull.CAMERA_RENDER_CULL_DISTANCE`).
+        """Broad-phase distance cull for the MAIN camera pass.
+
+        The radius is :attr:`view_distance` — the live camera setting the editor
+        spinbox and ``r_viewdistance`` write, not a fixed constant, so pulling
+        the far plane in narrows this pass on the very next frame.
+        :data:`engine.render_cull.CAMERA_RENDER_CULL_DISTANCE` remains that
+        setting's default value.
 
         Returns ``(brushes, things)`` filtered to those within the cull radius on
         the XZ plane, reusing two persistent scratch buffers so nothing new is
@@ -554,23 +473,23 @@ class Renderer_F(BaseRenderer):
         results to ``_sort_objects`` only, leaving the original ``brushes`` /
         ``things`` lists (used by the shadow and portal passes) untouched.
 
-        This is the *unculled-input* path — the editor viewport driving the
-        renderer straight off the scene. In a threaded play session the logic
-        thread has already culled to the camera's relevance region, tighter than
-        this radius, so running it again there would be the same distance
-        measured twice; ``render_scene`` skips it in that case."""
+        This is a *visibility* decision and only that: an object dropped here is
+        still loaded, still simulated and still lighting and shadowing the rest
+        of the scene. Nothing about the world's resident set is this pass's to
+        change.
+        """
         if camera_pos is None:
             return brushes, things
         cx, cz = _cull_camera_xz(camera_pos)
+        limit_sq = self.view_distance.distance_sq
         bbuf = getattr(self, "_cull_brush_buf", None)
         if bbuf is None:
             bbuf = self._cull_brush_buf = []
         tbuf = getattr(self, "_cull_thing_buf", None)
         if tbuf is None:
             tbuf = self._cull_thing_buf = []
-        brushes = _cull_by_distance(brushes, cx, cz,
-                                    CAMERA_RENDER_CULL_DISTANCE_SQ, out=bbuf)
-        things = _cull_by_distance(things, cx, cz, CAMERA_RENDER_CULL_DISTANCE_SQ,
+        brushes = _cull_by_distance(brushes, cx, cz, limit_sq, out=bbuf)
+        things = _cull_by_distance(things, cx, cz, limit_sq,
                                    out=tbuf, keep=self._cull_keep_thing)
         return brushes, things
 
@@ -586,6 +505,9 @@ class Renderer_F(BaseRenderer):
                 gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT | gl.GL_STENCIL_BUFFER_BIT)
         self._proj_ptr = glm.value_ptr(projection)
         self._view_ptr = glm.value_ptr(view)
+        # Every fog calculation this frame measures from here. Cached because
+        # the unlit passes (sprites) and the terrain are not handed a camera.
+        self._frame_camera_pos = self._camera_xyz(camera_pos)
         self.render_stats.reset()
         self.render_stats.total_brushes = len(brushes)
         self._begin_geo_frame()
@@ -595,22 +517,29 @@ class Renderer_F(BaseRenderer):
             gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_LINE)
         elif current_mode == RENDER_MODE_VERTEX:
             gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_POINT)
-            gl.glPointSize(4.0)
+            # Clamped: a point size the driver does not support is a GL error,
+            # not a silent clamp, and would take the whole frame with it.
+            self._set_point_size(4.0)
         else:
             gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
         self.draw_grid(projection, view, self.grid_indices_count,
                       config.get('play_mode', False), config.get('grid_visible', True))
-        # Broad-phase distance cull for the main camera pass — but only when the
-        # scene arrived unculled. A threaded play session hands the renderer
-        # lists the logic thread already narrowed to the camera's relevance
-        # region (a box derived from the real view volume, tighter than this
-        # radius), and measuring the same distance a second time would buy
-        # nothing. `camera_relevance_box` on the config is how the viewport says
-        # the culling has been done.
+        # Broad-phase distance cull (main camera pass only): feed _sort_objects a
+        # range-limited view of the scene, on top of the frustum cull it already
+        # applies downstream. The original brushes/things lists are left intact
+        # for the shadow and portal passes below. Enabled in play mode by
+        # default; a caller can force it on/off via 'camera_distance_cull'.
+        #
+        # This is the cheap *approximation* of the view distance -- it drops an
+        # object by the distance to its centre, so it is deliberately not what
+        # guarantees "nothing renders past the far plane". The projection's far
+        # plane does that, per fragment, in the editor as well as in play; this
+        # pass only saves the CPU from sorting and submitting what that plane
+        # would have thrown away. Leaving it off in the editor keeps a large
+        # brush whose centre is out of range but whose near end is in shot from
+        # blinking out while it is being built.
         cull_brushes, cull_things = brushes, things
-        _pre_culled = config.get('camera_relevance_box') is not None
-        if config.get('camera_distance_cull',
-                      config.get('play_mode', False) and not _pre_culled):
+        if config.get('camera_distance_cull', config.get('play_mode', False)):
             cull_brushes, cull_things = self._camera_distance_cull(brushes, things, camera_pos)
         opaque_brushes, transparent_brushes, sprite_things, fog_volumes, water_brushes, glass_brushes, glow_brushes = \
             self._sort_objects(cull_brushes, cull_things, config)
@@ -631,16 +560,8 @@ class Renderer_F(BaseRenderer):
         if current_mode == RENDER_MODE_LIT and self.shadows_enabled:
             shadow_lights = [l for l in lights if _light_casts_shadows(l)]
             if shadow_lights:
-                # The caster set: everything within reach of a light that can
-                # reach the view. The logic thread narrows it from the same cell
-                # index the geometry cull uses; without one (editor preview) it
-                # falls back to the whole world, as it always did.
-                shadow_brushes = config.get('shadow_brushes')
-                if shadow_brushes is None:
-                    shadow_brushes = config.get('all_brushes', brushes)
-                shadow_things = config.get('shadow_things')
-                if shadow_things is None:
-                    shadow_things = config.get('all_things', things)
+                shadow_brushes = config.get('all_brushes', brushes)
+                shadow_things = config.get('all_things', things)
                 self.render_shadow_maps(shadow_lights, shadow_brushes, shadow_things, config, camera_pos)
 
         terrain = config.get('terrain', None)
@@ -665,6 +586,19 @@ class Renderer_F(BaseRenderer):
             if portal_things:
                 try:
                     def _portal_draw_scene(proj, vw, cam, br, th, sel, cfg):
+                        # Fog the virtual view from the *virtual* eye: a portal
+                        # shows the world as seen from its far end, so measuring
+                        # from the real camera would fog the aperture by how far
+                        # away the portal is rather than by what is through it.
+                        _saved_cam = self._frame_camera_pos
+                        self._frame_camera_pos = self._camera_xyz(cam)
+                        try:
+                            _portal_draw_scene_inner(proj, vw, cam, br, th, sel, cfg)
+                        finally:
+                            self._frame_camera_pos = _saved_cam
+                            self._frame_lights_uploaded.clear()
+
+                    def _portal_draw_scene_inner(proj, vw, cam, br, th, sel, cfg):
                         # Re-sort from the FULL unculled brush set, but cull it
                         # against the VIRTUAL camera frustum first — otherwise
                         # every portal re-shades the entire level. Sphere-based
@@ -732,11 +666,6 @@ class Renderer_F(BaseRenderer):
         gl.glEnable(gl.GL_BLEND)
         gl.glDepthMask(gl.GL_FALSE)
         self.draw_sprites(projection, view, final_sprites, self.sprite_textures, self.instance_textures)
-
-        # ---- Draw weapons ----
-        session = miniwind_session
-        if session is not None and final_sprites:
-            self._draw_actor_weapons(projection, view, final_sprites, config.get('time', 0.0))
         if current_mode == RENDER_MODE_UNLIT:
             self.draw_textured_brushes_optimized(projection, view, camera_pos, transparent_brushes, lights, config)
         elif current_mode == RENDER_MODE_LIT:

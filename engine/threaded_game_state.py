@@ -51,19 +51,6 @@ class RenderState:
         self.visible_brushes = []
         self.all_brushes = []
         self.visible_things = []
-        #: (min_x, min_z, max_x, max_z) — the XZ region this camera can actually
-        #: see, derived from the live view volume and the world's height slab
-        #: (engine/render_cull.py). The logic thread has already culled
-        #: visible_brushes/visible_things to it; the renderer reads it so its own
-        #: passes measure against the same region instead of re-deriving one.
-        self.camera_relevance_box = None
-        #: The brushes/entities the shadow pass could need — the relevance region
-        #: grown by twice the largest surviving light's reach, so a light can
-        #: still be shadowed by geometry just outside the view. Narrower than
-        #: all_brushes, which the portal pass and the second splitscreen view
-        #: still get in full.
-        self.shadow_brushes = []
-        self.shadow_things = []
         
         # HUD / Gameplay
         self.collected_keys = set()
@@ -169,7 +156,7 @@ class ThreadedGameState:
         self._mouse_delta = (0.0, 0.0)
         # Mouse-control aiming (Settings ▸ GAME ▸ Mouse control): where the
         # on-screen pointer is aiming, published by the view each frame and read
-        # by the logic thread and the game plugin. ``_aim_direction`` is a unit
+        # by the logic thread and the game layer. ``_aim_direction`` is a unit
         # world-space vector from the player's eye toward the pointer, and
         # ``_aim_yaw`` the absolute heading the head should face (overhead only,
         # where the pointer maps onto the ground and facing it is exact). Both
@@ -182,9 +169,7 @@ class ThreadedGameState:
         # Shot Queue — deque for O(1) popleft
         self._shot_lock = threading.Lock()
         self._shot_queue = deque()
-        # RPG combat intents (MiniWind): left mouse -> attack, right -> cast.
-        self._rpg_attack = False
-        self._rpg_cast = False
+        self._secondary_shot_queue = deque()
 
         # Use key — protected by its own lock
         self._use_key_lock = threading.Lock()
@@ -321,35 +306,21 @@ class ThreadedGameState:
                 return True
             return False
 
-    # --- RPG combat intents (MiniWind: left = attack, right = cast) ---
-    # Simple edge-triggered flags set from the UI thread and consumed on the
-    # logic thread, mirroring the shot queue. A built-in game reads these each
-    # tick to drive its own melee/spell combat (the stock shot queue stays for
-    # the engine's gun weapons).
+    # --- Secondary fire ---
+    # A second fire button (right mouse), queued and consumed exactly like the
+    # primary shot. The logic thread hands both to the installed player fire
+    # handler; with no handler, secondary fire does nothing.
 
-    def queue_rpg_attack(self):
+    def queue_secondary_shot(self):
         with self._shot_lock:
-            self._rpg_attack = True
+            self._secondary_shot_queue.append(True)
 
-    def consume_rpg_attack(self) -> bool:
-        if not getattr(self, "_rpg_attack", False):
+    def consume_secondary_shot(self):
+        if not self._secondary_shot_queue:
             return False
         with self._shot_lock:
-            if self._rpg_attack:
-                self._rpg_attack = False
-                return True
-            return False
-
-    def queue_rpg_cast(self):
-        with self._shot_lock:
-            self._rpg_cast = True
-
-    def consume_rpg_cast(self) -> bool:
-        if not getattr(self, "_rpg_cast", False):
-            return False
-        with self._shot_lock:
-            if self._rpg_cast:
-                self._rpg_cast = False
+            if self._secondary_shot_queue:
+                self._secondary_shot_queue.popleft()
                 return True
             return False
 
