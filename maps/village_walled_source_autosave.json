@@ -31443,15 +31443,6 @@
                         "value": 1,
                         "weight": 0.1,
                         "description": "A pale flower."
-                    },
-                    {
-                        "description": "Three iron tines on an ash haft. What a farmhand reaches for.",
-                        "id": "pitchfork",
-                        "name": "Pitchfork",
-                        "qty": 1,
-                        "type": "weapon",
-                        "value": 22,
-                        "weight": 11.0
                     }
                 ],
                 "dialogue": {
@@ -31510,7 +31501,7 @@
                 "sprite_height": 112,
                 "monster_id": 0,
                 "health": 100,
-                "damage": 22,
+                "damage": 6,
                 "triggered": true,
                 "wake_on_sight": true,
                 "awake": false,
@@ -31525,10 +31516,10 @@
                 "attack_style": "melee",
                 "sight_range": 1024,
                 "loot": "",
-                "creature_level": 3,
+                "creature_level": 1,
                 "xp_value": 0,
                 "move_speed": 90.0,
-                "combatant": true,
+                "combatant": false,
                 "persistent": true,
                 "sched_state": "WORKING",
                 "autonomy": true,
@@ -31542,7 +31533,7 @@
                     "Mara": "sister",
                     "Elowen": "customer"
                 },
-                "max_health": 100,
+                "max_health": 22,
                 "courage": 0.3,
                 "_dest": [
                     770,
@@ -31567,10 +31558,7 @@
                 "need_stamina": 1.114,
                 "need_fatigue": 0.08215750000010086,
                 "need_hunger": 0.05516500000006779,
-                "_need_t": 32.98366666666787,
-                "dead": false,
-                "can_defend": true,
-                "patrol_markers": []
+                "_need_t": 32.98366666666787
             },
             "io_connections": []
         },
@@ -32197,7 +32185,7 @@
                 "sprite_height": 120,
                 "monster_id": 0,
                 "health": 89,
-                "damage": 22,
+                "damage": 10,
                 "triggered": false,
                 "wake_on_sight": true,
                 "awake": false,
@@ -32210,13 +32198,13 @@
                 "team": "bandits",
                 "attack_style": "melee",
                 "loot": "bandit",
-                "creature_level": 3,
-                "xp_value": 25,
+                "creature_level": 1,
+                "xp_value": 14,
                 "move_speed": 90.0,
                 "combatant": true,
                 "inventory": [],
                 "persistent": true,
-                "respawn": true,
+                "respawn": false,
                 "roam": false,
                 "roam_radius": 300.0,
                 "home": [
@@ -32227,7 +32215,7 @@
                 "sight": 512,
                 "can_hear": false,
                 "non_hostile": false,
-                "max_health": 100,
+                "max_health": -102,
                 "courage": 0.3,
                 "spells": [],
                 "head": "head07",
@@ -32236,8 +32224,7 @@
                 "_was_shooting": false,
                 "_facing": -1.2262504797580043,
                 "handed": "left",
-                "_attack_anim": 0.0,
-                "dead": false
+                "_attack_anim": 0.0
             },
             "io_connections": []
         },
