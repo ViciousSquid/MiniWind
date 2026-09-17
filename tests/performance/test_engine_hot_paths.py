@@ -275,16 +275,33 @@ def test_the_precomputed_monster_list_is_used_rather_than_a_type_scan(logic):
 # Plugins
 # ---------------------------------------------------------------------------
 
-def test_a_session_with_no_ticking_plugin_gates_the_per_frame_call(logic):
-    """``wants_tick`` is what makes an idle plugin system free per frame."""
+def test_a_session_keeps_only_mandatory_plugins_on_the_per_frame_path(logic):
+    """``wants_tick`` is what makes an idle plugin system free per frame.
+
+    This build has one standing exception: ``bigworld`` is mandatory and cannot
+    be switched off, so a real session always has it on the tick path. Its
+    ``on_tick`` is a single ``getattr`` when no streaming session exists, so
+    what the gate must still buy is that *nothing else* rides along with it.
+    The gate closing outright is covered by the plugin contract suite, whose
+    fixture plugins include no mandatory one.
+    """
     thread = logic(brushes=room())
     if thread.plugins is None:
         pytest.skip("the plugin system is unavailable in this build")
-    for plugin in thread.plugins.plugins:
-        thread.plugins.set_enabled(plugin, False)
-    assert thread.plugins.wants_tick() is False, (
-        "every plugin is disabled but the engine would still dispatch a "
-        "per-frame tick to them")
+    manager = thread.plugins
+    for plugin in manager.plugins:
+        manager.set_enabled(plugin, False)
+
+    left_on = sorted(p.name for p in manager.plugins if manager.is_enabled(p))
+    assert left_on == sorted(p.name for p in manager.plugins
+                             if manager.is_mandatory(p)), (
+        "after disabling every plugin, the ones still enabled should be exactly "
+        "the mandatory ones; still on: %s" % (left_on,))
+
+    tickers = manager._active_for("on_tick")
+    assert all(manager.is_mandatory(p) for p in tickers), (
+        "a disabled plugin is still on the per-frame tick path: %s"
+        % ([p.name for p in tickers if not manager.is_mandatory(p)],))
 
 
 def test_the_tick_gate_answer_is_cached_across_frames(logic):

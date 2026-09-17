@@ -1,6 +1,14 @@
 # Big World — large persistent worlds for Fio
 
-**Big World** is Fio's optional large-world runtime layer. It allows a single map to contain a very large number of brushes and entities while keeping only the region around the player **resident, active, and simulated**.
+> **Required in this build.** MiniWind lists `bigworld` in
+> `plugins.manager.MANDATORY_PLUGINS`, so it always loads, always starts enabled,
+> cannot be disabled from the Plugins menu or `settings.ini`, and the
+> application refuses to start without it
+> (`error: Bigworld plugin is mandatory: could not be located`).
+> The **map-level** opt-in below is unchanged: a map streams only if it carries a
+> `BigWorldSettings` entity, so an ordinary map still pays nothing.
+
+**Big World** is Fio's large-world runtime layer. It allows a single map to contain a very large number of brushes and entities while keeping only the region around the player **resident, active, and simulated**.
 
 It is designed for **large persistent cell-based worlds and open-world games** without introducing a separate ECS, BSP/PVS compile, renderer replacement, or new world format.
 
@@ -739,15 +747,18 @@ Big World therefore makes very large maps practical without requiring the entire
 
 # Plugin isolation
 
-Big World is deliberately optional.
+Big World is required by this build, but it is still **per-map opt-in**: being
+loaded and enabled is not the same as a map streaming.
 
 The plugin declares itself:
 
 ```python
-enabled = False
+enabled = True     # mandatory here; the manager forces this on at load anyway
 ```
 
-and uses the presence of a `BigWorldSettings` entity as the map opt-in.
+and uses the presence of a `BigWorldSettings` entity as the map opt-in. Every
+lifecycle hook tests that opt-in before it touches the runtime, so a map without
+the entity behaves exactly as an ordinary Fio map.
 
 More importantly, the plugin's heavy runtime modules are **lazy-imported**.
 

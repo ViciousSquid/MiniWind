@@ -420,12 +420,13 @@ def test_a_bigworld_map_activates_cells_around_the_player_and_restores_on_stop(
                                     make_thing(PlayerStart, "spawn", (0, 64, 0))])
     authored = json.dumps(state.get_level_data(), sort_keys=True)
 
-    # Big World ships disabled; the map loader switches it on for a map that
-    # carries its settings entity.  Doing the same here is the realistic flow.
-    enabled = thread.plugins.auto_enable_for_map(state.get_level_data())
-    assert [p.name for p in enabled] == ["bigworld"], (
-        "loading a map with a BigWorldSettings entity should auto-enable the "
-        "plugin; it enabled %s" % ([p.name for p in enabled],))
+    # Big World is mandatory in this build, so it is already on by the time any
+    # map loads.  The map loader still runs its auto-enable pass — doing the
+    # same here is the realistic flow — and it must leave the plugin enabled.
+    thread.plugins.auto_enable_for_map(state.get_level_data())
+    bigworld = thread.plugins.find_plugin("bigworld")
+    assert bigworld is not None and thread.plugins.is_enabled(bigworld), (
+        "bigworld must be enabled for a map carrying a BigWorldSettings entity")
 
     # The session activates cells around the player, so the player has to exist
     # before play mode starts - as it does in the editor, which spawns at the

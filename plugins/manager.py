@@ -17,6 +17,14 @@ The :class:`PluginManager` is a process-wide singleton. It:
 
 Every call into plugin code is wrapped so a misbehaving plugin logs an error
 instead of taking down the editor or a play session.
+
+One class of plugin is exempt from all of that tolerance: a **mandatory**
+plugin (see :data:`MANDATORY_PLUGINS`). This build is built around Big World,
+so ``bigworld`` is not an optional extra that a map opts into — it ships as
+part of the product. A mandatory plugin is always loaded, always starts
+enabled, cannot be switched off by the ``Plugins`` menu, ``settings.ini`` or
+``FIO_DISABLED_PLUGINS``, and its absence is a startup failure rather than
+something to carry on without (see :meth:`PluginManager.require_mandatory_plugins`).
 """
 
 from __future__ import annotations
@@ -30,6 +38,32 @@ from typing import List, Optional, Tuple
 from .api import (API_VERSION, EditorAPI, FioPlugin, GlobalStore, RuntimeAPI,
                   TickContext, version_tuple)
 from .host import EventBus, PluginHost
+
+
+#: Plugin packages this build cannot run without. They are loaded before any
+#: opt-out is consulted, forced on at load, held on for the life of the process
+#: and required to be present at startup. Names are compared case-insensitively
+#: against both a plugin's package directory and its declared ``name``.
+MANDATORY_PLUGINS = ("bigworld",)
+
+
+class MandatoryPluginMissing(RuntimeError):
+    """A plugin this build declares mandatory could not be found.
+
+    Raised by :meth:`PluginManager.require_mandatory_plugins`, which the
+    application bootstrap calls before it builds anything. The message is the
+    one shown to the user, so it names the plugin rather than the machinery.
+    """
+
+    def __init__(self, name: str):
+        self.plugin_name = name
+        super().__init__(
+            f"{str(name).capitalize()} plugin is mandatory: could not be located")
+
+
+def is_mandatory_name(name: str) -> bool:
+    """Whether *name* (a package or plugin name) is mandatory for this build."""
+    return str(name).lower() in {n.lower() for n in MANDATORY_PLUGINS}
 
 
 def _log(message: str):
@@ -140,11 +174,13 @@ class PluginManager:
         # of fields that read as part of the entity's own properties.
         self._property_sections: list = []
         # Disabled plugin names (by directory or plugin.name). Populated from
-        # the FIO_DISABLED_PLUGINS env var, comma-separated.
+        # the FIO_DISABLED_PLUGINS env var, comma-separated. A mandatory plugin
+        # named there is ignored rather than honoured: the build does not run
+        # without it, so there is nothing an opt-out could usefully mean.
         self._disabled = {
             n.strip().lower()
             for n in os.environ.get("FIO_DISABLED_PLUGINS", "").split(",")
-            if n.strip()
+            if n.strip() and not is_mandatory_name(n.strip())
         }
         # Plugins switched on by a loaded level (auto_enable_*), as opposed to
         # a manual menu toggle. Tracked so an empty/new scene can revert exactly
@@ -282,6 +318,14 @@ class PluginManager:
         self._loaded_modules.add(mod_name)
         self._enabled_generation += 1
 
+        # A mandatory plugin starts enabled whatever it declares: bigworld ships
+        # `enabled = False` upstream as an opt-in streaming layer, but in this
+        # build it is part of the product, so the load decides its state rather
+        # than the class attribute or any persisted choice.
+        if self.is_mandatory(plugin):
+            plugin.enabled = True
+            self._debug(f"Plugin '{plugin.name}' is mandatory; forced enabled")
+
     def _verify_requirements(self):
         """Disable any plugin whose declared ``requires`` aren't all loaded.
 
@@ -297,6 +341,13 @@ class PluginManager:
             reqs = getattr(plugin, "requires", None) or []
             missing = [r for r in reqs if str(r).lower() not in available]
             if missing:
+                if self.is_mandatory(plugin):
+                    # Mandatory plugins stay on regardless; say so rather than
+                    # claiming a disable that set_enabled will refuse.
+                    self._log(
+                        f"Mandatory plugin '{plugin.name}' requires missing "
+                        f"plugin(s): {', '.join(missing)}; leaving it enabled.")
+                    continue
                 self._log(
                     f"Plugin '{plugin.name}' requires missing plugin(s): "
                     f"{', '.join(missing)}; disabling it.")
@@ -519,6 +570,42 @@ class PluginManager:
     def is_enabled(self, plugin) -> bool:
         return bool(getattr(plugin, "enabled", True))
 
+    # -- mandatory plugins --------------------------------------------------
+    def is_mandatory(self, plugin_or_name) -> bool:
+        """Whether this build refuses to run without *plugin_or_name*.
+
+        Accepts a loaded plugin or a package/plugin name. A plugin matches on
+        either spelling, so ``MANDATORY_PLUGINS`` can name the package
+        directory without knowing what the plugin calls itself.
+        """
+        if isinstance(plugin_or_name, str):
+            return is_mandatory_name(plugin_or_name)
+        if plugin_or_name is None:
+            return False
+        return (is_mandatory_name(getattr(plugin_or_name, "name", "")) or
+                is_mandatory_name(self.plugin_package_name(plugin_or_name)))
+
+    def missing_mandatory(self) -> List[str]:
+        """Mandatory plugin names that discovery did not produce.
+
+        Empty when every mandatory plugin loaded. Note this is only meaningful
+        once loading has finished — call :func:`load_plugins` first.
+        """
+        return [name for name in MANDATORY_PLUGINS
+                if self.find_plugin(name) is None]
+
+    def require_mandatory_plugins(self):
+        """Raise :class:`MandatoryPluginMissing` if a mandatory plugin is absent.
+
+        The application bootstrap calls this straight after discovery and before
+        it builds anything, so a build missing a plugin it is made of stops with
+        one clear message instead of failing later, halfway into a map, in terms
+        that only make sense to someone who knows the plugin system.
+        """
+        missing = self.missing_mandatory()
+        if missing:
+            raise MandatoryPluginMissing(missing[0])
+
     def set_enabled(self, plugin_or_name, enabled: bool, auto: bool = False):
         """Enable/disable a plugin at runtime.
 
@@ -532,11 +619,20 @@ class PluginManager:
         New/empty scene can revert them; any manual call clears that memory, so
         a plugin the user turned on by hand is never auto-disabled underneath
         them.
+
+        A mandatory plugin cannot be disabled through here — by a menu toggle, a
+        missing ``requires`` or the revert an empty scene does — so every caller
+        gets the guarantee without having to know about it.
         """
         plugin = plugin_or_name
         if isinstance(plugin_or_name, str):
             plugin = self.find_plugin(plugin_or_name)
         if plugin is None:
+            return
+        if not enabled and self.is_mandatory(plugin):
+            self._debug(
+                f"Refusing to disable mandatory plugin '{plugin.name}'")
+            self._auto_enabled.discard(plugin)
             return
         was = bool(getattr(plugin, "enabled", True))
         plugin.enabled = bool(enabled)
@@ -621,11 +717,14 @@ class PluginManager:
         """
         disabled: List[FioPlugin] = []
         for plugin in list(self._auto_enabled):
-            if self.is_enabled(plugin):
+            was_on = self.is_enabled(plugin)
+            self.set_enabled(plugin, False)
+            # A mandatory plugin refuses the disable, so read the state back
+            # rather than assuming the call took.
+            if was_on and not self.is_enabled(plugin):
                 disabled.append(plugin)
                 self._debug(
                     f"Auto-disabled plugin '{plugin.name}' for cleared level")
-            self.set_enabled(plugin, False)
         return disabled
 
     def auto_enable_for_map(self, map_data) -> List[FioPlugin]:

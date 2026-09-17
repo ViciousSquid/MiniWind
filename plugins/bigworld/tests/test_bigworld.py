@@ -461,15 +461,22 @@ def test_plugin_registers():
     _check("bigworld" in names, f"bigworld plugin discovered (loaded: {names})")
 
     plugin = mgr.find_plugin("bigworld")
-    _check(plugin is not None and plugin.enabled is False,
-           "ships disabled by default (ordinary maps pay nothing)")
+    _check(plugin is not None and mgr.is_mandatory(plugin),
+           "declared mandatory for this build")
+    _check(plugin.enabled is True,
+           "starts enabled (a map still opts in via BigWorldSettings)")
 
-    # Auto-enable when a map carries a BigWorldSettings entity.
+    # ...and cannot be switched off, however the request arrives.
+    mgr.set_enabled(plugin, False)
+    _check(plugin.enabled is True, "refuses to be disabled")
+
+    # A map carrying a BigWorldSettings entity needs no auto-enable any more,
+    # but asking for one must still leave the plugin on.
     map_data = {"things": [{"type": "bigworldsettings",
                             "properties": {"type": "bigworldsettings"}}]}
-    newly = mgr.auto_enable_for_map(map_data)
-    _check(plugin in newly or plugin.enabled,
-           "auto-enabled for a map containing BigWorldSettings")
+    mgr.auto_enable_for_map(map_data)
+    _check(plugin.enabled,
+           "still enabled for a map containing BigWorldSettings")
 
     try:
         from editor.things import ENTITY_TYPES

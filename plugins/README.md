@@ -248,14 +248,34 @@ are always shown).
 
 ## Enabling / disabling plugins
 
+- **Mandatory plugins.** A build can declare a plugin part of the product rather
+  than an optional extra, by naming its package in
+  `plugins.manager.MANDATORY_PLUGINS`. **This build declares `bigworld`.** A
+  mandatory plugin always loads, is forced enabled at load whatever its class
+  declares, and cannot be switched off by anything — the Plugins menu shows its
+  toggle checked and greyed, `[Plugins] disabled` and `FIO_DISABLED_PLUGINS`
+  ignore it, an unmet `requires` leaves it on, and **File ▸ New** does not revert
+  it. If one is missing, the application refuses to start:
+
+  ```
+  error: Bigworld plugin is mandatory: could not be located
+  ```
+
+  That check is `PluginManager.require_mandatory_plugins()`, called from
+  `main.py` after discovery and before the main window, the game layer or any
+  map is built; it raises `plugins.manager.MandatoryPluginMissing`. Being
+  enabled is not the same as being *in use*: Big World still streams only for a
+  map that carries a `BigWorldSettings` entity, so an ordinary map pays nothing
+  for the plugin being on.
 - **Disabled by default + auto-enable on load.** A plugin can set
   `enabled = False` on its class to ship inert — ordinary maps never pay for
   gameplay they don't use. When a level whose `things` reference the plugin's
   entity types is loaded, the manager turns it on automatically
   (`PluginManager.auto_enable_for_map`, wired into level loading in the editor
-  and the standalone player). Both example plugins ship this way: `tidy` stays
-  off until you open a map like `maps/Tidy_Test.json`, and `bigworld` until a map
-  contains a `BigWorldSettings` entity. The flip is symmetric — clearing the
+  and the standalone player). `tidy` ships this way: it stays off until you open
+  a map like `maps/Tidy_Test.json`. (`bigworld` used to as well; it is mandatory
+  in this build, so it is always on and its auto-enable is a no-op.) The flip is
+  symmetric — clearing the
   scene (**File ▸ New**, or loading a map that doesn't use the plugin) reverts a
   level-driven auto-enable via `PluginManager.disable_auto_enabled`, so an empty
   map starts clean. This is a runtime, per-session flip: it never rewrites the
@@ -263,17 +283,26 @@ are always shown).
   menu is never auto-disabled underneath you.
 - **Per plugin, in the editor.** Toggle **Enabled** in the Plugins menu. A
   disabled plugin stops its gameplay and greys out placement; the choice is saved
-  to `settings.ini` (`[Plugins] disabled`) and restored next launch. (Entity
+  to `settings.ini` (`[Plugins] disabled`) and restored next launch. Mandatory
+  plugins are marked *(required)* and their toggle is greyed out. (Entity
   *registration* isn't undone live, so a re-enable is instant while a full unload
   happens on restart.)
 - **At startup, globally.** Set `FIO_DISABLED_PLUGINS` to a comma-separated list
   of plugin/package names so they never load, or `FIO_NO_PLUGINS=1` to disable
-  the whole system:
+  the whole system. A mandatory plugin named in `FIO_DISABLED_PLUGINS` is
+  ignored:
 
   ```bash
   FIO_DISABLED_PLUGINS=tidy python main.py
   FIO_NO_PLUGINS=1 python main.py
   ```
+
+  `FIO_NO_PLUGINS` is the one remaining way to run without a mandatory plugin's
+  gameplay. It is an engine-level debugging kill-switch: the app still starts
+  (the plugin is present, which is what the startup check asks), but the logic
+  thread never attaches the plugin system, so nothing — mandatory or not —
+  ticks. Use it to isolate a bug to the plugin system; it is not a supported
+  way to play.
 
 ---
 
