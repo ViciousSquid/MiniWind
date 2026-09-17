@@ -134,7 +134,12 @@ meaning to Fio primitives; it does not reimplement Fio's infrastructure.**
 **World streaming is Big World's.** `plugins/bigworld/` — cells, tiers, dormant
 entities, the streaming lifecycle and per-cell persistence — is a core Fio
 plugin and authoritative. MiniWind has no streaming layer of its own and no
-parallel `BigWorldSettings` entity; a map opts in with Big World's.
+parallel `BigWorldSettings` entity; a map opts in with Big World's. The plugin
+is **mandatory** (`plugins.manager.MANDATORY_PLUGINS`): it always loads, always
+starts enabled, cannot be switched off, and `main.py` refuses to start without
+it. Mandatory means present, not active — a map with no `BigWorldSettings`
+entity still runs as an ordinary Fio map and never imports the streaming
+runtime.
 
 **Simulation relevance is Big World's tiers.** Big World stamps `_sim_tier` on
 entities as cell residency changes. `MonsterAI.update` and `MiniwindSession`

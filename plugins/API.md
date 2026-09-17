@@ -104,7 +104,7 @@ methods you need, and expose an instance as your package's module-level
 | `version` | `str` | `"0.0.0"` | Human-readable version string. |
 | `description` | `str` | `""` | One-line description shown in tooling / the *About* entry. |
 | `category` | `str` | `"Plugins"` | Default editor category / menu grouping for this plugin's entities. |
-| `enabled` | `bool` | `True` | Whether the plugin is active. Set `False` to ship disabled-by-default (auto-enabled when a level using its entities loads). |
+| `enabled` | `bool` | `True` | Whether the plugin is active. Set `False` to ship disabled-by-default (auto-enabled when a level using its entities loads). Ignored for a plugin the build lists in `plugins.manager.MANDATORY_PLUGINS`: those are forced on at load and cannot be disabled. |
 | `api_version` | `str` | `"1.0.0"` | Minimum API version this plugin needs (see [API versioning](#api-versioning)). |
 | `requires` | `List[str]` | `[]` | Names (or package names) of other plugins this one depends on. A missing requirement disables this plugin with a logged reason. |
 
@@ -718,6 +718,9 @@ Useful `PluginManager` methods (see [`manager.py`](manager.py) for the full set)
 | `plugin_for_type(type)` / `entity_class_for_type(type)` | map an entity `type` back to its plugin/class |
 | `auto_enable_for_map(map_data)` | enable disabled-by-default plugins a map needs |
 | `disable_auto_enabled()` | revert level-driven auto-enables (e.g. File ▸ New) |
+| `is_mandatory(plugin_or_name)` | whether this build refuses to run without it |
+| `missing_mandatory()` | mandatory plugin names discovery did not produce |
+| `require_mandatory_plugins()` | raise `MandatoryPluginMissing` if one is absent |
 | `attach_runtime(logic)` | wire every plugin's runtime into a logic thread |
 | `bind_host(target, kind)` | build the `PluginHost` and call each `connect` |
 | `emit(event, **data)` / `has_listeners(event)` | drive the event bus |

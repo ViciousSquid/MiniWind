@@ -348,8 +348,11 @@ The simulation tiers Big World stamps, and what MiniWind does with them:
 | `TIER_DISTANT` | distant world | schedules and needs on the clock, one coarse collision-checked step per pass, no perception |
 | `TIER_DORMANT` | streamed out | nothing; the state persists and resumes when the region becomes relevant |
 
-A map opts into streaming by carrying Big World's `BigWorldSettings` entity. A
-map without one keeps the whole world resident. MiniWind's own actor index
+The Big World plugin is **required**: MiniWind does not start without
+`plugins/bigworld/`, and it cannot be disabled from the Plugins menu or
+`settings.ini`. Streaming is still per map — a map opts in by carrying Big
+World's `BigWorldSettings` entity, and a map without one keeps the whole world
+resident and pays nothing for the plugin being loaded. MiniWind's own actor index
 (`game/world_index.py`) is a query accelerator for perception and combat that
 reads those tiers; it is built only for casts large enough to benefit.
 

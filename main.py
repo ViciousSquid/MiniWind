@@ -130,6 +130,42 @@ dark_stylesheet = """
 """
 
 
+def _can_show_error_dialog() -> bool:
+    """Whether a modal error box would reach a person rather than hang.
+
+    A refusal has to be visible both ways round: a windowed launch may have no
+    console to read, and a scripted or headless one must never stop on a dialog
+    nobody can dismiss. So the dialog is offered only when there is a real GUI
+    session to show it in; stderr carries the message either way.
+    """
+    if os.environ.get("QT_QPA_PLATFORM", "").lower() in ("offscreen", "minimal"):
+        return False
+    if sys.platform.startswith("linux") and not (
+            os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return False
+    return True
+
+
+def _require_mandatory_plugins():
+    """Stop the launch if a plugin this build is made of is missing.
+
+    Big World is not an optional extra here: MiniWind is built on top of it, so
+    a tree without ``plugins/bigworld`` is a broken install rather than a
+    smaller feature set. Checking it in the bootstrap — after discovery, before
+    the main window, the game layer or any map — means the failure is one clear
+    sentence instead of a missing entity type surfacing halfway into a level.
+
+    Raises :class:`plugins.manager.MandatoryPluginMissing`.
+    """
+    from plugins.manager import get_manager, load_plugins
+
+    # The editor package bootstraps discovery on import, but a plugin caught
+    # mid-import there is deferred to the next call (see PluginManager), so ask
+    # for the load again before judging anything missing.
+    load_plugins()
+    get_manager().require_mandatory_plugins()
+
+
 if __name__ == "__main__":
 
     # ---------------------------------------------------------
@@ -160,6 +196,27 @@ if __name__ == "__main__":
     # menus. It lives here, in the application bootstrap, so Fio's editor and
     # engine packages never import the game.
     import game as _miniwind
+
+    # Refuse to start without the plugins this build requires. This runs before
+    # install() and before any window exists, so nothing has been built by the
+    # time we bail out.
+    from plugins.manager import MandatoryPluginMissing
+    try:
+        _require_mandatory_plugins()
+    except MandatoryPluginMissing as exc:
+        print(f"\nerror: {exc}", file=sys.stderr)
+        # Surface it in the UI too, for a launch with no console attached. A
+        # throwaway QApplication is safe here: we exit immediately after, so it
+        # never competes with the real one (whose surface format is set below).
+        if _can_show_error_dialog():
+            try:
+                from PyQt5.QtWidgets import QMessageBox
+                _err_app = QApplication.instance() or QApplication(sys.argv)
+                QMessageBox.critical(None, "Fio cannot start", str(exc))
+            except Exception:
+                pass      # no usable display after all: stderr is the message
+        sys.exit(1)
+
     _miniwind.install()
 
     # ---------------------------------------------------------

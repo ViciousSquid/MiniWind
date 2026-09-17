@@ -429,8 +429,12 @@ def _build_plugins_menu(MainWindow):
     mgr = get_manager()
 
     # Apply any persisted enable/disable choices before drawing the menu.
+    # A mandatory plugin is exempt: a stale settings.ini from a build where it
+    # was optional must not switch off something this build is made of.
     persisted_off = _disabled_from_config(MainWindow)
     for plugin in mgr.plugins:
+        if mgr.is_mandatory(plugin):
+            continue
         if mgr.plugin_package_name(plugin).lower() in persisted_off or \
                 plugin.name.lower() in persisted_off:
             plugin.enabled = False
@@ -456,14 +460,24 @@ def _build_plugins_menu(MainWindow):
         return
 
     for plugin in mgr.plugins:
-        sub = menu.addMenu(f"{plugin.name}  v{plugin.version}")
+        mandatory = mgr.is_mandatory(plugin)
+        label = f"{plugin.name}  v{plugin.version}"
+        sub = menu.addMenu(f"{label}  (required)" if mandatory else label)
 
-        # Enable/disable toggle (checked = on).
+        # Enable/disable toggle (checked = on). A mandatory plugin still shows
+        # its state — greyed and checked — so the menu reads as "on and not
+        # yours to change" rather than silently missing a control.
         toggle = sub.addAction("Enabled")
         toggle.setCheckable(True)
         toggle.setChecked(mgr.is_enabled(plugin))
-        toggle.toggled.connect(
-            lambda checked, p=plugin: _toggle_plugin(MainWindow, p, checked))
+        if mandatory:
+            toggle.setEnabled(False)
+            toggle.setToolTip(
+                f"'{plugin.name}' is required by this build and cannot be "
+                f"disabled.")
+        else:
+            toggle.toggled.connect(
+                lambda checked, p=plugin: _toggle_plugin(MainWindow, p, checked))
         sub.addSeparator()
 
         # Placement entries for this plugin's entities.
@@ -481,12 +495,14 @@ def _build_plugins_menu(MainWindow):
 
         about = sub.addAction("About…")
         about.triggered.connect(
-            lambda _checked=False, p=plugin:
+            lambda _checked=False, p=plugin, req=mandatory:
             QMessageBox.information(
                 MainWindow, f"{p.name} v{p.version}",
                 f"{p.description or '(no description)'}\n\n"
                 f"Category: {p.category}\n"
-                f"Place its entities from here or the 2D view's right-click "
+                + ("Required: this build does not run without this plugin.\n"
+                   if req else "")
+                + f"Place its entities from here or the 2D view's right-click "
                 f"menu under Plugins ▸ {p.name}."))
 
 
