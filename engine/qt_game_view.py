@@ -474,6 +474,30 @@ class QtGameView(QOpenGLWidget):
             lt.set_camera_mode(self.camera_mode)
         self.update()
 
+    def _sprite_look(self, render_state):
+        """Pass-level sprite look for this frame (see draw_sprites_instanced).
+
+        In overhead play, sprites that face a heading lie flat on the ground at
+        the actor layer and the overhead sprite size, like the player's own
+        overhead sprite. The inspector's hovered actor is highlighted by slot.
+        """
+        from engine.overhead_sprite import ACTOR_Y
+        look = {
+            'ground': bool(self.play_mode and self.overhead_sprite_enabled
+                           and self._is_overhead()),
+            'ground_lift': ACTOR_Y,
+            'ground_size': float(self.overhead_sprite_size),
+        }
+        hover = getattr(self, 'inspect_hover', None)
+        if hover is not None and getattr(self, 'inspect_mode', False):
+            etable = getattr(render_state, 'entity_table', None)
+            if etable is not None:
+                slot = etable.slot_of_id.get(
+                    getattr(hover, 'properties', {}).get('id'))
+                if slot is not None:
+                    look['highlight_slot'] = int(slot)
+        return look
+
     def _is_overhead(self) -> bool:
         # PERF: cached — recompute only when camera_mode changes.
         cm = getattr(self, "camera_mode", "")
@@ -1034,6 +1058,7 @@ class QtGameView(QOpenGLWidget):
             self._render_config["all_things"] = render_state.all_things
         else:
             self._render_config["all_things"] = self.editor.state.things
+        self._render_config["sprite_look"] = self._sprite_look(render_state)
         if render_state and hasattr(render_state, 'all_lights'):
             self._render_config["all_lights"] = render_state.all_lights
         else:

@@ -719,9 +719,33 @@ layout (location = 10) in vec4 iPayload;
             print('[BaseRenderer] Shadow depth instancing shader compiled successfully.')
 
     #: Per-instance attributes the sprite pass carries: the billboard's centre
-    #: and its world size.  Five floats, against the two uniform uploads and
-    #: the draw call each sprite used to cost.
-    SPRITE_INSTANCE_FLOATS = 5
+    #: and world size, then its look -- heading, whether it turns to face it,
+    #: tint and fade. Everything that can differ between two sprites sharing a
+    #: texture is here; the texture is the run key.
+    SPRITE_INSTANCE_FLOATS = 12
+    #: ``(location, components, float offset)`` of each instance attribute.
+    SPRITE_INSTANCE_LAYOUT = ((1, 3, 0),    # iSpritePos
+                              (2, 2, 3),    # iSpriteSize
+                              (3, 1, 5),    # iSpriteHeading
+                              (4, 1, 6),    # iSpriteOrient
+                              (5, 4, 7),    # iSpriteTint
+                              (6, 1, 11))   # iSpriteFade
+    #: The per-sprite uniforms of ``sprite.vert`` that the instanced program
+    #: takes as attributes instead: ``(uniform decl, attribute decl, old, new)``.
+    _SPRITE_INSTANCE_REWRITE = (
+        ('uniform vec3 sprite_pos_world;',
+         'layout (location = 1) in vec3 iSpritePos;', 'sprite_pos_world', 'iSpritePos'),
+        ('uniform vec2 sprite_size;',
+         'layout (location = 2) in vec2 iSpriteSize;', 'sprite_size', 'iSpriteSize'),
+        ('uniform float sprite_heading;',
+         'layout (location = 3) in float iSpriteHeading;', 'sprite_heading', 'iSpriteHeading'),
+        ('uniform float sprite_orient;',
+         'layout (location = 4) in float iSpriteOrient;', 'sprite_orient', 'iSpriteOrient'),
+        ('uniform vec4 sprite_tint;',
+         'layout (location = 5) in vec4 iSpriteTint;', 'sprite_tint', 'iSpriteTint'),
+        ('uniform float sprite_fade;',
+         'layout (location = 6) in float iSpriteFade;', 'sprite_fade', 'iSpriteFade'),
+    )
 
     def _compile_instanced_sprite_shader(self):
         """Compile the billboard shader with its centre and size per instance.
@@ -741,27 +765,30 @@ layout (location = 10) in vec4 iPayload;
         frag = DEFAULT_SHADERS.get('sprite.frag', '')
         if not vert or not frag:
             return
-        kept = [line for line in vert.splitlines()
-                if not line.strip().startswith(('uniform vec3 sprite_pos_world',
-                                                'uniform vec2 sprite_size'))]
-        source = '\n'.join(kept)
-        if 'out vec2 TexCoords;' not in source:
+        lines = vert.splitlines()
+        decls = [line.strip() for line in lines]
+        if 'out vec2 TexCoords;' not in decls:
             return
-        source = source.replace(
-            'out vec2 TexCoords;',
-            'layout (location = 1) in vec3 iSpritePos;\n'
-            'layout (location = 2) in vec2 iSpriteSize;\n'
-            'out vec2 TexCoords;', 1)
-        source = source.replace('sprite_pos_world', 'iSpritePos')
-        source = source.replace('sprite_size.x', 'iSpriteSize.x')
-        source = source.replace('sprite_size.y', 'iSpriteSize.y')
-        if 'iSpritePos' not in source or 'iSpriteSize.x' not in source:
-            # The shader did not look the way this rewrite assumes; leaving the
-            # program absent keeps the per-sprite path, which every caller has.
-            return
+        attributes = []
+        for uniform_decl, attribute_decl, _old, _new in self._SPRITE_INSTANCE_REWRITE:
+            if uniform_decl not in decls:
+                # The shader did not look the way this rewrite assumes; leaving
+                # the program absent keeps the per-sprite path, which every
+                # caller has.
+                return
+            attributes.append(attribute_decl)
+        dropped = {entry[0] for entry in self._SPRITE_INSTANCE_REWRITE}
+        source = '\n'.join(line for line in lines if line.strip() not in dropped)
+        source = source.replace('out vec2 TexCoords;',
+                                '\n'.join(attributes) + '\nout vec2 TexCoords;', 1)
+        for _uniform_decl, _attribute_decl, old, new in self._SPRITE_INSTANCE_REWRITE:
+            source = re.sub(r'\b%s\b' % old, new, source)
         if self._register_instanced_shader('sprite_instanced', source, frag,
                                            extra_uniforms=['projection', 'view',
-                                                           'sprite_texture']):
+                                                           'sprite_texture',
+                                                           'sprite_ground',
+                                                           'sprite_ground_lift',
+                                                           'sprite_ground_size']):
             print('[BaseRenderer] Sprite instancing shader compiled successfully.')
 
     def _ensure_sprite_instance_buffer(self, count):
@@ -798,9 +825,9 @@ layout (location = 10) in vec4 iPayload;
         gl.glEnableVertexAttribArray(0)
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._sprite_instance_vbo)
         stride = self.SPRITE_INSTANCE_FLOATS * 4
-        for location, size, offset in ((1, 3, 0), (2, 2, 12)):
+        for location, size, offset in self.SPRITE_INSTANCE_LAYOUT:
             gl.glVertexAttribPointer(location, size, gl.GL_FLOAT, gl.GL_FALSE,
-                                     stride, ctypes.c_void_p(offset))
+                                     stride, ctypes.c_void_p(offset * 4))
             gl.glEnableVertexAttribArray(location)
             gl.glVertexAttribDivisor(location, 1)
         gl.glBindVertexArray(0)
@@ -820,9 +847,9 @@ layout (location = 10) in vec4 iPayload;
         #: submission tests to recover what a run actually drew.
         self._sprite_instance_base = base
         origin = base * stride
-        for location, size, offset in ((1, 3, 0), (2, 2, 12)):
+        for location, size, offset in self.SPRITE_INSTANCE_LAYOUT:
             gl.glVertexAttribPointer(location, size, gl.GL_FLOAT, gl.GL_FALSE,
-                                     stride, ctypes.c_void_p(origin + offset))
+                                     stride, ctypes.c_void_p(origin + offset * 4))
 
     def _compile_instanced_lit_brush_shader(self, lit_vert, lit_frag):
         """Compile the flat-shaded brush shader with instanced colour.
@@ -1743,7 +1770,7 @@ layout (location = 9) in vec4 iNormal2;
     SPRITE_KEY_LAYOUT = KeyLayout([('texture', 32)])
 
     def draw_sprites_instanced(self, projection, view, table, slots,
-                               gl_ids=None):
+                               gl_ids=None, look=None):
         """The sprite pass over dense columns: one draw per texture run.
 
         *slots* are rows of an :class:`engine.entity_table.EntityTable`, already
@@ -1757,6 +1784,16 @@ layout (location = 9) in vec4 iNormal2;
         :func:`engine.render_keys.sort_into_runs`, stable, so the depth order
         the caller established survives inside each run -- and each run is one
         ``glDrawArraysInstanced`` over a slice of the packed buffer.
+
+        Each instance also carries the row's per-frame look -- heading, tint and
+        fade (see :class:`engine.entity_table.EntityTable`). *look* holds the
+        pass-level parts, all optional:
+
+        ``ground``, ``ground_lift``, ``ground_size``
+            draw heading-oriented sprites flat on the ground (overhead camera);
+        ``highlight_slot``, ``highlight_tint``
+            one row to tint for this frame only (the inspector's hover), unless
+            it already carries a tint of its own.
 
         Returns the number of sprites submitted, so a caller can tell an empty
         pass from a skipped one.
@@ -1787,6 +1824,16 @@ layout (location = 9) in vec4 iNormal2;
         sorted_slots = slots[order]
         data[:, 0:3] = table.pos[sorted_slots]
         data[:, 3:5] = table.sprite_size[sorted_slots]
+        data[:, 5] = table.sprite_heading[sorted_slots]
+        data[:, 6] = table.sprite_orient[sorted_slots]
+        data[:, 7:11] = table.sprite_tint[sorted_slots]
+        data[:, 11] = table.sprite_fade[sorted_slots]
+        look = look or {}
+        highlight = look.get('highlight_slot')
+        if highlight is not None and highlight >= 0:
+            rows = np.flatnonzero(sorted_slots == highlight)
+            if len(rows) and data[rows[0], 10] <= 0.0:
+                data[rows[0], 7:11] = look.get('highlight_tint', (1.0, 0.85, 0.35, 0.55))
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._sprite_instance_vbo)
         gl.glBufferSubData(gl.GL_ARRAY_BUFFER, 0, data)
 
@@ -1803,9 +1850,23 @@ layout (location = 9) in vec4 iNormal2;
                               glm.value_ptr(view))
         gl.glActiveTexture(gl.GL_TEXTURE0)
         gl.glUniform1i(uniforms['sprite_texture'], 0)
+        gl.glUniform1f(uniforms['sprite_ground'], 1.0 if look.get('ground') else 0.0)
+        gl.glUniform1f(uniforms['sprite_ground_lift'], float(look.get('ground_lift', 0.0)))
+        gl.glUniform1f(uniforms['sprite_ground_size'], float(look.get('ground_size', 0.0)))
         gl.glBindVertexArray(self._ensure_sprite_instance_vao())
 
         run_texture = textures[order][run_starts[:-1]]
+        # A fading sprite needs its alpha blended; the stock pass cuts out with
+        # discard and never sets a blend function. Set one only for a frame that
+        # fades something, and put the previous one back, so every other frame
+        # is exactly what Fio drew before.
+        fading = bool(np.any(data[:, 11] > 0.0))
+        if fading:
+            prev_blend = (gl.glGetIntegerv(gl.GL_BLEND_SRC_RGB),
+                          gl.glGetIntegerv(gl.GL_BLEND_DST_RGB),
+                          gl.glGetIntegerv(gl.GL_BLEND_SRC_ALPHA),
+                          gl.glGetIntegerv(gl.GL_BLEND_DST_ALPHA))
+            gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
         current_tex = None
         for run in range(len(run_starts) - 1):
             begin = int(run_starts[run])
@@ -1820,6 +1881,8 @@ layout (location = 9) in vec4 iNormal2;
             self._point_sprite_instances_at(begin)
             gl.glDrawArraysInstanced(gl.GL_TRIANGLE_STRIP, 0, 4, length)
             self.render_stats.draw_calls += 1
+        if fading:
+            gl.glBlendFuncSeparate(*(int(v) for v in prev_blend))
         gl.glBindVertexArray(0)
         return count
 

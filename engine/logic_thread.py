@@ -4087,6 +4087,9 @@ class LogicThread(threading.Thread):
         # only per-entity work left that is not a column operation.
         for i in etable.monster_slots:
             erefs[i] = things[i].get_render_snapshot()
+        # The same snapshots carry the per-frame look (heading, tint, opacity)
+        # into the projection's columns; see EntityTable.refresh_actor_look.
+        etable.refresh_actor_look(erefs, etable.monster_slots)
 
         # A collected pickup is not published.  Only pickup rows can be
         # collected, so the filter costs pickups rather than entities -- on a

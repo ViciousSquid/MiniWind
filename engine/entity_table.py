@@ -71,6 +71,18 @@ Fio itself has goes through an editor gesture or changes the entity set.
 Entity classes are imported defensively, the way :mod:`engine.logic_thread`
 imports them, so a tier without ``editor.things`` -- the standalone player, a
 head-less test -- still imports this module.
+
+Per-frame look
+--------------
+A monster's *picture* is its sprite identity above. How that picture is drawn
+this frame -- turned to face a heading, tinted (a hit flash), faded -- is
+warmer still: it can change every frame without any identity change. It is
+carried by three more columns, :attr:`sprite_heading` (+ :attr:`sprite_orient`),
+:attr:`sprite_tint` and :attr:`sprite_fade`, and it arrives the way everything
+else about a monster does: through the render snapshot the logic thread already
+refreshes per monster per frame (:meth:`refresh_actor_look`). A snapshot that
+says nothing about its look leaves the stock billboard -- upright, untinted,
+opaque -- so plain Fio monsters are drawn exactly as before.
 """
 
 from __future__ import annotations
@@ -427,7 +439,9 @@ class EntityTable:
                  'pos', 'class_bits', 'light_slots', 'monster_slots',
                  'pickup_slots', 'sprite_size', 'sprite_key_id',
                  'warm_sprite_slots', '_sprite_ids', '_sprite_recipes',
-                 '_sprite_state', '_epoch', '_hidden_buf')
+                 '_sprite_state', '_epoch', '_hidden_buf',
+                 'sprite_heading', 'sprite_orient', 'sprite_tint',
+                 'sprite_fade', '_look_live')
 
     def __init__(self):
         self.generation = 0
@@ -472,6 +486,16 @@ class EntityTable:
         #: A plain list: it is compared per warm row per frame and never
         #: indexed numerically.
         self._sprite_state: list = []
+
+        #: Per-frame look (see the module's "Per-frame look" section). All
+        #: zero is the stock billboard: upright, untinted, opaque.
+        self.sprite_heading = np.zeros((0,), dtype=np.float32)
+        self.sprite_orient = np.zeros((0,), dtype=np.float32)
+        self.sprite_tint = np.zeros((0, 4), dtype=np.float32)
+        self.sprite_fade = np.zeros((0,), dtype=np.float32)
+        #: Whether any row currently holds a non-stock look, so a level whose
+        #: monsters never publish one pays one check per frame, not a reset.
+        self._look_live = False
 
         self._epoch = None
         self._hidden_buf = np.empty(0, dtype=bool)
@@ -532,6 +556,13 @@ class EntityTable:
         if len(self.sprite_key_id):
             keys[:len(self.sprite_key_id)] = self.sprite_key_id
         self.sprite_key_id = keys
+        for name, shape in (('sprite_heading', (n,)), ('sprite_orient', (n,)),
+                            ('sprite_tint', (n, 4)), ('sprite_fade', (n,))):
+            old = getattr(self, name)
+            grown = np.zeros(shape, dtype=np.float32)
+            if len(old):
+                grown[:len(old)] = old
+            setattr(self, name, grown)
 
     # -- synchronisation ---------------------------------------------------
 
@@ -666,7 +697,56 @@ class EntityTable:
         self.pickup_slots = np.flatnonzero(bits & ENT_PICKUP).astype(np.int32)
         self.warm_sprite_slots = np.flatnonzero(
             bits & ENT_SPRITE_WARM).astype(np.int32)
+        # Rows moved, so any look they held belongs to other entities now.
+        self.sprite_heading[:] = 0.0
+        self.sprite_orient[:] = 0.0
+        self.sprite_tint[:] = 0.0
+        self.sprite_fade[:] = 0.0
+        self._look_live = False
         self.generation += 1
+
+    def refresh_actor_look(self, refs, slots):
+        """Bulk-store the per-frame look of *slots* from their render snapshots.
+
+        *refs* is the published reference array: for a monster row, the snapshot
+        dict the logic thread has just refreshed. A snapshot may carry the
+        generic keys ``heading`` (world yaw in radians; present = turn to face
+        it), ``tint`` (``(r, g, b, strength)``) and ``opacity`` (0..1). Absent
+        keys mean the stock billboard.
+
+        The cost is one comprehension per key over the monster rows -- the rows
+        whose snapshots were just built, so the order of the work does not
+        change -- and none at all while no snapshot has ever carried a look.
+        """
+        n = len(slots)
+        if not n:
+            return
+        snaps = refs[slots].tolist()
+        try:
+            has_look = any('heading' in s or 'tint' in s or 'opacity' in s
+                           for s in snaps)
+        except TypeError:
+            snaps = [s if isinstance(s, dict) else _EMPTY for s in snaps]
+            has_look = any('heading' in s or 'tint' in s or 'opacity' in s
+                           for s in snaps)
+        if not has_look:
+            if self._look_live:
+                self.sprite_heading[slots] = 0.0
+                self.sprite_orient[slots] = 0.0
+                self.sprite_tint[slots] = 0.0
+                self.sprite_fade[slots] = 0.0
+                self._look_live = False
+            return
+        headings = [s.get('heading') for s in snaps]
+        self.sprite_orient[slots] = np.fromiter(
+            (h is not None for h in headings), dtype=np.float32, count=n)
+        self.sprite_heading[slots] = np.fromiter(
+            (h or 0.0 for h in headings), dtype=np.float32, count=n)
+        self.sprite_tint[slots] = np.array(
+            [s.get('tint') or _NO_TINT for s in snaps], dtype=np.float32)
+        self.sprite_fade[slots] = 1.0 - np.fromiter(
+            (s.get('opacity', 1.0) for s in snaps), dtype=np.float32, count=n)
+        self._look_live = True
 
     def refresh_rows(self, things, slots):
         """Re-resolve the cold columns for *slots* after a semantic change."""
@@ -681,6 +761,7 @@ class EntityTable:
 
 
 _EMPTY: dict = {}
+_NO_TINT = (0.0, 0.0, 0.0, 0.0)
 
 
 def _props_of(thing) -> dict:

@@ -25,6 +25,7 @@ from typing import Dict, List, Optional
 from engine.facing import face_heading
 from engine.spatial import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
                                 TIER_DORMANT)
+from . import actor_look
 from .rpg import factions
 from .rpg import gib
 from .rpg import schedule as sched
@@ -629,7 +630,7 @@ class MiniwindSession:
                 p["head"] = head
                 p["custom_idle"] = path
                 p["custom_shoot"] = path
-                p.pop("custom_dead", None)   # no custom death sprite (removed)
+                actor_look.refresh_death_look(p)   # derived, never authored
                 changed = True
         if changed:
             try:

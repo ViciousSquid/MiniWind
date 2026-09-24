@@ -658,6 +658,10 @@ class MiniwindGame:
 
     # ------------------------------------------------------------- lifecycle
     def on_play_start(self, logic):
+        # Fio has just reset its monsters (dead cleared); drop MiniWind's own
+        # per-session actor state to match (gib look, switched weapon, flash).
+        from . import actor_look
+        actor_look.reset_transient(getattr(logic, "things", ()))
         logic._miniwind = None
         logic.game_session = None
         settings = self._find_settings(logic)
@@ -689,6 +693,8 @@ class MiniwindGame:
             session.uninstall()
             logic._miniwind = None
             logic.game_session = None
+        from . import actor_look
+        actor_look.reset_transient(getattr(logic, "things", ()))
         host = getattr(self, "_host", None)
         if host is not None:
             try:

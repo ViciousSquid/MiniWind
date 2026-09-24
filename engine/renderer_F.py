@@ -1433,7 +1433,8 @@ class Renderer_F(BaseRenderer):
         gl.glEnable(gl.GL_BLEND)
         gl.glDepthMask(gl.GL_FALSE)
         if sprites_numeric:
-            self.draw_sprites_instanced(projection, view, etable, sprite_slots)
+            self.draw_sprites_instanced(projection, view, etable, sprite_slots,
+                                        look=config.get('sprite_look'))
         else:
             self.draw_sprites(projection, view, final_sprites, self.sprite_textures, self.instance_textures)
         if current_mode == RENDER_MODE_UNLIT:

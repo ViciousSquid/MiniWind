@@ -63,6 +63,13 @@ def _mark_gibbed(props, damage, new_health, magical: bool = False) -> bool:
         sprite = _gib.stain_for(damage, _gore.max_health(props), magical=magical)
         if sprite:
             props["gib_sprite"] = sprite
+        # The splatter replaces the corpse through the death sprite Fio's
+        # renderer already watches (see game.actor_look).
+        try:
+            from .. import actor_look
+            actor_look.refresh_death_look(props)
+        except Exception:
+            pass
     return True
 
 

@@ -307,7 +307,8 @@ def make_appearance_tab(thing):
                 # death sprite (a slain actor shows its head + dead.png overlay).
                 for k in ("custom_idle", "custom_shoot"):
                     self.thing.properties[k] = path
-            self.thing.properties.pop("custom_dead", None)
+            from . import actor_look
+            actor_look.refresh_death_look(self.thing.properties)
             # Drop cached sprites so the viewport shows the new head.
             try:
                 from editor.things import Monster

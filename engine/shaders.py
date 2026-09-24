@@ -458,13 +458,61 @@ uniform mat4 projection;
 uniform mat4 view;
 uniform vec3 sprite_pos_world;
 uniform vec2 sprite_size;
+// Per-sprite look. Every one defaults to zero, and zero is the stock billboard:
+// upright, untinted, opaque -- so a caller that never sets them draws exactly
+// what it always drew. The instanced pass carries them as instance data.
+//   sprite_orient   1 = turn the sprite to face sprite_heading (world yaw, rad)
+//   sprite_tint     rgb mixed over the texel by a (0 = untinted)
+//   sprite_fade     0 = opaque .. 1 = invisible
+uniform float sprite_heading;
+uniform float sprite_orient;
+uniform vec4 sprite_tint;
+uniform float sprite_fade;
+// Pass-level: draw oriented sprites flat on the ground plane (overhead camera),
+// lifted by sprite_ground_lift and, when sprite_ground_size > 0, at that size.
+uniform float sprite_ground;
+uniform float sprite_ground_lift;
+uniform float sprite_ground_size;
+out vec4 vSpriteTint;
+out float vSpriteFade;
 void main() {
-    TexCoords = aPos + 0.5;
+    vSpriteTint = sprite_tint;
+    vSpriteFade = sprite_fade;
     vec3 cameraRight = vec3(view[0][0], view[1][0], view[2][0]);
     vec3 cameraUp = vec3(view[0][1], view[1][1], view[2][1]);
-    vec3 worldPos = sprite_pos_world 
-                  + cameraRight * aPos.x * sprite_size.x 
-                  + cameraUp * aPos.y * sprite_size.y;
+    vec3 worldPos;
+    if (sprite_orient > 0.5 && sprite_ground > 0.5) {
+        // A ground quad turned about +Y by the heading: its texture's top edge
+        // points along -heading, so art drawn facing "down" faces forward.
+        TexCoords = vec2(aPos.x + 0.5, 0.5 - aPos.y);
+        vec2 extent = sprite_ground_size > 0.0
+                    ? vec2(sprite_ground_size) : vec2(sprite_size.x, sprite_size.y);
+        vec2 q = aPos * extent;
+        float c = cos(sprite_heading);
+        float s = sin(sprite_heading);
+        worldPos = sprite_pos_world
+                 + vec3(q.x * c + q.y * s, sprite_ground_lift, -q.x * s + q.y * c);
+    } else {
+        TexCoords = aPos + 0.5;
+        vec2 p = aPos;
+        if (sprite_orient > 0.5) {
+            // Turn in the billboard plane so the sprite's up axis points along
+            // the heading as projected onto the camera's right/up basis.
+            float hx = sin(sprite_heading);
+            float hz = cos(sprite_heading);
+            float a = hx * cameraRight.x + hz * cameraRight.z;
+            float b = hx * cameraUp.x + hz * cameraUp.z;
+            if (a * a + b * b > 1e-8) {
+                float r = atan(-a, b);
+                float c = cos(r);
+                float s = sin(r);
+                p = vec2(aPos.x * c - aPos.y * s, aPos.x * s + aPos.y * c);
+            }
+        }
+        worldPos = sprite_pos_world
+                 + cameraRight * p.x * sprite_size.x
+                 + cameraUp * p.y * sprite_size.y;
+    }
     FragPos = worldPos;
     gl_Position = projection * view * vec4(worldPos, 1.0);
 }""",
@@ -473,10 +521,17 @@ precision mediump float;
 out vec4 FragColor;
 in highp vec2 TexCoords;
 uniform sampler2D sprite_texture;
-in highp vec3 FragPos;""" + FOG_GLSL + """
+in highp vec3 FragPos;
+in vec4 vSpriteTint;
+in float vSpriteFade;""" + FOG_GLSL + """
 void main() {
     vec4 texColor = texture(sprite_texture, TexCoords);
+    // The cut-out uses the texture's own alpha, before any fade, so a fading
+    // sprite dissolves evenly rather than eroding from its edges.
     if(texColor.a < 0.1) discard;
+    texColor.rgb = mix(texColor.rgb, vSpriteTint.rgb, clamp(vSpriteTint.a, 0.0, 1.0));
+    texColor.a *= 1.0 - clamp(vSpriteFade, 0.0, 1.0);
+    // Fog after the tint, so a flashing sprite in the haze fades with the scene.
     FragColor = vec4(applyFog(texColor.rgb, FragPos), texColor.a);
 }""",
 

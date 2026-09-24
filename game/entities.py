@@ -40,6 +40,7 @@ except Exception:  # pragma: no cover - PyQt-free player
     Monster = Thing
     _HAVE_EDITOR = False
 
+from . import actor_look as _actor_look
 from .rpg import schedule as _schedule
 from .rpg import bestiary
 from .rpg import factions
@@ -101,9 +102,10 @@ def _apply_head_sprite(p: dict) -> None:
         path = heads.any_head_path(hid)
         p["custom_idle"] = path
         p["custom_shoot"] = path
-        # No custom death sprite: a slain head-wearing actor shows its head with
-        # the shared heads/dead.png overlay (see Monster.get_sprite_path).
-    p.pop("custom_dead", None)
+    # No *authored* death sprite: a slain head-wearing actor shows its head with
+    # the shared heads/dead.png overlay, published as the derived custom_dead
+    # Fio's renderer already reads (see game.actor_look).
+    _actor_look.refresh_death_look(p)
 
 
 def _apply_actor_common(thing, entity_type, default_role, default_faction):
@@ -242,7 +244,23 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
 
 
 
-class NPC(Monster):
+class _ActorLook:
+    """What a MiniWind actor hands Fio's renderer each frame.
+
+    Fio refreshes every monster's render snapshot once per frame and projects
+    it into the entity table; the snapshot is therefore the one place a
+    per-frame look (heading, hit flash, fade) crosses into the dense render
+    path. The keys are Fio's generic ones; what they mean for MiniWind is
+    decided in :func:`game.actor_look.render_state`.
+    """
+
+    def get_render_snapshot(self):
+        snap = super().get_render_snapshot()
+        snap.update(_actor_look.render_state(self.properties))
+        return snap
+
+
+class NPC(_ActorLook, Monster):
     """A social, role-driven townsperson or quest actor (villager…merchant…guard)."""
 
     pixmap_path = "assets/sprites/miniwind/villager.png"
@@ -288,7 +306,7 @@ class NPC(Monster):
         p.setdefault("disposition_base", 45 if faction in ("villagers", "guards") else 30)
 
 
-class Creature(Monster):
+class Creature(_ActorLook, Monster):
     """A monster or wild animal (wolf, bear, bandit, cultist, skeleton…)."""
 
     pixmap_path = "assets/sprites/miniwind/wolf.png"
