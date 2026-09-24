@@ -15,11 +15,11 @@ from datetime import datetime
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QMessageBox, QFileDialog, QDialog, QWidget, QLabel, QVBoxLayout,
-    QGraphicsOpacityEffect, QInputDialog, QColorDialog, QProgressDialog, QAction, QAbstractButton, QToolBar, QDockWidget,
+    QGraphicsOpacityEffect, QInputDialog, QColorDialog, QProgressDialog, QAction, QToolBar, QDockWidget,
     QPushButton, QDialogButtonBox, QHBoxLayout
 )
 from PyQt5.QtWidgets import QShortcut
-from PyQt5.QtCore import Qt, QByteArray, QTimer, QPropertyAnimation, QEasingCurve, QPoint, pyqtSignal
+from PyQt5.QtCore import Qt, QByteArray, QTimer, QPropertyAnimation, QEasingCurve, pyqtSignal
 from PyQt5.QtGui import QKeySequence, QPixmap, QCursor, QColor, QIcon
 
 from editor.things import Light, PlayerStart, Model, update_all_counters_from_entities
@@ -37,7 +37,6 @@ from editor.component_edit import (
     MODE_OBJECT, MODE_FACE, MODE_EDGE, MODE_VERTEX,
 )
 from editor.terrain_editor import TerrainEditorPanel
-from engine.terrain import Terrain
 from editor.debug_console import DebugConsole, CommandInput, debug_log
 from editor.console_commands import ConsoleCommandHandler
 
@@ -141,7 +140,7 @@ class MainWindow(QMainWindow):
     def __init__(self, root_dir):
         super().__init__()
         self.root_dir = root_dir
-        self.root_dir = os.path.abspath(root_dir)
+        self.root_dir = os.path.abspath(root_dir) 
         self.assets_root = os.path.join(self.root_dir, 'assets')
         self.debug_console = None
         self.key_bindings = {}
@@ -157,9 +156,9 @@ class MainWindow(QMainWindow):
         self.recent_files = []
         self.load_level_signal.connect(self.load_level_file)
 
-        self.setWindowTitle("MiniWind")
+        self.setWindowTitle("Fio")
         self.setWindowIcon(QIcon(os.path.join(self.root_dir, 'assets', 'icon.ico')))
-        self.setGeometry(50, 50, 1600, 900)
+        self.setGeometry(100, 100, 1600, 900)
         self.setMinimumSize(1280, 800)
         self.state = EditorState()
         self.load_recent_files()
@@ -171,10 +170,6 @@ class MainWindow(QMainWindow):
             self.state.selected_object = None
             
         self.keys_pressed = set()
-        # True while play mode is a game the player launched (launcher Play,
-        # or an imported package) rather than a preview started from the
-        # editor. Escape means 'pause' in the first case, 'stop' in the second.
-        self.standalone_play_session = False
         self._brush_clipboard = None  # For Ctrl+C / Ctrl+V brush copy-paste
         self.grid_visible = True
         self.clip_mode = False  # Radiant-style clip/slice tool (toggled with X)
@@ -199,6 +194,7 @@ class MainWindow(QMainWindow):
         self.preview_data = {} 
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
+
         self.update_recent_files_menu()
         self.setup_package_actions() 
         self.update_title()
@@ -222,23 +218,6 @@ class MainWindow(QMainWindow):
         self.update_global_font()
         self.apply_tooltip_settings()
         self.load_layout()
-
-        # No saved layout in settings.ini → lay the docks out proportionally
-        # (see apply_default_layout). Deferred by one event-loop turn because
-        # the window has not been shown yet, so its width is not yet final and
-        # resizeDocks would have nothing meaningful to divide up.
-        if not self.has_saved_layout():
-            QTimer.singleShot(0, self.apply_default_layout)
-
-        # Apply configured default dock visibility after restoring saved layout.
-        self.right_dock.setVisible(
-            self.config.getboolean('Display', 'show_2d_views', fallback=False)
-        )
-
-        self.properties_dock.setVisible(
-            self.config.getboolean('Display', 'show_properties_console', fallback=False)
-        )
-        
         
         self.terrain = None
         self.terrain_editor_window = None
@@ -325,11 +304,6 @@ class MainWindow(QMainWindow):
         self._current_overlay = None              # currently active overlay widget
         self._overlay_close_callback = None       # optional cleanup when overlay is closed
 
-        # Open default map on startup if present
-        default_map = os.path.join(self.root_dir, "maps", "village_walled_source.json")
-        if os.path.isfile(default_map):
-            QTimer.singleShot(0, lambda p=default_map: self.load_level_file(p))
-
 
     def _close_current_overlay(self):
         """Close any active overlay and restore the original Properties dock content."""
@@ -371,7 +345,7 @@ class MainWindow(QMainWindow):
         """Updates window title with filename and dirty status."""
         fname = os.path.basename(self.file_path) if self.file_path else "Untitled"
         dirty_marker = "*" if self.unsaved_changes else ""
-        self.setWindowTitle(f"MiniWind {fname} {dirty_marker}")
+        self.setWindowTitle(f"Fio - {fname} {dirty_marker}")
 
     def load_key_bindings(self):
         if self.config.has_section('KeyBindings'):
@@ -544,6 +518,97 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Autosave failed: {e}")
 
+    def show_procedural_map_generator(self):
+        """Open the procedural map generator as an overlay in the Properties dock."""
+        from editor.procedural_generator import ProceduralMapWidget
+
+        # Create the generator widget (it will emit map_generated when closed)
+        generator = ProceduralMapWidget(self.properties_dock)
+        generator.map_generated.connect(self._on_procedural_map_generated)
+
+        # Show it in the overlay system
+        self._show_overlay(generator)
+
+    def _on_procedural_map_generated(self, map_data):
+        """
+        Handle the signal from the generator:
+        - if map_data is not None → load the generated map (keep generator open)
+        - if map_data is None → user clicked X → close the overlay
+        """
+        if map_data is not None:
+            # Load the generated map without closing the generator
+            import tempfile, json, os
+            fd, temp_path = tempfile.mkstemp(suffix=".json", prefix="procedural_")
+            os.close(fd)
+            with open(temp_path, 'w') as f:
+                json.dump(map_data, f, indent=4)
+            self.load_level_file(temp_path)
+            os.unlink(temp_path)
+            self.show_toast("Generated map loaded – use Save As to keep it")
+        else:
+            # User closed the generator – close the overlay
+            self._close_current_overlay()
+
+    def _on_procedural_map_closed(self, map_data):
+        """
+        Called when the procedural map widget emits map_generated.
+        - If map_data is None → user clicked X → restore original Properties tab.
+        - Else → load the generated map into the editor (generator remains open).
+        """
+        if map_data is None:
+            # Restore original content (user closed the generator)
+            self.properties_dock.setWidget(self._original_properties_widget)
+            self._original_properties_widget = None
+        else:
+            # Load the generated map without closing the generator
+            try:
+                # Create a temporary file name (not saved to disk unless user saves later)
+                import tempfile
+                fd, temp_path = tempfile.mkstemp(suffix=".json", prefix="procedural_", dir=None)
+                os.close(fd)
+                with open(temp_path, 'w') as f:
+                    json.dump(map_data, f, indent=4)
+
+                # Load the temporary file
+                self.load_level_file(temp_path)
+
+                # Optionally delete the temp file after load
+                # (load_level_file makes a copy of the data, so we can delete)
+                os.unlink(temp_path)
+
+                self.show_toast("Generated map loaded – use Save As to keep it")
+            except Exception as e:
+                self.show_toast(f"Failed to load generated map: {e}", is_error=True)
+                import traceback
+                traceback.print_exc()
+
+    def load_procedural_map(self, map_data):
+        """Save the generated map to maps/ folder and load it."""
+        if not self.check_unsaved_changes():
+            return
+        try:
+            # Ensure maps directory exists
+            maps_dir = os.path.join(self.root_dir, "maps")
+            if not os.path.exists(maps_dir):
+                os.makedirs(maps_dir)
+
+            # Generate a unique filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"procedural_{timestamp}.json"
+            filepath = os.path.join(maps_dir, filename)
+
+            # Save map data to file
+            with open(filepath, 'w') as f:
+                json.dump(map_data, f, indent=4)
+
+            # Now load the saved file (reuse existing load_level_file logic)
+            self.load_level_file(filepath)
+
+        except Exception as e:
+            self.show_toast(f"Failed to save/load procedural map: {e}", is_error=True)
+            import traceback
+            traceback.print_exc()
+
     def center_2d_views_on(self, world_pos):
         """Center all 2D views on the given world position (list/tuple of [x, y, z])."""
         from PyQt5.QtCore import QPointF
@@ -646,6 +711,24 @@ class MainWindow(QMainWindow):
         else:
             tab.setCurrentIndex(console_idx)
 
+    def show_properties_panel(self):
+        """Bring the Properties tab to the front and make sure it is visible.
+
+        The dock is tabbed with the Debug Console and can be closed outright,
+        so showing the panel means three things, not one: the dock visible, the
+        dock raised above anything docked over it, and the Properties tab
+        selected rather than the console.
+        """
+        dock = getattr(self, 'properties_dock', None)
+        tab = getattr(self, 'properties_tab_widget', None)
+        if dock is not None:
+            dock.setVisible(True)
+            dock.raise_()
+        if tab is not None:
+            index = tab.indexOf(self.property_editor)
+            if index >= 0:
+                tab.setCurrentIndex(index)
+
     def _clear_terrain(self):
         """Remove the terrain object and clear all references."""
         # Destroy the live terrain object
@@ -728,12 +811,8 @@ class MainWindow(QMainWindow):
         """Hide the overlay and re-grab the mouse."""
         self._play_console_frame.hide()
 
-        # Re-hide the cursor for FPS control — unless this session wants it on
-        # screen (mouse control aims with it, inspect mode picks with it).
-        if not self.view_3d.play_mode_cursor_visible():
-            QApplication.setOverrideCursor(Qt.BlankCursor)
-        else:
-            self.view_3d.apply_play_cursor_shape()
+        # Re-hide cursor for FPS control
+        QApplication.setOverrideCursor(Qt.BlankCursor)
         self.view_3d.setFocus()
 
     def _is_play_console_visible(self):
@@ -892,7 +971,6 @@ class MainWindow(QMainWindow):
     
     def open_terrain_editor(self):
         """Open the terrain editor floating window."""
-        from PyQt5.QtWidgets import QProgressDialog
         from PyQt5.QtCore import Qt
         
        # Create terrain if it doesn't exist
@@ -1179,7 +1257,35 @@ class MainWindow(QMainWindow):
         new_model = Model(pos=[0, 0, 0])
         new_model.properties['model_path'] = filepath.replace('\\', '/') # Ensure forward slashes
         new_model.properties['rotation'] = rotation
-        new_model.properties['scale'] = scale
+
+        # Downloaded OBJs are commonly authored in real-world units and can be
+        # only a few Fio units across. Fio's world is much larger (TILE_SIZE is
+        # 50), so an otherwise valid imported mesh can become effectively
+        # invisible in the editor at the default camera distance. When the Asset
+        # Browser supplies the neutral [1,1,1] scale, give unusually small OBJs a
+        # sensible initial scene scale. Existing authored maps and explicit
+        # non-unit scales are left untouched.
+        initial_scale = list(scale) if isinstance(scale, (list, tuple)) else scale
+        if (
+            str(filepath).lower().endswith('.obj')
+            and isinstance(initial_scale, (list, tuple))
+            and len(initial_scale) == 3
+            and all(float(v) == 1.0 for v in initial_scale)
+        ):
+            try:
+                from engine.obj_loader import OBJLoader
+                loader = OBJLoader()
+                if loader.load(filepath) and loader.vertices:
+                    verts = np.asarray(loader.vertices, dtype=np.float32)
+                    extent = float(np.max(verts.max(axis=0) - verts.min(axis=0)))
+                    if 0.0 < extent < TILE_SIZE * 0.2:
+                        fit_target = TILE_SIZE * 0.5
+                        fit = min(fit_target / extent, 25.0)
+                        initial_scale = [fit, fit, fit]
+            except Exception:
+                pass
+
+        new_model.properties['scale'] = initial_scale
         
         # Set a default name based on filename
         model_name = os.path.splitext(os.path.basename(filepath))[0]
@@ -2088,7 +2194,6 @@ class MainWindow(QMainWindow):
             return
 
         self._store_and_switch_to_debug_console()
-        self._suspend_editor_shortcuts()
 
         player_start = None
         for thing in self.state.things:
@@ -2099,23 +2204,6 @@ class MainWindow(QMainWindow):
         if not player_start:
             QMessageBox.warning(self, "No Player Start", "Add a Player Start object to the scene before entering play mode.")
             return
-
-        # Developer aid (opt-in): when [MiniWind] reset_prompt_on_play is enabled
-        # in settings, ask before every play whether to wipe saved MiniWind
-        # progress so iterating on the level always starts from a clean world.
-        # Off by default, so ordinary play keeps its saved state.
-        if self.config.getboolean('MiniWind', 'reset_prompt_on_play', fallback=False):
-            choice = QMessageBox.question(
-                self, "Reset world?",
-                "Reset the saved MiniWind world before starting play?\n\n"
-                "This clears the persisted character, clock, quests, NPC deaths "
-                "and town state. Level geometry is untouched.",
-                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
-                QMessageBox.No)
-            if choice == QMessageBox.Cancel:
-                return
-            if choice == QMessageBox.Yes:
-                self._reset_game_progress()
 
         if hasattr(self, 'mode_label'):
             self.mode_label.setText("PLAY MODE")
@@ -2141,292 +2229,8 @@ class MainWindow(QMainWindow):
         #self.ui.notification_label.setText("ESC = EXIT PLAY MODE  |  F12 = FULLSCREEN")
 
 
-    # =========================================================================
-    # PAUSE MENU ACTIONS  (engine/pause_menu.py calls these by name)
-    # =========================================================================
-    #
-    # The menu itself is pure presentation — it knows nothing about levels, play
-    # mode or the kiosk window. Everything it can actually *do* lives here,
-    # built on machinery that already exists: the console handler's save/load
-    # (engine/savegame.py) for the three slots, load_level_file() for a fresh
-    # start, and exit_kiosk_mode() for the way out.
-
-    #: The pause menu's three save slots, as ``.fiosave`` basenames. They are
-    #: ordinary saves, so ``load slot2`` in the console reaches the same file.
-    PAUSE_MENU_SLOTS = 3
-
-    def _pause_menu_slot_path(self, slot):
-        """Absolute path of pause-menu save slot *slot* (1-based)."""
-        from engine.pause_menu import slot_name
-        return self.console_handler._resolve_save_path(slot_name(slot))
-
-    def pause_menu_slot_info(self):
-        """Metadata for each save slot, or None for an empty one.
-
-        Only the header fields the menu captions a slot with are read, so a save
-        from an incompatible version still lists rather than breaking the menu.
-        """
-        out = []
-        for slot in range(1, self.PAUSE_MENU_SLOTS + 1):
-            path = self._pause_menu_slot_path(slot)
-            info = None
-            if os.path.exists(path):
-                info = {'map': '', 'saved_at': ''}
-                try:
-                    with open(path, 'r', encoding='utf-8') as fh:
-                        data = json.load(fh)
-                    info = {'map': data.get('map', ''),
-                            'saved_at': data.get('saved_at', '')}
-                except Exception:
-                    pass
-            out.append(info)
-        return out
-
-    def pause_menu_save_slot(self, slot):
-        """Write the live play session into slot *slot*."""
-        from engine.pause_menu import slot_name
-        self.console_handler.cmd_save(slot_name(slot))
-
-    def pause_menu_load_slot(self, slot):
-        """Restore slot *slot* over the running session."""
-        from engine.pause_menu import slot_name
-        path = self._pause_menu_slot_path(slot)
-        if not os.path.exists(path):
-            self.show_toast(f"Slot {slot} is empty.", is_error=True)
-            return
-        self.console_handler.cmd_load(slot_name(slot))
-
-    def pause_menu_new_game(self):
-        """Start the current map over from a clean world.
-
-        Wipes the persisted MiniWind progress (character, clock, quests, town
-        state) and reloads the map. load_level_file() restarts play mode by
-        itself when it was already running, so the player lands back at the
-        Player Start rather than in the editor.
-        """
-        self._reset_game_progress()
-        map_path = self.file_path
-        if not map_path:
-            self.show_toast("No map loaded.", is_error=True)
-            return
-        self.load_level_file(map_path)
-
-    def pause_menu_to_editor(self):
-        """Leave the game and hand the map back to the editor."""
-        self.standalone_play_session = False
-        if getattr(self, 'is_kiosk_mode', False):
-            self.exit_kiosk_mode(confirm=False)
-        else:
-            self._exit_play_mode()
-
-    def pause_menu_quit(self):
-        """Quit to desktop."""
-        self.standalone_play_session = False
-        self._exit_play_mode()
-        QApplication.quit()
-
-    # =========================================================================
-    # INSPECTOR  (console 'inspect' → click an actor)
-    # =========================================================================
-
-    #: Property-editor tab the inspector jumps to. Registered by the MiniWind
-    #: plugin for npc and creature entities (see game/host.py), and the one that
-    #: shows what an actor believes, wants and is about to do.
-    INSPECT_TAB_LABEL = "Simulation"
-
-    def show_simulation_tab_for(self, thing):
-        """Select *thing* and bring its Simulation tab to the front.
-
-        The floating inspector popup shows the live per-tick mental state; this
-        is the other half — the full authored/derived picture in the Properties
-        pane, where the rest of an actor's data already lives. Called by the
-        viewport when an inspect pick lands.
-
-        Plenty of things can be inspected that have no Simulation tab: a plain
-        engine monster, an actor from another game, a plugin whose tabs failed
-        to build. That is an ordinary outcome, not an error — the panel still
-        shows whatever tabs the thing *does* have, the popup is unaffected, and
-        the only feedback is a toast saying there is no such tab. Returns True
-        only when the tab was actually brought to the front.
-        """
-        try:
-            self.set_selected_object(thing)
-
-            # Play mode hides the whole Properties dock (and switches its inner
-            # tab to the console); inspecting is a debugging act, so put it back.
-            dock = getattr(self, 'properties_dock', None)
-            if dock is not None:
-                dock.setVisible(True)
-                dock.raise_()
-            tabs = getattr(self, 'properties_tab_widget', None)
-            editor_widget = getattr(self, 'property_editor', None)
-            if tabs is not None and editor_widget is not None:
-                index = tabs.indexOf(editor_widget)
-                if index >= 0:
-                    tabs.setCurrentIndex(index)
-
-            # Plugin tabs are built lazily and vary per entity type, so look the
-            # tab up by label rather than trusting a remembered index.
-            inner = getattr(editor_widget, 'tab_widget', None)
-            if inner is None:
-                return False
-            wanted = self.INSPECT_TAB_LABEL.lower()
-            for i in range(inner.count()):
-                if inner.tabText(i).strip().lower() == wanted:
-                    inner.setCurrentIndex(i)
-                    return True
-            self.show_toast(
-                f"No {self.INSPECT_TAB_LABEL} tab for "
-                f"{self._display_name_of(thing)}.")
-        except Exception as exc:
-            from editor.debug_console import debug_log
-            debug_log("Warning", f"inspect: could not show the "
-                                 f"{self.INSPECT_TAB_LABEL} tab ({exc})")
-        return False
-
-    @staticmethod
-    def _display_name_of(thing):
-        """A readable label for an entity, for toasts and log lines."""
-        props = getattr(thing, 'properties', None)
-        if not isinstance(props, dict):
-            return 'this object'
-        return str(props.get('display_name') or props.get('name')
-                   or props.get('monster_type') or props.get('type')
-                   or 'this object')
-
-    def _reset_game_progress(self):
-        """Wipe persisted play progress so the next play starts from a clean world.
-
-        Two halves. The generic one is Fio's: every in-scene ``LogicState``
-        store drops its persistent values and re-seeds from its design-time
-        ``initial_data``. The rest belongs to whatever game layer is installed:
-        each built-in game that defines ``reset_progress(main_window)`` clears
-        its own stores and any live session. Entity health/dead is restored on
-        play start by the logic thread, and level geometry is untouched.
-        """
-        try:
-            from editor.things import LogicState
-        except Exception as exc:
-            debug_log("Error", f"progress reset unavailable: {exc}")
-            return
-        registry = LogicState._persistent_registry
-        for t in self.state.things:
-            if not isinstance(t, LogicState):
-                continue
-            registry.pop(t.properties.get('store_name', ''), None)
-            try:
-                t._sync_from_persistent()
-            except Exception as exc:
-                debug_log("Error", f"state store re-seed failed: {exc}")
-        try:
-            from plugins.manager import get_manager
-            games = get_manager().builtin_games()
-        except Exception:
-            games = []
-        for game in games:
-            hook = getattr(game, 'reset_progress', None)
-            if callable(hook):
-                try:
-                    hook(self)
-                except Exception as exc:
-                    debug_log("Error", f"{getattr(game, 'name', 'game')} progress "
-                                       f"reset failed: {exc}")
-        if hasattr(self, 'ui') and hasattr(self.ui, 'notification_label'):
-            self.ui.notification_label.setText("Game progress reset")
-
-    def _game_modal_wants_escape(self):
-        """True when the running game plugin will close something on Escape.
-
-        Only then is Escape the game's key rather than the editor's. A plugin
-        that offers no opinion (or none is loaded) leaves Escape to play mode.
-        Screens that refuse Escape — MiniWind's character creation and level-up
-        — answer False, so the key still reaches the exit prompt instead of
-        vanishing into a screen that was never going to close.
-        """
-        logic = getattr(self.view_3d, 'logic_thread', None)
-        session = getattr(logic, 'game_session', None) if logic else None
-        if session is None:
-            return False
-        asks = getattr(session, 'escape_closes_modal', None)
-        if callable(asks):
-            try:
-                return bool(asks())
-            except Exception:
-                pass
-        # Older sessions without the question: fall back to "anything open".
-        return (getattr(session, 'open_screen', None) is not None
-                or getattr(session, 'dialogue', None) is not None)
-
-    def _confirm_exit_play_mode(self):
-        """Escape out of an editor-launched preview, after asking.
-
-        Play mode is a *preview* here, not a game the player came for (that one
-        gets the pause menu instead — see :meth:`enter_kiosk_mode`), but leaving
-        it still throws away the running session, so it is worth one question.
-        The world is frozen and the cursor given back while the box is up, and
-        answering "No" puts both back exactly as they were.
-        """
-        self.keys_pressed.clear()
-        logic = getattr(self.view_3d, 'logic_thread', None)
-        was_paused = bool(getattr(logic, 'gameplay_paused', False)) if logic else False
-        if logic is not None:
-            try:
-                logic._menu_paused = True
-                logic.gameplay_paused = True
-            except Exception:
-                pass
-
-        # Play mode hides the cursor (and stacks override cursors); a message
-        # box the player cannot point at is no question at all.
-        cursor_depth = 0
-        while QApplication.overrideCursor() is not None:
-            QApplication.restoreOverrideCursor()
-            cursor_depth += 1
-
-        leave = QMessageBox.question(
-            self, "Exit Play Mode", "Exit Play mode?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) == QMessageBox.Yes
-
-        if not leave:
-            if logic is not None:
-                try:
-                    logic._menu_paused = False
-                    logic.gameplay_paused = was_paused
-                except Exception:
-                    pass
-            # Put the cursor back the way play mode had it, unless this session
-            # deliberately keeps it on screen (mouse control, an open window, an
-            # armed inspect pick).
-            if not self.view_3d.play_mode_cursor_visible():
-                for _ in range(max(1, cursor_depth)):
-                    QApplication.setOverrideCursor(Qt.BlankCursor)
-            else:
-                self.view_3d.apply_play_cursor_shape()
-            self.view_3d.setFocus()
-            return
-
-        if logic is not None:
-            try:
-                logic._menu_paused = False
-            except Exception:
-                pass
-        self._exit_play_mode()
-
-        if getattr(self, 'is_kiosk_mode', False):
-            self.exit_kiosk_mode()
-            return
-
-        if not self.camera_movement_learned:
-            QTimer.singleShot(500, lambda: self.show_tooltip(
-                "Hold right mouse to move camera with WASD", duration=0, toast_id="camera_tip"))
-
     def _exit_play_mode(self):
         """Exit play mode and return to editor."""
-        pause_menu = getattr(self.view_3d, 'pause_menu', None)
-        if pause_menu is not None:
-            pause_menu.close()
-        self._restore_editor_shortcuts()
-        self.standalone_play_session = False
         if hasattr(self.view_3d, 'play_mode') and self.view_3d.play_mode:
             self.view_3d.toggle_play_mode(None, None)
             self.view_3d.play_mode = False  # Force state change before UI update
@@ -2450,59 +2254,6 @@ class MainWindow(QMainWindow):
 
         self.setFocus()
         self.update_play_button_color()
-
-    # =========================================================================
-    # EDITOR SHORTCUTS vs. THE GAME'S KEYBOARD
-    # =========================================================================
-
-    def _suspend_editor_shortcuts(self):
-        """Take the editor's plain-letter shortcuts off the keyboard for play mode.
-
-        A shortcut on a QAction or a toolbar button is a *window* shortcut: Qt
-        fires it before the focused widget ever sees the key press. So H (Hide
-        Brush), T (Asset Browser), X (clip tool) and Shift+S / Shift+B were
-        swallowing those keys everywhere in play mode — H never reached
-        MiniWind's heal binding, Shift+S ate walking backwards, and typing a
-        name with an H or a T in it in character creation silently dropped the
-        letter.
-
-        Only shortcuts that are a single printable key, alone or with Shift, are
-        suspended: those are exactly the ones that collide with gameplay and with
-        typing. Ctrl-, Alt- and function-key shortcuts are left alone, so Ctrl+S
-        still saves. The originals are put back by
-        :meth:`_restore_editor_shortcuts` on the way out.
-        """
-        if getattr(self, '_suspended_shortcuts', None):
-            return
-        blocking_modifiers = (int(Qt.ControlModifier) | int(Qt.AltModifier)
-                              | int(Qt.MetaModifier))
-        suspended = []
-        # Buttons carry shortcuts too (the tool strip's X / Shift+S / Shift+B),
-        # and they are window shortcuts exactly like an action's.
-        for owner in self.findChildren(QAction) + self.findChildren(QAbstractButton):
-            sequence = owner.shortcut()
-            if sequence.isEmpty():
-                continue
-            combo = int(sequence[0])
-            if combo & blocking_modifiers:
-                continue                      # Ctrl+S and friends are harmless
-            key = combo & ~int(Qt.KeyboardModifierMask)
-            # Printable ASCII only: letters, digits and punctuation are what a
-            # player types or walks with. Function and navigation keys are not.
-            if not (Qt.Key_Space <= key <= Qt.Key_AsciiTilde):
-                continue
-            suspended.append((owner, sequence))
-            owner.setShortcut(QKeySequence())
-        self._suspended_shortcuts = suspended
-
-    def _restore_editor_shortcuts(self):
-        """Give the editor its plain-letter shortcuts back after play mode."""
-        for owner, sequence in getattr(self, '_suspended_shortcuts', None) or []:
-            try:
-                owner.setShortcut(sequence)
-            except RuntimeError:
-                pass                          # the widget outlived its owner
-        self._suspended_shortcuts = []
 
     def _store_and_switch_to_debug_console(self):
         """Store current tab index and switch to Debug Console tab."""
@@ -2756,7 +2507,7 @@ class MainWindow(QMainWindow):
             version = "Version not found"
 
         msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("About MiniWind")
+        msg_box.setWindowTitle("About Fio")
         
         container_widget = QWidget()
         layout = QVBoxLayout(container_widget)
@@ -2766,7 +2517,7 @@ class MainWindow(QMainWindow):
         splash_label.setPixmap(pixmap.scaled(512, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         layout.addWidget(splash_label)
 
-        subtitle_label = QLabel("A fantasy RPG game & editor, powered by Fio")
+        subtitle_label = QLabel("Liminal World Editor & Procedural Engine")
         subtitle_label.setAlignment(Qt.AlignCenter)
         subtitle_label.setStyleSheet("""
             QLabel {
@@ -3439,13 +3190,6 @@ class MainWindow(QMainWindow):
         # PLAY MODE HANDLING (hardcoded shortcuts first)
         # ------------------------------------------------------------------
         if self.view_3d.play_mode:
-            # The pause menu is modal over the game: while it is up it takes
-            # every key, so nothing below (including Escape's quit) can fire.
-            pause_menu = getattr(self.view_3d, 'pause_menu', None)
-            if pause_menu is not None and pause_menu.active:
-                pause_menu.handle_key(event)
-                return
-
             # Autorepeat: holding a key down makes the OS/Qt resend keyPress
             # (and, on some platforms, interleaved keyRelease) events for as
             # long as it's held. The play-mode actions below are edge-triggered
@@ -3467,37 +3211,16 @@ class MainWindow(QMainWindow):
                 # All other keys go to the overlay input — don't process as game input
                 return
 
-            # The 3D view has a console overlay of its own (the one tilde opens
-            # in play mode). Its line edit normally closes itself on Escape, but
-            # only while it still holds focus — click the viewport behind it and
-            # the key lands here instead, with the overlay still up and no way to
-            # dismiss it. Close it from here too, so Escape always gets rid of a
-            # console whatever has focus.
-            if getattr(self.view_3d, 'console_overlay_active', False):
-                if event.key() in (Qt.Key_QuoteLeft, Qt.Key_Escape):
-                    self.view_3d._close_console_overlay()
-                return
-
             if event.key() == Qt.Key_Escape:
-                # If the game plugin has a modal screen or dialogue open, route
-                # ESC to the plugin so it closes the modal instead of exiting
-                # play mode — but only when the plugin will actually close it.
-                # Character creation and the level-up screen deliberately refuse
-                # Escape, so handing them the key would swallow it and leave the
-                # player stuck in play mode with no way out.
-                if self._game_modal_wants_escape():
-                    self.keys_pressed.add(event.key())
+                self._exit_play_mode()
+
+                if getattr(self, 'is_kiosk_mode', False):
+                    self.exit_kiosk_mode()
                     return
 
-                # A game the player launched pauses instead of ending. Play mode
-                # started from the editor asks first — Escape there means "stop
-                # previewing", and it is worth a confirmation because a stray
-                # press otherwise throws away whatever the session was showing.
-                if self.standalone_play_session and pause_menu is not None:
-                    pause_menu.open()
-                    return
-
-                self._confirm_exit_play_mode()
+                if not self.camera_movement_learned:
+                    QTimer.singleShot(500, lambda: self.show_tooltip(
+                        "Hold right mouse to move camera with WASD", duration=0, toast_id="camera_tip"))
                 return
 
             elif event.key() == Qt.Key_F3:
@@ -3552,14 +3275,6 @@ class MainWindow(QMainWindow):
 
         # ESC: back out of whatever is in progress, innermost first
         if event.key() == Qt.Key_Escape:
-            # Tilde opens the console; Escape is the other half of that reflex,
-            # so it puts the Properties dock back the way tilde would.
-            tab = self.properties_tab_widget
-            console_idx = tab.indexOf(self.debug_console)
-            if (console_idx >= 0 and tab.currentIndex() == console_idx
-                    and self.properties_dock.isVisible()):
-                tab.setCurrentIndex(0)
-                return
             if self.handle_escape():
                 return
 
@@ -3617,6 +3332,16 @@ class MainWindow(QMainWindow):
             if self._brush_clipboard is not None:
                 self.save_state()
                 pasted = copy.deepcopy(self._brush_clipboard)
+
+                # A paste is a new entity, not the one that was copied.
+                # clone_selected_object and the clip tool both re-stamp the
+                # UUID for the same reason: two live objects sharing one id
+                # make find_entity_by_id -- and every I/O target_id routed
+                # through it -- resolve to whichever comes first in the list.
+                if isinstance(pasted, dict):
+                    pasted['id'] = str(uuid.uuid4())
+                else:
+                    pasted.properties['id'] = str(uuid.uuid4())
 
                 # Offset the pasted object so it doesn't sit exactly on top
                 offset = self.grid_size_spinbox.value()
@@ -4403,114 +4128,38 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Could not launch game:\n{e}")
             
     def save_layout(self):
-        """Persist the *editor's* window layout.
-
-        While play mode is running this window is showing the game at the
-        kiosk display mode and resolution, which is not a layout anybody meant
-        to save — quitting straight from play used to persist it and the editor
-        would reopen at the game's resolution (frameless, even). So when a
-        kiosk snapshot is live, that is what gets written."""
         if not self.config.has_section('Layout'):
             self.config.add_section('Layout')
-        snapshot = getattr(self, '_editor_layout', None)
-        geometry, state = snapshot if snapshot is not None else (
-            self.saveGeometry(), self.saveState())
-        self.config['Layout']['geometry'] = geometry.toHex().data().decode()
-        self.config['Layout']['state'] = state.toHex().data().decode()
+        self.config['Layout']['geometry'] = self.saveGeometry().toHex().data().decode()
+        self.config['Layout']['state'] = self.saveState().toHex().data().decode()
         self.config['Layout']['version'] = str(LAYOUT_VERSION)
         self.save_config()
         self.statusBar().showMessage("Layout saved.", 2000)
 
-    #: The editor's default dock proportions, as fractions of the window width:
-    #: the scene tree down the left, then the 3D view and the Properties / Debug
-    #: Console column splitting the rest evenly. The 2D views dock shares the
-    #: right-hand column when it is shown, so the column as a whole is what gets
-    #: DEFAULT_PROPERTIES_FRACTION.
-    DEFAULT_SCENE_FRACTION = 0.10
-    DEFAULT_VIEW_3D_FRACTION = 0.45
-    DEFAULT_PROPERTIES_FRACTION = 0.45
-
-    def has_saved_layout(self):
-        """True when settings.ini carries a layout the user asked us to keep.
-
-        A saved [Layout] is an explicit preference and always wins over the
-        proportional default — that is the "unless overridden via settings.ini"
-        half of the rule.
-        """
-        return (self.config.has_section('Layout')
-                and self.config.has_option('Layout', 'geometry')
-                and self.config.has_option('Layout', 'state'))
-
-    def apply_default_layout(self):
-        """Lay the docks out at the editor's default proportions.
-
-        Scene 10% of the window width, then the 3D view and the Properties /
-        Debug Console column 50:50 across what is left. The asset browser is a
-        tool you open when you want it, so it starts hidden. Used on first run
-        (no saved layout) and by View ▸ Restore Layout, so there is always one
-        keystroke back to a sane arrangement no matter how far the docks have
-        been dragged.
-        """
+    def restore_layout(self):
+        """Restore the previously saved layout from settings.ini without restarting."""
+        if not self.config.has_section('Layout') or \
+           not (self.config.has_option('Layout', 'geometry') and self.config.has_option('Layout', 'state')):
+            self.show_toast("No saved layout found. Save a layout first.", is_error=True)
+            return
+        
         try:
-            # Re-establish the arrangement first: the docks may have been torn
-            # off, tabbed together or floated since startup, and resizeDocks only
-            # means anything once they are back in their splitters.
-            self.scene_hierarchy_dock.setFloating(False)
-            self.view_3d_dock.setFloating(False)
-            self.right_dock.setFloating(False)
-            self.properties_dock.setFloating(False)
-            self.addDockWidget(Qt.LeftDockWidgetArea, self.scene_hierarchy_dock)
-            self.addDockWidget(Qt.RightDockWidgetArea, self.view_3d_dock)
-            self.splitDockWidget(self.view_3d_dock, self.right_dock, Qt.Horizontal)
-            self.splitDockWidget(self.right_dock, self.properties_dock, Qt.Vertical)
-            if hasattr(self, 'asset_browser_dock'):
-                self.asset_browser_dock.setFloating(False)
-                self.splitDockWidget(self.view_3d_dock, self.asset_browser_dock,
-                                     Qt.Vertical)
-                # A tool, not part of the working layout: T (or View ▸ Asset
-                # Browser) brings it up when it is wanted.
-                self.asset_browser_dock.setVisible(False)
-
-            self.view_3d_dock.setVisible(True)
+            # Restore geometry and state
+            if self.config.has_option('Layout', 'geometry'):
+                self.restoreGeometry(QByteArray.fromHex(self.config['Layout']['geometry'].encode()))
+            if self.config.has_option('Layout', 'state'):
+                self.restoreState(QByteArray.fromHex(self.config['Layout']['state'].encode()))
+            
+            # Restore menu bar and status bar visibility (not saved in state)
             if self.menuBar():
                 self.menuBar().setVisible(True)
             self.statusBar().setVisible(True)
-
-            width = max(1, self.width())
-            docks, widths = [], []
-            if self.scene_hierarchy_dock.isVisible():
-                docks.append(self.scene_hierarchy_dock)
-                widths.append(int(width * self.DEFAULT_SCENE_FRACTION))
-            docks.append(self.view_3d_dock)
-            widths.append(int(width * self.DEFAULT_VIEW_3D_FRACTION))
-            # The right-hand column is one splitter, so sizing whichever of its
-            # docks are visible sizes the column.
-            side_width = int(width * self.DEFAULT_PROPERTIES_FRACTION)
-            for dock in (self.right_dock, self.properties_dock):
-                if dock.isVisible():
-                    docks.append(dock)
-                    widths.append(side_width)
-            self.resizeDocks(docks, widths, Qt.Horizontal)
-
-            # Within that column, the 2D views get twice the height of the
-            # properties pane when both are showing.
-            if self.right_dock.isVisible() and self.properties_dock.isVisible():
-                self.resizeDocks([self.right_dock, self.properties_dock],
-                                 [2, 1], Qt.Vertical)
-            # The asset browser is a strip under the 3D view, not a half of it.
-            if (hasattr(self, 'asset_browser_dock')
-                    and self.asset_browser_dock.isVisible()):
-                self.resizeDocks([self.view_3d_dock, self.asset_browser_dock],
-                                 [10000, 1], Qt.Vertical)
+            
+            self.show_toast("Layout restored")
         except Exception as e:
-            self.show_toast(f"Failed to apply default layout: {e}", is_error=True)
+            self.show_toast(f"Failed to restore layout: {e}", is_error=True)
             import traceback
             traceback.print_exc()
-
-    def restore_layout(self):
-        """View ▸ Restore Layout — put the docks back to the default proportions."""
-        self.apply_default_layout()
-        self.show_toast("Layout restored")
 
     def load_layout(self):
         """Restore the saved window layout, unless the default has moved on.
@@ -4589,7 +4238,6 @@ class MainWindow(QMainWindow):
         """Extract a zip file safely, rejecting any member that would escape dest_dir."""
         import zipfile
         import os
-        import shutil
 
         dest_dir = os.path.realpath(dest_dir)
         with zipfile.ZipFile(zip_path, 'r') as zf:
@@ -4628,8 +4276,7 @@ class MainWindow(QMainWindow):
 
             # Extract package to temp directory
             temp_dir = tempfile.mkdtemp(prefix="fio_package_")
-            with zipfile.ZipFile(filePath, 'r') as zf:
-                self._safe_extract_zip(filePath, temp_dir)
+            self._safe_extract_zip(filePath, temp_dir)
 
             # Find the map JSON inside the package
             map_path = self._find_map_in_package(temp_dir)
@@ -4639,6 +4286,8 @@ class MainWindow(QMainWindow):
             if not map_path:
                 QMessageBox.critical(self, "Error", "No map file found in game package.")
                 return
+
+            self._load_package_plugins(temp_dir)
 
             # Try to configure ResourceManager for package assets
             try:
@@ -4681,8 +4330,10 @@ class MainWindow(QMainWindow):
             self._package_temp_dir = temp_dir
             temp_dir = None  # Prevent cleanup in finally block
 
-            # Update UI state
-            self.file_path = filePath
+            # Update UI state.  file_path deliberately stays None (set above):
+            # it is what save_level() writes to, and writing a map over the
+            # .fiopak replaces the archive -- and every asset in it -- with a
+            # JSON file.  The first save must go through Save As.
             self.unsaved_changes = False
             self.update_title()
             self.set_selected_object(None)
@@ -4694,9 +4345,8 @@ class MainWindow(QMainWindow):
                 # Just load the map in the editor — no kiosk, no play mode
                 self.show_toast(f"Loaded package: {os.path.basename(filePath)}")
             else:
-                # Hide editor chrome and launch play mode. A package launched
-                # this way is a game, not a preview, so Escape pauses it.
-                self.enter_kiosk_mode(standalone=True)
+                # Hide editor chrome and launch play mode
+                self.enter_kiosk_mode()
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load game package:\n{e}")
@@ -4705,6 +4355,34 @@ class MainWindow(QMainWindow):
         finally:
             if temp_dir and os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def _load_package_plugins(self, package_root):
+        """Load the plugins a .fiopak carries, before its map is parsed.
+
+        A package bundles the plugin code its maps need so it plays on a
+        machine without those plugins installed (see the .fiopak format docs).
+        Both import paths go through here, and it runs *before* the map is
+        loaded: Thing.from_dict resolves an entity's class at parse time, so a
+        plugin arriving afterwards would leave every one of its entities as an
+        unresolved record.
+        """
+        try:
+            from plugins.packaging import load_package_plugins
+        except Exception:
+            return []          # no plugin system in this build
+        try:
+            added = load_package_plugins(package_root, log=print)
+        except Exception as exc:
+            print(f"[Package] plugin load failed: {exc}")
+            return []
+        if added:
+            self.show_toast("Package plugins loaded: %s" % ", ".join(added))
+            try:
+                from plugins.integration import refresh_plugin_ui
+                refresh_plugin_ui(self)
+            except Exception:
+                pass
+        return added
 
     def play_package_from_path(self, file_path):
         """Load and launch a game package from the given file path.
@@ -4730,8 +4408,7 @@ class MainWindow(QMainWindow):
 
             # Extract package to temp directory
             temp_dir = tempfile.mkdtemp(prefix="fio_package_")
-            with zipfile.ZipFile(file_path, 'r') as zf:
-                self._safe_extract_zip(file_path, temp_dir)
+            self._safe_extract_zip(file_path, temp_dir)
 
             # Find the map JSON inside the package
             map_path = self._find_map_in_package(temp_dir)
@@ -4740,6 +4417,8 @@ class MainWindow(QMainWindow):
             if not map_path:
                 self.show_toast("No map file found in game package.", is_error=True)
                 return
+
+            self._load_package_plugins(temp_dir)
 
             # Configure ResourceManager for package assets
             try:
@@ -4781,7 +4460,6 @@ class MainWindow(QMainWindow):
             temp_dir = None  # Prevent cleanup in finally block
 
             # Update UI state
-            self.file_path = file_path
             self.unsaved_changes = False
             self.update_title()
             self.set_selected_object(None)
@@ -4793,9 +4471,8 @@ class MainWindow(QMainWindow):
                 # Just load the map in the editor — no kiosk, no play mode
                 self.show_toast(f"Loaded package: {os.path.basename(file_path)}")
             else:
-                # Hide editor chrome and launch play mode. A package launched
-                # this way is a game, not a preview, so Escape pauses it.
-                self.enter_kiosk_mode(standalone=True)
+                # Hide editor chrome and launch play mode
+                self.enter_kiosk_mode()
 
         except Exception as e:
             self.show_toast(f"Failed to load game package: {e}", is_error=True)
@@ -4822,27 +4499,12 @@ class MainWindow(QMainWindow):
                         return best_match
         return best_match or fallback
 
-    def enter_kiosk_mode(self, standalone=False):
-        """Hide all editor UI and present play mode per Settings ▸ Kiosk.
-
-        *standalone* marks a session the player came for rather than a preview
-        the editor is running: the launcher's Play button, or an imported
-        ``.fiopak``. It is what decides Escape's meaning — a standalone session
-        raises the pause menu (engine/pause_menu.py), an editor-launched one
-        keeps the old "quit game and return to editor?" prompt. F12's kiosk
-        toggle from inside the editor leaves it False, as it should.
-        """
+    def enter_kiosk_mode(self):
+        """Hide all editor UI and launch play mode fullscreen."""
         self.is_kiosk_mode = True
-        if standalone:
-            self.standalone_play_session = True
 
-        # Play mode is a *transient presentation of the editor's own window*,
-        # so the display mode and resolution it uses must never become the
-        # editor's remembered size, position or frame. The layout is snapshotted
-        # in memory here and put back on the way out; nothing is written to
-        # [Layout] on the way in, and save_layout() refuses to persist the
-        # play-mode window while this snapshot is live.
-        self._editor_layout = (self.saveGeometry(), self.saveState())
+        # Save layout before hiding
+        self.save_layout()
 
         # Hide menu bar and status bar
         if self.menuBar():
@@ -4868,53 +4530,12 @@ class MainWindow(QMainWindow):
         # Hide sysmon overlay by default in kiosk mode (F3 to toggle back on)
         self.view_3d.sysmon.set_active(False)
 
-        # Present it the way the player asked for it (Settings ▸ Kiosk):
-        # Fullscreen, Borderless at the chosen resolution, or a plain window.
-        self._apply_kiosk_display_mode()
+        # Go fullscreen
+        self.showFullScreen()
 
         # Launch play mode ONLY if not already in play mode
         if not self.view_3d.play_mode:
             self.enter_play_mode()
-
-    def _apply_kiosk_display_mode(self):
-        """Size and present the window per Settings ▸ Kiosk.
-
-        'Fullscreen' takes the whole screen (the default and what most people
-        want); 'Borderless' is a frameless window at the configured resolution,
-        centred; 'Windowed' is an ordinary window at that resolution. The
-        resolution values are only meaningful for the latter two, which is
-        exactly how the Settings window presents them."""
-        mode = str(self.config.get('Kiosk', 'window_mode',
-                                   fallback='Fullscreen')).strip().lower()
-        screen = QApplication.primaryScreen()
-        screen_geo = screen.geometry() if screen is not None else None
-
-        if mode == 'borderless':
-            # A frameless window filling the screen: fullscreen to look at,
-            # but it keeps normal window stacking (handy on a second monitor).
-            self._kiosk_prev_flags = self.windowFlags()
-            self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
-            self.showNormal()
-            if screen_geo is not None:
-                self.setGeometry(screen_geo)
-            return
-
-        if mode == 'windowed':
-            # The Settings window only offers a resolution for this mode, so it
-            # is the only mode that reads one.
-            try:
-                width = self.config.getint('Kiosk', 'res_width', fallback=1280)
-                height = self.config.getint('Kiosk', 'res_height', fallback=720)
-            except Exception:
-                width, height = 1280, 720
-            self.showNormal()
-            self.resize(width, height)
-            if screen_geo is not None:
-                self.move(max(0, (screen_geo.width() - width) // 2),
-                          max(0, (screen_geo.height() - height) // 2))
-            return
-
-        self.showFullScreen()
 
     def exit_kiosk_mode(self, keep_play_mode=False, confirm=True):
         """Restore editor UI and exit play mode.
@@ -4947,26 +4568,12 @@ class MainWindow(QMainWindow):
             self._restore_properties_tab()
 
         # Exit fullscreen FIRST - critical for proper geometry restoration
-        # (and put the frame back if this was a borderless kiosk session).
-        prev_flags = getattr(self, '_kiosk_prev_flags', None)
-        if prev_flags is not None:
-            self.setWindowFlags(prev_flags)
-            self._kiosk_prev_flags = None
         self.showNormal()
 
-        # Restore the complete layout state (geometry, docks, toolbars) from the
-        # snapshot taken on the way in, so the editor comes back exactly the
-        # size and position it was — not at whatever resolution play mode used.
+        # Restore the complete layout state (geometry, docks, toolbars)
         # This must happen BEFORE manual visibility fixes so restoreState()
-        # has full control over dock positions and toolbar states.
-        snapshot = getattr(self, '_editor_layout', None)
-        if snapshot is not None:
-            geometry, state = snapshot
-            self.restoreGeometry(geometry)
-            self.restoreState(state)
-            self._editor_layout = None
-        else:
-            self.load_layout()
+        # has full control over dock positions and toolbar states
+        self.load_layout()
 
         # restoreState()/restoreGeometry() handle docks and toolbars,
         # but menu bar and status bar visibility are NOT saved in the state
@@ -5051,7 +4658,7 @@ class MainWindow(QMainWindow):
 
     def open_logic_wizard(self):
         """Open the Logic Wizard (guided I/O scenario setup)."""
-        from editor.logic_graph_widget import LogicGraphWindow, LogicGraphScene
+        from editor.logic_graph_widget import LogicGraphScene
         from editor.logic_wizard import LogicWizard
         # Reuse the existing graph window's scene if it is already open,
         # so that wizard-added connections appear there immediately.
@@ -5099,29 +4706,55 @@ class MainWindow(QMainWindow):
         anywhere until someone noticed the door was not opening.
         """
         try:
-            from editor.io_system import (validate_scene_connections,
+            from editor.io_system import (validate_all_scene_connections,
                                           PROBLEM_MISSING_TARGET)
         except ImportError:
             QMessageBox.warning(self, "Validate Connections",
                                 "The I/O system is unavailable in this build.")
             return
 
-        problems = validate_scene_connections(self.state.brushes, self.state.things)
-
-        all_entities = list(self.state.things) + list(self.state.brushes)
-        total = sum(
-            len(e.properties.get('_io_connections', [])
-                if hasattr(e, 'properties')
-                else e.get('_io_connections', []))
-            for e in all_entities
+        validation = validate_all_scene_connections(
+            self.state.brushes,
+            self.state.things,
         )
 
-        if not problems:
-            QMessageBox.information(
-                self, "Validate Connections",
-                f"All {total} connection(s) are valid. ✔"
-            )
-            return
+        problems = validation['problems']
+        total = validation['total']
+
+        # Format validation problems.  I/O and PathNode problems use the
+        # same four-item tuple shape, but their connection objects differ.
+        lines = []
+
+        for entity, connection, code, message in problems:
+            if code in (
+                "missing_pathnode_target",
+                "invalid_pathnode_target",
+            ):
+                if isinstance(entity, dict):
+                    properties = entity.get("properties", entity)
+                else:
+                    properties = getattr(entity, "properties", {})
+
+                name = properties.get("name", "<unnamed PathNode>")
+
+                lines.append(
+                    "PathNode '%s': %s" % (name, message)
+                )
+            else:
+                # Existing I/O validation message.
+                lines.append(message)
+
+        QMessageBox.warning(
+            self,
+            "Validate Connections",
+            "%d of %d connection(s) have problems:\n\n%s"
+            % (
+                len(problems),
+                total,
+                "\n".join(lines),
+            ),
+        )
+        return
 
         def _name(entity):
             if hasattr(entity, 'properties'):

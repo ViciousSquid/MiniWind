@@ -1,14 +1,10 @@
 import os
 import json
 import zipfile
-import shutil
-import traceback
-from pathlib import Path
-from typing import Set, List, Dict, Optional, Tuple
+from typing import Set, List, Dict, Tuple
 from collections import deque
 
-from PyQt5.QtWidgets import QProgressDialog, QMessageBox, QApplication
-from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QProgressDialog, QApplication
 
 
 class PackageExporter:
@@ -19,8 +15,8 @@ class PackageExporter:
     
     # Asset path patterns to scan for in map JSON
     ASSET_KEYS = {
-        'textures': ['textures', 'texture', 'texture_path', 'sprite_2d', 'custom_idle',
-                     'custom_shoot'],
+        'textures': ['textures', 'texture', 'texture_path', 'sprite_2d', 'custom_idle', 
+                     'custom_shoot', 'custom_dead'],
         'models': ['model_path', 'mesh'],
         'sounds': ['sound_file', 'sound', 'audio']
     }

@@ -1,13 +1,63 @@
 import threading
 import glm
-import time
-from typing import List, Any, Dict, Optional
+import numpy as np
 from collections import deque
 
 # Shared immutable "nothing to drain" result for the per-frame consumer methods
 # (consume_sounds / consume_console_commands). Returning this singleton on the
 # common empty path avoids allocating a throwaway list on every rendered frame.
 _EMPTY_DRAIN: tuple = ()
+
+class PublishedBrushes:
+    """The published brush list, materialised only if something reads it.
+
+    The logic thread used to end every frame by converting its visibility
+    result back into Python lists -- ``refs[visible_slots].tolist()`` for the
+    visible set and again for every non-hidden brush -- so that the renderer
+    could walk them and rediscover what the dense columns already said.
+
+    The renderer's main camera pass does not walk them any more: it consumes
+    the slots. But three things still want a list, and all three are
+    conditional -- the portal virtual views, the split-screen second view, and
+    any caller running without a projection. So the conversion happens on first
+    access rather than on every frame, and for a frame with no portal and no
+    split-screen it never happens at all.
+
+    ``len()`` and truth-testing are answered from the slot array, because those
+    are what the renderer and the stats overlay actually ask for.
+    """
+
+    __slots__ = ('_refs', '_slots', '_list')
+
+    def __init__(self, refs, slots):
+        self._refs = refs
+        self._slots = slots
+        self._list = None
+
+    def materialise(self):
+        if self._list is None:
+            if len(self._slots):
+                self._list = self._refs[self._slots].tolist()
+            else:
+                self._list = []
+        return self._list
+
+    def __len__(self):
+        return len(self._slots)
+
+    def __bool__(self):
+        return len(self._slots) > 0
+
+    def __iter__(self):
+        return iter(self.materialise())
+
+    def __getitem__(self, index):
+        return self.materialise()[index]
+
+    def __repr__(self):
+        return '<PublishedBrushes %d%s>' % (
+            len(self._slots), '' if self._list is None else ' materialised')
+
 
 class RenderState:
     """
@@ -51,6 +101,41 @@ class RenderState:
         self.visible_brushes = []
         self.all_brushes = []
         self.visible_things = []
+        # Authoritative Light objects for renderer lighting; avoids scanning
+        # the full Thing set every render frame.
+        self.all_lights = []
+        # Reusable numeric views aligned with the published render-object lists.
+        # These are snapshots derived from authoritative transforms.
+        self.visible_brush_positions = np.empty((0, 2), dtype=np.float64)
+        self.visible_brush_position_count = 0
+        self.visible_thing_positions = np.empty((0, 2), dtype=np.float64)
+        self.visible_thing_position_count = 0
+        # The entity half of the dense projection (engine.entity_table), with
+        # the slots the frame published and the live hidden mask it read.  The
+        # renderer classifies entities into passes from these rather than
+        # re-deriving each one's kind; None outside a projected frame, where it
+        # takes the object path.
+        self.entity_table = None
+        self.entity_refs = None
+        self.visible_thing_slots = None
+        self.thing_hidden = None
+        self.has_portals = False
+
+        # The dense render projection (engine.render_table.RenderTable) and the
+        # visibility result as integer slots into it. These are what let the
+        # renderer classify, sort and batch numerically instead of walking the
+        # published object lists to rediscover what it already knows. The table
+        # is shared by reference, not copied: its cold columns are immutable
+        # between world-epoch bumps, and its warm columns are refreshed only on
+        # the logic thread.
+        self.render_table = None
+        #: slot -> the render reference for that row: the live brush dict, or
+        #: for a mover or a door the per-frame snapshot. Indexed by the slot
+        #: arrays below, so a consumer converts an index to an object once, at
+        #: the point it actually needs one, rather than up front for everything.
+        self.render_refs = np.empty(0, dtype=object)
+        self.visible_brush_slots = np.empty(0, dtype=np.int32)
+        self.all_brush_slots = np.empty(0, dtype=np.int32)
         
         # HUD / Gameplay
         self.collected_keys = set()
@@ -67,10 +152,6 @@ class RenderState:
             #     'damage': int,
             #     'size': (w, h),       # billboard size
             # }
-        self.stuck_arrows = []  # list of {'pos': [x,y,z], 'yaw': deg, 'pitch': deg}
-            # — arrows embedded in a wall or a monster after landing
-        self.blood_stains = []  # list of {'pos': [x,y,z], 'sprite': str,
-            #     'size': float, 'yaw': deg} — ground decals from wounds
 
         # Muzzle flash — True for one frame after the player fires
         self.muzzle_flash_active = False
@@ -92,6 +173,31 @@ class RenderState:
         self.culled_brushes = 0
         self.timestamp = 0.0
 
+    def ensure_visible_brush_positions(self, count):
+        """Ensure a reusable contiguous [x, z] buffer can hold count brushes."""
+        count = max(0, int(count))
+        capacity = int(self.visible_brush_positions.shape[0])
+        if count > capacity:
+            new_capacity = max(count, 16 if capacity == 0 else capacity * 2)
+            self.visible_brush_positions = np.empty(
+                (new_capacity, 2), dtype=np.float64)
+        self.visible_brush_position_count = count
+        return self.visible_brush_positions
+
+    def ensure_visible_thing_positions(self, count):
+        """Ensure a reusable contiguous [x, z] buffer can hold count entities.
+
+        Capacity grows geometrically and is never shrunk. The buffer is a render
+        snapshot derived from live Thing.pos values; it is not a transform store.
+        """
+        count = max(0, int(count))
+        capacity = int(self.visible_thing_positions.shape[0])
+        if count > capacity:
+            new_capacity = max(count, 16 if capacity == 0 else capacity * 2)
+            self.visible_thing_positions = np.empty(
+                (new_capacity, 2), dtype=np.float64)
+        self.visible_thing_position_count = count
+        return self.visible_thing_positions
     def reset(self):
         """Reset all fields to defaults for reuse (avoids per-frame allocation)."""
         self.camera_view_matrix = glm.mat4(1.0)
@@ -122,12 +228,26 @@ class RenderState:
         self.visible_brushes = []
         self.all_brushes = []
         self.visible_things = []
+        self.all_lights = []
+        self.visible_brush_position_count = 0
+        self.visible_thing_position_count = 0
+        self.entity_table = None
+        self.entity_refs = None
+        self.visible_thing_slots = None
+        self.thing_hidden = None
+        self.has_portals = False
+        self.render_table = None
+        #: slot -> the render reference for that row: the live brush dict, or
+        #: for a mover or a door the per-frame snapshot. Indexed by the slot
+        #: arrays below, so a consumer converts an index to an object once, at
+        #: the point it actually needs one, rather than up front for everything.
+        self.render_refs = np.empty(0, dtype=object)
+        self.visible_brush_slots = np.empty(0, dtype=np.int32)
+        self.all_brush_slots = np.empty(0, dtype=np.int32)
         self.collected_keys = set()
         self.hud_message = ""
         self.bullet_marks = []
         self.projectiles = []
-        self.stuck_arrows = []
-        self.blood_stains = []
         self.muzzle_flash_active = False
         self.camera_transition_active = False
         self.monster_debug_active = False
@@ -154,22 +274,10 @@ class ThreadedGameState:
         self._keys = set()
         self._mouse_lock = threading.Lock()
         self._mouse_delta = (0.0, 0.0)
-        # Mouse-control aiming (Settings ▸ GAME ▸ Mouse control): where the
-        # on-screen pointer is aiming, published by the view each frame and read
-        # by the logic thread and the game layer. ``_aim_direction`` is a unit
-        # world-space vector from the player's eye toward the pointer, and
-        # ``_aim_yaw`` the absolute heading the head should face (overhead only,
-        # where the pointer maps onto the ground and facing it is exact). Both
-        # are None whenever mouse control is off, which is what every reader
-        # tests to know whether pointer aiming is live at all.
-        self._aim_lock = threading.Lock()
-        self._aim_direction = None
-        self._aim_yaw = None
         
         # Shot Queue — deque for O(1) popleft
         self._shot_lock = threading.Lock()
         self._shot_queue = deque()
-        self._secondary_shot_queue = deque()
 
         # Use key — protected by its own lock
         self._use_key_lock = threading.Lock()
@@ -250,26 +358,6 @@ class ThreadedGameState:
             self._mouse_delta = (0.0, 0.0)
             return delta
 
-    def set_aim(self, direction=None, yaw=None):
-        """Publish where the pointer is aiming, or clear it with no arguments.
-
-        Called from the UI thread once per frame while mouse control is on.
-        """
-        with self._aim_lock:
-            self._aim_direction = (tuple(float(c) for c in direction)
-                                   if direction is not None else None)
-            self._aim_yaw = float(yaw) if yaw is not None else None
-
-    def get_aim_direction(self):
-        """Unit aim vector toward the pointer, or None when mouse control is off."""
-        with self._aim_lock:
-            return self._aim_direction
-
-    def get_aim_yaw(self):
-        """Absolute heading the head should face, or None to leave yaw alone."""
-        with self._aim_lock:
-            return self._aim_yaw
-
     def set_use_key(self, pressed: bool):
         """Sets the state of the use key explicitly (True/False)."""
         with self._use_key_lock:
@@ -303,24 +391,6 @@ class ThreadedGameState:
         with self._shot_lock:
             if self._shot_queue:
                 self._shot_queue.popleft()
-                return True
-            return False
-
-    # --- Secondary fire ---
-    # A second fire button (right mouse), queued and consumed exactly like the
-    # primary shot. The logic thread hands both to the installed player fire
-    # handler; with no handler, secondary fire does nothing.
-
-    def queue_secondary_shot(self):
-        with self._shot_lock:
-            self._secondary_shot_queue.append(True)
-
-    def consume_secondary_shot(self):
-        if not self._secondary_shot_queue:
-            return False
-        with self._shot_lock:
-            if self._secondary_shot_queue:
-                self._secondary_shot_queue.popleft()
                 return True
             return False
 

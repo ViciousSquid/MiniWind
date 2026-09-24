@@ -88,8 +88,38 @@ def _deterministic_rngs():
     yield
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _plugins_loaded_before_isolation():
+    """Load the plugins once, before any per-test registry snapshot is taken.
+
+    ``_isolate_process_singletons`` restores ``IO_REGISTRY`` to whatever it held
+    at the *start of each test*, so a test that registers a fake entity type
+    cannot leak it into the next one. But plugin registration is a
+    once-per-process event: ``PluginManager.discover_and_load`` early-outs on
+    ``self._loaded``. So if the first ``load_plugins()`` of the process happened
+    inside a test, that test's teardown rolled the registry back to before the
+    plugins registered and nothing ever registered them again -- every later
+    test saw a plugin that is loaded and enabled but whose I/O and entity
+    declarations had silently vanished.
+
+    That is why ``plugins/tidy/tests/test_smoke.py::test_plugin_loads_and_registers``
+    passes alone and fails when another tidy test runs first. Loading here, at
+    session scope, puts the plugin registrations *inside* every per-test
+    snapshot, so restoring a snapshot preserves them while still dropping
+    anything an individual test added.
+
+    Guarded: the headless CI tier has no PyQt5, so plugin import can fail there.
+    That tier simply runs without plugins, exactly as before.
+    """
+    try:
+        from plugins.manager import load_plugins
+        load_plugins()
+    except Exception:
+        pass
+
+
 @pytest.fixture(autouse=True)
-def _isolate_process_singletons():
+def _isolate_process_singletons(_plugins_loaded_before_isolation):
     """Undo the process-wide state a test can leave behind.
 
     Fio keeps several deliberate singletons: the plugin manager, the I/O
@@ -135,10 +165,27 @@ def _isolate_process_singletons():
             # Derived from the registry, so it has to go back with it.
             if hasattr(io_system, "_declared_outputs_cache"):
                 io_system._declared_outputs_cache.clear()
+            # Restoring the registry to its pre-test state also undoes anything
+            # the plugins declared into it, and plugin registration is a
+            # once-per-process event that will not run again. Ask the manager
+            # to replay its recorded registrations so a plugin can never be
+            # left loaded and enabled but silently undeclared.
+            _reapply_plugin_registrations()
     things = sys.modules.get("editor.things")
     if things is not None and counters is not None:
         things.Thing._counters.clear()
         things.Thing._counters.update(counters)
+
+
+def _reapply_plugin_registrations():
+    """Put back the declarations a registry restore stripped from the plugins."""
+    manager_module = sys.modules.get("plugins.manager")
+    if manager_module is None:
+        return
+    try:
+        manager_module.get_manager().reapply_registrations()
+    except Exception:  # pragma: no cover - defensive
+        pass
 
 
 def _snapshot_plugin_state():
@@ -159,17 +206,25 @@ def _snapshot_plugin_state():
     return (manager,
             {plugin: bool(getattr(plugin, "enabled", True))
              for plugin in manager.plugins},
-            set(manager._auto_enabled))
+            set(manager._auto_enabled),
+            # The manager's recorded registrations are process-wide state like
+            # any other singleton here. A test that registers something -- the
+            # plugin-API tests do -- would otherwise have it replayed into
+            # every later test by reapply_registrations(), which is a leak the
+            # replay itself makes permanent.
+            list(getattr(manager, "_io_registrations", [])))
 
 
 def _restore_plugin_state(snapshot):
     if snapshot is None:
         return
-    manager, enabled, auto_enabled = snapshot
+    manager, enabled, auto_enabled, io_registrations = snapshot
     for plugin, was_enabled in enabled.items():
         plugin.enabled = was_enabled
     manager._auto_enabled.clear()
     manager._auto_enabled.update(auto_enabled)
+    if hasattr(manager, "_io_registrations"):
+        manager._io_registrations[:] = io_registrations
 
 
 # ---------------------------------------------------------------------------
@@ -253,51 +308,3 @@ def _skip_without_gl(request):
     ok, reason = gl_availability()
     if not ok:
         pytest.skip("OpenGL tier unavailable: %s" % reason)
-
-
-# ---------------------------------------------------------------------------
-# GL import stubs (MiniWind's editor/engine/game suites)
-# ---------------------------------------------------------------------------
-# Several MiniWind test modules exercise code behind the render stack --
-# ``editor.main_window``, ``engine.qt_game_view`` -- on machines with no OpenGL
-# driver, where PyOpenGL cannot even be imported. They stub the GL modules for
-# the import, and :func:`install_gl_stubs` is the one correct way to do it.
-#
-# ``mock.patch.dict(sys.modules, ...)`` is a trap: on exit the patch removes
-# *everything* imported inside the block, including heavy transitive imports
-# such as numpy, whose C extension cannot be imported twice in one process. The
-# stubs installed here are permanent and only ever fill a genuine gap: where
-# PyOpenGL really is installed, nothing is replaced.
-
-#: The GL modules the render stack imports at module scope.
-_GL_MODULES = (
-    "OpenGL",
-    "OpenGL.GL",
-    "OpenGL.GLU",
-    "OpenGL.GLUT",
-    "OpenGL.GL.shaders",
-    "OpenGL.arrays",
-    "OpenGL.arrays.vbo",
-)
-
-
-def install_gl_stubs():
-    """Make ``import OpenGL...`` succeed on a machine with no GL driver.
-
-    A no-op where PyOpenGL imports for real. Returns True if any stub was
-    installed, so a test can say why it is running against a fake.
-    """
-    from unittest import mock
-
-    try:
-        import OpenGL.GL  # noqa: F401
-        return False
-    except Exception:
-        pass
-
-    installed = False
-    for name in _GL_MODULES:
-        if name not in sys.modules:
-            sys.modules[name] = mock.MagicMock(name=name)
-            installed = True
-    return installed

@@ -1,5 +1,6 @@
 import os
 import platform
+import re
 import sys
 
 SHADER_DIR = os.path.join(os.path.dirname(__file__), 'shaders')
@@ -155,6 +156,57 @@ MAX_LIGHTS_ARM = 16
 # renderer clamps `active_lights` to match (see BaseRenderer._shader_light_cap).
 MAX_LIGHTS_WATER = 8
 MAX_LIGHTS_TERRAIN = 8
+
+# GL 3.3 UBO binding used by every lighting shader.  The binding is assigned
+# from Python with glUniformBlockBinding rather than using a GLSL 4.2-style
+# explicit binding qualifier, keeping this portable to the engine's GL 3.3
+# target.
+LIGHT_UBO_BINDING = 2
+
+_LIGHT_DECL_RE = re.compile(
+    r"struct\s+Light\s*\{.*?\};\s*uniform\s+Light\s+lights\s*\[\s*(\d+)\s*\]\s*;",
+    re.DOTALL,
+)
+
+
+def light_ubo_source(source):
+    """Rewrite a legacy Light[] fragment shader to the shared std140 UBO.
+
+    The original shader interface is intentionally accepted here so the source
+    files remain readable and the same transform applies to loose shaders,
+    fallback strings, ARM variants and instanced variants alike.
+    """
+    if not source or 'uniform Light lights[' not in source:
+        return source
+
+    match = _LIGHT_DECL_RE.search(source)
+    if match is None:
+        return source
+
+    count = int(match.group(1))
+    block = (
+        "struct Light {\n"
+        "    highp vec4 position;\n"
+        "    vec4 color;\n"
+        "    vec4 params;       // x=intensity, y=radius\n"
+        "    ivec4 indices;     // x=shadow index\n"
+        "};\n"
+        "layout(std140) uniform FioLightBlock {\n"
+        f"    Light lights[{count}];\n"
+        "};"
+    )
+    result = _LIGHT_DECL_RE.sub(block, source, count=1)
+
+    result = re.sub(r"lights\[([^]]+)\]\.position\b", r"lights[\1].position.xyz", result)
+    result = re.sub(r"lights\[([^]]+)\]\.color\b", r"lights[\1].color.xyz", result)
+    result = re.sub(r"lights\[([^]]+)\]\.intensity\b", r"lights[\1].params.x", result)
+    result = re.sub(r"lights\[([^]]+)\]\.radius\b", r"lights[\1].params.y", result)
+    result = re.sub(
+        r"lights\[([^]]+)\]\.shadowIndex\b",
+        r"int(lights[\1].indices.x)",
+        result,
+    )
+    return result
 
 SHADOW_GLSL = """
 #define MAX_SHADOW_LIGHTS 4
@@ -406,22 +458,13 @@ uniform mat4 projection;
 uniform mat4 view;
 uniform vec3 sprite_pos_world;
 uniform vec2 sprite_size;
-// In-plane rotation of the billboard (radians). 0 = upright (default). Used to
-// turn a top-down head sprite so it points where the actor is heading, matching
-// the 2D map view and the player's own rotating head.
-uniform float sprite_rot;
 void main() {
     TexCoords = aPos + 0.5;
-    float sc = cos(sprite_rot);
-    float ss = sin(sprite_rot);
-    // Rotate the quad corner in the billboard plane. The texture rides the
-    // rotated quad, so the whole image spins on screen.
-    vec2 rp = vec2(aPos.x * sc - aPos.y * ss, aPos.x * ss + aPos.y * sc);
     vec3 cameraRight = vec3(view[0][0], view[1][0], view[2][0]);
     vec3 cameraUp = vec3(view[0][1], view[1][1], view[2][1]);
-    vec3 worldPos = sprite_pos_world
-                  + cameraRight * rp.x * sprite_size.x
-                  + cameraUp * rp.y * sprite_size.y;
+    vec3 worldPos = sprite_pos_world 
+                  + cameraRight * aPos.x * sprite_size.x 
+                  + cameraUp * aPos.y * sprite_size.y;
     FragPos = worldPos;
     gl_Position = projection * view * vec4(worldPos, 1.0);
 }""",
@@ -431,25 +474,9 @@ out vec4 FragColor;
 in highp vec2 TexCoords;
 uniform sampler2D sprite_texture;
 in highp vec3 FragPos;""" + FOG_GLSL + """
-// Optional colour flash: rgb is the flash colour, a is how strongly to mix it in
-// (0 = untinted). Used for the red damage flash. Defaults to no tint.
-uniform vec4 sprite_tint;
-// Whole-sprite opacity, for something fading in or out (the reaper's arrival and
-// departure). 1 = solid, which is what every caller that never sets it gets — a
-// uniform an old driver has optimised away reads as 0 through glGetUniformLocation,
-// and the -1 location that produces makes the glUniform1f call a no-op, so the
-// default must be established by the caller each pass, not relied on here.
-uniform float sprite_opacity;
 void main() {
     vec4 texColor = texture(sprite_texture, TexCoords);
-    // Cut the sprite's transparent border on the *texture's* own alpha, before
-    // any fade is applied — otherwise fading one out would erode its silhouette
-    // from the edges in rather than dissolving it evenly.
     if(texColor.a < 0.1) discard;
-    texColor.rgb = mix(texColor.rgb, sprite_tint.rgb, clamp(sprite_tint.a, 0.0, 1.0));
-    texColor.a *= clamp(sprite_opacity, 0.0, 1.0);
-    // Distance fog is applied after the tint, so a flashing actor in the haze
-    // fades with the scene rather than glowing through it.
     FragColor = vec4(applyFog(texColor.rgb, FragPos), texColor.a);
 }""",
 

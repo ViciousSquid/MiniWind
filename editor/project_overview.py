@@ -154,7 +154,7 @@ def format_overview(stats: dict, map_name: str) -> str:
             % (label, stats.get(key, 0)))
 
     return (
-        '<div style="font-size:11pt;"><b style="color:#b52316;">%s</b></div>'
+        '<div style="font-size:11pt;"><b style="color:#F08000;">%s</b></div>'
         '<table style="margin-top:8px;">%s</table>'
         '<hr style="border:1px solid #444; margin-top:10px;">'
         '<div style="color:#aaaaaa;">Created: %s</div>'

@@ -9,9 +9,9 @@ import threading
 import time
 import glm
 import math
-import json
-from html import escape
-from typing import Dict, List, Any, Optional, Tuple
+
+import numpy as np
+from typing import Dict, List, Any, Optional
 # The debug console is a Qt widget and lives in the editor package; the AI only
 # wants somewhere to write a line.  Guarded exactly like the rest of the engine
 # (see logic_thread) so the AI still runs - and is still testable - in the
@@ -21,10 +21,7 @@ try:
 except ImportError:  # pragma: no cover - exercised by the head-less player
     def debug_log(category, message):
         print(f"[{category}] {message}")
-from engine import combat_loadout
-from engine.facing import face_heading
-from .constants import is_water_brush
-from .spatial import TIER_ACTIVE, TIER_DISTANT, TIER_DORMANT, TIER_NEAR
+from .constants import is_solid_world_brush
 from .monster_constants import (
     MONSTER_SIGHT_RANGE,
     MONSTER_SHOOT_INTERVAL,
@@ -36,22 +33,10 @@ from .monster_constants import (
     MONSTER_WALL_MARGIN,
     MONSTER_STUCK_THRESHOLD,
     MONSTER_DETOUR_RANGE,
-    WEAPON_DAMAGE,
     MONSTER_SHOOT_SOUNDS,
     MONSTER_SHOOT_SOUND_DEFAULT,
     MONSTER_BITE_DISTANCE,
     MONSTER_BITE_DAMAGE_MULT,
-    MONSTER_MELEE_RANGE,
-    MONSTER_MELEE_SOUND,
-    MONSTER_BOW_SOUND,
-    MONSTER_ARROW_SPRITE,
-    MONSTER_ARROW_SPRITE_SIZE,
-    MONSTER_BOW_PROJECTILE_SPEED,
-    MONSTER_MAGIC_SOUND,
-    MONSTER_MAGIC_SPRITE,
-    MONSTER_MAGIC_SPRITE_SIZE,
-    MONSTER_MAGIC_PROJECTILE_SPEED,
-    MONSTER_HIT_FLASH_TIME,
 )
 
 try:
@@ -92,116 +77,23 @@ class MonsterAI:
         self._debug_rays: List[Dict[str, Any]] = []   # for F7 debug lines
         self.monster_debug_active = False
         self._grid = None                          # SpatialGrid, set by LogicThread
-        # PERF: per-tick snapshot of every actor's position/team, plus a uniform
-        # spatial hash of them keyed by (cell_x, cell_z). Team targeting
-        # (_find_closest_enemy_team_monster) was O(N^2): every actor scanned
-        # every other actor each tick, building a glm.vec3 and calling the
-        # faction predicate per pair. With the hash, a query only visits actors
-        # in the handful of cells its sight radius covers, and team hostility is
-        # resolved once per distinct team — so a spread-out population is no
-        # longer quadratic. Rebuilt at the top of update(); see _build_ai_snapshot.
-        self._ai_snapshot = None
-        #: Reusable buffer holding the actors this tick's simulation LOD kept
-        #: live. Cleared and refilled each update() so a tick allocates no list.
-        self._active_buf: List = []
+
+        # Nearest-enemy batch. Every awake teamed monster without an aggro
+        # target used to walk every monster, so the search was O(N^2) Python --
+        # 22 ms per tick at 240 monsters. It is one dense pass now; see
+        # _enemy_batch(). Invalidated at the top of every update and rebuilt on
+        # the first query of the tick, so a map with no teams never builds it.
+        self._enemy_rows = {}          # id(monster) -> row
+        self._enemy_monsters = ()      # row -> monster
+        self._enemy_teams = ()         # row -> its team string
+        self._enemy_nearest = None     # row -> nearest enemy row, or -1
+        self._enemy_range = None       # the range the batch was built for
+        self._enemy_ready = False      # has this tick's batch been attempted
+        self._enemy_pos = np.empty((0, 3), dtype=np.float64)
 
     def set_spatial_grid(self, grid):
         """Called by LogicThread after populating the grid."""
         self._grid = grid
-
-    def _roll_attack_damage(self, attacker, maximum: int, attack_style: str):
-        """Roll an actor's damage through the running game's dice service.
-
-        The engine knows only the service's shape: ``notation_for_maximum`` turns
-        a damage ceiling into a dice expression and ``request_roll`` rolls it.
-        Which dice exist is the game's rule (``game.diceroll``). With no service
-        bound the flat maximum is dealt, exactly as before dice existed.
-        """
-        maximum = int(maximum)
-        if maximum < 2:
-            return max(0, maximum), None
-        session = getattr(self.lt, "game_session", None)
-        dice = getattr(getattr(session, "game", None), "dice", None)
-        if dice is None:
-            return maximum, None
-        name = str(attacker.properties.get("name", "monster"))
-        notation_for = getattr(dice, "notation_for_maximum", None)
-        if notation_for is None:
-            return maximum, None
-        notation = notation_for(maximum)
-        result = dice.request_roll(
-            notation, source="monster.attack",
-            context={"attacker": name, "attack_style": attack_style})
-        return int(result["roll_result"]), result
-
-    @staticmethod
-    def _attack_target_name(aggro_monster):
-        """Return a readable target label for combat logging."""
-        if aggro_monster is not None:
-            return str(aggro_monster.properties.get("name", "monster"))
-        return "player"
-
-
-    @staticmethod
-    def _face_dir(thing, direction, delta=None) -> None:
-        """Turn an actor toward *direction* so it faces where it's moving or
-        looking, rather than sliding there sideways.
-
-        Delegates to :func:`engine.facing.face_heading`, which owns the heading
-        convention and the easing — see that module for why every mover has to
-        go through it. Passing *delta* eases the turn over time; omitting it
-        (e.g. snapping to face a target the instant combat starts) sets the
-        heading outright.
-        """
-        try:
-            dx = float(direction.x); dz = float(direction.z)
-        except AttributeError:
-            dx, dz = float(direction[0]), float(direction[2])
-        face_heading(thing.properties, dx, dz, delta)
-
-    # -------------------------------------------------------------------------
-    # Choosing a weapon
-    # -------------------------------------------------------------------------
-
-    @staticmethod
-    def _attack_style_for(thing, state, in_melee: bool) -> str:
-        """How this actor is fighting right now — blade, bow or spell.
-
-        An actor that carries more than one option switches between them: it
-        draws a blade once the target is inside its reach and reaches for a
-        spell or a bow when the target is away. One that carries a single option
-        is untouched and keeps behaving exactly as the map authored it.
-
-        **This runs every tick, so it does almost nothing.** The choice depends
-        only on which side of melee range the target is, so all a normal tick
-        does is compare that band against the last one. Only when the band
-        actually flips — a handful of times in a fight — is the loadout rebuilt
-        from the inventory and a style picked (see engine/combat_loadout.py).
-        Rebuilding on that edge, rather than caching it for the session, is also
-        what makes a kit picked up mid-fight take effect with no invalidation
-        bookkeeping and nothing polling for changes.
-        """
-        band = bool(in_melee)
-        if state.get('style_band') is not band:
-            state['style_band'] = band
-            loadout = combat_loadout.build_loadout(thing.properties)
-            style = combat_loadout.choose_style(loadout, band)
-            # Nothing authored and nothing to choose between: keep the legacy
-            # per-type attack (flying = projectile, others = hitscan). The
-            # loadout's MELEE fallback is for actors that do have a style.
-            if (not combat_loadout.has_choice(loadout)
-                    and not str(thing.properties.get('attack_style', '') or '').strip()):
-                style = ''
-            state['attack_style'] = style
-            # Show what it is actually holding. Written to a transient key so
-            # the authored `equipped_weapon` survives — the renderer prefers
-            # `_active_weapon` when it is set (see Monster.get_render_snapshot).
-            if combat_loadout.has_choice(loadout):
-                thing.properties['_active_weapon'] = combat_loadout.weapon_for(
-                    loadout, style)
-            return style
-        return state.get('attack_style') or str(
-            thing.properties.get('attack_style', '') or '').lower()
 
     # -------------------------------------------------------------------------
     # Main update entry point
@@ -215,45 +107,18 @@ class MonsterAI:
         if self.lt.player_dead:
             return
 
-        # World frozen by a game menu (character creation, inventory, …): don't
-        # move, target, attack or make noise until play resumes.
-        if getattr(self.lt, 'gameplay_paused', False):
-            return
-
         player_pos = self.lt.player.pos
         self._debug_rays.clear()
+        # The batch describes one tick. Dropping it here rather than building
+        # it means a map with no teams never pays for one.
+        self._enemy_ready = False
+        self._enemy_nearest = None
 
         # PERF: iterate the precomputed monster list instead of isinstance-
         # scanning every brush/thing in the level every tick.
         monster_things = getattr(self.lt, '_monster_things', None)
         if monster_things is None:
             monster_things = [t for t in self.lt.things if isinstance(t, MonsterThing)]
-
-        # ---- Simulation LOD -------------------------------------------------
-        # Only actors Big World's tier classifier put in the player's vicinity
-        # (TIER_NEAR / TIER_ACTIVE) get the combat AI at all. Beyond that the
-        # player cannot see, hear, be seen by or reach them, so chasing, sight
-        # lines, gravity settling and patrol stepping are pure waste — and they
-        # are the per-actor costs that made this the most expensive thing in the
-        # frame on a large world. The tier is read from the actor's own
-        # properties (stamped by Fio Big World on cell crossings) rather than
-        # from the index arrays, because the AI runs on its own thread: a dict
-        # read races with nothing.
-        #
-        # A world with no index behind it — the editor, a headless test, LOD
-        # switched off — leaves every actor at TIER_NEAR, i.e. exactly the
-        # pre-LOD behaviour.
-        active = self._active_buf
-        del active[:]
-        for t in monster_things:
-            if t.properties.get('_sim_tier', TIER_NEAR) <= TIER_ACTIVE:
-                active.append(t)
-        monster_things = active
-
-        # PERF: build the per-tick actor snapshot + spatial hash once so every
-        # team-targeting query below is a local cell walk instead of a full
-        # per-pair scan (see _build_ai_snapshot / _find_closest_enemy_team_monster).
-        self._build_ai_snapshot(monster_things)
 
         for thing in monster_things:
             if thing.properties.get('hidden', False):
@@ -263,17 +128,6 @@ class MonsterAI:
                 continue
 
             mid = id(thing)
-
-            # Decay the damage flash (set on any hit, incl. parked NPCs that are
-            # struck but never reach the AI logic below). Runs before the early
-            # continues so a flash always clears.
-            _flash = thing.properties.get('_hit_flash', 0.0)
-            if _flash:
-                _flash -= delta
-                if _flash <= 0.0:
-                    thing.properties.pop('_hit_flash', None)
-                else:
-                    thing.properties['_hit_flash'] = _flash
 
             # ---- Dead monsters: sprite falls ----
             if thing.properties.get('dead', False):
@@ -307,14 +161,6 @@ class MonsterAI:
             wake_sight = thing.properties.get('wake_on_sight', True)
             awake = thing.properties.get('awake', False)
 
-            # Per-entity perception: how far this actor sees enemies before it
-            # engages. Lets a bandit camp stay dormant until approached instead
-            # of aggroing the whole map. Falls back to the global default.
-            try:
-                sight = float(thing.properties.get('sight_range', MONSTER_SIGHT_RANGE))
-            except (TypeError, ValueError):
-                sight = float(MONSTER_SIGHT_RANGE)
-
             if not awake:
                 if triggered:
                     # Scripted ambush: waits for its I/O trigger, ignores sight & sound
@@ -330,16 +176,14 @@ class MonsterAI:
                     # Sight of the player (squared distance — threshold-only compare)
                     diff_to_player = player_pos - glm.vec3(thing.pos)
                     dist_to_player_sq = glm.dot(diff_to_player, diff_to_player)
-                    player_hostile = self._teams_hostile(
-                        thing.properties.get('team', ''), 'player')
-                    if player_hostile and dist_to_player_sq <= sight * sight:
+                    if dist_to_player_sq <= MONSTER_SIGHT_RANGE * MONSTER_SIGHT_RANGE:
                         woke_reason = 'sight'
                     else:
                         # Sight of an enemy-team monster
                         my_team = thing.properties.get('team', '')
                         if my_team:
                             enemy = self._find_closest_enemy_team_monster(
-                                thing, my_team, player_pos, sight)
+                                thing, my_team, player_pos, MONSTER_SIGHT_RANGE)
                             if enemy is not None:
                                 woke_reason = 'enemy'
                                 if self.monster_debug_active:
@@ -368,7 +212,6 @@ class MonsterAI:
             if thing.properties.pop('_kill', False):
                 thing.properties['dead'] = True
                 thing.properties.pop('is_shooting', None)
-                self._snapshot_mark_dead(thing)
                 if self.monster_debug_active:
                     name = thing.properties.get('name', '?')
                     debug_log("MonsterAI",
@@ -465,54 +308,30 @@ class MonsterAI:
                 else:
                     # ---- Team-based enemy targeting (priority over player) ----
                     my_team = thing.properties.get('team', '')
-                    enemy_monster = None
                     if my_team:
                         enemy_monster = self._find_closest_enemy_team_monster(
-                            thing, my_team, player_pos, sight)
-                    if enemy_monster is not None:
-                        aggro_monster = enemy_monster
-                        target_pos = glm.vec3(enemy_monster.pos)
-                        if self.monster_debug_active:
-                            name = thing.properties.get('name', '?')
-                            ename = enemy_monster.properties.get('name', '?')
-                            eteam = enemy_monster.properties.get('team', '?')
-                            debug_log("MonsterAI",
-                                      f"{name} (team={my_team}) targeting enemy {ename} (team={eteam})")
-                    elif self._hostile_to_player(thing):
-                        # Only actors hostile to the player fall back to hunting
-                        # the player. A guard or wild animal that isn't hostile to
-                        # the player (and has no enemy in sight) just idles/patrols
-                        # instead of chasing them.
-                        target_pos = player_pos
+                            thing, my_team, player_pos, MONSTER_SIGHT_RANGE)
+                        if enemy_monster is not None:
+                            aggro_monster = enemy_monster
+                            target_pos = glm.vec3(enemy_monster.pos)
+                            if self.monster_debug_active:
+                                name = thing.properties.get('name', '?')
+                                ename = enemy_monster.properties.get('name', '?')
+                                eteam = enemy_monster.properties.get('team', '?')
+                                debug_log("MonsterAI",
+                                          f"{name} (team={my_team}) targeting enemy {ename} (team={eteam})")
+                        else:
+                            target_pos = player_pos
                     else:
-                        target_pos = None
+                        target_pos = player_pos
 
-            # No valid target this frame — behave as "out of sight" (patrol/idle).
-            if target_pos is None:
-                thing.properties['is_shooting'] = False
-                state['anim_timer'] = 0.0
-                if state['in_sight']:
-                    state['in_sight'] = False
-                if thing.properties.get('can_hear', False):
-                    if not self._investigate_sounds(thing, state, mtype, delta, player_pos):
-                        self._update_monster_patrol(thing, state, mtype, delta)
-                else:
-                    self._update_monster_patrol(thing, state, mtype, delta)
-                continue
-
-            # Distance is needed for the sight-range decision regardless of LOS.
-            # Avoid a spatial ray query for targets that cannot be engaged; debug
-            # visualization deliberately retains the full LOS check.
-            _dist_diff = thing_pos - target_pos
-            distance_sq = glm.dot(_dist_diff, _dist_diff)
-            in_sight_range = distance_sq <= sight * sight
-
+            # ---- Line of sight check ----
             monster_eye = glm.vec3(thing_pos.x, thing_pos.y + 64.0, thing_pos.z)
             if aggro_monster is not None:
                 target_eye = glm.vec3(target_pos.x, target_pos.y + 64.0, target_pos.z)
             else:
                 target_eye = glm.vec3(player_pos.x, player_pos.y + self.lt.player.camera_height, player_pos.z)
-            has_los = self._has_line_of_sight(monster_eye, target_eye) if (in_sight_range or self.monster_debug_active) else False
+            has_los = self._has_line_of_sight(monster_eye, target_eye)
 
             if self.monster_debug_active:
                 self._debug_rays.append({
@@ -521,7 +340,11 @@ class MonsterAI:
                     'color': 'green' if has_los else 'red',
                 })
 
-            if in_sight_range:
+            # PERF: squared distance — every use below is a threshold compare.
+            _dist_diff = thing_pos - target_pos
+            distance_sq = glm.dot(_dist_diff, _dist_diff)
+
+            if distance_sq <= MONSTER_SIGHT_RANGE * MONSTER_SIGHT_RANGE:
                 # ---- Entered sight range ----
                 if not state['in_sight']:
                     state['in_sight'] = True
@@ -540,10 +363,6 @@ class MonsterAI:
                                 f'<a href="filter:{name}" style="color: #42A5F5; font-weight: bold; text-decoration: none;">{name}</a> '
                                 f'engaging enemy: '
                                 f'<span style="color: #AB47BC; font-weight: bold;">player</span>')
-
-                # Face the target while engaged, even at melee stop distance, so
-                # the head sprite looks at what it's fighting.
-                self._face_dir(thing, target_pos - thing_pos)
 
                 # ---- Move toward target ----
                 if distance_sq > MONSTER_STOP_DISTANCE * MONSTER_STOP_DISTANCE:
@@ -569,122 +388,49 @@ class MonsterAI:
                                 thing.pos = [slide_z.x, slide_z.y, slide_z.z]
                             # else: blocked on both axes – no movement
 
-                # ---- Attacking ----
-                # Fantasy combat: a monster/NPC either strikes in MELEE (no
-                # ranged attack, no gunshot) or looses an ARROW with a bow.
-                # ``attack_style`` selects which; when it is absent the legacy
-                # behaviour (flying = projectile, human = hitscan) is kept so
-                # pre-existing non-fantasy maps are unchanged.
+                # ---- Shooting ----
                 state['shoot_timer'] -= delta
-                melee_range = float(thing.properties.get('melee_range', MONSTER_MELEE_RANGE))
-                in_melee = distance_sq <= melee_range * melee_range
-                attack_style = self._attack_style_for(thing, state, in_melee)
-
-                if attack_style == 'melee':
-                    ready = state['shoot_timer'] <= 0.0 and in_melee
-                elif attack_style in ('bow', 'magic'):
-                    ready = state['shoot_timer'] <= 0.0 and has_los
-                else:
-                    ready = state['shoot_timer'] <= 0.0 and has_los  # legacy
-
-                if ready:
+                if state['shoot_timer'] <= 0.0 and has_los:
                     state['shoot_timer'] = MONSTER_SHOOT_INTERVAL
                     state['anim_timer'] = MONSTER_SHOOT_ANIM_TIME
 
-                    authored_damage = int(thing.properties.get('damage', 20))
-                    damage, attack_roll = self._roll_attack_damage(
-                        thing, authored_damage, attack_style or mtype)
-                    sound_file = MONSTER_SHOOT_SOUNDS.get(mtype, MONSTER_SHOOT_SOUND_DEFAULT)
+                    damage = int(thing.properties.get('damage', 20))
 
-                    if attack_style == 'melee':
-                        # Instant strike at close range — player or, when
-                        # infighting, the aggro'd enemy monster. No projectile.
-                        if aggro_monster is not None:
-                            self._apply_monster_damage(aggro_monster, damage, attacker=thing)
-                        else:
-                            self.lt._apply_player_damage(damage)
-                        sound_file = MONSTER_MELEE_SOUND
-                    elif attack_style == 'bow':
-                        # Loose an arrow toward the target (dodgeable projectile).
-                        self._spawn_monster_projectile(
-                            thing, target_pos, damage, mid,
-                            sprite=MONSTER_ARROW_SPRITE,
-                            size=MONSTER_ARROW_SPRITE_SIZE,
-                            speed=MONSTER_BOW_PROJECTILE_SPEED,
-                            embeds=True, kind='arrow')
-                        sound_file = MONSTER_BOW_SOUND
-                    elif attack_style == 'magic':
-                        # Hurl a glowing magic bolt (dodgeable projectile). If the
-                        # caster has an assigned spell (authored in the Spells
-                        # tab), use its colour / per-shot damage / speed so each
-                        # bolt matches the spell being cast.
-                        m_color, m_speed = None, MONSTER_MAGIC_PROJECTILE_SPEED
-                        m_damage = damage
-                        spell = self._primary_spell(thing)
-                        if spell:
-                            m_color = spell.get('color')
-                            if spell.get('damage'):
-                                m_damage = int(spell['damage'])
-                            if spell.get('speed'):
-                                m_speed = float(spell['speed'])
-                        self._spawn_monster_projectile(
-                            thing, target_pos, m_damage, mid,
-                            sprite=MONSTER_MAGIC_SPRITE,
-                            size=MONSTER_MAGIC_SPRITE_SIZE,
-                            speed=m_speed, color=m_color)
-                        sound_file = MONSTER_MAGIC_SOUND
-                    elif mtype == 'flying':
-                        # ---- Legacy flying monsters: bite if very close, else projectile ----
+                    if mtype == 'flying':
+                        # ---- Flying monsters: bite if very close, else projectile ----
                         if distance_sq <= MONSTER_BITE_DISTANCE * MONSTER_BITE_DISTANCE and aggro_monster is None:
+                            # Bite attack: instant hitscan, double damage
                             bite_damage = int(damage * MONSTER_BITE_DAMAGE_MULT)
                             self.lt._apply_player_damage(bite_damage)
+                            name = thing.properties.get('name', '?')
+                            debug_log("MonsterAI", f"{name} used bite attack for 2x damage!")
                         else:
+                            # Too far — spawn projectile sprite
                             self._spawn_monster_projectile(thing, target_pos, damage, mid)
+                            name = thing.properties.get('name', '?')
+                            debug_log("MonsterAI", f"{name} fired projectile")
                     else:
-                        # ---- Legacy human monsters: instant hitscan damage ----
+                        # ---- Human monsters: instant hitscan damage ----
                         if aggro_monster is not None:
+                            # ---- Infighting: damage the aggro target monster ----
                             self._apply_monster_damage(aggro_monster, damage, attacker=thing)
                         else:
+                            # ---- Check for crossfire (Doom-style infighting) ----
                             crossfire_victim = self._find_monster_in_crossfire(
                                 thing, monster_eye, target_eye)
                             if crossfire_victim is not None:
                                 self._apply_monster_damage(
                                     crossfire_victim, damage, attacker=thing)
+                                if self.monster_debug_active:
+                                    v_name = crossfire_victim.properties.get('name', '?')
+                                    a_name = thing.properties.get('name', '?')
+                                    debug_log("MonsterAI",
+                                              f"CROSSFIRE: {a_name} hit {v_name} — infighting!")
                             else:
                                 self.lt._apply_player_damage(damage)
 
-                    target_name = self._attack_target_name(aggro_monster)
-                    attack_payload = {
-                        'attacker': thing.properties.get('name', 'monster'),
-                        'target': target_name,
-                        'damage': damage,
-                        'attack_style': attack_style or mtype,
-                    }
-                    if attack_roll is not None:
-                        attack_payload['dice'] = attack_roll
-                        attack_payload['damage_roll'] = attack_roll
-                    attacker_label = escape(str(attack_payload['attacker']))
-                    target_label = escape(str(target_name))
-                    if attack_roll is not None:
-                        dice_label = escape(str(attack_roll['dice_notation']))
-                        result_label = escape(str(attack_roll['roll_result']))
-                        attack_message = (
-                            f'<span style="color: #42A5F5; font-weight: bold;">'
-                            f'{attacker_label}</span> attacked {target_label} for '
-                            f'<span style="color: #FF7043; font-weight: bold;">'
-                            f'{damage} damage</span> '
-                            f'(<span style="color: #FFFFFF;">{dice_label}</span> = '
-                            f'<span style="color: #69F0AE; font-weight: bold;">'
-                            f'{result_label}</span>)')
-                    else:
-                        attack_message = (
-                            f'<span style="color: #42A5F5; font-weight: bold;">'
-                            f'{attacker_label}</span> attacked {target_label} for '
-                            f'<span style="color: #FF7043; font-weight: bold;">'
-                            f'{damage} damage</span>')
-                    debug_log("Roll" if attack_roll is not None else "IO", attack_message)
-
-
+                    # ---- Use per-type shoot sound ----
+                    sound_file = MONSTER_SHOOT_SOUNDS.get(mtype, MONSTER_SHOOT_SOUND_DEFAULT)
                     self.lt.game_state.queue_sound({
                         'file': sound_file,
                         'volume': 0.6,
@@ -692,17 +438,15 @@ class MonsterAI:
                     })
 
                     if self.lt.io_manager:
-                        self.lt.io_manager.fire_output(
-                            thing, 'OnAttack',
-                            json.dumps(attack_payload, separators=(',', ':')))
+                        self.lt.io_manager.fire_output(thing, 'OnAttack')
 
                     if self.monster_debug_active:
                         name = thing.properties.get('name', '?')
                         tgt = aggro_monster.properties.get('name', '?') if aggro_monster else 'player'
-                        debug_log("MonsterAI", f"{name} attacks {tgt} for {damage} damage ({attack_style or mtype})")
+                        debug_log("MonsterAI", f"{name} attacks {tgt} for {damage} damage (LOS clear)")
 
-                elif state['shoot_timer'] <= 0.0:
-                    state['shoot_timer'] = 0.1   # re-check soon (out of range/LOS)
+                elif state['shoot_timer'] <= 0.0 and not has_los:
+                    state['shoot_timer'] = 0.1   # re-check soon
 
                 if state['anim_timer'] > 0.0:
                     state['anim_timer'] -= delta
@@ -765,188 +509,202 @@ class MonsterAI:
                 return t
         return None
 
-    def _teams_hostile(self, team_a, team_b) -> bool:
-        """Whether two teams are enemies.
-
-        Generic Fio behaviour is "any two different teams are enemies". A game
-        layer can install a faction model by setting ``logic._faction_hostile
-        (a, b) -> bool`` (MiniWind wires in its faction matrix), and this
-        consults it so, e.g., wild animals stay neutral to villagers while
-        bandits are hostile to both. Missing/erroring predicate falls back to
-        the legacy different-team rule so non-RPG maps are unchanged.
-        """
-        fn = getattr(self.lt, '_faction_hostile', None)
-        if fn is None:
-            return True
-        try:
-            return bool(fn(team_a, team_b))
-        except Exception:
-            return True
-
-    def _hostile_to_player(self, thing) -> bool:
-        """True if *thing* would attack the player: an explicitly hostile actor,
-        or one whose faction is hostile to the player. Guards/villagers/neutral
-        wildlife are therefore never driven to chase the player."""
-        if str(thing.properties.get('aggression', '')).lower() == 'hostile':
-            return True
-        return self._teams_hostile(thing.properties.get('team', ''), 'player')
-
-    # ------------------------------------------------------------------
-    # Per-tick actor snapshot (bulk team targeting)
-    # ------------------------------------------------------------------
-
-    #: Side length of a spatial-hash cell (world units). Sized to the monster
-    #: sight range so a typical team query only touches a 3x3–5x5 cell block.
-    _AI_CELL_SIZE = float(MONSTER_SIGHT_RANGE)
-
-    def _build_ai_snapshot(self, monster_things) -> None:
-        """Snapshot every actor's position/team for this AI tick and bin them
-        into a uniform spatial hash, so team-targeting is a local cell walk
-        rather than a full scan.
-
-        Positions are frozen at tick start and used for *both* the hash bins and
-        the distance test, so the two can never disagree (an actor moves at most
-        a few units per tick — far less than a cell — so its bin is never stale).
-        Only actors that could actually be a target — alive, non-hidden and on a
-        team — are binned, keeping buckets small; ``alive`` is still tracked per
-        row and cleared by ``_snapshot_mark_dead`` when an actor dies mid-tick.
-        ``row_of`` maps ``id(thing)`` to its row for self exclusion / death
-        updates."""
-        n = len(monster_things)
-        if n == 0:
-            self._ai_snapshot = None
-            return
-        cs = self._AI_CELL_SIZE
-        pos: List[tuple] = []
-        teams: List[str] = []
-        alive: List[bool] = []
-        row_of: Dict[int, int] = {}
-        cells: Dict[tuple, list] = {}
-        distinct_teams = set()
-        floor = math.floor
-        for i, m in enumerate(monster_things):
-            p = m.pos
-            px, py, pz = float(p[0]), float(p[1]), float(p[2])
-            pos.append((px, py, pz))
-            props = m.properties
-            team = props.get('team', '') or ''
-            teams.append(team)
-            distinct_teams.add(team)
-            al = not (props.get('dead', False) or props.get('hidden', False))
-            alive.append(al)
-            row_of[id(m)] = i
-            if al and team:   # only ever-targetable actors go in the hash
-                key = (int(floor(px / cs)), int(floor(pz / cs)))
-                bucket = cells.get(key)
-                if bucket is None:
-                    cells[key] = [i]
-                else:
-                    bucket.append(i)
-        self._ai_snapshot = {
-            'mons': monster_things,
-            'pos': pos,
-            'teams': teams,
-            'alive': alive,
-            'row_of': row_of,
-            'cells': cells,
-            'cell_size': cs,
-            'distinct_teams': distinct_teams,
-            'hostile_cache': {},   # my_team -> set of hostile team strings
-        }
-
-    def _snapshot_mark_dead(self, thing) -> None:
-        """Flag *thing* dead in the current tick's snapshot so later queries in
-        the same tick don't target it. No-op if there is no snapshot."""
-        snap = self._ai_snapshot
-        if snap is None:
-            return
-        row = snap['row_of'].get(id(thing))
-        if row is not None:
-            snap['alive'][row] = False
-
-    def _hostile_teams_for(self, snap, my_team: str):
-        """The set of team names hostile to *my_team* (memoised per tick).
-
-        The faction predicate is consulted once per distinct team rather than
-        once per candidate pair, collapsing the old O(N^2) hostility checks to
-        O(distinct_teams). ``my_team`` is never in the result, so the returned
-        set doubles as the "is an enemy" membership test in the query."""
-        cache = snap['hostile_cache']
-        hostile = cache.get(my_team)
-        if hostile is None:
-            hostile = {t for t in snap['distinct_teams']
-                       if t and t != my_team and self._teams_hostile(my_team, t)}
-            cache[my_team] = hostile
-        return hostile
+    #: Below this many monsters the batch costs more to assemble than the walk
+    #: it replaces, because only a fraction of monsters query in a given tick
+    #: -- the rest are holding an aggro target -- so an N-by-N matrix is built
+    #: to answer a handful of questions. Measured on a driven tick:
+    #:
+    #:     monsters   queries/tick   search: walk -> batch
+    #:        30           4          0.056 -> 0.138 ms   0.41x
+    #:        60           8          0.230 -> 0.230 ms   1.00x
+    #:       120          15          0.752 -> 0.460 ms   1.63x
+    #:       240          29          2.677 -> 1.428 ms   1.87x
+    #:       480          68         12.770 -> 5.096 ms   2.51x
+    #:
+    #: The same idiom as ``FLOOR_BATCH_MIN_BODIES`` and
+    #: ``render_cull.min_numpy_count``, and for the same reason: blanket
+    #: vectorisation would make the common small scene slower.
+    ENEMY_BATCH_MIN_MONSTERS = 64
 
     def _find_closest_enemy_team_monster(self, thing, my_team: str, player_pos: glm.vec3, max_range: float):
-        """Find the closest living monster on a DIFFERENT, hostile team within
-        range. Returns the monster or None.  Team-based enemies are targeted
-        first before the player.
+        """Find the closest living monster on a DIFFERENT team within range.
+        Returns the monster or None.  Team-based enemies are targeted first
+        before the player.
 
-        PERF: walks only the spatial-hash cells the sight radius covers instead
-        of every actor (the AI's old O(N^2) hot spot). Selection and tie-breaking
-        match the old loop: the nearest hostile actor, and on an exact distance
-        tie the earlier one in scene order (smallest row index)."""
+        Answered from the tick's dense batch when there is one, which is the
+        same question asked for every monster at once rather than once per
+        monster; :meth:`_enemy_batch` builds it. The walk below is what runs
+        for a small monster set, for a caller asking about a range the batch
+        was not built for, and wherever the batch cannot be assembled.
+        """
         if not my_team or MonsterThing is None:
             return None
-        snap = self._ai_snapshot
-        if snap is None:
+
+        if self._enemy_batch(max_range) is not None:
+            row = self._enemy_rows.get(id(thing))
+            # The team is re-checked because it is the caller's argument, not
+            # necessarily the property the batch read.
+            if row is not None and self._enemy_teams[row] == my_team:
+                nearest = int(self._enemy_nearest[row])
+                return self._enemy_monsters[nearest] if nearest >= 0 else None
+
+        return self._find_closest_enemy_scalar(thing, my_team, max_range)
+
+    def _enemy_batch(self, max_range: float):
+        """This tick's nearest enemy for every monster, as one dense pass.
+
+        The shape the scalar search always had was ``for A: for B: distance``,
+        which is the same arithmetic N times over rather than once over N --
+        22 ms per tick at 240 monsters, and quadratic beyond that. Written as
+        arrays it is one squared-distance matrix, three masks and an
+        ``argmin``: 0.74 ms at the same count, and the answer agrees.
+
+        Built at most once per tick, on the first query, so a map whose
+        monsters have no teams never builds one. Returns the nearest-enemy row
+        array, or ``None`` when the caller should walk instead.
+
+        **Positions are read live here, not from the projection's column.**
+        ``EntityTable.pos`` is refreshed by the logic thread in its render
+        pass, and the AI runs on its own thread at its own rate: measured, that
+        leaves the column up to 2.5 units behind a settled monster and 11
+        behind a falling one, and in a context where no render pass runs at all
+        -- a head-less test, the standalone player -- it would never be
+        refreshed. The projection still supplies what it is good for, which is
+        the row set and its order: ``monster_slots`` is the same monsters in
+        the same order as ``_monster_things``, and that order is what makes
+        ``argmin`` break ties exactly as ``<`` did.
+
+        The distance is ``|a|^2 + |b|^2 - 2ab`` in float64, where the scalar
+        path subtracts two ``glm.vec3`` in float32. That is not bit-identical
+        and is deliberately the more precise of the two: a pair whose ordering
+        the two disagree about is a pair the float32 path was resolving with
+        its own rounding error. Checked against the scalar answer over random
+        scenes and over constructed exact ties.
+        """
+        if self._enemy_ready:
+            return self._enemy_nearest if self._enemy_range == max_range else None
+        self._enemy_ready = True
+        self._enemy_nearest = None
+        self._enemy_range = max_range
+
+        monsters = getattr(self.lt, '_monster_things', None)
+        if not monsters or len(monsters) < self.ENEMY_BATCH_MIN_MONSTERS:
             return None
 
-        hostile = self._hostile_teams_for(snap, my_team)
-        if not hostile:
+        count = len(monsters)
+        if len(self._enemy_pos) < count:
+            self._enemy_pos = np.empty((max(count, 32), 3), dtype=np.float64)
+        pos = self._enemy_pos[:count]
+
+        teams = []
+        codes = {}
+        team_id = np.empty(count, dtype=np.int32)
+        alive = np.empty(count, dtype=bool)
+        rows = {}
+        try:
+            pos[:] = [m.pos for m in monsters]
+        except (ValueError, TypeError):
+            # A monster whose pos is not a 3-vector: leave it to the walk.
             return None
+        for row, monster in enumerate(monsters):
+            props = monster.properties
+            team = props.get('team', '')
+            teams.append(team)
+            if team:
+                code = codes.get(team)
+                if code is None:
+                    code = codes[team] = len(codes)
+                team_id[row] = code
+            else:
+                team_id[row] = -1
+            alive[row] = not (props.get('dead', False)
+                              or props.get('hidden', False))
+            rows[id(monster)] = row
 
-        pos = snap['pos']
-        teams = snap['teams']
-        alive = snap['alive']
-        mons = snap['mons']
-        cells = snap['cells']
-        cs = snap['cell_size']
+        self._enemy_rows = rows
+        self._enemy_monsters = monsters
+        self._enemy_teams = teams
+        self._enemy_nearest = self._nearest_enemy_rows(
+            pos, team_id, alive, max_range)
+        return self._enemy_nearest
 
-        self_row = snap['row_of'].get(id(thing))
-        # Query from the frozen snapshot position (consistent with the bins);
-        # the querying actor hasn't moved yet this tick, so this equals its live
-        # position anyway.
-        if self_row is not None:
-            mx, my_, mz = pos[self_row]
-        else:
-            mp = thing.pos
-            mx, my_, mz = float(mp[0]), float(mp[1]), float(mp[2])
+    @staticmethod
+    def _nearest_enemy_rows(pos, team_id, alive, max_range):
+        """``row -> nearest enemy row``, or -1. The whole kernel.
 
-        mr2 = max_range * max_range
-        # +2 cells of margin guarantees every actor within max_range is visited
-        # regardless of where it sits inside its cell.
-        r = int(max_range / cs) + 2
-        cx = int(math.floor(mx / cs))
-        cz = int(math.floor(mz / cs))
+        The arithmetic is float32 component-wise, because that is what the walk
+        does: ``glm.vec3(a) - glm.vec3(b)`` is float32, and ``glm.dot`` is
+        ``x*x + y*y + z*z`` in float32. Two enemies the walk cannot tell apart
+        are an exact tie it resolves by order, and ``argmin`` resolves the same
+        way -- but only if they are still exactly equal here.
 
-        best = None
-        best_d = float('inf')
-        best_row = 0
-        for gx in range(cx - r, cx + r + 1):
-            for gz in range(cz - r, cz + r + 1):
-                bucket = cells.get((gx, gz))
-                if not bucket:
-                    continue
-                for row in bucket:
-                    if row == self_row or not alive[row]:
-                        continue
-                    if teams[row] not in hostile:
-                        continue
-                    px, py, pz = pos[row]
-                    dx = px - mx
-                    dy = py - my_
-                    dz = pz - mz
-                    d2 = dx * dx + dy * dy + dz * dz
-                    if d2 > mr2:
-                        continue
-                    if d2 < best_d or (d2 == best_d and row < best_row):
-                        best_d = d2
-                        best = mons[row]
-                        best_row = row
-        return best
+        Getting that wrong is not theoretical: a float64 batch separated a pair
+        the walk tied (22509.0000000000 against 22508.9988555908) and picked
+        the other monster. Nor is rounding the float64 *result* to float32
+        enough -- it lands on 22508.998, where the float32 computation lands on
+        22509.0. The precision has to be in the inputs and the intermediates,
+        not just the answer.
+
+        Three ``(M, M)`` float32 planes rather than one ``(M, M, 3)``, so the
+        peak temporary is two of them.
+        """
+        count = len(pos)
+        p = np.asarray(pos, dtype=np.float32)
+        dx = p[:, None, 0] - p[None, :, 0]
+        dy = p[:, None, 1] - p[None, :, 1]
+        dz = p[:, None, 2] - p[None, :, 2]
+        distance = dx * dx + dy * dy + dz * dz
+
+        # A monster is excluded from its own row by the team comparison -- its
+        # team equals its own -- exactly as the walk's `t is thing` guard was
+        # already implied by its `other_team == my_team` one. An explicit
+        # diagonal clear was here and removed: no test could distinguish it,
+        # because nothing can reach it.
+        eligible = (team_id[:, None] != team_id[None, :])
+        eligible &= alive[None, :]
+        eligible &= team_id[None, :] >= 0        # a teamless monster is nobody's enemy
+        eligible &= distance <= np.float32(max_range) * np.float32(max_range)
+
+        distance = np.where(eligible, distance, np.float32(np.inf))
+        nearest = np.argmin(distance, axis=1)
+        found = np.isfinite(distance[np.arange(count), nearest])
+        return np.where(found, nearest, -1).astype(np.int32)
+
+    def _find_closest_enemy_scalar(self, thing, my_team: str, max_range: float):
+        """The per-monster walk: the batch's reference, and its fallback."""
+        my_pos = glm.vec3(thing.pos)
+        best_dist_sq = float('inf')
+        best_monster = None
+        max_range_sq = max_range * max_range
+        monster_things = getattr(self.lt, '_monster_things', None) or self.lt.things
+        # Hoisted: this used to be re-evaluated per candidate, and `things` is
+        # a property, so a 240-monster tick called it 57,600 times.
+        needs_type_check = monster_things is self.lt.things
+
+        for t in monster_things:
+            if needs_type_check and not isinstance(t, MonsterThing):
+                continue
+            if t is thing:
+                continue
+            if t.properties.get('dead', False) or t.properties.get('hidden', False):
+                continue
+            other_team = t.properties.get('team', '')
+            if not other_team:
+                continue
+            if other_team == my_team:
+                continue  # Same team = ally, not enemy
+
+            # PERF: compare squared distances — only used for a threshold
+            # and closest-of check, so the sqrt in glm.distance is wasted.
+            diff = my_pos - glm.vec3(t.pos)
+            dist_sq = glm.dot(diff, diff)
+            if dist_sq > max_range_sq:
+                continue
+            if dist_sq < best_dist_sq:
+                best_dist_sq = dist_sq
+                best_monster = t
+
+        return best_monster
 
 
     def _find_monster_in_crossfire(self, shooter, ray_start: glm.vec3,
@@ -1009,8 +767,6 @@ class MonsterAI:
 
         new_health = health - damage
         victim.properties['health'] = new_health
-        # Brief red flash so a hit reads clearly in the top-down view.
-        victim.properties['_hit_flash'] = MONSTER_HIT_FLASH_TIME
 
         if self.lt.io_manager:
             self.lt.io_manager.fire_output(victim, 'OnDamaged')
@@ -1026,9 +782,6 @@ class MonsterAI:
             victim.properties['dead'] = True
             victim.properties.pop('is_shooting', None)
             victim.properties.pop('_aggro_target', None)
-            # Keep the per-tick AI snapshot in step so a monster killed earlier
-            # this tick is no longer a valid target for later actors' queries.
-            self._snapshot_mark_dead(victim)
             if self.lt.io_manager:
                 self.lt.io_manager.fire_output(victim, 'OnDeath')
             if self.monster_debug_active:
@@ -1055,43 +808,15 @@ class MonsterAI:
     # Projectile system (flying monsters)
     # -------------------------------------------------------------------------
 
-    @staticmethod
-    def _primary_spell(thing):
-        """The next assigned spell dict for a caster, or None.
-
-        Reads ``properties['spells']`` — a list of ``{id, color, damage, speed}``
-        entries authored in the editor's Spells tab — and rotates through them
-        one per shot so a mage with several spells cycles its bolts."""
-        spells = thing.properties.get('spells')
-        if not isinstance(spells, list) or not spells:
-            return None
-        idx = int(thing.properties.get('_spell_rr', 0)) % len(spells)
-        thing.properties['_spell_rr'] = idx + 1
-        entry = spells[idx]
-        return entry if isinstance(entry, dict) else None
-
-    def _spawn_monster_projectile(self, thing, target_pos: glm.vec3, damage: int, owner_id: int,
-                                  sprite: str = None, size=None, speed: float = None,
-                                  color=None, embeds: bool = False, kind: str = None):
-        """Spawn a projectile sprite (a lobbed bolt, or an arrow for archers).
-
-        The projectile travels toward the target position and can be dodged.
-        *sprite* / *size* / *speed* let a bow-armed attacker fire a fast arrow
-        instead of the default flying-monster bolt. *embeds* mirrors the
-        player arrow's behaviour (see ``game.runtime._spawn_player_arrow_projectile``):
-        when true the shaft is left sticking in whatever it hits (or the wall)
-        via ``LogicThread._embed_projectile`` instead of just vanishing on
-        impact. *kind* is a free-form tag (e.g. ``"arrow"``) carried through
-        to the embedded-shaft record for anything that wants to distinguish
-        arrows from bolts later."""
+    def _spawn_monster_projectile(self, thing, target_pos: glm.vec3, damage: int, owner_id: int):
+        """Spawn a projectile sprite for a flying monster.
+        The projectile travels toward the target position and can be dodged."""
         from .monster_constants import (
             MONSTER_PROJECTILE_SPEED,
             MONSTER_PROJECTILE_MAX_DIST,
             MONSTER_PROJECTILE_SPRITE_SIZE,
             MONSTER_PROJECTILE_SPRITE,
         )
-
-        proj_speed = float(speed) if speed else MONSTER_PROJECTILE_SPEED
 
         start_pos = glm.vec3(thing.pos[0], thing.pos[1] + 64.0, thing.pos[2])
         direction = target_pos - start_pos
@@ -1101,33 +826,23 @@ class MonsterAI:
             dir_len = 1.0
         direction = direction / dir_len
 
-        # Get custom projectile sprite or the caller-supplied / default one.
-        sprite = (sprite or thing.properties.get('projectile_sprite')
-                  or MONSTER_PROJECTILE_SPRITE)
-        if size is None:
-            size = thing.properties.get('projectile_size', MONSTER_PROJECTILE_SPRITE_SIZE)
+        # Get custom projectile sprite or default
+        sprite = thing.properties.get('projectile_sprite', MONSTER_PROJECTILE_SPRITE)
+        size = thing.properties.get('projectile_size', MONSTER_PROJECTILE_SPRITE_SIZE)
         if not isinstance(size, (list, tuple)) or len(size) != 2:
             size = MONSTER_PROJECTILE_SPRITE_SIZE
 
-        # Projectile tint (RGB 0-255): explicit colour, else the caster's
-        # authored projectile_colour. None renders the sprite untinted.
-        if color is None:
-            color = thing.properties.get('projectile_colour')
-
         projectile = {
             'pos': [start_pos.x, start_pos.y, start_pos.z],
-            'vel': [direction.x * proj_speed,
-                    direction.y * proj_speed,
-                    direction.z * proj_speed],
+            'vel': [direction.x * MONSTER_PROJECTILE_SPEED,
+                    direction.y * MONSTER_PROJECTILE_SPEED,
+                    direction.z * MONSTER_PROJECTILE_SPEED],
             'owner_id': owner_id,
             'sprite': sprite,
-            'lifetime': MONSTER_PROJECTILE_MAX_DIST / proj_speed,
+            'lifetime': MONSTER_PROJECTILE_MAX_DIST / MONSTER_PROJECTILE_SPEED,
             'damage': damage,
             'size': tuple(size),
-            'color': list(color) if color else None,
             'distance_travelled': 0.0,
-            'embeds': embeds,
-            'kind': kind,
         }
 
         # Add to logic thread's projectile list for update
@@ -1232,7 +947,6 @@ class MonsterAI:
             if mtype != 'flying':
                 direction = _flatten_to_ground(direction)
         if dir_len > 0.001 and direction is not None:
-            self._face_dir(monster, direction, delta)
             step = direction * MONSTER_MOVE_SPEED * delta
             new_pos = thing_pos + step
 
@@ -1454,7 +1168,6 @@ class MonsterAI:
             direction = _flatten_to_ground(direction)
             if direction is None:
                 return      # the node is directly overhead; no way to walk to it
-        self._face_dir(monster, direction, delta)
 
         step = direction * MONSTER_MOVE_SPEED * speed_mult * delta
         new_pos = m_pos + step
@@ -1623,7 +1336,14 @@ class MonsterAI:
     def _has_line_of_sight(self, start: glm.vec3, end: glm.vec3) -> bool:
         """Return True if ray from start to end hits no solid wall brush."""
         if self._grid:
-            return self._grid.has_line_of_sight(start, end, self.lt.intersect_ray_aabb)
+            # The dense render projection, when the logic thread has published
+            # one: line of sight then tests the candidate brushes as rows
+            # rather than as dicts. The grid falls back to its own per-brush
+            # path when there is no table, or when it holds a brush the table
+            # cannot address.
+            return self._grid.has_line_of_sight(
+                start, end, self.lt.intersect_ray_aabb,
+                getattr(self.lt, '_render_table', None))
 
         # Fallback: full brush scan (should not happen in play mode)
         ray_dir = end - start
@@ -1633,9 +1353,7 @@ class MonsterAI:
         ray_dir = ray_dir / ray_len
 
         for brush in self.lt.brushes:
-            if brush.get('hidden') or is_water_brush(brush) or brush.get('is_fog'):
-                continue
-            if brush.get('is_trigger') and not (brush.get('is_mover') or brush.get('is_door')):
+            if not is_solid_world_brush(brush):
                 continue
             pos = glm.vec3(brush['pos'])
             size = glm.vec3(brush['size'])
@@ -1654,9 +1372,7 @@ class MonsterAI:
         # Fallback
         best_y = None
         for brush in self.lt.brushes:
-            if brush.get('hidden') or is_water_brush(brush) or brush.get('is_fog'):
-                continue
-            if brush.get('is_trigger') and not (brush.get('is_mover') or brush.get('is_door')):
+            if not is_solid_world_brush(brush):
                 continue
             pos = brush['pos']
             size = brush['size']
@@ -1679,9 +1395,7 @@ class MonsterAI:
 
         # Fallback
         for brush in self.lt.brushes:
-            if brush.get('hidden') or is_water_brush(brush) or brush.get('is_fog'):
-                continue
-            if brush.get('is_trigger') and not (brush.get('is_mover') or brush.get('is_door')):
+            if not is_solid_world_brush(brush):
                 continue
             pos = brush['pos']
             size = brush['size']

@@ -482,6 +482,7 @@ def register_all_input_handlers(io_manager: IOManager):
             return
 
         game_state = _speaker_game_state(logic)
+
         if game_state is None:
             debug_log('Error', f"Could not find game_state for speaker '{entity_name}'!")
             return
@@ -489,29 +490,23 @@ def register_all_input_handlers(io_manager: IOManager):
         # Queue the sound for the main thread to play (thread-safe). ``looping``
         # asks the mixer to repeat it until an explicit StopSound; ``entity_id``
         # lets that stop find and silence this speaker's channel.
-        # Where it is and how far it carries travel with the request: the view
-        # mixes by distance from the listener (see engine/sound_falloff.py) and
-        # keeps a looping speaker's volume up to date as the player walks.
         game_state.queue_sound({
             'action': 'play',
             'file': sound_file,
             'volume': volume,
             'looping': looping,
             'entity_id': speaker_id,
-            'pos': [float(entity.pos[0]), float(entity.pos[1]), float(entity.pos[2])],
-            'radius': float(entity.properties.get('radius', 512.0) or 0.0),
-            'global': bool(entity.properties.get('global', False)),
         })
         debug_log('Speaker', f"  Queued '{sound_file}'" + (" (looping)" if looping else ""))
 
         # Fire output event
         logic.io_manager.fire_output(entity, 'OnSoundStarted')
-
+    
     def speaker_stop(entity, param, logic):
         entity.properties['state'] = 'off'
         speaker_id = id(entity)
         logic.active_speakers.discard(speaker_id)
-        # Actually silence the channel on the audio thread — a looping sound
+        # Actually silence the channel on the audio thread -- a looping sound
         # would otherwise play forever (StopSound could not reach the mixer).
         game_state = _speaker_game_state(logic)
         if game_state is not None:
@@ -564,6 +559,28 @@ def register_all_input_handlers(io_manager: IOManager):
     io_manager.register_input_handler('pickup', 'respawn', pickup_respawn)
     io_manager.register_input_handler('pickup', 'setvalue', pickup_set_value)
     
+    # ==========================================================================
+    # PROP INPUTS
+    # ==========================================================================
+
+    def prop_enable(entity, param, logic):
+        entity.properties['disabled'] = False
+
+    def prop_disable(entity, param, logic):
+        entity.properties['disabled'] = True
+
+    def prop_wake(entity, param, logic):
+        entity.properties['_physics_awake'] = True
+
+    def prop_drop(entity, param, logic):
+        # The active prop runtime observes this one-shot request on its next tick.
+        entity.properties['_drop_requested'] = True
+
+    io_manager.register_input_handler('prop', 'enable', prop_enable)
+    io_manager.register_input_handler('prop', 'disable', prop_disable)
+    io_manager.register_input_handler('prop', 'wake', prop_wake)
+    io_manager.register_input_handler('prop', 'drop', prop_drop)
+
     # ==========================================================================
     # LOGIC_RELAY INPUTS
     # ==========================================================================
@@ -938,39 +955,21 @@ def register_all_input_handlers(io_manager: IOManager):
     # (Brushes are dicts — these handlers work for brush, door, mover, trigger)
     # ==========================================================================
 
-    def _visibility_changed(logic):
-        """An I/O Show/Hide changed an object's *authored* visibility.
-
-        That is Fio's expensive notification (``LogicThread.
-        notify_authored_visibility_changed``): it invalidates the cull buffers
-        and rebuilds the collision grid from the authored state, so the change
-        lands on the next frame rather than at the next re-validation. Hosts
-        without it (headless test doubles) are left alone.
-        """
-        notify = getattr(logic, 'notify_authored_visibility_changed', None)
-        if notify is None:
-            notify = getattr(logic, 'notify_visibility_changed', None)
-        if notify is not None:
-            notify()
-
     def brush_hide(entity, param, logic):
         """Hide a brush (set hidden flag — renderer skips it)."""
         entity['hidden'] = True
-        _visibility_changed(logic)
         name = entity.get('name', 'unnamed')
         debug_log('IO', f"Brush '{name}' hidden")
 
     def brush_show(entity, param, logic):
         """Show a brush (clear hidden flag)."""
         entity['hidden'] = False
-        _visibility_changed(logic)
         name = entity.get('name', 'unnamed')
         debug_log('IO', f"Brush '{name}' shown")
 
     def brush_toggle_vis(entity, param, logic):
         """Toggle brush visibility."""
         entity['hidden'] = not entity.get('hidden', False)
-        _visibility_changed(logic)
         name = entity.get('name', 'unnamed')
         state = "hidden" if entity.get('hidden') else "visible"
         debug_log('IO', f"Brush '{name}' toggled → {state}")
@@ -1022,27 +1021,24 @@ def register_all_input_handlers(io_manager: IOManager):
     def thing_hide(entity, param, logic):
         """Hide a thing entity."""
         entity.properties['hidden'] = True
-        _visibility_changed(logic)
         name = entity.properties.get('name', 'unnamed')
         debug_log('IO', f"Entity '{name}' hidden")
 
     def thing_show(entity, param, logic):
         """Show a thing entity."""
         entity.properties['hidden'] = False
-        _visibility_changed(logic)
         name = entity.properties.get('name', 'unnamed')
         debug_log('IO', f"Entity '{name}' shown")
 
     def thing_toggle_vis(entity, param, logic):
         """Toggle thing visibility."""
         entity.properties['hidden'] = not entity.properties.get('hidden', False)
-        _visibility_changed(logic)
         name = entity.properties.get('name', 'unnamed')
         state = "hidden" if entity.properties.get('hidden') else "visible"
         debug_log('IO', f"Entity '{name}' toggled → {state}")
 
     # Register for every thing-based type that declares Hide/Show
-    for ttype in ('monster', 'light', 'speaker', 'pickup', 'model'):
+    for ttype in ('monster', 'light', 'speaker', 'pickup', 'model', 'prop'):
         io_manager.register_input_handler(ttype, 'hide', thing_hide)
         io_manager.register_input_handler(ttype, 'show', thing_show)
         io_manager.register_input_handler(ttype, 'togglevisibility', thing_toggle_vis)

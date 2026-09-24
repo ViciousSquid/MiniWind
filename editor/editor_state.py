@@ -14,12 +14,12 @@ import copy
 import datetime
 import uuid
 from collections import deque
-from .things import Thing, Model
+from .things import Thing
 from editor.things import update_all_counters_from_entities
 
 # Import I/O system for serialization
 try:
-    from .io_system import OutputConnection, get_connections, set_connections
+    from .io_system import OutputConnection, get_connections
     IO_AVAILABLE = True
 except ImportError:
     IO_AVAILABLE = False
@@ -60,6 +60,10 @@ class EditorState:
     """Manages all the data for the current level being edited."""
 
     def __init__(self):
+        #: Coarse "something about the world changed" counter -- see
+        #: :meth:`mark_world_changed`.  Set before anything that bumps it can
+        #: run, because save_state() is reachable during construction.
+        self.world_epoch = 0
         self.brushes = []
         self.things = []
         self.selected_object = None
@@ -87,6 +91,29 @@ class EditorState:
     # =========================================================================
 
 
+    def mark_world_changed(self) -> None:
+        """Bump the coarse "something about the world changed" counter.
+
+        A derived structure that resolves expensive per-object data -- the
+        renderer's dense projection above all -- has to know when to re-resolve
+        it without inspecting every object every frame.  This counter is that
+        signal: monotonic, one integer, and cheap enough to compare per frame.
+
+        It is bumped from three places, all of them here, so nothing outside
+        this module has to remember to call it:
+
+        * :meth:`save_state`, which every tool calls at the start of a gesture;
+        * :meth:`_invalidate_entity_caches`, which undo, redo, load and clear
+          go through;
+        * :meth:`mark_lighting_dirty`, which is what a tool holding one undo
+          checkpoint open across a burst of edits calls per edit -- the Surface
+          Inspector being the one that does.
+
+        Deliberately coarse.  It says *something* changed, not what; a consumer
+        that wants to be finer-grained tracks its own per-row dirty set on top.
+        """
+        self.world_epoch += 1
+
     def mark_lighting_dirty(self) -> None:
         """
         Call whenever static geometry or static lights change so the next
@@ -94,6 +121,10 @@ class EditorState:
 
         Safe to call even when the lightmap system is unavailable.
         """
+        # A tool that holds one undo checkpoint open across a burst of edits
+        # (the Surface Inspector) calls this per edit, so it is the signal that
+        # catches what save_state alone would miss.
+        self.world_epoch += 1
         if self.bake_state is not None:
             self.bake_state.mark_dirty()
 
@@ -183,6 +214,7 @@ class EditorState:
         identity or contents cannot see it happen and would go on showing the
         entities that used to be there.
         """
+        self.mark_world_changed()
         if IO_AVAILABLE:
             try:
                 from .io_system import bump_io_revision
@@ -285,11 +317,13 @@ class EditorState:
 
         return serialized
 
-    def _deserialize_brushes(self, brushes_data):
+    def _deserialize_brushes(self, brushes_data, yield_hook=None):
         """Deserialize brushes with I/O connections."""
         result = []
 
-        for brush_data in brushes_data:
+        for index, brush_data in enumerate(brushes_data):
+            if yield_hook is not None and index % 64 == 0:
+                yield_hook()
             brush = brush_data.copy()
 
             # Backfill stable ID for legacy maps
@@ -311,26 +345,16 @@ class EditorState:
 
         return result
 
-    def load_from_data(self, level_data):
-        """Populates the scene from a dictionary."""
+    def load_from_data(self, level_data, *, yield_hook=None, save_undo=True):
+        """Populates the scene from a dictionary.
+
+        ``yield_hook`` is an optional cooperative callback used by long-running
+        imports. Normal editor loads remain unchanged.
+        """
         self._invalidate_entity_caches()
 
-        # Handle both old and new format
-        version = level_data.get('version', 1)
-
-        if version >= 2:
-            # New format with I/O connections stored separately
-            self.brushes = self._deserialize_brushes(level_data.get('brushes', []))
-        else:
-            # Old format - brushes are plain dicts
-            self.brushes = level_data.get('brushes', [])
-            # Backfill stable IDs for v1 brushes
-            for brush in self.brushes:
-                brush.setdefault('id', str(uuid.uuid4()))
-            # Migrate legacy 'target' property to I/O connections
-            if IO_AVAILABLE:
-                for brush in self.brushes:
-                    self._migrate_legacy_target(brush)
+        self.brushes = self._deserialize_brushes(
+            level_data.get('brushes', []), yield_hook=yield_hook)
 
         self.terrain_data = level_data.get('terrain_data', None)
         # Absent in maps written before this existed; the overview falls back to
@@ -346,17 +370,12 @@ class EditorState:
         # Load things
         things_data = level_data.get('things', [])
         new_things = []
-        for t_data in things_data:
-            if t_data.get('type') == 'Model':
-                model_kwargs = {k: v for k, v in t_data.items() if k != 'type'}
-                new_things.append(Model(**model_kwargs))
-            else:
-                thing = Thing.from_dict(t_data)
-                if thing:
-                    # Migrate legacy 'target' property
-                    if thing.properties.get('target') and IO_AVAILABLE:
-                        self._migrate_legacy_thing_target(thing)
-                    new_things.append(thing)
+        for index, t_data in enumerate(things_data):
+            if yield_hook is not None and index % 25 == 0:
+                yield_hook()
+            thing = Thing.from_dict(t_data)
+            if thing is not None:
+                new_things.append(thing)
 
         self.things = new_things
 
@@ -379,57 +398,8 @@ class EditorState:
             # at least once before the first Play in this session.
             self.bake_state.mark_dirty()
 
-        self.save_state()
-
-    def _migrate_legacy_target(self, brush):
-        """Migrate old 'target' property to I/O connection for brushes."""
-        target = brush.get('target', '')
-        if not target:
-            return
-
-        # Determine what output to use
-        if brush.get('is_trigger'):
-            output = 'OnTrigger'
-        elif brush.get('is_mover'):
-            output = 'OnFullyOpen'
-        elif brush.get('is_door'):
-            output = 'OnOpen'
-        else:
-            return
-
-        # Create connection
-        conn = OutputConnection(
-            output_name=output,
-            target_name=target,
-            input_name='Toggle',  # Generic default
-            parameter='',
-            delay=0.0,
-            fire_once=False
-        )
-
-        if '_io_connections' not in brush:
-            brush['_io_connections'] = []
-        brush['_io_connections'].append(conn)
-
-    def _migrate_legacy_thing_target(self, thing):
-        """Migrate old 'target' property to I/O connection for things."""
-        target = thing.properties.get('target', '')
-        if not target:
-            return
-
-        entity_type = thing.properties.get('type', '')
-
-        # Determine output based on type
-        if entity_type == 'logic_gate':
-            output = 'OnTrigger'
-        else:
-            return
-
-        thing.add_output_connection(
-            output_name=output,
-            target_name=target,
-            input_name='Toggle'
-        )
+        if save_undo:
+            self.save_state()
 
     def _selection_identifiers(self):
         """Stable identifiers for the whole selection, for state restoration.
@@ -532,6 +502,7 @@ class EditorState:
         record of what the scene now looks like.  :meth:`undo` therefore has to
         capture the live scene itself — see the note there.
         """
+        self.mark_world_changed()
         # Keep the redo branch we are about to drop, so an operation that turns
         # out to change nothing can put it back (see discard_last_checkpoint).
         self._discarded_redo = list(self.redo_stack)
@@ -616,13 +587,9 @@ class EditorState:
         things_data = state.get('things', [])
         new_things = []
         for t_data in things_data:
-            if t_data.get('type') == 'Model':
-                model_kwargs = {k: v for k, v in t_data.items() if k != 'type'}
-                new_things.append(Model(**model_kwargs))
-            else:
-                thing = Thing.from_dict(t_data)
-                if thing:
-                    new_things.append(thing)
+            thing = Thing.from_dict(t_data)
+            if thing is not None:
+                new_things.append(thing)
         self.things = new_things
 
         if 'selection' in state:
@@ -701,6 +668,37 @@ class EditorState:
                 return thing
 
         return None
+
+    def ensure_entity_ids(self):
+        """Stamp the stable UUID onto any brush or Thing that has not got one.
+
+        Fio assigns ids lazily, at the three points that serialise the scene
+        (save, load, undo checkpoint), because those are where an id earns its
+        keep: it is what lets a dict rebuilt from JSON be recognised as the
+        object it replaced.  A brush a tool has only just appended has
+        therefore not been stamped yet -- ``save_state`` snapshots the scene
+        *before* the operation that creates it.
+
+        Anything that keys a derived structure on the id needs one to exist by
+        the time it looks, so it calls this rather than stamping ids itself:
+        the write stays here, in the module that owns the world, and the
+        derived structure stays read-only with respect to it.
+
+        Uses the same ``setdefault`` semantics as the serialisers, so whoever
+        gets there first wins and an object that already has an id is
+        untouched.  Returns how many ids were assigned.
+        """
+        assigned = 0
+        for brush in self.brushes:
+            if 'id' not in brush:
+                brush['id'] = str(uuid.uuid4())
+                assigned += 1
+        for thing in self.things:
+            props = getattr(thing, 'properties', None)
+            if isinstance(props, dict) and 'id' not in props:
+                props['id'] = str(uuid.uuid4())
+                assigned += 1
+        return assigned
 
     def get_entity_id(self, entity):
         """Return the stable ID of an entity (brush dict or Thing)."""

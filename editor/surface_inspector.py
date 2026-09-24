@@ -48,19 +48,19 @@ FACE_BUTTON_STYLE = """
     QPushButton:disabled { background-color: #444; color: #888; border: 1px solid #555; }
 """
 
-# MiniWind's accent red, as the Settings window and the Asset Browser use it.
+# Fio's accent orange, as the Settings window and the Asset Browser use it.
 ACCENT_BUTTON_STYLE = """
     QPushButton {
-        background-color: #b52316;
+        background-color: #F08000;
         color: white;
         font: 9pt;
         font-weight: bold;
         padding: 6px 12px;
-        border: 1px solid #8a1a10;
+        border: 1px solid #B35F00;
         border-radius: 5px;
     }
-    QPushButton:hover { background-color: #d61604; }
-    QPushButton:pressed { background-color: #8a1a10; }
+    QPushButton:hover { background-color: #FF8C00; }
+    QPushButton:pressed { background-color: #B35F00; }
     QPushButton:disabled { background-color: #444; color: #888; border: 1px solid #555; }
 """
 

@@ -8,9 +8,8 @@ import copy
 import os
 import math
 import uuid
-from PyQt5.QtGui import QPixmap, QColor
+from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt
-import json
 import ast
 
 from . import state_values as _sv
@@ -64,7 +63,9 @@ def update_all_counters_from_entities(entities):
             if num > max_indices[class_name]:
                 max_indices[class_name] = num
 
-    # Update counters for all Thing subclasses
+    # Update counters for all Thing subclasses (including core entities
+    # defined outside this module, e.g. Prop).
+    _load_core_entity_types()
     for cls in find_subclasses(Thing):
         class_name = cls.__name__
         if class_name in max_indices:
@@ -80,10 +81,23 @@ class Thing:
     _pixmap_cache = {}  # Class-level cache for loaded pixmaps
     _counters = {}      # Class-level counter for unique naming
 
+    # Editor property classification.
+    #
+    # Properties listed here are shown on the main Properties tab.
+    # Properties listed in EDITOR_ADVANCED_PROPERTIES are shown on
+    # the Advanced tab.
+    #
+    # Subclasses should explicitly opt properties into Advanced.
+    # Everything else should remain available to the main Properties
+    # editor unless handled by a specialised widget.
+    EDITOR_PRIMARY_PROPERTIES = ()
+    EDITOR_ADVANCED_PROPERTIES = ()
+
     def __init__(self, pos=None, properties=None):
         self.pos = pos if pos is not None else [0, 0, 0]
         self.properties = properties if properties is not None else {}
         self.properties.setdefault('type', self.__class__.__name__.lower())
+        self.properties.setdefault('io_enabled', True)
         
         # Set a default and unique name
         if 'name' not in self.properties or not self.properties['name']:
@@ -162,6 +176,23 @@ class Thing:
         """
         return self.__class__.get_pixmap()
 
+    def _pixmap_for_path(self, sprite_path):
+        """Cached QPixmap for an authored sprite path (project-relative or absolute).
+
+        Returns None when the file is missing or unreadable. Shared by any
+        entity whose 2D icon comes from an authored path rather than its class.
+        """
+        cache_key = ('sprite_path', sprite_path)
+        if cache_key in self._pixmap_cache:
+            return self._pixmap_cache[cache_key]
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+        absolute_path = sprite_path if os.path.isabs(sprite_path) else os.path.join(project_root, sprite_path)
+        pixmap = QPixmap(absolute_path) if os.path.exists(absolute_path) else None
+        if pixmap is not None and pixmap.isNull():
+            pixmap = None
+        self._pixmap_cache[cache_key] = pixmap
+        return pixmap
+
     def duplicate(self, existing_names=()):
         """An independent copy of this entity, ready to place.
 
@@ -234,7 +265,21 @@ class Thing:
     def from_dict(data):
         """Deserialize from dictionary."""
         thing_type = data.get('type')
+
+        # Untouched copy for opaque preservation of unresolvable types; the
+        # loop below rewrites string property values in place.
+        original_record = copy.deepcopy(data)
+
         if not thing_type:
+            # Deliberately *not* preserved, unlike an unresolvable type token.
+            # Preservation exists so an entity whose plugin is missing survives
+            # a load/save round trip; that entity is identifiable, carries
+            # authored content, and a plugin may supply its class later. A
+            # record with no type at all is none of those things -- there is
+            # nothing to resolve it to and nothing to show the author but a
+            # nameless ghost. Skipping it (without stopping the load) is the
+            # contract test_a_thing_with_no_type_is_skipped_rather_than_
+            # crashing_the_load pins.
             return None
 
         properties = data.get('properties', {})
@@ -246,20 +291,13 @@ class Thing:
                     pass
 
         # A subclass may declare `map_type` when its serialised type token
-        # differs from its class name; otherwise the class name is used, so
-        # every existing entity resolves exactly as before.  `legacy_map_types`
-        # lists tokens an *older* Fio wrote for the same entity, so a map saved
-        # before a rename still loads into the renamed class rather than being
-        # dropped with a warning.  Current tokens are matched across every class
-        # first, so a legacy alias can never shadow a live entity type.
+        # differs from its class name; otherwise the class name is used.
         thing = None
         token = thing_type.replace('_', '').lower()
+        _load_core_entity_types()
         subclasses = find_subclasses(Thing)
         match = next((c for c in subclasses
                       if token == getattr(c, 'map_type', c.__name__.lower())), None)
-        if match is None:
-            match = next((c for c in subclasses
-                          if token in getattr(c, 'legacy_map_types', ())), None)
         if match is not None:
             thing = match(pos=data.get('pos'), properties=properties)
 
@@ -267,8 +305,11 @@ class Thing:
             if thing_type == 'thing':
                 thing = Thing(pos=data.get('pos'), properties=properties)
             else:
-                print(f"Warning: Unknown thing type '{thing_type}' found in map file.")
-                return None
+                # Never drop an entity: a later save would erase it for good.
+                # Keep the record opaque so it round-trips byte-for-byte.
+                print(f"Warning: Unknown thing type '{thing_type}' found in map file; "
+                      f"preserved unchanged (is a plugin missing or disabled?).")
+                return UnresolvedThing(original_record)
         
         io_data = data.get('io_connections', [])
         if io_data:
@@ -327,6 +368,7 @@ class Thing:
 class PlayerStart(Thing):
     """Defines where the player spawns."""
     pixmap_path = "assets/sprites/player.png"
+    EDITOR_PRIMARY_PROPERTIES = ('angle',)
     
     def __init__(self, pos=None, properties=None):
         super().__init__(pos, properties)
@@ -337,9 +379,61 @@ class PlayerStart(Thing):
         return float(self.properties.get('angle', 0.0))
 
 
+class UnresolvedThing(Thing):
+    """Opaque stand-in for an entity whose type this build cannot resolve.
+
+    Typically a plugin entity whose plugin is missing or disabled, or a type
+    from a newer/older Fio with no migration. The original map record is kept
+    verbatim and written back unchanged on save (only ``pos`` follows edits,
+    so it can still be moved or deleted in the editor). It has no runtime
+    behaviour: no class-specific handling matches it, and it declares no I/O.
+
+    ``map_type`` is set to a token no map can contain, so the from_dict
+    subclass walk can never resolve a record *to* this class.
+    """
+    map_type = '\x00unresolved'
+
+    def __init__(self, record=None, pos=None, properties=None):
+        record = copy.deepcopy(record) if isinstance(record, dict) else {}
+        self._record = record
+        raw_props = record.get('properties')
+        props = copy.deepcopy(raw_props) if isinstance(raw_props, dict) else {}
+        if properties:
+            props.update(properties)
+        super().__init__(pos=list(record.get('pos') or pos or [0, 0, 0]),
+                         properties=props)
+        self.properties['type'] = record.get('type') or self.properties.get('type')
+
+    @property
+    def unresolved_type(self):
+        return self._record.get('type')
+
+    def to_dict(self):
+        data = copy.deepcopy(self._record)
+        data['pos'] = [float(v) for v in self.pos]
+        return data
+
+    def duplicate(self, existing_names=()):
+        """Copies need their own identity inside the preserved record too."""
+        clone = super().duplicate(existing_names)
+        props = clone._record.setdefault('properties', {})
+        if isinstance(props, dict):
+            props['id'] = clone.properties['id']
+            props['name'] = clone.properties['name']
+        return clone
+
+
 class Light(Thing):
     """Dynamic light source."""
     pixmap_path = "assets/sprites/light.png"
+    EDITOR_PRIMARY_PROPERTIES = (
+    'intensity',
+    'radius',
+    'state',
+    'show_radius',
+    'casts_shadows',
+    'shadow_map_size',
+    )
 
     def __init__(self, pos=None, properties=None):
         super().__init__(pos, properties)
@@ -382,6 +476,16 @@ class Light(Thing):
 class Speaker(Thing):
     """Sound emitter entity."""
     pixmap_path = "assets/sprites/speaker.png"
+    EDITOR_PRIMARY_PROPERTIES = (
+        'sound_file',
+        'radius',
+        'global',
+        'show_radius',
+        'volume',
+        'looping',
+        'play_on_start',
+        'state',
+    )
     
     def __init__(self, pos=None, properties=None):
         super().__init__(pos, properties)
@@ -402,6 +506,15 @@ class Speaker(Thing):
 class Monster(Thing):
     """Enemy entity with subtypes (human, flying)."""
     pixmap_path = "assets/sprites/monsters/human/idle.png"   # fallback
+    EDITOR_PRIMARY_PROPERTIES = (
+        'monster_type',
+        'monster_id',
+        'health',
+        'damage',
+        'awake',
+        'sprite_width',
+        'sprite_height',
+    )
     _subtype_sprites = {}  # cache keyed by full sprite path (includes dead/alive state)
     _icon_cache = {}       # 1.2.6.0: cache for 2D view icons (60×60)
 
@@ -418,19 +531,8 @@ class Monster(Thing):
     # subsequent frames don't re-stat the file.
     # Keyed tuple: (abs_path,) -> bool
     _custom_path_exists_cache = {}
-    #: custom sprite path -> whether it resolved. Keyed by the repo-relative
-    #: path the caller holds, so the hot path does no os.path.join at all.
-    _resolved_custom_cache = {}
     # Cache the project_root lookup once per class; it never changes at runtime.
     _cached_project_root = None
-    # A head sprite's dead form is the *same head* with heads/dead.png overlaid
-    # (so a slain NPC keeps its identity instead of switching to a role sprite).
-    # Maps a head's repo-relative idle path -> the cached composite path (or
-    # None when the head / overlay art is missing). Composites are written under
-    # assets/sprites/heads/dead_cache/ (git-ignored — never real art).
-    _dead_head_cache = {}
-    HEADS_DIR = "assets/sprites/heads"
-    DEAD_OVERLAY = "assets/sprites/heads/dead.png"
 
     def __init__(self, pos=None, properties=None):
         super().__init__(pos, properties)
@@ -438,15 +540,7 @@ class Monster(Thing):
         self.properties.setdefault('monster_type', 'human')  # 'human' or 'flying'
         self.properties.setdefault('monster_id', 0)
         self.properties.setdefault('health', 100)
-        self.properties.setdefault('max_health', self.properties.get('health', 100))
         self.properties.setdefault('damage', 10)
-        # Custom death sprites were removed: a slain actor shows its head +
-        # heads/dead.png overlay (or its type's default dead.png). The gib/gore
-        # mechanic, however, is live again — a gibbed body is replaced by a
-        # splatter sprite — so its flags (``gibbed`` / ``gib_sprite`` /
-        # ``gib_magical``) are preserved here so a gibbed corpse survives a
-        # save/load instead of reverting to an ordinary corpse.
-        self.properties.pop('custom_dead', None)
 
         # --- Wake / AI behaviour ---
         self.properties.setdefault('triggered', False)
@@ -500,21 +594,6 @@ class Monster(Thing):
         return cached
 
     @classmethod
-    def invalidate_sprite_caches(cls):
-        """Drop every memoised sprite-path answer.
-
-        The resolution caches assume the sprite files on disk do not change
-        while the editor runs, which is what makes the render snapshot free of
-        filesystem work. Call this after adding, removing or replacing sprite
-        art at runtime. (The docstrings referred to this for a long time before
-        it existed — it does now, and it clears all three caches together so
-        they cannot get out of step with each other.)
-        """
-        cls._custom_path_exists_cache.clear()
-        cls._resolved_custom_cache.clear()
-        cls._default_path_cache.clear()
-
-    @classmethod
     def _get_default_paths(cls, mtype: str, variant: str):
         """Return (idle, dead, shoot) default sprite paths for this
         (monster_type, variant) pair. Filesystem stats happen only on the
@@ -559,107 +638,18 @@ class Monster(Thing):
         *default_path*.  Falls back silently — the caller guarantees the
         default path is the safest possible choice.
 
-        Uses the class-level existence cache so repeated calls don't re-stat —
-        and now also skips rebuilding the absolute path, which is a string join
-        per actor per frame on the render-snapshot path.
+        Uses the class-level existence cache so repeated calls don't re-stat.
         """
         if custom_path:
-            cache = Monster._resolved_custom_cache
-            resolved = cache.get(custom_path)
-            if resolved is None:
-                abs_custom = os.path.join(project_root, custom_path)
-                resolved = Monster._path_exists_cached(abs_custom)
-                cache[custom_path] = resolved
-                if not resolved:
-                    print(f"[Monster] Custom sprite not found, using default: {custom_path}")
-            if resolved:
+            abs_custom = os.path.join(project_root, custom_path)
+            if Monster._path_exists_cached(abs_custom):
                 return custom_path
+            print(f"[Monster] Custom sprite not found, using default: {custom_path}")
         return default_path
 
-    @classmethod
-    def _is_head_sprite(cls, rel_path: str) -> bool:
-        """True when *rel_path* is one of the character head sprites."""
-        rp = str(rel_path or "").replace("\\", "/")
-        base = os.path.basename(rp)
-        return ("/heads/" in rp or rp.startswith("heads/")) and base.startswith("head")
-
-    @classmethod
-    def _dead_head_composite(cls, idle_rel: str, project_root: str):
-        """Repo-relative path to *idle_rel* (a head) with heads/dead.png painted
-        over it — generated once and cached to disk. Returns ``None`` when
-        *idle_rel* is not a head, or when the head/overlay art is missing (so
-        the caller falls back to the normal corpse sprite).
-
-        The composite is a plain top-down PNG, so BOTH the 2D map icon and the
-        3D billboard pick it up through the ordinary sprite path with no other
-        changes."""
-        if not cls._is_head_sprite(idle_rel):
-            return None
-        # Only trust a cached HIT whose file is still on disk. Never cache a miss
-        # (the head/overlay art may be dropped in later — e.g. the artist adds
-        # dead.png after first launch), so a later call regenerates it.
-        cached = cls._dead_head_cache.get(idle_rel)
-        if cached and os.path.isfile(os.path.join(project_root, cached)):
-            return cached
-
-        result = None
-        try:
-            head_abs = os.path.join(project_root, idle_rel)
-            overlay_abs = os.path.join(project_root, cls.DEAD_OVERLAY)
-            if os.path.isfile(head_abs) and os.path.isfile(overlay_abs):
-                from PIL import Image
-                base = Image.open(head_abs).convert("RGBA")
-                over = Image.open(overlay_abs).convert("RGBA")
-                if over.size != base.size:
-                    over = over.resize(base.size, Image.LANCZOS)
-                base.alpha_composite(over)
-                out_dir = os.path.join(project_root, cls.HEADS_DIR, "dead_cache")
-                os.makedirs(out_dir, exist_ok=True)
-                name = os.path.splitext(os.path.basename(idle_rel))[0] + "__dead.png"
-                out_abs = os.path.join(out_dir, name)
-                base.save(out_abs)
-                result = f"{cls.HEADS_DIR}/dead_cache/{name}"
-        except Exception:
-            result = None
-
-        if result:
-            cls._dead_head_cache[idle_rel] = result
-        return result
-
     def get_render_snapshot(self):
-        """Return a lightweight dictionary snapshot for the renderer.
-
-        In threaded play mode the render thread draws from these snapshots
-        (``LogicThread._update_render_state`` -> ``write_state.visible_things``),
-        never from the live ``Thing`` objects, so every field the renderer
-        needs to make a per-frame decision about this actor must be included
-        here — there is no live object to fall back on.
-        """
-        idle = str(self.properties.get('custom_idle', '')).replace('\\', '/')
-        base = idle.rsplit('/', 1)[-1]
-        ttype = str(self.properties.get('type', '')).lower()
-        # Whether this actor's idle sprite is a character head — the actors
-        # that should rotate to face their heading in overhead view (drawn as
-        # ground quads, with their equipped weapon overlaid, instead of
-        # camera-facing billboards). Mirrors
-        # QtGameView._is_overhead_head_actor's live-object branch exactly, so
-        # the snapshot and live-object paths agree on the same actors.
-        # An actor may declare it outright — the way in for one whose head is
-        # not a numbered headNN (MiniWind's reaper wears heads/reaper.png).
-        if 'is_head' in self.properties:
-            is_head = bool(self.properties['is_head'])
-        else:
-            is_head = (
-                ttype in ('npc', 'creature', 'monster')
-                and ('/heads/' in idle or idle.startswith('heads/'))
-                and base.startswith('head')
-            )
+        """Return a lightweight dictionary snapshot for the renderer."""
         return {
-            # Identity of the live Thing this snapshot came from. The renderer
-            # draws from snapshots only, so this is how it recognises the actor
-            # the inspector is hovering over and tints it (see
-            # renderer_core.draw_sprites / QtGameView.inspect_hover).
-            'id': id(self),
             'pos': list(self.pos),                         # copy list
             'dead': self.properties.get('dead', False),
             'is_shooting': self.properties.get('is_shooting', False),
@@ -669,35 +659,7 @@ class Monster(Thing):
             'sprite_height': self.properties.get('sprite_height', 128),
             'custom_idle': self.properties.get('custom_idle', ''),
             'custom_shoot': self.properties.get('custom_shoot', ''),
-            'hit_flash': self.properties.get('_hit_flash', 0.0),
-            # Facing angle (radians) so the 3D billboard can rotate a head sprite
-            # to point where the actor is heading (mirrors the player). Sourced
-            # from the transient runtime heading set by the monster AI.
-            'angle': float(self.properties.get('_facing', 0.0) or 0.0),
-            # Fully-resolved sprite path for the CURRENT state. This already folds
-            # in the dead-head composite (head + heads/dead.png overlay), so the
-            # 3D view matches the 2D view for slain head actors instead of falling
-            # back to the monster-type's plain dead.png.
-            'sprite_path': self.get_sprite_path(),
-            # What is in this actor's hand right now. `_active_weapon` is the
-            # transient one the combat AI switched to when it changed range
-            # (see engine/combat_loadout.py); it wins over the authored
-            # `equipped_weapon`, which stays untouched so re-saving the map
-            # never overwrites the author's choice.
-            'weapon_id': self.properties.get('_active_weapon')
-            or self.properties.get(
-                'equipped_weapon',
-                (self.properties.get('equipment') or {}).get('weapon', '')
-                if isinstance(self.properties.get('equipment'), dict) else ''),
-            'is_head': is_head,
-            # Gib state: a gibbed body renders as its splatter sprite (already
-            # folded into sprite_path above) instead of the head/weapon overlay.
-            'gibbed': bool(self.properties.get('gibbed')),
-            'gib_sprite': self.properties.get('gib_sprite', ''),
-            # Whole-sprite opacity, for an actor fading in or out (MiniWind's
-            # reaper). 1.0 — solid — for everyone else, which is what the
-            # renderer's default is too.
-            'opacity': float(self.properties.get('_opacity', 1.0) or 0.0),
+            'custom_dead': self.properties.get('custom_dead', ''),
         }
 
     def get_sprite_path(self) -> str:
@@ -730,21 +692,8 @@ class Monster(Thing):
         default_idle, default_dead, default_shoot = Monster._get_default_paths(mtype, variant)
 
         if is_dead:
-            # A gibbed actor was blown apart / disintegrated: it is replaced by
-            # its chosen splatter sprite (blood stain, or a magical
-            # disintegration splatter), not a corpse.
-            if self.properties.get('gibbed'):
-                stain = self.properties.get('gib_sprite')
-                if stain:
-                    return stain
-            # A slain actor keeps its identity: show its head with heads/dead.png
-            # composited over it (never a custom death sprite — those are gone).
-            # A non-head actor falls back to its monster-type's default dead.png.
-            idle = self.properties.get('custom_idle', '')
-            composite = Monster._dead_head_composite(idle, project_root)
-            if composite:
-                return composite
-            return default_dead
+            return self._resolve_sprite(
+                self.properties.get('custom_dead', ''), default_dead, project_root)
         elif is_shooting:
             return self._resolve_sprite(
                 self.properties.get('custom_shoot', ''), default_shoot, project_root)
@@ -753,79 +702,56 @@ class Monster(Thing):
                 self.properties.get('custom_idle', ''), default_idle, project_root)
 
     def get_instance_pixmap(self):
-        """
-        Return the correct pixmap for the current alive/dead state.
+        """Return the icon matching this gate's current logic type."""
+        logic_type = str(
+            self.properties.get('logic_type', 'AND')
+        ).strip().lower()
 
-        The cache is keyed by the full sprite path returned by get_sprite_path(),
-        which already encodes both monster type AND state (idle vs dead).
-        This means alive and dead sprites are cached independently, so setting
-        'dead' = True on a monster that was previously rendered alive will
-        correctly switch to dead.png on the next frame without a stale cache hit.
-        """
-        sprite_path = self.get_sprite_path()
+        if logic_type not in ('and', 'or', 'xor', 'nand', 'nor'):
+            logic_type = 'and'
 
-        # Return from cache if available
-        if sprite_path in Monster._subtype_sprites:
-            return Monster._subtype_sprites[sprite_path]
+        cache_key = f"LogicGate:{logic_type}"
 
-        # Load from disk
+        if cache_key in self._pixmap_cache:
+            return self._pixmap_cache[cache_key]
+
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             project_root = os.path.abspath(os.path.join(script_dir, os.pardir))
-            abs_path = os.path.join(project_root, sprite_path)
-            if os.path.exists(abs_path):
-                pixmap = QPixmap(abs_path)
+            image_path = os.path.join(
+                project_root,
+                "assets",
+                "sprites",
+                f"logic_{logic_type}.png"
+            )
+
+            if os.path.exists(image_path):
+                pixmap = QPixmap(image_path)
                 if not pixmap.isNull():
-                    Monster._subtype_sprites[sprite_path] = pixmap
+                    self._pixmap_cache[cache_key] = pixmap
                     return pixmap
         except Exception:
             pass
 
-        # Fallback: dark red square so death is still visually obvious
-        if self.properties.get('dead', False):
-            fallback = QPixmap(128, 128)
-            fallback.fill(QColor(128, 0, 0))
-            return fallback
-
+        # Fall back to the generic LogicGate icon.
         return super().get_instance_pixmap()
 
-    #: Edge length (px) of the 2D-view actor icon.
-    ICON_SIZE = 75
-
     def get_icon_pixmap(self):
-        """Return a 75×75 top-down icon for 2D views.
-
-        Prefers the actor's *own* sprite — the head image an NPC/Monster is
-        wearing (``custom_idle``) or its role sprite — so the 2D map shows the
-        real head instead of a generic marker, matching the 3D view. Falls back
-        to the generic monster icon only when no sprite resolves. Cached in
-        ``_icon_cache`` keyed by the resolved sprite path so it is cheap."""
-        size = Monster.ICON_SIZE
-        sprite_path = self.get_sprite_path()
-        cache_key = (sprite_path, size)
-        cached = Monster._icon_cache.get(cache_key)
-        if cached is not None:
-            return cached
-
-        project_root = Monster._get_project_root()
-
-        def _scaled(rel_path):
-            try:
-                abs_path = os.path.join(project_root, rel_path)
-                if os.path.exists(abs_path):
-                    raw = QPixmap(abs_path)
-                    if not raw.isNull():
-                        return raw.scaled(size, size, Qt.KeepAspectRatio,
-                                          Qt.SmoothTransformation)
-            except Exception:
-                pass
-            return None
-
-        pix = _scaled(sprite_path) or _scaled("assets/sprites/monster.png")
-        if pix is None:
-            pix = self.get_instance_pixmap()
-        Monster._icon_cache[cache_key] = pix
-        return pix
+        """Return a generic small monster icon for 2D views."""
+        icon_path = "assets/sprites/monster.png"   # 60×60 icon
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.abspath(os.path.join(script_dir, os.pardir))
+            abs_path = os.path.join(project_root, icon_path)
+            if os.path.exists(abs_path):
+                pix = QPixmap(abs_path)
+                if not pix.isNull():
+                    return pix
+        except Exception:
+            pass
+        # Fallback: scale the full sprite down
+        # Use get_instance_pixmap() instead of super().get_icon_pixmap()
+        return self.get_instance_pixmap()
 
     @classmethod
     def clear_sprite_cache(cls):
@@ -833,8 +759,6 @@ class Monster(Thing):
         cls._subtype_sprites.clear()
         cls._default_path_cache.clear()
         cls._custom_path_exists_cache.clear()
-        cls._icon_cache.clear()   # 2D head icons follow the sprite
-        cls._dead_head_cache.clear()
         # Invalidate the base class cache for Monster’s default pixmap
         if cls.__name__ in Thing._pixmap_cache:
             del Thing._pixmap_cache[cls.__name__]
@@ -848,6 +772,12 @@ class Monster(Thing):
 class Pickup(Thing):
     """Collectible item entity."""
     pixmap_path = "assets/sprites/pickup.png"
+    EDITOR_PRIMARY_PROPERTIES = (
+        'item_type',
+        'value',
+        'activation',
+        'collected',
+    )
     
     KEY_SPRITES = {
         'blue_key': 'assets/sprites/bluekey.png',
@@ -973,6 +903,9 @@ class Pickup(Thing):
 
 class Trigger(Thing):
     """Non-visible trigger volume (for point-entity triggers)."""
+    EDITOR_PRIMARY_PROPERTIES = (
+        'action',
+    )
     pixmap_path = None
     
     def __init__(self, pos=None, properties=None):
@@ -983,7 +916,14 @@ class Trigger(Thing):
 
 class Model(Thing):
     """Represents a 3D model placed in the world."""
-    pixmap_path = "assets/sprites/model.png"
+    pixmap_path = "assets/sprites/pickup.png"
+    EDITOR_PRIMARY_PROPERTIES = (
+        'model_path',
+        'scale',
+        'rotation',
+        'no_collision',
+        'collision_size',
+    )
     
     def __init__(self, pos=None, properties=None):
         super().__init__(pos, properties)
@@ -991,6 +931,12 @@ class Model(Thing):
         self.properties.setdefault('model_path', "")
         self.properties.setdefault('rotation', [0, 0, 0])
         self.properties.setdefault('scale', [1, 1, 1])
+        self.properties.setdefault('collision_shape', 'auto')
+
+
+# Prop is a core engine primitive shared with the headless player, so it is
+# defined once in engine/prop_entity.py and exposed here lazily (see the
+# module-level __getattr__ at the end of this file).
 
 
 # =============================================================================
@@ -1003,6 +949,10 @@ class LogicRelay(Thing):
     Can be enabled/disabled. Useful for creating reusable trigger chains.
     """
     pixmap_path = "assets/sprites/logic_relay.png"
+    EDITOR_PRIMARY_PROPERTIES = (
+        'disabled',
+        'fire_once',
+    )
     
     def __init__(self, pos=None, properties=None):
         super().__init__(pos, properties)
@@ -1023,6 +973,10 @@ class LogicGate(Thing):
     Fires OnTrigger when gate condition is met.
     """
     pixmap_path = "assets/sprites/logic_gate.png"
+    EDITOR_PRIMARY_PROPERTIES = (
+        'logic_type',
+        'initial_state',
+    )
     
     def __init__(self, pos=None, properties=None):
         super().__init__(pos, properties)
@@ -1059,6 +1013,12 @@ class LogicTimer(Thing):
     Can be enabled/disabled.
     """
     pixmap_path = "assets/sprites/logic_timer.png"
+    EDITOR_PRIMARY_PROPERTIES = (
+        'interval',
+        'timer_enabled',
+        'start_on',
+        'one_shot',
+    )
     
     def __init__(self, pos=None, properties=None):
         super().__init__(pos, properties)
@@ -1087,6 +1047,10 @@ class LogicCommand(Thing):
     'command' property when the parameter is blank. Example command: "cam 2".
     """
     pixmap_path = "assets/sprites/logic_command.png"
+    EDITOR_PRIMARY_PROPERTIES = (
+        'command',
+        'disabled',
+    )
 
     def __init__(self, pos=None, properties=None):
         super().__init__(pos, properties)
@@ -1104,6 +1068,14 @@ class LogicCommand(Thing):
 class LevelChanger(Thing):
     """Entity that loads a new level when triggered."""
     pixmap_path = "assets/sprites/levelchanger.png"
+    EDITOR_PRIMARY_PROPERTIES = (
+        'target_map',
+        'delay',
+        'fade_time',
+        'show_radius',
+        'radius',
+        'usable',
+    )
 
     def __init__(self, pos=None, properties=None):
         super().__init__(pos, properties)
@@ -1397,6 +1369,16 @@ class Portal(Thing):
     """
 
     pixmap_path = "assets/sprites/portal.png"
+    EDITOR_PRIMARY_PROPERTIES = (
+    'portal_target',
+    'width',
+    'height',
+    'angle',
+    'active',
+    'portal_direction',
+    'color',
+    'show_rim',
+    )
 
     DEFAULT_WIDTH  = 128.0
     DEFAULT_HEIGHT = 256.0
@@ -1729,9 +1711,6 @@ class LogicState(Thing):
 
     #: Type token written to map files.
     map_type = 'logicstate'
-    #: Tokens older versions wrote for this same entity. None: the pre-2.4
-    #: key/value store was removed outright, not kept as an alias.
-    legacy_map_types = ()
 
     # Class-level registry of persistent stores across level transitions.
     # Keyed by store_name, stores the dict of values. Survives as long as
@@ -2101,6 +2080,7 @@ def _same_value(a, b) -> bool:
     return type(a) is type(b) and a == b
 
 
+
 # =============================================================================
 # ENTITY REGISTRY
 # =============================================================================
@@ -2132,3 +2112,33 @@ ENTITY_CATEGORIES = {
     'Logic': ['LogicRelay', 'LogicGate', 'LogicTimer', 'LogicCommand', 'LogicCamera', 'LogicSpawner', 'LogicState'],
     'AI': ['PathNode'],
 }
+
+
+# =============================================================================
+# CORE ENTITIES DEFINED OUTSIDE THIS MODULE
+# =============================================================================
+#
+# Core primitives that the headless player also needs (currently Prop) live in
+# engine/, subclassing this module's Model when the editor tier is present.
+# They cannot be imported at the top of this file (they import it), so they are
+# loaded on first use: by name via __getattr__ (``from editor.things import
+# Prop``), and before map deserialization via _load_core_entity_types() so the
+# subclass walk in Thing.from_dict can resolve their type tokens.
+
+_CORE_ENTITY_MODULES = {'Prop': 'engine.prop_entity'}
+
+
+def _load_core_entity_types():
+    import importlib
+    for module_name in set(_CORE_ENTITY_MODULES.values()):
+        importlib.import_module(module_name)
+
+
+def __getattr__(name):
+    module_name = _CORE_ENTITY_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+    value = getattr(importlib.import_module(module_name), name)
+    globals()[name] = value
+    return value

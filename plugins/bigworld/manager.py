@@ -52,7 +52,7 @@ DEFAULT_DEACTIVATION_RADIUS = 2304.0
 #: truthy ``bw_persistent`` property.
 DEFAULT_PERSISTENT_TYPES = frozenset({
     "worldmanager", "gamestate", "globalscript",
-    "questcontroller", "logicstate", "logicrelay",
+    "questcontroller", "logicstate", "logickeyvaluestore", "logicrelay",
 })
 
 

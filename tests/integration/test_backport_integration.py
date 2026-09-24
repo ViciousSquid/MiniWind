@@ -38,17 +38,16 @@ def _render_scene_source():
 
 
 def test_cull_output_feeds_only_sort_objects():
-    """cull_brushes/cull_things must reach _sort_objects and nothing else."""
+    """render_scene hands the culled lists (not the originals) to _sort_objects."""
     body = _render_scene_source()
-    uses = re.findall(r"cull_brushes|cull_things", body)
-    # 2 assignments (tuple target), 2 in the reassignment, 2 in the _sort_objects call.
-    assert "self._sort_objects(cull_brushes, cull_things, config)" in body
-    # No other call site may consume the culled lists.
-    other = re.findall(r"\w+\((?:[^()]*\b(?:cull_brushes|cull_things)\b[^()]*)\)", body)
-    for call in other:
-        assert "_sort_objects" in call or "_camera_distance_cull" in call, \
-            f"culled list leaked into another call: {call}"
-    assert len(uses) >= 4
+    tree = ast.parse("def _f():\n" + "\n".join("    " + l for l in body.splitlines()))
+    sort_calls = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "_sort_objects"
+    ]
+    main = [c for c in sort_calls
+            if [getattr(a, "id", None) for a in c.args[:2]] == ["cull_brushes", "cull_things"]]
+    assert len(main) == 1, "main camera pass must sort the culled collections"
 
 
 def test_shadow_and_portal_passes_use_the_unculled_collections():
@@ -65,10 +64,25 @@ def test_shadow_and_portal_passes_use_the_unculled_collections():
 
 
 def test_cull_is_opt_in_and_defaults_to_play_mode():
+    """Both the numeric and the object path gate the cull on the same flag.
+
+    render_scene has two of them now: the main camera pass narrows integer
+    slots into the render projection, and everything else (the split-screen
+    second view, the portal virtual views, the non-threaded editor) still
+    narrows object lists. Neither may cull unless the flag says so, and with
+    the flag absent outside play mode both must pass their input straight
+    through.
+    """
     body = _render_scene_source()
-    assert "config.get('camera_distance_cull', config.get('play_mode', False))" in body
-    # When the flag is absent and not in play mode, the originals pass through.
-    assert "cull_brushes, cull_things = brushes, things" in body
+    guard = "config.get('camera_distance_cull', config.get('play_mode', False))"
+    assert body.count(guard) >= 2, (
+        "every cull site must be gated on the opt-in flag; found %d"
+        % body.count(guard))
+    # Numeric path: the published slots are the starting point, unnarrowed.
+    assert "slots = brush_slots" in body
+    # Object path: the originals pass through.
+    assert "cull_brushes = brushes" in body
+    assert "cull_things = things" in body
 
 
 def test_cull_does_not_mutate_its_input_lists():
@@ -81,15 +95,142 @@ def test_cull_does_not_mutate_its_input_lists():
     assert len(out) == 1
 
 
-def test_light_and_portal_exemption_predicate():
-    """_cull_keep_thing must exempt Light and Portal and nothing else."""
-    src = _read("engine/renderer_F.py")
-    assert "def _cull_keep_thing(t):" in src
-    assert "isinstance(t, Light)" in src
-    assert "isinstance(t, Portal)" in src
-    # The predicate is passed for things only, never for brushes.
-    assert "out=tbuf, keep=self._cull_keep_thing" in src
-    assert "out=bbuf)" in src
+def test_camera_cull_exempts_lights_and_portals_and_tracks_positions():
+    """Behavioural: far Lights/Portals survive, far brushes/Things do not."""
+    import numpy as np
+    from editor.things import Light, Portal, Thing
+    from engine.renderer_F import Renderer_F
+    from engine.view_distance import ViewDistance
+
+    r = Renderer_F.__new__(Renderer_F)
+    r.view_distance = ViewDistance(1000.0)
+    r._cull_brush_buf, r._cull_thing_buf = [], []
+    r._cull_brush_pos_buf = np.empty((0, 2), dtype=np.float64)
+    r._cull_thing_pos_buf = np.empty((0, 2), dtype=np.float64)
+
+    far = [50000.0, 0.0, 0.0]
+    near_brush = {"pos": [10.0, 0.0, 10.0]}
+    far_brush = {"pos": list(far)}
+    light, portal, thing = Light(pos=list(far)), Portal(pos=list(far)), Thing(pos=list(far))
+    near_thing = Thing(pos=[5.0, 0.0, 5.0])
+    brushes = [far_brush, near_brush]
+    things = [thing, light, near_thing, portal]
+    bpos = np.asarray([[b["pos"][0], b["pos"][2]] for b in brushes])
+    tpos = np.asarray([[t.pos[0], t.pos[2]] for t in things])
+
+    kb, kt = r._camera_distance_cull(brushes, things, glm_vec(0.0, 0.0, 0.0),
+                                     brush_positions=bpos, thing_positions=tpos)
+
+    assert kb == [near_brush]
+    assert kt == [light, near_thing, portal]
+    np.testing.assert_array_equal(r._last_cull_brush_positions, bpos[1:])
+    np.testing.assert_array_equal(r._last_cull_thing_positions, tpos[1:])
+    assert brushes == [far_brush, near_brush]  # inputs untouched
+
+
+def test_the_slot_cull_exempts_the_same_lights_and_portals():
+    """The numeric path states the exemption as a mask; same answer required.
+
+    ``_cull_keep_thing`` is what kept lighting and portal rendering out of the
+    distance cull on the object path.  The entity projection expresses it as
+    :data:`engine.entity_table.ENT_CULL_EXEMPT`, and an exemption that drifted
+    would silently unlight a scene at range -- or, the other way, keep every
+    monster in the world alive in the sprite pass.
+    """
+    import numpy as np
+    from editor.things import Light, Monster, Portal, Thing
+    from engine import entity_table as et
+    from engine.renderer_core import BaseRenderer
+
+    far = [50000.0, 0.0, 0.0]
+    things = [Thing(pos=list(far)), Light(pos=list(far)), Portal(pos=list(far)),
+              Monster(pos=list(far)), Thing(pos=[5.0, 0.0, 5.0])]
+    table = et.EntityTable()
+    table.begin_frame(things, epoch=1)
+    slots = np.arange(table.count, dtype=np.int32)
+
+    kept = BaseRenderer._distance_cull_thing_slots(
+        table, slots, 0.0, 0.0, 1000.0 * 1000.0)
+
+    assert [int(i) for i in kept] == [1, 2, 4], (
+        "kept rows %s; the far Light (1) and Portal (2) are exempt and the "
+        "near Thing (4) is in range, but the far Thing (0) and the far "
+        "Monster (3) are not" % ([int(i) for i in kept],))
+
+
+def _numeric_config(count=2):
+    """The four entity-projection keys plus the brush ones, as published."""
+    import numpy as np
+    from editor.things import Light
+    from engine.entity_table import EntityTable
+    from engine.render_table import RenderTable
+
+    brushes = [{'id': 'b%d' % i, 'pos': [0.0, 0.0, 0.0], 'size': [64.0] * 3}
+               for i in range(count)]
+    btable = RenderTable()
+    btable.sync(brushes, 1)
+    brefs = np.empty(count, dtype=object)
+    for i, b in enumerate(brushes):
+        brefs[i] = b
+
+    things = [Light(pos=[0.0, 0.0, 0.0]) for _ in range(count)]
+    etable = EntityTable()
+    hidden = etable.begin_frame(things, 1)
+    erefs = np.empty(count, dtype=object)
+    for i, t in enumerate(things):
+        erefs[i] = t
+
+    config = {
+        'render_table': btable, 'render_refs': brefs,
+        'entity_table': etable, 'entity_refs': erefs,
+        'visible_thing_slots': np.arange(count, dtype=np.int32),
+        'thing_hidden': hidden,
+    }
+    return config, np.arange(count, dtype=np.int32)
+
+
+def _bare_renderer(with_instancing=True):
+    from engine.renderer_F import Renderer_F
+
+    r = Renderer_F.__new__(Renderer_F)
+    r.shaders = {'sprite_instanced': 1} if with_instancing else {}
+    return r
+
+
+def test_the_sprite_predicate_needs_the_whole_projection():
+    """Every key has to arrive, or the object path runs and needs its overrides.
+
+    The view skips building the per-entity texture overrides when this says the
+    billboards will be instanced. A predicate that said yes on an incomplete
+    projection would withhold overrides the object path still reads.
+    """
+    config, slots = _numeric_config()
+    r = _bare_renderer()
+    assert r.will_instance_sprites(config, slots) is True
+
+    for key in ('render_table', 'render_refs', 'entity_table', 'entity_refs',
+                'visible_thing_slots', 'thing_hidden'):
+        missing = dict(config)
+        missing[key] = None
+        assert r.will_instance_sprites(missing, slots) is False, (
+            "the predicate said the sprites would be instanced with %r absent"
+            % key)
+
+    assert r.will_instance_sprites(config, None) is False, (
+        "without brush slots the frame is on the object path entirely")
+
+
+def test_the_sprite_predicate_respects_a_driver_without_instancing():
+    config, slots = _numeric_config()
+    assert _bare_renderer(with_instancing=False).will_instance_sprites(
+        config, slots) is False, (
+        "a driver that rejected the instanced program still needs the object "
+        "path, and the object path needs the overrides")
+
+
+def glm_vec(x, y, z):
+    import glm
+    return glm.vec3(x, y, z)
 
 
 # ---------------------------------------------------------------------------
@@ -253,10 +394,11 @@ def test_keyvalue_defaults_are_json_serialisable():
 
 
 def test_keyvalue_group_is_generic():
-    """Game keys arrive through the plugin manager's provider hook; the generic
-    editor itself names none."""
+    """No game-supplied suggestion hook may exist in the generic editor."""
     src = _read("editor/property_editor.py")
-    assert "get_manager().kv_key_suggestions()" in src
+    assert "_kv_suggestions" not in src
+    assert "kv_key_suggestions" not in src
+    assert "Preset key" not in src
     for banned in ("quest", "faction", "miniwind"):
         assert banned not in src.lower(), f"RPG term '{banned}' in property_editor"
 

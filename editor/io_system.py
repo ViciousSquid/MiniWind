@@ -10,9 +10,7 @@ Example: A trigger_once fires "OnTrigger" which calls "Open" on "door_main" afte
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Callable, Optional, Set
-from enum import Enum
-import time
+from typing import List, Dict, Callable, Optional, Set
 
 # Import debug logger - with fallback to print if not available
 try:
@@ -42,6 +40,11 @@ def _property_dict(obj):
 def _plain_authored_flag(obj, flag, default=False):
     props = _property_dict(obj)
     return bool(props.get(flag, default)) if props is not None else default
+
+def io_enabled(obj):
+    """Whether this entity participates in the runtime I/O graph."""
+    props = _property_dict(obj)
+    return bool(props.get('io_enabled', True)) if props is not None else True
 
 
 def _plain_set_authored_flag(obj, flag, value):
@@ -130,18 +133,6 @@ def register_io(entity_type: str, inputs: List[IODef], outputs: List[IODef]):
 #: rather than a list of their own, so the exception is stated once, here,
 #: where anyone reading the declaration will see it.
 ABSTRACT_IO: Dict[tuple, str] = {}
-
-
-def register_io_alias(alias: str, entity_type: str):
-    """Make *alias* resolve to the same I/O definitions as *entity_type*.
-
-    Used when an entity is renamed: the old type token keeps answering, so a
-    map saved by an older Fio still shows its inputs and outputs in the editor
-    instead of an empty list.  The two names share one definition object, so
-    they cannot drift apart.
-    """
-    if entity_type in IO_REGISTRY:
-        IO_REGISTRY[alias] = IO_REGISTRY[entity_type]
 
 
 def is_registered_type(entity_type: str) -> bool:
@@ -372,7 +363,13 @@ class IOManager:
         self._activator_entity = None
         self._activator_id = ""
     
-    def fire_output(self, source_entity, output_name: str, value: str = None):
+    def fire_output(
+        self,
+        source_entity,
+        output_name: str,
+        value: str = None,
+        activator_entity=None,
+    ):
         """
         Fire an output from an entity (thing), triggering all connected inputs.
 
@@ -380,13 +377,19 @@ class IOManager:
         parameter is blank (Source-engine style parameter pass-through). A
         connection with an explicit parameter always keeps its own parameter.
         """
+        if not io_enabled(source_entity):
+            return
+
         connections = self._get_connections(source_entity)
         source_name = self._get_entity_name(source_entity)
         source_id = self._get_entity_id(source_entity)
-        # A chain that is already running keeps its activator; one starting here
-        # takes this entity as its own.  Read before dispatch, because dispatch
-        # rebinds it for the duration of each hop.
-        activator_id = self._activator_id or source_id
+        # An explicit activator starts a new chain context at this output. This
+        # preserves the actual entity that touched a trigger through all I/O hops.
+        explicit_activator_id = (
+            self._get_entity_id(activator_entity)
+            if activator_entity is not None else ""
+        )
+        activator_id = explicit_activator_id or self._activator_id or source_id
 
         # The mirror of the stale-declaration problem: an output the code fires
         # but no type declares is undiscoverable — it works perfectly for anyone
@@ -492,6 +495,9 @@ class IOManager:
             target = self._find_entity(target_name)
         if target is None:
             debug_log("Error", f"I/O: Target '{target_name}' (id={target_id}) not found!")
+            return
+
+        if not io_enabled(target):
             return
         
         entity_type = self._get_entity_type(target)
@@ -712,8 +718,8 @@ def register_default_io():
             IODef('Enable', 'Enable this trigger'),
             IODef('Disable', 'Disable this trigger'),
             IODef('Toggle', 'Toggle enabled state'),
-            IODef('TouchTest', 'Fire OnTrigger if player is inside'),
-            IODef('Teleport', 'Teleport the touching player to target_node'),
+            IODef('TouchTest', 'Fire OnTrigger if a filtered activator is inside'),
+            IODef('Teleport', 'Teleport the touching activator to target_node'),
             IODef('SetTargetNode', 'Change the target PathNode name', 'string'),
             IODef('Hide', 'Hide this trigger'),
             IODef('Show', 'Show this trigger'),
@@ -723,9 +729,9 @@ def register_default_io():
         ],
         outputs=[
             IODef('OnTrigger', 'Fired when activated'),
-            IODef('OnStartTouch', 'Fired when player enters'),
-            IODef('OnEndTouch', 'Fired when player exits'),
-            IODef('OnTeleport', 'Fired after a player is teleported'),
+            IODef('OnStartTouch', 'Fired when a filtered activator enters'),
+            IODef('OnEndTouch', 'Fired when a filtered activator exits'),
+            IODef('OnTeleport', 'Fired after an activator is teleported'),
         ]
     )
     
@@ -944,6 +950,24 @@ def register_default_io():
         ]
     )
     
+    # === PROP ===
+    register_io('prop',
+        inputs=[
+            IODef('Enable', 'Make this prop pickable'),
+            IODef('Disable', 'Make this prop unavailable'),
+            IODef('Drop', 'Release this prop if it is being carried'),
+            IODef('Wake', 'Resume physics simulation'),
+            IODef('Hide', 'Hide this prop'),
+            IODef('Show', 'Show this prop'),
+            IODef('ToggleVisibility', 'Toggle this prop between hidden and shown'),
+        ],
+        outputs=[
+            IODef('OnPickedUp', 'Fired when the player picks up this prop'),
+            IODef('OnDropped', 'Fired when the player drops this prop'),
+            IODef('OnRest', 'Fired when this prop comes to rest'),
+        ]
+    )
+
     # === MODEL ===
     register_io('model',
         inputs=[
@@ -1117,7 +1141,6 @@ def register_default_io():
             IODef('OnCompareFalse','Legacy name for OnFalse (param: the value)'),
         ]
     )
-
 
 
 # =============================================================================
@@ -1499,6 +1522,140 @@ def validate_scene_connections(brushes, things, find_by_id=None, find_by_name=No
                 report.append((entity, conn, code, message))
     return report
 
+def validate_all_scene_connections(
+        brushes, things, find_by_id=None, find_by_name=None):
+    """Validate every authored graph connection in the scene.
+
+    This covers both graph systems currently used by Fio:
+
+    - I/O connections stored as OutputConnection objects.
+    - PathNode navigation links stored in ``next_node``.
+
+    PathNode links are deliberately validated separately because they are
+    navigation-graph edges, not I/O edges.
+    """
+
+    all_entities = list(brushes) + list(things)
+
+    # ------------------------------------------------------------------
+    # I/O connections
+    # ------------------------------------------------------------------
+    io_problems = validate_scene_connections(
+        brushes,
+        things,
+        find_by_id=find_by_id,
+        find_by_name=find_by_name,
+    )
+
+    io_count = sum(
+        len(get_connections(entity))
+        for entity in all_entities
+    )
+
+    # ------------------------------------------------------------------
+    # Build a name lookup for PathNode links.
+    #
+    # PathNode.next_node stores the target's name, not an OutputConnection
+    # and not a target UUID.
+    # ------------------------------------------------------------------
+    if find_by_name is None:
+        by_name = {}
+
+        for entity in all_entities:
+            if isinstance(entity, dict):
+                properties = entity.get("properties", entity)
+            else:
+                properties = getattr(entity, "properties", {})
+
+            if not isinstance(properties, dict):
+                continue
+
+            name = properties.get("name", "")
+            if name:
+                by_name[name] = entity
+
+        def find_by_name(name):
+            return by_name.get(name)
+
+    # ------------------------------------------------------------------
+    # PathNode navigation links
+    # ------------------------------------------------------------------
+    pathnode_count = 0
+    pathnode_problems = []
+
+    for entity in things:
+        if isinstance(entity, dict):
+            properties = entity.get("properties", entity)
+        else:
+            properties = getattr(entity, "properties", {})
+
+        if not isinstance(properties, dict):
+            continue
+
+        entity_type = str(properties.get("type", "")).replace("_", "").lower()
+
+        if entity_type != "pathnode":
+            continue
+
+        next_node = properties.get("next_node", "")
+        if not next_node:
+            # Empty next_node is a legitimate dead-end.
+            continue
+
+        pathnode_count += 1
+
+        target = find_by_name(next_node)
+
+        if target is None:
+            source_name = properties.get("name", "<unnamed>")
+
+            pathnode_problems.append((
+                entity,
+                next_node,
+                "missing_pathnode_target",
+                "PathNode '%s' points to missing PathNode '%s'."
+                % (source_name, next_node),
+            ))
+            continue
+
+        if isinstance(target, dict):
+            target_properties = target.get("properties", target)
+        else:
+            target_properties = getattr(target, "properties", {})
+
+        if not isinstance(target_properties, dict):
+            target_properties = {}
+
+        target_type = (
+            str(target_properties.get("type", ""))
+            .replace("_", "")
+            .lower()
+        )
+
+        if target_type != "pathnode":
+            source_name = properties.get("name", "<unnamed>")
+
+            pathnode_problems.append((
+                entity,
+                next_node,
+                "invalid_pathnode_target",
+                "PathNode '%s' points to '%s', which is not a PathNode."
+                % (source_name, next_node),
+            ))
+
+    # ------------------------------------------------------------------
+    # Combined result
+    # ------------------------------------------------------------------
+    problems = list(io_problems) + list(pathnode_problems)
+
+    return {
+        "io_count": io_count,
+        "pathnode_count": pathnode_count,
+        "total": io_count + pathnode_count,
+        "problems": problems,
+        "io_problems": io_problems,
+        "pathnode_problems": pathnode_problems,
+    }
 
 # =============================================================================
 # HELPER FUNCTIONS

@@ -22,6 +22,8 @@ call this -- they keep operating on the full scene.
 from __future__ import annotations
 
 import math
+
+import numpy as np
 from typing import Callable, List, Optional, Sequence
 
 from engine.view_distance import DEFAULT_VIEW_DISTANCE
@@ -179,19 +181,74 @@ def camera_xz(camera_pos):
 def cull_by_distance(objects: Sequence, cx: float, cz: float,
                      limit_sq: float = CAMERA_RENDER_CULL_DISTANCE_SQ,
                      out: Optional[List] = None,
-                     keep: Optional[Callable[[object], bool]] = None) -> List:
-    """Return the subset of *objects* within *limit_sq* XZ of (cx, cz).
+                     keep: Optional[Callable[[object], bool]] = None,
+                     positions=None, positions_out=None) -> List:
+    """Return the subset of objects within limit_sq XZ of (cx, cz).
 
-    Fills and returns *out* when given (cleared first), so a caller can reuse one
+    Fills and returns out when given (cleared first), so a caller can reuse one
     persistent buffer across frames and allocate nothing; otherwise a fresh list
-    is returned. An object for which *keep* returns True -- or that has no
+    is returned. An object for which keep returns True -- or that has no
     readable position -- is retained unconditionally (fail-open: never wrongly
     hide it).
+
+    positions is an optional contiguous (N, 2) NumPy array of [x, z] rows
+    aligned one-for-one with objects. When supplied, the X/Z distance arithmetic
+    is evaluated in one NumPy batch; the Python object walk is then limited to
+    assembling the surviving objects into out. If positions_out is supplied,
+    the selected rows are copied into that reusable buffer in the same batch,
+    keeping a numeric position array aligned with the returned object list for
+    subsequent vectorized stages.
+
+    The batch contract is explicit: every object must have a row in positions.
+    The engine uses it only with render-state snapshots built from authoritative
+    Thing.pos values, so missing-position fail-open behaviour remains unchanged
+    for the legacy/API-compatible path.
     """
     if out is None:
         out = []
     else:
         del out[:]
+
+    if positions is not None:
+        count = len(objects)
+        if len(positions) != count:
+            raise ValueError(
+                "distance-cull positions must contain one [x, z] row per object "
+                "(got %d rows for %d objects)" % (len(positions), count)
+            )
+        positions = np.asarray(positions)
+        if positions.ndim != 2 or positions.shape[1] != 2:
+            raise ValueError("distance-cull positions must have shape (N, 2), got %r" %
+                             (positions.shape,))
+
+        dx = positions[:, 0] - cx
+        dz = positions[:, 1] - cz
+        visible = (dx * dx + dz * dz) <= limit_sq
+
+        if keep is not None:
+            forced = np.fromiter(
+                (bool(keep(obj)) for obj in objects),
+                dtype=bool,
+                count=count,
+            )
+            visible |= forced
+
+        visible_indices = np.flatnonzero(visible)
+        if positions_out is not None:
+            if len(positions_out) < len(visible_indices):
+                raise ValueError(
+                    "distance-cull positions_out is too small "
+                    "(got %d rows for %d visible objects)" %
+                    (len(positions_out), len(visible_indices))
+                )
+            np.take(positions[:, 0], visible_indices,
+                    out=positions_out[:len(visible_indices), 0])
+            np.take(positions[:, 1], visible_indices,
+                    out=positions_out[:len(visible_indices), 1])
+        for index in visible_indices:
+            out.append(objects[int(index)])
+        return out
+
     for obj in objects:
         if keep is not None and keep(obj):
             out.append(obj)
@@ -200,3 +257,39 @@ def cull_by_distance(objects: Sequence, cx: float, cz: float,
         if pos is None or within_xz_sq(pos, cx, cz, limit_sq):
             out.append(obj)
     return out
+
+
+def sort_by_distance(objects: Sequence, positions, cx: float, cz: float,
+                     reverse: bool = True, min_numpy_count: int = 16) -> List:
+    """Return *objects* depth-sorted using batched NumPy distance math."""
+    count = len(objects)
+    if count < 2:
+        return list(objects)
+
+    pos = None if positions is None else np.asarray(positions)
+    if (positions is None or count < min_numpy_count or
+            pos is None or pos.dtype == object):
+        result = list(objects)
+
+        def _key(obj):
+            pos = pos_of(obj)
+            if pos is None:
+                return float("inf") if reverse else float("-inf")
+            dx = pos[0] - cx
+            dz = pos[2] - cz
+            value = dx * dx + dz * dz
+            return -value if reverse else value
+
+        result.sort(key=_key)
+        return result
+
+    if pos.ndim != 2 or pos.shape[0] != count or pos.shape[1] != 2:
+        raise ValueError(
+            "distance-sort positions must have shape (%d, 2), got %r" %
+            (count, pos.shape)
+        )
+    dx = pos[:, 0] - cx
+    dz = pos[:, 1] - cz
+    distances = dx * dx + dz * dz
+    order = np.argsort(-distances if reverse else distances, kind="stable")
+    return [objects[int(index)] for index in order]

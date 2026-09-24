@@ -70,10 +70,7 @@ History:
 - **1.3.0** — render hooks (`render.*` events), swappable-renderer registration
   (`register_renderer`), editor-UI extensions (extra property fields on any
   entity, custom property tabs), and the `FIO_NO_PLUGINS` kill-switch.
-- **1.4.0** — console commands (`register_console_command`, `ConsoleContext`),
-  collapsible property sections, State Store key suggestions and actor
-  inspector snapshots, so a game layer extends the editor without the editor
-  importing it.
+- **1.4.0** — optional editor Tools actions and console-command registration for developer plugins.
 
 A plugin declares the minimum it needs with `FioPlugin.api_version`. If that is
 **newer** than the host's `API_VERSION`, the manager refuses to load the plugin
@@ -104,7 +101,7 @@ methods you need, and expose an instance as your package's module-level
 | `version` | `str` | `"0.0.0"` | Human-readable version string. |
 | `description` | `str` | `""` | One-line description shown in tooling / the *About* entry. |
 | `category` | `str` | `"Plugins"` | Default editor category / menu grouping for this plugin's entities. |
-| `enabled` | `bool` | `True` | Whether the plugin is active. Set `False` to ship disabled-by-default (auto-enabled when a level using its entities loads). Ignored for a plugin the build lists in `plugins.manager.MANDATORY_PLUGINS`: those are forced on at load and cannot be disabled. |
+| `enabled` | `bool` | `True` | Whether the plugin is active. Set `False` to ship disabled-by-default (auto-enabled when a level using its entities loads). |
 | `api_version` | `str` | `"1.0.0"` | Minimum API version this plugin needs (see [API versioning](#api-versioning)). |
 | `requires` | `List[str]` | `[]` | Names (or package names) of other plugins this one depends on. A missing requirement disables this plugin with a logged reason. |
 
@@ -265,6 +262,14 @@ entity's `properties['type']` string. *inputs*/*outputs* are lists of
 [`io_def`](#helpers-io_def-key_code-prop) results; `None` entries (produced when
 the I/O system is unavailable) are filtered out.
 
+```python
+def extend_io(self, entity_type: str, inputs=(), outputs=()) -> None
+```
+Add I/O definitions to an entity type the plugin does not own. Existing
+ports are preserved and matching names are not duplicated. Unlike `register_io`,
+this is an additive merge and is recorded so the extension can be replayed if
+the editor's I/O registry is rebuilt.
+
 ### Property schema
 
 ```python
@@ -293,6 +298,24 @@ tab's widget. With *entity_type* the tab appears only for that type; otherwise
 for every entity.
 
 ```python
+def register_singleton_entity(self, entity_type: str) -> None
+```
+Mark *entity_type* as a per-map singleton. Placement paths refuse to add a
+second instance and select the existing one.
+
+```python
+def register_entity_wizard(self, entity_type: str, factory) -> None
+```
+Register a creation wizard. `factory(parent) -> dict | None` runs when the entity
+is placed and returns its initial properties, or `None` to cancel.
+
+```python
+def register_menu_action(self, label: str, callback, tooltip: str = "") -> None
+```
+Add an action to the top of the plugin's editor menu. The callback is dispatched
+only while the plugin is enabled.
+
+```python
 def register_renderer(self, name: str, cls) -> bool
 ```
 Register a swappable renderer class under *name*. Fio's viewport selects its
@@ -302,29 +325,18 @@ mode. *cls* must implement the renderer interface (`render_scene`,
 `False` in a headless/player context with no viewport. This is how a whole new
 renderer ships as a plugin.
 
-### Editor extensions for a game layer (API 1.4.0)
+### Developer/editor tools (API 1.4.0)
 
 ```python
-def register_console_command(self, name: str, handler, help: str = "") -> None
+def register_tools_action(self, label: str, callback, tooltip: str = "") -> None
+def register_console_command(self, name: str, callback, help_text: str = "") -> None
 ```
-Add a debug-console command. `handler(ctx, args)` receives a `ConsoleContext`
-(`logic_thread`, `play_mode`, `main_window`) and the raw argument string, and
-may return a reply for the console to print. Built-in commands win over a
-registered one of the same name; a disabled plugin's commands are not offered.
-
-```python
-def register_property_section(self, label, factory, entity_type=None, expanded=False) -> None
-```
-Like `register_property_tab`, but placed as a collapsible section inside the
-Properties tab — for a handful of fields that read as part of the entity.
-
-```python
-def register_kv_suggestions(self, provider) -> None
-def register_entity_inspector(self, provider) -> None
-```
-`provider() -> [(label, key, default_value, tooltip)]` fills the State Store
-editor's *Preset key* row. `provider(thing, monster_state, logic_thread) -> dict`
-supplies the snapshot the in-game `inspect` popup shows for an actor.
+`register_tools_action` adds an action to Fio's **Tools** menu. Its callback
+receives `main_window`. `register_console_command` adds a plugin-owned debug
+console command; its callback receives `(args, main_window, logic, play_mode)`.
+Both are gated by the plugin's enabled state and are available from API 1.4.0.
+`register_menu_action` above is the plugin-specific menu counterpart for actions
+that belong with the plugin rather than in Tools.
 
 ### Global store & logging
 
@@ -718,9 +730,6 @@ Useful `PluginManager` methods (see [`manager.py`](manager.py) for the full set)
 | `plugin_for_type(type)` / `entity_class_for_type(type)` | map an entity `type` back to its plugin/class |
 | `auto_enable_for_map(map_data)` | enable disabled-by-default plugins a map needs |
 | `disable_auto_enabled()` | revert level-driven auto-enables (e.g. File ▸ New) |
-| `is_mandatory(plugin_or_name)` | whether this build refuses to run without it |
-| `missing_mandatory()` | mandatory plugin names discovery did not produce |
-| `require_mandatory_plugins()` | raise `MandatoryPluginMissing` if one is absent |
 | `attach_runtime(logic)` | wire every plugin's runtime into a logic thread |
 | `bind_host(target, kind)` | build the `PluginHost` and call each `connect` |
 | `emit(event, **data)` / `has_listeners(event)` | drive the event bus |
@@ -737,7 +746,7 @@ hooks are installed as small guarded monkey-patches in
 
 Saving and loading a **play session** is an engine-native capability, not part
 of the plugin API surface — adding it did **not** bump `API_VERSION` (still
-`1.3.0`). It is documented here because it builds directly on the same
+`1.4.0`). It is documented here because it builds directly on the same
 serialization a plugin already relies on, and because a plugin can drive it
 through the [`PluginHost`](#pluginhost--the-open-ended-engine-seam).
 
@@ -826,7 +835,7 @@ def connect(self, host):
     self._host = host
 
 def on_tick(self, logic, ctx):
-    if ctx.key_down("f5"):
+    if ctx.key_down("f"):
         ok, msg = self._host.logic.save_session("saves/plugin_quick.fiosave")
         ctx.toast(msg)
 ```

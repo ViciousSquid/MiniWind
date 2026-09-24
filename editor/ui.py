@@ -6,8 +6,7 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox, QApplication, QSizePolicy, QInputDialog, QMenu
 )
 from PyQt5.QtCore import Qt, QSize
-from PyQt5.QtGui import QFont, QIcon, QKeySequence, QPixmap
-from PyQt5.QtGui import QPalette, QColor
+from PyQt5.QtGui import QIcon, QKeySequence
 
 from editor.view_2d import View2D
 from engine.qt_game_view import QtGameView
@@ -16,7 +15,6 @@ from engine.view_distance import (
 from editor.property_editor import PropertyEditor
 from editor.scene_hierarchy import SceneHierarchy
 from editor.asset_browser import AssetBrowser
-from editor.SettingsWindow import SettingsWindow
 from editor.debug_console import DebugConsole
 
 import math
@@ -109,10 +107,7 @@ class Ui_MainWindow(object):
         # 2D Views Dock (Right, Tabbed)
         MainWindow.right_dock = QDockWidget("2D Views", MainWindow)
         MainWindow.right_dock.setObjectName("2DViewsDock")
-        # Small enough that the default layout's 30% right-hand column is
-        # actually reachable on an ordinary 1080p window (see
-        # MainWindow.apply_default_layout); the 2D views still grow happily.
-        MainWindow.right_dock.setMinimumWidth(240)
+        MainWindow.right_dock.setMinimumWidth(610)
         MainWindow.right_tabs = QTabWidget()
         MainWindow.right_tabs.addTab(MainWindow.view_top, "Top (XZ)")
         MainWindow.right_tabs.addTab(MainWindow.view_side, "Side (YZ)")
@@ -127,7 +122,7 @@ class Ui_MainWindow(object):
         MainWindow.properties_tab_widget.addTab(MainWindow.property_editor, "Properties")
         MainWindow.properties_tab_widget.addTab(MainWindow.debug_console, "Debug Console")
         MainWindow.properties_tab_widget.setStyleSheet("""
-            QTabBar::tab:selected { background: #b52316; color: white; }
+            QTabBar::tab:selected { background: #F08000; color: white; }
             QTabBar::tab { background: #2b2b2b; color: #ccc; height: 40px; min-width: 120px; padding: 0px 8px; border: 1px solid #222; }
             QTabBar::tab:hover { background: #5a7a82; }
         """)
@@ -143,14 +138,15 @@ class Ui_MainWindow(object):
         MainWindow.splitDockWidget(MainWindow.view_3d_dock, MainWindow.right_dock, Qt.Horizontal)
         MainWindow.splitDockWidget(MainWindow.right_dock, MainWindow.properties_dock, Qt.Vertical)
 
-        # Rough starting proportions; MainWindow.apply_default_layout() sets the
-        # real 10 / 60 / 30 split once the window has been shown and has a width.
-        MainWindow.resizeDocks([MainWindow.view_3d_dock, MainWindow.right_dock], [600, 300], Qt.Horizontal)
+        # 3D view 40%, 2D views 60%.  resizeDocks reads these as proportions
+        # rather than pixels, so the split holds at any window size.
+        MainWindow.resizeDocks([MainWindow.view_3d_dock, MainWindow.right_dock],
+                               [40, 60], Qt.Horizontal)
         MainWindow.resizeDocks([MainWindow.right_dock, MainWindow.properties_dock], [600, 300], Qt.Vertical)
 
         # Tab Styling
         MainWindow.right_tabs.setStyleSheet("""
-            QTabBar::tab:selected { background: #b52316; color: white; }
+            QTabBar::tab:selected { background: #F08000; color: white; }
             QTabBar::tab { background: #2b2b2b; color: #ccc; height: 35px; min-width: 150px; padding: 0px; border: 1px solid #222; }
             QTabBar::tab:hover { background: #5a7a82; }
             QTabBar::scroller { width: 0px; }
@@ -166,12 +162,10 @@ class Ui_MainWindow(object):
 
         MainWindow.asset_browser_dock.setWidget(MainWindow.asset_browser)
         
-        # Dockable anywhere, but closed to begin with: it is a tool you open
-        # (T, or View ▸ Asset Browser) rather than a pane you work in, and it
-        # was eating a strip of the 3D view on every launch.
+        # CHANGED: Allow docking and set initial visibility
         MainWindow.asset_browser_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         MainWindow.asset_browser_dock.setFloating(False)
-        MainWindow.asset_browser_dock.setVisible(False)
+        MainWindow.asset_browser_dock.setVisible(True)
 
         # CHANGED: Dock logic to match screenshot (Under 3D View)
         # We add it to the Right area first (same as others) then split the 3D view vertically
@@ -201,10 +195,10 @@ class Ui_MainWindow(object):
         menubar = MainWindow.menuBar()
         menubar.setStyleSheet("""
             QMenuBar::item:selected {
-                background-color: #b52316;
+                background-color: #F08000;
             }
             QMenu::item:selected {
-                background-color: #b52316;
+                background-color: #F08000;
             }
         """)
         
@@ -344,6 +338,8 @@ class Ui_MainWindow(object):
         autocaulk_action.triggered.connect(MainWindow.autocaulk)
         MainWindow.tools_menu.addAction(autocaulk_action)
 
+        # Benchmark action is inserted by MainWindow immediately below Autocaulk.
+
         MainWindow.logic_graph_action = QAction('Logic Graph Editor…', MainWindow)
         MainWindow.logic_graph_action.setShortcut('Ctrl+L')
         MainWindow.logic_graph_action.setToolTip('Open the visual I/O node graph editor')
@@ -371,12 +367,16 @@ class Ui_MainWindow(object):
         MainWindow.terrain_action.setToolTip('Open the terrain editor (low‑poly terrain generator)')
         MainWindow.terrain_action.triggered.connect(MainWindow.open_terrain_editor)
 
+        MainWindow.procedural_action = QAction('Procedural Map Generator…', MainWindow)
+        MainWindow.procedural_action.triggered.connect(MainWindow.show_procedural_map_generator)
+        
         MainWindow.tools_menu.addAction(MainWindow.logic_graph_action)
         MainWindow.tools_menu.addAction(MainWindow.logic_wizard_action)
         MainWindow.tools_menu.addAction(MainWindow.project_overview_action)
         MainWindow.tools_menu.addAction(MainWindow.validate_action)
         MainWindow.tools_menu.addSeparator()
         MainWindow.tools_menu.addAction(MainWindow.terrain_action)
+        MainWindow.tools_menu.addAction(MainWindow.procedural_action)
         MainWindow.tools_menu.addSeparator()
 
         view_menu.addSeparator()
@@ -509,7 +509,7 @@ class Ui_MainWindow(object):
                     }}
                     QPushButton:checked {{
                         background-color: #2b2b2b;
-                        border: 1px solid #b52316;
+                        border: 1px solid #F08000;
                         {border_bottom}
                     }}
                     QPushButton:checked:hover {{
@@ -526,7 +526,7 @@ class Ui_MainWindow(object):
             return b
 
         # --- Base tools: Select + Box (Orange Strip) ---
-        group_1_color = "#b52316" 
+        group_1_color = "#F08000" 
         # Shift+S belongs to the Surface Inspector (Radiant's binding, and what
         # a mapper reaches for far more often); the Select tool takes Shift+A.
         MainWindow.select_tool_btn = make_btn(
@@ -615,6 +615,7 @@ class Ui_MainWindow(object):
 
         terrain_menu = QMenu(MainWindow)
         terrain_menu.addAction(MainWindow.terrain_action)
+        terrain_menu.addAction(MainWindow.procedural_action)
         terrain_btn = make_btn("assets/terrain.png", "Procedural Tools", bottom_color=group_3_color)
         terrain_btn.clicked.connect(lambda: terrain_menu.popup(
             terrain_btn.mapToGlobal(terrain_btn.rect().bottomLeft())))
@@ -681,8 +682,8 @@ class Ui_MainWindow(object):
 
         # Camera mode (native): First Person vs Overhead (top-down).
         MainWindow.camera_mode_combobox = QComboBox()
-        MainWindow.camera_mode_combobox.addItems(["Overhead", "First Person"])
-        MainWindow.camera_mode_combobox.setCurrentText("Overhead")
+        MainWindow.camera_mode_combobox.addItems(["First Person", "Overhead"])
+        MainWindow.camera_mode_combobox.setCurrentText("First Person")
         MainWindow.camera_mode_combobox.setToolTip(
             "Play-mode camera. 'Overhead' is a top-down view (GTA 1 / Alien Swarm style).")
         MainWindow.camera_mode_combobox.currentTextChanged.connect(MainWindow.set_camera_mode)

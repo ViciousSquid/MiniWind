@@ -120,10 +120,6 @@ class FakeEditorWindow(QWidget):
     selected_objects_list = MainWindow.selected_objects_list
     apply_rotation_to_selection = MainWindow.apply_rotation_to_selection
     apply_clip_to_selection = MainWindow.apply_clip_to_selection
-    # clone_selected_object schedules this on a QTimer; without it the timer
-    # fires into an AttributeError the next time any later test pumps Qt
-    # events, and PyQt aborts the whole process on an exception in a slot.
-    _clear_flash = MainWindow._clear_flash
 
     def __init__(self):
         super().__init__()

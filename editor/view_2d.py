@@ -5,11 +5,11 @@ import os
 from PyQt5.QtWidgets import QWidget, QMenu, QFileDialog, QApplication
 from PyQt5.QtGui import QPainter, QPen, QBrush, QColor, QFont, QPolygonF, QPixmap
 from PyQt5.QtCore import Qt, QRectF, QPointF, QPoint, QTimer
-from editor.things import (Thing, Light, PlayerStart, Pickup, Speaker, Model, Monster,
+from editor.things import (Thing, Light, PlayerStart, Pickup, Speaker, Model, Prop, Monster,
                           LogicGate, LogicRelay, LogicTimer, LogicCommand, LevelChanger, PathNode,
                           LogicCamera, LogicSpawner, Portal, LogicState)
-from editor.scene_hierarchy import SceneHierarchy
 from engine import brush_geometry as bg  # convex/angled-brush geometry
+from engine.constants import brush_aabb_bounds
 from editor import component_edit as ce  # shared object/face/edge/vertex model
 
 # How close (in screen pixels) the cursor has to be before a press grabs a
@@ -1878,7 +1878,25 @@ class View2D(QWidget):
                 font.setPointSize(10)
                 painter.setFont(font)
                 label_text = " / ".join(type_labels)
-                painter.drawText(screen_rect.adjusted(0, 0, -5, -5), Qt.AlignRight | Qt.AlignBottom, label_text)
+                painter.drawText(screen_rect, Qt.AlignCenter, label_text)
+
+            # Show the exact runtime trigger AABB when requested.
+            if is_selected and is_trigger and brush.get('show_aabb_bounds', False):
+                lo_x, lo_y, lo_z, hi_x, hi_y, hi_z = brush_aabb_bounds(brush)
+                mins = (lo_x, lo_y, lo_z)
+                maxs = (hi_x, hi_y, hi_z)
+                a1_min = mins[axis1_idx]
+                a1_max = maxs[axis1_idx]
+                a2_min = mins[axis2_idx]
+                a2_max = maxs[axis2_idx]
+                aabb_p1 = self.world_to_screen(QPointF(a1_min, a2_min))
+                aabb_p2 = self.world_to_screen(QPointF(a1_max, a2_max))
+                aabb_rect = QRectF(aabb_p1, aabb_p2).normalized()
+                painter.save()
+                painter.setPen(QPen(QColor(255, 140, 0), 1, Qt.DashLine))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRect(aabb_rect)
+                painter.restore()
 
             # Add mover label
             if is_mover:
@@ -2068,23 +2086,24 @@ class View2D(QWidget):
         """Helper to compute screen coordinates for a model's wireframe.
         Returns (pts_x, pts_y) numpy arrays, or None if failed."""
         model_path = model_thing.properties.get('model_path')
-        if not model_path: return None
+        if not model_path:
+            return None
 
-        # Access loaded model from renderer via main window reference
+        # 2D is a QPainter view, not the renderer's OpenGL context. Never load
+        # a model here: OBJ/GLB loading creates VAOs/VBOs and must happen in the
+        # 3D view's current GL context. The 3D renderer loads it on its next frame.
         if not hasattr(self.main_window, 'view_3d') or not self.main_window.view_3d.renderer:
             return None
-            
+
         renderer = self.main_window.view_3d.renderer
-        
-        if model_path not in renderer.loaded_models:
+        obj = renderer.get_loaded_model(model_path)
+        if not obj or not obj.is_loaded:
             return None
-            
-        obj = renderer.loaded_models.get(model_path)
         if not obj or not hasattr(obj, 'cpu_vertices') or obj.cpu_vertices is None or len(obj.cpu_vertices) == 0:
             return None
 
         # Optimization: Too many vertices check
-        if len(obj.cpu_vertices) > 2000:
+        if len(obj.cpu_vertices) > 50000:
             return None # Treat as box fallback elsewhere
 
         # Transform parameters
@@ -2138,10 +2157,6 @@ class View2D(QWidget):
     def _draw_model_wireframe(self, painter, model_thing, ax_map, ax1, ax2):
         """Draws the projected wireframe of a 3D model in the 2D view."""
         model_path = model_thing.properties.get('model_path')
-        if model_path and hasattr(self.main_window, 'view_3d') and self.main_window.view_3d.renderer:
-            renderer = self.main_window.view_3d.renderer
-            if model_path not in renderer.loaded_models:
-                renderer.load_model(model_path)
 
         coords = self._compute_model_screen_coords(model_thing, ax_map, ax1, ax2)
 
@@ -2163,10 +2178,10 @@ class View2D(QWidget):
         # edges AND crashes when vertex_count % 3 != 0.
         obj = None
         if model_path and hasattr(self.main_window, 'view_3d') and self.main_window.view_3d.renderer:
-            obj = self.main_window.view_3d.renderer.loaded_models.get(model_path)
+            obj = self.main_window.view_3d.renderer.get_loaded_model(model_path)
         cpu_triangles = getattr(obj, 'cpu_triangles', None)
 
-        if cpu_triangles:
+        if cpu_triangles is not None and len(cpu_triangles):
             for tri in cpu_triangles:
                 i0, i1, i2 = tri
                 # Guard against malformed index data
@@ -2225,7 +2240,7 @@ class View2D(QWidget):
             draw_rect = None
 
             # --- MODEL RENDERING ---
-            if isinstance(thing, Model):
+            if thing.properties.get('model_path'):
                 self._draw_model_wireframe(painter, thing, ax_map, ax1, ax2)
                 # Selection box for models
                 draw_rect = QRectF(s_pos.x() - 16, s_pos.y() - 16, 32, 32)
@@ -3753,7 +3768,7 @@ class View2D(QWidget):
                 background-color: #2c2c2c;
                 color: #ffffff;
                 border: 1px solid #3d3d3d;
-                border-top: 3px solid #a10a28;
+                border-top: 3px solid #FF8C00; /* Orange Strip */
                 padding-bottom: 2px;
             }
             QMenu::item {
@@ -3763,7 +3778,7 @@ class View2D(QWidget):
             QMenu::item:selected {
                 background-color: #3e3e3e;
             }
-
+            /* REVISED: Large margin creates the "Gap" you wanted */
             QMenu::separator {
                 height: 1px;
                 background: #555;
@@ -3783,8 +3798,10 @@ class View2D(QWidget):
         add_light_action = menu.addAction("Light")
         add_player_start_action = menu.addAction("PlayerStart")
         add_pickup_action = menu.addAction("Pickup")
+        add_prop_action = menu.addAction("Prop")
         add_monster_action = menu.addAction("Monster")
         add_speaker_action = menu.addAction("Speaker")
+        add_logic_spawner_action = menu.addAction("Spawner")
         add_levelchanger_action = menu.addAction("LevelChanger")
         
         menu.addSeparator()
@@ -3803,10 +3820,6 @@ class View2D(QWidget):
         add_logic_gate_action = logic_menu.addAction("LogicGate")
         add_logic_command_action = logic_menu.addAction("LogicCommand")
         add_logic_state_action = logic_menu.addAction("State Store")
-        # Generic Fio logic spawner lives here under Logic Entities. MiniWind's
-        # own "Spawn Point" (creaturespawn) is the top-level RPG spawner; keeping
-        # this one out of the top level avoids the confusing duplicate.
-        add_logic_spawner_action = logic_menu.addAction("LogicSpawner")
 
         # Node / Special submenu
         ai_menu = menu.addMenu("Nodes")
@@ -3851,6 +3864,8 @@ class View2D(QWidget):
             new_thing = PlayerStart(pos=pos_3d)
         elif action == add_pickup_action: 
             new_thing = Pickup(pos=pos_3d)
+        elif action == add_prop_action:
+            new_thing = Prop(pos=pos_3d)
         elif action == add_speaker_action: 
             new_thing = Speaker(pos=pos_3d)
         elif action == add_levelchanger_action:
@@ -4228,7 +4243,7 @@ class View2D(QWidget):
             is_hit = False
             
             # Standard Thing Hit Test
-            if isinstance(thing, Model):
+            if thing.properties.get('model_path'):
                 # Advanced Model Hit Test: Check Bounding Box of projected vertices
                 coords = self._compute_model_screen_coords(thing, ax_map, ax1, ax2)
                 if coords:

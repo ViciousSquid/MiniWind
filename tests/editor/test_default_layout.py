@@ -99,16 +99,15 @@ def test_the_2d_views_are_the_wider_of_the_two(qt_app):
     assert views_2d.width() > view_3d.width()
 
 
-def test_the_layout_call_asks_for_miniwinds_split(qt_app):
-    """The ratio lives in ui.py (MiniWind's 2:1 viewport-to-side split; the
-    proportional default is MainWindow.apply_default_layout)."""
+def test_the_layout_call_asks_for_forty_sixty(qt_app):
+    """The ratio lives in ui.py; this is what the numbers above come from."""
     import inspect
 
     from editor.ui import Ui_MainWindow
 
     source = inspect.getsource(Ui_MainWindow.setupUi)
 
-    assert '[600, 300], Qt.Horizontal' in source
+    assert '[40, 60], Qt.Horizontal' in source
 
 
 # ────────────────────────────

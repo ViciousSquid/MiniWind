@@ -6,8 +6,8 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QScrollArea, QFrame,
                              QMainWindow, QPushButton, QFileDialog, QTreeView, 
                              QFileSystemModel, QTabWidget, QAbstractItemView,
                              QSizePolicy, QListWidget, QListWidgetItem)
-from PyQt5.QtCore import Qt, QSize, QDir, QRect, QPointF, pyqtSignal, QTimer
-from PyQt5.QtGui import QPixmap, QColor, QPainter, QFont, QIcon, QPen, QPolygonF, QTextCursor, QDesktopServices
+from PyQt5.QtCore import Qt, QDir, QRect, QPointF, QTimer
+from PyQt5.QtGui import QPixmap, QColor, QPainter, QFont, QPen, QPolygonF
 from engine.glb_loader import render_glb_thumbnail
 # The Surface Inspector's FACE toggle sets this colour; the INSPECTOR button
 # that opens that panel borrows it so the two read as a pair.
@@ -166,7 +166,7 @@ class AssetItem(QWidget):
         self.selection_overlay.setGeometry(0, 0, self.width(), self.height())
         self.selection_overlay.setStyleSheet("""
             QFrame {
-                border: 3px solid #b52316;
+                border: 3px solid #F08000;
                 border-radius: 6px;
                 background: transparent;
             }
@@ -229,7 +229,7 @@ class AssetItem(QWidget):
         """Update the name label color and overlay visibility."""
         if self.selected:
             self.selection_overlay.show()
-            self.name_label.setStyleSheet("color: #b52316; font-weight: bold; font-size: 10px;")
+            self.name_label.setStyleSheet("color: #F08000; font-weight: bold; font-size: 10px;")
         else:
             self.selection_overlay.hide()
             self.name_label.setStyleSheet("color: #ccc; font-size: 10px;")
@@ -305,7 +305,7 @@ class AssetBrowserTab(QWidget):
                 font-size: 14px;
             }
             QPushButton:hover { background-color: #444; }
-            QPushButton:checked { background-color: #b52316; border: 1px solid #b52316; }
+            QPushButton:checked { background-color: #F08000; border: 1px solid #F08000; }
         """)
         self.tree_toggle_btn.setCheckable(True)
         self.tree_toggle_btn.setChecked(False)  # collapsed by default
@@ -436,6 +436,10 @@ class AssetBrowserTab(QWidget):
         self.scroll_area.setStyleSheet("background-color: #2b2b2b; border: none;")
         self.grid_container = QWidget()
         self.grid_layout = QGridLayout(self.grid_container)
+        self.grid_container.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Preferred
+        )
         self.grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self.grid_layout.setSpacing(10)
         self.scroll_area.setWidget(self.grid_container)
@@ -474,8 +478,8 @@ class AssetBrowserTab(QWidget):
             return
         
         # Compute number of columns
-        item_width = 110  # 100px width + 10px spacing
-        available_width = self.grid_container.width() - 20  # margin
+        item_width = 110  # 100px item width + 10px spacing
+        available_width = self.scroll_area.viewport().width()
         col_count = max(1, available_width // item_width)
         
         if col_count == self.current_cols and not force:
@@ -532,7 +536,8 @@ class AssetBrowserTab(QWidget):
                 if ext in self.extensions:
                     full_path = os.path.join(path, f)
                     # Per-item guard: a single unreadable asset (bad model, odd
-                    # image) must not abort loading the rest of the folder.
+                    # image) must not abort loading the rest of the folder. The
+                    # skipped file is named so the failure stays diagnosable.
                     try:
                         item = AssetItem(f, full_path, self, is_model=self.is_model_tab)
                         self.items.append(item)
@@ -541,7 +546,7 @@ class AssetBrowserTab(QWidget):
             # After loading, layout the grid dynamically (force initial layout)
             self.relayout_grid(force=True)
         except Exception as e:
-            print(f"[AssetBrowser] Failed to list {path}: {e}")
+            print(f"Error: {e}")
 
     def select_item(self, item):
         if self.selected_item: 
@@ -627,7 +632,7 @@ class MapsBrowserTab(QWidget):
                 border-bottom: 1px solid #3d3d3d;
             }
             QListWidget::item:selected {
-                background-color: #b52316;
+                background-color: #F08000;
                 color: white;
             }
             QListWidget::item:hover {
@@ -641,9 +646,9 @@ class MapsBrowserTab(QWidget):
 
     def update_header(self):
         if self.current_mode == 'maps':
-            self.header_label.setText('Showing: <a href="switch" style="color: #b52316; text-decoration: none;">Maps</a>')
+            self.header_label.setText('Showing: <a href="switch" style="color: #F08000; text-decoration: none;">Maps</a>')
         else:
-            self.header_label.setText('Showing: <a href="switch" style="color: #b52316; text-decoration: none;">Packages</a>')
+            self.header_label.setText('Showing: <a href="switch" style="color: #F08000; text-decoration: none;">Packages</a>')
 
     def on_header_link_clicked(self, link):
         # Toggle mode
@@ -761,7 +766,7 @@ class AssetBrowser(QWidget):
         self.tabs.setStyleSheet("""
             QTabWidget::pane { border: 1px solid #3d3d3d; background-color: #2b2b2b; }
             QTabBar::tab { background: #1e1e1e; color: #aaa; min-width: 100px; padding: 6px; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
-            QTabBar::tab:selected { background: #b52316; color: white; font-weight: bold; }
+            QTabBar::tab:selected { background: #F08000; color: white; font-weight: bold; }
             QTabBar::tab:hover:!selected { background: #333; }
         """)
 

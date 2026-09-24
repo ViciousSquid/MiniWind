@@ -1,6 +1,6 @@
-# The Fio Plugin System
+# Fio Plugin System
 
-Plugins add new gameplay to Fio — new placeable entity types, their I/O, and
+Plugins add new concepts to Fio: new placeable entity types, their I/O, and
 runtime behaviour — **without editing the core editor or engine**. Drop a Python
 package into this `plugins/` directory and it is discovered automatically at
 startup, wired into the editor's menus, property panel, I/O editor, serializer
@@ -31,13 +31,14 @@ the standalone `.fiopak` player.
 
 ## What ships
 
-Two example plugins live in this directory, and they are deliberately different
-in kind:
+Three example plugins live in this directory, and they deliberately cover
+different kinds of extension:
 
 | Plugin | Kind | What it demonstrates |
 |--------|------|----------------------|
 | [`tidy`](tidy/) | **Gameplay** | Pick-up-and-put-away games (books back on the shelf, tidy the museum, sort the warehouse). Entities, I/O ports, a carry/place runtime, a HUD goal. |
 | [`bigworld`](bigworld/) | **Runtime layer** | Cell streaming that keeps only the area around the player active in maps of hundreds of thousands of brushes. Uses the event bus, cross-plugin services, and host wrapping rather than adding entities to place. See its own [README](bigworld/README.md). |
+| [`benchmark`](benchmark/) | **Developer tooling** | Optional live runtime benchmark tooling. Registers the `benchmark` console command and launches the benchmark manager against the existing editor `MainWindow`. |
 
 Between them they exercise nearly the whole API: entity registration and I/O
 (`tidy`), and the open-ended [`PluginHost`](API.md#pluginhost--the-open-ended-engine-seam)
@@ -190,7 +191,7 @@ are in [`API.md`](API.md); here is what each is *for*:
 
 | Object | Handed to | Use it for |
 |--------|-----------|------------|
-| [`EditorAPI`](API.md#editorapi--load-time-registration) | `register(api)` | declare entity types, I/O, property schemas, extra property fields/tabs, renderers |
+| [`EditorAPI`](API.md#editorapi--load-time-registration) | `register(api)` | declare entity types, I/O, property schemas, editor actions/wizards, extra property fields/tabs, renderers |
 | [`RuntimeAPI`](API.md#runtimeapi--per-session-services) | `register_runtime(api)` | register I/O input handlers; query the scene (`entities_of_type`, `things_near`, `raycast_from_crosshair`); `spawn`/`despawn` |
 | [`PluginHost`](API.md#pluginhost--the-open-ended-engine-seam) | `connect(host)` | subscribe to engine events (`host.on(...)`); reach any subsystem (`host.get(...)`); publish/consume services; guarded `host.wrap(...)` |
 | [`TickContext`](API.md#tickcontext--the-per-tick-object) | `on_tick(logic, ctx)` | read input (`ctx.use_pressed`, `ctx.key_down('e')`); drive the HUD (`ctx.set_prompt`, `ctx.toast`) |
@@ -207,18 +208,24 @@ cross-level state through the [`GlobalStore`](API.md#globalstore--cross-level-st
   the keys you pass to `register_io` and `register_input_handler`. If you
   subclass `Thing` directly, the base defaults `type` to the lowercased class
   name; set it explicitly to be safe.
-- **Want 3D geometry in play mode?** Subclass the engine's `Model` (as `tidy`'s
-  `TidyObject` does) or set a `model_path` property — any `Thing` with a
+- **Want 3D geometry in play mode?** Subclass the engine's `Model` for a new visual entity, or set a `model_path` property — any `Thing` with a
   `model_path` is rendered by the existing model pipeline. Things without one are
   editor-only sprites.
 - **Keep `register()` UI-free.** It runs in headless/engine contexts too — no Qt,
-  no OpenGL.
+  no OpenGL. Registration can declare editor actions and wizards; the callbacks
+  themselves run later in the editor.
 - **Do per-tick work in `on_tick`, and keep it cheap.** `ctx.use_pressed` is the
   edge-triggered interact key for that tick; `ctx.interaction_consumed` tells you
   whether the core already claimed the HUD/use this tick.
 - **Use the HUD helpers, not `logic.current_hud_message`.** `ctx.set_prompt`
   respects priority and won't clobber the core's prompt; `ctx.toast` shows a
   timed message.
+- **Use `extend_io()` when adding I/O to a core entity.** `register_io()`
+  replaces the declarations for an entity type; `extend_io()` preserves the
+  existing ports and adds only missing names.
+- **Use singleton/wizard registration for authoring constraints.**
+  `register_singleton_entity()` prevents duplicate per-map instances, while
+  `register_entity_wizard()` can collect initial properties before placement.
 - **Restore what you mutate.** If you move, hide or disable entities during play,
   put them back in `on_play_stop` so the edited map is unchanged (see
   `TidySession.stop`).
@@ -248,34 +255,14 @@ are always shown).
 
 ## Enabling / disabling plugins
 
-- **Mandatory plugins.** A build can declare a plugin part of the product rather
-  than an optional extra, by naming its package in
-  `plugins.manager.MANDATORY_PLUGINS`. **This build declares `bigworld`.** A
-  mandatory plugin always loads, is forced enabled at load whatever its class
-  declares, and cannot be switched off by anything — the Plugins menu shows its
-  toggle checked and greyed, `[Plugins] disabled` and `FIO_DISABLED_PLUGINS`
-  ignore it, an unmet `requires` leaves it on, and **File ▸ New** does not revert
-  it. If one is missing, the application refuses to start:
-
-  ```
-  error: Bigworld plugin is mandatory: could not be located
-  ```
-
-  That check is `PluginManager.require_mandatory_plugins()`, called from
-  `main.py` after discovery and before the main window, the game layer or any
-  map is built; it raises `plugins.manager.MandatoryPluginMissing`. Being
-  enabled is not the same as being *in use*: Big World still streams only for a
-  map that carries a `BigWorldSettings` entity, so an ordinary map pays nothing
-  for the plugin being on.
 - **Disabled by default + auto-enable on load.** A plugin can set
   `enabled = False` on its class to ship inert — ordinary maps never pay for
   gameplay they don't use. When a level whose `things` reference the plugin's
   entity types is loaded, the manager turns it on automatically
   (`PluginManager.auto_enable_for_map`, wired into level loading in the editor
-  and the standalone player). `tidy` ships this way: it stays off until you open
-  a map like `maps/Tidy_Test.json`. (`bigworld` used to as well; it is mandatory
-  in this build, so it is always on and its auto-enable is a no-op.) The flip is
-  symmetric — clearing the
+  and the standalone player). Both example plugins ship this way: `tidy` stays
+  off until you open a map like `maps/Tidy_Test.json`, and `bigworld` until a map
+  contains a `BigWorldSettings` entity. The flip is symmetric — clearing the
   scene (**File ▸ New**, or loading a map that doesn't use the plugin) reverts a
   level-driven auto-enable via `PluginManager.disable_auto_enabled`, so an empty
   map starts clean. This is a runtime, per-session flip: it never rewrites the
@@ -283,26 +270,17 @@ are always shown).
   menu is never auto-disabled underneath you.
 - **Per plugin, in the editor.** Toggle **Enabled** in the Plugins menu. A
   disabled plugin stops its gameplay and greys out placement; the choice is saved
-  to `settings.ini` (`[Plugins] disabled`) and restored next launch. Mandatory
-  plugins are marked *(required)* and their toggle is greyed out. (Entity
+  to `settings.ini` (`[Plugins] disabled`) and restored next launch. (Entity
   *registration* isn't undone live, so a re-enable is instant while a full unload
   happens on restart.)
 - **At startup, globally.** Set `FIO_DISABLED_PLUGINS` to a comma-separated list
   of plugin/package names so they never load, or `FIO_NO_PLUGINS=1` to disable
-  the whole system. A mandatory plugin named in `FIO_DISABLED_PLUGINS` is
-  ignored:
+  the whole system:
 
   ```bash
   FIO_DISABLED_PLUGINS=tidy python main.py
   FIO_NO_PLUGINS=1 python main.py
   ```
-
-  `FIO_NO_PLUGINS` is the one remaining way to run without a mandatory plugin's
-  gameplay. It is an engine-level debugging kill-switch: the app still starts
-  (the plugin is present, which is what the startup check asks), but the logic
-  thread never attaches the plugin system, so nothing — mandatory or not —
-  ticks. Use it to isolate a bug to the plugin system; it is not a supported
-  way to play.
 
 ---
 
@@ -399,6 +377,8 @@ python -m plugins.bigworld.tests.test_bigworld
 | Want to… | Read |
 |----------|------|
 | Understand the whole system | this file |
+| Add editor actions, singleton entities or creation wizards | [`API.md`](API.md#editorapi--load-time-registration) |
+| Add I/O to a core entity without replacing its ports | [`API.md`](API.md#editorapi--load-time-registration) |
 | Look up a class/method/signature | [`API.md`](API.md) |
 | See the annotated API source | [`api.py`](api.py) |
 | Use the open-ended engine seam | [`host.py`](host.py) / [API §PluginHost](API.md#pluginhost--the-open-ended-engine-seam) |

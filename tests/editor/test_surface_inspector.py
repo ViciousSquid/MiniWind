@@ -726,13 +726,13 @@ def test_natural_on_one_face_survives_a_resize_while_fit_stretches(inspector):
 # Chrome
 # ────────────────────────────
 
-def test_fit_wears_the_miniwind_accent(inspector):
+def test_fit_wears_the_fio_accent(inspector):
     from editor.surface_inspector import ACCENT_BUTTON_STYLE
 
     host, panel, brush = inspector
 
     assert panel.fit_btn.styleSheet() == ACCENT_BUTTON_STYLE
-    assert '#b52316' in ACCENT_BUTTON_STYLE
+    assert '#F08000' in ACCENT_BUTTON_STYLE
 
 
 def test_apply_is_short_and_green(inspector):

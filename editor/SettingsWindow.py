@@ -24,7 +24,6 @@ class SettingsWindow(QDialog):
         self.tabs = QTabWidget()
         self.layout.addWidget(self.tabs)
         
-        self._create_game_tab()
         self._create_editor_tab()
         self._create_display_tab()
         self._create_play_modes_tab()
@@ -66,46 +65,6 @@ class SettingsWindow(QDialog):
         
         self.load_settings()
         self._apply_stylesheet()
-
-    def _create_game_tab(self):
-        """Create settings shared by the MiniWind gameplay systems."""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        self.tabs.addTab(widget, "GAME")
-
-        dice_group = QGroupBox("Dice")
-        dice_layout = QVBoxLayout(dice_group)
-        self.visualise_dice_rolls_checkbox = QCheckBox("Visualise dice rolls")
-        self.visualise_dice_rolls_checkbox.setToolTip(
-            "Show the dice visualisation for every dice roll during gameplay, "
-            "including combat, magic, quests, loot, and I/O events."
-        )
-        dice_layout.addWidget(self.visualise_dice_rolls_checkbox)
-        layout.addWidget(dice_group)
-
-        dialogue_group = QGroupBox("Dialogue")
-        dialogue_layout = QVBoxLayout(dialogue_group)
-        self.show_dialogue_heads_checkbox = QCheckBox("Show dialogue heads")
-        self.show_dialogue_heads_checkbox.setToolTip(
-            "Show the character's head beside the conversation window when "
-            "talking to an NPC. The head always matches the NPC's world sprite."
-        )
-        dialogue_layout.addWidget(self.show_dialogue_heads_checkbox)
-        layout.addWidget(dialogue_group)
-
-        controls_group = QGroupBox("Controls")
-        controls_layout = QVBoxLayout(controls_group)
-        self.mouse_control_checkbox = QCheckBox("Mouse control")
-        self.mouse_control_checkbox.setToolTip(
-            "Keep the mouse pointer on screen during play. The head turns to "
-            "face the pointer, and arrows, spells and other projectiles are "
-            "launched at it, so the cursor is the crosshair.\n\n"
-            "Off: the classic hidden, centre-locked mouse look."
-        )
-        controls_layout.addWidget(self.mouse_control_checkbox)
-        layout.addWidget(controls_group)
-
-        layout.addStretch()
 
     def _create_editor_tab(self):
         widget = QWidget()
@@ -397,15 +356,6 @@ class SettingsWindow(QDialog):
         )
         layout.addWidget(self.launch_in_editor_checkbox)
 
-        self.show_launcher_checkbox = QCheckBox("Show the launcher on startup")
-        self.show_launcher_checkbox.setToolTip(
-            "After the splash screen, show the launcher: set the display mode\n"
-            "and resolution above, then choose PLAY or EDIT. The launcher\n"
-            "writes the same settings this window does. Turn it off to go\n"
-            "straight to the editor."
-        )
-        layout.addWidget(self.show_launcher_checkbox)
-
         self.kiosk_mode_combo.currentTextChanged.connect(self._toggle_resolution_visibility)
         self._toggle_resolution_visibility()
 
@@ -476,7 +426,7 @@ class SettingsWindow(QDialog):
     def _apply_stylesheet(self):
         self.setStyleSheet("""
             QCheckBox::indicator:checked {
-                background-color: #b52316;
+                background-color: #F08000;
                 border: 1px solid #333;
                 image: none;
             }
@@ -492,7 +442,7 @@ class SettingsWindow(QDialog):
                 border: 1px solid #555;
             }
             QCheckBox::indicator:checked:hover {
-                background-color: #b52316;
+                background-color: #FF8C00;
                 image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'><path fill='white' d='M6 12.5l-4-4 1.4-1.4L6 9.7l6.6-6.6L14 4.5z'/></svg>");
                 image-position: center;
             }
@@ -514,15 +464,6 @@ class SettingsWindow(QDialog):
         """)
 
     def load_settings(self):
-        self.visualise_dice_rolls_checkbox.setChecked(
-            self.config.getboolean('GAME', 'visualise_dice_rolls', fallback=False)
-        )
-        self.show_dialogue_heads_checkbox.setChecked(
-            self.config.getboolean('GAME', 'show_dialogue_heads', fallback=True)
-        )
-        self.mouse_control_checkbox.setChecked(
-            self.config.getboolean('GAME', 'mouse_control', fallback=False)
-        )
         self.show_caulk_checkbox.setChecked(self.config.getboolean('Display', 'show_caulk', fallback=True))
         self.sync_selection_checkbox.setChecked(self.config.getboolean('Display', 'sync_selection', fallback=True))
         self.click_select_3d_checkbox.setChecked(self.config.getboolean('Display', 'click_select_3d', fallback=False))
@@ -587,8 +528,6 @@ class SettingsWindow(QDialog):
             self.kiosk_mode_combo.setCurrentIndex(idx)
         self.kiosk_res_w.setValue(self.config.getint('Kiosk', 'res_width', fallback=1280))
         self.kiosk_res_h.setValue(self.config.getint('Kiosk', 'res_height', fallback=720))
-        self.show_launcher_checkbox.setChecked(
-            self.config.getboolean('Startup', 'show_launcher', fallback=True))
         self.launch_in_editor_checkbox.setChecked(
             self.config.getboolean('Kiosk', 'launch_in_editor', fallback=False)
         )
@@ -641,15 +580,6 @@ class SettingsWindow(QDialog):
         self._restart_application()
 
     def _save_settings(self):
-        if not self.config.has_section('GAME'):
-            self.config.add_section('GAME')
-        self.config.set('GAME', 'visualise_dice_rolls',
-                        str(self.visualise_dice_rolls_checkbox.isChecked()))
-        self.config.set('GAME', 'show_dialogue_heads',
-                        str(self.show_dialogue_heads_checkbox.isChecked()))
-        self.config.set('GAME', 'mouse_control',
-                        str(self.mouse_control_checkbox.isChecked()))
-
         if not self.config.has_section('Display'): 
             self.config.add_section('Display')
         
@@ -702,10 +632,6 @@ class SettingsWindow(QDialog):
         self.config.set('Kiosk', 'window_mode', self.kiosk_mode_combo.currentText())
         self.config.set('Kiosk', 'res_width', str(self.kiosk_res_w.value()))
         self.config.set('Kiosk', 'res_height', str(self.kiosk_res_h.value()))
-        if not self.config.has_section('Startup'):
-            self.config.add_section('Startup')
-        self.config.set('Startup', 'show_launcher',
-                        str(self.show_launcher_checkbox.isChecked()))
         self.config.set('Kiosk', 'launch_in_editor',
                         str(self.launch_in_editor_checkbox.isChecked()))
 
@@ -713,7 +639,6 @@ class SettingsWindow(QDialog):
                 str(self.place_camera_at_player_start_checkbox.isChecked()))
 
     def _restart_application(self):
-        from PyQt5.QtWidgets import QApplication
         
         python = sys.executable
         script = sys.argv[0]

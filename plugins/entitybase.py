@@ -94,3 +94,17 @@ class Model(Thing):
         self.properties.setdefault("model_path", "")
         self.properties.setdefault("rotation", [0, 0, 0])
         self.properties.setdefault("scale", [1, 1, 1])
+
+
+def __getattr__(name):
+    """``plugins.entitybase.Prop`` is an alias, not a second implementation.
+
+    Prop is a core engine primitive defined once in :mod:`engine.prop_entity`
+    (on this module's Model when the editor tier is absent). Resolved lazily
+    because that module imports this one.
+    """
+    if name == 'Prop':
+        from engine.prop_entity import Prop
+        globals()['Prop'] = Prop
+        return Prop
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

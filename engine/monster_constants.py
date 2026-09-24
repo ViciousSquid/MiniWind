@@ -73,62 +73,6 @@ MONSTER_PROJECTILE_MAX_DIST = 2048  # despawn after travelling this far
 MONSTER_PROJECTILE_SPRITE_SIZE = (40.0, 40.0)   # billboard size in world units
 
 # ---------------------------------------------------------------------------
-# Player arrow constants (bow attacks — a real flying/physical projectile,
-# distinct from monster projectiles above: faster, flies further, and — once
-# it lands — leaves a persistent embedded-arrow prop instead of just vanishing)
-# ---------------------------------------------------------------------------
-ARROW_SPEED = 1600.0                    # world-units / second
-ARROW_MAX_DIST = 3000.0                 # falls/despawns beyond this if it hits nothing
-ARROW_SPRITE_SIZE = (40.0, 40.0)        # billboard size while in flight
-ARROW_TEXTURE_SUBFOLDER = "sprites/monsters"
-ARROW_TEXTURE_FILE = "arrow.png"
-STUCK_ARROW_SPRITE_SIZE = (28.0, 28.0)  # smaller billboard once embedded
-MAX_STUCK_ARROWS = 150                  # oldest are dropped past this cap
-
-# ---------------------------------------------------------------------------
-# Blood stains  (ground decals left when a character is wounded — not just on
-# a gib death). Size scales with the severity of the wound between these bounds.
-# ---------------------------------------------------------------------------
-BLOOD_STAIN_SIZE_MIN = 22.0             # a light nick
-BLOOD_STAIN_SIZE_MAX = 120.0            # a grievous, near-lethal wound
-MAX_BLOOD_STAINS = 120                  # oldest are dropped past this cap
-BLOOD_MIN_DAMAGE = 1.0                  # ignore sub-1 damage (rounding dust)
-# Each new stain is laid a hair higher than the last, cycling through
-# BLOOD_STAIN_LAYERS steps of this size before wrapping. Overlapping pools then
-# have a definite order instead of sharing one plane; the total climb stays well
-# inside the gap to the layer above (see engine.overhead_sprite).
-BLOOD_STAIN_LAYER_STEP = 0.4
-BLOOD_STAIN_LAYERS = 8
-
-# ---------------------------------------------------------------------------
-# Fantasy combat  (attack_style: "melee" | "bow")
-# ---------------------------------------------------------------------------
-# Fio's world of Miniwind has no firearms.  A monster/NPC carries an
-# ``attack_style`` property that selects how it fights:
-#
-#   "melee"  – closes to arm's reach and strikes; no ranged attack at all, no
-#              gunshot.  Damage is applied instantly when within MELEE range.
-#   "bow"    – looses an ARROW projectile toward the target (reuses the
-#              projectile system with an arrow sprite + a bow-string sound).
-#
-# When ``attack_style`` is ABSENT the legacy behaviour is preserved (flying =
-# projectile, human = hitscan), so pre-existing non-fantasy maps are unchanged.
-MONSTER_MELEE_RANGE       = 130.0   # world units; slightly beyond STOP_DISTANCE
-MONSTER_BOW_PROJECTILE_SPEED = 1400.0   # arrows fly faster than lobbed bolts
-MONSTER_ARROW_SPRITE      = "monsters/arrow.png"   # relative to assets/sprites/
-MONSTER_ARROW_SPRITE_SIZE = (48.0, 12.0)
-# Magic: a caster (attack_style 'magic') lobs a glowing bolt instead of an arrow.
-MONSTER_MAGIC_PROJECTILE_SPEED = 1000.0
-MONSTER_MAGIC_SPRITE      = "miniwind/magicbolt.png"   # relative to assets/sprites/
-MONSTER_MAGIC_SPRITE_SIZE = (36.0, 36.0)
-# Per-style attack sounds (fantasy — never a gun).
-MONSTER_MELEE_SOUND       = "melee.wav"
-MONSTER_BOW_SOUND         = "bow.wav"
-MONSTER_MAGIC_SOUND       = "activate.wav"
-# How long (seconds) a struck actor flashes red after taking a hit.
-MONSTER_HIT_FLASH_TIME    = 0.18
-
-# ---------------------------------------------------------------------------
 # Monster physics & collision
 # ---------------------------------------------------------------------------
 MONSTER_GRAVITY        = -500.0   # same gravity as player
@@ -151,17 +95,20 @@ MONSTER_DETOUR_RANGE     = 1024.0
 # ---------------------------------------------------------------------------
 # Non-firing weapons (see NON_FIRING_WEAPONS below) are deliberately omitted —
 # they deal no damage.
-# Guns are removed in the Miniwind fantasy conversion — this table is empty.
-# (Kept defined because a few modules still import the name.) Player combat is
-# melee/bow/spell, driven by the RPG plugin, not by these weapon ids.
-WEAPON_DAMAGE = {}
+WEAPON_DAMAGE = {
+    'gun1': 25,
+    'gun2': 75,    # shotgun — 3× gun1
+}
 
 # ---------------------------------------------------------------------------
 # Per-weapon shoot sound
 # ---------------------------------------------------------------------------
 # Non-firing weapons (see NON_FIRING_WEAPONS below) are deliberately omitted —
 # they play no shoot sound.
-WEAPON_SHOOT_SOUND = {}
+WEAPON_SHOOT_SOUND = {
+    'gun1': 'shoot.wav',
+    'gun2': 'shoot2.wav',
+}
 
 # ---------------------------------------------------------------------------
 # Non-firing weapons
@@ -176,13 +123,11 @@ NON_FIRING_WEAPONS = {'cig'}
 # ---------------------------------------------------------------------------
 # Per-monster-type shoot sounds (used by MonsterAI)
 # ---------------------------------------------------------------------------
-# Fantasy conversion: legacy monster types default to the melee strike sound
-# rather than a gunshot (creatures that use bows set their own bow sound).
 MONSTER_SHOOT_SOUNDS = {
-    'human':  'melee.wav',
-    'flying': 'bow.wav',
+    'human':  'shoot.wav',
+    'flying': 'shoot_flying.wav',
 }
-MONSTER_SHOOT_SOUND_DEFAULT = 'melee.wav'
+MONSTER_SHOOT_SOUND_DEFAULT = 'shoot.wav'
 
 
 # ---------------------------------------------------------------------------

@@ -28,7 +28,7 @@ pytestmark = pytest.mark.qt
 
 
 #: The group colours the toolbar paints its strips with.
-ORANGE = '#b52316'   # MiniWind's accent (the name predates the rebrand)
+ORANGE = '#F08000'
 BLUE = '#00A2E8'
 GREY = '#555'
 
@@ -58,6 +58,7 @@ class FakeEditorWindow(QMainWindow):
         self.config = configparser.ConfigParser()
         self.play_button = QPushButton("Play")
         self.terrain_action = QAction("Terrain", self)
+        self.procedural_action = QAction("Procedural", self)
 
     def __getattr__(self, name):
         return lambda *args, **kwargs: None

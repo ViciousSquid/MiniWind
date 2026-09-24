@@ -2,9 +2,9 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextBrowser, QPushButton, 
     QLabel, QCheckBox, QComboBox, QFrame, QLineEdit, QSplitter, QScrollArea
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject, QUrl
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QUrl
 from PyQt5 import sip
-from PyQt5.QtGui import QFont, QTextCursor, QColor, QDesktopServices, QPainter, QPixmap
+from PyQt5.QtGui import QFont, QTextCursor, QPainter, QPixmap
 from collections import deque
 import re
 
@@ -70,8 +70,7 @@ _debug_logger = None
 def get_debug_logger() -> DebugLogger:
     """Get the global debug logger instance, rebuilding a destroyed one."""
     global _debug_logger
-    if (_debug_logger is None
-            or (isinstance(_debug_logger, DebugLogger) and sip.isdeleted(_debug_logger))):
+    if _debug_logger is None or sip.isdeleted(_debug_logger):
         _debug_logger = DebugLogger()
     return _debug_logger
 
@@ -176,8 +175,6 @@ class DebugConsole(QWidget):
         'Info': '#FFFFFF',      # White
         'MonsterAI': '#FF7043', # Deep orange — monster combat / sight / attack
         'Pathfinding': '#26A69A', # Teal — monster patrol / navigation
-        'Roll': '#FFD54F',      # Combat and tabletop roll output (MiniWind)
-        'Dice': '#FFD54F',      # Legacy tabletop roll category (MiniWind)
         'Plugins': '#42A5F5',   # Blue — plugin debug / init (default; loads/errors recoloured per-message)
     }
 
@@ -314,7 +311,7 @@ class DebugConsole(QWidget):
             }
             QPushButton:hover {
                 background-color: #555;
-                border-color: #b52316;
+                border-color: #F08000;
             }
             QPushButton:pressed {
                 background-color: #333;
@@ -382,7 +379,7 @@ class DebugConsole(QWidget):
             }
             QPushButton:hover {
                 background-color: #555;
-                border-color: #b52316;
+                border-color: #F08000;
             }
             QPushButton:pressed {
                 background-color: #333;
@@ -426,7 +423,7 @@ class DebugConsole(QWidget):
                 background-color: #444;
             }
             QSplitter::handle:hover {
-                background-color: #b52316;
+                background-color: #F08000;
             }
         """)
 
@@ -441,7 +438,7 @@ class DebugConsole(QWidget):
                 background-color: #1a1a1a;
                 color: #ddd;
                 border: 1px solid #333;
-                selection-background-color: #b52316;
+                selection-background-color: #F08000;
             }
         """)
         splitter.addWidget(self.console)
@@ -529,7 +526,7 @@ class DebugConsole(QWidget):
         input_layout.setContentsMargins(0, 0, 0, 0)
 
         prompt_label = QLabel("]")
-        prompt_label.setStyleSheet("color: #b52316; font-weight: bold; font-family: Consolas; font-size: 14px;")
+        prompt_label.setStyleSheet("color: #F08000; font-weight: bold; font-family: Consolas; font-size: 14px;")
 
         self.command_input = CommandInput()
         self.command_input.setPlaceholderText("Enter command...")
@@ -542,7 +539,7 @@ class DebugConsole(QWidget):
                 padding: 4px;
             }
             QLineEdit:focus {
-                border: 1px solid #b52316;
+                border: 1px solid #F08000;
             }
         """)
         self.command_input.returnPressed.connect(self._on_command_entered)
@@ -564,7 +561,7 @@ class DebugConsole(QWidget):
                 border-radius: 3px;
             }
             QComboBox:hover {
-                border-color: #b52316;
+                border-color: #F08000;
             }
             QComboBox::drop-down {
                 border: none;
@@ -572,7 +569,7 @@ class DebugConsole(QWidget):
             QComboBox QAbstractItemView {
                 background-color: #3a3a3a;
                 color: #ddd;
-                selection-background-color: #b52316;
+                selection-background-color: #F08000;
             }
         """)
 
@@ -632,7 +629,7 @@ class DebugConsole(QWidget):
         # Echo the command to the console exactly like Quake
         cursor = self.console.textCursor()
         cursor.movePosition(QTextCursor.End)
-        cursor.insertHtml(f"<br><span style='color: #b52316; font-weight: bold;'>] {cmd}</span><br>")
+        cursor.insertHtml(f"<br><span style='color: #F08000; font-weight: bold;'>] {cmd}</span><br>")
 
         # Add to local history and clear the line
         self.command_input.add_history(cmd)
@@ -763,7 +760,7 @@ class DebugConsole(QWidget):
         _msg_temp = re.sub(r'</?[a-zA-Z][^>]*>', _protect_tag, message)
 
         # Define styles
-        ENT_STYLE = 'color: #b52316; font-weight: bold; text-decoration: none;'
+        ENT_STYLE = 'color: #F08000; font-weight: bold; text-decoration: none;'
         FIRE_STYLE = 'color: #66BB6A; font-weight: bold;'
         EMPTY_STYLE = 'color: #E35335;'
 
@@ -890,7 +887,7 @@ class DebugConsole(QWidget):
                 }
                 QPushButton:hover {
                     background-color: #555;
-                    border-color: #b52316;
+                    border-color: #F08000;
                 }
                 QPushButton:pressed { background-color: #333; }
             """)
@@ -901,15 +898,15 @@ class DebugConsole(QWidget):
             self._filter_btn.setStyleSheet("""
                 QPushButton {
                     background-color: #3a3312;
-                    color: #b52316;
-                    border: 1px solid #b52316;
+                    color: #F08000;
+                    border: 1px solid #F08000;
                     border-radius: 3px;
                     padding: 3px 6px;
                     font-weight: bold;
                 }
                 QPushButton:hover {
                     background-color: #4a4322;
-                    border-color: #b52316;
+                    border-color: #F08000;
                 }
                 QPushButton:pressed { background-color: #2a2308; }
             """)

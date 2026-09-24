@@ -148,9 +148,9 @@ the game.
 
 ## 3. LogicState
 
-`LogicState` replaced the pre-2.4 key/value store in 2.4. In MiniWind the old
-store has been removed outright — no class alias, no `logic_keyvalue` I/O alias,
-no legacy map tokens — so every map and every piece of code names `LogicState`.
+The state entity was renamed `LogicState` in 2.4. 2.5 drops the pre-2.4 alias:
+there is one name for the class, and `logicstate` is the token written to map
+files.
 
 > `LogicState` is persistent named state that can be read, modified, compared,
 > and used to generate I/O events. It is not a controller, a quest manager, an
@@ -356,13 +356,13 @@ level per signal, and `Trigger`'s flip semantics made AND gates unusable.
 **LogicTimer?** Intervals and enable/disable. Missing: one-shot, stable keying,
 and not scanning the level each frame.
 
-**What was genuinely missing from the pre-2.4 key/value store?** Typed values; change
+**What was genuinely missing from the pre-2.4 store?** Typed values; change
 detection; `Exists`/`Missing`; arithmetic beyond ±1; `Compare` producing plain
 `OnTrue`/`OnFalse`; a capacity that was not a hard 25; and — the largest defect
 — it could not be loaded from a map file at all. Its serialised type token
-(`logic_keyvalue`) matched no class, so every store placed in a map was
-silently dropped on load. `map_type` fixes that, and `legacy_map_types` remains
-the mechanism for any future rename.
+matched no class, so every store placed in a map was silently dropped on load.
+Declaring `map_type` on the class is what fixes that, for it and for any future
+rename: the token a class writes is stated rather than inferred from its name.
 
 **What belongs in `LogicState`?** Storage, typing, arithmetic, comparison,
 change events, persistence. Nothing else.

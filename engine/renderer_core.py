@@ -19,23 +19,27 @@ Both Renderer_F and Renderer_D inherit from BaseRenderer.
 """
 
 import ctypes
+import re
 import math
 import os
-from collections import defaultdict
 
 import glm
 import numpy as np
 import OpenGL.GL as gl
 from OpenGL.GL.shaders import compileProgram, compileShader
 
-from engine.constants import RENDER_MODE_LIT, RENDER_MODE_UNLIT, RENDER_MODE_WIREFRAME, RENDER_MODE_VERTEX, is_water_brush
+from engine.constants import (is_water_brush, brush_aabb_bounds,
+                              normalize_color)
 from engine import brush_geometry
+from engine import render_table
+from engine import entity_table as entity_projection
+from engine.render_keys import KeyLayout, sort_into_runs
 from engine import shaders
 from engine.shaders import DEFAULT_SHADERS
 from engine.terrain import TERRAIN_VERTEX_SHADER, TERRAIN_FRAGMENT_SHADER
 from engine.view_distance import ViewDistance
 from editor.things import (
-    Thing, PathNode, Portal, Pickup, Monster, LogicGate, LogicRelay,
+    Thing, PathNode, Portal, Pickup, Prop, Monster, LogicGate, LogicRelay,
     LogicTimer, LevelChanger, Light, LogicSpawner, LogicCamera,
 )
 
@@ -49,19 +53,6 @@ try:
     from .glb_loader import GLB
 except ImportError:
     GLB = None
-
-
-# Extra in-plane rotation (radians) applied to head billboards so their art's
-# "forward" lines up with the actor heading. The head-sprite art faces "down"
-# (the bottom of the image is the character's front), so a half-turn is applied
-# to make that front point along the actor's heading; kept as a single tunable
-# knob mirroring overhead_sprite.HEAD_FACING_OFFSET_DEG.
-HEAD_FACING_OFFSET = math.pi
-
-#: Tint laid over the actor the inspector is hovering (r, g, b, strength). A
-#: warm gold, strong enough to pick the actor out of a crowd but light enough
-#: that you can still read which head it is.
-INSPECT_HOVER_TINT = (1.0, 0.85, 0.35, 0.55)
 
 
 # ---------- Utility classes ----------
@@ -178,7 +169,7 @@ class ShaderLoader:
     def compile_shader_program(self, vertex_file, fragment_file, geometry_file=None):
         try:
             vertex_src = self._read_source(vertex_file)
-            fragment_src = self._read_source(fragment_file)
+            fragment_src = shaders.light_ubo_source(self._read_source(fragment_file))
             vs = compileShader(vertex_src, gl.GL_VERTEX_SHADER)
             fs = compileShader(fragment_src, gl.GL_FRAGMENT_SHADER)
             if geometry_file:
@@ -194,6 +185,7 @@ class ShaderLoader:
 
     def compile_from_source(self, vertex_src, fragment_src):
         try:
+            fragment_src = shaders.light_ubo_source(fragment_src)
             vs = compileShader(vertex_src, gl.GL_VERTEX_SHADER)
             fs = compileShader(fragment_src, gl.GL_FRAGMENT_SHADER)
             return compileProgram(vs, fs, validate=False)
@@ -203,16 +195,10 @@ class ShaderLoader:
 
 
 # ---------- Helper ----------
-def normalize_color(rgb, default=None):
-    """Normalise an RGB colour to 0.0-1.0 floats.
-    Accepts [0-255] int or [0.0-1.0] float components.
-    Returns *default* (or [0.8, 0.8, 0.8]) if rgb is None or malformed.
-    """
-    if default is None:
-        default = [0.8, 0.8, 0.8]
-    if not rgb or not isinstance(rgb, (list, tuple)) or len(rgb) < 3:
-        return list(default)
-    return [c / 255.0 if c > 1.0 else c for c in rgb[:3]]
+#: Re-exported so ``from engine.renderer_core import normalize_color`` keeps
+#: working; it lives in engine.constants because the GL-free render projection
+#: needs it too.  See :func:`engine.constants.normalize_color`.
+normalize_color = normalize_color
 
 
 #: Light-array capacity of each lighting shader, so the renderer can never set
@@ -231,6 +217,14 @@ class BaseRenderer:
     # that shader declared room for.  Per-shader caps below cover the ones that
     # are deliberately smaller (water, terrain, the ARM variants).
     MAX_LIGHTS = shaders.MAX_LIGHTS
+    # CPU mirror of the std140 GLSL `struct Light` (shaders.py): four 16-byte
+    # fields per light, 64 bytes total. One upload feeds every lit shader.
+    LIGHT_UBO_DTYPE = np.dtype([
+        ('position', '<f4', (4,)),
+        ('color', '<f4', (4,)),
+        ('params', '<f4', (4,)),
+        ('indices', '<i4', (4,)),
+    ])
     MAX_PORTALS = 4      # maximum portal apertures rendered per frame
 
     # How many times a portal may be seen recursively through another portal.
@@ -247,10 +241,7 @@ class BaseRenderer:
     PORTAL_NEAR_STRADDLE = 24.0
 
     # --- Depth cube-map shadow mapping (omnidirectional point-light shadows) ---
-    # Taken from the shaders, like MAX_LIGHTS: the lit shaders declare
-    # `samplerCube shadowMaps[MAX_SHADOW_LIGHTS]`, and a slot past that array
-    # binds a cube-map no shader can sample.
-    MAX_SHADOW_LIGHTS = shaders.MAX_SHADOW_LIGHTS
+    MAX_SHADOW_LIGHTS = 8          # number of point lights that can cast shadows at once
     SHADOW_MAP_SIZE = 384         # per-face resolution of each depth cube-map
     SHADOW_TEXTURE_UNIT_BASE = 4   # shadow cube-maps bind to units 4..(4+MAX_SHADOW_LIGHTS-1)
 
@@ -309,6 +300,37 @@ class BaseRenderer:
 
         self._model_matrix = glm.mat4(1.0)
 
+        # GPU-instanced model data. One persistent VBO is shared by all model
+        # VAOs; each instance carries a model matrix and normal matrix (112 B).
+        # The shared brush-instance buffer and its VAO. One layout serves every
+        # pass that submits runs (see BRUSH_INSTANCE_ATTRS), so it lives here
+        # rather than on the forward renderer.
+        self._brush_instance_vbo = None
+        self._brush_instance_vao = None
+        self._sprite_instance_vbo = None
+        self._sprite_instance_vao = None
+        self._sprite_instance_capacity = 0
+        self._sprite_gl_by_id = np.zeros(0, dtype=np.int32)
+        self._sprite_instance_base = 0
+        self._sprite_recipes_seen = None
+        self._sprite_instance_data = np.empty(
+            (0, 5), dtype=np.float32)
+        self._brush_instance_capacity = 0
+        self._brush_instance_data = np.empty((0, 32), dtype=np.float32)
+        # Reusable model/normal matrix buffers for the batched transform build.
+        self._brush_mat_buf = np.empty((0, 16), dtype=np.float32)
+        self._brush_nmat_buf = np.empty((0, 9), dtype=np.float32)
+        self._model_instance_vbo = None
+        self._model_instance_capacity = 0
+        self._model_instance_data = np.empty((0, 28), dtype=np.float32)
+        self._model_instanced_vaos = set()
+
+        # Shared std140 light UBO. One upload feeds every lighting shader.
+        self._light_ubo = None
+        self._light_ubo_capacity = 0
+        self._light_ubo_key = None
+        self._light_ubo_dtype = self.LIGHT_UBO_DTYPE
+        self._light_ubo_data = np.zeros(self.MAX_LIGHTS, dtype=self._light_ubo_dtype)
         # Depth cube-map shadow-mapping state (created lazily once GL is ready).
         self._shadow_fbo = None
         self._shadow_cubemaps = []          # texture ids, one cube-map per shadow slot
@@ -318,9 +340,14 @@ class BaseRenderer:
         self._shadow_slot_owner = [None] * self.MAX_SHADOW_LIGHTS   # id(light) per slot
         self._shadow_slot_sig = [None] * self.MAX_SHADOW_LIGHTS     # last-rendered signature
 
+        # Cached editor-mode light collection. Threaded/play mode supplies
+        # an authoritative all_lights list through RenderState; this fallback
+        # avoids rescanning every Thing on every editor frame.
+        self._light_collection_key = None
+        self._light_collection = []
+
         # Per‑frame caches
-        self._frame_lights = []
-        # shader_name -> tuple of light ids uploaded this frame; cleared at
+        self._frame_lights = []        # shader_name -> tuple of light ids uploaded this frame; cleared at
         # the start of every render_scene() so animated lights stay fresh.
         self._frame_lights_uploaded = {}
         self._current_shader = None
@@ -331,16 +358,8 @@ class BaseRenderer:
         # monster (draw_sprites runs once per visible monster per frame).
         self._sprite_tex_key_cache = {}
 
-        # PERF: precomputed GLSL uniform names for each light slot. Building
-        # these f-strings on the hot path meant up to MAX_LIGHTS*5 string
-        # allocations per shader per frame inside _upload_lights_once; the
-        # names never change, so build them once here.
-        self._light_uniform_names = [
-            ('lights[%d].position' % i, 'lights[%d].color' % i,
-             'lights[%d].intensity' % i, 'lights[%d].radius' % i,
-             'lights[%d].shadowIndex' % i)
-            for i in range(self.MAX_LIGHTS)
-        ]
+        # Light data now travels through the shared std140 UBO; no per-slot
+        # uniform-name table is needed on the render path.
 
         # PERF: cache of texture-name -> "textures/<name>" cache-key path.
         # draw_textured_brushes_optimized resolves this for every drawn face
@@ -474,8 +493,7 @@ class BaseRenderer:
             fs_src = DEFAULT_SHADERS.get('sprite.frag', '')
             self.shaders['sprite'] = self.shader_loader.compile_from_source(vs_src, fs_src)
             self.uniforms['sprite'] = UniformCache(self.shaders['sprite'])
-            self.uniforms['sprite'].preload(['projection', 'view', 'sprite_texture', 'sprite_pos_world', 'sprite_size',
-                                             'sprite_tint', 'sprite_rot', 'sprite_opacity'])
+            self.uniforms['sprite'].preload(['projection', 'view', 'sprite_texture', 'sprite_pos_world', 'sprite_size'])
             self.uniforms['sprite'].preload(self.ENV_UNIFORMS)
 
             # depth_cube – renders scene depth into a point light's cube-map for
@@ -502,7 +520,6 @@ class BaseRenderer:
                                             'distortionStrength', 'causticStrength', 'glassOpacity',
                                             'refractionIndex', 'roughness', 'normalMatrix'])
             self.uniforms['glass'].preload(self.ENV_UNIFORMS)
-
             # fog – use ARM‑optimised fragment shader (works everywhere)
             fog_vert = DEFAULT_SHADERS.get('fog.vert', '')
             fog_frag = DEFAULT_SHADERS.get('fog_arm.frag', DEFAULT_SHADERS.get('fog.frag', ''))
@@ -513,7 +530,10 @@ class BaseRenderer:
             # terrain
             try:
                 terrain_vs = compileShader(TERRAIN_VERTEX_SHADER, gl.GL_VERTEX_SHADER)
-                terrain_fs = compileShader(TERRAIN_FRAGMENT_SHADER, gl.GL_FRAGMENT_SHADER)
+                terrain_fs = compileShader(
+                    shaders.light_ubo_source(TERRAIN_FRAGMENT_SHADER),
+                    gl.GL_FRAGMENT_SHADER,
+                )
                 terrain_program = compileProgram(terrain_vs, terrain_fs, validate=False)
                 self.shaders['terrain'] = terrain_program
                 self.uniforms['terrain'] = UniformCache(terrain_program)
@@ -523,11 +543,6 @@ class BaseRenderer:
                     'biomeWeights', 'terrainHeightScale'
                 ])
                 self.uniforms['terrain'].preload(self.ENV_UNIFORMS)
-                for i in range(self.MAX_LIGHTS):
-                    self.uniforms['terrain'].preload([
-                        f'lights[{i}].position', f'lights[{i}].color',
-                        f'lights[{i}].intensity', f'lights[{i}].radius'
-                    ])
                 print("Terrain shader loaded")
             except Exception as e:
                 print(f"Terrain shader error: {e}")
@@ -539,6 +554,7 @@ class BaseRenderer:
             else:
                 self._compile_standard_shaders()
 
+            self._configure_light_ubo_programs()
             print("Base renderer shaders compiled successfully.")
         except Exception as e:
             print(f"FATAL: Shader Error in BaseRenderer: {e}")
@@ -560,6 +576,11 @@ class BaseRenderer:
         self.uniforms['textured'] = UniformCache(tex_shader)
         self._preload_lit_uniforms('textured')
         self.uniforms['textured'].preload(['texture_diffuse', 'tex_scale', 'tex_angle', 'tex_shift', 'normalMatrix'])
+        self._compile_instanced_model_shaders(lit_vert, lit_frag, tex_vert, tex_frag)
+        self._compile_instanced_brush_shader(tex_vert, tex_frag)
+        self._compile_instanced_lit_brush_shader(lit_vert, lit_frag)
+        self._compile_instanced_depth_shader()
+        self._compile_instanced_sprite_shader()
 
     def _compile_standard_shaders(self):
         lit_shader = self.shader_loader.compile_shader_program('lit.vert', 'lit.frag')
@@ -573,14 +594,493 @@ class BaseRenderer:
         self.uniforms['textured'] = UniformCache(tex_shader)
         self._preload_lit_uniforms('textured')
         self.uniforms['textured'].preload(['texture_diffuse', 'tex_scale', 'tex_angle', 'tex_shift', 'normalMatrix'])
+        lit_vert = DEFAULT_SHADERS.get('lit.vert', '')
+        lit_frag = DEFAULT_SHADERS.get('lit.frag', '')
+        tex_vert = DEFAULT_SHADERS.get('textured.vert', '')
+        tex_frag = DEFAULT_SHADERS.get('textured.frag', '')
+        self._compile_instanced_model_shaders(lit_vert, lit_frag, tex_vert, tex_frag)
+        self._compile_instanced_brush_shader(tex_vert, tex_frag)
+        self._compile_instanced_lit_brush_shader(lit_vert, lit_frag)
+        self._compile_instanced_depth_shader()
+        self._compile_instanced_sprite_shader()
+
+    #: Floats per brush-face instance: a mat4 model matrix, a mat3 normal
+    #: matrix padded to three vec4 (with the face's UV rotation tucked into the
+    #: first spare w), and one vec4 of UV scale and shift.  Eight vec4s, so
+    #: attribute locations 3..10 -- 0..2 are the cube's own position, normal and
+    #: texture coordinate.
+    BRUSH_INSTANCE_FLOATS = 32
+
+    #: Attribute locations 3..10 carry one instance of a brush draw run, and
+    #: mean the same thing for every pass that uses them:
+    #:
+    #:   3..6   mat4 model
+    #:   7..9   mat3 normal matrix, padded to vec4; ``iNormal0.w`` is a spare
+    #:          scalar a pass may use (the textured pass puts the face's UV
+    #:          rotation there)
+    #:   10     vec4 payload, whose meaning is the pass's own (UV scale and
+    #:          shift for textured, colour and alpha for lit)
+    #:
+    #: One layout, one buffer and one VAO serve both passes, which is what
+    #: makes "a run describes the invariant GPU state, the instance array
+    #: describes everything that varies within it" a property of the renderer
+    #: rather than of one pass.
+    BRUSH_INSTANCE_ATTRS = """layout (location = 3) in vec4 iModel0;
+layout (location = 4) in vec4 iModel1;
+layout (location = 5) in vec4 iModel2;
+layout (location = 6) in vec4 iModel3;
+layout (location = 7) in vec4 iNormal0;
+layout (location = 8) in vec4 iNormal1;
+layout (location = 9) in vec4 iNormal2;
+layout (location = 10) in vec4 iPayload;
+
+"""
+
+    #: Vertex-shader uniforms the instanced variants drop, because the value is
+    #: per instance now rather than per draw.
+    _INSTANCED_VERT_DROP = ('uniform mat4 model;', 'uniform mat3 normalMatrix;',
+                            'uniform vec2 tex_scale', 'uniform float tex_angle',
+                            'uniform vec2 tex_shift')
+
+    def _instanced_vertex_source(self, vert, preamble, extra_out=''):
+        """A vertex shader rewritten to take its transform from instance data.
+
+        Shared by the textured and lit brush passes: both start from the
+        ordinary shader and differ only in what they pull out of the payload,
+        so neither can drift from the pass it accelerates.
+        """
+        kept = [line for line in vert.splitlines()
+                if not line.strip().startswith(self._INSTANCED_VERT_DROP)]
+        source = '\n'.join(kept)
+        if 'out vec3 FragPos;' not in source or 'void main() {' not in source:
+            return None
+        source = source.replace(
+            'out vec3 FragPos;',
+            self.BRUSH_INSTANCE_ATTRS + extra_out + 'out vec3 FragPos;', 1)
+        source = source.replace(
+            'void main() {',
+            'void main() {\n'
+            '    mat4 instanceModel = mat4(iModel0, iModel1, iModel2, iModel3);\n'
+            '    mat3 instanceNormal = mat3(iNormal0.xyz, iNormal1.xyz, iNormal2.xyz);\n'
+            + preamble, 1)
+        source = source.replace('model * vec4(aPos, 1.0)',
+                                'instanceModel * vec4(aPos, 1.0)')
+        source = source.replace('normalMatrix * aNormal',
+                                'instanceNormal * aNormal')
+        return source
+
+    def _register_instanced_shader(self, name, vertex_source, fragment_source,
+                                   extra_uniforms=()):
+        """Compile one instanced brush program, or leave it absent.
+
+        Absence is a supported state, not a failure: a driver that rejects the
+        attribute interface simply keeps the per-object path, which every pass
+        retains.
+        """
+        if not vertex_source or not fragment_source:
+            return False
+        try:
+            program = self.shader_loader.compile_from_source(vertex_source,
+                                                             fragment_source)
+        except Exception as exc:
+            print(f'[BaseRenderer] {name} instancing disabled: {exc}')
+            return False
+        self.shaders[name] = program
+        self.uniforms[name] = UniformCache(program)
+        self._preload_lit_uniforms(name)
+        if extra_uniforms:
+            self.uniforms[name].preload(list(extra_uniforms))
+        return True
+
+    def _compile_instanced_depth_shader(self):
+        """Compile the shadow depth shader with an instanced model matrix.
+
+        The depth pass is the purest run/instance split in the renderer: the
+        only thing that varies per caster is its model matrix, and the only
+        thing that varies per run is the cube face's ``lightSpaceMatrix``. So
+        the matrix becomes instance data and the face stays a uniform, and one
+        light's six faces cost six draws instead of six times its caster count.
+
+        The vertex shader takes the same instance attributes as the brush
+        passes, so the same buffer and the same VAO serve it; the normal and
+        payload slots go unused here, which costs a little upload bandwidth and
+        buys one layout for the whole renderer.
+        """
+        vert = DEFAULT_SHADERS.get('depth_cube.vert', '')
+        frag = DEFAULT_SHADERS.get('depth_cube.frag', '')
+        if not vert or not frag:
+            return
+        vertex = self._instanced_vertex_source(vert, preamble='')
+        if vertex is None:
+            return
+        if self._register_instanced_shader(
+                'depth_cube_instanced', vertex, frag,
+                extra_uniforms=['lightSpaceMatrix', 'lightPos', 'far_plane']):
+            print('[BaseRenderer] Shadow depth instancing shader compiled successfully.')
+
+    #: Per-instance attributes the sprite pass carries: the billboard's centre
+    #: and its world size.  Five floats, against the two uniform uploads and
+    #: the draw call each sprite used to cost.
+    SPRITE_INSTANCE_FLOATS = 5
+
+    def _compile_instanced_sprite_shader(self):
+        """Compile the billboard shader with its centre and size per instance.
+
+        The sprite pass was the last one submitting per object: one
+        ``glDrawArrays`` and two uniform uploads for every billboard in range,
+        where the brush passes had long since collapsed to one draw per state
+        run.  Instancing it is the same trade they made -- what cannot vary
+        within a draw (the texture) stays a bind, and what does (where the
+        billboard is and how big) becomes instance data.
+
+        Derived from ``sprite.vert`` by rewriting the two uniforms into
+        attributes rather than written out again, so the billboard's
+        camera-facing maths cannot drift from the path it accelerates.
+        """
+        vert = DEFAULT_SHADERS.get('sprite.vert', '')
+        frag = DEFAULT_SHADERS.get('sprite.frag', '')
+        if not vert or not frag:
+            return
+        kept = [line for line in vert.splitlines()
+                if not line.strip().startswith(('uniform vec3 sprite_pos_world',
+                                                'uniform vec2 sprite_size'))]
+        source = '\n'.join(kept)
+        if 'out vec2 TexCoords;' not in source:
+            return
+        source = source.replace(
+            'out vec2 TexCoords;',
+            'layout (location = 1) in vec3 iSpritePos;\n'
+            'layout (location = 2) in vec2 iSpriteSize;\n'
+            'out vec2 TexCoords;', 1)
+        source = source.replace('sprite_pos_world', 'iSpritePos')
+        source = source.replace('sprite_size.x', 'iSpriteSize.x')
+        source = source.replace('sprite_size.y', 'iSpriteSize.y')
+        if 'iSpritePos' not in source or 'iSpriteSize.x' not in source:
+            # The shader did not look the way this rewrite assumes; leaving the
+            # program absent keeps the per-sprite path, which every caller has.
+            return
+        if self._register_instanced_shader('sprite_instanced', source, frag,
+                                           extra_uniforms=['projection', 'view',
+                                                           'sprite_texture']):
+            print('[BaseRenderer] Sprite instancing shader compiled successfully.')
+
+    def _ensure_sprite_instance_buffer(self, count):
+        """Grow the sprite instance VBO and its staging array to *count* rows."""
+        if self._sprite_instance_vbo is None:
+            self._sprite_instance_vbo = gl.glGenBuffers(1)
+        if count <= self._sprite_instance_capacity:
+            return
+        capacity = max(count, 256, self._sprite_instance_capacity * 2)
+        self._sprite_instance_capacity = capacity
+        self._sprite_instance_data = np.empty(
+            (capacity, self.SPRITE_INSTANCE_FLOATS), dtype=np.float32)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._sprite_instance_vbo)
+        gl.glBufferData(gl.GL_ARRAY_BUFFER, self._sprite_instance_data.nbytes,
+                        None, gl.GL_DYNAMIC_DRAW)
+        # As with the brush buffer, the VAO is left alone: glBufferData keeps
+        # the buffer's name and the VAO's pointers reference the name.
+
+    def _ensure_sprite_instance_vao(self):
+        """A VAO over the shared billboard quad plus the instance buffer.
+
+        Separate from ``vaos['sprite']`` for the reason the brush pass keeps
+        its own: the per-sprite path shares that one, and giving it two enabled
+        divisor-1 attributes would have every ordinary billboard draw read an
+        instance buffer it does not use.
+        """
+        if self._sprite_instance_vao is not None:
+            return self._sprite_instance_vao
+        self._ensure_sprite_instance_buffer(1)
+        vao = gl.glGenVertexArrays(1)
+        gl.glBindVertexArray(vao)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._sprite_vbo)
+        gl.glVertexAttribPointer(0, 2, gl.GL_FLOAT, gl.GL_FALSE, 0, None)
+        gl.glEnableVertexAttribArray(0)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._sprite_instance_vbo)
+        stride = self.SPRITE_INSTANCE_FLOATS * 4
+        for location, size, offset in ((1, 3, 0), (2, 2, 12)):
+            gl.glVertexAttribPointer(location, size, gl.GL_FLOAT, gl.GL_FALSE,
+                                     stride, ctypes.c_void_p(offset))
+            gl.glEnableVertexAttribArray(location)
+            gl.glVertexAttribDivisor(location, 1)
+        gl.glBindVertexArray(0)
+        self._sprite_instance_vao = vao
+        return vao
+
+    def _point_sprite_instances_at(self, base):
+        """Re-aim the sprite instance attributes at instance *base*.
+
+        OpenGL 3.3 has no ``glDrawArraysInstancedBaseInstance``, so a run that
+        starts part way through the buffer is reached by moving the pointers --
+        the same two calls per run the brush pass makes eight of.
+        """
+        stride = self.SPRITE_INSTANCE_FLOATS * 4
+        base = int(base)
+        #: Which instance the attributes currently point at. Read by the
+        #: submission tests to recover what a run actually drew.
+        self._sprite_instance_base = base
+        origin = base * stride
+        for location, size, offset in ((1, 3, 0), (2, 2, 12)):
+            gl.glVertexAttribPointer(location, size, gl.GL_FLOAT, gl.GL_FALSE,
+                                     stride, ctypes.c_void_p(origin + offset))
+
+    def _compile_instanced_lit_brush_shader(self, lit_vert, lit_frag):
+        """Compile the flat-shaded brush shader with instanced colour.
+
+        The lit pass had no texture to batch by, so every brush was its own
+        draw carrying four uniform uploads -- model, normal, colour, alpha.
+        Colour and alpha are read in the *fragment* stage, so instancing them
+        means carrying them across as a varying; the rest of the lighting,
+        shadowing and fog code is untouched.
+        """
+        if not lit_vert or not lit_frag:
+            return
+        vertex = self._instanced_vertex_source(
+            lit_vert,
+            preamble='    vInstanceColor = iPayload;\n',
+            extra_out='out vec4 vInstanceColor;\n')
+        if vertex is None:
+            return
+
+        kept = [line for line in lit_frag.splitlines()
+                if not line.strip().startswith(('uniform vec3 object_color;',
+                                                'uniform float alpha;'))]
+        fragment = '\n'.join(kept)
+        if 'in vec3 Normal;' not in fragment:
+            return
+        fragment = fragment.replace('in vec3 Normal;',
+                                    'in vec3 Normal;\nin vec4 vInstanceColor;', 1)
+        fragment, colours = re.subn(r'\bobject_color\b', 'vInstanceColor.rgb',
+                                    fragment)
+        fragment, alphas = re.subn(r'\balpha\b', 'vInstanceColor.a', fragment)
+        if not colours or not alphas:
+            # The shader did not look the way this rewrite assumes; leaving the
+            # program absent keeps the per-brush path rather than compiling
+            # something subtly wrong.
+            return
+        if self._register_instanced_shader('lit_brush_instanced', vertex,
+                                           fragment):
+            print('[BaseRenderer] Lit brush instancing shader compiled successfully.')
+
+    def _frame_transforms(self, table, slots):
+        """Model and normal matrices for *slots*, into reusable buffers.
+
+        One batched build per pass instead of one memoised glm matrix per brush
+        object.  The buffers are grown geometrically and never shrunk, so a
+        steady-state frame allocates nothing.
+        """
+        count = len(slots)
+        if len(self._brush_mat_buf) < count:
+            capacity = max(count, 16, len(self._brush_mat_buf) * 2)
+            self._brush_mat_buf = np.empty((capacity, 16), dtype=np.float32)
+            self._brush_nmat_buf = np.empty((capacity, 9), dtype=np.float32)
+        return render_table.model_matrices(
+            table, slots, self._brush_mat_buf, self._brush_nmat_buf)
+
+    
+
+    def _ensure_brush_instance_buffer(self, count):
+        """Grow the per-face instance VBO and its staging array to *count* rows."""
+        if self._brush_instance_vbo is None:
+            self._brush_instance_vbo = gl.glGenBuffers(1)
+        if count <= self._brush_instance_capacity:
+            return
+        capacity = max(count, 256, self._brush_instance_capacity * 2)
+        self._brush_instance_capacity = capacity
+        self._brush_instance_data = np.empty(
+            (capacity, self.BRUSH_INSTANCE_FLOATS), dtype=np.float32)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._brush_instance_vbo)
+        gl.glBufferData(gl.GL_ARRAY_BUFFER, self._brush_instance_data.nbytes,
+                        None, gl.GL_DYNAMIC_DRAW)
+        # The VAO is deliberately left alone. glBufferData reallocates the data
+        # store but keeps the buffer's name, and a VAO's attribute pointers
+        # reference the name with a stride and offset that have not changed --
+        # so the VAO stays valid across a growth. Deleting it here would also
+        # invalidate any handle a caller is holding, which the shadow pass does
+        # across its six faces.
+
+    def _ensure_brush_instance_vao(self):
+        """A VAO over the shared cube VBO plus the per-face instance buffer.
+
+        Deliberately separate from ``vaos['cube']``: the non-instanced path
+        shares that one, and giving it eight enabled divisor-1 attributes would
+        have every ordinary cube draw read an instance buffer it does not use.
+        """
+        if self._brush_instance_vao is not None:
+            return self._brush_instance_vao
+        # The shadow pass asks for the VAO during its setup, before anything
+        # has packed instances, so the buffer may not exist yet.
+        self._ensure_brush_instance_buffer(1)
+        vao = gl.glGenVertexArrays(1)
+        gl.glBindVertexArray(vao)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._cube_vbo)
+        for location, size, offset in ((0, 3, 0), (1, 3, 12), (2, 2, 24)):
+            gl.glVertexAttribPointer(location, size, gl.GL_FLOAT, gl.GL_FALSE,
+                                     32, ctypes.c_void_p(offset))
+            gl.glEnableVertexAttribArray(location)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._brush_instance_vbo)
+        stride = self.BRUSH_INSTANCE_FLOATS * 4
+        for location in range(3, 11):
+            gl.glVertexAttribPointer(
+                location, 4, gl.GL_FLOAT, gl.GL_FALSE, stride,
+                ctypes.c_void_p((location - 3) * 16))
+            gl.glEnableVertexAttribArray(location)
+            gl.glVertexAttribDivisor(location, 1)
+        gl.glBindVertexArray(0)
+        self._brush_instance_vao = vao
+        return vao
+
+    def _point_brush_instances_at(self, base):
+        """Re-aim the instance attributes at instance *base*.
+
+        OpenGL 3.3 has no ``glDrawArraysInstancedBaseInstance``, so a run that
+        starts part way through the buffer is reached by moving the attribute
+        pointers instead. Eight calls per run, against six vertices' worth of
+        draw -- and there are at most six runs per texture.
+        """
+        stride = self.BRUSH_INSTANCE_FLOATS * 4
+        origin = int(base) * stride
+        for location in range(3, 11):
+            gl.glVertexAttribPointer(
+                location, 4, gl.GL_FLOAT, gl.GL_FALSE, stride,
+                ctypes.c_void_p(origin + (location - 3) * 16))
+
+    def _pack_brush_instances(self, models, normals, rows, spare, payload):
+        """Pack one instance row per draw item, straight from existing arrays.
+
+        The layout is :data:`BaseRenderer.BRUSH_INSTANCE_ATTRS`: the model
+        matrix, the normal matrix padded to three vec4 with one spare scalar,
+        and a payload vec4 whose meaning belongs to the calling pass.  Every
+        field is a vectorised take -- no Python loop, and no going back to an
+        object for a transform that already exists as a column.
+
+        *rows* selects which of *models* / *normals* each instance uses, so one
+        brush appearing as six faces costs six instance rows and one matrix
+        build.
+        """
+        count = len(rows)
+        self._ensure_brush_instance_buffer(count)
+        data = self._brush_instance_data[:count]
+        np.take(models, rows, axis=0, out=data[:, 0:16])
+        if payload is None:
+            payload = 0.0
+        if normals is None:
+            # A pass that writes only depth has no normal to carry; leaving the
+            # slots zero keeps one instance layout for the whole renderer at
+            # the cost of a little upload bandwidth.
+            data[:, 16:28] = 0.0
+        else:
+            item_normals = normals[rows]
+            data[:, 16:19] = item_normals[:, 0:3]
+            data[:, 19] = spare
+            data[:, 20:23] = item_normals[:, 3:6]
+            data[:, 23] = 0.0
+            data[:, 24:27] = item_normals[:, 6:9]
+            data[:, 27] = 0.0
+        data[:, 28:32] = payload
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._brush_instance_vbo)
+        gl.glBufferSubData(gl.GL_ARRAY_BUFFER, 0, data)
+        return count
+
+    def _begin_instanced_pass(self, name, projection, view, lights):
+        """Bind an instanced brush program and its per-pass uniform state."""
+        program = self.shaders[name]
+        uniforms = self.uniforms[name]
+        gl.glUseProgram(program)
+        self._current_shader = program
+        self._upload_lights_once(name, lights)
+        gl.glUniformMatrix4fv(uniforms['projection'], 1, gl.GL_FALSE,
+                              glm.value_ptr(projection))
+        gl.glUniformMatrix4fv(uniforms['view'], 1, gl.GL_FALSE,
+                              glm.value_ptr(view))
+        return uniforms
+
+    def _compile_instanced_brush_shader(self, tex_vert, tex_frag):
+        """Compile the textured-brush shader with per-face instanced attributes.
+
+        The per-face state the pass used to upload as uniforms -- model matrix,
+        normal matrix, UV scale, rotation and shift -- becomes instance data,
+        so every face sharing a texture and a cube face index is one
+        ``glDrawArraysInstanced`` instead of one ``glDrawArrays`` and three or
+        four ``glUniform`` calls each.
+
+        The UV scale and shift ride in the payload vec4 and the rotation in the
+        spare ``iNormal0.w``; declaring locals of the shader's original uniform
+        names leaves the UV rotate/scale/shift maths in the body byte for byte
+        what the non-instanced path runs.  Both the desktop and ARM variants
+        have the same vertex interface, so one derivation serves both.
+        """
+        vertex = self._instanced_vertex_source(
+            tex_vert,
+            preamble=('    vec2 tex_scale = iPayload.xy;\n'
+                      '    vec2 tex_shift = iPayload.zw;\n'
+                      '    float tex_angle = iNormal0.w;\n'))
+        if vertex is None:
+            return
+        if self._register_instanced_shader('brush_instanced', vertex, tex_frag,
+                                           extra_uniforms=['texture_diffuse']):
+            print('[BaseRenderer] Brush face instancing shader compiled successfully.')
+
+    def _compile_instanced_model_shaders(self, lit_vert, lit_frag, tex_vert, tex_frag):
+        """Compile GL 3.3 model shaders whose transforms come from instanced attributes."""
+        instance_attrs = """layout (location = 3) in vec4 iModel0;
+layout (location = 4) in vec4 iModel1;
+layout (location = 5) in vec4 iModel2;
+layout (location = 6) in vec4 iModel3;
+layout (location = 7) in vec4 iNormal0;
+layout (location = 8) in vec4 iNormal1;
+layout (location = 9) in vec4 iNormal2;
+
+"""
+
+        def make_vertex(source):
+            if not source:
+                raise ValueError('missing model vertex shader source')
+            source = source.replace('uniform mat4 model;\n', '')
+            source = source.replace('uniform mat3 normalMatrix;\n', '')
+            if 'out vec3 FragPos;' not in source:
+                raise ValueError('unexpected model vertex shader interface')
+            source = source.replace('out vec3 FragPos;', instance_attrs + 'out vec3 FragPos;', 1)
+            source = source.replace(
+                'void main() {',
+                'void main() {\n'
+                '    mat4 instanceModel = mat4(iModel0, iModel1, iModel2, iModel3);\n'
+                '    mat3 instanceNormal = mat3(iNormal0.xyz, iNormal1.xyz, iNormal2.xyz);\n',
+                1,
+            )
+            source = source.replace('model * vec4(aPos, 1.0)', 'instanceModel * vec4(aPos, 1.0)')
+            source = source.replace('normalMatrix * aNormal', 'instanceNormal * aNormal')
+            return source
+        try:
+            self.shaders['lit_instanced'] = self.shader_loader.compile_from_source(
+                make_vertex(lit_vert), lit_frag)
+            self.uniforms['lit_instanced'] = UniformCache(self.shaders['lit_instanced'])
+            self._preload_lit_uniforms('lit_instanced')
+
+            self.shaders['textured_instanced'] = self.shader_loader.compile_from_source(
+                make_vertex(tex_vert), tex_frag)
+            self.uniforms['textured_instanced'] = UniformCache(self.shaders['textured_instanced'])
+            self._preload_lit_uniforms('textured_instanced')
+            self.uniforms['textured_instanced'].preload(
+                ['texture_diffuse', 'tex_scale', 'tex_angle', 'tex_shift', 'normalMatrix'])
+            print('[BaseRenderer] GPU model instancing shaders compiled successfully.')
+        except Exception as exc:
+            # The ordinary model shaders remain authoritative if an older/quirky
+            # driver rejects the instanced attribute interface.
+            for name in ('lit_instanced', 'textured_instanced'):
+                self.uniforms.pop(name, None)
+                program = self.shaders.pop(name, None)
+                if program:
+                    try:
+                        gl.glDeleteProgram(program)
+                    except Exception:
+                        pass
+            print(f'[BaseRenderer] GPU model instancing disabled: {exc}')
 
     def _preload_lit_uniforms(self, shader_name):
         uniforms = self.uniforms[shader_name]
         uniforms.preload(['projection', 'view', 'model', 'object_color', 'alpha', 'active_lights'])
         uniforms.preload(self.ENV_UNIFORMS)
-        for i in range(self.MAX_LIGHTS):
-            uniforms.preload([f'lights[{i}].position', f'lights[{i}].color',
-                              f'lights[{i}].intensity', f'lights[{i}].radius'])
 
     def _preload_water_uniforms(self):
         uniforms = self.uniforms['water']
@@ -775,12 +1275,30 @@ class BaseRenderer:
         self._ensure_terrain_textures(terrain)
         if not terrain.shader_program:
             self.setup_terrain_shader(terrain)
-        active_lights_count = len(lights) if lights else 0
+        terrain_lights = list(lights) if lights else []
+        max_terrain_lights = shaders.MAX_LIGHTS_TERRAIN
+        if len(terrain_lights) > max_terrain_lights:
+            cx, cy, cz = self._camera_xyz(camera_pos)
+            terrain_lights.sort(
+                key=lambda light: (
+                    (float(light.pos[0]) - cx) ** 2 +
+                    (float(light.pos[1]) - cy) ** 2 +
+                    (float(light.pos[2]) - cz) ** 2
+                )
+            )
+            terrain_lights = terrain_lights[:max_terrain_lights]
+        # _upload_lights_once() updates regular uniforms, so the terrain program
+        # must be current before that upload. update_and_render() binds it again
+        # for the actual draw, but it is too late for the uniform writes above.
+        gl.glUseProgram(terrain.shader_program)
+        self._current_shader = terrain.shader_program
+        self._upload_lights_once('terrain', terrain_lights)
+        active_lights_count = len(terrain_lights)
         gl.glDisable(gl.GL_CULL_FACE)
         if hasattr(terrain, 'get_tri_count'):
             self.render_stats.visible_tris += terrain.get_tri_count()
         terrain.update_and_render(
-            projection, view, camera_pos, frustum_planes, lights, active_lights_count,
+            projection, view, camera_pos, frustum_planes, terrain_lights, active_lights_count,
             shadow_cubemaps=(self._shadow_cubemaps if self.shadows_enabled else None),
             shadow_index_map=self._light_shadow_index,
             shadow_unit_base=self.SHADOW_TEXTURE_UNIT_BASE,
@@ -791,13 +1309,43 @@ class BaseRenderer:
     # Models
     # --------------------------------------------------------------------------
     def load_model(self, filename):
-        """Load a 3D model (OBJ or GLB)."""
-        if filename in self.loaded_models:
-            return self.loaded_models[filename]
+        """Load a 3D model (OBJ or GLB).
 
-        full_path = os.path.join('assets', 'models', filename)
-        if not os.path.exists(full_path):
-            full_path = filename
+        The normal render-time case is an already-loaded model. Keep that path
+        to a single dictionary lookup; path normalisation and filesystem work
+        belong exclusively to cache misses.
+        """
+        if not filename:
+            return None
+
+        # HOT PATH: model_path values are normally identical strings frame to
+        # frame, so this is the entire lookup on the common render path.
+        model = self.loaded_models.get(filename)
+        if model is not None:
+            return model
+
+        # Cache miss only: normalise alternate slash/absolute-path spellings
+        # so editor/package/file-dialog paths still collapse to one resource.
+        original_filename = str(filename)
+        normalized_filename = os.path.normpath(
+            original_filename.replace('/', os.sep).replace('\\', os.sep)
+        )
+        cache_key = os.path.normcase(normalized_filename)
+
+        model = self.loaded_models.get(cache_key)
+        if model is not None:
+            # Alias this exact authored path so subsequent frames stay on the
+            # one-dictionary-lookup path above.
+            self.loaded_models[filename] = model
+            return model
+
+        full_path = normalized_filename
+        if not os.path.isabs(full_path):
+            candidate = os.path.join('assets', 'models', full_path)
+            if os.path.exists(candidate):
+                full_path = candidate
+            elif os.path.exists(original_filename):
+                full_path = original_filename
 
         if not os.path.exists(full_path):
             print(f"Failed to load model: {filename}")
@@ -806,7 +1354,7 @@ class BaseRenderer:
         print(f"Loading model: {full_path}")
 
         # Determine format by extension
-        ext = os.path.splitext(filename)[1].lower()
+        ext = os.path.splitext(full_path)[1].lower()
 
         if ext == '.glb':
             if GLB is None:
@@ -823,197 +1371,457 @@ class BaseRenderer:
             return None
 
         if model.is_loaded:
+            self.loaded_models[cache_key] = model
             self.loaded_models[filename] = model
             return model
 
         print(f"Failed to load model: {filename}")
         return None
 
-    def draw_models(self, projection, view, camera_pos, models, lights, config):
-            if not models:
-                return
+    def get_loaded_model(self, filename):
+        """Return a model already loaded by this renderer without touching GL."""
+        if not filename:
+            return None
 
-            lit_shader = self.shaders.get('lit')
-            textured_shader = self.shaders.get('textured')
-            current_shader = None
-            cull_was_enabled = gl.glIsEnabled(gl.GL_CULL_FACE)
-            gl.glDisable(gl.GL_CULL_FACE)
+        model = self.loaded_models.get(filename)
+        if model is not None:
+            return model
 
-            for thing in models:
-                model_file = thing.properties.get('model_path')
-                if not model_file:
-                    continue
-                obj = self.load_model(model_file)
-                if not obj or not obj.is_loaded:
-                    continue
+        normalized_filename = os.path.normpath(
+            str(filename).replace('/', os.sep).replace('\\', os.sep)
+        )
+        cache_key = os.path.normcase(normalized_filename)
+        model = self.loaded_models.get(cache_key)
+        if model is not None:
+            self.loaded_models[filename] = model
+        return model
 
-                self.render_stats.visible_tris += (obj.vertex_count // 3)
+    def _ensure_model_instance_buffer(self, count):
+        if count <= 0:
+            return
+        if self._model_instance_vbo is None:
+            self._model_instance_vbo = gl.glGenBuffers(1)
+        if count > self._model_instance_capacity:
+            capacity = max(16, self._model_instance_capacity)
+            while capacity < count:
+                capacity *= 2
+            self._model_instance_capacity = capacity
+            self._model_instance_data = np.empty((capacity, 28), dtype=np.float32)
+            gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._model_instance_vbo)
+            gl.glBufferData(
+                gl.GL_ARRAY_BUFFER,
+                self._model_instance_data.nbytes,
+                None,
+                gl.GL_DYNAMIC_DRAW,
+            )
 
-                pos = thing.pos
-                scale = thing.properties.get('scale', 1.0)
-                if isinstance(scale, (int, float)):
-                    scale = [scale, scale, scale]
-                rot = thing.properties.get('rotation', [0, 0, 0])
+    def _ensure_model_instance_vao(self, vao):
+        key = int(vao)
+        if key in self._model_instanced_vaos:
+            return
+        if self._model_instance_vbo is None:
+            self._ensure_model_instance_buffer(1)
+        gl.glBindVertexArray(vao)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._model_instance_vbo)
+        stride = 28 * 4
+        offsets = (0, 16, 32, 48, 64, 80, 96)
+        for location, offset in zip(range(3, 10), offsets):
+            gl.glVertexAttribPointer(
+                location, 4, gl.GL_FLOAT, gl.GL_FALSE, stride, ctypes.c_void_p(offset))
+            gl.glEnableVertexAttribArray(location)
+            gl.glVertexAttribDivisor(location, 1)
+        gl.glBindVertexArray(0)
+        self._model_instanced_vaos.add(key)
 
-                mat = glm.translate(self._identity_mat4, glm.vec3(*pos))
-                mat = glm.rotate(mat, glm.radians(rot[1]), glm.vec3(0, 1, 0))
-                mat = glm.rotate(mat, glm.radians(rot[0]), glm.vec3(1, 0, 0))
-                mat = glm.rotate(mat, glm.radians(rot[2]), glm.vec3(0, 0, 1))
-                mat = glm.scale(mat, glm.vec3(*scale))
+    def _fill_model_instance_buffer(self, things):
+        count = len(things)
+        self._ensure_model_instance_buffer(count)
+        out = self._model_instance_data[:count]
+        for i, thing in enumerate(things):
+            mat = self._thing_model_matrix(thing)
+            model_np = getattr(thing, '_render_model_mat_np_cache', None)
+            normal_np = getattr(thing, '_render_model_nmat_np_cache', None)
+            if model_np is None or normal_np is None:
+                normal = getattr(thing, '_render_model_nmat_cache', self._identity_mat3)
+                model_np = np.array([
+                    mat[0][0], mat[0][1], mat[0][2], mat[0][3],
+                    mat[1][0], mat[1][1], mat[1][2], mat[1][3],
+                    mat[2][0], mat[2][1], mat[2][2], mat[2][3],
+                    mat[3][0], mat[3][1], mat[3][2], mat[3][3],
+                ], dtype=np.float32)
+                normal_np = np.array([                    normal[0][0], normal[0][1], normal[0][2], 0.0,
+                    normal[1][0], normal[1][1], normal[1][2], 0.0,
+                    normal[2][0], normal[2][1], normal[2][2], 0.0,
+                ], dtype=np.float32)
+                thing._render_model_mat_np_cache = model_np
+                thing._render_model_nmat_np_cache = normal_np
+            out[i, :16] = model_np
+            out[i, 16:28] = normal_np
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._model_instance_vbo)
+        gl.glBufferSubData(gl.GL_ARRAY_BUFFER, 0, out)
 
-                gl.glBindVertexArray(obj.vao)
-                manual_texture = thing.properties.get('texture')
+    def _model_texture_id(self, tex_name, material=None, manual=False):
+        if not tex_name:
+            return 0
+        resolved_path = self._resolve_model_texture_path(
+            material or {'texture': tex_name}, tex_name)
+        use_direct = bool(
+            resolved_path and os.path.exists(resolved_path) and
+            (not manual or not resolved_path.startswith('assets'))
+        )
+        if not use_direct:
+            return self.load_texture(tex_name, 'textures')
+        tex_cache_name = f'model_tex:{resolved_path}'
+        tex_id = self.texture_manager.get(tex_cache_name)
+        if tex_id is not None:
+            return tex_id
+        try:
+            from PIL import Image
+            img = Image.open(resolved_path).convert('RGBA')
+            img = img.transpose(Image.FLIP_TOP_BOTTOM)
+            tex_id = gl.glGenTextures(1)
+            self.texture_manager[tex_cache_name] = tex_id
+            gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_REPEAT)
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_REPEAT)
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR_MIPMAP_LINEAR)
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
+            gl.glTexImage2D(
+                gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, img.width, img.height, 0,
+                gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, img.tobytes())
+            gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
+            return tex_id
+        except Exception as exc:
+            print(f'[Renderer] Model texture load failed for {resolved_path}: {exc}')
+            return self.load_texture(tex_name, 'textures')
 
-                if obj.groups and not manual_texture:
-                    for group in obj.groups:
-                        mat_name = group['material']
-                        material = obj.materials.get(mat_name, {'color': [0.8,0.8,0.8], 'texture': None})
-                        use_texture = material.get('texture')
-                        if use_texture and textured_shader:
-                            if current_shader != textured_shader:
-                                gl.glUseProgram(textured_shader)
-                                current_shader = textured_shader
-                                u = self.uniforms['textured']
-                                gl.glUniformMatrix4fv(u['projection'], 1, gl.GL_FALSE, glm.value_ptr(projection))
-                                gl.glUniformMatrix4fv(u['view'], 1, gl.GL_FALSE, glm.value_ptr(view))
-                                self._upload_lights_once('textured', lights)
-                                gl.glActiveTexture(gl.GL_TEXTURE0)
-                                gl.glUniform1i(u['texture_diffuse'], 0)
-                                # Models use their own UVs — clear any brush
-                                # face transform left in the shared uniforms.
-                                if u.get('tex_angle', -1) != -1:
-                                    gl.glUniform1f(u['tex_angle'], 0.0)
-                                if u.get('tex_shift', -1) != -1:
-                                    gl.glUniform2f(u['tex_shift'], 0.0, 0.0)
-                            # Resolve texture path relative to MTL directory first
-                            resolved_path = self._resolve_model_texture_path(material, use_texture)
-                            if resolved_path and os.path.exists(resolved_path):
-                                # Load from resolved absolute path
-                                tex_cache_name = f"model_tex:{resolved_path}"
-                                if tex_cache_name in self.texture_manager:
-                                    tex_id = self.texture_manager[tex_cache_name]
-                                else:
-                                    from PIL import Image
-                                    img = Image.open(resolved_path).convert("RGBA")
-                                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
-                                    tex_id = gl.glGenTextures(1)
-                                    self.texture_manager[tex_cache_name] = tex_id
-                                    gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
-                                    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_REPEAT)
-                                    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_REPEAT)
-                                    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR_MIPMAP_LINEAR)
-                                    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
-                                    gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, img.width, img.height, 0,
-                                                gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, img.tobytes())
-                                    gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
-                            else:
-                                tex_id = self.load_texture(use_texture, 'textures')
-                            gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
-                            gl.glUniformMatrix4fv(self.uniforms['textured']['model'], 1, gl.GL_FALSE, glm.value_ptr(mat))
-                            # Upload normal matrix for correct lighting
-                            normal_mat = self._compute_normal_matrix(mat)
-                            normal_mat_loc = self.uniforms['textured'].get('normalMatrix', -1)
-                            if normal_mat_loc >= 0:
-                                gl.glUniformMatrix3fv(normal_mat_loc, 1, gl.GL_FALSE, glm.value_ptr(normal_mat))
-                        elif lit_shader:
-                            if current_shader != lit_shader:
-                                gl.glUseProgram(lit_shader)
-                                current_shader = lit_shader
-                                u = self.uniforms['lit']
-                                gl.glUniformMatrix4fv(u['projection'], 1, gl.GL_FALSE, glm.value_ptr(projection))
-                                gl.glUniformMatrix4fv(u['view'], 1, gl.GL_FALSE, glm.value_ptr(view))
-                                self._upload_lights_once('lit', lights)
-                            color = material.get('color', [0.8,0.8,0.8])
-                            gl.glUniform3fv(self.uniforms['lit']['object_color'], 1, color)
-                            gl.glUniform1f(self.uniforms['lit']['alpha'], 1.0)
-                            gl.glUniformMatrix4fv(self.uniforms['lit']['model'], 1, gl.GL_FALSE, glm.value_ptr(mat))
-                            # Upload normal matrix for correct lighting
-                            normal_mat = self._compute_normal_matrix(mat)
-                            normal_mat_loc = self.uniforms['lit'].get('normalMatrix', -1)
-                            if normal_mat_loc >= 0:
-                                gl.glUniformMatrix3fv(normal_mat_loc, 1, gl.GL_FALSE, glm.value_ptr(normal_mat))
-                        # Draw the group - indexed or non-indexed
-                        if group.get('indexed', False) and getattr(obj, 'ebo', None) is not None:
-                            gl.glDrawElements(gl.GL_TRIANGLES, group['count'], gl.GL_UNSIGNED_INT,
-                                            ctypes.c_void_p(group['start'] * 4))
-                        else:
-                            gl.glDrawArrays(gl.GL_TRIANGLES, group['start'], group['count'])
-                else:
-                    tex_name = manual_texture
-                    target_shader = textured_shader if tex_name else lit_shader
-                    if target_shader == textured_shader:
-                        if current_shader != textured_shader:
-                            gl.glUseProgram(textured_shader)
-                            current_shader = textured_shader
-                            u = self.uniforms['textured']
-                            gl.glUniformMatrix4fv(u['projection'], 1, gl.GL_FALSE, glm.value_ptr(projection))
-                            gl.glUniformMatrix4fv(u['view'], 1, gl.GL_FALSE, glm.value_ptr(view))
-                            self._upload_lights_once('textured', lights)
-                            gl.glActiveTexture(gl.GL_TEXTURE0)
-                            gl.glUniform1i(u['texture_diffuse'], 0)
-                            # Models use their own UVs — clear any brush face
-                            # transform left in the shared uniforms.
-                            if u.get('tex_angle', -1) != -1:
-                                gl.glUniform1f(u['tex_angle'], 0.0)
-                            if u.get('tex_shift', -1) != -1:
-                                gl.glUniform2f(u['tex_shift'], 0.0, 0.0)
-                        resolved_path = self._resolve_model_texture_path({'texture': tex_name}, tex_name)
-                        if resolved_path and os.path.exists(resolved_path) and not resolved_path.startswith('assets'):
-                            # Load from resolved absolute path
-                            tex_cache_name = f"model_tex:{resolved_path}"
-                            if tex_cache_name in self.texture_manager:
-                                tex_id = self.texture_manager[tex_cache_name]
-                            else:
-                                from PIL import Image
-                                img = Image.open(resolved_path).convert("RGBA")
-                                img = img.transpose(Image.FLIP_TOP_BOTTOM)
-                                tex_id = gl.glGenTextures(1)
-                                self.texture_manager[tex_cache_name] = tex_id
-                                gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
-                                gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_REPEAT)
-                                gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_REPEAT)
-                                gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR_MIPMAP_LINEAR)
-                                gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
-                                gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, img.width, img.height, 0,
-                                            gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, img.tobytes())
-                                gl.glGenerateMipmap(gl.GL_TEXTURE_2D)
-                        else:
-                            tex_id = self.load_texture(tex_name, 'textures')
-                        gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
-                        gl.glUniformMatrix4fv(self.uniforms['textured']['model'], 1, gl.GL_FALSE, glm.value_ptr(mat))
-                        # Upload normal matrix for correct lighting
-                        normal_mat = self._compute_normal_matrix(mat)
-                        normal_mat_loc = self.uniforms['textured'].get('normalMatrix', -1)
-                        if normal_mat_loc >= 0:
-                            gl.glUniformMatrix3fv(normal_mat_loc, 1, gl.GL_FALSE, glm.value_ptr(normal_mat))
-                    elif lit_shader:
-                        if current_shader != lit_shader:
-                            gl.glUseProgram(lit_shader)
-                            current_shader = lit_shader
-                            u = self.uniforms['lit']
-                            gl.glUniformMatrix4fv(u['projection'], 1, gl.GL_FALSE, glm.value_ptr(projection))
-                            gl.glUniformMatrix4fv(u['view'], 1, gl.GL_FALSE, glm.value_ptr(view))
-                            self._upload_lights_once('lit', lights)
-                        col = thing.properties.get('color', [0.8, 0.8, 0.8])
-                        gl.glUniform3fv(self.uniforms['lit']['object_color'], 1, col)
-                        gl.glUniform1f(self.uniforms['lit']['alpha'], 1.0)
-                        gl.glUniformMatrix4fv(self.uniforms['lit']['model'], 1, gl.GL_FALSE, glm.value_ptr(mat))
-                        # Upload normal matrix for correct lighting
-                        normal_mat = self._compute_normal_matrix(mat)
-                        normal_mat_loc = self.uniforms['lit'].get('normalMatrix', -1)
-                        if normal_mat_loc >= 0:
-                            gl.glUniformMatrix3fv(normal_mat_loc, 1, gl.GL_FALSE, glm.value_ptr(normal_mat))
-                    gl.glDrawArrays(gl.GL_TRIANGLES, 0, obj.vertex_count)
-                self.render_stats.draw_calls += 1
+    def _prepare_model_shader(self, shader_name, projection, view, lights, current_shader):
+        program = self.shaders.get(shader_name)
+        if not program:
+            return current_shader
+        if current_shader != shader_name:
+            gl.glUseProgram(program)
+            u = self.uniforms[shader_name]
+            gl.glUniformMatrix4fv(u['projection'], 1, gl.GL_FALSE, glm.value_ptr(projection))
+            gl.glUniformMatrix4fv(u['view'], 1, gl.GL_FALSE, glm.value_ptr(view))
+            self._upload_lights_once(shader_name, lights)
+            if shader_name.startswith('textured'):
+                gl.glActiveTexture(gl.GL_TEXTURE0)
+                gl.glUniform1i(u['texture_diffuse'], 0)
+                if u.get('tex_scale', -1) != -1:
+                    gl.glUniform2f(u['tex_scale'], 1.0, 1.0)
+                if u.get('tex_angle', -1) != -1:
+                    gl.glUniform1f(u['tex_angle'], 0.0)
+                if u.get('tex_shift', -1) != -1:
+                    gl.glUniform2f(u['tex_shift'], 0.0, 0.0)
+            current_shader = shader_name
+        return current_shader
 
-            gl.glBindVertexArray(0)
-            if cull_was_enabled:
-                gl.glEnable(gl.GL_CULL_FACE)
+    def _draw_model_batch_instanced(self, batch, projection, view, lights, current_shader):
+        shader_name = batch['shader'] + '_instanced'
+        current_shader = self._prepare_model_shader(
+            shader_name, projection, view, lights, current_shader)
+        if current_shader != shader_name:
+            return current_shader
+
+        obj = batch['obj']
+        things = batch['things']
+        u = self.uniforms[shader_name]
+        if batch['shader'] == 'textured':
+            gl.glBindTexture(gl.GL_TEXTURE_2D, batch.get('texture_id', 0))
+        else:
+            color = batch.get('color', (0.8, 0.8, 0.8))
+            gl.glUniform3fv(u['object_color'], 1, color)
+            gl.glUniform1f(u['alpha'], 1.0)
+
+        self._fill_model_instance_buffer(things)
+        self._ensure_model_instance_vao(obj.vao)
+        gl.glBindVertexArray(obj.vao)
+        group = batch.get('group')
+        if group is not None:
+            if group.get('indexed', False) and getattr(obj, 'ebo', None) is not None:
+                gl.glDrawElementsInstanced(
+                    gl.GL_TRIANGLES, group['count'], gl.GL_UNSIGNED_INT,
+                    ctypes.c_void_p(group['start'] * 4), len(things))
             else:
-                gl.glDisable(gl.GL_CULL_FACE)
+                gl.glDrawArraysInstanced(
+                    gl.GL_TRIANGLES, group['start'], group['count'], len(things))
+        else:
+            gl.glDrawArraysInstanced(gl.GL_TRIANGLES, 0, obj.vertex_count, len(things))
+        self.render_stats.draw_calls += 1
+        self.render_stats.batched_draws += 1
+        return current_shader
+
+    def _draw_model_batch_single(self, batch, projection, view, lights, current_shader):
+        shader_name = batch['shader']
+        current_shader = self._prepare_model_shader(
+            shader_name, projection, view, lights, current_shader)
+        if current_shader != shader_name:
+            return current_shader
+
+        obj = batch['obj']
+        thing = batch['things'][0]
+        mat = self._thing_model_matrix(thing)
+        normal_mat = getattr(thing, '_render_model_nmat_cache', self._identity_mat3)
+        u = self.uniforms[shader_name]
+        if shader_name == 'textured':
+            gl.glBindTexture(gl.GL_TEXTURE_2D, batch.get('texture_id', 0))
+        else:
+            color = batch.get('color', (0.8, 0.8, 0.8))
+            gl.glUniform3fv(u['object_color'], 1, color)
+            gl.glUniform1f(u['alpha'], 1.0)
+        gl.glUniformMatrix4fv(u['model'], 1, gl.GL_FALSE, glm.value_ptr(mat))
+        normal_loc = u.get('normalMatrix', -1)
+        if normal_loc >= 0:
+            gl.glUniformMatrix3fv(normal_loc, 1, gl.GL_FALSE, glm.value_ptr(normal_mat))
+        gl.glBindVertexArray(obj.vao)
+        group = batch.get('group')
+        if group is not None:
+            if group.get('indexed', False) and getattr(obj, 'ebo', None) is not None:
+                gl.glDrawElements(gl.GL_TRIANGLES, group['count'], gl.GL_UNSIGNED_INT,
+                                  ctypes.c_void_p(group['start'] * 4))
+            else:
+                gl.glDrawArrays(gl.GL_TRIANGLES, group['start'], group['count'])
+        else:
+            gl.glDrawArrays(gl.GL_TRIANGLES, 0, obj.vertex_count)
+        self.render_stats.draw_calls += 1
+        return current_shader
+
+    def draw_models(self, projection, view, camera_pos, models, lights, config):
+        if not models:
+            return
+
+        lit_shader = self.shaders.get('lit')
+        textured_shader = self.shaders.get('textured')
+        if not lit_shader and not textured_shader:
+            return
+
+        cull_was_enabled = gl.glIsEnabled(gl.GL_CULL_FACE)
+        gl.glDisable(gl.GL_CULL_FACE)
+
+        # Build material/mesh batches once. Identical model geometry and material
+        # state shares one instanced draw instead of one GL draw per Thing.
+        batches = {}
+        for thing in models:
+            props = getattr(thing, 'properties', {})
+            model_file = props.get('model_path')
+            if not model_file:
+                continue
+            obj = self.load_model(model_file)
+            if not obj or not obj.is_loaded:
+                continue
+
+            self.render_stats.visible_tris += obj.vertex_count // 3
+            manual_texture = props.get('texture')
+
+            if obj.groups and not manual_texture:
+                for group in obj.groups:
+                    material = obj.materials.get(
+                        group['material'],
+                        {'color': [0.8, 0.8, 0.8], 'texture': None})
+                    use_texture = material.get('texture')
+                    shader_kind = (
+                        'textured' if use_texture and textured_shader
+                        else 'lit' if lit_shader else None)
+                    if not shader_kind:
+                        continue
+                    color = tuple(material.get('color', [0.8, 0.8, 0.8]))
+                    key = (
+                        id(obj), group.get('start', 0), group.get('count', 0),
+                        bool(group.get('indexed', False)), shader_kind,
+                        str(use_texture) if shader_kind == 'textured' else color,
+                    )
+                    batch = batches.get(key)
+                    if batch is None:
+                        batch = {
+                            'obj': obj, 'group': group, 'things': [],
+                            'shader': shader_kind, 'material': material,
+                            'texture_name': use_texture, 'color': color,
+                        }
+                        batches[key] = batch
+                    batch['things'].append(thing)
+            else:
+                tex_name = manual_texture
+                shader_kind = (
+                    'textured' if tex_name and textured_shader
+                    else 'lit' if lit_shader else None)
+                if not shader_kind:
+                    continue
+                color = tuple(props.get('color', [0.8, 0.8, 0.8]))
+                key = (
+                    id(obj), 0, obj.vertex_count, False, shader_kind,
+                    str(tex_name) if shader_kind == 'textured' else color,
+                )
+                batch = batches.get(key)
+                if batch is None:
+                    batch = {
+                        'obj': obj, 'group': None, 'things': [],
+                        'shader': shader_kind, 'material': None,
+                        'texture_name': tex_name, 'color': color,
+                    }
+                    batches[key] = batch
+                batch['things'].append(thing)
+
+        current_shader = None
+        for batch in batches.values():
+            tex_name = batch.get('texture_name')
+            if tex_name:
+                batch['texture_id'] = self._model_texture_id(
+                    tex_name, batch.get('material'),
+                    manual=bool(batch.get('material') is None))
+
+            things = batch['things']
+            instanced_shader = self.shaders.get(batch['shader'] + '_instanced')
+            if len(things) >= 2 and instanced_shader:
+                current_shader = self._draw_model_batch_instanced(
+                    batch, projection, view, lights, current_shader)
+            else:
+                current_shader = self._draw_model_batch_single(
+                    batch, projection, view, lights, current_shader)
+
+        gl.glBindVertexArray(0)
+        if cull_was_enabled:
+            gl.glEnable(gl.GL_CULL_FACE)
+        else:
+            gl.glDisable(gl.GL_CULL_FACE)
 
     def set_instance_textures(self, textures):
         self.instance_textures = textures
+
+    def _sprite_gl_ids(self, table):
+        """``sprite id -> GL texture id``, for every recipe the table interned.
+
+        The entity projection is GL-free, so it interns sprite *recipes* --
+        ordered candidate cache keys and how to load each -- and the resolution
+        to a GL id happens here, once per unique recipe, on the thread that has
+        a context.  Exactly the shape :meth:`Renderer_F._gl_texture_ids` has for
+        brush face textures.
+
+        Each candidate is tried in the order the object path tried it: look the
+        key up in the shared sprite-texture cache, and on a miss load the file
+        if the recipe names one.  A recipe no candidate satisfies resolves to
+        0, which is how the object path's "this sprite has no texture, draw
+        nothing" is said numerically.
+        """
+        recipes = table.sprite_recipes()
+        if recipes is not self._sprite_recipes_seen:
+            # A different projection, so a different id space -- a new play
+            # session builds a new EntityTable while the renderer outlives it.
+            # Identity of the recipe list is the cheapest way to notice, and
+            # the list outlives nothing: holding it does not keep the table.
+            self._sprite_recipes_seen = recipes
+            self._sprite_gl_by_id = np.zeros(0, dtype=np.int32)
+        cached = self._sprite_gl_by_id
+        if len(cached) >= len(recipes):
+            return cached
+        grown = np.zeros(len(recipes), dtype=np.int32)
+        grown[:len(cached)] = cached
+        for sprite_id in range(len(cached), len(recipes)):
+            grown[sprite_id] = self._resolve_sprite_recipe(recipes[sprite_id])
+        self._sprite_gl_by_id = grown
+        return grown
+
+    def _resolve_sprite_recipe(self, candidates):
+        """The GL texture id for one interned candidate list, or 0."""
+        for key, filename, subfolder, cache in candidates:
+            if key:
+                tex_id = self.sprite_textures.get(key)
+                if tex_id:
+                    return int(tex_id)
+            if not filename:
+                continue
+            tex_id = self.load_texture(filename, subfolder)
+            if tex_id:
+                if cache and key:
+                    self.sprite_textures[key] = tex_id
+                return int(tex_id)
+        return 0
+
+    #: The sprite pass's render key. Texture is the whole of it: it is the only
+    #: GPU state a billboard establishes, and everything else about a sprite --
+    #: where it is, how big -- is per-instance by construction.
+    SPRITE_KEY_LAYOUT = KeyLayout([('texture', 32)])
+
+    def draw_sprites_instanced(self, projection, view, table, slots,
+                               gl_ids=None):
+        """The sprite pass over dense columns: one draw per texture run.
+
+        *slots* are rows of an :class:`engine.entity_table.EntityTable`, already
+        classified into the sprite pass and depth-ordered.  Everything this
+        needs is a column read: the centre from ``pos``, the size from
+        ``sprite_size``, the texture from ``sprite_key_id`` through
+        :meth:`_sprite_gl_ids`.  No entity is touched.
+
+        Rows whose texture resolves to 0 are dropped, which is what the object
+        path's ``if tex_id:`` did.  The rest are sorted by texture into runs --
+        :func:`engine.render_keys.sort_into_runs`, stable, so the depth order
+        the caller established survives inside each run -- and each run is one
+        ``glDrawArraysInstanced`` over a slice of the packed buffer.
+
+        Returns the number of sprites submitted, so a caller can tell an empty
+        pass from a skipped one.
+        """
+        if 'sprite_instanced' not in self.shaders or not len(slots):
+            return 0
+        if gl_ids is None:
+            gl_ids = self._sprite_gl_ids(table)
+
+        key_ids = table.sprite_key_id[slots]
+        drawn = key_ids >= 0
+        if len(gl_ids):
+            textures = np.where(drawn, gl_ids[np.where(drawn, key_ids, 0)], 0)
+        else:
+            textures = np.zeros(len(slots), dtype=np.int32)
+        drawn &= textures > 0
+        if not drawn.any():
+            return 0
+        slots = slots[drawn]
+        textures = textures[drawn].astype(np.int64)
+
+        keys = self.SPRITE_KEY_LAYOUT.pack(texture=textures)
+        order, run_starts = sort_into_runs(keys)
+
+        count = len(order)
+        self._ensure_sprite_instance_buffer(count)
+        data = self._sprite_instance_data[:count]
+        sorted_slots = slots[order]
+        data[:, 0:3] = table.pos[sorted_slots]
+        data[:, 3:5] = table.sprite_size[sorted_slots]
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._sprite_instance_vbo)
+        gl.glBufferSubData(gl.GL_ARRAY_BUFFER, 0, data)
+
+        shader, uniforms = (self.shaders['sprite_instanced'],
+                            self.uniforms['sprite_instanced'])
+        gl.glUseProgram(shader)
+        self._current_shader = shader
+        # Billboards are unlit, so they never reach _upload_lights_once -- they
+        # still need fogging, exactly as the per-sprite path does.
+        self._upload_env_uniforms('sprite_instanced')
+        gl.glUniformMatrix4fv(uniforms['projection'], 1, gl.GL_FALSE,
+                              glm.value_ptr(projection))
+        gl.glUniformMatrix4fv(uniforms['view'], 1, gl.GL_FALSE,
+                              glm.value_ptr(view))
+        gl.glActiveTexture(gl.GL_TEXTURE0)
+        gl.glUniform1i(uniforms['sprite_texture'], 0)
+        gl.glBindVertexArray(self._ensure_sprite_instance_vao())
+
+        run_texture = textures[order][run_starts[:-1]]
+        current_tex = None
+        for run in range(len(run_starts) - 1):
+            begin = int(run_starts[run])
+            length = int(run_starts[run + 1]) - begin
+            if length <= 0:
+                continue
+            tex_id = int(run_texture[run])
+            if tex_id != current_tex:
+                gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
+                current_tex = tex_id
+                self.render_stats.batched_draws += 1
+            self._point_sprite_instances_at(begin)
+            gl.glDrawArraysInstanced(gl.GL_TRIANGLE_STRIP, 0, 4, length)
+            self.render_stats.draw_calls += 1
+        gl.glBindVertexArray(0)
+        return count
 
     def draw_sprites(self, projection, view, things_to_draw, sprite_textures, instance_textures=None):
         if not things_to_draw or 'sprite' not in self.shaders:
@@ -1030,106 +1838,50 @@ class BaseRenderer:
         gl.glActiveTexture(gl.GL_TEXTURE0)
         gl.glUniform1i(uniforms['sprite_texture'], 0)
         pos_loc, size_loc = uniforms['sprite_pos_world'], uniforms['sprite_size']
-        tint_loc = uniforms['sprite_tint']
-        rot_loc = uniforms['sprite_rot']   # -1 if the shader lacks it (safe no-op)
-        opacity_loc = uniforms.get('sprite_opacity', -1)
-        gl.glUniform4f(tint_loc, 0.0, 0.0, 0.0, 0.0)   # no tint by default
-        gl.glUniform1f(rot_loc, 0.0)                   # upright by default
-        if opacity_loc >= 0:
-            gl.glUniform1f(opacity_loc, 1.0)           # solid by default
         gl.glBindVertexArray(self.vaos['sprite'])
 
-        # Billboard right/up basis (world space) — the plane a sprite rotates in.
-        # Used to turn a head sprite so its "up" points along the actor's heading.
-        _cam_right = (view[0][0], view[1][0], view[2][0])
-        _cam_up = (view[0][1], view[1][1], view[2][1])
-
-        def _head_billboard_rot(angle):
-            """In-plane billboard rotation (radians) that makes a head sprite face
-            its heading. Heading world dir is (sin a, 0, cos a) — the engine's
-            forward convention. Projected onto the billboard basis, then the
-            sprite's up axis is turned to match."""
-            ha = math.sin(angle); hz = math.cos(angle)
-            a = ha * _cam_right[0] + hz * _cam_right[2]
-            b = ha * _cam_up[0] + hz * _cam_up[2]
-            if (a * a + b * b) < 1e-8:
-                return 0.0
-            return math.atan2(-a, b) + HEAD_FACING_OFFSET
-
-        # The actor the inspector's cursor is over, set on the renderer by the
-        # viewport each frame (id of the live Thing; None when inspect mode is
-        # off). Read here rather than passed down because draw_sprites sits at
-        # the bottom of the render call chain.
-        hover_id = getattr(self, 'inspect_hover_id', None)
-
         current_tex = None
-        _tinted = False   # whether the last draw left a non-zero tint set
-        _rotated = False  # whether the last draw left a non-zero rotation set
-        _faded = False    # whether the last draw left a partial opacity set
         for thing in things_to_draw:
             if Portal is not None and isinstance(thing, Portal):
                 continue
 
             # Monster snapshot dict
             if isinstance(thing, dict) and 'dead' in thing:
-                # Prefer the fully-resolved sprite path from the snapshot: it
-                # already folds in the dead-head composite (head + heads/dead.png
-                # overlay), so a slain head actor shows its head with the X in the
-                # 3D view exactly as in the 2D view — no plain dead.png fallback.
-                sprite_path = thing.get('sprite_path')
-                tex_id = None
-                if sprite_path:
-                    tex_key = self._sprite_tex_key_cache.get(sprite_path)
-                    if tex_key is None:
-                        tex_key = f"mpath_{sprite_path}"
-                        self._sprite_tex_key_cache[sprite_path] = tex_key
-                    tex_id = sprite_textures.get(tex_key)
-                    if tex_id is None:
-                        rel = sprite_path.replace('assets/', '', 1)
-                        subfolder = os.path.dirname(rel)
-                        filename = os.path.basename(rel)
-                        tex_id = self.load_texture(filename, subfolder)
-                        if tex_id:
-                            self.sprite_textures[tex_key] = tex_id
+                if thing.get('dead'):
+                    custom = thing.get('custom_dead', '')
+                    sprite_type = 'dead'
+                elif thing.get('is_shooting'):
+                    custom = thing.get('custom_shoot', '')
+                    sprite_type = 'shoot'
+                else:
+                    custom = thing.get('custom_idle', '')
+                    sprite_type = 'idle'
 
+                mtype = thing.get('monster_type', 'human')
+                variant = thing.get('variant', '<None>')
+                key_tuple = (mtype, variant, sprite_type, custom)
+                tex_key = self._sprite_tex_key_cache.get(key_tuple)
+                if tex_key is None:
+                    tex_key = f"msprite_{mtype}_{variant}_{sprite_type}_{custom}"
+                    self._sprite_tex_key_cache[key_tuple] = tex_key
+                tex_id = sprite_textures.get(tex_key)
                 if tex_id is None:
-                    # Legacy fallback: derive the path from state (older snapshots
-                    # without 'sprite_path').
-                    if thing.get('dead'):
-                        custom = ''
-                        sprite_type = 'dead'
-                    elif thing.get('is_shooting'):
-                        custom = thing.get('custom_shoot', '')
-                        sprite_type = 'shoot'
+                    if custom:
+                        custom_clean = custom.replace('assets/', '', 1)
+                        subfolder = os.path.dirname(custom_clean)
+                        filename = os.path.basename(custom_clean)
                     else:
-                        custom = thing.get('custom_idle', '')
-                        sprite_type = 'idle'
-
-                    mtype = thing.get('monster_type', 'human')
-                    variant = thing.get('variant', '<None>')
-                    key_tuple = (mtype, variant, sprite_type, custom)
-                    tex_key = self._sprite_tex_key_cache.get(key_tuple)
-                    if tex_key is None:
-                        tex_key = f"msprite_{mtype}_{variant}_{sprite_type}_{custom}"
-                        self._sprite_tex_key_cache[key_tuple] = tex_key
-                    tex_id = sprite_textures.get(tex_key)
-                    if tex_id is None:
-                        if custom:
-                            custom_clean = custom.replace('assets/', '', 1)
-                            subfolder = os.path.dirname(custom_clean)
-                            filename = os.path.basename(custom_clean)
+                        if variant and variant != '<None>':
+                            subfolder = f"sprites/monsters/{mtype}/{variant}"
                         else:
-                            if variant and variant != '<None>':
-                                subfolder = f"sprites/monsters/{mtype}/{variant}"
-                            else:
-                                subfolder = f"sprites/monsters/{mtype}"
-                            filename = f"{sprite_type}.png"
-                        tex_id = self.load_texture(filename, subfolder)
-                        if not tex_id and variant and variant != '<None>':
                             subfolder = f"sprites/monsters/{mtype}"
-                            tex_id = self.load_texture(filename, subfolder)
-                        if tex_id:
-                            self.sprite_textures[tex_key] = tex_id
+                        filename = f"{sprite_type}.png"
+                    tex_id = self.load_texture(filename, subfolder)
+                    if not tex_id and variant and variant != '<None>':
+                        subfolder = f"sprites/monsters/{mtype}"
+                        tex_id = self.load_texture(filename, subfolder)
+                    if tex_id:
+                        self.sprite_textures[tex_key] = tex_id
 
                 if tex_id and tex_id != current_tex:
                     gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
@@ -1139,53 +1891,8 @@ class BaseRenderer:
                 w = thing.get('sprite_width', 128)
                 h = thing.get('sprite_height', 128)
                 gl.glUniform2f(size_loc, float(w), float(h))
-                # Head actors turn to face where they're heading (like the player
-                # and the 2D map). Non-head sprites stay upright.
-                if thing.get('is_head'):
-                    rot = _head_billboard_rot(float(thing.get('angle', 0.0) or 0.0))
-                    gl.glUniform1f(rot_loc, rot)
-                    _rotated = (rot != 0.0)
-                elif _rotated:
-                    gl.glUniform1f(rot_loc, 0.0)
-                    _rotated = False
-                # Red damage flash: mix toward red by the remaining flash time.
-                # A hit always wins over the inspector's hover tint — being shot
-                # is the more urgent thing to show.
-                flash = thing.get('hit_flash', 0.0) or 0.0
-                hovered = (hover_id is not None and thing.get('id') == hover_id)
-                if flash > 0.0:
-                    gl.glUniform4f(tint_loc, 1.0, 0.15, 0.1, min(0.75, flash * 4.0))
-                    _tinted = True
-                elif hovered:
-                    gl.glUniform4f(tint_loc, *INSPECT_HOVER_TINT)
-                    _tinted = True
-                elif _tinted:
-                    gl.glUniform4f(tint_loc, 0.0, 0.0, 0.0, 0.0)
-                    _tinted = False
-                # An actor mid-fade (the reaper arriving or leaving) draws
-                # translucent; everything else stays solid.
-                if opacity_loc >= 0:
-                    opacity = float(thing.get('opacity', 1.0) or 0.0)
-                    if opacity < 0.999:
-                        gl.glUniform1f(opacity_loc, opacity)
-                        _faded = True
-                    elif _faded:
-                        gl.glUniform1f(opacity_loc, 1.0)
-                        _faded = False
                 gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4)
                 continue
-
-            # Any non-monster sprite below must not inherit a monster's flash,
-            # rotation or fade.
-            if _tinted:
-                gl.glUniform4f(tint_loc, 0.0, 0.0, 0.0, 0.0)
-                _tinted = False
-            if _rotated:
-                gl.glUniform1f(rot_loc, 0.0)
-                _rotated = False
-            if _faded:
-                gl.glUniform1f(opacity_loc, 1.0)
-                _faded = False
 
             tex_id = None
             if instance_textures:
@@ -1211,6 +1918,13 @@ class BaseRenderer:
                             tex_id = self.load_texture(filename, subfolder)
                             if tex_id:
                                 sprite_textures[class_name] = tex_id
+                    elif getattr(thing, 'properties', {}).get('sprite_path'):
+                        sprite_path = thing.properties.get('sprite_path')
+                        subfolder = os.path.dirname(sprite_path.replace('assets/', '', 1))
+                        filename = os.path.basename(sprite_path)
+                        tex_id = self.load_texture(filename, subfolder)
+                        if tex_id:
+                            sprite_textures[class_name] = tex_id
                     elif isinstance(thing, Monster):
                         sprite_path = thing.get_sprite_path()
                         if sprite_path:
@@ -1230,6 +1944,12 @@ class BaseRenderer:
                 gl.glUniform3fv(pos_loc, 1, thing.pos)
                 if isinstance(thing, Light):
                     gl.glUniform2f(size_loc, 16.0, 16.0)
+                elif getattr(thing, 'properties', {}).get('sprite_path'):
+                    size = thing.properties.get('sprite_size', [32.0, 32.0])
+                    try:
+                        gl.glUniform2f(size_loc, float(size[0]), float(size[1]))
+                    except (TypeError, ValueError, IndexError):
+                        gl.glUniform2f(size_loc, 32.0, 32.0)
                 elif isinstance(thing, (LogicSpawner, LogicCamera)):
                     gl.glUniform2f(size_loc, 32.0, 32.0)
                 else:
@@ -1363,7 +2083,6 @@ class BaseRenderer:
         roughness_loc = uniforms['roughness']
         normal_mat_loc = uniforms.get('normalMatrix', -1)
         if normal_mat_loc is None: normal_mat_loc = -1
-
         gl.glBindVertexArray(self.vaos['cube'])
         gl.glEnable(gl.GL_BLEND)
         gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
@@ -1463,53 +2182,215 @@ class BaseRenderer:
     # --------------------------------------------------------------------------
     # Helpers for sorting and matrix utilities
     # --------------------------------------------------------------------------
-    def _sort_objects(self, brushes, things, config):
-        opaque, transparent, sprites, fog, water, glass, glow = [], [], [], [], [], [], []
-        is_play, show_sprites = config.get('play_mode', False), config.get('show_sprites_in_play_mode', False)
+    @staticmethod
+    def _thing_render_kind(thing):
+        """Cache the type-derived render category of a Thing."""
+        props = getattr(thing, 'properties', {})
+        render_mode = str(props.get('render_mode', 'model')).lower()
+        key = (type(thing), render_mode, bool(props.get('sprite_path')))
+        cached = getattr(thing, '_render_kind_cache', None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
 
-        for brush in brushes:
+        if isinstance(thing, Pickup):
+            kind = 'pickup'
+        elif isinstance(thing, (Monster, LogicGate, LogicRelay, LogicTimer, LevelChanger)):
+            kind = 'entity_sprite'
+        elif key[1] == 'billboard' and key[2]:
+            kind = 'sprite'
+        else:
+            kind = 'ordinary'
+
+        thing._render_kind_cache = (key, kind)
+        return kind
+
+    def _sort_objects(self, brushes, things, config, model_out=None,
+                      brush_positions=None, thing_positions=None,
+                      collect_sort_positions=False):
+        opaque, transparent, sprites, fog, water, glass, glow = [], [], [], [], [], [], []
+        is_play = config.get('play_mode', False)
+        show_sprites = config.get('show_sprites_in_play_mode', False)
+
+        if collect_sort_positions:
+            transparent_pos, water_pos = [], []
+            glass_pos, sprite_pos = [], []
+        else:
+            transparent_pos = water_pos = glass_pos = sprite_pos = None
+
+        for i, brush in enumerate(brushes):
             if brush.get('hidden'):
                 continue
-            # Hoist the shader lookup: it was fetched up to three times per
-            # brush per frame for the Fog/Glass/Glow branches below.
             shader = brush.get('shader')
+            pos = brush_positions[i] if brush_positions is not None else None
             if is_water_brush(brush):
                 water.append(brush)
+                if water_pos is not None:
+                    water_pos.append(pos)
             elif brush.get('is_fog') or shader == 'Fog':
                 fog.append(brush)
             elif shader == 'Glass':
                 glass.append(brush)
+                if glass_pos is not None:
+                    glass_pos.append(pos)
             elif shader == 'Glow':
                 glow.append(brush)
             elif brush.get('is_trigger'):
                 if not is_play:
                     transparent.append(brush)
+                    if transparent_pos is not None:
+                        transparent_pos.append(pos)
             else:
                 opaque.append(brush)
 
-        if not is_play:
-            sprites = [t for t in things if (isinstance(t, Thing) or (isinstance(t, dict) and 'monster_type' in t))
-                       and not (PathNode is not None and isinstance(t, PathNode))]
+        for i, t in enumerate(things):
+            pos = thing_positions[i] if thing_positions is not None else None
+            if PathNode is not None and isinstance(t, PathNode):
+                continue
+            if Portal is not None and isinstance(t, Portal):
+                sprites.append(t)
+                if sprite_pos is not None:
+                    sprite_pos.append(pos)
+                continue
+            if isinstance(t, dict) and 'monster_type' in t:
+                sprites.append(t)
+                if sprite_pos is not None:
+                    sprite_pos.append(pos)
+                continue
+            if not isinstance(t, Thing):
+                continue
+
+            props = getattr(t, 'properties', {})
+            model_path = props.get('model_path')
+            render_mode = str(props.get('render_mode', 'model')).lower()
+            model_visible = bool(
+                model_path and
+                render_mode == 'model' and
+                not props.get('hidden', False)
+            )
+            if model_out is not None and model_visible:
+                model_out.append(t)
+                continue
+
+            kind = self._thing_render_kind(t)
+            if isinstance(t, Prop):
+                if render_mode == 'billboard' and kind == 'sprite':
+                    sprites.append(t)
+            elif kind == 'pickup' or kind == 'entity_sprite':
+                sprites.append(t)
+            elif model_path and render_mode == 'model':
+                # Models have already been collected into model_out above.
+                pass
+            elif kind == 'sprite':
+                sprites.append(t)
+            elif not is_play or show_sprites:
+                sprites.append(t)
+
+            if sprite_pos is not None and sprites and sprites[-1] is t:
+                sprite_pos.append(pos)
+
+        result = (opaque, transparent, sprites, fog, water, glass, glow)
+        if collect_sort_positions:
+            return result + ({
+                'transparent': transparent_pos,
+                'water': water_pos,
+                'glass': glass_pos,
+                'sprites': sprite_pos,
+            },)
+        return result
+
+    def _classify_brush_slots(self, table, slots, config):
+        """Split visible brush slots into the render passes, numerically.
+
+        The array form of ``_sort_objects``' brush half.  That loop asked every
+        visible brush what it was, once per frame -- ``is_water_brush`` alone is
+        six ``str.lower()`` calls and six substring searches per brush -- to
+        reach a verdict that only changes when the brush is edited.  The
+        projection resolved it at edit time into ``class_bits``, so the same
+        split is one mask per class.
+
+        The classes are mutually exclusive in the same order the Python chain
+        tried them (water, then fog, then glass, then glow, then trigger), so
+        ``_brush_class_bits`` sets at most one of them and the masks cannot
+        disagree with what the loop used to decide.
+
+        Returns int32 slot arrays -- no objects are materialised here.
+        """
+        empty = slots[:0]
+        if not len(slots):
+            return {'opaque': empty, 'textured': empty, 'solid': empty,
+                    'transparent': empty, 'water': empty, 'glass': empty,
+                    'fog': empty, 'glow': empty}
+
+        bits = table.class_bits[slots]
+        opaque_mask = (bits & render_table.CLASS_NON_OPAQUE) == 0
+        textured_mask = (bits & render_table.CLASS_TEXTURED) != 0
+        # A trigger volume is drawn as a wireframe while editing and not at all
+        # in play, which is what the old loop's `if not is_play` meant.
+        if config.get('play_mode', False):
+            trigger_mask = np.zeros(len(slots), dtype=bool)
         else:
-            for t in things:
-                if PathNode is not None and isinstance(t, PathNode):
-                    continue
-                if Portal is not None and isinstance(t, Portal):
-                    sprites.append(t)
-                    continue
-                if isinstance(t, dict) and 'monster_type' in t:
-                    sprites.append(t)
-                elif isinstance(t, Thing):
-                    if isinstance(t, Pickup):
-                        sprites.append(t)
-                    elif isinstance(t, (Monster, LogicGate, LogicRelay, LogicTimer, LevelChanger)):
-                        sprites.append(t)
-                    elif getattr(t, 'properties', {}).get('model_path'):
-                        # Always render models in play mode (3D geometry, not just editor sprites)
-                        sprites.append(t)
-                    elif show_sprites:
-                        sprites.append(t)
-        return opaque, transparent, sprites, fog, water, glass, glow
+            trigger_mask = (bits & render_table.CLASS_TRIGGER) != 0
+
+        return {
+            'opaque': slots[opaque_mask],
+            'textured': slots[opaque_mask & textured_mask],
+            'solid': slots[opaque_mask & ~textured_mask],
+            'transparent': slots[trigger_mask],
+            'water': slots[(bits & render_table.CLASS_WATER) != 0],
+            'glass': slots[(bits & render_table.CLASS_GLASS) != 0],
+            'fog': slots[(bits & render_table.CLASS_FOG) != 0],
+            'glow': slots[(bits & render_table.CLASS_GLOW) != 0],
+        }
+
+    @staticmethod
+    def _distance_cull_thing_slots(table, slots, cx, cz, limit_sq):
+        """:meth:`_distance_cull_slots` with the Thing pass's exemption.
+
+        Lights and Portals survive the cull at any distance, because lighting
+        and portal rendering are deliberately unaffected by it -- the predicate
+        ``_cull_keep_thing`` states that for the object path, and this is the
+        same statement as a mask over :data:`engine.entity_table.ENT_CULL_EXEMPT`.
+        """
+        if not len(slots):
+            return slots
+        dx = table.pos[slots, 0] - cx
+        dz = table.pos[slots, 2] - cz
+        near = (dx * dx + dz * dz) <= limit_sq
+        exempt = (table.class_bits[slots]
+                  & entity_projection.ENT_CULL_EXEMPT) != 0
+        return slots[near | exempt]
+
+    @staticmethod
+    def _distance_cull_slots(table, slots, cx, cz, limit_sq):
+        """Narrow *slots* to those within *limit_sq* on the XZ plane.
+
+        The broad-phase distance cull, as a mask rather than a compaction.  It
+        used to run over a Python list and rebuild another one an element at a
+        time (``render_cull.cull_by_distance``); the surviving slots are the
+        same answer with no object touched.
+        """
+        if not len(slots):
+            return slots
+        dx = table.center[slots, 0] - cx
+        dz = table.center[slots, 2] - cz
+        return slots[(dx * dx + dz * dz) <= limit_sq]
+
+    @staticmethod
+    def _sort_slots_by_distance(table, slots, cx, cz, reverse=True):
+        """Depth-order *slots* from the projection's centres.
+
+        Replaces reconstructing an array from a list of row views and then
+        rebuilding an object list from the sort order: the positions are
+        already dense, so the sort is one argsort over a gathered distance
+        vector and the result is still slots.
+        """
+        if len(slots) < 2:
+            return slots
+        dx = table.center[slots, 0] - cx
+        dz = table.center[slots, 2] - cz
+        distances = dx * dx + dz * dz
+        order = np.argsort(-distances if reverse else distances, kind="stable")
+        return slots[order]
 
     def _split_opaque(self, brushes):
         textured, solid = [], []
@@ -1557,7 +2438,9 @@ class BaseRenderer:
         for uniform storage.
         """
         cap = _SHADER_LIGHT_CAPS.get(shader_name, self.MAX_LIGHTS)
-        if self.lowpower_mode and shader_name in ('lit', 'textured'):
+        if self.lowpower_mode and shader_name in ('lit', 'textured', 'lit_instanced',
+                                                  'textured_instanced', 'brush_instanced',
+                                                  'lit_brush_instanced'):
             cap = min(cap, shaders.MAX_LIGHTS_ARM)
         return cap
 
@@ -1614,39 +2497,122 @@ class BaseRenderer:
             return (float(camera_pos.x), float(camera_pos.y), float(camera_pos.z))
         return (float(camera_pos[0]), float(camera_pos[1]), float(camera_pos[2]))
 
+    def _configure_light_ubo_program(self, shader_name):
+        """Bind a compiled lighting shader's std140 block to the shared slot."""
+        program = self.shaders.get(shader_name)
+        if not program:
+            return False
+        block_index = gl.glGetUniformBlockIndex(program, 'FioLightBlock')
+        invalid = getattr(gl, 'GL_INVALID_INDEX', 0xFFFFFFFF)
+        if block_index == invalid:
+            return False
+        gl.glUniformBlockBinding(program, block_index, shaders.LIGHT_UBO_BINDING)
+        return True
+
+    def _configure_light_ubo_programs(self):
+        for name in ('lit', 'textured', 'lit_instanced', 'textured_instanced',
+                     'brush_instanced', 'lit_brush_instanced', 'water', 'terrain'):
+            self._configure_light_ubo_program(name)
+        self._ensure_light_ubo(self.MAX_LIGHTS)
+
+    def _ensure_light_ubo(self, capacity):
+        capacity = max(1, int(capacity))
+        if self._light_ubo is None:
+            self._light_ubo = gl.glGenBuffers(1)
+        if capacity > self._light_ubo_capacity:
+            self._light_ubo_capacity = max(self.MAX_LIGHTS, capacity)
+            self._light_ubo_data = np.zeros(self._light_ubo_capacity,
+                                            dtype=self._light_ubo_dtype)
+            gl.glBindBuffer(gl.GL_UNIFORM_BUFFER, self._light_ubo)
+            gl.glBufferData(
+                gl.GL_UNIFORM_BUFFER,
+                self._light_ubo_data.nbytes,
+                None,
+                gl.GL_DYNAMIC_DRAW,
+            )
+        gl.glBindBufferBase(
+            gl.GL_UNIFORM_BUFFER,
+            shaders.LIGHT_UBO_BINDING,
+            self._light_ubo,
+        )
+    def _upload_light_ubo(self, lights, count):
+        """Pack the active light slice once and upload it to the shared UBO."""
+        count = min(int(count), self.MAX_LIGHTS)
+        self._ensure_light_ubo(count)
+        if count <= 0:
+            self._light_ubo_key = ()
+            return
+
+        key = tuple(id(light) for light in lights[:count])
+        if self._light_ubo_key == key:
+            return
+
+        active = self._light_ubo_data[:count]
+        active['position'].fill(0.0)
+        active['color'].fill(0.0)
+        active['params'].fill(0.0)
+        active['indices'].fill(0)
+
+        active_lights = lights[:count]
+        positions = np.asarray([light.pos for light in active_lights], dtype=np.float32)
+        colors = np.asarray([light.get_color() for light in active_lights], dtype=np.float32)
+        params = np.asarray(
+            [[light.get_intensity(), light.get_radius()] for light in active_lights],
+            dtype=np.float32,
+        )
+        shadow_indices = np.fromiter(
+            (self._light_shadow_index.get(id(light), -1) for light in active_lights),
+            dtype=np.int32,
+            count=count,
+        )
+
+        active['position'][:, :3] = positions
+        active['position'][:, 3] = 1.0
+        active['color'][:, :3] = colors
+        active['color'][:, 3] = 1.0
+        active['params'][:, :2] = params
+        active['indices'][:, 0] = shadow_indices
+
+        gl.glBindBuffer(gl.GL_UNIFORM_BUFFER, self._light_ubo)
+        gl.glBufferSubData(
+            gl.GL_UNIFORM_BUFFER,
+            0,
+            active,
+        )
+        self._light_ubo_key = key
+
+    # --------------------------------------------------------------------------
+    # Light upload
+    # --------------------------------------------------------------------------
     def _upload_lights_once(self, shader_name, lights):
         if shader_name not in self.uniforms:
             return
-        # Fog and ambient ride along with the light upload: every lighting pass
-        # already calls this immediately after binding its program, and it must
-        # happen *before* the same-lights early-out below, or a frame that
-        # reuses last frame's light list would also reuse last frame's fog.
+
+        # Fog/ambient remain regular uniforms because they are not shared light
+        # state.
         self._upload_env_uniforms(shader_name)
         cap = self._shader_light_cap(shader_name)
-        # Skip if this shader already received this exact light list this
-        # frame (portal passes may use a different list, so key on ids).
-        key = tuple(map(id, lights[:cap]))
-        if self._frame_lights_uploaded.get(shader_name) == key:
-            return
-        self._frame_lights_uploaded[shader_name] = key
-        uniforms = self.uniforms[shader_name]
         num_lights = min(len(lights), cap)
-        gl.glUniform1i(uniforms['active_lights'], num_lights)
-        shadow_index_map = self._light_shadow_index
-        light_names = self._light_uniform_names
-        for i in range(num_lights):
-            light = lights[i]
-            n_pos, n_col, n_int, n_rad, n_shadow = light_names[i]
-            gl.glUniform3fv(uniforms[n_pos], 1, light.pos)
-            gl.glUniform3fv(uniforms[n_col], 1, light.get_color())
-            gl.glUniform1f(uniforms[n_int], light.get_intensity())
-            gl.glUniform1f(uniforms[n_rad], light.get_radius())
-            loc = uniforms[n_shadow]
-            if loc != -1:
-                gl.glUniform1i(loc, shadow_index_map.get(id(light), -1))
-        # Bind the depth cube-maps so the shadow test can sample them.
-        self._bind_shadow_maps(uniforms)
 
+        # Bind the shared block for this program even when the light list itself
+        # is unchanged. The UBO contents are uploaded only when the light IDs
+        # change for the frame/pass.
+        self._ensure_light_ubo(num_lights)
+        gl.glBindBufferBase(
+            gl.GL_UNIFORM_BUFFER,
+            shaders.LIGHT_UBO_BINDING,
+            self._light_ubo,
+        )
+        self._frame_lights_uploaded[shader_name] = tuple(map(id, lights[:cap]))
+        gl.glUniform1i(self.uniforms[shader_name]['active_lights'], num_lights)
+        self._upload_light_ubo(lights, num_lights)
+
+        # Keep sampler2D and samplerCube uniforms on distinct texture units.
+        # This is one shader-pass operation, never part of the per-draw loop.
+        if shader_name in ('lit', 'textured', 'lit_instanced',
+                           'textured_instanced', 'brush_instanced',
+                           'lit_brush_instanced', 'terrain'):
+            self._bind_shadow_maps(self.uniforms[shader_name])
     # --------------------------------------------------------------------------
     # Depth cube-map shadow mapping
     # --------------------------------------------------------------------------
@@ -1697,40 +2663,201 @@ class BaseRenderer:
             self._shadow_cubemaps = []
 
     def _thing_model_matrix(self, thing):
-        """Model matrix for a model-carrying Thing, matching draw_models()."""
+        """Return a cached model matrix for a model-carrying Thing."""
+        props = getattr(thing, 'properties', {})
         pos = thing.pos
-        scale = thing.properties.get('scale', 1.0)
-        if isinstance(scale, (int, float)):
-            scale = [scale, scale, scale]
-        rot = thing.properties.get('rotation', [0, 0, 0])
+        rot = props.get('rotation', [0, 0, 0])
+        scale = props.get('scale', 1.0)
+        scale_key = (scale, scale, scale) if isinstance(scale, (int, float)) else tuple(scale)
+        key = (pos[0], pos[1], pos[2], tuple(rot), scale_key)
+        if getattr(thing, '_render_model_mat_key', None) == key:
+            return thing._render_model_mat_cache
+
+        scale_vec = (scale, scale, scale) if isinstance(scale, (int, float)) else scale
         mat = glm.translate(self._identity_mat4, glm.vec3(*pos))
         mat = glm.rotate(mat, glm.radians(rot[1]), glm.vec3(0, 1, 0))
         mat = glm.rotate(mat, glm.radians(rot[0]), glm.vec3(1, 0, 0))
         mat = glm.rotate(mat, glm.radians(rot[2]), glm.vec3(0, 0, 1))
-        mat = glm.scale(mat, glm.vec3(*scale))
+        mat = glm.scale(mat, glm.vec3(*scale_vec))
+        try:
+            normal = glm.transpose(glm.inverse(glm.mat3(mat)))
+        except Exception:
+            normal = self._identity_mat3
+        thing._render_model_mat_key = key
+        thing._render_model_mat_cache = mat
+        thing._render_model_nmat_cache = normal
+        # Numpy copies are generated only when the transform changes; the
+        # instanced renderer can then copy cached arrays into one GPU batch.
+        thing._render_model_mat_np_cache = np.array([
+            mat[0][0], mat[0][1], mat[0][2], mat[0][3],
+            mat[1][0], mat[1][1], mat[1][2], mat[1][3],
+            mat[2][0], mat[2][1], mat[2][2], mat[2][3],
+            mat[3][0], mat[3][1], mat[3][2], mat[3][3],
+        ], dtype=np.float32)
+        thing._render_model_nmat_np_cache = np.array([
+            normal[0][0], normal[0][1], normal[0][2], 0.0,
+            normal[1][0], normal[1][1], normal[1][2], 0.0,
+            normal[2][0], normal[2][1], normal[2][2], 0.0,
+        ], dtype=np.float32)
         return mat
 
     def _bind_shadow_maps(self, uniforms):
-        """Bind every depth cube-map to its reserved texture unit and point the
-        matching ``shadowMaps[i]`` sampler at it.  Unused slots are still bound
-        so the samplers stay valid; the shaders simply never sample a slot whose
-        ``shadowIndex`` no light references."""
-        if not self._shadow_cubemaps:
-            return
+        """Bind shadow samplers to dedicated texture units.
+
+        Lighting shaders contain both sampler2D and samplerCube uniforms.
+        OpenGL requires sampler uniforms of different types to reference
+        different texture units at draw time, even when no shadowing light
+        is active. Keep the cube samplers on their reserved units and bind
+        texture 0 when shadow resources are unavailable.
+        """
         base = self.SHADOW_TEXTURE_UNIT_BASE
-        for i, cm in enumerate(self._shadow_cubemaps):
+        cubemaps = self._shadow_cubemaps
+        for i in range(self.MAX_SHADOW_LIGHTS):
             loc = uniforms[f'shadowMaps[{i}]']
-            if loc != -1:
-                gl.glActiveTexture(gl.GL_TEXTURE0 + base + i)
-                gl.glBindTexture(gl.GL_TEXTURE_CUBE_MAP, cm)
-                gl.glUniform1i(loc, base + i)
+            if loc == -1:
+                continue
+            gl.glActiveTexture(gl.GL_TEXTURE0 + base + i)
+            cm = cubemaps[i] if i < len(cubemaps) else 0
+            gl.glBindTexture(gl.GL_TEXTURE_CUBE_MAP, cm)
+            gl.glUniform1i(loc, base + i)
         gl.glActiveTexture(gl.GL_TEXTURE0)
 
-    def _collect_shadow_casters(self, brushes, models, lx, ly, lz, reach):
-        """Return the brushes/models within *reach* of a light plus a hashable
-        signature of their transforms (used to detect when a cube-map is stale).
-        Filtering once per light — rather than once per cube face — also cuts the
-        non-cached path's CPU work by 6x."""
+    @staticmethod
+    def _shadow_caster_slots(table, all_slots):
+        """The brushes eligible to cast a shadow, as slots.
+
+        This filter used to be a Python walk over every brush in the level --
+        five dict lookups and ``is_water_brush``'s six-string search each --
+        run every frame, before anything had checked whether a single cube-map
+        actually needed re-rendering.  The verdict changes only when a brush is
+        edited, so the projection resolved it at edit time; here it is one mask.
+        """
+        if not len(all_slots):
+            return all_slots
+        bits = table.class_bits[all_slots]
+        return all_slots[(bits & render_table.CLASS_SHADOW_CASTER) != 0]
+
+    @staticmethod
+    def _casters_in_reach(table, slots, lx, ly, lz, reach):
+        """Caster slots within *reach* of a light, and a signature of them.
+
+        Replaces rebuilding ``np.asarray([b['pos'] for b in brushes])`` and
+        ``[b['size'] ...]`` from the brush dicts every frame: the projection
+        already holds both, so the whole per-light test is
+        ``center[slots]`` and one comparison.
+
+        The signature is the caster geometry itself rather than a tuple
+        reconstructed per brush.  A light's cube-map is valid exactly while the
+        casters in reach of it have not moved or changed shape, which is what
+        these bytes say -- and comparing them is a memcmp over a few kilobytes
+        instead of building thousands of Python tuples.
+        """
+        if not len(slots):
+            return slots, ()
+        center = table.center[slots]
+        dx = center[:, 0] - lx
+        dy = center[:, 1] - ly
+        dz = center[:, 2] - lz
+        # A brush counts when the light reaches its bounding sphere, whose
+        # radius is the largest half-extent -- the same test as before.
+        limit = reach + table.half[slots].max(axis=1)
+        sel = slots[(dx * dx + dy * dy + dz * dz) <= limit * limit]
+        if not len(sel):
+            return sel, ()
+        geometry = np.concatenate((table.center[sel].ravel(),
+                                   table.half[sel].ravel(),
+                                   table.rot[sel].ravel().astype(np.float64)))
+        return sel, (sel.tobytes(), geometry.tobytes())
+
+    def _prepare_shadow_caster_batch(self, brushes, models):
+        """Build one numeric caster snapshot shared by every shadow light."""
+        if brushes:
+            brush_positions = np.asarray(
+                [b.get('pos', (0.0, 0.0, 0.0)) for b in brushes],
+                dtype=np.float64,
+            )
+            brush_sizes = np.asarray(
+                [b.get('size', (64.0, 64.0, 64.0)) for b in brushes],
+                dtype=np.float64,
+            )
+            brush_radii = 0.5 * np.max(brush_sizes, axis=1)
+            brush_keys = [
+                (
+                    tuple(b.get('pos', (0.0, 0.0, 0.0))),
+                    tuple(b.get('size', (64.0, 64.0, 64.0))),
+                    b.get('_rot_angle'),
+                    tuple(b.get('rot_axis')) if b.get('rot_axis') else None,
+                )
+                for b in brushes
+            ]
+        else:
+            brush_positions = np.empty((0, 3), dtype=np.float64)
+            brush_radii = np.empty((0,), dtype=np.float64)
+            brush_keys = []
+
+        if models:
+            model_positions = np.asarray(
+                [tuple(t.pos) for t in models],
+                dtype=np.float64,
+            )
+            model_keys = []
+            for t in models:
+                props = t.properties
+                scale = props.get('scale', 1.0)
+                scale_key = scale if isinstance(scale, (int, float)) else tuple(scale)
+                model_keys.append(
+                    (
+                        tuple(t.pos),
+                        props.get('model_path'),
+                        tuple(props.get('rotation', (0, 0, 0))),
+                        scale_key,
+                    )
+                )
+        else:
+            model_positions = np.empty((0, 3), dtype=np.float64)
+            model_keys = []
+
+        return (
+            brush_positions, brush_radii, brush_keys,
+            model_positions, model_keys,
+        )
+
+    def _collect_shadow_casters(self, brushes, models, lx, ly, lz, reach,
+                                batch=None):
+        """Return casters within reach, using one NumPy distance pass per light."""
+        if batch is not None:
+            (brush_positions, brush_radii, brush_keys,
+             model_positions, model_keys) = batch
+
+            in_brushes = []
+            if len(brushes):
+                dx = brush_positions[:, 0] - lx
+                dy = brush_positions[:, 1] - ly
+                dz = brush_positions[:, 2] - lz
+                limit = reach + brush_radii
+                visible = (dx * dx + dy * dy + dz * dz) <= (limit * limit)
+                indices = np.flatnonzero(visible)
+                in_brushes = [brushes[int(i)] for i in indices]
+                bkeys = tuple(brush_keys[int(i)] for i in indices)
+            else:
+                bkeys = ()
+
+            in_models = []
+            if len(models):
+                dx = model_positions[:, 0] - lx
+                dy = model_positions[:, 1] - ly
+                dz = model_positions[:, 2] - lz
+                visible = (dx * dx + dy * dy + dz * dz) <= (reach * reach * 4.0)
+                indices = np.flatnonzero(visible)
+                in_models = [models[int(i)] for i in indices]
+                mkeys = tuple(model_keys[int(i)] for i in indices)
+            else:
+                mkeys = ()
+
+            return in_brushes, in_models, (bkeys, mkeys)
+
+        # Legacy/API-compatible scalar path for callers that don't provide the
+        # shared batch snapshot.
         in_brushes, bkeys = [], []
         for b in brushes:
             pos = b.get('pos', (0, 0, 0))
@@ -1741,9 +2868,9 @@ class BaseRenderer:
             if (dx * dx + dy * dy + dz * dz) > limit * limit:
                 continue
             in_brushes.append(b)
-            axis = b.get('rot_axis')
             bkeys.append((pos[0], pos[1], pos[2], size[0], size[1], size[2],
-                          b.get('_rot_angle'), tuple(axis) if axis else None))
+                          b.get('_rot_angle'),
+                          tuple(b.get('rot_axis')) if b.get('rot_axis') else None))
 
         in_models, mkeys = [], []
         reach4_sq = reach * reach * 4.0
@@ -1760,6 +2887,62 @@ class BaseRenderer:
                           tuple(props.get('rotation', (0, 0, 0))), scale_key))
 
         return in_brushes, in_models, (tuple(bkeys), tuple(mkeys))
+
+
+    #: The shadow pass's render key. One field, because one thing cannot vary
+    #: within a depth draw: which cube face is being rendered, since that is
+    #: the light-space matrix. Everything else -- each caster's transform --
+    #: is instance data.
+    #:
+    #: Its items are its *runs*, which is the one place this differs from the
+    #: brush passes. There an item is a face of a brush and the key partitions
+    #: items into runs; here the caster set is identical for all six faces, so
+    #: the six runs share one instance array rather than carving it up. Packing
+    #: the casters once and drawing them six times is the whole saving.
+    SHADOW_RUN_KEY = KeyLayout([('face', 3)])
+
+    def _shadow_face_runs(self):
+        """The six cube faces, as sorted runs.
+
+        Trivial today -- six items, one field, already in order -- and that is
+        the point of routing it through the same machinery rather than a bare
+        ``range(6)``: the ordering is a property of the key, so a second field
+        (batching two lights into one pass, say) changes the layout and nothing
+        else.
+        """
+        keys = self.SHADOW_RUN_KEY.pack(face=np.arange(6, dtype=np.int64))
+        order, starts = sort_into_runs(keys)
+        return self.SHADOW_RUN_KEY.field(keys[order], 'face'), starts
+
+    def _prepare_shadow_instances(self, table, refs, in_brushes, instanced):
+        """Pack one light's cube casters, and hand back its angled ones.
+
+        Returns ``(instance_count, geo_casters)``. The cube casters go into the
+        shared instance buffer as model matrices -- the depth pass writes only
+        depth, so the normal and payload slots stay zero -- and the angled ones
+        come back as objects, because each convex mesh is unique and a run of
+        one instance buys nothing.
+
+        Falls back to treating every caster as an individual object when there
+        is no projection to read, or no instanced depth shader: the per-caster
+        path below still works and is what a driver without the attribute
+        interface gets.
+        """
+        if not instanced or table is None or refs is None or not len(in_brushes):
+            return 0, [refs[int(b)] if (refs is not None and not isinstance(b, dict))
+                       else b for b in in_brushes]
+
+        slots = np.asarray(in_brushes, dtype=np.int32)
+        geometry = (table.class_bits[slots] & render_table.CLASS_HAS_GEOMETRY) != 0
+        cube_slots = slots[~geometry]
+        geo_casters = [refs[int(s)] for s in slots[geometry]]
+        if not len(cube_slots):
+            return 0, geo_casters
+
+        models, _normals = self._frame_transforms(table, cube_slots)
+        rows = np.arange(len(cube_slots), dtype=np.int32)
+        self._pack_brush_instances(models, None, rows, 0.0, 0.0)
+        return len(cube_slots), geo_casters
 
     def render_shadow_maps(self, shadow_lights, brushes, things, config, camera_pos=None):
         """Refresh the depth cube-map for each shadow-casting point light.
@@ -1811,15 +2994,35 @@ class BaseRenderer:
                     break
 
         # ---- Filter casters once & decide which lights are dirty ------------
-        caster_brushes = []
-        for b in brushes:
-            if b.get('hidden') or b.get('is_trigger') or b.get('is_fog') or b.get('operation') == 'subtract':
-                continue
-            if is_water_brush(b) or b.get('shader') in ('Fog', 'Glass', 'Glow'):
-                continue
-            caster_brushes.append(b)
+        # Models keep the object path: they are not projected, and the set is
+        # small enough that it has never been the cost here.
         caster_models = [t for t in things
                          if isinstance(t, Thing) and t.properties.get('model_path')]
+
+        table = config.get('render_table')
+        refs = config.get('render_refs')
+        caster_slots = config.get('all_brush_slots')
+        numeric = (table is not None and refs is not None
+                   and caster_slots is not None and len(refs) >= table.count)
+
+        if numeric:
+            caster_slots = self._shadow_caster_slots(table, caster_slots)
+            caster_brushes = None
+            # Brush positions come from the projection, so the only snapshot
+            # still worth building is the models', and it is built once for
+            # every light rather than once per light.
+            caster_batch = self._prepare_shadow_caster_batch((), caster_models)
+        else:
+            caster_brushes = []
+            for b in brushes:
+                if b.get('hidden') or b.get('is_trigger') or b.get('is_fog') or b.get('operation') == 'subtract':
+                    continue
+                if is_water_brush(b) or b.get('shader') in ('Fog', 'Glass', 'Glow'):
+                    continue
+                caster_brushes.append(b)
+            # Build numeric caster positions once; every dirty light reuses them.
+            caster_batch = self._prepare_shadow_caster_batch(
+                caster_brushes, caster_models)
 
         to_render = []   # (light, slot, in_brushes, in_models)
         for l in lights:
@@ -1828,8 +3031,18 @@ class BaseRenderer:
                 continue
             lx, ly, lz = float(l.pos[0]), float(l.pos[1]), float(l.pos[2])
             radius = max(float(l.get_radius()), 1.0)
-            in_brushes, in_models, caster_keys = self._collect_shadow_casters(
-                caster_brushes, caster_models, lx, ly, lz, radius)
+            if numeric:
+                in_slots, brush_keys = self._casters_in_reach(
+                    table, caster_slots, lx, ly, lz, radius)
+                # Models still go through the object path for their own keys.
+                _, in_models, (_, mkeys) = self._collect_shadow_casters(
+                    (), caster_models, lx, ly, lz, radius, batch=caster_batch)
+                in_brushes = in_slots
+                caster_keys = (brush_keys, mkeys)
+            else:
+                in_brushes, in_models, caster_keys = self._collect_shadow_casters(
+                    caster_brushes, caster_models, lx, ly, lz, radius,
+                    batch=caster_batch)
             sig = (round(lx, 3), round(ly, 3), round(lz, 3), round(radius, 3), caster_keys)
             self._light_shadow_index[id(l)] = slot
             if self._shadow_slot_sig[slot] == sig:
@@ -1846,6 +3059,8 @@ class BaseRenderer:
         cull_was = bool(gl.glIsEnabled(gl.GL_CULL_FACE))
         blend_was = bool(gl.glIsEnabled(gl.GL_BLEND))
 
+        prev_program = int(gl.glGetIntegerv(gl.GL_CURRENT_PROGRAM))
+        prev_shader = self._current_shader
         shader = self.shaders['depth_cube']
         u = self.uniforms['depth_cube']
         gl.glUseProgram(shader)
@@ -1867,6 +3082,17 @@ class BaseRenderer:
 
         model_loc = u['model']
         lsm_loc = u['lightSpaceMatrix']
+        depth_instanced = self.shaders.get('depth_cube_instanced')
+        instance_vao = None
+        inst_lsm_loc = inst_lightpos_loc = inst_far_loc = -1
+        if depth_instanced is not None and self._cube_vbo is not None:
+            iu = self.uniforms['depth_cube_instanced']
+            inst_lsm_loc = iu['lightSpaceMatrix']
+            inst_lightpos_loc = iu['lightPos']
+            inst_far_loc = iu['far_plane']
+            instance_vao = self._ensure_brush_instance_vao()
+        else:
+            depth_instanced = None
         lightpos_loc = u['lightPos']
         far_loc = u['far_plane']
         cube_vao = self.vaos['cube']
@@ -1899,6 +3125,12 @@ class BaseRenderer:
                 if obj and obj.is_loaded:
                     resolved_models.append((t, obj))
 
+            # Split this light's casters, and pack the cube ones' transforms
+            # once. The caster set is the same for all six faces, so the
+            # instance buffer is filled here rather than inside the loop.
+            cube_instances, geo_casters = self._prepare_shadow_instances(
+                table, refs, in_brushes, depth_instanced is not None)
+
             for face in range(6):
                 gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_DEPTH_ATTACHMENT,
                                           gl.GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, cubemap, 0)
@@ -1906,10 +3138,28 @@ class BaseRenderer:
                 lsm = proj * glm.lookAt(center, center + face_dirs[face][0], face_dirs[face][1])
                 gl.glUniformMatrix4fv(lsm_loc, 1, gl.GL_FALSE, glm.value_ptr(lsm))
 
-                # Brush casters (shared unit cube VAO, or the brush's own
-                # convex mesh for angled brushes), pre-filtered by reach.
+                # Cube casters: one instanced submission for the whole set.
+                # The instance buffer was packed once for this light, before
+                # the face loop, because the caster set does not vary between
+                # faces -- only the light-space matrix above does.
+                if cube_instances:
+                    gl.glUseProgram(depth_instanced)
+                    gl.glUniformMatrix4fv(inst_lsm_loc, 1, gl.GL_FALSE,
+                                          glm.value_ptr(lsm))
+                    gl.glUniform3f(inst_lightpos_loc, lx, ly, lz)
+                    gl.glUniform1f(inst_far_loc, far_plane)
+                    gl.glBindVertexArray(instance_vao)
+                    self._point_brush_instances_at(0)
+                    gl.glDrawArraysInstanced(gl.GL_TRIANGLES, 0, 36,
+                                             cube_instances)
+                    gl.glUseProgram(shader)
+                    gl.glUniformMatrix4fv(lsm_loc, 1, gl.GL_FALSE,
+                                          glm.value_ptr(lsm))
+
+                # Angled casters keep their own mesh, and their own draw: each
+                # convex mesh is unique, so a run would have one member in it.
                 gl.glBindVertexArray(cube_vao)
-                for b in in_brushes:
+                for b in geo_casters:
                     gl.glUniformMatrix4fv(model_loc, 1, gl.GL_FALSE,
                                           glm.value_ptr(self._brush_model_matrix(b)))
                     mesh = self._get_geo_mesh(b)
@@ -1948,7 +3198,8 @@ class BaseRenderer:
         gl.glViewport(int(prev_vp[0]), int(prev_vp[1]), int(prev_vp[2]), int(prev_vp[3]))
         if scissor_was:
             gl.glEnable(gl.GL_SCISSOR_TEST)
-        self._current_shader = None
+        gl.glUseProgram(prev_program)
+        self._current_shader = prev_shader
 
     def _resolve_model_texture_path(self, material, texture_name):
         """
@@ -1962,20 +3213,34 @@ class BaseRenderer:
         if not texture_name:
             return None
 
+        # Normalise separators from MTL files authored on another platform.
+        texture_name = (
+            str(texture_name)
+            .strip()
+            .strip('"')
+            .replace('\\', os.sep)
+            .replace('/', os.sep)
+        )
+
         # 1. Try relative to the MTL file's directory (most correct for MTL refs)
         mtl_dir = material.get('mtl_dir', '')
         if mtl_dir:
-            resolved = os.path.join(mtl_dir, texture_name)
+            mtl_dir = (
+                str(mtl_dir)
+                .replace('\\', os.sep)
+                .replace('/', os.sep)
+            )
+            resolved = os.path.normpath(os.path.join(mtl_dir, texture_name))
             if os.path.exists(resolved):
                 return resolved
 
         # 2. Try assets/textures/ (global fallback)
-        resolved = os.path.join('assets', 'textures', texture_name)
+        resolved = os.path.normpath(os.path.join('assets', 'textures', texture_name))
         if os.path.exists(resolved):
             return resolved
 
         # 3. Try assets/models/ (legacy fallback)
-        resolved = os.path.join('assets', 'models', texture_name)
+        resolved = os.path.normpath(os.path.join('assets', 'models', texture_name))
         if os.path.exists(resolved):
             return resolved
 
@@ -2081,6 +3346,61 @@ class BaseRenderer:
         else:
             gl.glBindVertexArray(self._edge_vao)
             gl.glDrawArrays(gl.GL_LINES, 0, 24)
+        gl.glBindVertexArray(0)
+
+    def draw_aabb_bounds(self, projection, view, brush):
+        """Draw the exact world-space trigger AABB as orange dashed lines."""
+        if 'simple' not in self.shaders:
+            return
+        shader, uniforms = self.shaders['simple'], self.uniforms['simple']
+        gl.glUseProgram(shader)
+        gl.glUniformMatrix4fv(uniforms['projection'], 1, gl.GL_FALSE, glm.value_ptr(projection))
+        gl.glUniformMatrix4fv(uniforms['view'], 1, gl.GL_FALSE, glm.value_ptr(view))
+
+        lo_x, lo_y, lo_z, hi_x, hi_y, hi_z = brush_aabb_bounds(brush)
+        corners = np.array([
+            [lo_x, lo_y, lo_z], [hi_x, lo_y, lo_z],
+            [hi_x, hi_y, lo_z], [lo_x, hi_y, lo_z],
+            [lo_x, lo_y, hi_z], [hi_x, lo_y, hi_z],
+            [hi_x, hi_y, hi_z], [lo_x, hi_y, hi_z],
+        ], dtype=np.float32)
+        edges = ((0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),(0,4),(1,5),(2,6),(3,7))
+        dash, gap = 8.0, 5.0
+        vertices = []
+        for i0, i1 in edges:
+            a, b = corners[i0], corners[i1]
+            delta = b - a
+            length = float(np.linalg.norm(delta))
+            if length <= 1e-6:
+                continue
+            direction = delta / length
+            cursor = 0.0
+            while cursor < length:
+                end = min(cursor + dash, length)
+                p0, p1 = a + direction * cursor, a + direction * end
+                vertices.extend((float(p0[0]), float(p0[1]), float(p0[2]),
+                                 float(p1[0]), float(p1[1]), float(p1[2])))
+                cursor += dash + gap
+        if not vertices:
+            return
+        data = np.asarray(vertices, dtype=np.float32)
+        vao = getattr(self, '_aabb_vao', None)
+        vbo = getattr(self, '_aabb_vbo', None)
+        if vao is None:
+            vao = self._aabb_vao = gl.glGenVertexArrays(1)
+            vbo = self._aabb_vbo = gl.glGenBuffers(1)
+            gl.glBindVertexArray(vao)
+            gl.glBindBuffer(gl.GL_ARRAY_BUFFER, vbo)
+            gl.glEnableVertexAttribArray(0)
+            gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, None)
+            gl.glBindVertexArray(0)
+        gl.glBindVertexArray(vao)
+        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, vbo)
+        gl.glBufferData(gl.GL_ARRAY_BUFFER, data.nbytes, data, gl.GL_DYNAMIC_DRAW)
+        gl.glUniform3f(uniforms['color'], 1.0, 140.0 / 255.0, 0.0)
+        gl.glUniform1f(uniforms['alpha'], 1.0)
+        self._set_line_width(1.0)
+        gl.glDrawArrays(gl.GL_LINES, 0, len(vertices) // 3)
         gl.glBindVertexArray(0)
 
     def draw_face_highlight(self, projection, view, brush, face_name):
@@ -3469,6 +4789,16 @@ class BaseRenderer:
             gl.glDeleteBuffers(1, [self._water_surface_vbo])
         if self._water_surface_ebo:
             gl.glDeleteBuffers(1, [self._water_surface_ebo])
+        if self._model_instance_vbo:
+            gl.glDeleteBuffers(1, [self._model_instance_vbo])
+            self._model_instance_vbo = None
+            self._model_instance_capacity = 0
+            self._model_instanced_vaos.clear()
+        if self._light_ubo:
+            gl.glDeleteBuffers(1, [self._light_ubo])
+            self._light_ubo = None
+            self._light_ubo_capacity = 0
+            self._light_ubo_key = None
         # Portal resources
         if self._portal_quad_vao:
             gl.glDeleteVertexArrays(1, [self._portal_quad_vao])
@@ -3488,5 +4818,6 @@ class BaseRenderer:
     # --------------------------------------------------------------------------
     # Abstract method (must be overridden by Forward/Deferred)
     # --------------------------------------------------------------------------
-    def render_scene(self, projection, view, camera_pos, brushes, things, selected_object, config):
+    def render_scene(self, projection, view, camera_pos, brushes, things,
+                     selected_object, config, clear=True, brush_slots=None):
         raise NotImplementedError("Derived renderer must implement render_scene()")

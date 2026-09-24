@@ -19,7 +19,7 @@ pytest.importorskip("PyQt5", reason="these drive the real logic thread")
 from editor import io_system as io                  # noqa: E402
 from editor.editor_state import EditorState         # noqa: E402
 from editor.io_system import OutputConnection       # noqa: E402
-from editor.things import Monster                   # noqa: E402
+from editor.things import Light, Monster            # noqa: E402
 from engine.constants import brush_aabb_bounds      # noqa: E402
 from engine.logic_thread import LogicThread         # noqa: E402
 from engine.physics import SpatialGrid              # noqa: E402
@@ -56,14 +56,20 @@ def test_the_cull_buffers_are_built_once_per_session_not_per_frame(logic):
     thread = logic(brushes=pillar_grid(6, 6, spacing=300.0))
     thread.set_play_mode(True)
     try:
-        centers = thread._cull_centers
-        halves = thread._cull_halves
+        thread._prepare_render_state()
+        table = thread._render_table
+        centers = table.center
+        halves = table.half
+        generation = table.generation
         for _ in range(20):
             thread._prepare_render_state()
-        assert thread._cull_centers is centers, (
-            "the cull centre array was reallocated during a frame; it is built "
-            "once per play session")
-        assert thread._cull_halves is halves
+        assert table.center is centers, (
+            "the projection's centre array was reallocated during a frame; it "
+            "is built once and refreshed in place")
+        assert table.half is halves
+        assert table.generation == generation, (
+            "the projection reconciled during a steady-state frame; the world "
+            "epoch has not moved, so sync should be a couple of comparisons")
     finally:
         thread.set_play_mode(False)
 
@@ -76,20 +82,107 @@ def test_only_dynamic_rows_are_refreshed_each_frame(logic):
     thread.set_play_mode(True)
     try:
         thread._prepare_render_state()
-        static_row = thread._cull_centers[0].copy()
+        table = thread._render_table
+        static_row = table.center[0].copy()
 
-        # Move both brushes behind the cache's back.  Only the mover's row is
-        # meant to follow, because only movers are refreshed per frame.
+        # Move both brushes behind the projection's back.  Only the mover's row
+        # is meant to follow, because only movers are refreshed per frame.
         static["pos"] = [9999.0, 0.0, -400.0]
         mover["pos"] = [8888.0, 0.0, -400.0]
         thread._prepare_render_state()
 
-        assert np.array_equal(thread._cull_centers[0], static_row), (
-            "the static brush's cull row was refreshed; the per-frame loop is "
+        assert np.array_equal(table.center[0], static_row), (
+            "the static brush's row was refreshed; the per-frame loop is "
             "walking every brush, not just the movers")
-        assert thread._cull_centers[1][0] == pytest.approx(8888.0), (
-            "the mover's cull row was not refreshed, so it would be culled "
+        assert table.center[1][0] == pytest.approx(8888.0), (
+            "the mover's row was not refreshed, so it would be culled "
             "against its old position")
+    finally:
+        thread.set_play_mode(False)
+
+
+def test_classification_is_not_re_resolved_per_frame(logic):
+    """The cold columns are the expensive half; they must not move per frame.
+
+    This is the property the whole projection exists for: ``is_water_brush``
+    and the texture scan used to run per visible brush per frame.  Mutating a
+    classification field behind the projection's back and seeing the column
+    stay put is what proves the work is no longer happening.
+    """
+    brush = box_brush("wall", (0, 0, -400))
+    thread = logic(brushes=[brush])
+    thread.set_play_mode(True)
+    try:
+        thread._prepare_render_state()
+        table = thread._render_table
+        before = int(table.class_bits[0])
+
+        brush["shader"] = "Glass"          # no epoch bump: nobody was told
+        for _ in range(10):
+            thread._prepare_render_state()
+        assert int(table.class_bits[0]) == before, (
+            "the classification columns were re-resolved during a frame")
+
+        # ...and the editor's coarse change signal is what picks it up.
+        thread.editor_state.mark_world_changed()
+        thread._prepare_render_state()
+        from engine.render_table import CLASS_GLASS
+        assert int(table.class_bits[0]) & CLASS_GLASS, (
+            "a world-epoch bump did not re-resolve the cold columns")
+    finally:
+        thread.set_play_mode(False)
+
+
+def test_entity_classification_is_not_re_resolved_per_frame(logic):
+    """The entity projection's cold column, held to the same rule as the brush one.
+
+    ``_sort_objects`` asked every entity what it was on every frame -- four
+    isinstance tests, a ``str().lower()`` and a tuple compare each.  The column
+    answering instead is only worth having if it stays put between edits.
+    """
+    from engine import entity_table as et
+
+    thing = make_thing(Light, "lamp", (0, 100, 0))
+    thread = logic(things=[thing])
+    thread.set_play_mode(True)
+    try:
+        thread._prepare_render_state()
+        table = thread._entity_table
+        before = int(table.class_bits[0])
+
+        thing.properties["render_mode"] = "billboard"   # nobody was told
+        thing.properties["sprite_path"] = "s.png"
+        for _ in range(10):
+            thread._prepare_render_state()
+        assert int(table.class_bits[0]) == before, (
+            "the entity classification column was re-resolved during a frame")
+
+        thread.editor_state.mark_world_changed()
+        thread._prepare_render_state()
+        assert int(table.class_bits[0]) & et.ENT_MODE_BILLBOARD, (
+            "a world-epoch bump did not re-resolve the entity column")
+    finally:
+        thread.set_play_mode(False)
+
+
+def test_only_monster_rows_are_republished_each_frame(logic):
+    """Entities whose reference cannot change are handed over by identity."""
+    lamp = make_thing(Light, "lamp", (0, 100, 0))
+    grunt = make_thing(Monster, "grunt", (0, 96, -300))
+    thread = logic(things=[lamp, grunt])
+    thread.set_play_mode(True)
+    try:
+        thread._prepare_render_state()
+        first = list(thread.game_state.get_write_state().visible_things)
+        thread._prepare_render_state()
+        second = list(thread.game_state.get_write_state().visible_things)
+
+        assert first[0] is second[0] is lamp, (
+            "a Light was copied between frames; only Monsters need a snapshot")
+        assert first[1] is not second[1], (
+            "the Monster snapshot was not refreshed, so the renderer would "
+            "read a frame-old copy")
+        assert list(thread._entity_table.monster_slots) == [1]
     finally:
         thread.set_play_mode(False)
 
@@ -275,33 +368,16 @@ def test_the_precomputed_monster_list_is_used_rather_than_a_type_scan(logic):
 # Plugins
 # ---------------------------------------------------------------------------
 
-def test_a_session_keeps_only_mandatory_plugins_on_the_per_frame_path(logic):
-    """``wants_tick`` is what makes an idle plugin system free per frame.
-
-    This build has one standing exception: ``bigworld`` is mandatory and cannot
-    be switched off, so a real session always has it on the tick path. Its
-    ``on_tick`` is a single ``getattr`` when no streaming session exists, so
-    what the gate must still buy is that *nothing else* rides along with it.
-    The gate closing outright is covered by the plugin contract suite, whose
-    fixture plugins include no mandatory one.
-    """
+def test_a_session_with_no_ticking_plugin_gates_the_per_frame_call(logic):
+    """``wants_tick`` is what makes an idle plugin system free per frame."""
     thread = logic(brushes=room())
     if thread.plugins is None:
         pytest.skip("the plugin system is unavailable in this build")
-    manager = thread.plugins
-    for plugin in manager.plugins:
-        manager.set_enabled(plugin, False)
-
-    left_on = sorted(p.name for p in manager.plugins if manager.is_enabled(p))
-    assert left_on == sorted(p.name for p in manager.plugins
-                             if manager.is_mandatory(p)), (
-        "after disabling every plugin, the ones still enabled should be exactly "
-        "the mandatory ones; still on: %s" % (left_on,))
-
-    tickers = manager._active_for("on_tick")
-    assert all(manager.is_mandatory(p) for p in tickers), (
-        "a disabled plugin is still on the per-frame tick path: %s"
-        % ([p.name for p in tickers if not manager.is_mandatory(p)],))
+    for plugin in thread.plugins.plugins:
+        thread.plugins.set_enabled(plugin, False)
+    assert thread.plugins.wants_tick() is False, (
+        "every plugin is disabled but the engine would still dispatch a "
+        "per-frame tick to them")
 
 
 def test_the_tick_gate_answer_is_cached_across_frames(logic):
@@ -316,3 +392,69 @@ def test_the_tick_gate_answer_is_cached_across_frames(logic):
     assert manager._tick_work_gen == generation, (
         "the tick gate recomputed itself with nothing changed; it is meant to "
         "be one integer compare per frame")
+
+
+# ---------------------------------------------------------------------------
+# Portals
+# ---------------------------------------------------------------------------
+
+def test_portal_fades_tick_off_the_cache_not_the_thing_list(logic):
+    """``_update_portals`` runs every frame and used to isinstance-scan every
+    Thing in the map to find the portals — on a map with none at all."""
+    from editor.things import Portal
+    from engine.player import Player
+
+    portals = [Portal(pos=[0, 0, float(i) * 200.0],
+                      properties={'name': 'P%d' % i}) for i in range(3)]
+    filler = [make_thing(Light, "L%d" % i) for i in range(50)]
+    thread = logic(brushes=room(), things=filler + portals)
+    thread.set_player(Player(0.0, 0.0, 0.0))
+    thread.set_play_mode(True)
+    try:
+        assert thread._portal_things == portals
+        assert set(thread._portals_by_name) == {'P0', 'P1', 'P2'}
+
+        # Fades still advance, and they advance for portals the name index
+        # cannot hold (an unnamed portal is still a portal).
+        unnamed = Portal(pos=[500, 0, 0])
+        thread.editor_state.things.append(unnamed)
+        thread._build_entity_caches()
+        assert unnamed in thread._portal_things
+        assert '' not in thread._portals_by_name
+
+        for p in thread._portal_things:
+            p._fade_alpha, p._fade_target = 0.0, 1.0
+        thread._update_portals(1.0 / 60.0)
+        assert all(p._fade_alpha > 0.0 for p in thread._portal_things)
+
+        # And the per-frame path must not walk the level to find them.
+        scanned = []
+        original = type(thread).things
+        try:
+            type(thread).things = property(
+                lambda self: (scanned.append(1), original.fget(self))[1])
+            thread._update_portals(1.0 / 60.0)
+        finally:
+            type(thread).things = original
+        assert scanned == [], (
+            "_update_portals read the full thing list %d times in one frame"
+            % len(scanned))
+    finally:
+        thread.set_play_mode(False)
+
+
+def test_a_map_with_no_portals_pays_nothing_for_the_portal_system(logic):
+    from engine.player import Player
+
+    thread = logic(brushes=room(),
+                   things=[make_thing(Light, "L%d" % i) for i in range(20)])
+    thread.set_player(Player(0.0, 0.0, 0.0))
+    thread.set_play_mode(True)
+    try:
+        assert thread._portal_things == []
+        thread._portal_prev_player_pos = None
+        thread._update_portals(1.0 / 60.0)
+        assert thread._portal_prev_player_pos is None, (
+            "the portal system did per-frame work on a map with no portals")
+    finally:
+        thread.set_play_mode(False)
