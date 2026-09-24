@@ -64,8 +64,10 @@ from typing import Any, Callable, List, Optional, Tuple
 #:   the engine event bus, and the ``connect(host)`` hook.
 #: * 1.3.0 — render hooks, swappable-renderer registration, and editor-UI extensions.
 #: * 1.4.0 — optional editor Tools actions and console-command registration.
-API_VERSION = "1.4.0"
-API_VERSION_INFO = (1, 4, 0)
+#: * 1.5.0 — (MiniWind) collapsible property sections, State Store key
+#:   suggestions and actor-inspector snapshot providers.
+API_VERSION = "1.5.0"
+API_VERSION_INFO = (1, 5, 0)
 
 
 def version_tuple(value: str) -> tuple:
@@ -507,6 +509,38 @@ class EditorAPI:
         is given the tab appears only for that type, otherwise for every entity.
         """
         self._manager.register_property_tab(label, factory, entity_type)
+
+    def register_property_section(self, label: str, factory, entity_type=None,
+                                  expanded: bool = False):
+        """Register a collapsible section inside the entity's Properties tab
+        (API 1.5.0).
+
+        Same ``factory(thing) -> widget`` contract as
+        :meth:`register_property_tab`, but the editor drops it into the
+        Properties tab as a titled, click-to-collapse section instead of adding
+        a tab. Use it for a small editor that belongs with the entity's other
+        properties; use a tab for something that needs the room.
+        """
+        self._manager.register_property_section(label, factory, entity_type,
+                                                expanded)
+
+    def register_kv_suggestions(self, provider) -> None:
+        """Provide key/value quick-insert suggestions for the State Store editor
+        (API 1.5.0).
+
+        ``provider() -> list[(label, key, default_value, tooltip)]``. Lets a game
+        surface the store keys it uses without the generic editor knowing them.
+        """
+        self._manager.register_kv_suggestion_provider(provider)
+
+    def register_entity_inspector(self, provider) -> None:
+        """Provide the live inspector snapshot for an actor debug popup
+        (API 1.5.0).
+
+        ``provider(thing, monster_state, logic_thread) -> dict | None``. Lets a
+        game supply its own mental-state view without the engine importing it.
+        """
+        self._manager.register_inspector_provider(provider)
 
     def register_singleton_entity(self, entity_type: str) -> None:
         """Mark *entity_type* as a per-map singleton (at most one instance).

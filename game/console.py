@@ -4,9 +4,11 @@ MiniWind's debug-console commands.
 Registered through Fio's console-command surface
 (``EditorAPI.register_console_command``, plugin API 1.4.0) from
 :meth:`game.host.MiniwindGame.register`, so the generic console carries no
-knowledge of dice, quests or the reactive simulation. Each handler receives a
-:class:`plugins.api.ConsoleContext` (the live logic thread, whether a play
-session is running, and the editor window) plus the raw argument string.
+knowledge of dice, quests or the reactive simulation. Fio calls a command as
+``callback(args, main_window, logic, play_mode)``; :func:`register` adapts that
+to MiniWind's handler shape, so each handler receives a :class:`ConsoleContext`
+(the live logic thread, whether a play session is running, and the editor
+window) plus the raw argument string.
 
     diceroll | dice   roll a dice expression, optionally animated
     quest | quests    list / start / advance / complete / reset quests
@@ -14,6 +16,8 @@ session is running, and the editor window) plus the raw argument string.
 """
 
 import time
+from dataclasses import dataclass
+from typing import Any
 
 try:
     from editor.debug_console import debug_log
@@ -22,6 +26,19 @@ except Exception:  # pragma: no cover - console unavailable (headless)
         print(f"[{category}] {message}")
 
 from .diceroll import DiceRoller
+
+
+@dataclass
+class ConsoleContext:
+    """What a MiniWind console command is handed when it runs.
+
+    ``logic_thread`` is the live play session's logic thread (None in the
+    editor), ``play_mode`` whether a play session is running, and
+    ``main_window`` the editor window hosting the console (None headless).
+    """
+    logic_thread: Any = None
+    play_mode: bool = False
+    main_window: Any = None
 
 _CONSOLE_DICE = None
 
@@ -301,8 +318,18 @@ COMMANDS = (
 )
 
 
+def _adapt(handler):
+    """Fio's ``callback(args, main_window, logic, play_mode)`` -> ``handler(ctx, args)``."""
+    def callback(args, main_window=None, logic=None, play_mode=False):
+        ctx = ConsoleContext(logic_thread=logic, play_mode=bool(play_mode),
+                             main_window=main_window)
+        return handler(ctx, args or "")
+    callback.__doc__ = handler.__doc__
+    return callback
+
+
 def register(api) -> None:
     """Register every MiniWind console command on *api* (an EditorAPI)."""
     for names, handler, help_text in COMMANDS:
         for name in names:
-            api.register_console_command(name, handler, help_text)
+            api.register_console_command(name, _adapt(handler), help_text)

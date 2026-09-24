@@ -308,3 +308,51 @@ def _skip_without_gl(request):
     ok, reason = gl_availability()
     if not ok:
         pytest.skip("OpenGL tier unavailable: %s" % reason)
+
+
+# ---------------------------------------------------------------------------
+# GL import stubs (MiniWind's editor/engine/game suites)
+# ---------------------------------------------------------------------------
+# Several MiniWind test modules exercise code behind the render stack --
+# ``editor.main_window``, ``engine.qt_game_view`` -- on machines with no OpenGL
+# driver, where PyOpenGL cannot even be imported. They stub the GL modules for
+# the import, and :func:`install_gl_stubs` is the one correct way to do it.
+#
+# ``mock.patch.dict(sys.modules, ...)`` is a trap: on exit the patch removes
+# *everything* imported inside the block, including heavy transitive imports
+# such as numpy, whose C extension cannot be imported twice in one process. The
+# stubs installed here are permanent and only ever fill a genuine gap: where
+# PyOpenGL really is installed, nothing is replaced.
+
+#: The GL modules the render stack imports at module scope.
+_GL_MODULES = (
+    "OpenGL",
+    "OpenGL.GL",
+    "OpenGL.GLU",
+    "OpenGL.GLUT",
+    "OpenGL.GL.shaders",
+    "OpenGL.arrays",
+    "OpenGL.arrays.vbo",
+)
+
+
+def install_gl_stubs():
+    """Make ``import OpenGL...`` succeed on a machine with no GL driver.
+
+    A no-op where PyOpenGL imports for real. Returns True if any stub was
+    installed, so a test can say why it is running against a fake.
+    """
+    from unittest import mock
+
+    try:
+        import OpenGL.GL  # noqa: F401
+        return False
+    except Exception:
+        pass
+
+    installed = False
+    for name in _GL_MODULES:
+        if name not in sys.modules:
+            sys.modules[name] = mock.MagicMock(name=name)
+            installed = True
+    return installed

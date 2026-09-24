@@ -17,6 +17,14 @@ The :class:`PluginManager` is a process-wide singleton. It:
 
 Every call into plugin code is wrapped so a misbehaving plugin logs an error
 instead of taking down the editor or a play session.
+
+One class of plugin is exempt from all of that tolerance: a **mandatory**
+plugin (see :data:`MANDATORY_PLUGINS`). MiniWind is built around Big World,
+so ``bigworld`` is not an optional extra that a map opts into -- it ships as
+part of the product. A mandatory plugin is always loaded, always starts
+enabled, cannot be switched off by the ``Plugins`` menu, ``settings.ini`` or
+``FIO_DISABLED_PLUGINS``, and its absence is a startup failure rather than
+something to carry on without (see :meth:`PluginManager.require_mandatory_plugins`).
 """
 
 from __future__ import annotations
@@ -30,6 +38,32 @@ from typing import List, Optional, Tuple
 from .api import (API_VERSION, EditorAPI, FioPlugin, GlobalStore, RuntimeAPI,
                   TickContext, version_tuple)
 from .host import EventBus, PluginHost
+
+
+#: Plugin packages this build cannot run without. They are loaded before any
+#: opt-out is consulted, forced on at load, held on for the life of the process
+#: and required to be present at startup. Names are compared case-insensitively
+#: against both a plugin's package directory and its declared ``name``.
+MANDATORY_PLUGINS = ("bigworld",)
+
+
+class MandatoryPluginMissing(RuntimeError):
+    """A plugin this build declares mandatory could not be found.
+
+    Raised by :meth:`PluginManager.require_mandatory_plugins`, which the
+    application bootstrap calls before it builds anything. The message is the
+    one shown to the user, so it names the plugin rather than the machinery.
+    """
+
+    def __init__(self, name: str):
+        self.plugin_name = name
+        super().__init__(
+            f"{str(name).capitalize()} plugin is mandatory: could not be located")
+
+
+def is_mandatory_name(name: str) -> bool:
+    """Whether *name* (a package or plugin name) is mandatory for this build."""
+    return str(name).lower() in {n.lower() for n in MANDATORY_PLUGINS}
 
 
 def _log(message: str):
@@ -90,6 +124,13 @@ class PluginManager:
         # Normalised entity-type names that may exist at most once per map.
         # Placement paths consult this.
         self._singleton_types: set = set()
+        # Editor-extension providers a game layer registers through the
+        # EditorAPI, so game-specific editor behaviour lives with the game
+        # rather than in generic editor code:
+        #   * key/value quick-insert suggestions for the State Store editor
+        #   * a live inspector snapshot for an actor's debug popup
+        self._kv_suggestion_providers: list = []
+        self._inspector_providers: list = []
         # Normalised entity-type name -> owning plugin (for package export).
         # Keyed the same way editor.things.from_dict matches: class name,
         # lowercased, underscores stripped.
@@ -128,15 +169,20 @@ class PluginManager:
         # property tabs. Both keyed/filtered by normalised entity type.
         self._extra_fields: dict = {}       # type -> list[PropertySpec]
         self._property_tabs: list = []      # list[(label, factory, type_or_None)]
+        # list[(label, factory, type_or_None, expanded)] -- editors that belong
+        # inside the Properties tab as a collapsible section rather than as a
+        # tab of their own.
+        self._property_sections: list = []
         self._tools_actions: list = []
         self._menu_actions: list = []
         self._console_commands: dict = {}
         # Disabled plugin names (by directory or plugin.name). Populated from
-        # the FIO_DISABLED_PLUGINS env var, comma-separated.
+        # the FIO_DISABLED_PLUGINS env var, comma-separated. A mandatory plugin
+        # named there is ignored rather than honoured.
         self._disabled = {
             n.strip().lower()
             for n in os.environ.get("FIO_DISABLED_PLUGINS", "").split(",")
-            if n.strip()
+            if n.strip() and not is_mandatory_name(n.strip())
         }
         # Plugins switched on by a loaded level (auto_enable_*), as opposed to
         # a manual menu toggle. Tracked so an empty/new scene can revert exactly
@@ -310,6 +356,14 @@ class PluginManager:
         self._loaded_modules.add(mod_name)
         self._enabled_generation += 1
 
+        # A mandatory plugin starts enabled whatever it declares: bigworld ships
+        # `enabled = False` upstream as an opt-in streaming layer, but in this
+        # build it is part of the product, so the load decides its state rather
+        # than the class attribute or any persisted choice.
+        if self.is_mandatory(plugin):
+            plugin.enabled = True
+            self._debug(f"Plugin '{plugin.name}' is mandatory; forced enabled")
+
     def _verify_requirements(self):
         """Disable any plugin whose declared ``requires`` aren't all loaded.
 
@@ -325,6 +379,11 @@ class PluginManager:
             reqs = getattr(plugin, "requires", None) or []
             missing = [r for r in reqs if str(r).lower() not in available]
             if missing:
+                if self.is_mandatory(plugin):
+                    self._log(
+                        f"Mandatory plugin '{plugin.name}' requires missing "
+                        f"plugin(s): {', '.join(missing)}; leaving it enabled.")
+                    continue
                 self._log(
                     f"Plugin '{plugin.name}' requires missing plugin(s): "
                     f"{', '.join(missing)}; disabling it.")
@@ -533,6 +592,48 @@ class PluginManager:
         """
         self._singleton_types.add(self._normalise_type(type_name))
 
+    # -- editor-extension providers -----------------------------------------
+    def register_kv_suggestion_provider(self, provider) -> None:
+        """Register a key/value quick-insert provider for the State Store editor.
+
+        ``provider() -> list[(label, key, default_value, tooltip)]`` supplies the
+        store keys a game layer uses, so the generic editor carries no
+        game-specific knowledge.
+        """
+        if callable(provider):
+            self._kv_suggestion_providers.append(provider)
+
+    def kv_key_suggestions(self) -> list:
+        """Every registered provider's key/value quick-insert suggestions."""
+        out: list = []
+        for provider in self._kv_suggestion_providers:
+            try:
+                out.extend(provider() or [])
+            except Exception:
+                self._log(f"kv suggestion provider failed:\n{traceback.format_exc()}")
+        return out
+
+    def register_inspector_provider(self, provider) -> None:
+        """Register an actor *inspector* snapshot builder for the debug popup.
+
+        ``provider(thing, monster_state, logic_thread) -> dict | None`` returns
+        a display snapshot, letting a game supply its own view of an actor
+        without the engine importing the game.
+        """
+        if callable(provider):
+            self._inspector_providers.append(provider)
+
+    def inspector_snapshot(self, thing, monster_state=None, logic_thread=None):
+        """First non-empty snapshot from a registered provider, or None."""
+        for provider in self._inspector_providers:
+            try:
+                snap = provider(thing, monster_state, logic_thread)
+                if snap:
+                    return snap
+            except Exception:
+                self._log(f"inspector provider failed:\n{traceback.format_exc()}")
+        return None
+
     def is_singleton_entity(self, type_name: str) -> bool:
         return self._normalise_type(type_name) in self._singleton_types
 
@@ -577,6 +678,37 @@ class PluginManager:
     def is_enabled(self, plugin) -> bool:
         return bool(getattr(plugin, "enabled", True))
 
+    # -- mandatory plugins --------------------------------------------------
+    def is_mandatory(self, plugin_or_name) -> bool:
+        """Whether this build refuses to run without *plugin_or_name*.
+
+        Accepts a loaded plugin or a package/plugin name. A plugin matches on
+        either spelling, so ``MANDATORY_PLUGINS`` can name the package
+        directory without knowing what the plugin calls itself.
+        """
+        if isinstance(plugin_or_name, str):
+            return is_mandatory_name(plugin_or_name)
+        if plugin_or_name is None:
+            return False
+        return (is_mandatory_name(getattr(plugin_or_name, "name", "")) or
+                is_mandatory_name(self.plugin_package_name(plugin_or_name)))
+
+    def missing_mandatory(self) -> List[str]:
+        """Mandatory plugin names that discovery did not produce."""
+        return [name for name in MANDATORY_PLUGINS
+                if self.find_plugin(name) is None]
+
+    def require_mandatory_plugins(self):
+        """Raise :class:`MandatoryPluginMissing` if a mandatory plugin is absent.
+
+        The application bootstrap calls this straight after discovery and before
+        it builds anything, so a build missing a plugin it is made of stops with
+        one clear message instead of failing later, halfway into a map.
+        """
+        missing = self.missing_mandatory()
+        if missing:
+            raise MandatoryPluginMissing(missing[0])
+
     def set_enabled(self, plugin_or_name, enabled: bool, auto: bool = False):
         """Enable/disable a plugin at runtime.
 
@@ -595,6 +727,14 @@ class PluginManager:
         if isinstance(plugin_or_name, str):
             plugin = self.find_plugin(plugin_or_name)
         if plugin is None:
+            return
+        # A mandatory plugin cannot be disabled through here -- by a menu
+        # toggle, a missing ``requires`` or the revert an empty scene does -- so
+        # every caller gets the guarantee without having to know about it.
+        if not enabled and self.is_mandatory(plugin):
+            self._debug(
+                f"Refusing to disable mandatory plugin '{plugin.name}'")
+            self._auto_enabled.discard(plugin)
             return
         was = bool(getattr(plugin, "enabled", True))
         plugin.enabled = bool(enabled)
@@ -712,11 +852,14 @@ class PluginManager:
         """
         disabled: List[FioPlugin] = []
         for plugin in list(self._auto_enabled):
-            if self.is_enabled(plugin):
+            was_on = self.is_enabled(plugin)
+            self.set_enabled(plugin, False)
+            # A mandatory plugin refuses the disable, so read the state back
+            # rather than assuming the call took.
+            if was_on and not self.is_enabled(plugin):
                 disabled.append(plugin)
                 self._debug(
                     f"Auto-disabled plugin '{plugin.name}' for cleared level")
-            self.set_enabled(plugin, False)
         return disabled
 
     def auto_enable_for_map(self, map_data) -> List[FioPlugin]:
@@ -852,6 +995,27 @@ class PluginManager:
         """List of ``(label, factory)`` custom tabs that apply to *entity_type*."""
         norm = self._normalise_type(entity_type)
         return [(label, factory) for (label, factory, t) in self._property_tabs
+                if t is None or t == norm]
+
+    def register_property_section(self, label: str, factory, entity_type=None,
+                                  expanded: bool = False):
+        """Register a collapsible section inside the Properties tab.
+
+        The same ``factory(thing) -> widget`` contract as
+        :meth:`register_property_tab`; the difference is placement. A section
+        is for an editor that reads as part of the entity's properties rather
+        than a workspace of its own.
+        """
+        self._property_sections.append(
+            (label, factory,
+             self._normalise_type(entity_type) if entity_type else None,
+             bool(expanded)))
+
+    def property_sections_for(self, entity_type: str):
+        """``(label, factory, expanded)`` sections that apply to *entity_type*."""
+        norm = self._normalise_type(entity_type)
+        return [(label, factory, exp)
+                for (label, factory, t, exp) in self._property_sections
                 if t is None or t == norm]
 
     # -- lifecycle dispatch -------------------------------------------------

@@ -40,11 +40,15 @@ def test_bigworld_is_mandatory_for_this_build():
         % (MANDATORY_PLUGINS,))
 
 
-def test_the_shipped_bigworld_plugin_ships_enabled():
-    from plugins.bigworld.plugin import BigWorldPlugin
-    assert BigWorldPlugin.enabled is True, (
-        "bigworld must start enabled; it declares enabled=%r"
-        % (BigWorldPlugin.enabled,))
+def test_the_shipped_bigworld_plugin_loads_enabled():
+    """Big World is Fio's plugin, vendored verbatim: it still *declares*
+    ``enabled = False`` (an opt-in layer upstream). Mandatory-ness is this
+    build's policy, applied by the manager at load, not an edit to the plugin."""
+    from plugins.manager import PluginManager
+    mgr = PluginManager()
+    mgr.discover_and_load()
+    plugin = mgr.find_plugin("bigworld")
+    assert plugin is not None and plugin.enabled is True
 
 
 def test_mandatory_names_are_matched_case_insensitively():

@@ -15,7 +15,8 @@ for a walkthrough and ``plugins/tidy`` for a complete worked example.
 """
 
 from .api import FioPlugin, EditorAPI, RuntimeAPI, TickContext, io_def
-from .manager import get_manager, load_plugins
+from .manager import (MANDATORY_PLUGINS, MandatoryPluginMissing, get_manager,
+                      load_plugins)
 
 __all__ = [
     "FioPlugin",
@@ -25,4 +26,6 @@ __all__ = [
     "io_def",
     "get_manager",
     "load_plugins",
+    "MANDATORY_PLUGINS",
+    "MandatoryPluginMissing",
 ]

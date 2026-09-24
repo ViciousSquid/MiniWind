@@ -1,13 +1,14 @@
-"""Console commands registered through the plugin API (API 1.4.0).
+"""MiniWind's console commands on Fio's console-command surface (API 1.4.0).
 
 ``editor.console_commands`` asks the plugin manager for any command its own
-table does not answer. A game layer (MiniWind's diceroll / quest / sim)
-registers through ``EditorAPI.register_console_command``.
+table does not answer. Fio calls a registered command as
+``callback(args, main_window, logic, play_mode)``; MiniWind's game layer adapts
+that to its ``handler(ctx, args)`` shape (``game.console.register``).
 """
 
 import types
 
-from plugins.api import ConsoleContext, EditorAPI
+from plugins.api import EditorAPI
 from plugins.manager import PluginManager
 
 
@@ -17,7 +18,8 @@ def _manager_with(owner=None):
     return mgr, api
 
 
-def test_a_registered_command_is_dispatched_with_its_context():
+def test_miniwind_handlers_receive_their_context():
+    from game import console
     mgr, api = _manager_with()
     seen = []
 
@@ -25,17 +27,16 @@ def test_a_registered_command_is_dispatched_with_its_context():
         seen.append((ctx, args))
         return "rolled " + args
 
-    api.register_console_command("Dice", handler, "roll dice")
+    api.register_console_command("dice", console._adapt(handler), "roll dice")
     logic, window = object(), object()
     handled, reply = mgr.dispatch_console_command(
-        "dice", "2d6", logic, play_mode=True, main_window=window)
+        "DICE", "2d6", logic, main_window=window, play_mode=True)
 
     assert handled is True and reply == "rolled 2d6"
     ctx, args = seen[0]
-    assert isinstance(ctx, ConsoleContext)
+    assert isinstance(ctx, console.ConsoleContext)
     assert (ctx.logic_thread, ctx.play_mode, ctx.main_window) == (logic, True, window)
-    assert mgr.has_console_command("DICE")
-    assert ("dice", "roll dice") in mgr.console_commands()
+    assert args == "2d6"
 
 
 def test_an_unknown_command_is_not_handled():
@@ -45,19 +46,20 @@ def test_an_unknown_command_is_not_handled():
 
 
 def test_a_failing_handler_is_still_handled():
-    mgr, api = _manager_with()
+    from game import console
+    mgr, api = _manager_with(types.SimpleNamespace(name="game", is_builtin_game=True))
 
     def boom(ctx, args):
         raise RuntimeError("bad roll")
 
-    api.register_console_command("boom", boom)
+    api.register_console_command("boom", console._adapt(boom))
     assert mgr.dispatch_console_command("boom", "", None) == (True, None)
 
 
 def test_a_builtin_game_owners_commands_are_always_active():
     game = types.SimpleNamespace(name="game", is_builtin_game=True)
     mgr, api = _manager_with(game)
-    api.register_console_command("quest", lambda ctx, args: "ok")
+    api.register_console_command("quest", lambda *a: "ok")
     assert mgr.has_console_command("quest")
 
 
@@ -65,5 +67,5 @@ def test_miniwind_registers_its_commands():
     mgr, api = _manager_with()
     from game import console
     console.register(api)
-    names = {name for name, _ in mgr.console_commands()}
+    names = set(mgr.console_commands())
     assert {"diceroll", "dice", "quest", "quests", "sim"} <= names

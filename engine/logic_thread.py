@@ -223,7 +223,24 @@ class LogicThread(threading.Thread):
         self.god_mode = False
         self.buddha_mode = False
         self.notarget = False
-        
+
+        # ---- Game-layer seams (see docs/FIO_2.5.5_SEAMS.md) ----------------
+        # Generic hooks a built-in game installs on the logic thread. None of
+        # them names a game concept; with none installed Fio behaves as shipped.
+        #: Freeze the *world* (player, monsters, projectiles) while a game's
+        #: modal screen is open, but keep ticking plugins so its menus work.
+        self.gameplay_paused = False
+        #: ``handler(logic, mode) -> bool`` owning what the fire buttons do;
+        #: *mode* is ``"primary"`` or ``"secondary"``. True means handled, and
+        #: the stock hitscan weapon path is skipped.
+        self.player_fire_handler = None
+        #: The running game layer's session, for engine code that duck-types
+        #: against it (overhead pose/weapon). None when no game is running.
+        self.game_session = None
+        #: ``filter(damage, damage_kind) -> damage`` applied before the
+        #: player's health drops (armour, resistances).
+        self._player_damage_filter = None
+
         # I/O System
         self.io_manager = None
         if IO_AVAILABLE and IOManager:
@@ -1784,6 +1801,7 @@ class LogicThread(threading.Thread):
             self.game_state.consume_mouse_delta()
             self.game_state.consume_use_key()
             self.game_state.consume_shot()
+            self.game_state.consume_secondary_shot()
             return
 
         # ---- Player dead: freeze all gameplay input ----
@@ -1791,6 +1809,7 @@ class LogicThread(threading.Thread):
             self.game_state.consume_mouse_delta()
             self.game_state.consume_use_key()
             self.game_state.consume_shot()
+            self.game_state.consume_secondary_shot()
             return
 
         # ---- Level Complete UI: freeze player input ----
@@ -1798,8 +1817,23 @@ class LogicThread(threading.Thread):
             self.game_state.consume_mouse_delta()
             self.game_state.consume_use_key()
             self.game_state.consume_shot()
+            self.game_state.consume_secondary_shot()
             return
-        
+
+        # ---- World paused by a game layer (a menu is open) ----
+        # No look/move/shooting and no world update, but plugins still tick
+        # so the game's menus receive input.
+        if self.gameplay_paused:
+            self.game_state.consume_mouse_delta()
+            use_key = self.game_state.consume_use_key()
+            self.game_state.consume_shot()
+            self.game_state.consume_secondary_shot()
+            if self.plugins is not None and self.plugins.wants_tick():
+                self.plugins.tick(
+                    self, use_pressed=use_key, interaction_consumed=False,
+                    delta=delta, keys=self.game_state.get_keys)
+            return
+
         # Clear muzzle flash from previous frame
         self.muzzle_flash_active = False
 
@@ -1813,7 +1847,13 @@ class LogicThread(threading.Thread):
         self.player.angle -= mouse_dx * SENSITIVITY
         self.player.pitch -= mouse_dy * SENSITIVITY
         self.player.pitch = max(-1.5, min(1.5, self.player.pitch))
-        
+
+        # Pointer aiming with an overhead camera: the view publishes the
+        # heading under the pointer each frame; None leaves yaw to mouse look.
+        aim_yaw = self.game_state.get_aim_yaw()
+        if aim_yaw is not None:
+            self.player.angle = aim_yaw
+
         # Movement
         move_dir = glm.vec3(0)
         if Key_W in keys: move_dir.z += 1
@@ -1870,9 +1910,11 @@ class LogicThread(threading.Thread):
         # post-physics position is the one tested against portal planes.
         self._update_portals(delta)
         
-        # Player shooting
+        # Player shooting: primary and secondary fire
         if self.game_state.consume_shot():
             self._handle_shooting()
+        if self.game_state.consume_secondary_shot():
+            self._handle_shooting(secondary=True)
             
         self._update_bullet_marks()
 
@@ -2721,7 +2763,15 @@ class LogicThread(threading.Thread):
             if due_ids:
                 self._poll_triggers(trigger_ids=due_ids)
 
-    def _apply_player_damage(self, damage):
+    def _apply_player_damage(self, damage, damage_kind="physical"):
+        filt = self._player_damage_filter
+        if filt is not None:
+            try:
+                damage = filt(damage, damage_kind)
+            except Exception:
+                import traceback
+                debug_log("Error", "player damage filter failed:\n"
+                          + traceback.format_exc())
         with self._player_damage_lock:
             if self.god_mode:
                 return
@@ -3385,15 +3435,36 @@ class LogicThread(threading.Thread):
     # PLAYER SHOOTING
     # =========================================================================
 
-    def _handle_shooting(self):
-        if not self.player or not self.active_weapon:
+    def _handle_shooting(self, secondary=False):
+        """Resolve one press of a fire button.
+
+        An installed :attr:`player_fire_handler` owns what a shot *is*; every
+        shot it handles goes through the projectile pipeline. Without one,
+        primary fire is Fio's hitscan weapon and secondary fire does nothing.
+        """
+        if not self.player:
+            return
+        handler = self.player_fire_handler
+        if handler is not None:
+            mode = "secondary" if secondary else "primary"
+            try:
+                handled = bool(handler(self, mode))
+            except Exception:
+                import traceback
+                debug_log("Error", "player fire handler failed:\n"
+                          + traceback.format_exc())
+                handled = True
+            if handled:
+                self._plugin_emit("player_shoot", weapon=self.active_weapon, mode=mode)
+                return
+        if secondary or not self.active_weapon:
             return
         # Non-firing weapons (e.g. cig) never fire: no muzzle flash, no
         # hitscan/projectile, no damage, and no gunfire noise event.
         if self.active_weapon in NON_FIRING_WEAPONS:
             return
         self.muzzle_flash_active = True
-        self._plugin_emit("player_shoot", weapon=self.active_weapon)
+        self._plugin_emit("player_shoot", weapon=self.active_weapon, mode="primary")
         yaw_rad = self.player.angle
         if self.is_overhead():
             # Top-down aiming is planar: the player rotates to face a target and
@@ -3563,7 +3634,7 @@ class LogicThread(threading.Thread):
             proj['lifetime'] -= delta
 
             # Check max distance
-            if proj['distance_travelled'] >= MONSTER_PROJECTILE_MAX_DIST:
+            if proj['distance_travelled'] >= proj.get('max_dist', MONSTER_PROJECTILE_MAX_DIST):
                 continue  # Expired
 
             if proj['lifetime'] <= 0.0:
@@ -3572,7 +3643,9 @@ class LogicThread(threading.Thread):
             p_pos = glm.vec3(proj['pos'][0], proj['pos'][1], proj['pos'][2])
 
             # ---- Collision with player ----
-            if self.player and not self.god_mode and not self.player_dead:
+            # A player-fired projectile never strikes the player who fired it.
+            if (self.player and not self.god_mode and not self.player_dead
+                    and not proj.get('owner_is_player')):
                 player_pos = self.player.pos
                 # Simple sphere collision with player (radius ~32 units)
                 dist_to_player = glm.distance(p_pos, player_pos)
@@ -3609,11 +3682,23 @@ class LogicThread(threading.Thread):
                         break
 
                 if hit_monster is not None:
-                    damage = proj['damage']
-                    self.monster_ai._apply_monster_damage(hit_monster, damage, attacker=None)
-                    if self.monster_ai.monster_debug_active:
-                        name = hit_monster.properties.get('name', '?')
-                        debug_log("MonsterAI", f"Projectile hit {name} for {damage} dmg")
+                    on_hit = proj.get('on_hit')
+                    if callable(on_hit):
+                        # The shooter resolves its own damage at impact rather
+                        # than a flat number baked in at fire time.
+                        try:
+                            on_hit(hit_monster)
+                        except Exception:
+                            import traceback
+                            debug_log("Error", "projectile on_hit failed:\n"
+                                      + traceback.format_exc())
+                    else:
+                        damage = proj['damage']
+                        self.monster_ai._apply_monster_damage(hit_monster, damage, attacker=None)
+                        if self.monster_ai.monster_debug_active:
+                            name = hit_monster.properties.get('name', '?')
+                            debug_log("MonsterAI", f"Projectile hit {name} for {damage} dmg")
+                    self._projectile_impact(proj, p_pos, hit_monster)
                     continue  # Projectile consumed
 
             # ---- Collision with solid brushes (walls) ----
@@ -3644,6 +3729,7 @@ class LogicThread(threading.Thread):
                     break
 
             if hit_wall:
+                self._projectile_impact(proj, p_pos, None)
                 continue  # Projectile consumed
 
             # Projectile survived this tick
@@ -3656,11 +3742,32 @@ class LogicThread(threading.Thread):
         write_state.projectiles = [
             {
                 'pos': list(proj['pos']),
+                'vel': list(proj['vel']),
                 'sprite': proj.get('sprite', 'projectile.png'),
                 'size': proj.get('size', MONSTER_PROJECTILE_SPRITE_SIZE),
+                'color': proj.get('color'),   # RGB 0-255 tint, or None
+                'kind': proj.get('kind'),     # e.g. 'arrow'
             }
             for proj in remaining
         ]
+
+    @staticmethod
+    def _projectile_impact(proj, pos, target):
+        """Tell a projectile's owner where it landed (``on_impact``).
+
+        ``on_impact(proj, pos, target)`` is called once when a projectile is
+        consumed by an actor (*target*) or a wall (*target* None); *pos* is a
+        ``glm.vec3``. It is how a game leaves arrows stuck in what they hit
+        without the engine knowing what an arrow is.
+        """
+        on_impact = proj.get('on_impact')
+        if callable(on_impact):
+            try:
+                on_impact(proj, pos, target)
+            except Exception:
+                import traceback
+                debug_log("Error", "projectile on_impact failed:\n"
+                          + traceback.format_exc())
 
 
     # =========================================================================

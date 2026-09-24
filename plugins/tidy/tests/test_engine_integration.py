@@ -103,8 +103,10 @@ def test_tick_cache_and_early_out():
     tidy = _tidy(mgr)
 
     mgr.set_enabled(tidy, False)
-    _check(mgr._active_for("on_tick") == [],
-           "no active tickers while tidy is disabled")
+    # Not "nothing ticks": bigworld is mandatory in this build, so it is always
+    # an active ticker. What matters here is that tidy has dropped out.
+    _check(tidy not in mgr._active_for("on_tick"),
+           "tidy is not an active ticker while it is disabled")
 
     gen = mgr._enabled_generation
     mgr.set_enabled(tidy, True)
