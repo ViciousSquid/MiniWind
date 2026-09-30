@@ -238,14 +238,12 @@ def test_callback_window_wants_cursor_flag(app):
                           wants_cursor=True).wants_cursor is True
 
 
-def test_the_actor_inspector_window_stays_game_agnostic():
-    """The inspector popup renders a caller-supplied snapshot; the game's view
-    of an actor arrives through the plugin manager, never an import."""
+def test_no_rpg_inspector_window_was_ported():
+    """The NPC mental-state window must NOT exist in generic Fio."""
     import engine.floating_windows as fw
-    assert hasattr(fw, "NpcDebugWindow")
+    assert not hasattr(fw, "NpcDebugWindow")
     src = open(fw.__file__, encoding="utf-8").read()
-    assert "import game" not in src and "from game" not in src
-    for banned in ("quest", "faction", "disposition"):
+    for banned in ("npc", "monster", "quest", "faction", "disposition"):
         assert banned not in src.lower(), f"RPG term '{banned}' leaked in"
 
 

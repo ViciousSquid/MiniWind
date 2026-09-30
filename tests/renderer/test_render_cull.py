@@ -3,11 +3,14 @@
 import os
 import sys
 
+import numpy as np
+import pytest
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from engine.render_cull import (  # noqa: E402
     CAMERA_RENDER_CULL_DISTANCE, CAMERA_RENDER_CULL_DISTANCE_SQ,
-    camera_xz, cull_by_distance, pos_of, within_xz_sq,
+    camera_xz, cull_by_distance, pos_of, sort_by_distance, within_xz_sq,
 )
 
 
@@ -105,6 +108,125 @@ def test_empty_input_returns_empty():
     assert cull_by_distance([], 0.0, 0.0) == []
 
 
+def test_batched_positions_match_the_scalar_path():
+    objects = [
+        {"pos": [0.0, 0.0, 0.0]},
+        {"pos": [100.0, 0.0, 25.0]},
+        {"pos": [10000.0, 0.0, 0.0]},
+        {"pos": [-150.0, 0.0, 200.0]},
+    ]
+    positions = np.asarray(
+        [[obj["pos"][0], obj["pos"][2]] for obj in objects],
+        dtype=np.float64,
+    )
+    scalar = cull_by_distance(objects, 10.0, 20.0, 22500.0)
+    batched = cull_by_distance(
+        objects, 10.0, 20.0, 22500.0, positions=positions)
+    assert batched == scalar
+
+
+def test_batched_positions_skip_the_scalar_distance_kernel(monkeypatch):
+    objects = [
+        _Thing([0.0, 0.0, 0.0]),
+        _Thing([100.0, 0.0, 0.0]),
+        _Thing([1000.0, 0.0, 0.0]),
+    ]
+    positions = np.ascontiguousarray(
+        [[obj.pos[0], obj.pos[2]] for obj in objects],
+        dtype=np.float64,
+    )
+    assert positions.shape == (3, 2)
+    assert positions.flags.c_contiguous
+
+    def fail_scalar(*_args, **_kwargs):
+        raise AssertionError("the batched path called the scalar distance kernel")
+
+    monkeypatch.setattr("engine.render_cull.within_xz_sq", fail_scalar)
+
+    kept = cull_by_distance(objects, 0.0, 0.0, 10000.0, positions=positions)
+    assert kept == objects[:2]
+
+
+def test_batched_keep_predicate_matches_scalar_semantics():
+    far = _Thing([99999.0, 0.0, 0.0])
+    near = _Thing([10.0, 0.0, 0.0])
+    objects = [far, near]
+    positions = np.asarray(
+        [[far.pos[0], far.pos[2]], [near.pos[0], near.pos[2]]],
+        dtype=np.float64,
+    )
+    keep = lambda obj: obj is far
+    assert cull_by_distance(
+        objects, 0.0, 0.0, 100.0, keep=keep, positions=positions
+    ) == cull_by_distance(objects, 0.0, 0.0, 100.0, keep=keep)
+
+
+def test_batched_distance_preserves_inclusive_boundary_and_order():
+    radius = 100.0
+    objects = [
+        {"name": "outside", "pos": [101.0, 0.0, 0.0]},
+        {"name": "edge", "pos": [100.0, 0.0, 0.0]},
+        {"name": "inside", "pos": [25.0, 0.0, 75.0]},
+    ]
+    positions = np.asarray(
+        [[obj["pos"][0], obj["pos"][2]] for obj in objects],
+        dtype=np.float64,
+    )
+    kept = cull_by_distance(
+        objects, 0.0, 0.0, radius * radius, positions=positions)
+    assert kept == objects[1:]
+
+
+def test_batched_positions_out_tracks_selected_rows():
+    objects = [
+        {"name": "far", "pos": [500.0, 0.0, 0.0]},
+        {"name": "near-a", "pos": [10.0, 0.0, 20.0]},
+        {"name": "near-b", "pos": [-20.0, 0.0, 5.0]},
+    ]
+    positions = np.asarray(
+        [[o["pos"][0], o["pos"][2]] for o in objects], dtype=np.float64)
+    out_positions = np.empty((3, 2), dtype=np.float64)
+    kept = cull_by_distance(
+        objects, 0.0, 0.0, 1.0e6,
+        positions=positions, positions_out=out_positions)
+    assert kept == objects
+    np.testing.assert_array_equal(out_positions[:3], positions)
+
+    kept = cull_by_distance(
+        objects, 0.0, 0.0, 500.0 * 500.0 - 1.0,
+        positions=positions, positions_out=out_positions)
+    assert kept == objects[1:]
+    np.testing.assert_array_equal(out_positions[:2], positions[1:])
+
+
+def test_vectorized_depth_sort_matches_python_order():
+    objects = [
+        {"pos": [float(i), 0.0, float((i * 7) % 23)]}
+        for i in range(25)
+    ]
+    positions = np.asarray(
+        [[o["pos"][0], o["pos"][2]] for o in objects], dtype=np.float64)
+    expected = list(objects)
+    expected.sort(
+        key=lambda o: -(
+            (o["pos"][0] - 3.0) ** 2 +
+            (o["pos"][2] + 2.0) ** 2
+        )
+    )
+    actual = sort_by_distance(objects, positions, 3.0, -2.0)
+    assert actual == expected
+
+
+def test_batched_positions_require_one_xz_row_per_object():
+    objects = [_Thing([0.0, 0.0, 0.0])]
+    try:
+        cull_by_distance(objects, 0.0, 0.0, 1.0, positions=np.empty((0, 2)))
+    except ValueError as exc:
+        assert "one [x, z] row per object" in str(exc)
+    else:
+        raise AssertionError("a positions/object count mismatch was accepted")
+
+
 def test_order_is_preserved():
     objs = [{"pos": [float(i), 0.0, 0.0]} for i in range(10)]
     assert cull_by_distance(objs, 0.0, 0.0) == objs
@@ -191,3 +313,94 @@ def test_the_box_is_never_smaller_than_the_visible_volume():
         # The camera's own column is inside the box whenever it is in the slab,
         # and the box is non-degenerate whenever anything is visible at all.
         assert max_x - min_x > 0.0
+
+
+def _inside_frustum_samples(cam, corners, rng, count):
+    """Points uniformly spread through the pyramid ``cam`` + four far corners."""
+    c00, c10, c01, c11 = (np.asarray(c, dtype=np.float64) for c in corners)
+    cam = np.asarray(cam, dtype=np.float64)
+    u, v, t = rng.random(count), rng.random(count), rng.random(count)
+    far = ((1 - u)[:, None] * ((1 - v)[:, None] * c00 + v[:, None] * c01)
+           + u[:, None] * ((1 - v)[:, None] * c10 + v[:, None] * c11))
+    return cam + t[:, None] * (far - cam)
+
+
+@pytest.mark.parametrize("direction, up, cam", [
+    ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 64.0, 0.0)),        # level, thin world
+    ((1.0, 0.05, 0.3), (0.0, 1.0, 0.0), (500.0, 64.0, -800.0)),  # slight climb
+    ((0.3, -0.4, 1.0), (0.0, 1.0, 0.0), (0.0, 900.0, 0.0)),      # raked overhead
+    ((0.0, -1.0, 0.0), (0.0, 0.0, -1.0), (0.0, 800.0, 0.0)),     # straight down
+    ((1.0, 0.0, 1.0), (0.0, 1.0, 0.0), (0.0, 3000.0, 0.0)),      # above the slab
+])
+def test_every_visible_point_in_the_slab_is_inside_the_box(direction, up, cam):
+    """The bug this pins: sampling only the corner rays undershoots sideways.
+
+    Looking level over a world 272 units thick, the corner rays leave the slab
+    within ~1 300 units, but the far face still crosses it ~8 000 units to
+    either side; the old box was ±1 252 wide and dropped a point at
+    (6000, 64, 5000) that is squarely in view.
+    """
+    y_min, y_max, reach = -16.0, 256.0, 10000.0
+    corners = _corners(cam, direction, up, far=12000.0)
+    min_x, min_z, max_x, max_z = visible_xz_bounds(cam, corners, y_min, y_max,
+                                                   max_dist=reach)
+    points = _inside_frustum_samples(cam, corners, np.random.default_rng(1), 200000)
+    offset = points - np.asarray(cam)
+    wanted = ((points[:, 1] >= y_min - WORLD_SLAB_MARGIN)
+              & (points[:, 1] <= y_max + WORLD_SLAB_MARGIN)
+              & ((offset * offset).sum(axis=1) <= reach * reach))
+    x, z = points[wanted, 0], points[wanted, 2]
+    outside = (x < min_x - 1e-6) | (x > max_x + 1e-6) | (z < min_z - 1e-6) | (z > max_z + 1e-6)
+    assert not outside.any(), (
+        "%d visible points fall outside the box %r, e.g. %r"
+        % (outside.sum(), (min_x, min_z, max_x, max_z),
+           points[wanted][outside][0].tolist()))
+
+
+# ---------------------------------------------------------------------------
+# sort_by_distance keeps two implementations: a Python sort below
+# min_numpy_count objects and a batched NumPy argsort at or above it. A scene
+# crossing that threshold must not change draw order, or transparency pops as
+# objects enter and leave view. Nothing pinned the boundary, and the existing
+# coverage exercises the NumPy path only (25 objects).
+# ---------------------------------------------------------------------------
+
+def _scene(count):
+    objects = [{"n": i, "pos": [float(i % 5), 0.0, float((i * 3) % 7)]}
+               for i in range(count)]
+    positions = np.asarray(
+        [[o["pos"][0], o["pos"][2]] for o in objects], dtype=np.float64)
+    return objects, positions
+
+
+@pytest.mark.parametrize("count", [2, 3, 15, 16, 17, 40])
+@pytest.mark.parametrize("reverse", [True, False])
+def test_scalar_and_batched_depth_sort_agree(count, reverse):
+    objects, positions = _scene(count)
+
+    batched = sort_by_distance(objects, positions, 1.0, 2.0,
+                               reverse=reverse, min_numpy_count=1)
+    scalar = sort_by_distance(objects, positions, 1.0, 2.0,
+                              reverse=reverse, min_numpy_count=10 ** 6)
+
+    assert [o["n"] for o in batched] == [o["n"] for o in scalar]
+
+
+@pytest.mark.parametrize("reverse", [True, False])
+def test_depth_sort_is_stable_across_equal_distances(reverse):
+    """Ties must keep authored order in both paths.
+
+    Reversing a stable ascending sort reverses its ties too; the batched path
+    negates the distances instead, which is what keeps it matching Python's
+    own stable reverse sort.
+    """
+    objects = [{"n": i, "pos": [3.0, 0.0, -2.0]} for i in range(20)]
+    positions = np.asarray([[3.0, -2.0]] * 20, dtype=np.float64)
+
+    batched = sort_by_distance(objects, positions, 3.0, -2.0,
+                               reverse=reverse, min_numpy_count=1)
+    scalar = sort_by_distance(objects, positions, 3.0, -2.0,
+                              reverse=reverse, min_numpy_count=10 ** 6)
+
+    assert [o["n"] for o in batched] == list(range(20))
+    assert [o["n"] for o in scalar] == list(range(20))

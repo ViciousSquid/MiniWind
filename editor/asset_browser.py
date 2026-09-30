@@ -3,11 +3,11 @@ import sys
 import math
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QScrollArea, QFrame,
                              QHBoxLayout, QGridLayout, QSplitter, QApplication,
-                             QMainWindow, QPushButton, QFileDialog, QTreeView, 
-                             QFileSystemModel, QTabWidget, QAbstractItemView,
+                             QMainWindow, QPushButton, QTreeView,
+                             QFileSystemModel, QTabWidget,
                              QSizePolicy, QListWidget, QListWidgetItem)
-from PyQt5.QtCore import Qt, QSize, QDir, QRect, QPointF, pyqtSignal, QTimer
-from PyQt5.QtGui import QPixmap, QColor, QPainter, QFont, QIcon, QPen, QPolygonF, QTextCursor, QDesktopServices
+from PyQt5.QtCore import Qt, QDir, QRect, QPointF, QTimer
+from PyQt5.QtGui import QPixmap, QColor, QPainter, QFont, QPen, QPolygonF, QIcon
 from engine.glb_loader import render_glb_thumbnail
 # The Surface Inspector's FACE toggle sets this colour; the INSPECTOR button
 # that opens that panel borrows it so the two read as a pair.
@@ -166,7 +166,7 @@ class AssetItem(QWidget):
         self.selection_overlay.setGeometry(0, 0, self.width(), self.height())
         self.selection_overlay.setStyleSheet("""
             QFrame {
-                border: 3px solid #b52316;
+                border: 3px solid #F08000;
                 border-radius: 6px;
                 background: transparent;
             }
@@ -229,7 +229,7 @@ class AssetItem(QWidget):
         """Update the name label color and overlay visibility."""
         if self.selected:
             self.selection_overlay.show()
-            self.name_label.setStyleSheet("color: #b52316; font-weight: bold; font-size: 10px;")
+            self.name_label.setStyleSheet("color: #F08000; font-weight: bold; font-size: 10px;")
         else:
             self.selection_overlay.hide()
             self.name_label.setStyleSheet("color: #ccc; font-size: 10px;")
@@ -268,7 +268,7 @@ class AssetBrowserTab(QWidget):
 
         if not os.path.exists(self.current_asset_folder):
             try: os.makedirs(self.current_asset_folder)
-            except: pass
+            except OSError: pass
 
         # Main layout: action bar at top (below tabs), then splitter (tree + grid)
         main_layout = QVBoxLayout(self)
@@ -305,7 +305,7 @@ class AssetBrowserTab(QWidget):
                 font-size: 14px;
             }
             QPushButton:hover { background-color: #444; }
-            QPushButton:checked { background-color: #b52316; border: 1px solid #b52316; }
+            QPushButton:checked { background-color: #F08000; border: 1px solid #F08000; }
         """)
         self.tree_toggle_btn.setCheckable(True)
         self.tree_toggle_btn.setChecked(False)  # collapsed by default
@@ -330,8 +330,11 @@ class AssetBrowserTab(QWidget):
         """
         self.add_btn = None
         self.inspector_btn = None
+        self.tint_btn = None
 
-        # Create a container widget for buttons to allow stretching
+        # Create a container widget for buttons to allow stretching.
+        # The texture tab keeps INSPECTOR on the left and Tint brush on the
+        # far right; the stretch between them follows the browser width.
         button_container = QWidget()
         button_layout = QHBoxLayout(button_container)
         button_layout.setContentsMargins(0, 0, 0, 0)
@@ -345,25 +348,25 @@ class AssetBrowserTab(QWidget):
             self.add_btn.clicked.connect(self.on_add_clicked)
             button_layout.addWidget(self.add_btn)
         else:
-            # The only button here: texturing is the Surface Inspector's job,
-            # and this opens it.  It borrows the FACE toggle's purple so the
-            # button and the panel it opens read as a pair.
-            # Sized to its label rather than stretched across the bar: it is one
-            # button that opens one panel, and a full-width slab reads as the
-            # bar's primary action when the primary action here is the texture
-            # grid below it.
             self.inspector_btn = QPushButton("INSPECTOR")
             self.inspector_btn.setStyleSheet(INSPECTOR_BUTTON_STYLE)
-            self.inspector_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
+            self.inspector_btn.setFixedHeight(32)
+            self.inspector_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             self.inspector_btn.setToolTip(
                 "Open the Surface Inspector (T)\n"
                 "Fit / Natural / Axial projections, shift, scale and rotation,\n"
                 "for one face or every face of the selection")
             self.inspector_btn.clicked.connect(self.on_inspector_clicked)
             button_layout.addWidget(self.inspector_btn)
-            # Take up the rest of the row so the button stays left-aligned next
-            # to the folder toggle instead of drifting to the middle.
+
             button_layout.addStretch()
+
+            self.tint_btn = QPushButton(QIcon("assets/tint.png"), "")
+            self.tint_btn.setFixedHeight(36)
+            self.tint_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            self.tint_btn.setToolTip("Tint the selected brush")
+            self.tint_btn.clicked.connect(self.on_tint_clicked)
+            button_layout.addWidget(self.tint_btn)
 
         if self.is_model_tab:
             # "Add to Scene" is this tab's primary action and stays centred.
@@ -436,6 +439,10 @@ class AssetBrowserTab(QWidget):
         self.scroll_area.setStyleSheet("background-color: #2b2b2b; border: none;")
         self.grid_container = QWidget()
         self.grid_layout = QGridLayout(self.grid_container)
+        self.grid_container.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Preferred
+        )
         self.grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self.grid_layout.setSpacing(10)
         self.scroll_area.setWidget(self.grid_container)
@@ -474,8 +481,8 @@ class AssetBrowserTab(QWidget):
             return
         
         # Compute number of columns
-        item_width = 110  # 100px width + 10px spacing
-        available_width = self.grid_container.width() - 20  # margin
+        item_width = 110  # 100px item width + 10px spacing
+        available_width = self.scroll_area.viewport().width()
         col_count = max(1, available_width // item_width)
         
         if col_count == self.current_cols and not force:
@@ -532,7 +539,8 @@ class AssetBrowserTab(QWidget):
                 if ext in self.extensions:
                     full_path = os.path.join(path, f)
                     # Per-item guard: a single unreadable asset (bad model, odd
-                    # image) must not abort loading the rest of the folder.
+                    # image) must not abort loading the rest of the folder. The
+                    # skipped file is named so the failure stays diagnosable.
                     try:
                         item = AssetItem(f, full_path, self, is_model=self.is_model_tab)
                         self.items.append(item)
@@ -541,7 +549,7 @@ class AssetBrowserTab(QWidget):
             # After loading, layout the grid dynamically (force initial layout)
             self.relayout_grid(force=True)
         except Exception as e:
-            print(f"[AssetBrowser] Failed to list {path}: {e}")
+            print(f"Error: {e}")
 
     def select_item(self, item):
         if self.selected_item: 
@@ -568,6 +576,12 @@ class AssetBrowserTab(QWidget):
         toggle = getattr(self.editor, 'toggle_surface_inspector', None)
         if toggle is not None:
             toggle()
+
+    def on_tint_clicked(self):
+        """Tint the selected brush."""
+        tint = getattr(self.editor, 'tint_selected_brush', None)
+        if tint is not None:
+            tint()
 
 
 class MapsBrowserTab(QWidget):
@@ -627,7 +641,7 @@ class MapsBrowserTab(QWidget):
                 border-bottom: 1px solid #3d3d3d;
             }
             QListWidget::item:selected {
-                background-color: #b52316;
+                background-color: #F08000;
                 color: white;
             }
             QListWidget::item:hover {
@@ -641,9 +655,9 @@ class MapsBrowserTab(QWidget):
 
     def update_header(self):
         if self.current_mode == 'maps':
-            self.header_label.setText('Showing: <a href="switch" style="color: #b52316; text-decoration: none;">Maps</a>')
+            self.header_label.setText('Showing: <a href="switch" style="color: #F08000; text-decoration: none;">Maps</a>')
         else:
-            self.header_label.setText('Showing: <a href="switch" style="color: #b52316; text-decoration: none;">Packages</a>')
+            self.header_label.setText('Showing: <a href="switch" style="color: #F08000; text-decoration: none;">Packages</a>')
 
     def on_header_link_clicked(self, link):
         # Toggle mode
@@ -660,6 +674,12 @@ class MapsBrowserTab(QWidget):
                 return
             files = [f for f in os.listdir(folder) if f.lower().endswith(extension)]
             files.sort()
+            # _SHOWCASE.json is a reserved maps-browser entry: when present,
+            # keep it at the very top regardless of normal filename sorting.
+            showcase = "_SHOWCASE.json"
+            if showcase in files:
+                files.remove(showcase)
+                files.insert(0, showcase)
             for filename in files:
                 full_path = os.path.join(folder, filename)
                 item = QListWidgetItem(filename)
@@ -749,7 +769,7 @@ class AssetBrowser(QWidget):
         for p in [self.textures_path, self.models_path, self.maps_folder, self.packages_folder]:
             if not os.path.exists(p):
                 try: os.makedirs(p)
-                except: pass
+                except OSError: pass
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -761,7 +781,7 @@ class AssetBrowser(QWidget):
         self.tabs.setStyleSheet("""
             QTabWidget::pane { border: 1px solid #3d3d3d; background-color: #2b2b2b; }
             QTabBar::tab { background: #1e1e1e; color: #aaa; min-width: 100px; padding: 6px; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
-            QTabBar::tab:selected { background: #b52316; color: white; font-weight: bold; }
+            QTabBar::tab:selected { background: #F08000; color: white; font-weight: bold; }
             QTabBar::tab:hover:!selected { background: #333; }
         """)
 

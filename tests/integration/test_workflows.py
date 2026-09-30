@@ -358,7 +358,7 @@ def test_load_world_build_render_state_modify_world_rebuild(session):
     first = thread.game_state.get_write_state()
     first_count = len(first.all_brushes)
     assert first_count == 6, "the room is six brushes, the frame has %d" % first_count
-    assert len(first.all_things) == 1
+    assert first.entity_table.count == 1
 
     thread.game_state.request_swap()
     state.brushes.append(box_brush("new_pillar", (0, 64, 0), (64, 128, 64)))
@@ -369,7 +369,7 @@ def test_load_world_build_render_state_modify_world_rebuild(session):
     assert len(second.all_brushes) == first_count + 1, (
         "the rebuilt frame holds %d brushes, expected %d"
         % (len(second.all_brushes), first_count + 1))
-    assert len(second.all_things) == 2
+    assert second.entity_table.count == 2
 
 
 def test_a_geometry_edit_reaches_the_renderers_derived_mesh(session):
@@ -420,13 +420,12 @@ def test_a_bigworld_map_activates_cells_around_the_player_and_restores_on_stop(
                                     make_thing(PlayerStart, "spawn", (0, 64, 0))])
     authored = json.dumps(state.get_level_data(), sort_keys=True)
 
-    # Big World is mandatory in this build, so it is already on by the time any
-    # map loads.  The map loader still runs its auto-enable pass — doing the
-    # same here is the realistic flow — and it must leave the plugin enabled.
-    thread.plugins.auto_enable_for_map(state.get_level_data())
-    bigworld = thread.plugins.find_plugin("bigworld")
-    assert bigworld is not None and thread.plugins.is_enabled(bigworld), (
-        "bigworld must be enabled for a map carrying a BigWorldSettings entity")
+    # Big World ships disabled; the map loader switches it on for a map that
+    # carries its settings entity.  Doing the same here is the realistic flow.
+    enabled = thread.plugins.auto_enable_for_map(state.get_level_data())
+    assert [p.name for p in enabled] == ["bigworld"], (
+        "loading a map with a BigWorldSettings entity should auto-enable the "
+        "plugin; it enabled %s" % ([p.name for p in enabled],))
 
     # The session activates cells around the player, so the player has to exist
     # before play mode starts - as it does in the editor, which spawns at the

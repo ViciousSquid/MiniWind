@@ -20,7 +20,7 @@ from editor import io_system as io                       # noqa: E402
 from editor import state_values as sv                    # noqa: E402
 from editor.io_system import IOManager, OutputConnection  # noqa: E402
 from editor.io_handlers import register_all_input_handlers  # noqa: E402
-from editor.things import LogicState, Thing  # noqa: E402
+from editor.things import LogicState, Thing              # noqa: E402
 
 pytestmark = pytest.mark.qt
 
@@ -127,11 +127,11 @@ def bench():
 # Identity and naming
 # ---------------------------------------------------------------------------
 
-def test_the_pre_2_4_key_value_store_is_gone():
-    """LogicState replaced it outright: no alias, no legacy map tokens."""
+def test_the_pre_2_5_alias_is_gone():
+    """2.5 is a clean break: one name for the state entity, not two."""
     import editor.things as things
-    assert not hasattr(things, "LogicKeyValueStore")
-    assert LogicState.legacy_map_types == ()
+    assert not hasattr(things, "LogicKeyValueStore"), (
+        "the pre-2.4 alias is back; 2.5 ships LogicState under one name")
 
 
 def test_a_store_carries_a_stable_uuid():
@@ -564,27 +564,7 @@ def test_a_store_round_trips_through_a_map_file():
     assert restored.properties["id"] == store.properties["id"]
 
 
-def test_a_store_loads_from_its_map_token():
-    data = {
-        "type": "logic_state",
-        "pos": [0, 0, 0],
-        "properties": {"name": "Store_1", "id": UUID_TEXT,
-                       "store_name": "world", "type": "logic_state"},
-        "runtime_data": {"stage": "3"},
-    }
-    restored = Thing.from_dict(data)
-    assert isinstance(restored, LogicState)
-    assert restored.properties["id"] == UUID_TEXT
-    assert restored.properties["type"] == "logic_state"
-
-
-def test_the_removed_pre_2_4_token_no_longer_resolves():
-    legacy = {"type": "logic_keyvalue", "pos": [0, 0, 0],
-              "properties": {"name": "Store_1", "store_name": "world"}}
-    assert not isinstance(Thing.from_dict(legacy), LogicState)
-
-
-def test_legacy_string_values_load_untouched_and_still_work():
+def test_string_values_load_untouched_and_still_work():
     legacy = {
         "type": "logic_state",
         "pos": [0, 0, 0],
@@ -663,7 +643,9 @@ def test_the_state_entity_has_no_per_frame_entry_point():
 def test_the_state_entity_knows_about_no_other_system():
     source = open("editor/things.py", encoding="utf-8").read()
     start = source.index("class LogicState(Thing):")
-    end = source.index("\ndef _same_value(", start)
+    # LogicState is the last class in the module; its body runs to the entity
+    # registry banner that follows it.
+    end = source.index("# ENTITY REGISTRY")
     body = source[start:end].lower()
     # Prose may cite an example chain; code may not reach into these at all.
     for forbidden in ("import monster", "import door", "logicspawner(",

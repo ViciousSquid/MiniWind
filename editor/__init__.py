@@ -11,14 +11,8 @@ itself) failing must never stop the editor from starting.
 
 try:
     from plugins.manager import load_plugins
-    load_plugins()                       # register plugin entity types + I/O defs
+    load_plugins()                       # register entity types + I/O defs
     from plugins import integration as _fio_integration
-    _fio_integration.apply()             # wire generic plugin hooks into editor
+    _fio_integration.apply()             # wire hooks into editor + engine
 except Exception as _fio_plugin_exc:      # pragma: no cover - defensive
     print(f"[Plugins] editor bootstrap skipped: {_fio_plugin_exc}")
-
-# MiniWind (the built-in game) is installed from editor.main_window once the
-# editor package is fully constructed — NOT here. Installing during package
-# import would re-enter this module while game.entities is still importing
-# editor.things, so the game-host registration is deferred to MainWindow.__init__
-# (see editor/main_window.py). It is still "always on"; only the timing moved.

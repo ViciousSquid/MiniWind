@@ -24,10 +24,8 @@ a log line rather than breaking startup. It patches:
 * ``editor.ui.Ui_MainWindow``
     - ``create_menu_bar``     → add a top-level **Plugins** menu bar entry
 
-Package export is **not** patched here: bundling the plugins a ``.fiopak``'s
-maps depend on is a first-class step of ``PackageExporter.export`` itself
-(``editor/package_exporter.py``), which calls ``plugins.packaging.augment_fiopak``
-natively once the base archive is written.
+Package export is not patched either: a ``.fiopak`` is a world container and
+never carries plugin code, so the exporter has nothing plugin-specific to do.
 
 The equivalent hand-edits (for reference / an alternative to this shim) would
 be small insertions in those files; see ``plugins/README.md``.
@@ -36,7 +34,7 @@ be small insertions in those files; see ``plugins/README.md``.
 
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QMessageBox, QMenu
+from PyQt5.QtWidgets import QMenu
 
 _applied = False
 
@@ -47,50 +45,6 @@ def _log(message: str):
         debug_log("Plugins", message)
     except Exception:
         print(f"[Plugins] {message}")
-
-
-def _singleton_blocked(main_window, editor_state, ttype) -> bool:
-    """Enforce per-map singleton entity types (see ``register_singleton_entity``).
-
-    If *ttype* is a registered singleton and one already exists in the scene,
-    select the existing instance, toast, and return True so the caller aborts
-    placement. Otherwise returns False. Fully guarded — any error means "don't
-    block", so a normal entity is never affected."""
-    if not ttype:
-        return False
-    try:
-        from plugins.manager import get_manager
-        mgr = get_manager()
-        if not mgr.is_singleton_entity(ttype):
-            return False
-        norm = mgr._normalise_type(ttype)
-    except Exception:
-        return False
-    existing = None
-    for t in getattr(editor_state, "things", []) or []:
-        props = getattr(t, "properties", None)
-        if not isinstance(props, dict):
-            continue
-        try:
-            if mgr._normalise_type(props.get("type", "")) == norm:
-                existing = t
-                break
-        except Exception:
-            continue
-    if existing is None:
-        return False
-    try:
-        if hasattr(main_window, "set_selected_object"):
-            main_window.set_selected_object(existing)
-        if hasattr(main_window, "update_views"):
-            main_window.update_views()
-        if hasattr(main_window, "show_toast"):
-            main_window.show_toast(
-                "Only one of this entity is allowed per map — selected the existing one.",
-                is_error=True)
-    except Exception as exc:
-        _log(f"singleton select failed ({exc})")
-    return True
 
 
 def apply():
@@ -182,25 +136,6 @@ def _patch_editor_state():
 # editor.view_2d.View2D  — right-click "place entity" menu
 # ---------------------------------------------------------------------------
 
-#: Native right-click entities a built-in game supersedes, so they aren't shown
-#: twice alongside the game's own equivalents (MiniWind: Creature, ItemPickup).
-#: Removed from this one menu only — the classes and palette are untouched.
-_SUPERSEDED_MENU_LABELS = {"monster", "pickup"}
-
-
-def _remove_superseded_actions(menu):
-    """Remove top-level menu actions whose label a built-in game replaces."""
-    try:
-        for act in list(menu.actions()):
-            if act.menu() is not None:        # keep submenus (Logic Entities, …)
-                continue
-            text = act.text().replace("&", "").strip().lower()
-            if text in _SUPERSEDED_MENU_LABELS:
-                menu.removeAction(act)
-    except Exception:
-        pass
-
-
 def _patch_view_2d():
     try:
         from editor.view_2d import View2D
@@ -221,13 +156,8 @@ def _patch_view_2d():
             entries = [(pl, label, cls) for pl, label, cls in mgr.menu_entries()
                        if mgr.is_enabled(pl)]
         except Exception:
-            mgr = None
             entries = []
-        try:
-            builtin = mgr.builtin_menu_entries() if mgr is not None else []
-        except Exception:
-            builtin = []
-        if not entries and not builtin:
+        if not entries:
             return _orig_context_menu(self, event)
 
         from PyQt5.QtWidgets import QMenu
@@ -262,36 +192,12 @@ def _patch_view_2d():
             # Restore the real exec_ immediately so this only fires for the top
             # menu and never re-enters.
             QMenu.exec_ = orig_exec_desc
-            from PyQt5.QtWidgets import QAction
             action_map = {}
             try:
-                # Built-in game (MiniWind) entities are the primary placeables, so
-                # merge them into ONE single list at the top of the native menu —
-                # not a separate submenu. First drop the native demo items the game
-                # supersedes so no concept appears twice, then de-duplicate the
-                # game's own entries by class.
-                if builtin:
-                    _remove_superseded_actions(menu_self)
-                    existing = menu_self.actions()
-                    before = existing[0] if existing else None
-                    seen = set()
-                    for _game, label, cls in builtin:
-                        if cls in seen:
-                            continue
-                        seen.add(cls)
-                        act = QAction(label, menu_self)
-                        menu_self.insertAction(before, act)   # keep insertion order
-                        action_map[act] = cls
-                    sep = QAction(menu_self)
-                    sep.setSeparator(True)
-                    menu_self.insertAction(before, sep)
-                # Optional gameplay plugins stay in their own submenu — they
-                # are separate from the game, not part of the entity list.
-                if entries:
-                    menu_self.addSeparator()
-                    sub = menu_self.addMenu("Plugins")
-                    for plug, label, cls in entries:
-                        action_map[sub.addAction(f"{plug.name} ▸ {label}")] = cls
+                menu_self.addSeparator()
+                sub = menu_self.addMenu("Plugins")
+                for plug, label, cls in entries:
+                    action_map[sub.addAction(f"{plug.name} ▸ {label}")] = cls
             except Exception:
                 action_map = {}
             chosen = orig_exec_call(menu_self, *args, **kwargs)
@@ -429,15 +335,14 @@ def _build_plugins_menu(MainWindow):
     mgr = get_manager()
 
     # Apply any persisted enable/disable choices before drawing the menu.
-    # A mandatory plugin is exempt: a stale settings.ini from a build where it
-    # was optional must not switch off something this build is made of.
+    # Through set_enabled, not the attribute: the manager caches which plugins
+    # tick and dispatch keyed on its enabled generation, and a plugin is told
+    # (on_enabled_changed) so it can release what it holds.
     persisted_off = _disabled_from_config(MainWindow)
     for plugin in mgr.plugins:
-        if mgr.is_mandatory(plugin):
-            continue
         if mgr.plugin_package_name(plugin).lower() in persisted_off or \
                 plugin.name.lower() in persisted_off:
-            plugin.enabled = False
+            mgr.set_enabled(plugin, False)
 
     menubar = MainWindow.menuBar()
 
@@ -447,6 +352,12 @@ def _build_plugins_menu(MainWindow):
         if action.text().replace("&", "") == "Help":
             help_action = action
             break
+
+    # Drop a previously built menu, so a rebuild never leaves two "Plugins"
+    # entries in the menu bar.
+    for action in list(menubar.actions()):
+        if action.text().replace("&", "") == "Plugins":
+            menubar.removeAction(action)
 
     menu = QMenu("Plugins", menubar)
     if help_action:
@@ -459,25 +370,67 @@ def _build_plugins_menu(MainWindow):
         act.setEnabled(False)
         return
 
-    for plugin in mgr.plugins:
-        mandatory = mgr.is_mandatory(plugin)
-        label = f"{plugin.name}  v{plugin.version}"
-        sub = menu.addMenu(f"{label}  (required)" if mandatory else label)
+    # (plugin, "Enabled" toggle, plugin-owned actions) per submenu, re-read
+    # from the live enabled state every time the menu opens. The menu is built
+    # once at startup, but a plugin's state changes after that without the
+    # menu being involved -- above all a level that auto-enables its plugin
+    # (Big World for a map with a BigWorldSettings entity). Without the
+    # refresh the toggle kept showing that plugin as off while it ran.
+    rows = []
 
-        # Enable/disable toggle (checked = on). A mandatory plugin still shows
-        # its state — greyed and checked — so the menu reads as "on and not
-        # yours to change" rather than silently missing a control.
+    def _sync_with_live_state():
+        for plugin, toggle, actions in rows:
+            on = mgr.is_enabled(plugin)
+            if toggle.isChecked() != on:
+                # Reflect the state; do not fire _toggle_plugin, which would
+                # persist it and turn an auto-enable into a manual one.
+                toggle.blockSignals(True)
+                toggle.setChecked(on)
+                toggle.blockSignals(False)
+            for act in actions:
+                act.setVisible(on)
+                act.setEnabled(on)
+
+    menu.aboutToShow.connect(_sync_with_live_state)
+
+    for plugin in mgr.plugins:
+        sub = menu.addMenu(plugin.name)
+
+        # Plugin-owned actions sit at the very top, and are hidden outright
+        # while that plugin is off rather than shown greyed out.
+        # _run_plugin_menu_action refuses to call them without their plugin, so
+        # a visible one is an offer the editor cannot honour -- Tidy's "Load
+        # Demo map" looked available and silently did nothing.
+        plugin_actions = []
+        enabled = mgr.is_enabled(plugin)
+        for label, callback, tooltip in [
+            (label, callback, tooltip)
+            for pl, label, callback, tooltip in mgr.menu_actions()
+            if pl is plugin
+        ]:
+            act = sub.addAction(label)
+            if tooltip:
+                act.setToolTip(tooltip)
+            act.triggered.connect(
+                lambda _checked=False, p=plugin, cb=callback:
+                _run_plugin_menu_action(MainWindow, p, cb))
+            plugin_actions.append(act)
+        if plugin_actions:
+            # The separator belongs to the group: with the actions hidden it
+            # would otherwise sit above "Enabled" on its own.
+            plugin_actions.append(sub.addSeparator())
+        for act in plugin_actions:
+            act.setVisible(enabled)
+            act.setEnabled(enabled)
+
+        # Enable/disable toggle (checked = on).
         toggle = sub.addAction("Enabled")
         toggle.setCheckable(True)
         toggle.setChecked(mgr.is_enabled(plugin))
-        if mandatory:
-            toggle.setEnabled(False)
-            toggle.setToolTip(
-                f"'{plugin.name}' is required by this build and cannot be "
-                f"disabled.")
-        else:
-            toggle.toggled.connect(
-                lambda checked, p=plugin: _toggle_plugin(MainWindow, p, checked))
+        toggle.toggled.connect(
+            lambda checked, p=plugin, acts=plugin_actions:
+            _toggle_plugin(MainWindow, p, checked, acts))
+        rows.append((plugin, toggle, plugin_actions))
         sub.addSeparator()
 
         # Placement entries for this plugin's entities.
@@ -495,26 +448,86 @@ def _build_plugins_menu(MainWindow):
 
         about = sub.addAction("About…")
         about.triggered.connect(
-            lambda _checked=False, p=plugin, req=mandatory:
+            lambda _checked=False, p=plugin:
             QMessageBox.information(
                 MainWindow, f"{p.name} v{p.version}",
                 f"{p.description or '(no description)'}\n\n"
+                f"Version: {p.version}\n"
                 f"Category: {p.category}\n"
-                + ("Required: this build does not run without this plugin.\n"
-                   if req else "")
-                + f"Place its entities from here or the 2D view's right-click "
+                f"Place its entities from here or the 2D view's right-click "
                 f"menu under Plugins ▸ {p.name}."))
 
 
 
-def _toggle_plugin(MainWindow, plugin, enabled):
+def _run_plugin_menu_action(MainWindow, plugin, callback):
+    """Invoke a plugin-owned editor menu action safely."""
+    if not getattr(plugin, "enabled", False):
+        return
+    try:
+        callback(MainWindow)
+    except Exception as exc:
+        _log(f"plugin menu action failed for '{plugin.name}': {exc}")
+
+
+def _toggle_plugin(MainWindow, plugin, enabled, menu_actions=None):
     from plugins.manager import get_manager
     get_manager().set_enabled(plugin, enabled)
+    for action in menu_actions or ():
+        try:
+            action.setVisible(bool(enabled))
+            action.setEnabled(bool(enabled))
+        except Exception:
+            pass
     _persist_disabled(MainWindow)
     if hasattr(MainWindow, "show_toast"):
         state = "enabled" if enabled else "disabled"
         MainWindow.show_toast(f"Plugin '{plugin.name}' {state}"
                               + ("" if enabled else " (restart to fully unload)"))
+
+
+def _singleton_blocked(main_window, editor_state, ttype) -> bool:
+    """Enforce per-map singleton entity types (see ``register_singleton_entity``).
+
+    If *ttype* is a registered singleton and one already exists in the scene,
+    select the existing instance, toast, and return True so the caller aborts
+    placement. Otherwise returns False. Fully guarded -- any error means "don't
+    block", so an ordinary entity is never affected.
+    """
+    if not ttype:
+        return False
+    try:
+        from plugins.manager import get_manager
+        mgr = get_manager()
+        if not mgr.is_singleton_entity(ttype):
+            return False
+        norm = mgr._normalise_type(ttype)
+    except Exception:
+        return False
+    existing = None
+    for t in getattr(editor_state, "things", []) or []:
+        props = getattr(t, "properties", None)
+        if not isinstance(props, dict):
+            continue
+        try:
+            if mgr._normalise_type(props.get("type", "")) == norm:
+                existing = t
+                break
+        except Exception:
+            continue
+    if existing is None:
+        return False
+    try:
+        if hasattr(main_window, "set_selected_object"):
+            main_window.set_selected_object(existing)
+        if hasattr(main_window, "update_views"):
+            main_window.update_views()
+        if hasattr(main_window, "show_toast"):
+            main_window.show_toast(
+                "Only one of this entity is allowed per map - selected the existing one.",
+                is_error=True)
+    except Exception as exc:
+        _log(f"singleton select failed ({exc})")
+    return True
 
 
 def _place_plugin_entity(MainWindow, plugin, cls, label):
@@ -574,11 +587,13 @@ def _patch_property_editor():
 
     _orig_iterate = PropertyEditor._iterate_thing_properties
 
-    def _iterate_thing_properties(self, form, thing):
+    def _iterate_thing_properties(self, form, thing, property_keys=None):
         specs = owner = ttype = mgr = None
+
         try:
             props = getattr(thing, "properties", None)
             ttype = props.get("type") if isinstance(props, dict) else None
+
             if ttype:
                 mgr = get_manager()
                 specs = mgr.property_schema_for(ttype)
@@ -586,56 +601,50 @@ def _patch_property_editor():
         except Exception:
             specs = owner = None
 
-        # Plugin-owned entity with a full schema → typed widgets for the whole
-        # panel. Otherwise the stock rows. Either way, plugin-registered extra
-        # fields are appended afterwards, so they work on built-in entities too.
+        # Plugin-owned entity with a full schema gets its schema-driven widgets.
+        # Otherwise use the normal PropertyEditor iterator. Pass property_keys
+        # through so the editor's explicit primary/advanced classification is
+        # preserved even when this plugin shim is installed.
         rendered = False
+
         if specs and owner is not None:
             try:
+                # A plugin schema owns the complete rendering of its properties.
+                # Explicit property filtering is therefore not applied here.
                 _render_schema_rows(self, form, thing, specs)
                 rendered = True
             except Exception as exc:
-                _log(f"schema render failed for '{getattr(thing, 'name', '?')}', "
-                     f"falling back ({exc})")
+                _log(
+                    f"schema render failed for "
+                    f"'{getattr(thing, 'name', '?')}', falling back ({exc})"
+                )
+
         if not rendered:
-            _orig_iterate(self, form, thing)
+            _orig_iterate(
+                self,
+                form,
+                thing,
+                property_keys=property_keys,
+            )
 
         try:
-            extra = mgr.extra_fields_for(ttype) if (mgr and ttype) else []
+            extra = (
+                mgr.extra_fields_for(ttype)
+                if (mgr and ttype)
+                else []
+            )
+
             if extra:
-                _append_extra_fields(self, form, thing, extra)
+                _append_extra_fields(
+                    self,
+                    form,
+                    thing,
+                    extra,
+                )
         except Exception as exc:
             _log(f"extra-field render failed ({exc})")
 
     PropertyEditor._iterate_thing_properties = _iterate_thing_properties
-
-    # Custom property *sections*: small editors that belong with the entity's
-    # own properties rather than in a tab of their own. They are appended to the
-    # Properties tab as collapsible sections, built lazily the first time one is
-    # expanded so a collapsed section costs nothing.
-    _orig_props_tab = PropertyEditor._create_thing_properties_tab
-
-    def _create_thing_properties_tab(self, thing):
-        widget = _orig_props_tab(self, thing)
-        try:
-            props = getattr(thing, "properties", None)
-            ttype = props.get("type") if isinstance(props, dict) else None
-            sections = get_manager().property_sections_for(ttype) if ttype else []
-            if not sections or widget is None:
-                return widget
-            from editor.property_editor import CollapsibleSection
-
-            layout = widget.layout()
-            for label, factory, expanded in sections:
-                section = CollapsibleSection(label, expanded=expanded)
-                _wire_lazy_section(section, factory, thing, label)
-                # Before the trailing stretch, so sections stay packed to the top.
-                layout.insertWidget(max(0, layout.count() - 1), section)
-        except Exception as exc:
-            _log(f"property sections failed ({exc})")
-        return widget
-
-    PropertyEditor._create_thing_properties_tab = _create_thing_properties_tab
 
     # Custom property tabs: append plugin tabs after the stock ones are built.
     _orig_populate = PropertyEditor.populate_for_thing
@@ -650,15 +659,14 @@ def _patch_property_editor():
             if not tabs or widget is None:
                 return
             # Lazy tab construction: each custom tab's factory builds a full,
-            # often heavy widget (item tables, dialogue trees, spell pickers).
-            # Building all of them on every selection is the bulk of the panel's
-            # sluggishness, and most are never looked at. So insert a light
-            # placeholder per tab now and build the real content the first time
-            # that tab is actually shown.
+            # often heavy widget. Building all of them on every selection is the
+            # bulk of the panel's sluggishness, and most are never looked at. So
+            # insert a light placeholder per tab now and build the real content
+            # the first time that tab is actually shown.
             try:
                 from PyQt5.QtWidgets import QWidget, QVBoxLayout
             except Exception:
-                # No Qt (headless) — fall back to eager build so behaviour holds.
+                # No Qt (headless) - fall back to eager build so behaviour holds.
                 for label, factory in tabs:
                     try:
                         widget.addTab(factory(thing), label)
@@ -697,31 +705,6 @@ def _patch_property_editor():
 
     PropertyEditor.populate_for_thing = populate_for_thing
     PropertyEditor._fio_plugins_patched = True
-
-
-def _wire_lazy_section(section, factory, thing, label):
-    """Build a section's content the first time it is opened.
-
-    A section's factory can be as heavy as a tab's, and a collapsed one is not
-    being looked at — so nothing is built until somebody expands it. A section
-    that starts expanded builds immediately."""
-    state = {"built": False}
-
-    def _build(*_args):
-        if state["built"]:
-            return
-        state["built"] = True
-        try:
-            inner = factory(thing)
-        except Exception as exc:
-            _log(f"property section '{label}' failed ({exc})")
-            return
-        if inner is not None:
-            section.addWidget(inner)
-
-    section.toggle.toggled.connect(lambda checked: checked and _build())
-    if section.toggle.isChecked():
-        _build()
 
 
 def _append_extra_fields(editor_self, form, thing, specs):
@@ -795,11 +778,11 @@ def _widget_for_spec(editor_self, thing, spec, value):
 
 
 def _section_header(text):
-    """A bold, boxed section heading spanning a QFormLayout row (Aurora-style).
+    """A bold, boxed section heading spanning a QFormLayout row.
 
-    Font sizing uses the widget's point-based font (not a px stylesheet value) so
-    it stays crisp and correctly sized on high-DPI displays; only colour/border
-    are set via the stylesheet.
+    Font sizing uses the widget's point-based font (not a px stylesheet value)
+    so it stays crisp and correctly sized on high-DPI displays; only colour and
+    border come from the stylesheet.
     """
     from PyQt5.QtWidgets import QLabel
     lbl = QLabel(text.upper())
@@ -808,7 +791,7 @@ def _section_header(text):
     f.setLetterSpacing(f.PercentageSpacing, 108)
     lbl.setFont(f)
     lbl.setStyleSheet(
-        "color:#8fd0ff; border:none; border-bottom:1px solid #3a4a5a;"
+        "color:#F08000; border:none; border-bottom:1px solid #555;"
         "margin-top:8px; padding:3px 0 2px 0;")
     return lbl
 
@@ -816,13 +799,18 @@ def _section_header(text):
 def _render_schema_rows(editor_self, form, thing, specs):
     """Draw schema-driven rows first, then any remaining properties generically.
 
-    Specs carrying a ``group`` are rendered under a section heading (IDENTITY /
-    STATS / FACTION / …), turning a flat property list into an organised panel.
+    Specs carrying a ``group`` are rendered under a section heading, turning a
+    flat property list into an organised panel. Specs with no group behave
+    exactly as before.
     """
     from editor.property_editor import _make_spin, _make_checkbox
     from PyQt5.QtWidgets import QLineEdit
 
-    _HIDDEN = ("name", "id", "type", "_io_connections")
+    # An entity class can keep plumbing out of its panel -- e.g. the marker
+    # sprite a settings entity draws with -- by listing the keys in
+    # EDITOR_HIDDEN_PROPERTIES. They are still stored and saved as usual.
+    _HIDDEN = ("name", "id", "type", "_io_connections") + tuple(
+        getattr(thing, "EDITOR_HIDDEN_PROPERTIES", ()) or ())
     covered = set()
     current_group = None
 

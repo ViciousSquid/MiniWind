@@ -10,3 +10,6 @@ assets/shaders/
 
 # Generated head death-overlay composites (never real art)
 assets/sprites/heads/dead_cache/
+
+# Audit working files (regenerate with git rev-list)
+audit/_commits*.txt

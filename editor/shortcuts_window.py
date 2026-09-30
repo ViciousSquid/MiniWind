@@ -26,7 +26,7 @@ _PANEL = '#3c3f41'
 _BORDER = '#555'
 _TEXT = '#e0e0e0'
 _DIM = '#8a8a8a'
-_ACCENT = '#b52316'
+_ACCENT = '#F08000'
 
 _SHEET = """
     QTreeWidget {
