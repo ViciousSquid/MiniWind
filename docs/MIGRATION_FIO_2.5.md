@@ -133,7 +133,7 @@ Largest modified files (changed lines vs baseline): `qt_game_view` 1342,
 | property sections / grouped specs (`plugins/integration`) | 3 | `register_property_section` + editor consumer, on top of API 1.4.0 |
 | superseded palette entries (Monster/Pickup hidden in favour of Creature/ItemPickup) | 3 | generic "hide entity from palette" registration |
 | `io_handlers` visibility notify, speaker fields | 1? | verify current Fio already calls `notify_authored_visibility_changed`; drop if so |
-| `io_system` `logic_keyvalue` alias removal | 1 | follow upstream |
+| `io_system` `logic_keyvalue` alias removal, `io_handlers` registering `_STATE_INPUTS` on `logic_state` only | 1 | upstream now matches: the store is `LogicState` only, no class alias, no I/O alias (see §4.8) |
 | `console_commands` `inspect`, `main_window` passed to dispatch | 3 | upstream API 1.4.0 console commands take `(args, main_window, logic, play_mode)`; inspect per 4.3 |
 | `main_window` title/About branding | 3 | product name from config, not a fork |
 | `main_window` reset-prompt-on-play, `_reset_game_progress` | 4 | game menu action |
@@ -152,7 +152,7 @@ Largest modified files (changed lines vs baseline): `qt_game_view` 1342,
 | entity wizards, singletons, extra fields, console commands | 1 | upstream API 1.4.0 |
 | `MANDATORY_PLUGINS = ("bigworld",)` | 3 | minimal generic mandatory-plugin config (product setting), not a BigWorld fork |
 | BigWorld `enabled = True` | 3 | driven by mandatory config; plugin stays verbatim |
-| BigWorld `logickeyvaluestore` type removal | 1 | follow upstream |
+| BigWorld `logickeyvaluestore` in `DEFAULT_PERSISTENT_TYPES` removed | — | **not** carried: upstream 2.5.10 still lists the dead token, but it matches no class, so it is inert. BigWorld stays verbatim; raise the one-line cleanup upstream (see §4.8) |
 
 ### 4.6 game/ → Fio dependencies
 
@@ -177,6 +177,31 @@ attribute writes or they will never reach EntityTable.
 | unknown entity preservation | **1** — current Fio keeps unknown types as `UnresolvedThing` and round-trips them verbatim |
 | `.fiosave` | MiniWind never forked `savegame.py`; it persists via public properties + `LogicState`/`GlobalStore`. Fio 2.5 now writes delta saves against the base map and restores BigWorld cells — needs regression coverage, not code |
 | derived `custom_dead`, transient look keys | must not leak into saved maps / saves |
+
+### 4.8 Key/value store → `LogicState`
+
+The pre-2.4 `LogicKeyValueStore` entity no longer exists in Fio; `LogicState`
+(`editor/things.py`) is the only persistent named store, and Fio's own tests
+enforce it (`tests/logic/test_logic_state.py`: no `LogicKeyValueStore`
+attribute; a `logic_keyvalue` record no longer resolves to `LogicState`).
+
+* Surviving "keyvalue" names in Fio are **method names on the LogicState path**,
+  not the removed entity: `IOManager.query_keyvalue` / `set_keyvalue` read and
+  write `LogicState` stores (entity first, then `LogicState._persistent_registry`),
+  and `PropertyEditor._build_keyvalue_group` is the LogicState table editor.
+  MiniWind's State Store quick-insert suggestions (§4.4) attach to that group.
+* MiniWind content is already clean: no `keyvalue` reference in `game/`,
+  `game/data/`, `quests/` or `maps/`; game state goes through `LogicState` and
+  `plugins.api.GlobalStore` (which binds to the same registry).
+* The one upstream remnant is the inert `"logickeyvaluestore"` string in
+  `plugins/bigworld/manager.py` `DEFAULT_PERSISTENT_TYPES`.
+* **Test conflict:** MiniWind's
+  `tests/integration/test_miniwind_boundaries.py::test_the_pre_2_4_key_value_store_is_removed_from_code`
+  scans the Fio packages *and* `game/` for the old tokens, so it would fail on
+  verbatim upstream BigWorld. Rescope it to MiniWind-owned code (`game/`,
+  MiniWind tests excluded as now) and rely on Fio's own
+  `test_logic_state.py` for the engine side, rather than forking BigWorld to
+  satisfy it. Also update `README.md:389`, which describes the old store.
 
 ---
 
