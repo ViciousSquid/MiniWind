@@ -49,6 +49,12 @@ def _wolf():
     return {"attack_style": "melee", "equipped_weapon": "", "inventory": []}
 
 
+def _install_engine_hook():
+    MonsterAI = _install_engine_hook()
+    MonsterAI._attack_style_hook = cl.attack_style_for
+    return MonsterAI
+
+
 # ------------------------------------------------------------------- loadouts
 
 def test_a_loadout_lists_only_what_the_actor_carries():
@@ -152,7 +158,7 @@ def test_no_game_item_database_means_no_switching():
 
 def test_the_ai_only_rebuilds_a_loadout_when_the_range_band_flips():
     """The whole performance contract: no decision on an ordinary tick."""
-    from engine.monster_ai import MonsterAI
+    MonsterAI = _install_engine_hook()
 
     calls = []
     real_build = cl.build_loadout
@@ -185,7 +191,7 @@ def test_the_ai_only_rebuilds_a_loadout_when_the_range_band_flips():
 
 
 def test_switching_style_also_switches_the_weapon_in_hand():
-    from engine.monster_ai import MonsterAI
+    MonsterAI = _install_engine_hook()
 
     class _Thing:
         def __init__(self):
@@ -201,7 +207,7 @@ def test_switching_style_also_switches_the_weapon_in_hand():
 
 
 def test_an_actor_with_no_choice_never_gets_a_live_weapon_written():
-    from engine.monster_ai import MonsterAI
+    MonsterAI = _install_engine_hook()
 
     class _Thing:
         def __init__(self):
