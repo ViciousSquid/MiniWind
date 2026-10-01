@@ -221,8 +221,15 @@ Also:
 - **Fonts** (`game/ui/fonts.py`, files in `assets/fonts`): Enchanted Land for
   the pause menu's banner/options and the loading title; MedievalSharp (OFL,
   licence beside it) for conversations, the menu's small print and the bar.
-  Arial/Georgia only if a file is missing. The rest of the HUD and screens
-  still use `game/ui/theme.py`'s fonts.
+  Arial/Georgia only if a file is missing. `theme.font()` turns any sans face
+  the game UI asks for into MedievalSharp when it is installed.
+- **Mouse in menus** (`game/ui/hits.py`): menus record click targets as they
+  paint; Fio's generic `QtGameView.game_pointer` shows the arrow and hands
+  the mouse to the game while it wants it; clicks run on the game tick.
+  Character creation (Back/Next/Begin, head arrows, handedness, list rows),
+  trading (rows, Buy/Sell, Leave) and conversation replies are clickable.
+  Other screens (inventory, journal, spells, level-up, containers) are still
+  keyboard-only: add targets with `screens.button` / `_row_target`.
 
 ## 6. What still needs doing
 
