@@ -206,3 +206,60 @@ def test_a_click_off_every_target_is_ignored(session):
     _paint(session)
     assert not hits.click(1, 1)
     assert hits.run_clicks(session) == 0
+
+
+# ------------------------------------------------------------ trade motion
+
+def test_a_bought_item_flies_across_and_its_new_row_waits_for_it(session, monkeypatch):
+    import types
+    from ..ui import trade_anim
+    clock = [50.0]
+    monkeypatch.setattr(trade_anim, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
+    trade_anim.reset()
+    session.merchant_npc = _Merchant()
+    session.open_screen = "trade"
+    session.game.character.gold = 1000
+    iid = screens._merchant_stock(session.merchant_npc)[0]["id"]
+
+    _click(session, f"buy:{iid}")
+    _click(session, next(lab for lab in _labels(session) if str(lab).startswith("Buy ")))
+    assert trade_anim.active()
+    # The sell-side row exists already (the item is owned) but is still empty:
+    _paint(session)
+    assert trade_anim.landing_hidden(1, iid)
+
+    clock[0] += trade_anim.FLIGHT_SECONDS + 0.01
+    assert not trade_anim.landing_hidden(1, iid)       # landed
+    clock[0] += trade_anim.GOLD_SECONDS
+    assert not trade_anim.active()
+
+
+def test_selling_onto_a_row_the_merchant_already_lists_shows_both(session, monkeypatch):
+    import types
+    from ..ui import trade_anim
+    clock = [80.0]
+    monkeypatch.setattr(trade_anim, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
+    trade_anim.reset()
+    session.merchant_npc = _Merchant()
+    session.open_screen = "trade"
+    session.game.character.gold = 1000
+    iid = screens._merchant_stock(session.merchant_npc)[0]["id"]
+    _click(session, f"buy:{iid}")
+    _click(session, next(lab for lab in _labels(session) if str(lab).startswith("Buy ")))
+    clock[0] += 5
+    _click(session, f"sell:{iid}")
+    _click(session, next(lab for lab in _labels(session) if str(lab).startswith("Sell ")))
+    assert trade_anim.active()
+    assert not trade_anim.landing_hidden(0, iid)       # the stock row stays put
+
+
+def test_no_paint_no_motion_but_the_trade_still_happens(session):
+    from ..ui import trade_anim
+    trade_anim.reset()
+    session.merchant_npc = _Merchant()
+    session.open_screen = "trade"
+    session.game.character.gold = 1000
+    gold = session.game.character.gold
+    screens._handle_trade(session, "return")           # never painted
+    assert session.game.character.gold < gold
+    assert not any(True for _ in trade_anim._flights)

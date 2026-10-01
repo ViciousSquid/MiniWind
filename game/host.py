@@ -1017,6 +1017,12 @@ class MiniwindGame:
             # The fade-to-black transition (e.g. paying off a bounty) sits on
             # top of everything else, including dialogue and the death screen.
             hud.draw_fade(painter, session, w, h)
+            # Keep painting while something on a menu is moving (the view
+            # otherwise repaints only for new world frames).
+            from .ui import trade_anim
+            if viewport is not None and session.open_screen == "trade" \
+                    and trade_anim.active():
+                viewport.update()
         except Exception:
             import traceback
             traceback.print_exc()

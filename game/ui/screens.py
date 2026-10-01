@@ -14,7 +14,7 @@ from __future__ import annotations
 from PyQt5.QtCore import QRect, Qt
 from PyQt5.QtGui import QColor, QPen
 
-from . import fonts, hits
+from . import fonts, hits, trade_anim
 from . import theme as T
 from ..rpg import (races, classes, birthsigns, attributes as attr, skills as sk,
                    items as rpg_items, inventory as inv, equipment as eq,
@@ -946,7 +946,15 @@ def _draw_trade(painter, session, w, h):
     x, y, bw, bh = _panel_rect(w, h)
     inner = T.panel(painter, x, y, bw, bh)
     name = npc.properties.get("display_name", "Merchant") if npc else "Merchant"
-    ty = T.heading(painter, inner, f"Trading with {name}", f"Your gold: {c.gold}")
+    gold_text = f"Your gold: {c.gold}"
+    ty = T.heading(painter, inner, f"Trading with {name}", gold_text)
+    # Where a price floats up from: just past the gold total (T.heading's
+    # subtitle line).
+    from PyQt5.QtCore import QPoint
+    from PyQt5.QtGui import QFontMetrics
+    gold_w = QFontMetrics(T.font(10, italic=True, family="Segoe UI")).horizontalAdvance(gold_text)
+    trade_anim.begin_frame()
+    trade_anim.record_gold(QPoint(inner.x() + gold_w + 10, inner.y() + 48))
 
     # buy list = merchant stock; sell list = player inventory (sellable)
     stock = _merchant_stock(npc)
@@ -961,17 +969,22 @@ def _draw_trade(painter, session, w, h):
         if not lst:
             T.text(painter, cx + 8, ty + 36, "Nothing to sell" if side else
                    "Nothing for sale", size=10, color=T.DIM, family="Segoe UI")
+        shown = 0
         for i, entry in enumerate(lst):
             ry = ty + 24 + i * 22
             if ry > rows_bottom - 20:
                 break
+            shown = i + 1
             iid = entry["id"] if isinstance(entry, dict) else entry
             d = rpg_items.get(iid)
-            price = session._price(d.value if d else 0, buying)
+            price = session._price(d.value if d else 0, buying, npc=npc)
             selected = st["side"] == side and st["row"] == i
             row = QRect(cx, ry - 2, col_w, 20)
+            trade_anim.record_row(side, iid, row)
             _row_target(painter, row, _trade_select(side, i),
                         f"{'sell' if side else 'buy'}:{iid}")
+            if trade_anim.landing_hidden(side, iid):
+                continue            # its item is still flying in
             if selected:
                 painter.fillRect(row, T.SELECT)
             nm = (d.name if d else iid)
@@ -981,6 +994,9 @@ def _draw_trade(painter, session, w, h):
                    color=T.GOLD_BRIGHT if selected else T.INK, family="Segoe UI")
             T.text_in(painter, QRect(cx, ry - 2, col_w - 8, 20), f"{price}g", size=9,
                       color=T.GOLD, align=T.ALIGN_RIGHT, family="Segoe UI")
+        # Where a new row would appear: a card with no row to land on (an
+        # item sold into stock the merchant does not list) lands here.
+        trade_anim.record_column(side, QRect(cx, ty + 24 + shown * 22 - 2, col_w, 20))
 
     # The trade button names what it will do; Leave ends the trade.
     lst = stock if st["side"] == 0 else sell
@@ -989,7 +1005,7 @@ def _draw_trade(painter, session, w, h):
         entry = lst[min(st["row"], len(lst) - 1)]
         d = rpg_items.get(entry["id"] if isinstance(entry, dict) else entry)
         buying = st["side"] == 0
-        price = session._price(d.value if d else 0, buying)
+        price = session._price(d.value if d else 0, buying, npc=npc)
         name_ = d.name if d else "item"
         can = (c.gold >= price) if buying else True
         label = (f"Buy {name_} for {price}g" if buying
@@ -1005,6 +1021,9 @@ def _draw_trade(painter, session, w, h):
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
               "Click or ↑/↓ select   ←/→ buy|sell   Enter trade   Esc leave", size=9,
               color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
+
+    # Items changing hands, over everything else on the screen.
+    trade_anim.draw(painter)
 
 
 def _sell_list(c):
@@ -1054,13 +1073,25 @@ def _handle_trade(session, key):
         st["row"] = min(st["row"], len(lst) - 1)
         entry = lst[st["row"]]
         iid = entry["id"] if isinstance(entry, dict) else entry
-        if st["side"] == 0:
-            session.buy(iid)
-        else:
-            session.sell(iid)
+        buying = st["side"] == 0
+        d = rpg_items.get(iid)
+        price = session._price(d.value if d else 0, buying, npc=npc)
+        # Whether the item already has a row on the side it is going to: if
+        # so it lands on that row, otherwise its new row waits for it.
+        to_list = sell if buying else stock
+        had_row = any((e["id"] if isinstance(e, dict) else e) == iid for e in to_list)
+        done = session.buy(iid) if buying else session.sell(iid)
+        if done:
+            trade_anim.launch(iid, d.name if d else iid, f"{price}g",
+                              from_side=0 if buying else 1,
+                              to_side=1 if buying else 0,
+                              lands_on_new_row=not had_row,
+                              gold_text=f"{'-' if buying else '+'}{price}g",
+                              gold_gain=not buying)
         return True
     if key in ("escape", "esc"):
         session.open_screen = None; session.merchant_npc = None
+        trade_anim.reset()
     return True
 
 
