@@ -131,6 +131,25 @@ class Toast(QLabel):
         self.anim.start()
         
 
+def _sync_editor_camera(window):
+    """Hand *window*'s 3D view camera to the logic thread.
+
+    Outside play the logic thread's editor camera is the one the frame is
+    drawn from, and the view copies it back every paint: a camera placed on
+    the view alone (focusing on an object, opening a map at its Player Start)
+    is undone on the next frame unless it is handed over.
+    """
+    view = getattr(window, 'view_3d', None)
+    logic = getattr(view, 'logic_thread', None)
+    camera = getattr(view, 'camera', None)
+    if logic is None or camera is None or not hasattr(logic, 'set_editor_camera'):
+        return
+    try:
+        logic.set_editor_camera(camera.pos, camera.yaw, camera.pitch, camera.fov)
+    except Exception:
+        pass
+
+
 def _loading_overlay(window):
     """*window*'s loading bar (a no-op stand-in where it has none)."""
     from editor.loading_overlay import overlay_for
@@ -622,19 +641,23 @@ class MainWindow(QMainWindow):
                 else obj.properties.get('name', '')) or 'object'
         self.show_toast("Focused on %s" % name)
 
-    def focus_on_bounds(self, centre, radius):
-        """Centre every view on a point, framed for something *radius* across.
+    def focus_on_bounds(self, centre, radius, views="both"):
+        """Centre the views on a point, framed for something *radius* across.
 
-        The 3D camera keeps its current yaw and pitch and simply moves so the
-        target is in front of it. Snapping to a canned angle would be easier and
-        would throw away the orientation the user had chosen, which is usually
-        the thing they were reasoning about.
+        *views* is ``"both"`` (default), ``"2d"`` (the three 2D views only) or
+        ``"3d"`` (the 3D view only). The 3D camera keeps its current yaw and
+        pitch and simply moves so the target is in front of it. Snapping to a
+        canned angle would be easier and would throw away the orientation the
+        user had chosen, which is usually the thing they were reasoning about.
         """
         radius = max(16.0, float(radius))
-        self.center_2d_views_on(centre)
+        do_2d = views in ("both", "2d")
+        do_3d = views in ("both", "3d")
+        if do_2d:
+            self.center_2d_views_on(centre)
         # Zoom so the object spans a comfortable fraction of the viewport rather
         # than whatever zoom happened to be set.
-        for view in (self.view_top, self.view_side, self.view_front):
+        for view in ((self.view_top, self.view_side, self.view_front) if do_2d else ()):
             try:
                 extent = min(view.width(), view.height())
                 if extent > 0:
@@ -644,15 +667,17 @@ class MainWindow(QMainWindow):
                 pass
 
         camera = getattr(getattr(self, 'view_3d', None), 'camera', None)
-        if camera is not None:
+        if camera is not None and do_3d:
             try:
                 import glm
                 front = camera.get_front_vector()
                 distance = max(radius * 3.0, 128.0)
                 camera.pos = glm.vec3(centre[0], centre[1], centre[2]) - front * distance
+                _sync_editor_camera(self)
                 self.view_3d.update()
             except Exception:
                 pass
+
 
     def moveEvent(self, event):
         """Handle window move."""
@@ -4234,6 +4259,7 @@ class MainWindow(QMainWindow):
                 self.view_3d.camera.pos = glm.vec3(0, 150, 400)
                 self.view_3d.camera.yaw = -90
                 self.view_3d.camera.pitch = -20
+            _sync_editor_camera(self)
 
             # Update file path and UI state
             self.file_path = file_path

@@ -63,6 +63,124 @@ GOAL_TARGET_HINT = {
 
 
 # ---------------------------------------------------------------------------
+# Finding a quest's things in the world (the ⌖ buttons)
+# ---------------------------------------------------------------------------
+def _props(thing):
+    return getattr(thing, "properties", None) or {}
+
+
+def _inventory_ids(props):
+    out = set()
+    for entry in props.get("inventory") or ():
+        if isinstance(entry, dict):
+            out.add(str(entry.get("id", "")))
+        elif isinstance(entry, str):
+            out.add(entry)
+    return out
+
+
+def find_item_holders(things, item_id):
+    """Every thing in the world that has *item_id*: a pickup of it, a
+    spellbook that gives it (``quest_item``), or a chest / NPC / creature
+    carrying it in its inventory. In scene order."""
+    item_id = str(item_id or "").strip()
+    if not item_id:
+        return []
+    found = []
+    for thing in things or ():
+        p = _props(thing)
+        if (str(p.get("item_id", "")) == item_id
+                or str(p.get("quest_item", "")) == item_id
+                or item_id in _inventory_ids(p)):
+            found.append(thing)
+    return found
+
+
+def find_quest_targets(things, kind, target):
+    """The things a stage's goal points at, for jumping to them.
+
+    fetch: where the item is (:func:`find_item_holders`); visit: the location
+    marker (by place name or name); talk: the NPC (by name, display name or
+    role); kill: every creature / NPC of that type, role or name. Matching is
+    case-insensitive, as the game's own is.
+    """
+    target = str(target or "").strip()
+    if not target:
+        return []
+    if kind == "fetch":
+        return find_item_holders(things, target)
+    want = target.lower()
+    found = []
+    for thing in things or ():
+        p = _props(thing)
+        ttype = str(p.get("type", "")).lower()
+        names = {str(p.get(k, "")).strip().lower()
+                 for k in ("name", "display_name", "place_name")} - {""}
+        if kind == "visit":
+            if ttype == "marker" and want in names:
+                found.append(thing)
+        elif kind == "talk":
+            if ttype == "npc" and (want in names
+                                   or str(p.get("npc_role", "")).lower() == want):
+                found.append(thing)
+        elif kind == "kill":
+            kinds = {str(p.get(k, "")).lower() for k in
+                     ("monster_type", "creature_type", "creature_role", "npc_role")}
+            if ttype in ("creature", "monster", "npc") and (want in names or want in kinds):
+                found.append(thing)
+    return found
+
+
+#: Which views a ⌖ jump moves: "both" (default), "2d" or "3d". Remembered in
+#: settings.ini ([Editor] quest_jump_views) when the editor has a config.
+JUMP_VIEWS = ("both", "2d", "3d")
+_JUMP_SETTING = ("Editor", "quest_jump_views")
+
+
+def jump_views(editor) -> str:
+    try:
+        value = editor.config.get(*_JUMP_SETTING, fallback="both")
+    except Exception:
+        value = "both"
+    return value if value in JUMP_VIEWS else "both"
+
+
+def set_jump_views(editor, value) -> None:
+    if value not in JUMP_VIEWS:
+        return
+    try:
+        section, key = _JUMP_SETTING
+        if not editor.config.has_section(section):
+            editor.config.add_section(section)
+        editor.config.set(section, key, value)
+        editor.save_config()
+    except Exception:
+        pass
+
+
+def jump_to(editor, thing, views="both") -> bool:
+    """Select *thing* and frame it in the editor's 2D views, 3D view or both."""
+    if editor is None or thing is None:
+        return False
+    focus = getattr(editor, "focus_on_bounds", None)
+    framing = getattr(editor, "_object_focus_target", None)
+    if focus is None or framing is None:
+        return False
+    try:
+        select = getattr(editor, "set_selected_object", None)
+        if select is not None:
+            select(thing)
+    except Exception:
+        pass
+    centre, radius = framing(thing)
+    try:
+        focus(centre, radius, views=views)
+    except TypeError:            # an editor without the views choice
+        focus(centre, radius)
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Qt / editor plumbing
 # ---------------------------------------------------------------------------
 def _qt():
@@ -824,6 +942,80 @@ def _classes():
                 pass
 
     # ===================================================================
+    # ⌖ — jump to a quest's thing in the 2D / 3D views
+    # ===================================================================
+    class _JumpButton(QtWidgets.QToolButton):
+        """A small ⌖ button: click to show the thing in the views, again for
+        the next one when there are several; its arrow picks 2D, 3D or both.
+
+        *finder()* returns ``(things, what)`` for whatever the button points
+        at now, so it always follows the field beside it.
+        """
+
+        _VIEW_LABELS = (("both", "2D and 3D views"), ("2d", "2D views only"),
+                        ("3d", "3D view only"))
+
+        def __init__(self, finder, editor_getter, parent=None):
+            super().__init__(parent)
+            self._finder = finder
+            self._editor_getter = editor_getter
+            self._next = 0
+            self._last_key = None
+            self.setText("\u2316")
+            self.setAutoRaise(True)
+            self.setPopupMode(QtWidgets.QToolButton.MenuButtonPopup)
+            self.setToolTip("Show it in the views (again for the next one). "
+                            "The arrow picks 2D, 3D or both.")
+            self.setStyleSheet("QToolButton { color: #9ecbff; font-size: 15px; "
+                               "padding: 2px 4px; } QToolButton:disabled { color: #555; }")
+            menu = QtWidgets.QMenu(self)
+            group = QtWidgets.QActionGroup(menu)
+            self._view_actions = {}
+            for value, label in self._VIEW_LABELS:
+                act = menu.addAction(label)
+                act.setCheckable(True)
+                act.setData(value)
+                group.addAction(act)
+                act.triggered.connect(lambda _c=False, v=value: self._choose_views(v))
+                self._view_actions[value] = act
+            menu.aboutToShow.connect(self._sync_menu)
+            self.setMenu(menu)
+            self.clicked.connect(self.jump)
+
+        def _editor(self):
+            return self._editor_getter()
+
+        def _sync_menu(self):
+            current = jump_views(self._editor())
+            for value, act in self._view_actions.items():
+                act.setChecked(value == current)
+
+        def _choose_views(self, value):
+            set_jump_views(self._editor(), value)
+            self.jump()
+
+        def jump(self):
+            editor = self._editor()
+            things, what = self._finder()
+            toast = getattr(editor, "show_toast", None)
+            if not things:
+                if toast is not None and what:
+                    toast(f"{what}: not in this map", is_error=True)
+                return
+            key = (what, len(things))
+            if key != self._last_key:
+                self._next, self._last_key = 0, key
+            index = self._next % len(things)
+            self._next = index + 1
+            thing = things[index]
+            views = jump_views(editor)
+            if jump_to(editor, thing, views) and toast is not None:
+                name = (_props(thing).get("display_name") or _props(thing).get("name")
+                        or _props(thing).get("type") or "it")
+                where = {"both": "", "2d": " (2D)", "3d": " (3D)"}[views]
+                toast(f"{what}: {index + 1} of {len(things)} \u2014 {name}{where}")
+
+        # ===================================================================
     # Stage card (one per stage, in the detail panel)
     # ===================================================================
     class _StageCard(_Card):
@@ -876,6 +1068,10 @@ def _classes():
             row.addWidget(QtWidgets.QLabel("Completes by"))
             row.addWidget(self.cond, 2)
             row.addWidget(self.target, 3)
+            #: Set by the dialog: returns the editor window the views are in.
+            self.editor_getter = lambda: None
+            self.jump = _JumpButton(self._jump_targets, lambda: self.editor_getter())
+            row.addWidget(self.jump)
             row.addWidget(self.count, 1)
             lay.addLayout(row)
 
@@ -898,10 +1094,18 @@ def _classes():
             self._sync()
             self._loading = False
 
+        def _jump_targets(self):
+            kind = self.cond.currentData() or "none"
+            target = self.target.text().strip()
+            editor = self.editor_getter()
+            things = getattr(getattr(editor, "state", None), "things", None) or []
+            return find_quest_targets(things, kind, target), target
+
         def _sync(self):
             kind = self.cond.currentData() or "none"
             self.target.setPlaceholderText(GOAL_TARGET_HINT.get(kind, ""))
             self.target.setEnabled(kind != "none")
+            self.jump.setEnabled(kind in ("fetch", "visit", "talk", "kill"))
             self.count.setEnabled(kind in ("kill", "fetch"))
             idx = self.stage.get("index", 0)
             obj = self.obj.text().strip() or "(stage)"
@@ -1100,7 +1304,10 @@ def _classes():
             self.f_rep.editingFinished.connect(self._write)
             rf.addRow("Gold", self.f_gold)
             rf.addRow("XP", self.f_xp)
-            rf.addRow("Items", self.f_items)
+            items_row = QtWidgets.QHBoxLayout()
+            items_row.addWidget(self.f_items, 1)
+            items_row.addWidget(_JumpButton(self._reward_item_targets, lambda: self.editor))
+            rf.addRow("Items", items_row)
             rf.addRow("Reputation", self.f_rep)
             fv.addWidget(reward)
 
@@ -1118,6 +1325,18 @@ def _classes():
             v.addWidget(self.form_host)
             v.addStretch(1)
             self.form_host.setVisible(False)
+
+        def _reward_item_targets(self):
+            """Where the reward items already are in the world, if anywhere."""
+            ids = [part.split(",")[0].strip()
+                   for part in self.f_items.text().split(";") if part.strip()]
+            things = getattr(getattr(self.editor, "state", None), "things", None) or []
+            found = []
+            for item_id in ids:
+                for thing in find_item_holders(things, item_id):
+                    if thing not in found:
+                        found.append(thing)
+            return found, ", ".join(ids)
 
         # ---- quest list ---------------------------------------------------
         def _reload(self):
@@ -1266,6 +1485,7 @@ def _classes():
             npc = _npc_names(self.editor)
             for s in stages:
                 card = _StageCard(s, npc)
+                card.editor_getter = lambda: self.editor
                 card.changed.connect(lambda i=self._cur: self._on_stage_changed(i))
                 card.removed.connect(lambda st=s: self._remove_stage(st))
                 self.stage_col.addWidget(card)
@@ -1350,6 +1570,8 @@ def _classes():
     _CLASSES = {
         "QuestEditorDialog": QuestEditorDialog,
         "QuestWizard": QuestWizard,
+        "StageCard": _StageCard,
+        "JumpButton": _JumpButton,
     }
     return _CLASSES
 
