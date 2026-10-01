@@ -10,6 +10,7 @@ Run:  python -m pytest game/tests/test_weapon_slots.py -q
 
 from __future__ import annotations
 
+import pytest
 import os
 import sys
 
@@ -130,6 +131,7 @@ def test_the_slot_keys_do_not_clash_with_any_action_binding():
     assert not actions & set(host.WEAPON_SLOT_KEYS)
 
 
+@pytest.mark.qt
 def test_the_loadout_popup_lists_the_same_order_the_keys_use():
     """One source of truth: row 1 is what pressing 1 draws."""
     from ..ui.loadout_window import LoadoutWindow
