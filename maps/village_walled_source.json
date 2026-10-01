@@ -47512,6 +47512,7 @@
         "seed": 53092,
         "biome": "Rocky Mountains",
         "chunk_size": 2048.0,
+        "mesh_scale": 1.0,
         "base_resolution": 16,
         "offset_x": 0.0,
         "offset_z": 0.0,
