@@ -369,6 +369,9 @@ class MiniwindSession:
         self.dialogue_options = []      # for merchant/persuade extra options
         self.container_thing = None     # the world Container the player has open
         self.open_screen = None         # None | 'inventory' | 'character' | 'journal' | 'spells' | 'charcreate' | 'map' | 'levelup' | 'container'
+        #: The full map was asked for (M, a quest's *Show on map*): "player"
+        #: or (x, z, label); the host opens the pause menu's MAP page on it.
+        self.map_request = None
         self.notifications: List[Dict] = []   # timed toast messages
         self.floaters: List[Dict] = []         # floating combat text
         self._blocking = False
@@ -535,10 +538,12 @@ class MiniwindSession:
             logic.blood_stain_sprites = tuple(gib.stain_paths(magical=False))
         except Exception as exc:
             print(f"[MiniWind] blood stain art unavailable: {exc}")
-        # Teach the engine's team-aware MonsterAI MiniWind's faction relationships
-        # so wild animals stay neutral to villagers while bandits are hostile to
-        # both — instead of "every different team is an enemy".
-        logic._faction_hostile = factions.is_hostile
+        # Teach the engine's MonsterAI MiniWind's faction relationships and
+        # who hunts the player (game/faction_ai.py), so wild animals stay
+        # neutral to villagers while bandits are hostile to both, instead of
+        # "every different team is an enemy, everyone hunts the player".
+        from . import faction_ai
+        faction_ai.install(logic)
         self.spawn_creature_points()   # materialise CreatureSpawn points once
         self._assign_npc_handedness()  # random handedness (left rare) where unset
         self._wire_quest_givers()      # make quest givers offer their quests
@@ -553,8 +558,8 @@ class MiniwindSession:
             self.logic._player_damage_filter = None
         if getattr(self.logic, "player_fire_handler", None) == self.fire_player_weapon:
             self.logic.player_fire_handler = None
-        if getattr(self.logic, "_faction_hostile", None) is factions.is_hostile:
-            self.logic._faction_hostile = None
+        from . import faction_ai
+        faction_ai.uninstall(self.logic)
 
     def _mitigate_incoming(self, raw_damage, damage_kind="physical") -> float:
         c = self.game.character
@@ -2647,9 +2652,29 @@ class MiniwindSession:
     def _sim_observers(self) -> List:
         """Who could perceive an event right now.
 
-        The dead are excluded by ``_sim_actors``; perception itself decides who
-        was near enough, awake enough and sighted enough."""
-        return self._sim_actors()
+        The dead are excluded by ``_sim_actors``, and so are the DORMANT --
+        actors the world streamer has parked are not there to see anything;
+        perception itself decides who was near enough, awake enough and
+        sighted enough."""
+        tier_of = self._tier_of
+        return [t for t in self._sim_actors() if tier_of(t) < TIER_DORMANT]
+
+    def _sim_by_tier(self):
+        """``(near, distant)``: the reactive simulation's two levels of detail.
+
+        NEAR and ACTIVE actors (and the player, always) are simulated in full;
+        DISTANT ones get the director's coarse pass; DORMANT ones -- parked by
+        the streamer -- are in neither and catch up when they come back."""
+        near, distant = [], []
+        tier_of = self._tier_of
+        player = self.player_actor
+        for thing in self._sim_actors():
+            tier = TIER_NEAR if thing is player else tier_of(thing)
+            if tier <= TIER_ACTIVE:
+                near.append(thing)
+            elif tier == TIER_DISTANT:
+                distant.append(thing)
+        return near, distant
 
     def _sim_producer_of(self, item_props: Dict):
         """The producing object an item pickup came from, if it is still there.
@@ -2714,8 +2739,8 @@ class MiniwindSession:
         if self._sim_hours < 0.01:
             return
         hours, self._sim_hours = self._sim_hours, 0.0
-        actors = self._sim_actors()
-        self.director.tick(actors, hours)
+        near, distant = self._sim_by_tier()
+        self.director.tick(near, hours, distant=distant)
         for producer, yielded in self.director.drain_yields():
             self._place_yield(producer, yielded)
 

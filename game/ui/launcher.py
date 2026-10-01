@@ -105,17 +105,70 @@ def read_version(root_dir: str = ".") -> str:
 # ---------------------------------------------------------------------------
 # settings.ini
 # ---------------------------------------------------------------------------
+def mode_help(mode: str) -> str:
+    """The one-line description of a window mode (see :data:`MODES`)."""
+    for value, _label, help_text in MODES:
+        if value == mode:
+            return help_text
+    return ""
+
+
+def mode_label(mode: str) -> str:
+    for value, label, _help in MODES:
+        if value == mode:
+            return label
+    return str(mode)
+
+
+def resolution_choices(current=None, screen_size=None):
+    """``[(width, height, label)]`` the display settings offer, smallest first.
+
+    The sizes in :data:`RESOLUTIONS` that fit the screen, the screen's own
+    size (labelled "desktop"), and *current* even when it fits neither, so a
+    setting already chosen is never silently replaced. Shared by the
+    launcher and the in-game options (the pause menu)."""
+    if screen_size is None:
+        screen = QApplication.primaryScreen() if QApplication.instance() else None
+        geo = screen.geometry() if screen is not None else None
+        screen_size = (geo.width(), geo.height()) if geo is not None else None
+    sizes = [wh for wh in RESOLUTIONS
+             if screen_size is None
+             or (wh[0] <= screen_size[0] and wh[1] <= screen_size[1])]
+    if screen_size is not None and tuple(screen_size) not in sizes:
+        sizes.append(tuple(screen_size))
+    if current is not None:
+        current = (int(current[0]), int(current[1]))
+        if current not in sizes:
+            sizes.append(current)
+    out = []
+    for w, h in sorted(set(sizes)):
+        label = f"{w} × {h}"
+        if screen_size is not None and (w, h) == tuple(screen_size):
+            label += "   (desktop)"
+        out.append((w, h, label))
+    return out
+
+
 class DisplaySettings:
     """The launcher's slice of ``settings.ini``, read and written in place.
 
     Only the four keys the launcher shows are touched; every other section and
     value in the file is preserved exactly as configparser found it, so the
-    launcher can never clobber a setting it does not know about."""
+    launcher can never clobber a setting it does not know about.
 
-    def __init__(self, path: str = "settings.ini"):
+    In game (the pause menu's options) it works on the editor window's own
+    *config* and saves through its *save* callback instead of the file, so the
+    window's next write of settings.ini carries the change rather than
+    undoing it."""
+
+    def __init__(self, path: str = "settings.ini", config=None, save=None):
         self.path = path
-        self.config = configparser.ConfigParser()
-        self.config.read(path)
+        self._save_cb = save
+        if config is not None:
+            self.config = config
+        else:
+            self.config = configparser.ConfigParser()
+            self.config.read(path)
 
     # -- read ------------------------------------------------------------
     @property
@@ -164,6 +217,9 @@ class DisplaySettings:
         self.config.set("Display", "vsync", str(bool(vsync)))
         if high_dpi is not None:
             self.config.set("Display", "high_dpi_scaling", str(bool(high_dpi)))
+        if self._save_cb is not None:
+            self._save_cb()
+            return
         with open(self.path, "w") as f:
             self.config.write(f)
 
@@ -497,19 +553,7 @@ class Launcher(QDialog):
     # -- loading / saving --------------------------------------------------
     def _populate_resolutions(self):
         """Offer the sizes that fit this screen, plus whatever is already set."""
-        screen = QApplication.primaryScreen()
-        geo = screen.geometry() if screen is not None else None
-        sizes = [wh for wh in RESOLUTIONS
-                 if geo is None or (wh[0] <= geo.width() and wh[1] <= geo.height())]
-        if geo is not None and (geo.width(), geo.height()) not in sizes:
-            sizes.append((geo.width(), geo.height()))
-        current = self.settings.resolution
-        if current not in sizes:
-            sizes.append(current)
-        for w, h in sorted(set(sizes)):
-            label = f"{w} × {h}"
-            if geo is not None and (w, h) == (geo.width(), geo.height()):
-                label += "   (desktop)"
+        for w, h, label in resolution_choices(self.settings.resolution):
             self.res_combo.addItem(label, (w, h))
 
     def _load(self):
@@ -550,10 +594,7 @@ class Launcher(QDialog):
         """Resolution only means anything for a real window, so say so and grey
         it out rather than letting someone set a size that is ignored."""
         mode = self.current_mode()
-        for value, _label, help_text in MODES:
-            if value == mode:
-                self.mode_help.setText(help_text)
-                break
+        self.mode_help.setText(mode_help(mode))
         self.res_combo.setEnabled(mode == "Windowed")
 
     def _on_high_dpi_toggled(self, checked):

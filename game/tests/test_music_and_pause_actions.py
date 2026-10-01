@@ -251,10 +251,28 @@ def test_an_empty_slot_is_not_loaded(actions):
     assert actions.window.toasts[-1][1] is True
 
 
-def test_the_music_switch_reaches_the_player(actions):
-    assert actions.pause_menu_music_enabled() is True
-    actions.pause_menu_toggle_music()
-    assert actions.pause_menu_music_enabled() is False
+def test_the_volume_reaches_the_player_and_zero_is_off(actions):
+    assert actions.pause_menu_music_volume() == pytest.approx(0.5)
+    actions.pause_menu_set_music_volume(0.8)
+    assert actions.pause_menu_music_volume() == pytest.approx(0.8)
+    actions.pause_menu_set_music_volume(0.0)
+    assert actions.pause_menu_music_volume() == 0.0
+    assert not actions.music.enabled
+
+
+def test_setting_the_volume_is_live_and_remembered(music_dir):
+    mixer = _Mixer()
+    config = configparser.ConfigParser()
+    player = _player(music_dir, mixer)
+    player.configure(config)
+    player.start()
+    player.set_volume(0.3)
+    assert mixer.volume == pytest.approx(0.3) and mixer.busy
+    assert config.get("GAME", "music_volume") == "0.30"
+    player.set_volume(0.0)
+    assert not mixer.busy and config.getboolean("GAME", "music") is False
+    player.set_volume(0.6)                          # back on: a track starts
+    assert mixer.busy and player.effective_volume == pytest.approx(0.6)
 
 
 # ------------------------------------------------------------------- fonts

@@ -2192,6 +2192,8 @@ class QtGameView(QOpenGLWidget):
             painter.drawText(cx - tw // 2, cy, hint)
         if self._actor_pick is not None:
             self._draw_actor_pick_hint(painter, viewport_width)
+        elif getattr(self.logic_thread, 'camera_focus', None) is not None:
+            self._draw_camera_focus_hint(painter, viewport_width)
         # Overhead: held weapon shown as a bottom-right collectible icon (like keys).
         # It takes the rightmost slot; keys shift left so both fit side by side.
         key_slot_offset = 0
@@ -3420,6 +3422,9 @@ class QtGameView(QOpenGLWidget):
 
     def mouseReleaseEvent(self, event):
         if _play_menu_open(self):
+            release = getattr(self.play_menu, 'handle_mouse_release', None)
+            if release is not None:
+                release(event)
             return
         manager = getattr(self, 'window_manager', None)
         if manager is not None and manager.handle_mouse_release(event):
@@ -3454,6 +3459,11 @@ class QtGameView(QOpenGLWidget):
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event):
+        if _play_menu_open(self):
+            wheel = getattr(self.play_menu, 'handle_wheel', None)
+            if wheel is not None:
+                wheel(event)
+            return
         if not self.play_mode:
             self.camera.fov = np.clip(self.camera.fov - event.angleDelta().y() * 0.05, 30, 120)
             self.editor.update_views()
@@ -3752,6 +3762,19 @@ class QtGameView(QOpenGLWidget):
         show = getattr(self.editor, 'show_entity_inspector', None)
         if show is not None:
             show(actor)
+
+    #: Shown while the camera is held away from the player (set_camera_focus).
+    CAMERA_FOCUS_HINT = "HOME returns cam to player"
+
+    def _draw_camera_focus_hint(self, painter, viewport_width):
+        text = self.CAMERA_FOCUS_HINT
+        metrics = QFontMetrics(self._hud_msg_font)
+        x, y = viewport_width // 2 - metrics.horizontalAdvance(text) // 2, 40
+        painter.setFont(self._hud_msg_font)
+        painter.setPen(self._hud_shadow_pen)
+        painter.drawText(x + 2, y + 2, text)
+        painter.setPen(self._hud_grey_pen)
+        painter.drawText(x, y, text)
 
     def _draw_actor_pick_hint(self, painter, viewport_width):
         hovered = self.actor_pick_hover

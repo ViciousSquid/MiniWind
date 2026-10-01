@@ -2,13 +2,13 @@
 Tests for the play-mode pause menu (:mod:`game.ui.pause_menu`).
 
 Escape in play freezes the world and raises a menu, one row across the
-screen: RESUME / NEW GAME / LOAD GAME / SAVE GAME / MUSIC / EDITOR / QUIT, three
+screen: RESUME / GAME (NEW, LOAD, SAVE) / OPTIONS / EDITOR / QUIT, three
 save slots behind LOAD and SAVE, and a SURE? behind anything that throws
 progress away.
 
 The menu is drawn with QPainter and owns no widgets, so it can be driven
 directly here against a stand-in viewport: these tests pin the pages, the
-freeze, the confirmations, the music switch and the way out.
+freeze, the confirmations, the options and the way out.
 
 Run:  python -m pytest game/tests/test_pause_menu.py -q
 """
@@ -78,14 +78,30 @@ class _Editor:
     def pause_menu_quit(self):
         self.calls.append(("quit",))
 
-    music = False
+    volume = 0.5
+    applied = 0
 
-    def pause_menu_music_enabled(self):
-        return self.music
+    def pause_menu_music_volume(self):
+        return self.volume
 
-    def pause_menu_toggle_music(self):
-        self.music = not self.music
-        self.calls.append(("music", self.music))
+    def pause_menu_set_music_volume(self, volume):
+        self.volume = volume
+        self.calls.append(("volume", round(volume, 2)))
+
+    def pause_menu_display_settings(self):
+        if not hasattr(self, "_display"):
+            import configparser
+            from ..ui.launcher import DisplaySettings
+            self.saves = 0
+
+            def _save():
+                self.saves += 1
+            self._display = DisplaySettings(config=configparser.ConfigParser(),
+                                            save=_save)
+        return self._display
+
+    def pause_menu_apply_display(self):
+        self.applied += 1
 
 
 class _View:
@@ -164,7 +180,7 @@ def _draw(menu):
 def test_the_root_page_offers_its_options_in_order(app):
     menu = _menu()
     menu.open()
-    assert _labels(menu) == ["RESUME", "GAME", "MUSIC: OFF", "EDITOR", "QUIT"]
+    assert _labels(menu) == ["RESUME", "MAP", "GAME", "OPTIONS", "EDITOR", "QUIT"]
 
 
 def test_new_load_and_save_live_in_the_game_dropdown(app):
@@ -218,7 +234,7 @@ def test_moving_off_game_folds_the_dropdown(app):
     menu.toggle_dropdown(True)
     menu.handle_key(_key(QtCore.Qt.Key_Right))
     assert not menu.expanded
-    assert _labels(menu)[menu.index] == "MUSIC: OFF"
+    assert _labels(menu)[menu.index] == "OPTIONS"
 
 
 def test_the_arrow_points_down_folded_and_up_open(app, monkeypatch):
@@ -242,16 +258,98 @@ def test_resume_closes_the_menu(app):
     assert not menu.view.logic_thread.world_paused
 
 
-def test_music_switches_on_the_spot_and_the_label_follows(app):
-    menu = _menu()
+def _options(menu):
     menu.open()
-    _select(menu, "MUSIC: OFF")
+    _select(menu, "OPTIONS")
     menu.activate()
-    assert menu.editor.calls == [("music", True)]
-    assert menu.page == "root" and menu.active       # no SURE?, menu stays up
-    assert "MUSIC: ON" in _labels(menu)
-    menu.activate()
-    assert "MUSIC: OFF" in _labels(menu)
+    assert menu.page == "options"
+    return menu.options
+
+
+def _row(page, key):
+    page.index = [r[0] for r in page.rows()].index(key)
+
+
+def test_options_show_the_launchers_display_settings_and_the_music_volume(app):
+    page = _options(_menu())
+    rows = {key: (label, value) for key, label, value, _on in page.rows()}
+    assert set(rows) == {"mode", "res", "vsync", "hidpi", "volume", "back"}
+    assert rows["mode"][1] == "Fullscreen"         # the launcher's default
+    assert rows["volume"][1] == "50%"
+    _draw(page.menu)                                # paints without error
+
+
+def test_the_window_mode_cycles_through_the_launchers_modes_and_applies(app):
+    menu = _menu()
+    page = _options(menu)
+    _row(page, "mode")
+    menu.handle_key(_key(QtCore.Qt.Key_Right))
+    assert page.settings.mode == "Borderless"
+    assert menu.editor.applied == 1 and menu.editor.saves == 1
+    menu.handle_key(_key(QtCore.Qt.Key_Right))
+    assert page.settings.mode == "Windowed"
+
+
+def test_the_resolution_is_only_for_windowed_mode(app):
+    menu = _menu()
+    page = _options(menu)
+    _row(page, "res")
+    before = page.settings.resolution
+    menu.handle_key(_key(QtCore.Qt.Key_Right))     # Fullscreen: no change
+    assert page.settings.resolution == before
+    page.settings.save("Windowed", *before, True)
+    menu.handle_key(_key(QtCore.Qt.Key_Right))
+    assert page.settings.resolution != before
+
+
+def test_vsync_and_high_dpi_toggle_and_say_they_wait_for_a_relaunch(app):
+    menu = _menu()
+    page = _options(menu)
+    _row(page, "vsync")
+    on = page.settings.vsync
+    menu.handle_key(_key(QtCore.Qt.Key_Return))
+    assert page.settings.vsync is (not on)
+    assert "next launch" in page._note("vsync")
+
+
+def test_music_volume_steps_and_zero_is_off(app):
+    menu = _menu()
+    page = _options(menu)
+    _row(page, "volume")
+    menu.handle_key(_key(QtCore.Qt.Key_Right))
+    assert menu.editor.volume == pytest.approx(0.55)
+    for _ in range(20):
+        menu.handle_key(_key(QtCore.Qt.Key_Left))
+    assert menu.editor.volume == 0.0
+    assert dict((k, v) for k, _l, v, _o in page.rows())["volume"] == "OFF"
+
+
+def test_the_volume_slider_follows_a_click_and_a_drag(app):
+    menu = _menu()
+    page = _options(menu)
+    _draw(menu)
+    track = page._slider
+    press = QtGui.QMouseEvent(QtCore.QEvent.MouseButtonPress,
+                              QtCore.QPoint(int(track.left() + track.width() * 0.8),
+                                            int(track.center().y())),
+                              QtCore.Qt.LeftButton, QtCore.Qt.LeftButton,
+                              QtCore.Qt.NoModifier)
+    menu.handle_mouse_press(press)
+    assert menu.editor.volume == pytest.approx(0.8)
+    drag = QtGui.QMouseEvent(QtCore.QEvent.MouseMove,
+                             QtCore.QPoint(int(track.left() - 40), int(track.center().y())),
+                             QtCore.Qt.NoButton, QtCore.Qt.LeftButton,
+                             QtCore.Qt.NoModifier)
+    menu.handle_mouse_move(drag)
+    assert menu.editor.volume == 0.0                # dragged off the left: off
+    menu.handle_mouse_release()
+
+
+def test_escape_leaves_the_options_for_the_root_row(app):
+    menu = _menu()
+    _options(menu)
+    menu.handle_key(_key(QtCore.Qt.Key_Escape))
+    assert menu.page == "root" and _labels(menu)[menu.index] == "OPTIONS"
 
 
 def test_actions_can_come_from_the_game_rather_than_the_window(app):

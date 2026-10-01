@@ -185,4 +185,10 @@ def attack_style_for(thing, state, in_melee: bool) -> str:
 def install_engine_hook() -> None:
     """Install MiniWind's combat policy into Fio's generic MonsterAI."""
     from engine.monster_ai import MonsterAI
-    MonsterAI._attack_style_hook = attack_style_for
+    MonsterAI.install_attack_style_hook(attack_style_for)
+
+
+def uninstall_engine_hook() -> None:
+    """Remove it again (only if it is still ours): the end of a session."""
+    from engine.monster_ai import MonsterAI
+    MonsterAI.clear_attack_style_hook(attack_style_for)

@@ -71,12 +71,13 @@ _DOWN_KEYS = (Qt.Key_Down, Qt.Key_S)
 class PauseMenu:
     """Escape-menu state machine, renderer and input handler for play mode."""
 
-    #: Top-level options, left to right. ``music`` is labelled from its state;
+    #: Top-level options, left to right. ``options`` opens the settings page;
     #: ``game`` is the header of the :data:`GAME_ITEMS` dropdown.
     ROOT_ITEMS = (
         ('resume', 'RESUME'),
+        ('map', 'MAP'),
         ('game', 'GAME'),
-        ('music', 'MUSIC'),
+        ('options', 'OPTIONS'),
         ('editor', 'EDITOR'),
         ('quit', 'QUIT'),
     )
@@ -102,6 +103,15 @@ class PauseMenu:
         self._pending = None             # (callable, prompt, detail) awaiting SURE?
         self._return_state = ('root', 0, False, 0)
         self._slot_cache = None
+        from .options_page import OptionsPage
+        #: The OPTIONS page (game/ui/options_page.py).
+        self.options = OptionsPage(self)
+        from .map_page import MapPage
+        #: The MAP page (game/ui/map_page.py).
+        self.map = MapPage(self)
+        #: Whether MAP was opened straight from play (M, Show on map): then
+        #: leaving it resumes the game rather than showing the menu.
+        self._map_direct = False
         #: Whether the GAME dropdown is open, and its highlighted entry.
         self.expanded = False
         self.sub_index = 0
@@ -193,24 +203,10 @@ class PauseMenu:
             return None
 
     # ------------------------------------------------------------------- pages
-    def music_enabled(self) -> bool:
-        reader = getattr(self.actions, 'pause_menu_music_enabled', None)
-        if reader is None:
-            return False
-        try:
-            return bool(reader())
-        except Exception:
-            return False
-
     def _items(self):
         """(key, label) pairs for the page currently on screen."""
         if self.page == 'root':
-            items = []
-            for key, label in self.ROOT_ITEMS:
-                if key == 'music':
-                    label = f"MUSIC: {'ON' if self.music_enabled() else 'OFF'}"
-                items.append((key, label))
-            return items
+            return list(self.ROOT_ITEMS)
         if self.page in ('load', 'save'):
             items = [(f'slot{i}', f'SLOT {i}') for i in range(1, SLOT_COUNT + 1)]
             items.append(('back', 'BACK'))
@@ -220,6 +216,8 @@ class PauseMenu:
         return []
 
     def _heading(self):
+        if self.page == 'options':
+            return 'OPTIONS'
         if self.page == 'load':
             return 'LOAD GAME'
         if self.page == 'save':
@@ -264,6 +262,12 @@ class PauseMenu:
         if not self.active:
             return False
         key = event.key()
+        if self.page == 'options':
+            self.options.handle_key(key)
+            return True
+        if self.page == 'map':
+            self.map.handle_key(key)
+            return True
         items = self._items()
         if self.page == 'root' and self.expanded:
             # The open dropdown takes the keys until it folds.
@@ -320,6 +324,12 @@ class PauseMenu:
     def handle_mouse_move(self, event) -> bool:
         if not self.active:
             return False
+        if self.page == 'options':
+            self.options.handle_mouse_move(event.pos(), event.buttons())
+            return True
+        if self.page == 'map':
+            self.map.handle_mouse_move(event.pos(), event.buttons())
+            return True
         sub = self._dropdown_at(event.pos())
         if sub is not None:
             if sub != self.sub_index:
@@ -339,6 +349,12 @@ class PauseMenu:
             return False
         if event.button() != Qt.LeftButton:
             return True
+        if self.page == 'options':
+            self.options.handle_mouse_press(event.pos())
+            return True
+        if self.page == 'map':
+            self.map.handle_mouse_press(event.pos())
+            return True
         sub = self._dropdown_at(event.pos())
         if sub is not None:
             self.sub_index = sub
@@ -355,8 +371,61 @@ class PauseMenu:
             self.view.update()
         return True
 
+    def handle_mouse_release(self, event=None) -> bool:
+        if not self.active:
+            return False
+        if self.page == 'options':
+            self.options.handle_mouse_release()
+        elif self.page == 'map':
+            self.map.handle_mouse_release()
+        return True
+
+    def handle_wheel(self, event) -> bool:
+        if not self.active:
+            return False
+        if self.page == 'map':
+            self.map.handle_wheel(event.pos(), event.angleDelta().y())
+        return True
+
+    def open_map(self, focus=None):
+        """Open straight onto the MAP page (M in play, or a quest's *Show on
+        map*), on the player or on *focus* = ``(x, z, label)``."""
+        was_open = self.active
+        if not was_open:
+            self.open()
+        self._map_direct = not was_open
+        self.page = 'map'
+        self.expanded = False
+        self.map.open(focus)
+        self.view.update()
+
+    def _leave_map(self):
+        """Back from MAP: to the game when it was opened from play, else to
+        the root row on MAP."""
+        if self._map_direct:
+            self._map_direct = False
+            self.close()
+            return
+        self.page = 'root'
+        keys = [key for key, _ in self.ROOT_ITEMS]
+        self.index = keys.index('map')
+        self.view.update()
+
+    def _leave_options(self):
+        """Back from OPTIONS to the root row, on OPTIONS."""
+        self.page = 'root'
+        keys = [key for key, _ in self.ROOT_ITEMS]
+        self.index = keys.index('options')
+        self.view.update()
+
     def back(self):
         """Escape: fold the dropdown, leave a sub-page, or leave the menu."""
+        if self.page == 'options':
+            self._leave_options()
+            return
+        if self.page == 'map':
+            self._leave_map()
+            return
         if self.page == 'confirm':
             (self.page, self.index, self.expanded,
              self.sub_index) = self._return_state
@@ -438,8 +507,14 @@ class PauseMenu:
         self.expanded = False
         if key == 'resume':
             self.close()
-        elif key == 'music':
-            self._call_action('pause_menu_toggle_music')
+        elif key == 'options':
+            self.page = 'options'
+            self.options.open()
+            self.view.update()
+        elif key == 'map':
+            self._map_direct = False
+            self.page = 'map'
+            self.map.open()
             self.view.update()
         elif key == 'editor':
             self._confirm("Leave for the editor?",
@@ -522,6 +597,10 @@ class PauseMenu:
         painter.setBrush(QBrush(QColor(10, 10, 14, 150)))
         painter.drawRect(0, 0, w, h)
 
+        if self.page == 'map':
+            self.map.draw(painter, w, h, _text_font, _display_font)
+            return
+
         # --- banner ---
         title_size = max(24, min(72, w // 20, h // 10))
         painter.setFont(_display_font(title_size))
@@ -529,7 +608,8 @@ class PauseMenu:
         title = _shown_title()
         tw = fm.horizontalAdvance(title)
         tx = (w - tw) // 2
-        ty = int(h * 0.34)
+        # The options need the room below the banner, so it sits higher there.
+        ty = int(h * (0.20 if self.page == 'options' else 0.34))
         painter.setPen(_TITLE_SHADOW)
         painter.drawText(tx + 4, ty + 4, title)
         painter.setPen(_TITLE)
@@ -537,6 +617,24 @@ class PauseMenu:
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(_ACCENT))
         painter.drawRect(tx, ty + int(title_size * 0.30), tw, max(2, title_size // 18))
+
+        if self.page == 'options':
+            self._hit_rects = []
+            heading = _shown(self._heading())
+            painter.setFont(_display_font(max(12, min(20, w // 70))))
+            fm = painter.fontMetrics()
+            hy = ty + int(title_size * 0.30) + fm.height() + 16
+            painter.setPen(_SUBTLE)
+            painter.drawText((w - fm.horizontalAdvance(heading)) // 2, hy, heading)
+            self.options.draw(painter, w, h, hy + 14, _text_font, _display_font)
+            painter.setFont(_text_font(max(9, min(12, w // 130))))
+            fm = painter.fontMetrics()
+            hint = ("\u2191 \u2193  choose      \u2190 \u2192  change      "
+                    "Enter  set      Esc  back")
+            painter.setPen(_CAPTION)
+            painter.drawText((w - fm.horizontalAdvance(hint)) // 2,
+                             h - max(18, h // 25), hint)
+            return
 
         row_y = int(h * 0.56)
 

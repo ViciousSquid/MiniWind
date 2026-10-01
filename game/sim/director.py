@@ -44,6 +44,19 @@ TELL_RADIUS = 260.0
 #: cannot spike the frame budget.
 GOSSIP_BUDGET = 6
 
+#: How often (game hours) the *distant* world's reactive simulation runs: its
+#: gossip, reports and production, all at once, covering the whole interval.
+#: Off screen and out of reach, nobody can tell news travelled in hour-long
+#: steps rather than half-hour ones.
+COARSE_INTERVAL_HOURS = 1.0
+
+#: Per-actor stamps: the simulation time an actor's production was last
+#: advanced, and the day its memory last faded. An actor the simulation did
+#: not visit (parked by the world streamer) catches up from these when it is
+#: next visited, in one step.
+SIM_AT_KEY = "_sim_at"
+SIM_DAY_KEY = "_sim_day"
+
 
 def slug(text) -> str:
     """Lowercase, alnum-only identity slug (matches runtime/disposition)."""
@@ -124,6 +137,11 @@ class Director:
         self._intents: Dict[str, List[Intent]] = {}
         self._dirty: set = set()
         self._gossip_clock = 0.0
+        self._coarse_clock = 0.0
+        self._coarse_from = 0.0      # sim_time of the last coarse pass
+        #: Game hours this simulation has run (the clock production reads).
+        self.sim_time = 0.0
+        self._prev_time = 0.0
         # Baseline the day at construction so the first day boundary that
         # actually passes is the first one that ages anybody's memory.
         self._last_day: Optional[int] = (
@@ -281,17 +299,44 @@ class Director:
         return knowledge.summary(self.store, actor_key(thing), limit)
 
     # ----------------------------------------------------------------- ticks
-    def tick(self, actors: Sequence, hours: float) -> None:
+    def tick(self, actors: Sequence, hours: float, distant: Sequence = ()) -> None:
         """Advance the parts of the simulation that run on their own clock:
-        rumour propagation, crime reporting and production."""
+        rumour propagation, crime reporting and production.
+
+        By simulation detail (the world streamer's tiers):
+
+        * *actors* -- near the player (NEAR / ACTIVE): every tick, gossip
+          every :data:`GOSSIP_INTERVAL_HOURS`;
+        * *distant* -- DISTANT: one coarse pass every
+          :data:`COARSE_INTERVAL_HOURS` covering the whole interval (their
+          gossip among themselves, their reports, their production);
+        * anyone in neither -- DORMANT, parked: nothing at all. Production
+          and memory catch up from per-actor stamps the next time they are
+          in one of the lists.
+        """
+        hours = max(0.0, float(hours))
+        self._prev_time = self.sim_time
+        self.sim_time += hours
         actors = [a for a in (actors or ()) if not _props(a).get("dead")]
-        self._gossip_clock += max(0.0, float(hours))
+        distant = [a for a in (distant or ()) if not _props(a).get("dead")]
+        self._gossip_clock += hours
         if self._gossip_clock >= GOSSIP_INTERVAL_HOURS:
             self._gossip_clock = 0.0
             self.spread_rumours(actors)
         self.resolve_reports(actors)
-        self.tick_production(actors, hours)
-        self._roll_day(actors)
+        self.tick_production(actors)
+        if distant:
+            self._coarse_clock += hours
+            if self._coarse_clock >= COARSE_INTERVAL_HOURS:
+                self._coarse_clock = 0.0
+                self.spread_rumours(distant)
+                self.resolve_reports(distant)
+                self.tick_production(distant, since=self._coarse_from)
+                self._coarse_from = self.sim_time
+        else:
+            self._coarse_clock = 0.0
+            self._coarse_from = self.sim_time
+        self._roll_day(actors + distant)
 
     def spread_rumours(self, actors: Sequence) -> int:
         """One pass of people telling each other what they know.
@@ -395,17 +440,40 @@ class Director:
                 self._dirty.add(okey)
         return charges
 
-    def tick_production(self, actors: Sequence, hours: float) -> List:
+    def tick_production(self, actors: Sequence, hours: Optional[float] = None,
+                        since: Optional[float] = None) -> List:
         """Advance every producing object; queue what they made.
+
+        Each producer advances by the simulation time since it was last
+        advanced (its :data:`SIM_AT_KEY` stamp), so one visited every tick
+        moves by the tick, a distant one by the coarse interval, and one the
+        streamer parked for hours catches up in one step on its return
+        (production itself never banks more than a batch). One never seen
+        before counts from *since* (default: the previous tick; the coarse
+        pass passes its own last run). *hours*, when given, advances everyone
+        by exactly that instead.
 
         The director cannot create entities, so yields are queued for the
         session (which knows how to place an item in the scene) to drain."""
         made = []
+        now = self.sim_time
+        fresh = self._prev_time if since is None else float(since)
         for thing in actors:
             props = _props(thing)
             if not production.is_producer(props):
                 continue
-            for y in production.advance(props, hours):
+            if hours is None:
+                try:
+                    stamp = float(props.get(SIM_AT_KEY, fresh))
+                except (TypeError, ValueError):
+                    stamp = fresh
+                if stamp > now:              # a stamp from an earlier session
+                    stamp = fresh
+                step = now - stamp
+            else:
+                step = hours
+            props[SIM_AT_KEY] = now
+            for y in production.advance(props, step):
                 made.append((thing, y))
         if made:
             self.pending_yields.extend(made)
@@ -417,18 +485,31 @@ class Director:
         return out
 
     def _roll_day(self, actors: Sequence) -> None:
-        """At each day boundary, let everyone's knowledge fade a little."""
+        """At each day boundary, let everyone's knowledge fade a little.
+
+        By each actor's own :data:`SIM_DAY_KEY` stamp: one the simulation did
+        not visit at the last boundary (parked) fades by every day it missed
+        at the next boundary it is visited on."""
         day, _hour = self._now()
         if self._last_day is None:
             self._last_day = day
             return
         if day == self._last_day:
             return
-        elapsed = max(1, day - self._last_day)
+        last = self._last_day
         self._last_day = day
         for thing in actors:
             key = actor_key(thing)
-            if key:
+            if not key:
+                continue
+            props = _props(thing)
+            try:
+                since = int(props.get(SIM_DAY_KEY, last))
+            except (TypeError, ValueError):
+                since = last
+            elapsed = day - since if since < day else (1 if since == last else 0)
+            props[SIM_DAY_KEY] = day
+            if elapsed > 0:
                 knowledge.decay(self.store, key, elapsed)
                 self._dirty.add(key)
 

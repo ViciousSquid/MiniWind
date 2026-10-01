@@ -3,9 +3,10 @@ MiniWind's background music.
 
 Every ``.mp3`` in ``assets/music`` is the game's soundtrack: while a play
 session runs they play one after another, shuffled, everywhere in the world
-(not from a speaker), until the player switches music off in the pause menu.
-The choice is kept in ``settings.ini`` (``[GAME] music``), so it holds for the
-next game too. Leaving play for the editor stops the music.
+(not from a speaker), at the volume set in the pause menu's options; 0% is
+off. The volume is kept in ``settings.ini`` (``[GAME] music_volume``, with
+``[GAME] music`` off when it is 0), so it holds for the next game too.
+Leaving play for the editor stops the music.
 
 Playback streams through ``pygame.mixer.music``, the one music channel of the
 mixer the engine already opens for its sound effects, so music and effects
@@ -99,6 +100,7 @@ class MusicPlayer:
             if not config.has_section(section):
                 config.add_section(section)
             config.set(section, key, str(bool(self.enabled)))
+            config.set(*VOLUME_SETTING, f"{self.volume:.2f}")
             if self._save is not None:
                 self._save()
         except Exception as exc:
@@ -197,6 +199,35 @@ class MusicPlayer:
     def toggle(self) -> bool:
         self.set_enabled(not self.enabled)
         return self.enabled
+
+    @property
+    def effective_volume(self) -> float:
+        """The volume the player hears: 0 while music is off."""
+        return self.volume if self.enabled else 0.0
+
+    def set_volume(self, volume: float) -> None:
+        """Set the music volume (0..1), live; 0 switches the music off.
+
+        Raising it from 0 switches the music back on and starts a track if a
+        session is running. Remembered in settings.ini.
+        """
+        volume = max(0.0, min(1.0, float(volume)))
+        with self._lock:
+            self.enabled = volume > 0.0
+            if self.enabled:
+                self.volume = volume
+            self._persist()
+            if not self.enabled:
+                self._silence()
+                return
+            music = self._music()
+            if self.playing and music is not None:
+                try:
+                    music.set_volume(self.volume)
+                except Exception:
+                    pass
+            elif self.session_active:
+                self._play_next()
 
     def poll(self, now: float = None) -> None:
         """Move on to the next track once the current one has finished.

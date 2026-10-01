@@ -76,7 +76,8 @@ def window_body_size(screen):
 #: by :func:`handle_click` (the quest journal is mouse-driven — see the host's
 #: overlay wiring). ``rows`` is [(QRect, known-index)]; ``toggle`` is the
 #: "make active quest" box rect for ``toggle_qid``.
-_QUEST_HITS = {"rows": [], "toggle": None, "toggle_qid": None}
+_QUEST_HITS = {"rows": [], "toggle": None, "toggle_qid": None,
+               "map": None, "map_focus": None}
 
 
 def button(painter, rect, label, action, enabled=True, primary=False):
@@ -119,6 +120,10 @@ def handle_click(session, x, y):
         return False
     from PyQt5.QtCore import QPoint
     p = QPoint(int(x), int(y))
+    shown = _QUEST_HITS.get("map")
+    if shown is not None and shown.contains(p):
+        session.map_request = _QUEST_HITS.get("map_focus")
+        return True
     tog = _QUEST_HITS.get("toggle")
     if tog is not None and tog.contains(p):
         qid = _QUEST_HITS.get("toggle_qid")
@@ -735,6 +740,8 @@ def _draw_quest(painter, session, w, h):
     _QUEST_HITS["rows"] = []
     _QUEST_HITS["toggle"] = None
     _QUEST_HITS["toggle_qid"] = None
+    _QUEST_HITS["map"] = None
+    _QUEST_HITS["map_focus"] = None
     ty = T.heading(painter, inner, "Quests")
 
     if not known:
@@ -844,11 +851,26 @@ def _draw_quest(painter, session, w, h):
                  else "Make Active Quest (show only this arrow)")
         T.text_in(painter, QRect(box.right() + 8, box.y() - 3, col_w - 30, 20),
                   label, size=10, color=T.INK, align=T.ALIGN_LEFT, family="Segoe UI")
-        _QUEST_HITS["toggle"] = QRect(box.x(), box.y() - 3, col_w, 22)
+        _QUEST_HITS["toggle"] = QRect(box.x(), box.y() - 3, col_w - 140, 22)
         _QUEST_HITS["toggle_qid"] = q.id
+        # "Show on map": the full map, centred and ringed on the objective.
+        target = session.quest_guidance(q) or {}
+        tpos = target.get("target_pos")
+        if tpos is not None:
+            mrect = QRect(inner.right() - 132, box.y() - 6, 126, 26)
+            hot = hits.hovered(mrect)
+            painter.setBrush(QColor(96, 70, 34, 240) if hot else QColor(62, 48, 30, 235))
+            painter.setPen(QPen(T.GOLD_BRIGHT if hot else T.GILD, 1.5))
+            painter.drawRoundedRect(mrect, 5, 5)
+            painter.setFont(fonts.dialogue_font(11))
+            painter.setPen(T.GOLD_BRIGHT)
+            painter.drawText(mrect, T.ALIGN_CENTER, "Show on map")
+            _QUEST_HITS["map"] = QRect(mrect)
+            _QUEST_HITS["map_focus"] = (float(tpos[0]), float(tpos[2]), q.name)
 
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              "Click a quest to read it  ·  click the box to make it active  ·  Q/Esc close",
+              "Click a quest to read it  ·  click the box to make it active  ·  "
+              "M map  ·  Q/Esc close",
               size=9, color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
 
 
@@ -868,6 +890,14 @@ def _handle_quest(session, key):
         q = known[max(0, min(st["row"], len(known) - 1))]
         if session.game.quests.is_active(q.id):
             session.set_tracked_quest(q.id)
+        return True
+    if key == "m" and known:
+        # The full map, on the highlighted quest's objective when it has one.
+        q = known[max(0, min(st["row"], len(known) - 1))]
+        pos = (session.quest_guidance(q) or {}).get("target_pos") \
+            if session.game.quests.is_active(q.id) else None
+        session.map_request = ((float(pos[0]), float(pos[2]), q.name)
+                               if pos is not None else "player")
         return True
     if key in ("q", "escape", "esc"):
         session.open_screen = None
