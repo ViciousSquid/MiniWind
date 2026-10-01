@@ -2649,9 +2649,29 @@ class MiniwindSession:
     def _sim_observers(self) -> List:
         """Who could perceive an event right now.
 
-        The dead are excluded by ``_sim_actors``; perception itself decides who
-        was near enough, awake enough and sighted enough."""
-        return self._sim_actors()
+        The dead are excluded by ``_sim_actors``, and so are the DORMANT --
+        actors the world streamer has parked are not there to see anything;
+        perception itself decides who was near enough, awake enough and
+        sighted enough."""
+        tier_of = self._tier_of
+        return [t for t in self._sim_actors() if tier_of(t) < TIER_DORMANT]
+
+    def _sim_by_tier(self):
+        """``(near, distant)``: the reactive simulation's two levels of detail.
+
+        NEAR and ACTIVE actors (and the player, always) are simulated in full;
+        DISTANT ones get the director's coarse pass; DORMANT ones -- parked by
+        the streamer -- are in neither and catch up when they come back."""
+        near, distant = [], []
+        tier_of = self._tier_of
+        player = self.player_actor
+        for thing in self._sim_actors():
+            tier = TIER_NEAR if thing is player else tier_of(thing)
+            if tier <= TIER_ACTIVE:
+                near.append(thing)
+            elif tier == TIER_DISTANT:
+                distant.append(thing)
+        return near, distant
 
     def _sim_producer_of(self, item_props: Dict):
         """The producing object an item pickup came from, if it is still there.
@@ -2716,8 +2736,8 @@ class MiniwindSession:
         if self._sim_hours < 0.01:
             return
         hours, self._sim_hours = self._sim_hours, 0.0
-        actors = self._sim_actors()
-        self.director.tick(actors, hours)
+        near, distant = self._sim_by_tier()
+        self.director.tick(near, hours, distant=distant)
         for producer, yielded in self.director.drain_yields():
             self._place_yield(producer, yielded)
 
