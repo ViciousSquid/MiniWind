@@ -14,6 +14,7 @@ from __future__ import annotations
 from PyQt5.QtCore import QRect, Qt
 from PyQt5.QtGui import QColor, QPen
 
+from . import fonts, hits
 from . import theme as T
 from ..rpg import (races, classes, birthsigns, attributes as attr, skills as sk,
                    items as rpg_items, inventory as inv, equipment as eq,
@@ -76,6 +77,36 @@ def window_body_size(screen):
 #: overlay wiring). ``rows`` is [(QRect, known-index)]; ``toggle`` is the
 #: "make active quest" box rect for ``toggle_qid``.
 _QUEST_HITS = {"rows": [], "toggle": None, "toggle_qid": None}
+
+
+def button(painter, rect, label, action, enabled=True, primary=False):
+    """A clickable button: gilded frame, MedievalSharp label, lit on hover.
+
+    *action(session)* runs (from the game tick) when it is clicked; a disabled
+    button draws dimmed and does nothing.
+    """
+    hot = enabled and hits.hovered(rect)
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    fill = (QColor(96, 70, 34, 240) if hot else
+            QColor(62, 48, 30, 235) if primary else QColor(34, 30, 44, 235))
+    painter.setBrush(fill if enabled else QColor(24, 22, 30, 200))
+    painter.setPen(QPen(T.GOLD_BRIGHT if hot else T.GILD if enabled else T.DIM, 1.5))
+    painter.drawRoundedRect(rect, 5, 5)
+    painter.setFont(fonts.dialogue_font(12))
+    painter.setPen(T.GOLD_BRIGHT if (hot or primary) and enabled
+                   else T.INK if enabled else T.DIM)
+    painter.drawText(rect, T.ALIGN_CENTER, label)
+    painter.restore()
+    if enabled:
+        hits.add(QRect(rect), action, label)
+
+
+def _row_target(painter, rect, action, label=None):
+    """Make a list row clickable, with a faint glow under the pointer."""
+    if hits.hovered(rect):
+        painter.fillRect(rect, QColor(255, 220, 150, 22))
+    hits.add(QRect(rect), action, label)
 
 
 def handle_click(session, x, y):
@@ -174,7 +205,7 @@ def _draw_charcreate(painter, session, w, h):
         k = classes.get(ids[s["class"]])
         list_w = int(inner.width() * 0.42)
         _cc_list(painter, inner.x(), ty, list_w, ids, s["class"],
-                 lambda i: classes.get(i).label)
+                 lambda i: classes.get(i).label, field="class")
         favs = ", ".join(attr.label(a) for a in k.favored_attrs)
         majors = ", ".join(sk.label(m) for m in k.major_skills)
         _cc_detail(painter, inner.x() + list_w + 24, ty, inner.width() - list_w - 24,
@@ -186,7 +217,7 @@ def _draw_charcreate(painter, session, w, h):
         b = birthsigns.get(ids[s["birthsign"]])
         list_w = int(inner.width() * 0.42)
         _cc_list(painter, inner.x(), ty, list_w, ids, s["birthsign"],
-                 lambda i: birthsigns.get(i).label)
+                 lambda i: birthsigns.get(i).label, field="birthsign")
         _cc_detail(painter, inner.x() + list_w + 24, ty, inner.width() - list_w - 24,
                    b.label, b.desc)
         hint = "↑/↓ choose birthsign    Enter next    Esc back"
@@ -203,12 +234,48 @@ def _draw_charcreate(painter, session, w, h):
         else:
             tx = inner.x()
         summary = (f"Name: {name}\nClass: {k.label}\nBirthsign: {b.label}\n\n"
-                   "Press Enter to begin your adventure, or Esc to go back.")
+                   "Begin your adventure, or go back to change anything.")
         _cc_detail(painter, tx, ty, inner.right() - tx, "Ready?", summary)
         hint = "Enter begin    Esc back"
 
+    # Back / Next (Begin on the last step), above the key hints.
+    bw_, bh_ = 128, 32
+    by = inner.bottom() - 22 - bh_
+    last = s["step"] == len(_CC_STEPS) - 1
+    button(painter, QRect(inner.x(), by, bw_, bh_), "Back", _cc_back,
+           enabled=s["step"] > 0)
+    button(painter, QRect(inner.right() - bw_, by, bw_, bh_),
+           "Begin" if last else "Next", _cc_next,
+           enabled=bool(s["name"].strip()) or s["step"] > 0, primary=True)
+
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
               hint, size=10, color=T.DIM, align=T.ALIGN_CENTER, family="Georgia")
+
+
+def _cc_next(session):
+    _handle_charcreate(session, "return")
+
+
+def _cc_back(session):
+    _handle_charcreate(session, "escape")
+
+
+def _cc_set(field, value):
+    def action(session):
+        _cc(session)[field] = value
+    return action
+
+
+def _cc_head_step(delta):
+    def action(session):
+        s = _cc(session)
+        s["head"] = (s["head"] + delta) % heads.HEAD_COUNT
+    return action
+
+
+def _cc_toggle_hand(session):
+    s = _cc(session)
+    s["handed"] = "left" if s.get("handed", "right") == "right" else "right"
 
 
 def _draw_identity(painter, inner, ty, s):
@@ -226,7 +293,7 @@ def _draw_identity(painter, inner, ty, s):
 
     # Head chooser: big preview with arrows, centred below the name.
     hy = ty + 52
-    hh = inner.bottom() - 40 - hy
+    hh = inner.bottom() - 100 - hy
     size = min(hh, int(inner.width() * 0.5))
     cx = inner.x() + inner.width() // 2
     box = QRect(cx - size // 2, hy, size, size)
@@ -244,21 +311,31 @@ def _draw_identity(painter, inner, ty, s):
     # Arrows.
     painter.setFont(T.font(28, bold=True))
     painter.setPen(T.GOLD_BRIGHT)
-    painter.drawText(QRect(box.x() - 56, box.y(), 44, size), T.ALIGN_CENTER, "<")
-    painter.drawText(QRect(box.right() + 12, box.y(), 44, size), T.ALIGN_CENTER, ">")
+    left_arrow = QRect(box.x() - 56, box.y(), 44, size)
+    right_arrow = QRect(box.right() + 12, box.y(), 44, size)
+    for rect, glyph, delta in ((left_arrow, "<", -1), (right_arrow, ">", 1)):
+        painter.setPen(T.PARCH if hits.hovered(rect) else T.GOLD_BRIGHT)
+        painter.drawText(rect, T.ALIGN_CENTER, glyph)
+        hits.add(QRect(rect), _cc_head_step(delta), glyph)
+    # Clicking the face itself shows the next one too.
+    hits.add(QRect(box), _cc_head_step(1), "head")
     T.text_in(painter, QRect(box.x(), box.bottom() + 4, size, 18),
               f"Head {s['head'] + 1} / {heads.HEAD_COUNT}", size=10,
               color=T.DIM, align=T.ALIGN_CENTER)
     handed = s.get("handed", "right")
-    T.text_in(painter, QRect(box.x(), box.bottom() + 22, size, 18),
-              f"Handedness: {handed.capitalize()}-handed   (↑/↓ to switch)", size=11,
-              color=T.GOLD_BRIGHT, align=T.ALIGN_CENTER, family="Georgia")
+    hand_rect = QRect(inner.x() + inner.width() // 2 - 150, box.bottom() + 24, 300, 28)
+    button(painter, hand_rect,
+           f"{handed.capitalize()}-handed   (click or ↑/↓ to switch)",
+           _cc_toggle_hand)
 
 
-def _cc_list(painter, x, y, w, ids, sel, labeller):
+def _cc_list(painter, x, y, w, ids, sel, labeller, field=None):
     row_h = 26
     for i, item in enumerate(ids):
         ry = y + i * row_h
+        if field is not None:
+            _row_target(painter, QRect(x, ry, w, row_h - 2), _cc_set(field, i),
+                        labeller(item))
         if i == sel:
             painter.fillRect(QRect(x, ry, w, row_h - 2), T.SELECT)
             painter.setPen(T.GILD)
@@ -873,24 +950,30 @@ def _draw_trade(painter, session, w, h):
 
     # buy list = merchant stock; sell list = player inventory (sellable)
     stock = _merchant_stock(npc)
-    sell = [s for s in c.inventory if rpg_items.get(s.get("id")) and
-            rpg_items.get(s.get("id")).category != rpg_items.KEY]
+    sell = _sell_list(c)
     col_w = (inner.width() - 24) // 2
+    rows_bottom = inner.bottom() - 70          # room for the buttons below
 
     for side, (title, lst, buying) in enumerate([("Buy", stock, True), ("Sell", sell, False)]):
         cx = inner.x() + side * (col_w + 24)
         T.text(painter, cx, ty + 4, title, size=13,
                color=T.GOLD_BRIGHT if st["side"] == side else T.DIM, bold=True)
+        if not lst:
+            T.text(painter, cx + 8, ty + 36, "Nothing to sell" if side else
+                   "Nothing for sale", size=10, color=T.DIM, family="Segoe UI")
         for i, entry in enumerate(lst):
             ry = ty + 24 + i * 22
-            if ry > inner.bottom() - 30:
+            if ry > rows_bottom - 20:
                 break
             iid = entry["id"] if isinstance(entry, dict) else entry
             d = rpg_items.get(iid)
             price = session._price(d.value if d else 0, buying)
             selected = st["side"] == side and st["row"] == i
+            row = QRect(cx, ry - 2, col_w, 20)
+            _row_target(painter, row, _trade_select(side, i),
+                        f"{'sell' if side else 'buy'}:{iid}")
             if selected:
-                painter.fillRect(QRect(cx, ry - 2, col_w, 20), T.SELECT)
+                painter.fillRect(row, T.SELECT)
             nm = (d.name if d else iid)
             if not buying and isinstance(entry, dict) and entry.get("qty", 1) > 1:
                 nm += f" ×{entry['qty']}"
@@ -899,9 +982,42 @@ def _draw_trade(painter, session, w, h):
             T.text_in(painter, QRect(cx, ry - 2, col_w - 8, 20), f"{price}g", size=9,
                       color=T.GOLD, align=T.ALIGN_RIGHT, family="Segoe UI")
 
+    # The trade button names what it will do; Leave ends the trade.
+    lst = stock if st["side"] == 0 else sell
+    label, can = "Choose an item", False
+    if lst:
+        entry = lst[min(st["row"], len(lst) - 1)]
+        d = rpg_items.get(entry["id"] if isinstance(entry, dict) else entry)
+        buying = st["side"] == 0
+        price = session._price(d.value if d else 0, buying)
+        name_ = d.name if d else "item"
+        can = (c.gold >= price) if buying else True
+        label = (f"Buy {name_} for {price}g" if buying
+                 else f"Sell {name_} for {price}g")
+        if buying and not can:
+            label = f"{name_}: {price}g (not enough gold)"
+    by = inner.bottom() - 58
+    button(painter, QRect(inner.x() + (inner.width() - 360) // 2, by, 360, 34),
+           label, lambda sess: _handle_trade(sess, "return"), enabled=can, primary=True)
+    button(painter, QRect(inner.right() - 110, by, 110, 34), "Leave",
+           lambda sess: _handle_trade(sess, "escape"))
+
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              "↑/↓ select   ←/→ buy|sell   Enter trade   Esc leave", size=9,
+              "Click or ↑/↓ select   ←/→ buy|sell   Enter trade   Esc leave", size=9,
               color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
+
+
+def _sell_list(c):
+    """What the player can sell: everything carried but keys."""
+    return [s for s in c.inventory if rpg_items.get(s.get("id")) and
+            rpg_items.get(s.get("id")).category != rpg_items.KEY]
+
+
+def _trade_select(side, row):
+    def action(session):
+        st = _sel(session).setdefault("trade", {"row": 0, "side": 0})
+        st["side"], st["row"] = side, row
+    return action
 
 
 def _merchant_stock(npc):
@@ -926,7 +1042,7 @@ def _handle_trade(session, key):
     c = session.game.character
     npc = session.merchant_npc
     stock = _merchant_stock(npc)
-    sell = [s for s in c.inventory if rpg_items.get(s.get("id"))]
+    sell = _sell_list(c)
     lst = stock if st["side"] == 0 else sell
     if key in ("up", "w"):
         st["row"] = (st["row"] - 1) % max(1, len(lst)); return True
@@ -935,6 +1051,7 @@ def _handle_trade(session, key):
     if key in ("left", "a", "right", "d"):
         st["side"] ^= 1; st["row"] = 0; return True
     if key in ("return", "enter") and lst:
+        st["row"] = min(st["row"], len(lst) - 1)
         entry = lst[st["row"]]
         iid = entry["id"] if isinstance(entry, dict) else entry
         if st["side"] == 0:

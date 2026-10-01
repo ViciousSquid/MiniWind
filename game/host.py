@@ -794,6 +794,9 @@ class MiniwindGame:
 
         if world_paused:
             session.tick_ui(ctx.delta)   # ages toasts/floaters only, no world sim
+            # Clicks on the open menu, queued by the UI thread (game/ui/hits).
+            from .ui import hits
+            hits.run_clicks(session)
             menu_just = just
             if getattr(self, "_suppress_interact", False):
                 menu_just = just - {K_INTERACT}
@@ -966,12 +969,16 @@ class MiniwindGame:
                         pass
             return
         session = getattr(logic, "_miniwind", None)
+        from .ui import hits
         if session is None:
+            hits.clear()
             return
         painter = ev.get("painter")
         viewport = ev.get("viewport")
         if painter is None:
             return
+        # The menus drawn below say where their buttons are (game/ui/hits).
+        hits.begin()
         # suppress the stock health/weapon HUD; the RPG draws its own.
         if viewport is not None:
             try:
@@ -1013,6 +1020,8 @@ class MiniwindGame:
         except Exception:
             import traceback
             traceback.print_exc()
+        finally:
+            hits.end()
 
     # -- floating-window overlay hosting ------------------------------------
     _SCREEN_TITLES = {

@@ -51,8 +51,9 @@ class LoadoutWindow(FloatingWindow):
         self.tab = "inventory"          # 'inventory' | 'spells'
         self._tab_rects = []            # [(QRect, tab_name)]
         self._row_rects = []            # [(QRect, kind, id)]
-        self.body_font = QFont("Arial", 9)
-        self.small_font = QFont("Arial", 8)
+        from . import fonts
+        self.body_font = QFont(fonts.game_family("Arial"), 9)
+        self.small_font = QFont(fonts.game_family("Arial"), 8)
         self._icon_cache = {}
 
     # ---- data (read live from the session) -------------------------------

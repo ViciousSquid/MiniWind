@@ -10,6 +10,9 @@ by its family name.
 * :func:`dialogue_font`: what NPCs and the player say in a conversation,
   **MedievalSharp** (SIL Open Font License, ``MedievalSharp-OFL.txt``;
   Georgia if its file is missing).
+* :func:`game_family`: what a game UI that asked for a sans face gets:
+  MedievalSharp when installed (the game never shows a sans face it can
+  avoid), the face it asked for otherwise.
 """
 
 from __future__ import annotations
@@ -37,7 +40,9 @@ def installed_families():
         return _families
     families = set()
     try:
-        from PyQt5.QtGui import QFontDatabase
+        from PyQt5.QtGui import QFontDatabase, QGuiApplication
+        if QGuiApplication.instance() is None:
+            return families          # too early: Qt cannot load fonts yet
         names = sorted(os.listdir(FONT_DIR))
     except Exception:
         names = []
@@ -78,3 +83,16 @@ def dialogue_font(size):
     from PyQt5.QtGui import QFont
     family = dialogue_family()
     return QFont(family, int(size))
+
+
+#: Sans faces the game's UI code names; :func:`game_family` replaces them.
+SANS_FAMILIES = frozenset({"segoe ui", "arial", "helvetica", "verdana",
+                           "tahoma", "sans-serif", "sans"})
+
+
+def game_family(family: str) -> str:
+    """*family*, or MedievalSharp in place of a sans face when it is installed."""
+    if str(family).lower() not in SANS_FAMILIES:
+        return family
+    reading = dialogue_family()
+    return family if reading == DIALOGUE_FALLBACK else reading

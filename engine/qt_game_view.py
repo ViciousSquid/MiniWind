@@ -84,6 +84,24 @@ def _play_menu_open(view) -> bool:
                 and menu.active)
 
 
+def _game_pointer_open(view) -> bool:
+    """Whether the game's pointer claim holds now (``QtGameView.game_pointer``).
+
+    Never while something else owns the mouse: the play menu, the console,
+    an actor pick.
+    """
+    pointer = getattr(view, 'game_pointer', None)
+    if (pointer is None or not getattr(view, 'play_mode', False)
+            or getattr(view, 'console_overlay_active', False)
+            or getattr(view, '_actor_pick', None) is not None
+            or _play_menu_open(view)):
+        return False
+    try:
+        return bool(pointer.wants_pointer())
+    except Exception:
+        return False
+
+
 class QtGameView(QOpenGLWidget):
     def __init__(self, editor):
         super().__init__(editor)
@@ -310,6 +328,14 @@ class QtGameView(QOpenGLWidget):
         #: it owns the keyboard and mouse and is painted over everything else;
         #: see :meth:`open_play_menu`.
         self.play_menu = None
+
+        #: A game layer's claim on the mouse during play (None: mouse-look as
+        #: usual). Duck-typed: ``wants_pointer()``, ``pointer_move(ev)``,
+        #: ``pointer_press(ev)``. While it wants the pointer (an on-screen
+        #: menu with things to click) the cursor is shown and the mouse goes
+        #: to it instead of the camera and the fire buttons.
+        self.game_pointer = None
+        self._game_pointer_shown = False
 
         self.console_overlay_active = False
         self._console_input = QLineEdit(self)
@@ -1022,6 +1048,7 @@ class QtGameView(QOpenGLWidget):
         if self.use_threading and self.logic_thread:
             keys = (set() if self.console_overlay_active or _play_menu_open(self)
                     else self.editor.keys_pressed)
+            self._sync_game_pointer()
             self.game_state.set_keys(keys)
             # Update Player 2 input from arrow keys (if no gamepad)
             self._update_p2_keyboard_input()
@@ -2515,6 +2542,7 @@ class QtGameView(QOpenGLWidget):
             self.stop_all_sounds()
             if self.play_menu is not None and self.play_menu.active:
                 self.play_menu.close()
+            self._game_pointer_shown = False
             self._actor_pick = None
             self.actor_pick_hover = None
             if self.console_overlay_active:
@@ -3139,6 +3167,9 @@ class QtGameView(QOpenGLWidget):
         if _play_menu_open(self):
             self.play_menu.handle_mouse_press(event)
             return
+        if _game_pointer_open(self):
+            self.game_pointer.pointer_press(event)
+            return
         if self.play_mode and self._actor_pick is not None:
             if event.button() == Qt.RightButton:
                 self.cancel_actor_pick()
@@ -3273,6 +3304,9 @@ class QtGameView(QOpenGLWidget):
     def mouseMoveEvent(self, event):
         if _play_menu_open(self):
             self.play_menu.handle_mouse_move(event)
+            return
+        if _game_pointer_open(self):
+            self.game_pointer.pointer_move(event)
             return
         if self.sysmon.handle_mouse_move(event, self.play_mode, self.width(), self.height()):
             self.update()
@@ -3526,9 +3560,26 @@ class QtGameView(QOpenGLWidget):
             return
         if self._actor_pick is not None:
             self._show_pick_cursor()
+        elif _game_pointer_open(self):
+            self._game_pointer_shown = False
+            self._sync_game_pointer()
         else:
             self._capture_play_cursor()
         self.update()
+
+    def _sync_game_pointer(self):
+        """Show the cursor while the game wants the pointer, recapture it after."""
+        want = _game_pointer_open(self)
+        if want == getattr(self, '_game_pointer_shown', False):
+            return
+        self._game_pointer_shown = want
+        if want:
+            while QApplication.overrideCursor() is not None:
+                QApplication.restoreOverrideCursor()
+            QApplication.setOverrideCursor(Qt.ArrowCursor)
+        elif (self.play_mode and not self.console_overlay_active
+              and self._actor_pick is None and not _play_menu_open(self)):
+            self._capture_play_cursor()
 
     # =========================================================================
     # ACTOR PICK (Play Mode)

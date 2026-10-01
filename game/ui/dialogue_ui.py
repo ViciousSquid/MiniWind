@@ -18,7 +18,7 @@ from PyQt5.QtCore import QRect, QRectF, Qt
 from PyQt5.QtGui import (QColor, QFont, QPixmap, QPainterPath, QLinearGradient,
                          QBrush, QPen, QFontMetrics)
 
-from . import fonts
+from . import fonts, hits
 from . import theme as T
 from ..rpg import guilds, heads
 
@@ -231,6 +231,11 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
 
     ry = y + lay["resp_top"] + 11   # baseline of the first response row
     for i, resp in enumerate(view["responses"]):
+        # The whole reply row is clickable (the number keys still work).
+        row = QRect(int(tx) - 4, int(ry) - 16, int(cr - tx) + 8, _RESP_LINE_H - 2)
+        if hits.hovered(row):
+            painter.fillRect(row, QColor(255, 220, 150, 26))
+        hits.add(row, lambda sess, n=i: sess.choose(n), resp.get("text", ""))
         chip = QRect(tx, ry - 13, 18, 18)
         painter.setBrush(QColor(60, 52, 78))
         painter.setPen(QPen(T.GILD, 1))
@@ -246,7 +251,7 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
     painter.setPen(T.DIM)
     painter.setFont(fonts.dialogue_font(9))
     painter.drawText(QRect(int(x + pad), int(y + box_h - 22), int(cr - (x + pad)), 16),
-                     int(Qt.AlignRight | Qt.AlignVCenter), "[1-9] choose   [Esc] leave")
+                     int(Qt.AlignRight | Qt.AlignVCenter), "Click or [1-9] choose   [Esc] leave")
 
 
 def _draw_head(painter, head, x, y, w, box_h):

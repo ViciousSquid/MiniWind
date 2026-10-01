@@ -557,6 +557,9 @@ def install_play_menu(view):
     from .ui.pause_menu import PauseMenu
     from . import music
     view.play_menu = PauseMenu(view, PauseActions(view))
+    # Character creation, trading and conversations take the mouse.
+    from .ui.hits import GamePointer
+    view.game_pointer = GamePointer(view)
     _use_game_fonts_for_loading()
     editor = getattr(view, "editor", None)
     config = getattr(editor, "config", None)
