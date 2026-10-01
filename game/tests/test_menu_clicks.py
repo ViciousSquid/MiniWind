@@ -263,3 +263,37 @@ def test_no_paint_no_motion_but_the_trade_still_happens(session):
     screens._handle_trade(session, "return")           # never painted
     assert session.game.character.gold < gold
     assert not any(True for _ in trade_anim._flights)
+
+
+# ------------------------------------------------------------- trade sound
+
+def test_every_purchase_and_sale_plays_the_transaction_sound(session, tmp_path,
+                                                             monkeypatch):
+    from .. import runtime
+    queued = []
+    session.logic.game_state = type("GS", (), {"queue_sound": staticmethod(queued.append)})()
+    (tmp_path / runtime.TRANSACTION_SOUND).write_bytes(b"")
+    monkeypatch.setattr(runtime, "SOUND_DIR", str(tmp_path))
+    session.merchant_npc = _Merchant()
+    session.game.character.gold = 1000
+    iid = screens._merchant_stock(session.merchant_npc)[0]["id"]
+
+    assert session.buy(iid)
+    assert session.sell(iid)
+    assert [q["file"] for q in queued] == [runtime.TRANSACTION_SOUND] * 2
+    assert all(q["global"] for q in queued)
+
+    session.game.character.gold = 0
+    assert not session.buy(iid)                     # no sale, no sound
+    assert len(queued) == 2
+
+
+def test_no_sound_file_means_silence_not_an_error(session, tmp_path, monkeypatch):
+    from .. import runtime
+    queued = []
+    session.logic.game_state = type("GS", (), {"queue_sound": staticmethod(queued.append)})()
+    monkeypatch.setattr(runtime, "SOUND_DIR", str(tmp_path))     # empty folder
+    session.merchant_npc = _Merchant()
+    session.game.character.gold = 1000
+    assert session.buy(screens._merchant_stock(session.merchant_npc)[0]["id"])
+    assert queued == []

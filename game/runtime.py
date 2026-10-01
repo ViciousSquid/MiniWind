@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import random
 from itertools import chain as _chain
 from typing import Dict, List, Optional
@@ -232,6 +233,12 @@ class _PlayerActor:
         p["sneaking"] = bool(getattr(s.game, "sneaking", False))
         p["dead"] = bool(getattr(s.logic, "player_dead", False))
         return self
+
+
+#: Where interface sounds live (the engine's sound folder), and the one a
+#: purchase or sale makes.
+SOUND_DIR = os.path.join("assets", "sounds")
+TRANSACTION_SOUND = "transaction.mp3"
 
 
 class StateStore:
@@ -4766,6 +4773,7 @@ class MiniwindSession:
         self.game.pick_up(item_id, 1)
         c.use_skill("mercantile", 0.5)
         self._remember_trade()
+        self.play_ui_sound(TRANSACTION_SOUND)
         return True
 
     def sell(self, item_id: str) -> bool:
@@ -4778,6 +4786,21 @@ class MiniwindSession:
         c.gold += price
         c.use_skill("mercantile", 0.5)
         self._remember_trade()
+        self.play_ui_sound(TRANSACTION_SOUND)
+        return True
+
+    def play_ui_sound(self, name: str, volume: float = 1.0) -> bool:
+        """Play an interface sound from ``assets/sounds`` (heard everywhere).
+
+        Goes through the engine's sound queue like every other effect. A file
+        that is not there is skipped silently rather than reported on every
+        use. Returns whether it was queued.
+        """
+        game_state = getattr(self.logic, "game_state", None)
+        queue = getattr(game_state, "queue_sound", None)
+        if queue is None or not os.path.isfile(os.path.join(SOUND_DIR, name)):
+            return False
+        queue({"file": name, "volume": float(volume), "global": True})
         return True
 
     def _remember_trade(self) -> None:
