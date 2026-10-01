@@ -726,5 +726,12 @@
     "value": 12,
     "weight": 6.0,
     "desc": "A bundle of raw wool, newly shorn."
+  },
+  "ember_tome": {
+    "name": "The Ember Tome",
+    "category": "quest",
+    "value": 0,
+    "weight": 1.0,
+    "desc": "An ancient spellbook bound in red leather, warm as a hearth. Thalen will want to know it is safe."
   }
 }

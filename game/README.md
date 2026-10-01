@@ -111,7 +111,7 @@ game/
                     spells/trade/levelup), dialogue_ui, theme
   data/             editable game content: bestiary/factions/schedules/items/settlement
                     JSON (+ mods/ overlay). Rules stay in code, content lives here.
-  tools/            make_settlement.py (the living settlement), make_world.py, make_sprites.py
+  tools/            expand_world.py (spreads the Vale over a huge world), make_settlement.py (the living settlement), make_world.py, make_sprites.py
   tests/            test_rpg.py, test_miniwind.py, test_settlement.py
 ```
 

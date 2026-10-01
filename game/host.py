@@ -295,6 +295,10 @@ class MiniwindGame:
                  min=1.0, max=100000.0, group="SPELLBOOK"),
             prop("respawn", "bool", "Respawns after read", default=False,
                  group="SPELLBOOK"),
+            prop("quest_item", "string", "Quest item", default="", group="SPELLBOOK",
+                 help="An item id the reader also receives -- the book as a quest "
+                      "item. A quest's 'fetch' objective for that id points its "
+                      "arrow at this book."),
         ])
         # The spawn point's rich configuration (what to spawn, group faction and
         # per-member inventory) lives in a dedicated, guided "Spawn" tab

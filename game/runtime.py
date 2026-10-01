@@ -1472,6 +1472,10 @@ class MiniwindSession:
                 if not c.active_spell:
                     c.active_spell = spell_id
                 self.notify(f"Learned {spell.name} from {title}")
+            # A quest book: the reader carries it off as the quest item.
+            quest_item = str(p.get("quest_item", "") or "").strip()
+            if quest_item and not inv.has_item(c.inventory, quest_item, 1):
+                self.game.pick_up(quest_item, 1)
             if not p.get("respawn"):
                 p["dead"] = True
                 p["hidden"] = True
@@ -1829,10 +1833,15 @@ class MiniwindSession:
             raw = self._slug(st.condition_target())
             best = None
             ppos = self._player_pos()
-            for it in self._things_of_type("itempickup"):
+            # A pickup of the item, or a book that hands it over when read.
+            sources = [(it, it.properties.get("item_id", ""))
+                       for it in self._things_of_type("itempickup")]
+            sources += [(bk, bk.properties.get("quest_item", ""))
+                        for bk in self._things_of_type("spellbook")]
+            for it, item_id in sources:
                 if it.properties.get("dead"):
                     continue
-                if self._slug(it.properties.get("item_id", "")) == raw:
+                if self._slug(item_id) == raw:
                     if ppos is None:
                         pos = it.pos
                         break
@@ -1932,6 +1941,11 @@ class MiniwindSession:
                 nm = mk.properties.get("place_name") or mk.properties.get("name") or ""
                 if self._slug(nm) == tslug:
                     return nm
+        if kind == _quests.COND_FETCH:
+            from .rpg import items as rpg_items
+            item = rpg_items.get(str(raw).strip())
+            if item is not None and item.name:
+                return item.name
         # Fall back to a de-slugged, title-cased version of the raw target.
         return str(raw).replace("_", " ").strip() or "the objective"
 

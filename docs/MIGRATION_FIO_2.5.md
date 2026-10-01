@@ -174,6 +174,7 @@ attribute writes or they will never reach EntityTable.
 | Item | Finding |
 |---|---|
 | `maps/village_walled_source.json` | format v3, 303 things: creature 131, marker 55, light 30, npc 28, container 19, itempickup 11, speaker 10, creaturespawn 10, path_node 4, spellbook 1, miniwindsettings 1, bigworldsettings 1, playerstart 1, logic_command 1; `terrain_data` in the old sculpt-offset form — must be verified against the new dense TerrainTable / GPU heightfield loader |
+| expanded world (post-migration) | `game/tools/expand_world.py` grew the terrain to 40 x 40 chunks with `mesh_scale: 1.0`, moved the outlying sites rigidly with their ground (re-sculpted at the new place), added a heightmap-overlay mountain range and the Emberpeak Shrine, and removed the 2.4 invisible floor slabs (2.5 terrain is solid). BigWorld `terrain_fill` must stay off for this map: it re-bounds the terrain in play, and the heightmap overlay is laid over the authored bounds |
 | unknown entity preservation | **1** — current Fio keeps unknown types as `UnresolvedThing` and round-trips them verbatim |
 | `.fiosave` | MiniWind never forked `savegame.py`; it persists via public properties + `LogicState`/`GlobalStore`. Fio 2.5 now writes delta saves against the base map and restores BigWorld cells — needs regression coverage, not code |
 | derived `custom_dead`, transient look keys | must not leak into saved maps / saves |

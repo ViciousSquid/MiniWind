@@ -58,6 +58,25 @@ def load() -> None:
     ))
 
     register(Quest(
+        "ember_tome", "The Ember Tome",
+        giver="Thalen", faction="town", xp=60,
+        desc="Thalen speaks of a book of fire left on an altar high in the "
+             "Emberpeaks, far to the north-east.",
+        rewards={"gold": 120, "rep": ("town", 10)},
+        stages=[
+            Stage(0, "Thalen the smith told me of the Ember Tome, a book of fire "
+                     "magic left on an old altar at the Emberpeak Shrine, high in "
+                     "the mountains far to the north-east. The pass begins beyond "
+                     "Frostcap Tor.",
+                  objective="Find the Ember Tome at the Emberpeak Shrine",
+                  condition={"kind": "fetch", "target": "ember_tome", "count": 1},
+                  waypoint="Ember_Tome"),
+            Stage(10, "I found the Ember Tome on the Emberpeak altar and learned "
+                      "its fire.", finishes=True),
+        ],
+    ))
+
+    register(Quest(
         "lost_amulet", "The Lost Amulet",
         giver="Elowen", faction="town", xp=15,
         desc="Elowen lost her grandmother's amulet somewhere in the woods.",

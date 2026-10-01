@@ -623,6 +623,7 @@ def _init_spellbook(self):
     p.setdefault("pickup_radius", 70.0)
     p.setdefault("respawn", False)
     p.setdefault("title", "")             # optional display title
+    p.setdefault("quest_item", "")        # item id the reader also receives
     # A Prop: the book model by default (lying cover-up), or its cover sprite
     # with render_mode "billboard". Inert as a Prop -- the game, not Fio's
     # Prop runtime, handles reading it (MiniwindSession._tick_spellbooks).
