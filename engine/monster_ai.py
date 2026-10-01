@@ -139,6 +139,29 @@ class MonsterAI:
     # Main update entry point
     # -------------------------------------------------------------------------
 
+    @staticmethod
+    def _attack_style_for(thing, state, in_melee: bool) -> str:
+        """Choose the actor's current combat style, rebuilding only on a range-band change.
+
+        The MiniWind game layer owns item/style knowledge. The engine only keeps
+        the cheap state transition here, so an ordinary tick does not rescan the
+        actor's inventory.
+        """
+        from game import combat_loadout
+
+        band = bool(in_melee)
+        if state.get('style_band') is not band:
+            state['style_band'] = band
+            loadout = combat_loadout.build_loadout(thing.properties)
+            style = combat_loadout.choose_style(loadout, band)
+            state['attack_style'] = style
+            if combat_loadout.has_choice(loadout):
+                thing.properties['_active_weapon'] = combat_loadout.weapon_for(
+                    loadout, style)
+            return style
+        return state.get('attack_style') or str(
+            thing.properties.get('attack_style', '') or '').lower()
+
     def update(self, delta: float):
         """Called every tick from LogicThread._tick_play_mode."""
         if not self.lt.player or not MonsterThing:
