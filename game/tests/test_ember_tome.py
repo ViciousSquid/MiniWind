@@ -169,3 +169,33 @@ def test_the_sites_are_spread_out():
     nearest.sort()
     # The lake shore keeps its villages together; everything else has room.
     assert nearest[len(nearest) // 2] > 4000
+
+
+def test_every_lake_is_one_water_brush_over_a_sculpted_depression():
+    import pytest
+    pytest.importorskip("OpenGL", reason="engine.terrain samples the ground")
+    import numpy as np
+    from ..tools.expand_world import _heights, _load_heightmap, _terrain
+    m = _map()
+    water = [b for b in m["brushes"] if b.get("water_plane")]
+
+    def rect(b):
+        return (b["pos"][0] - b["size"][0] / 2, b["pos"][2] - b["size"][2] / 2,
+                b["pos"][0] + b["size"][0] / 2, b["pos"][2] + b["size"][2] / 2)
+    rects = [rect(b) for b in water]
+    for i, a in enumerate(rects):        # no water body is built of pieces
+        for c in rects[i + 1:]:
+            assert not (a[0] <= c[2] and c[0] <= a[2] and a[1] <= c[3] and c[1] <= a[3])
+    terrain = _terrain(m["terrain_data"], heightmap=_load_heightmap(m["terrain_data"]))
+    lakes = [b for b in water if b["size"][0] > 600]
+    assert len(lakes) >= 4                # Mirrormere and the new ponds
+    for b in lakes:
+        x0, z0, x1, z1 = rect(b)
+        top = b["pos"][1] + b["size"][1] / 2
+        xs, zs = np.meshgrid(np.linspace(x0, x1, 60), np.linspace(z0, z1, 60))
+        h = _heights(terrain, xs.ravel(), zs.ravel()).reshape(60, 60)
+        wet = h < top
+        assert 0.3 < wet.mean() < 0.9, "the water fills a depression, not the box"
+        edge = np.concatenate([wet[0], wet[-1], wet[:, 0], wet[:, -1]])
+        assert not edge.any(), "the brush's edges lie under dry bank"
+        assert h.min() > b["pos"][1] - b["size"][1] / 2, "the bed is inside the brush"

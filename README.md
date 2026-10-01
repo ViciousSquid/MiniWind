@@ -217,7 +217,9 @@ which moved every outlying site (Hollin's Cross, Mirrormere and its shore
 villages, the Old Mill, Greywood, the barrows and camps...) further from the
 village *with the ground it stands on*, raised a mountain wall around the edge
 and the Emberpeaks to the far north-east (a heightmap overlay kept clear of
-every site), and added open-country landmarks, wildlife and groves. High in
+every site), and added open-country landmarks, wildlife and groves. Every lake
+and pond is a sculpted depression filled by a single water brush whose edges
+lie under dry bank. High in
 the Emberpeaks, up a cairn-marked pass beyond Frostcap Tor, the **Emberpeak
 Shrine** holds the old altar and the **Ember Tome** -- the firebolt spellbook,
 which is also the `ember_tome` quest item of Thalen's quest *The Ember Tome*.

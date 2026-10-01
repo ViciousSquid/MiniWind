@@ -27,7 +27,12 @@ Takes the hand-built village map (``maps/village_walled_source.json``) and:
   (``game/rpg/quests_content.py``); the quest arrow points at the book.
 * Removes the invisible floor slabs the 2.4 map stood on: 2.5 terrain is
   solid, and the slabs would have stopped the moved sites carrying their own
-  ground.
+  ground. The ground is raised under the flat road, floor and hearth brushes
+  that were laid on the slabs, so they rest on it.
+* Makes every water body one water brush over a sculpted depression: the
+  2.4 lake's 27 stacked strips become a single brush, its waterline set just
+  below the real shore, the bed kept below it and the bank above it wherever
+  the brush reaches. The new ponds are built the same way.
 
 The map records that it has been expanded, so the tool refuses to run on its
 own output (``--force`` overrides).
@@ -186,6 +191,22 @@ def _dist_to_polyline(xs, zs, pts):
         along = np.where(closer, (run + t * seg) / total, along)
         run += seg
     return best, along
+
+
+def _box_blur(a, r):
+    """Mean over a (2r+1)-square window, edges clamped."""
+    a = np.pad(a, r, mode="edge")
+    for axis in (0, 1):
+        c = np.cumsum(a, axis=axis)
+        c = np.insert(c, 0, 0.0, axis=axis)
+        n = a.shape[axis]
+        hi = np.take(c, np.arange(2 * r + 1, n + 1), axis=axis)
+        lo = np.take(c, np.arange(0, n - 2 * r), axis=axis)
+        a = (hi - lo) / (2 * r + 1)
+        pad = [(0, 0), (0, 0)]
+        pad[axis] = (r, r)
+        a = np.pad(a, pad, mode="edge")
+    return a[r:-r, r:-r]
 
 
 def _dilate_distance(mask, cell, max_cells):
@@ -461,6 +482,172 @@ class Expander:
         td["heightmap_strength"] = HM_STRENGTH
         td["heightmap_blend"] = "additive"
         self.new_terrain = _terrain(td, heightmap=self.heightmap)
+        self._stored_sculpt = dict(self.sculpt)
+
+    def _grid_heights(self, gx, gz):
+        """Ground height at sculpt grid points, including sculpting not yet
+        stored into the terrain."""
+        gx = np.asarray(gx, np.int64).ravel()
+        gz = np.asarray(gz, np.int64).ravel()
+        h = _heights(self.new_terrain, gx * self.res, gz * self.res).astype(np.float64)
+        pending = np.array([self.sculpt.get((a, b), 0.0) - self._stored_sculpt.get((a, b), 0.0)
+                            for a, b in zip(gx.tolist(), gz.tolist())])
+        return h + pending
+
+    def _reshape(self, gx, gz, want, mode):
+        """Raise (``mode='raise'``) or lower the ground at grid points to
+        *want* where it is below / above it."""
+        cur = self._grid_heights(gx, gz)
+        want = np.asarray(want, np.float64).ravel()
+        change = np.maximum(want - cur, 0.0) if mode == "raise" else np.minimum(want - cur, 0.0)
+        for a, b, d in zip(np.ravel(gx).tolist(), np.ravel(gz).tolist(), change.tolist()):
+            if d:
+                self.sculpt[(a, b)] = self.sculpt.get((a, b), 0.0) + d
+
+    # -- ground decals and water -------------------------------------------
+    def seat_ground_decals(self):
+        """Raise the ground under the flat ground-level brushes (roads,
+        floors, tiles, fires) the 2.4 map laid on its floor slabs, so they
+        rest on the terrain instead of hovering over its dips."""
+        res = self.res
+        for b in self.world["brushes"]:
+            if b.get("water_plane") or self._is_tree(b) or b["size"][1] > 4.0:
+                continue
+            bottom = b["pos"][1] - b["size"][1] / 2.0
+            if not (184.0 <= bottom <= 204.0):
+                continue
+            hx, hz = b["size"][0] / 2.0, b["size"][2] / 2.0
+            feather = 96.0
+            gxs = np.arange(int((b["pos"][0] - hx - feather) // res),
+                            int((b["pos"][0] + hx + feather) // res) + 2)
+            gzs = np.arange(int((b["pos"][2] - hz - feather) // res),
+                            int((b["pos"][2] + hz + feather) // res) + 2)
+            GX, GZ = np.meshgrid(gxs, gzs, indexing="ij")
+            dx = np.maximum(np.abs(GX * res - b["pos"][0]) - hx, 0.0)
+            dz = np.maximum(np.abs(GZ * res - b["pos"][2]) - hz, 0.0)
+            d = np.hypot(dx, dz)
+            want = bottom - 1.0 - d * 0.5          # a gentle shoulder off the edge
+            self._reshape(GX, GZ, want, "raise")
+        self.report("ground raised under the ground-level brushes the floor slabs carried")
+
+    @staticmethod
+    def _water_props(proto=None):
+        props = {"shader": "Water", "is_fog": False, "water_opacity": 0.5,
+                 "water_reflectivity": 0.5, "water_tint": [0.05, 0.35, 0.5],
+                 "water_wave_enabled": False, "water_wave_height": 0.5,
+                 "is_trigger": False, "water_plane": True}
+        if proto:
+            props.update({k: proto[k] for k in props if k in proto})
+        return props
+
+    def _fill_basin(self, x0, z0, x1, z1, inside, surface=None, proto=None, name="",
+                    smooth=0.0, ragged=0.0, seed=0):
+        """Make a water body: one water brush over a sculpted depression.
+
+        *inside(wx, wz)* says where the water is, within the rectangle
+        (x0, z0)-(x1, z1). The ground there is lowered below the waterline;
+        the rest of the rectangle -- which the single brush also covers -- is
+        kept above it as bank, feathered out beyond the rectangle. Without a
+        *surface*, the waterline sits just below the natural shore. Returns
+        the brush. *smooth* rounds the outline off over that many units and
+        *ragged* frays it with noise, for a natural shore.
+        """
+        res = self.res
+        # The brush reaches a margin past the water on every side, so its
+        # straight edges lie under dry bank, well clear of the shoreline even
+        # where the terrain mesh is coarser than the sculpt grid.
+        margin = 128.0
+        x0, z0, x1, z1 = x0 - margin, z0 - margin, x1 + margin, z1 + margin
+        feather = 160.0
+        gxs = np.arange(int((x0 - feather) // res), int((x1 + feather) // res) + 2)
+        gzs = np.arange(int((z0 - feather) // res), int((z1 + feather) // res) + 2)
+        GX, GZ = np.meshgrid(gxs, gzs, indexing="ij")
+        WX, WZ = GX * res, GZ * res
+        water = inside(WX, WZ)
+        if smooth > 0.0:
+            r = max(1, int(smooth / res / 2))
+            field = _box_blur(_box_blur(water.astype(np.float32), r), r)
+            if ragged > 0.0:
+                field = field + ragged * _value_noise(WX.astype(np.float32),
+                                                      WZ.astype(np.float32), 260.0, seed)
+            water = field >= 0.5
+            # Never past the brush.
+            water &= (WX >= x0 + 32) & (WX <= x1 - 32) & (WZ >= z0 + 32) & (WZ <= z1 - 32)
+        h = self._grid_heights(GX, GZ).reshape(GX.shape)
+        d_out = _dilate_distance(water, res, int(96 // res) + 1)
+        d_in = _dilate_distance(~water, res, int(2400 // res) + 1)
+        shore = ~water & (d_out <= 96.0)
+        if surface is None:
+            surface = float(np.percentile(h[shore], 20)) - 4.0
+        # Underwater: below the line, deepening away from the shore.
+        bed = surface - 14.0 - np.minimum(d_in * 0.35, 110.0)
+        self._reshape(GX[water], GZ[water], bed[water], "lower")
+        # Bank: everything else the brush covers stays above the line, and
+        # the ground outside the rectangle ramps down to meet it.
+        beyond = np.hypot(np.maximum(np.maximum(x0 - WX, WX - x1), 0.0),
+                          np.maximum(np.maximum(z0 - WZ, WZ - z1), 0.0))
+        bank = surface + 12.0 - beyond * 0.5
+        land = ~water
+        self._reshape(GX[land], GZ[land], bank[land], "raise")
+        floor = float(self._grid_heights(GX[water], GZ[water]).min()) - 10.0
+        height = max(surface - floor, 40.0)
+        brush = {"pos": [round((x0 + x1) / 2.0, 1), round(surface - height / 2.0, 1),
+                         round((z0 + z1) / 2.0, 1)],
+                 "size": [round(x1 - x0, 1), round(height, 1), round(z1 - z0, 1)],
+                 "textures": self._textured("nodraw.jpg"), "id": _uid()}
+        brush.update(self._water_props(proto))
+        if name:
+            brush["name"] = name
+        self.world["brushes"].append(brush)
+        return brush
+
+    def merge_water(self):
+        """Turn every water body built of several brushes (the 2.4 lake is
+        27 strips) into one brush over a sculpted depression."""
+        water = [b for b in self.world["brushes"] if b.get("water_plane")]
+        n = len(water)
+        parent = list(range(n))
+
+        def find(a):
+            while parent[a] != a:
+                parent[a] = parent[parent[a]]
+                a = parent[a]
+            return a
+
+        def rect(b):
+            return (b["pos"][0] - b["size"][0] / 2, b["pos"][2] - b["size"][2] / 2,
+                    b["pos"][0] + b["size"][0] / 2, b["pos"][2] + b["size"][2] / 2)
+        rects = [rect(b) for b in water]
+        for i in range(n):
+            for j in range(i + 1, n):
+                a, c = rects[i], rects[j]
+                if a[0] <= c[2] + 1 and c[0] <= a[2] + 1 and a[1] <= c[3] + 1 and c[1] <= a[3] + 1:
+                    parent[find(i)] = find(j)
+        groups = collections.defaultdict(list)
+        for i in range(n):
+            groups[find(i)].append(i)
+        merged = 0
+        for members in groups.values():
+            if len(members) < 2:
+                continue
+            rs = np.array([rects[i] for i in members])
+
+            def inside(wx, wz, rs=rs):
+                hit = np.zeros(wx.shape, bool)
+                for x0, z0, x1, z1 in rs:
+                    hit |= (wx >= x0) & (wx <= x1) & (wz >= z0) & (wz <= z1)
+                return hit
+            proto = water[members[0]]
+            for i in members:
+                self.world["brushes"].remove(water[i])
+            b = self._fill_basin(rs[:, 0].min(), rs[:, 1].min(), rs[:, 2].max(),
+                                 rs[:, 3].max(), inside, proto=proto,
+                                 smooth=320.0, ragged=0.12, seed=len(members))
+            merged += 1
+            self.report(f"lake of {len(members)} water brushes -> one brush "
+                        f"{b['size'][0]:.0f} x {b['size'][2]:.0f}, waterline "
+                        f"{b['pos'][1] + b['size'][1] / 2:.0f}")
+        self._store_terrain()
 
     def _footprint(self, piece, res, old_sculpt):
         """``{old cell: weight}``: the ground a piece stands on (weight 1),
@@ -805,40 +992,14 @@ class Expander:
                     f"{len(dens)} wildlife spawners")
 
     def _pond(self, x, z, radius):
-        """A still pond: a sculpted bowl and its water."""
-        res = self.res
-        rim = min(self._ground(x + math.cos(a) * radius * 1.2, z + math.sin(a) * radius * 1.2)
-                  for a in np.linspace(0, 2 * math.pi, 16, endpoint=False))
-        surface = rim - 10.0
-        reach = radius * 1.35
-        for gx in range(int((x - reach) // res), int((x + reach) // res) + 2):
-            for gz in range(int((z - reach) // res), int((z + reach) // res) + 2):
-                d = math.hypot(gx * res - x, gz * res - z) / radius
-                if d > 1.35:
-                    continue
-                g = float(_heights(self.new_terrain, [gx * res], [gz * res])[0])
-                depth = 110.0 * (1.0 - float(_smoothstep(0.35, 1.15, d)))
-                want = surface - 18.0 - depth if d < 1.0 else None
-                if want is None:
-                    # The shore: down to just above the water, feathered out.
-                    blend = float(_smoothstep(1.35, 1.0, d))
-                    want = g + (min(g, surface + 6.0) - g) * blend
-                if want < g:
-                    self.sculpt[(gx, gz)] = self.sculpt.get((gx, gz), 0.0) + (want - g)
-        row = 64.0
-        zz = -radius + row / 2.0
-        while zz < radius:
-            half = math.sqrt(max(radius * radius - zz * zz, 0.0))
-            if half > 40.0:
-                self.world["brushes"].append({
-                    "pos": [round(x, 1), round(surface - 130.0, 1), round(z + zz, 1)],
-                    "size": [round(2 * half, 1), 260.0, row],
-                    "textures": self._textured("nodraw.jpg"), "id": _uid(),
-                    "shader": "Water", "is_fog": False, "water_opacity": 0.5,
-                    "water_reflectivity": 0.5, "water_tint": [0.05, 0.35, 0.5],
-                    "water_wave_enabled": False, "water_wave_height": 0.5,
-                    "is_trigger": False, "water_plane": True})
-            zz += row
+        """A still pond: a round sculpted depression, filled by one water
+        brush."""
+        r2 = radius * radius
+
+        def inside(wx, wz):
+            return (wx - x) ** 2 + (wz - z) ** 2 <= r2
+        self._fill_basin(x - radius, z - radius, x + radius, z + radius, inside,
+                         smooth=96.0, ragged=0.25, seed=int(abs(x) + abs(z)) % 997)
 
     # -- trees -------------------------------------------------------------
     def scatter_trees(self, count=900, seed=7):
@@ -887,6 +1048,8 @@ class Expander:
         self.build_heightmap()
         self.build_terrain()
         self.move_objects()
+        self.seat_ground_decals()
+        self.merge_water()
         self.build_shrine()
         self.add_wilds()
         self.scatter_trees()
