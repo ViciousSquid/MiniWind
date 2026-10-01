@@ -1,227 +1,302 @@
-# MiniWind → Fio 2.5.10 migration — Phase 1 archaeology & migration matrix
+# MiniWind → Fio 2.5.10 migration record
 
-Status: **Phase 1 (archaeology) complete; no engine code changed yet.**
-This document is the decision record the later phases execute against.
+Status: **Migration completed and merged into main.**
 
-Categories used throughout (from the migration brief):
+Merge commit: c56184506a — Merge pull request #17 from ViciousSquid/claude/jolly-goldberg-uybdqw
 
-| # | Meaning | Action |
-|---|---------|--------|
-| **1 OBSOLETE** | Fio 2.5 now provides it | delete MiniWind version, use upstream |
-| **2 REIMPLEMENT** | MiniWind needs the behaviour; old code is 2.4-shaped | rebuild against the 2.5 seam |
-| **3 GENERIC** | genuinely generic Fio capability MiniWind added | port the smallest clean seam into 2.5 |
-| **4 GAME** | MiniWind policy living in Fio | move under `game/` |
+This document records what the 2.4 → 2.5 migration actually delivered. It replaces the earlier archaeology/migration plan, which is now obsolete.
 
 ---
 
-## 1. Versions
+## 1. Migration outcome
 
-| | Commit | Notes |
-|---|---|---|
-| **Embedded baseline** | Fio `24a2757e` (2026‑09‑16, "Updated with 'Match case' button") | one commit past tag `v2.4.1.1609` (`1747926b`); the only difference is `editor/scene_hierarchy.py`, so its "Match whole word" button is **upstream, not a MiniWind delta** |
-| **Audit branch substrate** | Fio `4be5cefc` (2.5.5.2409) | used by `claude/fio-2.5.5-migration-audit` |
-| **Target** | Fio `f612655e` (branch `2.5.10.3009_Latest`, 2026‑09‑30) | 2 053 commits after the baseline, **1 376 after the audit substrate** |
+MiniWind is now a **native game layer on Fio 2.5**, rather than a 2.4-derived engine fork with a game attached to it.
 
-Consequence: the audit branch is evidence, not a base. Between its substrate and
-the target, `renderer_core.py` changed by ~4 100 lines, `entity_table.py` ~1 270,
-`logic_thread.py` ~1 900, `shaders.py` ~1 400, and — decisively — **the per-monster
-render snapshot the audit hooked into no longer exists.** EntityTable is now fed
-by the change journal (`TrackedAttribute` writes), not by a per-frame snapshot.
+The migration preserved MiniWind's authored world and game systems while moving the engine-facing parts onto Fio 2.5's current seams:
 
----
+- Fio owns rendering, EntityTable, terrain, spatial partitioning, save/load, BigWorld residency, camera, collision, lighting and dense Monster AI.
+- MiniWind owns game meaning: factions, actor presentation policy, combat loadouts, schedules, perception, knowledge, crime, appraisal, quests, production, director/event flow and game UI.
+- Actor rendering crosses the engine boundary through journalled state and dense tables rather than MiniWind-specific per-actor OpenGL draw loops.
+- The simulation layer in game/sim/ remains engine-independent and is organised around EVENT → PERCEPTION → INTERPRETATION → STATE CHANGE → BEHAVIOUR.
 
-## 2. Findings from the audit branch (`claude/fio-2.5.5-migration-audit`)
-
-Three commits: vendor Fio verbatim → re-attach game through seams → route actors
-through EntityTable. That *shape* is right and is the plan below. Revalidated
-against current Fio:
-
-| Audit idea | Verdict against 2.5.10 |
-|---|---|
-| Vendor Fio verbatim, re-apply MiniWind as seams | **Keep** (the method) |
-| NPC/Creature remain Fio `Monster`s through EntityTable → instanced sprites | **Keep** |
-| `game/actor_look.py`: death identity published as *derived* `custom_dead` | **Keep** — `entity_table.py:208` still resolves the dead sprite from `custom_dead`. Must be kept out of saved maps (derived, not authored). |
-| Heading/tint/opacity added as keys to the per-frame render snapshot | **Obsolete mechanism** — snapshots are gone. Current Fio already has journalled `render_alpha` and `sprite_fixed_yaw` columns (driven by `TrackedAttribute`s `_respawn_fade_alpha` / `_carry_sprite_yaw` on Prop) that already reach the instanced sprite data (`renderer_core.py:3038‑3039`). MiniWind opacity + heading ride those; only **tint** is missing. |
-| Sprite shader gains uniforms; instanced program derived by rewrite | Re-check against current shader; current instanced sprite already carries fixed-yaw + alpha as instance attributes (`shaders.py:461‑467`). Add tint the same way. |
-| `register_builtin_game` in PluginManager | **Obsolete** — upstream now (`plugins/manager.py:448`) |
-| API 1.5.0: property sections, KV suggestions, inspector providers | Needed, but the audit added them to the manager **without wiring the editor** (editor stayed verbatim): `kv_key_suggestions` and `inspector_snapshot` had no consumer. |
-| LogicThread seams (pause, fire handler, damage filter, aim yaw, projectile callbacks) | **Keep the contracts**, re-apply to current LogicThread |
-| `set_aim` / `queue_secondary_shot` in ThreadedGameState | Producer side had **no caller** — the view side (`qt_game_view`) was never migrated, so mouse aiming and right-click were dead on the audit branch |
-| MiniWind `monster_ai.py` deltas | **Silently dropped** by the audit — factions (`_faction_hostile`), "only hostiles hunt the player", dice damage, attack styles, spell projectiles were all lost there |
-| MiniWind `editor/main_window.py`, `qt_game_view.py` deltas | **Silently dropped** — pause menu, standalone play, mouse control, inspector, sound falloff, stuck arrows, overhead NPC weapons |
-
-Lesson for this migration: every MiniWind delta gets an explicit row below, and
-every seam gets both its producer and its consumer.
+This is the intended Fio 2.5 architecture: **Fio provides the world machine; MiniWind supplies the world rules.**
 
 ---
 
-## 3. File-level diff vs baseline (non-asset)
+## 2. Version provenance
 
-Unchanged vs baseline (ignoring CRLF/whitespace): `engine/renderer_F.py`,
-`player.py`, `physics.py`, `camera.py`, `constants.py`, `textures.py`,
-`resource_manager.py`, `audio_manager.py`, `obj_loader.py`, `sysmon.py`,
-`savegame.py`, `editor/package_dialog.py`, `tools/*`. → all **1 OBSOLETE**
-(take current Fio).
+| Stage | Fio version / ref | Result |
+|---|---|---|
+| Original MiniWind substrate | Fio 24a2757e, 2026-09-16 | 2.4-derived starting point |
+| Migration work | Fio 2.5.x, ending at 2.5.10.3009_Latest | engine migration and seam work |
+| Merged MiniWind | Fio 2.5.10.3009 | current MiniWind main |
+| Merge | c56184506a | PR #17 merged into main |
 
-MiniWind-only files outside `game/`:
-`engine/{gore,facing,combat_loadout,pause_menu,sound_falloff}.py`,
-`engine/tests/`, `editor/launcher.py`, `editor/tests/`,
-`tests/integration/test_miniwind_boundaries.py`,
-`tests/plugins/{test_console_commands,test_mandatory_plugins}.py`.
+The migration therefore represents a real architectural break from the old 2.4 substrate, not a compatibility layer around the old renderer.
 
-Largest modified files (changed lines vs baseline): `qt_game_view` 1342,
-`main_window` 745, `overhead_sprite` 671, `monster_ai` 612, `logic_thread` 337,
-`main.py` 269, `plugins/integration` 244, `plugins/manager` 238,
-`editor/things` 238, `renderer_core` 124, `floating_windows` 95,
-`property_editor` 94, `SettingsWindow` 78, `monster_constants` 77.
+The copy of Fio embedded in MiniWind is **not automatically the latest Fio after this merge**. Current upstream Fio has continued beyond the 2.5.10.3009 snapshot; updating MiniWind to later upstream 2.5.10 changes is a separate synchronisation task, not part of the historical migration itself.
 
 ---
 
-## 4. Migration matrix
+## 3. What was migrated
 
-### 4.1 Engine — LogicThread / game state
+### 3.1 LogicThread / game lifecycle
 
-| MiniWind delta | Cat | 2.5 destination |
-|---|---|---|
-| `game_session` attribute | 3 | one generic attr on LogicThread, set/cleared by the game host at play start/stop; cleared in LogicThread teardown too (lifetime test) |
-| `gameplay_paused` (world frozen, plugins still tick) | 3 | early-out in current `_update` before world simulation, still dispatching `plugins.tick` |
-| `player_fire_handler(logic, mode)` + secondary fire | 3 | hook in current `_handle_shooting`; secondary-shot queue in ThreadedGameState **and** its producer (right mouse) in the view |
-| `_player_damage_filter(damage, kind)` | 3 | hook at top of current `_apply_player_damage` |
-| pointer aim yaw/direction | 3 | `ThreadedGameState.set_aim/get_aim_*`; producer = view mouse-control mode (see 4.3) |
-| projectile `on_hit`, `on_impact`, `max_dist`, `owner_is_player`; publish `vel/color/kind` | 3 | current projectile update; audit the 2.5 projectile publication (dense or list) and add fields to whatever it publishes |
-| blood-stain / gib sprite data | 2 | re-derive from current decal/bullet-mark path; gib *rule* is game (4) |
-| game tick / lifecycle dispatch | 1 | upstream `PluginManager` builtin-game dispatch (`on_play_start/on_tick/on_play_stop`) |
+MiniWind-specific gameplay now attaches through explicit engine seams rather than forking the simulation loop.
 
-### 4.2 Engine — Monster AI
+Migrated capabilities include:
 
-| MiniWind delta | Cat | 2.5 destination |
-|---|---|---|
-| faction hostility `logic._faction_hostile(a, b)` (per-pair Python predicate) | 2+3 | **dense team relation matrix**: game publishes `hostile[team_i, team_j]` (bool, indexed by MonsterTable's interned team ids); the vectorised nearest-enemy pass masks with it. Default (no matrix) = Fio's "different team is enemy". No per-pair callback. |
-| "only hostile actors hunt the player" (`aggression`, faction vs `player`) | 2+3 | same matrix, one row/col for the player team, + a per-row `hunts_player` mask; default = Fio behaviour (all awake monsters hunt) |
-| dice-rolled attack damage via `game_session.game.dice` | 3 | a `monster_damage_roll(attacker, max, style)` hook on the AI; default = Fio's flat damage |
-| attack styles (melee/ranged/spell), `_primary_spell`, spell projectiles | 2/4 | style selection is game policy (4); the projectile spawn uses the 2.5 projectile path with the 4.1 fields |
-| `_face_dir` / `engine/facing.py` | 4 | `game/`; result written to the actor's journalled heading attribute |
-| `monster_constants` tweaks | 2 | re-evaluate per constant; game-specific tuning → game-owned overrides |
+- game-session attachment and lifecycle
+- gameplay pause state
+- player damage filtering
+- player fire / secondary-fire dispatch
+- aim state publication
+- projectile callbacks and published projectile state
+- game start/tick/stop integration through Fio's builtin-game/plugin lifecycle
 
-### 4.3 Engine — view / renderer
+The important architectural change is that **Fio owns the tick loop**. MiniWind hooks into it; it does not replace it.
 
-| MiniWind delta | Cat | 2.5 destination |
-|---|---|---|
-| `_draw_overhead_npcs` (per-NPC Python GL draw: heads, weapons, hover tint) | **DELETE** | replaced by EntityTable rows + instanced sprite pass |
-| head heading | 2 | journalled yaw → existing `sprite_fixed_yaw` column; "lie flat on ground" overhead mode may need one orientation flag (verify against current shader first) |
-| opacity / fade | 1/2 | existing `render_alpha` column; generalise its source attribute (today Prop-only `_respawn_fade_alpha`) to a generic journalled render-alpha attribute on Things |
-| hit flash / hover tint | 3 | **new generic `render_tint` (rgba) column** + instance attribute; default 0 = bit-identical draw. Which colour and when = game policy |
-| dead/gibbed identity | 2 | derived `custom_dead` (audit idea), game-owned in `game/actor_look.py` |
-| actor-held weapon quads | 3 | smallest generic option: a secondary "attached sprite" row / layer in EntityTable (to be designed after reading current sprite pass); **not** a Python draw loop |
-| player overhead head/weapon/flash (`overhead_sprite.py`, 671 lines) | 2 | start from current Fio `overhead_sprite.py` (302 lines); re-add only player presentation MiniWind needs via `game_session` duck-typing seam |
-| ground layer constants (floor < blood < gib < actor < weapon) | 2 | express as per-row y-offset/layer in the dense path |
-| stuck arrows, arrow projectile orientation, projectile lights | 2 | arrows oriented by published `vel`; stuck arrows as game-spawned entities or decals through the dense path |
-| mouse-control mode (pointer → aim), cross cursor | 3 | generic view option; producer for `set_aim` |
-| `sound_falloff.py` (speaker volume by distance) | 3 | generic engine audio seam |
-| pause menu (`engine/pause_menu.py`) + save slots in `main_window` | 4 (+3 seam) | game UI under `game/ui/`, drawn via `render.overlay`; needs a generic "game modal wants keys/Escape" seam |
-| inspector (`inspect`/`mind` command, `NpcDebugWindow`) | 3 + 4 | generic inspect-pick + floating window in Fio consuming `inspector_snapshot`; MiniWind snapshot provider stays in `game/` |
-| renderer_core/shaders sprite `tint/rot/opacity` uniforms | **DELETE** | superseded by the columns above |
+### 3.2 Monster AI
 
-### 4.4 Editor
+MiniWind's combat behaviour was re-attached to Fio's dense Monster AI rather than restoring the old 2.4 actor-draw / AI architecture.
 
-| MiniWind delta | Cat | 2.5 destination |
-|---|---|---|
-| `things.py` head sprites, dead-head composite, sprite caches | 4 / 1 | policy → `game/actor_look.py`; caches: current Fio's resolution path |
-| `things.py` `max_health` default, custom_dead pop | 4 | NPC/Creature subclasses in `game/entities.py` |
-| `property_editor` KV suggestions | 3 | `register_kv_suggestions` **with** the property-editor consumer |
-| `property_editor` accent colour `#F08000 → #d61604` | 3 | visual identity: a small editor accent/theme setting rather than a fork |
-| property sections / grouped specs (`plugins/integration`) | 3 | `register_property_section` + editor consumer, on top of API 1.4.0 |
-| superseded palette entries (Monster/Pickup hidden in favour of Creature/ItemPickup) | 3 | generic "hide entity from palette" registration |
-| `io_handlers` visibility notify, speaker fields | 1? | verify current Fio already calls `notify_authored_visibility_changed`; drop if so |
-| `io_system` `logic_keyvalue` alias removal, `io_handlers` registering `_STATE_INPUTS` on `logic_state` only | 1 | upstream now matches: the store is `LogicState` only, no class alias, no I/O alias (see §4.8) |
-| `console_commands` `inspect`, `main_window` passed to dispatch | 3 | upstream API 1.4.0 console commands take `(args, main_window, logic, play_mode)`; inspect per 4.3 |
-| `main_window` title/About branding | 3 | product name from config, not a fork |
-| `main_window` reset-prompt-on-play, `_reset_game_progress` | 4 | game menu action |
-| `main_window` standalone/kiosk play, shortcut suspension during play, layout defaults | 3 | review each against current main_window; port only what is missing |
-| `main_window` removal of procedural map generator | 4 | leave Fio's generator; hide via product config if needed |
-| `scene_hierarchy` match-whole-word | 1 | upstream |
-| `SettingsWindow` GAME tab (launcher, mouse control) | 3 | settings tab registration seam or generic "Game" settings |
-| `floating_windows.NpcDebugWindow` | 3 | generic inspector window (4.3) |
-| `editor/launcher.py`, `main.py` splash/launcher | 4 | game-owned launcher invoked by a generic startup hook |
+The migration added an application-level combat policy hook:
 
-### 4.5 Plugins
+- Fio remains responsible for dense enemy selection and MonsterTable processing.
+- MiniWind supplies authored attack style/loadout policy.
+- Combat loadouts determine melee/ranged/spell behaviour without moving the dense AI loop into game/.
+- Game-specific damage policy can be supplied at the application seam while Fio retains the default fallback behaviour.
 
-| MiniWind delta | Cat | 2.5 destination |
-|---|---|---|
-| builtin-game surface | 1 | upstream `register_builtin_game` |
-| entity wizards, singletons, extra fields, console commands | 1 | upstream API 1.4.0 |
-| `MANDATORY_PLUGINS = ("bigworld",)` | 3 | minimal generic mandatory-plugin config (product setting), not a BigWorld fork |
-| BigWorld `enabled = True` | 3 | driven by mandatory config; plugin stays verbatim |
-| BigWorld `logickeyvaluestore` in `DEFAULT_PERSISTENT_TYPES` removed | — | **not** carried: upstream 2.5.10 still lists the dead token, but it matches no class, so it is inert. BigWorld stays verbatim; raise the one-line cleanup upstream (see §4.8) |
+The attack-style hook is installed by the game host when play starts.
 
-### 4.6 game/ → Fio dependencies
+One lifecycle follow-up remains: the class-level engine hook should have a symmetric uninstall/clear operation when play stops, so repeated play sessions cannot retain stale game policy.
 
-`game/` imports: `editor.things.{Monster,Thing,Light,LogicState,ENTITY_TYPES}`,
-`editor.property_editor.CollapsibleSection`, `editor.debug_console`, `editor.ui`,
-`engine.monster_constants`, `engine.spatial.{CELL_SIZE,PARKED_*,TIER_*}`,
-`engine.floating_windows.{FloatingWindow,CallbackWindow}`,
-`plugins.{api,manager,entitybase}` — all still exist in 2.5.10.
-Plus the misplaced MiniWind modules `engine.gore`, `engine.facing`,
-`engine.combat_loadout` → **move to `game/`** (cat 4).
+### 3.3 Actor simulation
 
-Reaching into internals to review during Phase 4/5: `logic._faction_hostile`,
-`logic._player_damage_filter`, direct `properties` writes for render state
-(`_hit_flash`, `_opacity`, `_facing`) — the last group must become journalled
-attribute writes or they will never reach EntityTable.
+The previous monolithic gameplay additions were split into domain systems under game/sim/.
 
-### 4.7 Maps, save/load
+Current responsibilities include:
 
-| Item | Finding |
-|---|---|
-| `maps/village_walled_source.json` | format v3, 303 things: creature 131, marker 55, light 30, npc 28, container 19, itempickup 11, speaker 10, creaturespawn 10, path_node 4, spellbook 1, miniwindsettings 1, bigworldsettings 1, playerstart 1, logic_command 1; `terrain_data` in the old sculpt-offset form — must be verified against the new dense TerrainTable / GPU heightfield loader |
-| expanded world (post-migration) | `game/tools/expand_world.py` grew the terrain to 40 x 40 chunks with `mesh_scale: 1.0`, moved the outlying sites rigidly with their ground (re-sculpted at the new place), added a heightmap-overlay mountain range and the Emberpeak Shrine, and removed the 2.4 invisible floor slabs (2.5 terrain is solid). BigWorld `terrain_fill` must stay off for this map: it re-bounds the terrain in play, and the heightmap overlay is laid over the authored bounds |
-| overhead performance (post-migration) | BigWorldSettings `fit_overhead_camera` (MiniWind's plugin copy, off by default) sizes residency from `LogicThread.overhead_ground_footprint()` (screen corners + 256, refreshed every 256 units of movement) and makes NEAR the screen rectangle; BigWorld publishes `logic.sim_tiers_fit_view`, and only then do MonsterAI (one pass per 0.2 s, per-row delta) and MiniwindSession (one tick in 4) treat ACTIVE as off screen. `terrain_stream` streams terrain chunks inside the authored bounds (heightmap overlay stays aligned). Parked monsters are left out of the AI pass; the map has no BigWorld debug overlay; `water_quality = cheap`; water/glass skip the frame copy when none is in view |
-| unknown entity preservation | **1** — current Fio keeps unknown types as `UnresolvedThing` and round-trips them verbatim |
-| `.fiosave` | MiniWind never forked `savegame.py`; it persists via public properties + `LogicState`/`GlobalStore`. Fio 2.5 now writes delta saves against the base map and restores BigWorld cells — needs regression coverage, not code |
-| derived `custom_dead`, transient look keys | must not leak into saved maps / saves |
+- events.py — event production
+- perception.py — sensory interpretation
+- knowledge.py — certainty, sources, gossip decay and reporting
+- crime.py — crime and consequence state
+- appraisal.py — appraisal / interpretation
+- production.py — production/economic behaviour
+- director.py — generic orchestration and explanation trail
 
-### 4.8 Key/value store → `LogicState`
+The resulting system is deliberately independent of Fio's renderer and Qt layer.
 
-The pre-2.4 `LogicKeyValueStore` entity no longer exists in Fio; `LogicState`
-(`editor/things.py`) is the only persistent named store, and Fio's own tests
-enforce it (`tests/logic/test_logic_state.py`: no `LogicKeyValueStore`
-attribute; a `logic_keyvalue` record no longer resolves to `LogicState`).
+NPC simulation also has explicit distance tiers:
 
-* Surviving "keyvalue" names in Fio are **method names on the LogicState path**,
-  not the removed entity: `IOManager.query_keyvalue` / `set_keyvalue` read and
-  write `LogicState` stores (entity first, then `LogicState._persistent_registry`),
-  and `PropertyEditor._build_keyvalue_group` is the LogicState table editor.
-  MiniWind's State Store quick-insert suggestions (§4.4) attach to that group.
-* MiniWind content is already clean: no `keyvalue` reference in `game/`,
-  `game/data/`, `quests/` or `maps/`; game state goes through `LogicState` and
-  `plugins.api.GlobalStore` (which binds to the same registry).
-* The one upstream remnant is the inert `"logickeyvaluestore"` string in
-  `plugins/bigworld/manager.py` `DEFAULT_PERSISTENT_TYPES`.
-* **Test conflict:** MiniWind's
-  `tests/integration/test_miniwind_boundaries.py::test_the_pre_2_4_key_value_store_is_removed_from_code`
-  scans the Fio packages *and* `game/` for the old tokens, so it would fail on
-  verbatim upstream BigWorld. Rescope it to MiniWind-owned code (`game/`,
-  MiniWind tests excluded as now) and rely on Fio's own
-  `test_logic_state.py` for the engine side, rather than forking BigWorld to
-  satisfy it. Also update `README.md:389`, which describes the old store.
+- **NEAR** — full decisions and movement
+- **ACTIVE** — reduced/staggered decision cadence
+- **DISTANT** — coarse schedule/clock behaviour
+- **DORMANT** — parked state
+
+BigWorld remains the authority for spatial relevance.
+
+### 3.4 BigWorld and overhead play
+
+MiniWind's overhead mode is now integrated with Fio BigWorld rather than using a separate world-size mechanism.
+
+The migrated path includes:
+
+- overhead camera fitting
+- residency sized from the visible overhead footprint
+- sim_tiers_fit_view publication by BigWorld
+- reduced ACTIVE simulation cadence when actors are outside the fitted overhead view
+- terrain streaming within the authored world
+- parked monsters excluded from active AI processing
+- large authored terrain/world expansion without reverting to the old hard-distance gameplay cutoff
+
+This is the basis for MiniWind acting as a real large-world test of Fio's BigWorld architecture.
+
+### 3.5 Rendering / EntityTable migration
+
+The most important renderer change was replacing MiniWind's old per-NPC OpenGL presentation path.
+
+The old model:
+
+> iterate actors → issue Python-side draw work per actor
+
+is no longer the intended path.
+
+The migrated model is:
+
+> authored/game state → journalled attributes → EntityTable / dense render state → instanced sprite rendering
+
+The migration retained:
+
+- actor heading
+- render opacity / fade
+- dead identity
+- overhead presentation
+- actor-held weapon presentation requirements
+- ground/render layering requirements
+
+Where Fio already had a journalled render attribute, MiniWind uses it rather than creating a parallel render-state system.
+
+### 3.6 Overhead camera / player representation
+
+MiniWind's overhead gameplay was brought onto the 2.5 camera path rather than keeping its earlier specialised draw architecture.
+
+The migrated game-side behaviour includes:
+
+- top-down NPC presentation
+- player overhead presentation
+- mouse-control / pointer aiming
+- projectile orientation from published velocity
+- game-specific player/weapon presentation
+- cross-cursor interaction
+- overhead-compatible AI scheduling
+
+Fio's normal first-person camera remains intact.
+
+### 3.7 Editor and plugin integration
+
+MiniWind-specific editor behaviour was moved behind Fio 2.5 plugin/API seams.
+
+The migration retained game-specific needs such as:
+
+- entity presentation rules
+- property/editor metadata
+- inspector providers
+- game console commands
+- mandatory BigWorld configuration
+- game launcher/UI integration
+- game-owned settings
+
+Fio's generic editor/plugin APIs remain the implementation boundary instead of MiniWind carrying a permanent editor fork.
+
+### 3.8 Save/load and authored world
+
+The authored MiniWind world remains game content, not engine code.
+
+The migrated world includes:
+
+- the expanded terrain/world
+- NPCs, creatures, markers, lights, containers and pickups
+- schedules/quests/game data
+- BigWorld settings
+- LogicState/global game state
+
+Unknown entity types continue to round-trip through Fio's unresolved-entity path, rather than requiring MiniWind to own another save/load fork.
+
+Derived presentation state such as dead-sprite identity must remain derived and must not become authored map data.
 
 ---
 
-## 5. Execution plan (Phases 2+)
+## 4. What was deliberately removed or superseded
 
-1. **Substrate**: replace `engine/ editor/ plugins/ player/ tests/ conftest.py`
-   with Fio `f612655e` verbatim; move `engine/{gore,facing,combat_loadout}` into
-   `game/`; keep MiniWind content (`game/ maps/ quests/ assets/`). Run Fio's own
-   suite green before touching MiniWind.
-2. **Seams** (one commit each, producer + consumer + test): logic-thread hooks
-   (4.1); AI team-relation matrix + damage roll (4.2); editor API 1.5 with editor
-   consumers (4.4); mandatory-plugin config (4.5).
-3. **Actor visuals**: journalled heading/alpha/tint attributes → EntityTable
-   columns → instanced sprite; `game/actor_look.py` owns policy. Delete every
-   per-actor draw path.
-4. **Overhead**: player presentation, attached weapon sprites, ground layering,
-   projectiles/arrows through the dense path.
-5. **Game UI**: pause menu, inspector, launcher, mouse control, settings — as game
-   code on generic seams.
-6. **Tests & GL validation** per the brief's Phase 11/12 list, with Fio's own
-   regression and shader suites as acceptance criteria.
+The migration explicitly discarded the 2.4-era approaches that no longer fit Fio 2.5:
+
+- old renderer/draw paths
+- MiniWind's per-NPC OpenGL draw loop
+- renderer-side MiniWind snapshot plumbing
+- duplicate sprite shader mechanisms where EntityTable already provides the state
+- old LogicKeyValueStore architecture
+- engine-owned game policy that belongs in game/
+- unnecessary duplication of Fio systems which already exist upstream
+
+The rule throughout the migration was:
+
+> **Do not preserve a 2.4 mechanism merely because it existed in MiniWind.**
+
+Where Fio 2.5 already supplied the capability, MiniWind moved to the upstream implementation.
+
+---
+
+## 5. Game systems now owned by MiniWind
+
+The following remain intentionally outside generic Fio:
+
+- faction relationships and social semantics
+- actor appearance policy
+- combat loadouts and attack-style policy
+- schedules and daily routines
+- perception / knowledge / gossip
+- crime and consequences
+- appraisal and behavioural interpretation
+- production/economic behaviour
+- quests and world-specific progression
+- game UI and game launcher behaviour
+
+These are not engine features that need to be upstreamed merely because MiniWind uses them.
+
+---
+
+## 6. Architectural decisions recorded by the migration
+
+### Dense data remains the engine boundary
+
+Fio's high-frequency systems continue to operate on dense numeric data. MiniWind does not reintroduce Python object traversal into the render/AI hot path merely to make the game layer convenient.
+
+### Domain logic remains ordinary game code
+
+The game/sim/ layer is allowed to be expressive and object-oriented where that makes the game model clear. It is not part of the renderer's dense numerical core.
+
+### BigWorld owns relevance
+
+World scale and actor residency are not solved by another MiniWind-specific global distance cutoff. Spatial relevance belongs to Fio BigWorld and its residency tiers.
+
+### MiniWind is not a second engine
+
+MiniWind deliberately depends on Fio for the world machine. It adds game semantics and content; it does not recreate Fio's renderer, terrain, spatial system, or simulation infrastructure.
+
+---
+
+## 7. Known post-migration follow-ups
+
+These are **follow-ups after the migration**, not reasons to consider the migration incomplete.
+
+### Faction-aware dense Monster AI
+
+MiniWind installs logic._faction_hostile, but the dense MonsterAI targeting path currently still derives hostility from MonsterTable team differences. The intended next step is a dense team-relation representation (for example a boolean relation matrix plus a player-hunting mask) rather than a per-pair Python callback.
+
+### Combat-hook lifecycle
+
+game/combat_loadout.py installs the MonsterAI attack-style hook at play start. A matching uninstall/clear path should be added at play stop.
+
+### BigWorld-aware reactive simulation population
+
+The current MiniWind director population can still include live actors broadly. As world scale increases, reactive simulation should be made explicitly tier-aware: interactive NEAR/ACTIVE actors, coarse DISTANT state progression, and persisted DORMANT state.
+
+### Actor identity
+
+Death bookkeeping still has some name-based state. Stable UUIDs should be used for runtime identity and persistence wherever possible.
+
+### WorldIndex duplication
+
+WorldIndex and Fio's MonsterTable both maintain dense actor/query information. This is not automatically a bug. Consolidation should only happen if profiling shows that the duplication is material.
+
+### Upstream Fio synchronisation
+
+MiniWind's embedded Fio snapshot should be reviewed against subsequent Fio 2.5.10 changes. In particular, newer upstream overhead/relevance plumbing has moved beyond MiniWind's sim_tiers_fit_view snapshot.
+
+This should be handled as a normal upstream sync, with MiniWind-specific seams preserved—not by reopening the 2.4 migration.
+
+---
+
+## 8. Documentation state after migration
+
+This file is the **historical migration record**.
+
+It is no longer a work plan and should not contain instructions such as:
+
+- "replace the engine"
+- "Phase 1 archaeology"
+- "no engine code changed yet"
+- "future migration phases"
+
+Future work should be recorded as normal maintenance/synchronisation/audit work against the completed Fio 2.5 architecture.
+
+---
+
+## 9. Final state
+
+The 2.4 → 2.5 MiniWind migration is **complete** as represented by the merged main branch at c56184506a.
+
+The important result is not merely that the code runs on Fio 2.5.10. It is that MiniWind now exercises the architecture in the way Fio 2.5 was intended to work:
+
+**Fio owns the world machinery; MiniWind owns the world.**
