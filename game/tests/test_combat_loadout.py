@@ -16,6 +16,7 @@ Run:  python -m pytest engine/tests/test_combat_loadout.py -q
 
 from __future__ import annotations
 
+import pytest
 import os
 import sys
 
@@ -212,6 +213,7 @@ def test_an_actor_with_no_choice_never_gets_a_live_weapon_written():
     assert "_active_weapon" not in thing.properties
 
 
+@pytest.mark.qt
 def test_the_renderer_shows_whatever_is_actually_in_hand():
     from editor.things import Monster
 
