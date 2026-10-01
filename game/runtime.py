@@ -369,6 +369,9 @@ class MiniwindSession:
         self.dialogue_options = []      # for merchant/persuade extra options
         self.container_thing = None     # the world Container the player has open
         self.open_screen = None         # None | 'inventory' | 'character' | 'journal' | 'spells' | 'charcreate' | 'map' | 'levelup' | 'container'
+        #: The full map was asked for (M, a quest's *Show on map*): "player"
+        #: or (x, z, label); the host opens the pause menu's MAP page on it.
+        self.map_request = None
         self.notifications: List[Dict] = []   # timed toast messages
         self.floaters: List[Dict] = []         # floating combat text
         self._blocking = False

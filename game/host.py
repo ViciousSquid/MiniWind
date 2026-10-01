@@ -866,6 +866,8 @@ class MiniwindGame:
             session.open_screen = "journal"
         elif K_QUEST in just:
             session.open_screen = "quest"
+        elif K_MAP in just:
+            session.map_request = "player"
         elif K_SPELLS in just:
             session.open_screen = "spells"
         elif K_LEVELUP in just and session.game.character.can_level_up:
@@ -1014,6 +1016,7 @@ class MiniwindGame:
                     session._worldmap_requested = True
                     worldmap.ensure_for(logic, viewport)
                 worldmap.draw_minimap(painter, session, viewport, w, h)
+                self._serve_map_request(session, viewport)
                 # Speech bubbles over nearby NPCs (only during free play, not
                 # while a menu or conversation is open).
                 if session.open_screen is None and session.dialogue is None \
@@ -1066,6 +1069,24 @@ class MiniwindGame:
                 pass
             session.needs_char_creation = False
         session.open_screen = None
+
+    @staticmethod
+    def _serve_map_request(session, viewport):
+        """Open the pause menu's MAP page when the game asked for it (M, or a
+        quest's *Show on map*): ``session.map_request`` is ``"player"`` or a
+        ``(x, z, label)`` to ring. Deferred out of the paint pass, because
+        opening the menu grabs the frame."""
+        request = getattr(session, "map_request", None)
+        if not request:
+            return
+        session.map_request = None
+        menu = getattr(viewport, "play_menu", None)
+        if menu is None or not hasattr(menu, "open_map"):
+            return
+        focus = None if request == "player" else tuple(request)
+        session.open_screen = None
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(0, lambda: menu.open_map(focus))
 
     def _sync_loadout_window(self, session, viewport, w, h):
         """Create / remove the non-modal loadout popup on the viewport's window

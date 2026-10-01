@@ -142,3 +142,69 @@ def test_features_read_discovered_places_and_quest_objectives():
     assert f["player"] == (1.0, 2.0, 0.5)
     assert f["places"] == [("Millbrook", 5.0, 6.0)]
     assert f["quests"] == [("The Lost Ring", 30.0, 40.0, "ring", True)]
+
+
+# ----------------------------------------------------- opening from the game
+class _Menu:
+    def __init__(self):
+        self.opened = []
+
+    def open_map(self, focus=None):
+        self.opened.append(focus)
+
+
+class _ViewWithMenu:
+    def __init__(self):
+        self.play_menu = _Menu()
+
+
+class _S:
+    map_request = None
+    open_screen = "quest"
+
+
+def test_the_host_opens_the_map_for_a_request(app):
+    from ..host import MiniwindGame
+    serve = MiniwindGame._serve_map_request
+    view, session = _ViewWithMenu(), _S()
+    session.map_request = (30.0, 40.0, "The Lost Ring")
+    serve(session, view)
+    assert session.map_request is None and session.open_screen is None
+    app.processEvents()
+    assert view.play_menu.opened == [(30.0, 40.0, "The Lost Ring")]
+    session.map_request = "player"
+    serve(session, view)
+    app.processEvents()
+    assert view.play_menu.opened[-1] is None
+
+
+def test_the_quest_screen_m_key_asks_for_the_objective():
+    from ..ui import screens
+
+    class _Q:
+        id, name = "ring", "The Lost Ring"
+
+    class _Log:
+        def active_quests(self):
+            return [_Q()]
+
+        def completed_quests(self):
+            return []
+
+        def is_active(self, qid):
+            return True
+
+    class _Game:
+        quests = _Log()
+
+    class _Session:
+        game = _Game()
+        open_screen = "quest"
+        map_request = None
+
+        def quest_guidance(self, q):
+            return {"target_pos": [30.0, 0.0, 40.0]}
+
+    s = _Session()
+    screens._handle_quest(s, "m")
+    assert s.map_request == (30.0, 40.0, "The Lost Ring")
