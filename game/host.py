@@ -63,13 +63,18 @@ WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 10))
 # MiniWind editor-extension providers (registered through the generic EditorAPI
 # so generic Fio editor/engine code stays game-agnostic).
 # ---------------------------------------------------------------------------
-def _miniwind_kv_suggestions():
-    """Key/value quick-insert templates for the State Store (LogicState) editor.
+def _miniwind_kv_suggestions(store=None):
+    """Preset keys for Fio's LogicState editor (plugin API 1.5.0).
 
     Returns ``(menu_label, key, default_value, tooltip)`` rows for the store keys
     MiniWind actually uses — quest ``state``/``stage`` (one pair per authored
     quest, plus an editable ``<id>`` template) and a generic flag. Fully guarded:
-    if the data layer isn't importable this returns ``[]``."""
+    if the data layer isn't importable this returns ``[]``.
+
+    *store* is the LogicState being edited. The keys are offered for every
+    store: the session's store is named by the map's MiniWindSettings
+    ``state_store`` (default ``"miniwind"``), which this provider cannot see,
+    so filtering on the name would hide them on a map that renames it."""
     out = [
         ("Generic flag  (flag = true)", "flag", "true",
          "A simple on/off flag other entities/dialogue can test."),
@@ -156,17 +161,37 @@ def _perception_props():
     ]
 
 
-def _miniwind_inspector_snapshot(thing, monster_state, logic_thread):
-    """Build the MiniWind mental-state snapshot for the debug inspector popup.
+#: Entity types Fio's Entity Inspector shows MiniWind's mental state for: its
+#: actors, and Fio's own monsters, which run the same AI. Everything else keeps
+#: Fio's generic property view.
+INSPECTED_TYPES = ("npc", "creature", "monster")
 
-    Wraps :func:`game.mental_state.snapshot`, pulling the live session off the
-    logic thread here so the engine never needs MiniWind knowledge."""
+
+def _miniwind_inspection(entity, logic):
+    """Fio Entity Inspector document for a MiniWind actor (plugin API 1.5.0).
+
+    Wraps :func:`game.mental_state.snapshot`, looking up the actor's live AI
+    state and the MiniWind session on *logic* (None outside Play Mode), and
+    turns its prioritised task list into a section of bars, the active task
+    marked. Returns None on failure so Fio falls back to the property view."""
     try:
         from . import mental_state
-        session = getattr(logic_thread, "_miniwind", None)
-        return mental_state.snapshot(thing, monster_state=monster_state, session=session)
+        session = getattr(logic, "_miniwind", None)
+        states = getattr(getattr(logic, "monster_ai", None), "monster_states", None)
+        monster_state = states.get(id(entity), {}) if isinstance(states, dict) else {}
+        snap = mental_state.snapshot(entity, monster_state=monster_state,
+                                     session=session)
     except Exception:
         return None
+    sections = list(snap.get("sections", []))
+    tasks = snap.get("tasks", [])
+    if tasks:
+        top = max((pri for pri, _label, _active in tasks), default=1) or 1
+        sections.append(("Task list (by priority)", [
+            (("\u25b6 " if active else "") + str(label), "", pri / top)
+            for pri, label, active in tasks]))
+    return {"title": snap.get("title", ""), "subtitle": snap.get("subtitle", ""),
+            "sections": sections}
 
 
 class MiniwindGame:
@@ -555,13 +580,14 @@ class MiniwindGame:
         except Exception:
             pass
 
-        # Route MiniWind-specific editor extensions through the generic
-        # registration surface so no MiniWind knowledge lives in generic Fio
-        # editor/engine code: the State Store editor's quest-key quick-insert and
-        # the debug inspector's mental-state snapshot are supplied here.
+        # MiniWind content for Fio's plugin API 1.5.0 editor extensions: the
+        # LogicState editor's quest-key presets and the Entity Inspector's
+        # mental-state view of an actor. Fio owns both mechanisms.
         try:
             api.register_kv_suggestions(_miniwind_kv_suggestions)
-            api.register_entity_inspector(_miniwind_inspector_snapshot)
+            for _etype in INSPECTED_TYPES:
+                api.register_entity_inspector(_miniwind_inspection,
+                                              entity_type=_etype)
         except Exception as exc:
             print(f"[MiniWind] editor extension registration failed: {exc}")
         # Console commands (diceroll / quest / sim) go through Fio's console

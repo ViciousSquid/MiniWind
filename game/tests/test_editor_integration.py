@@ -115,23 +115,39 @@ def test_game_settings_is_registered_as_a_singleton():
 
 
 def test_miniwind_registers_generic_editor_extension_providers():
-    # MiniWind supplies its editor extensions through the generic registration
-    # surface, so generic Fio editor/engine code carries no MiniWind knowledge.
+    # MiniWind supplies its content through Fio's plugin API 1.5.0 editor
+    # extensions; the mechanisms are Fio's and carry no MiniWind knowledge.
     m = _mgr()
 
-    # KeyValue quick-insert suggestions (quest/flag keys) come from the game.
-    kv = m.kv_key_suggestions()
+    # LogicState preset keys (quest/flag keys) come from the game.
+    class _Store:
+        properties = {"type": "logic_state", "store_name": "miniwind"}
+    kv = m.kv_suggestions(_Store())
     keys = {row[1] for row in kv}
     assert "flag" in keys
     assert any(k.startswith("quest.") for k in keys)
 
-    # The debug inspector snapshot is provided by the game, not the engine.
+    # The Entity Inspector's mental-state view is provided by the game.
     class _T:
         properties = {"type": "npc", "npc_role": "guard", "faction": "guards",
                       "sched_state": "WORKING"}
-    snap = m.inspector_snapshot(_T(), {}, None)
-    assert snap and snap["title"].startswith("Guard")
-    assert snap["tasks"]        # the rich mental-state view, from the game
+    doc = m.inspect_entity(_T(), None)
+    assert doc and doc["title"].startswith("Guard")
+    headings = [heading for heading, _rows in doc["sections"]]
+    tasks = dict(doc["sections"])["Task list (by priority)"]
+    assert tasks and all(len(row) == 3 and 0.0 <= row[2] <= 1.0 for row in tasks)
+    assert sum(row[0].startswith("\u25b6 ") for row in tasks) <= 1
+    assert headings[-1] == "Task list (by priority)"
+
+
+def test_the_mental_state_inspector_is_only_for_actors():
+    m = _mgr()
+    for etype in ("npc", "creature", "monster"):
+        assert m.has_entity_inspector(etype), etype
+
+    class _Light:
+        properties = {"type": "light", "name": "lamp"}
+    assert m.inspect_entity(_Light(), None) is None    # Fio's property view
 
 
 def test_markers_have_distinct_per_kind_sprites():

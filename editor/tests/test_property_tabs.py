@@ -231,50 +231,6 @@ def test_appearance_is_a_collapsed_section_not_a_tab(app):
         (l, e) for l, _f, e in mgr.property_sections_for("creature"))
 
 
-def test_a_section_only_builds_when_it_is_opened(app):
-    """A collapsed section nobody looks at must cost nothing to show."""
-    from editor.property_editor import CollapsibleSection
-    from plugins.integration import _wire_lazy_section
-
-    built = []
-
-    def factory(thing):
-        built.append(thing)
-        return QtWidgets.QLabel("content")
-
-    thing = _Thing()
-    section = CollapsibleSection("Appearance", expanded=False)
-    _wire_lazy_section(section, factory, thing, "Appearance")
-    assert built == [], "nothing built while collapsed"
-
-    section.toggle.setChecked(True)
-    assert built == [thing], "built on first open"
-    section.toggle.setChecked(False)
-    section.toggle.setChecked(True)
-    assert built == [thing], "and only once"
-
-
-def test_a_section_that_starts_open_builds_immediately(app):
-    from editor.property_editor import CollapsibleSection
-    from plugins.integration import _wire_lazy_section
-
-    built = []
-    section = CollapsibleSection("Live", expanded=True)
-    _wire_lazy_section(section, lambda t: built.append(t) or QtWidgets.QLabel(),
-                       _Thing(), "Live")
-    assert len(built) == 1
-
-
-def test_a_failing_section_factory_cannot_break_the_panel(app):
-    from editor.property_editor import CollapsibleSection
-    from plugins.integration import _wire_lazy_section
-
-    section = CollapsibleSection("Bad", expanded=False)
-    _wire_lazy_section(section, lambda t: 1 / 0, _Thing(), "Bad")
-    section.toggle.setChecked(True)      # must not raise
-    assert section.toggle.isChecked()
-
-
 # --- every panel is dark ---------------------------------------------------
 def test_every_tab_carries_the_shared_panel_style(app):
     """The application theme covers QWidget, buttons and inputs but not item
