@@ -56,6 +56,10 @@ _SUBTLE = QColor(160, 160, 168)
 _CAPTION = QColor(140, 140, 148)
 
 
+
+#: The world-pause owner key the menu holds while it is open.
+PAUSE_OWNER = "pause_menu"
+
 class PauseMenu:
     """Escape-menu state machine, renderer and input handler for play mode."""
 
@@ -118,27 +122,17 @@ class PauseMenu:
         self.view.update()
 
     def _set_world_paused(self, paused: bool):
-        """Freeze / thaw the simulation.
+        """Freeze / thaw the simulation while the menu is on screen.
 
-        Set two ways, exactly like the ``inspect`` console command: the engine's
-        ``gameplay_paused`` stops the base logic thread and the monster AI, and
-        the sticky ``_menu_paused`` request is OR-ed back in by any game host
-        that recomputes the pause flag from its own state every tick (see
-        ``game/host.py``), so a host cannot thaw the world behind the menu.
+        Holds the menu's own world-pause request on the logic thread
+        (``LogicThread.set_world_paused``), so the game's screens and the
+        actor picker, which hold theirs, can neither thaw the world behind
+        the menu nor be thawed by it closing.
         """
         lt = getattr(self.view, 'logic_thread', None)
-        if lt is None:
-            return
-        try:
-            if paused:
-                self._prev_pause = bool(getattr(lt, 'gameplay_paused', False))
-                lt._menu_paused = True
-                lt.gameplay_paused = True
-            else:
-                lt._menu_paused = False
-                lt.gameplay_paused = bool(getattr(self, '_prev_pause', False))
-        except Exception:
-            pass
+        set_paused = getattr(lt, 'set_world_paused', None)
+        if set_paused is not None:
+            set_paused(PAUSE_OWNER, bool(paused))
 
     def _grab_blurred_frame(self):
         """A cheap blur of the current frame: shrink it hard, then grow it back.

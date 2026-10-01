@@ -49,3 +49,13 @@ def install() -> None:
         _integration.apply()
     except Exception as exc:  # pragma: no cover - editor/PyQt may be absent
         print(f"[MiniWind] editor integration skipped: {exc}")
+
+
+def show_launcher(root_directory, settings_path) -> str:
+    """MiniWind's startup launcher: ``"play"``, ``"edit"`` or ``"quit"``.
+
+    Called by the application bootstrap (main.py) before the main window is
+    built, when ``[Startup] show_launcher`` is on.
+    """
+    from .ui.launcher import launch
+    return launch(root_directory, settings_path)

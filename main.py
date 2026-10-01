@@ -118,6 +118,31 @@ dark_stylesheet = """
     }
 """
 
+def _missing_mandatory_plugins(config):
+    """Names in ``[Plugins] mandatory`` that discovery did not find.
+
+    A build that lists a plugin as mandatory is made of it: it is enabled
+    here, whatever ``[Plugins] disabled`` says, and its absence stops the
+    launch with one clear message rather than surfacing later as unknown
+    entities halfway into a map.
+    """
+    names = [n.strip() for n in config.get('Plugins', 'mandatory', fallback='').split(',')
+             if n.strip()]
+    if not names:
+        return []
+    from plugins.manager import get_manager, load_plugins
+    load_plugins()
+    manager = get_manager()
+    missing = []
+    for name in names:
+        plugin = manager.find_plugin(name)
+        if plugin is None:
+            missing.append(name)
+        else:
+            manager.set_enabled(plugin, True)
+    return missing
+
+
 if __name__ == "__main__":
 
     # ---------------------------------------------------------
@@ -132,6 +157,8 @@ if __name__ == "__main__":
         raise SystemExit(_player_main([]))
 
     from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QProgressBar
+    import configparser
+    import importlib
     from PyQt5.QtGui import QPixmap, QSurfaceFormat, QIcon
     from PyQt5.QtCore import Qt
     from editor.main_window import MainWindow
@@ -173,7 +200,6 @@ if __name__ == "__main__":
     fmt.setDepthBufferSize(24)
     fmt.setStencilBufferSize(8)
 
-    import configparser
     config = configparser.ConfigParser()
     config.read('settings.ini')
     vsync = config.getboolean('Display', 'vsync', fallback=True)
@@ -229,6 +255,34 @@ if __name__ == "__main__":
     install_excepthook()
     app.setStyleSheet(dark_stylesheet)
 
+    # The user's font size, applied up front so the splash and a game's
+    # launcher match the editor rather than only the main window honouring it.
+    app_font = app.font()
+    app_font.setPointSize(config.getint('Display', 'font_size', fallback=11))
+    app.setFont(app_font)
+
+    # ---------------------------------------------------------
+    # Built-in game layer ([Startup] game_module in settings.ini)
+    # ---------------------------------------------------------
+    # Loaded by name, before the main window builds its menus, so the editor
+    # and engine never import a game. Its plugins must be present first.
+    game_module = None
+    game_name = config.get('Startup', 'game_module', fallback='').strip()
+    if game_name:
+        missing = _missing_mandatory_plugins(config)
+        if missing:
+            message = (f"{missing[0].capitalize()} plugin is mandatory: "
+                       f"could not be located")
+            print(f"\nerror: {message}", file=sys.stderr)
+            try:
+                from PyQt5.QtWidgets import QMessageBox
+                QMessageBox.critical(None, "Cannot start", message)
+            except Exception:
+                pass
+            sys.exit(1)
+        game_module = importlib.import_module(game_name)
+        game_module.install()
+
     # Set application icon
     icon_path = os.path.join(root_directory, 'assets', 'icon.ico')
     if os.path.exists(icon_path):
@@ -248,6 +302,25 @@ if __name__ == "__main__":
     splash = ProgressSplashScreen('assets/splash.png')
     splash.show()
     splash.set_progress(5, "Configuring OpenGL...")
+
+    # A game may ask what this launch is for (play or edit) and let the
+    # display be set up first. It writes settings.ini, so re-read the parts
+    # that must be applied before the first OpenGL widget exists.
+    launch_choice = "edit"
+    show_launcher = getattr(game_module, 'show_launcher', None)
+    if show_launcher is not None and config.getboolean(
+            'Startup', 'show_launcher', fallback=True):
+        splash.hide()
+        QApplication.processEvents()
+        launch_choice = show_launcher(root_directory,
+                                      os.path.join(root_directory, 'settings.ini'))
+        if launch_choice == "quit":
+            sys.exit(0)
+        config.read('settings.ini')
+        fmt.setSwapInterval(
+            1 if config.getboolean('Display', 'vsync', fallback=True) else 0)
+        QSurfaceFormat.setDefaultFormat(fmt)
+        splash.show()
 
     splash.set_progress(25, "Building editor UI...")
 
@@ -272,5 +345,11 @@ if __name__ == "__main__":
 
     window.show()
     splash.finish(window)
+
+    if launch_choice == "play":
+        # One event-loop turn later, so the default map the main window queues
+        # has loaded and the scene has a Player Start to spawn at.
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(0, window.enter_kiosk_mode)
 
     sys.exit(app.exec_())

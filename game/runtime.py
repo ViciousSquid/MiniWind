@@ -483,7 +483,7 @@ class MiniwindSession:
         self._sim_hours = 0.0
         if self.logic is not None:
             try:
-                self.logic.gameplay_paused = True
+                self.logic.set_world_paused("miniwind.screen", True)
             except Exception:
                 pass
 

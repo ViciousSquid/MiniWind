@@ -1,5 +1,5 @@
 """
-Tests for the play-mode pause menu (:mod:`engine.pause_menu`).
+Tests for the play-mode pause menu (:mod:`game.ui.pause_menu`).
 
 Escape in a standalone play session used to end the game outright. It now
 freezes the world and raises a menu — NEW GAME / LOAD / SAVE / EDITOR / QUIT,
@@ -11,7 +11,7 @@ directly here against a stand-in viewport: these tests pin the pages, the
 freeze, the confirmations and the way out, plus the one rule the whole feature
 rests on — that a session launched from the editor keeps the old behaviour.
 
-Run:  python -m pytest engine/tests/test_pause_menu.py -q
+Run:  python -m pytest game/tests/test_pause_menu.py -q
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ QtCore = pytest.importorskip("PyQt5.QtCore")
 QtGui = pytest.importorskip("PyQt5.QtGui")
 QtWidgets = pytest.importorskip("PyQt5.QtWidgets")
 
+from ..ui import pause_menu
 from ..ui.pause_menu import SLOT_COUNT, PauseMenu, slot_name
 
 
@@ -39,11 +40,17 @@ def app(qt_app):
 
 
 class _Logic:
-    """The logic thread's two pause flags, and nothing else."""
+    """The logic thread's per-owner world pause (LogicThread.set_world_paused)."""
 
     def __init__(self):
-        self.gameplay_paused = False
-        self._menu_paused = False
+        self.owners = set()
+
+    def set_world_paused(self, owner, paused=True):
+        (self.owners.add if paused else self.owners.discard)(owner)
+
+    @property
+    def world_paused(self):
+        return bool(self.owners)
 
 
 class _Editor:
@@ -150,19 +157,19 @@ def test_opening_freezes_the_world_and_closing_thaws_it(app):
     logic = menu.view.logic_thread
     menu.open()
     assert menu.active
-    assert logic.gameplay_paused and logic._menu_paused
+    assert logic.owners == {pause_menu.PAUSE_OWNER}
     menu.close()
     assert not menu.active
-    assert not logic.gameplay_paused and not logic._menu_paused
+    assert not logic.world_paused
 
 
 def test_closing_restores_a_pause_that_was_already_in_effect(app):
     """A game screen open behind the menu must still be paused afterwards."""
     menu = _menu()
-    menu.view.logic_thread.gameplay_paused = True
+    menu.view.logic_thread.set_world_paused("game.screen", True)
     menu.open()
     menu.close()
-    assert menu.view.logic_thread.gameplay_paused
+    assert menu.view.logic_thread.owners == {"game.screen"}
 
 
 def test_held_keys_are_dropped_so_the_player_does_not_walk_off_on_resume(app):
@@ -308,7 +315,7 @@ def test_escape_backs_out_one_page_at_a_time_then_resumes(app):
 
     menu.handle_key(_key(QtCore.Qt.Key_Escape))
     assert not menu.active
-    assert not menu.view.logic_thread.gameplay_paused
+    assert not menu.view.logic_thread.world_paused
 
 
 def test_the_menu_swallows_gameplay_keys_while_it_is_up(app):

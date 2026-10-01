@@ -1,5 +1,5 @@
 """
-Tests for the startup launcher (:mod:`editor.launcher`).
+Tests for the startup launcher (:mod:`game.ui.launcher`).
 
 Qt-dependent, so the module skips where PyQt5 is not installed and the rest of
 the suite stays headless. Where Qt is available these run offscreen and need no
@@ -26,7 +26,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 QtCore = pytest.importorskip("PyQt5.QtCore")
 QtWidgets = pytest.importorskip("PyQt5.QtWidgets")
 
-from editor import launcher as lx   # noqa: E402
+from ..ui import launcher as lx   # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -245,7 +245,7 @@ def test_launch_never_raises(monkeypatch):
 def test_no_pixel_font_sizes_anywhere():
     """The repo's rule (see editor/logic_wizard.py): text inherits the
     application font so it honours font_size and OS display scaling."""
-    with open(os.path.join(ROOT, "editor", "launcher.py")) as f:
+    with open(os.path.join(ROOT, "game", "ui", "launcher.py")) as f:
         source = f.read()
     assert "font-size:" not in source
     assert "setPixelSize" not in source

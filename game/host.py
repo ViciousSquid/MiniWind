@@ -161,6 +161,11 @@ def _perception_props():
     ]
 
 
+#: The world-pause owner key MiniWind holds while a modal screen or a
+#: conversation is open (see LogicThread.set_world_paused).
+SCREEN_PAUSE = "miniwind.screen"
+
+
 #: Entity types Fio's Entity Inspector shows MiniWind's mental state for: its
 #: actors, and Fio's own monsters, which run the same AI. Everything else keeps
 #: Fio's generic property view.
@@ -697,7 +702,7 @@ class MiniwindGame:
             session.open_screen = "charcreate"
             # Freeze the world from frame zero so no combat/sound runs behind the
             # character-creation screen before the first plugin tick.
-            logic.gameplay_paused = True
+            logic.set_world_paused(SCREEN_PAUSE, True)
         logic._miniwind = session
         logic.game_session = session
         self._prev_keys = frozenset()
@@ -732,19 +737,16 @@ class MiniwindGame:
         just = self._just_pressed(ctx)
 
         # While a modal screen (character creation, inventory, journal…) or a
-        # conversation is open, the *world* is frozen: freeze it here so the
-        # engine idles the monsters/physics, advance nothing, and route input to
-        # the menu only. Time, NPC schedules and combat resume on close.
-        world_paused = (session.needs_char_creation or session.open_screen is not None
-                        or session.dialogue is not None
-                        # The 'inspect' console command freezes the world while the
-                        # player examines an actor (engine sets this on the logic
-                        # thread; see qt_game_view.enter_inspect_mode).
-                        or getattr(logic, "_inspect_paused", False)
-                        # The play-mode Escape menu (engine/pause_menu.py) sets
-                        # this for as long as it is on screen.
-                        or getattr(logic, "_menu_paused", False))
-        logic.gameplay_paused = world_paused
+        # conversation is open, the *world* is frozen: hold MiniWind's own
+        # world-pause request so the engine idles the monsters/physics, advance
+        # nothing, and route input to the menu only. Time, NPC schedules and
+        # combat resume on close. Other owners (the actor picker behind
+        # 'inspect', the Escape menu) hold their own requests, so the game's
+        # own freeze below follows the engine's verdict over all of them.
+        logic.set_world_paused(SCREEN_PAUSE, bool(
+            session.needs_char_creation or session.open_screen is not None
+            or session.dialogue is not None))
+        world_paused = logic.world_paused
 
         # The interact key (E) both opens a container/conversation and, inside
         # a screen, closes it. The engine latches its use-key edge the instant E
