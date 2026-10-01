@@ -14,7 +14,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from engine import gore
+from ..rpg import gore
 
 
 def test_normal_kill_does_not_gib():
@@ -64,7 +64,7 @@ def test_mark_gibbed_only_flags_on_overkill():
 
 
 def test_miniwind_actors_record_max_health():
-    from game import entities
+    from .. import entities
     npc = entities.NPC(pos=[0, 0, 0], properties={"npc_role": "guard"})
     assert npc.properties["max_health"] == npc.properties["health"]
     wolf = entities.Creature(pos=[0, 0, 0], properties={"npc_role": "wolf"})
@@ -73,7 +73,7 @@ def test_miniwind_actors_record_max_health():
 
 def test_game_state_wrapper_flags_gibbed():
     # The RPG-core wrapper delegates to engine.gore and is import-guarded.
-    from game.rpg.game_state import _mark_gibbed
+    from ..rpg.game_state import _mark_gibbed
     props = {"max_health": 30}
     assert _mark_gibbed(props, 60, -30) is True
     assert props.get("gibbed") is True
@@ -82,7 +82,7 @@ def test_game_state_wrapper_flags_gibbed():
 
 # --- splatter selection (physical blood vs magical disintegration) ---------
 def test_stain_folders_ship_with_defaults():
-    from game.rpg import gib
+    from ..rpg import gib
     physical = gib.stain_paths(magical=False)
     magical = gib.stain_paths(magical=True)
     assert len(physical) >= 2 and all(p.endswith(".png") for p in physical)
@@ -94,7 +94,7 @@ def test_stain_folders_ship_with_defaults():
 
 
 def test_severity_picks_mild_vs_severe_stain():
-    from game.rpg import gib
+    from ..rpg import gib
     mild = gib.stain_for(120, 100, magical=False)     # 1.2x -> mildest
     severe = gib.stain_for(400, 100, magical=False)    # >=3x -> severest
     assert "mild" in mild
@@ -103,7 +103,7 @@ def test_severity_picks_mild_vs_severe_stain():
 
 
 def test_magical_gib_uses_disintegration_splatter():
-    from game.rpg.game_state import _mark_gibbed
+    from ..rpg.game_state import _mark_gibbed
     physical = {"max_health": 100}
     assert _mark_gibbed(physical, 200, -100, magical=False) is True
     assert physical["gib_magical"] is False

@@ -23,10 +23,10 @@ import json
 import os
 import uuid
 
-from game import data
-from game.entities import sprite_for, portrait_for
-from game.rpg import schedule as sched
-from game.rpg import bestiary
+from .. import data
+from ..entities import sprite_for, portrait_for
+from ..rpg import schedule as sched
+from ..rpg import bestiary
 
 
 def _uid():
@@ -119,7 +119,7 @@ def build(settlement: dict, base: dict) -> dict:
         "name": "miniwind", "store_name": "miniwind", "initial_data": {}}))
 
     # --- markers (authored anchors NPCs reference by name) ---
-    from game.entities import marker_sprite
+    from ..entities import marker_sprite
     for mid, m in markers.items():
         kind = m.get("kind", "idle")
         world["things"].append(_thing("marker", m["pos"], {
@@ -211,7 +211,7 @@ def build(settlement: dict, base: dict) -> dict:
 
 def _resolve_inventory(entries):
     """Expand ``[{"id","qty"}]`` shorthand into full item stacks from the item DB."""
-    from game.rpg import items as rpg_items
+    from ..rpg import items as rpg_items
     out = []
     for e in entries:
         stack = rpg_items.make(e["id"], e.get("qty", 1))

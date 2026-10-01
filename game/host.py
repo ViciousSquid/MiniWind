@@ -63,13 +63,18 @@ WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 10))
 # MiniWind editor-extension providers (registered through the generic EditorAPI
 # so generic Fio editor/engine code stays game-agnostic).
 # ---------------------------------------------------------------------------
-def _miniwind_kv_suggestions():
-    """Key/value quick-insert templates for the State Store (LogicState) editor.
+def _miniwind_kv_suggestions(store=None):
+    """Preset keys for Fio's LogicState editor (plugin API 1.5.0).
 
     Returns ``(menu_label, key, default_value, tooltip)`` rows for the store keys
     MiniWind actually uses — quest ``state``/``stage`` (one pair per authored
     quest, plus an editable ``<id>`` template) and a generic flag. Fully guarded:
-    if the data layer isn't importable this returns ``[]``."""
+    if the data layer isn't importable this returns ``[]``.
+
+    *store* is the LogicState being edited. The keys are offered for every
+    store: the session's store is named by the map's MiniWindSettings
+    ``state_store`` (default ``"miniwind"``), which this provider cannot see,
+    so filtering on the name would hide them on a map that renames it."""
     out = [
         ("Generic flag  (flag = true)", "flag", "true",
          "A simple on/off flag other entities/dialogue can test."),
@@ -79,7 +84,7 @@ def _miniwind_kv_suggestions():
          "Current stage index of a quest. Replace <id>."),
     ]
     try:
-        from game import data
+        from . import data
         quests = data.load("quests") or {}
         for qid in sorted(quests.keys()):
             out.append((f"Quest '{qid}' state", f"quest.{qid}.state", "active",
@@ -156,17 +161,52 @@ def _perception_props():
     ]
 
 
-def _miniwind_inspector_snapshot(thing, monster_state, logic_thread):
-    """Build the MiniWind mental-state snapshot for the debug inspector popup.
+#: MiniWind is a top-down game: every play session starts in the overhead
+#: camera. The editor's own camera choice is untouched and comes back when
+#: play stops (QtGameView restores it).
+PLAY_CAMERA = "Overhead"
 
-    Wraps :func:`game.mental_state.snapshot`, pulling the live session off the
-    logic thread here so the engine never needs MiniWind knowledge."""
+#: The world-pause owner key MiniWind holds while a modal screen or a
+#: conversation is open (see LogicThread.set_world_paused).
+SCREEN_PAUSE = "miniwind.screen"
+
+
+#: Entity types Fio's Entity Inspector shows MiniWind's mental state for: its
+#: actors, and Fio's own monsters, which run the same AI. Everything else keeps
+#: Fio's generic property view.
+INSPECTED_TYPES = ("npc", "creature", "monster")
+
+
+def _miniwind_inspection(entity, logic):
+    """Fio Entity Inspector document for a MiniWind actor (plugin API 1.5.0).
+
+    Wraps :func:`game.mental_state.snapshot`, looking up the actor's live AI
+    state and the MiniWind session on *logic* (None outside Play Mode), and
+    turns its prioritised task list into a section of bars, the active task
+    marked. Returns None on failure so Fio falls back to the property view."""
     try:
         from . import mental_state
-        session = getattr(logic_thread, "_miniwind", None)
-        return mental_state.snapshot(thing, monster_state=monster_state, session=session)
+        session = getattr(logic, "_miniwind", None)
+        states = getattr(getattr(logic, "monster_ai", None), "monster_states", None)
+        monster_state = states.get(id(entity), {}) if isinstance(states, dict) else {}
+        snap = mental_state.snapshot(entity, monster_state=monster_state,
+                                     session=session)
     except Exception:
         return None
+    sections = list(snap.get("sections", []))
+    tasks = snap.get("tasks", [])
+    if tasks:
+        top = max((pri for pri, _label, _active in tasks), default=1) or 1
+        sections.append(("Task list (by priority)", [
+            (("\u25b6 " if active else "") + str(label), "", pri / top)
+            for pri, label, active in tasks]))
+    return {"title": snap.get("title", ""), "subtitle": snap.get("subtitle", ""),
+            "sections": sections}
+
+
+#: See on_play_start: the actor count from which the AI's batched enemy search
+#: is used instead of its per-actor walk.
+ENEMY_BATCH_MIN_ACTORS = 16
 
 
 class MiniwindGame:
@@ -260,6 +300,10 @@ class MiniwindGame:
                  min=1.0, max=100000.0, group="SPELLBOOK"),
             prop("respawn", "bool", "Respawns after read", default=False,
                  group="SPELLBOOK"),
+            prop("quest_item", "string", "Quest item", default="", group="SPELLBOOK",
+                 help="An item id the reader also receives -- the book as a quest "
+                      "item. A quest's 'fetch' objective for that id points its "
+                      "arrow at this book."),
         ])
         # The spawn point's rich configuration (what to spawn, group faction and
         # per-member inventory) lives in a dedicated, guided "Spawn" tab
@@ -555,13 +599,14 @@ class MiniwindGame:
         except Exception:
             pass
 
-        # Route MiniWind-specific editor extensions through the generic
-        # registration surface so no MiniWind knowledge lives in generic Fio
-        # editor/engine code: the State Store editor's quest-key quick-insert and
-        # the debug inspector's mental-state snapshot are supplied here.
+        # MiniWind content for Fio's plugin API 1.5.0 editor extensions: the
+        # LogicState editor's quest-key presets and the Entity Inspector's
+        # mental-state view of an actor. Fio owns both mechanisms.
         try:
             api.register_kv_suggestions(_miniwind_kv_suggestions)
-            api.register_entity_inspector(_miniwind_inspector_snapshot)
+            for _etype in INSPECTED_TYPES:
+                api.register_entity_inspector(_miniwind_inspection,
+                                              entity_type=_etype)
         except Exception as exc:
             print(f"[MiniWind] editor extension registration failed: {exc}")
         # Console commands (diceroll / quest / sim) go through Fio's console
@@ -636,6 +681,8 @@ class MiniwindGame:
         def _kill(entity, param, logic):
             entity.properties["dead"] = True
             entity.properties["health"] = 0
+            from engine.change_journal import touch
+            touch(entity)
             api.fire_output(entity, "OnDied")
 
         def _wake(entity, param, logic):
@@ -664,6 +711,18 @@ class MiniwindGame:
         cfg = dict(settings.properties) if settings is not None else {}
         host = getattr(self, "_host", None)
         globals_store = host.globals if host is not None else None
+        set_camera = getattr(logic, "set_camera_mode", None)
+        if set_camera is not None:
+            set_camera(PLAY_CAMERA)
+        # Nearly every MiniWind actor carries a team and asks for its nearest
+        # enemy every AI tick, so the batched search beats the per-actor walk
+        # at far smaller counts than Fio's default break-even assumes (that
+        # was measured with a few queries a tick; a village asks dozens).
+        ai = getattr(logic, "monster_ai", None)
+        if ai is not None:
+            ai.ENEMY_BATCH_MIN_MONSTERS = ENEMY_BATCH_MIN_ACTORS
+            from . import combat_loadout
+            combat_loadout.install_engine_hook()
         session = MiniwindSession(logic, cfg=cfg, globals_store=globals_store)
         session.restore()
         session.install()
@@ -671,10 +730,13 @@ class MiniwindGame:
             session.open_screen = "charcreate"
             # Freeze the world from frame zero so no combat/sound runs behind the
             # character-creation screen before the first plugin tick.
-            logic.gameplay_paused = True
+            logic.set_world_paused(SCREEN_PAUSE, True)
         logic._miniwind = session
         logic.game_session = session
         self._prev_keys = frozenset()
+        from . import music
+        if music.PLAYER.configured:
+            music.PLAYER.start()
         if host is not None:
             try:
                 host.provide("miniwind", session)
@@ -683,6 +745,8 @@ class MiniwindGame:
                 pass
 
     def on_play_stop(self, logic):
+        from . import music
+        music.PLAYER.stop()
         session = getattr(logic, "_miniwind", None)
         if session is not None:
             session.persist(force=True)
@@ -702,23 +766,25 @@ class MiniwindGame:
         session = getattr(logic, "_miniwind", None)
         if session is None:
             return
+        from . import music
+        music.PLAYER.poll()
+        # Walking brings a camera an inspector link sent away back home.
+        from .ui import inspector
+        inspector.cancel_focus_on_move(logic, ctx)
 
         just = self._just_pressed(ctx)
 
         # While a modal screen (character creation, inventory, journal…) or a
-        # conversation is open, the *world* is frozen: freeze it here so the
-        # engine idles the monsters/physics, advance nothing, and route input to
-        # the menu only. Time, NPC schedules and combat resume on close.
-        world_paused = (session.needs_char_creation or session.open_screen is not None
-                        or session.dialogue is not None
-                        # The 'inspect' console command freezes the world while the
-                        # player examines an actor (engine sets this on the logic
-                        # thread; see qt_game_view.enter_inspect_mode).
-                        or getattr(logic, "_inspect_paused", False)
-                        # The play-mode Escape menu (engine/pause_menu.py) sets
-                        # this for as long as it is on screen.
-                        or getattr(logic, "_menu_paused", False))
-        logic.gameplay_paused = world_paused
+        # conversation is open, the *world* is frozen: hold MiniWind's own
+        # world-pause request so the engine idles the monsters/physics, advance
+        # nothing, and route input to the menu only. Time, NPC schedules and
+        # combat resume on close. Other owners (the actor picker behind
+        # 'inspect', the Escape menu) hold their own requests, so the game's
+        # own freeze below follows the engine's verdict over all of them.
+        logic.set_world_paused(SCREEN_PAUSE, bool(
+            session.needs_char_creation or session.open_screen is not None
+            or session.dialogue is not None))
+        world_paused = logic.world_paused
 
         # The interact key (E) both opens a container/conversation and, inside
         # a screen, closes it. The engine latches its use-key edge the instant E
@@ -733,6 +799,9 @@ class MiniwindGame:
 
         if world_paused:
             session.tick_ui(ctx.delta)   # ages toasts/floaters only, no world sim
+            # Clicks on the open menu, queued by the UI thread (game/ui/hits).
+            from .ui import hits
+            hits.run_clicks(session)
             menu_just = just
             if getattr(self, "_suppress_interact", False):
                 menu_just = just - {K_INTERACT}
@@ -905,12 +974,16 @@ class MiniwindGame:
                         pass
             return
         session = getattr(logic, "_miniwind", None)
+        from .ui import hits
         if session is None:
+            hits.clear()
             return
         painter = ev.get("painter")
         viewport = ev.get("viewport")
         if painter is None:
             return
+        # The menus drawn below say where their buttons are (game/ui/hits).
+        hits.begin()
         # suppress the stock health/weapon HUD; the RPG draws its own.
         if viewport is not None:
             try:
@@ -931,6 +1004,10 @@ class MiniwindGame:
 
             if not session.needs_char_creation and session.open_screen != "charcreate":
                 hud.draw_time_tint(painter, session, w, h)
+                # Inspector lines (console 'inspect') lie on the world, under
+                # the HUD; their windows float above everything.
+                from .ui import inspector
+                inspector.draw_world_lines(painter, viewport, w, h)
                 hud.draw(painter, session, w, h)
                 # Speech bubbles over nearby NPCs (only during free play, not
                 # while a menu or conversation is open).
@@ -939,6 +1016,9 @@ class MiniwindGame:
                     hud.draw_bubbles(painter, session, viewport, w, h)
                 # The "stay near the guard" ring during a prison escort.
                 hud.draw_escort_ring(painter, session, viewport, w, h)
+                # "!" / "?" over heightened NPCs (a guard coming to arrest
+                # the player); shown in conversation too.
+                hud.draw_head_marks(painter, session, viewport, w, h)
             if not windowed:
                 if session.dialogue is not None:
                     dialogue_ui.draw(painter, session, w, h)
@@ -949,9 +1029,17 @@ class MiniwindGame:
             # The fade-to-black transition (e.g. paying off a bounty) sits on
             # top of everything else, including dialogue and the death screen.
             hud.draw_fade(painter, session, w, h)
+            # Keep painting while something on a menu is moving (the view
+            # otherwise repaints only for new world frames).
+            from .ui import trade_anim
+            if viewport is not None and session.open_screen == "trade" \
+                    and trade_anim.active():
+                viewport.update()
         except Exception:
             import traceback
             traceback.print_exc()
+        finally:
+            hits.end()
 
     # -- floating-window overlay hosting ------------------------------------
     _SCREEN_TITLES = {

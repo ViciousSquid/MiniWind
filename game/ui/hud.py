@@ -135,6 +135,85 @@ def draw_bubbles(painter, session, viewport, width, height):
             _draw_bubble(painter, int(sp[0]), int(sp[1]), kind)
 
 
+#: Mark images, by mark (assets/sprites/marks); loaded on first use.
+_MARK_FILES = {"!": "exclamation.png", "?": "question.png"}
+_MARK_PIXMAPS = {}
+#: When each NPC's current mark appeared: id(npc) -> (mark, monotonic time),
+#: for the pop-in.
+_MARK_SINCE = {}
+#: On-screen height of a mark (px), its pop-in time (s), and its bob.
+MARK_HEIGHT = 34
+MARK_POP_SECONDS = 0.22
+MARK_BOB_PX = 3.0
+
+
+def _mark_pixmap(mark):
+    if mark not in _MARK_PIXMAPS:
+        pm = None
+        name = _MARK_FILES.get(mark)
+        if name:
+            root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            path = os.path.join(root, "assets", "sprites", "marks", name)
+            if os.path.exists(path):
+                loaded = QPixmap(path)
+                if not loaded.isNull():
+                    pm = loaded.scaledToHeight(MARK_HEIGHT * 2, Qt.SmoothTransformation)
+        _MARK_PIXMAPS[mark] = pm
+    return _MARK_PIXMAPS[mark]
+
+
+def draw_head_marks(painter, session, viewport, width, height, now=None):
+    """Draw "!" / "?" above every NPC that has one (session.head_marks()).
+
+    Each mark pops in when it appears and bobs gently while it stays, so a
+    guard turning to come for the player catches the eye. Overhead only.
+    """
+    if viewport is None:
+        return
+    marks = getattr(session, "head_marks", None)
+    if marks is None:
+        return
+    try:
+        import glm
+        proj = viewport.projection_matrix
+        view = viewport.view_matrix
+    except Exception:
+        return
+    import time as _time
+    now = _time.monotonic() if now is None else now
+    current = marks()
+    live = set()
+    painter.save()
+    painter.setRenderHint(painter.SmoothPixmapTransform, True)
+    for npc, mark in current:
+        key = id(npc)
+        live.add(key)
+        since = _MARK_SINCE.get(key)
+        if since is None or since[0] != mark:
+            since = (mark, now)
+            _MARK_SINCE[key] = since
+        pm = _mark_pixmap(mark)
+        if pm is None:
+            continue
+        head_y = npc.pos[1] + float(npc.properties.get("sprite_height", 112)) * 0.5 + 26.0
+        sp = _world_to_screen(glm, proj, view, npc.pos[0], head_y, npc.pos[2], width, height)
+        if sp is None:
+            continue
+        age = now - since[1]
+        # Pop: grow past full size and settle (a small overshoot).
+        t = min(1.0, age / MARK_POP_SECONDS)
+        pop = 1.0 + 0.25 * math.sin(math.pi * t) if t < 1.0 else 1.0
+        pop *= min(1.0, 0.35 + t)
+        bob = MARK_BOB_PX * math.sin(age * 4.0)
+        h = MARK_HEIGHT * pop
+        w = h * pm.width() / float(pm.height())
+        painter.drawPixmap(QRectF(sp[0] - w / 2.0, sp[1] - h - 4.0 + bob, w, h),
+                           pm, QRectF(pm.rect()))
+    painter.restore()
+    for key in [k for k in _MARK_SINCE if k not in live]:
+        del _MARK_SINCE[key]
+
+
 def draw_escort_ring(painter, session, viewport, width, height):
     """While the player is being escorted to prison, ring the escort guard on
     the ground at the breakaway radius, so it's visually obvious how far the

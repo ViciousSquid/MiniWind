@@ -17,14 +17,6 @@ The :class:`PluginManager` is a process-wide singleton. It:
 
 Every call into plugin code is wrapped so a misbehaving plugin logs an error
 instead of taking down the editor or a play session.
-
-One class of plugin is exempt from all of that tolerance: a **mandatory**
-plugin (see :data:`MANDATORY_PLUGINS`). This build is built around Big World,
-so ``bigworld`` is not an optional extra that a map opts into — it ships as
-part of the product. A mandatory plugin is always loaded, always starts
-enabled, cannot be switched off by the ``Plugins`` menu, ``settings.ini`` or
-``FIO_DISABLED_PLUGINS``, and its absence is a startup failure rather than
-something to carry on without (see :meth:`PluginManager.require_mandatory_plugins`).
 """
 
 from __future__ import annotations
@@ -38,32 +30,6 @@ from typing import List, Optional, Tuple
 from .api import (API_VERSION, EditorAPI, FioPlugin, GlobalStore, RuntimeAPI,
                   TickContext, version_tuple)
 from .host import EventBus, PluginHost
-
-
-#: Plugin packages this build cannot run without. They are loaded before any
-#: opt-out is consulted, forced on at load, held on for the life of the process
-#: and required to be present at startup. Names are compared case-insensitively
-#: against both a plugin's package directory and its declared ``name``.
-MANDATORY_PLUGINS = ("bigworld",)
-
-
-class MandatoryPluginMissing(RuntimeError):
-    """A plugin this build declares mandatory could not be found.
-
-    Raised by :meth:`PluginManager.require_mandatory_plugins`, which the
-    application bootstrap calls before it builds anything. The message is the
-    one shown to the user, so it names the plugin rather than the machinery.
-    """
-
-    def __init__(self, name: str):
-        self.plugin_name = name
-        super().__init__(
-            f"{str(name).capitalize()} plugin is mandatory: could not be located")
-
-
-def is_mandatory_name(name: str) -> bool:
-    """Whether *name* (a package or plugin name) is mandatory for this build."""
-    return str(name).lower() in {n.lower() for n in MANDATORY_PLUGINS}
 
 
 def _log(message: str):
@@ -124,28 +90,22 @@ class PluginManager:
         # Normalised entity-type names that may exist at most once per map.
         # Placement paths consult this.
         self._singleton_types: set = set()
-        # Editor-extension providers a game layer registers through the
-        # EditorAPI, so game-specific editor behaviour lives with the game
-        # rather than in generic editor code:
-        #   * key/value quick-insert suggestions for the State Store editor
-        #   * a live inspector snapshot for an actor's debug popup
-        self._kv_suggestion_providers: list = []
-        self._inspector_providers: list = []
-        # Registered debug-console commands: lower-cased name -> (owner,
-        # handler, help). Offered by editor.console_commands only for names
-        # its built-in table does not already answer.
-        self._console_commands: dict = {}
         # Normalised entity-type name -> owning plugin (for package export).
         # Keyed the same way editor.things.from_dict matches: class name,
         # lowercased, underscores stripped.
         self._entity_owner: dict = {}
+        # Every I/O registration the loaded plugins have made, so they can be
+        # replayed if the process-wide IO_REGISTRY is reset out from under
+        # them. See reapply_registrations().
+        self._io_registrations: list = []
+        self._replaying_registrations = False
         # Normalised entity-type name -> entity class. Lets the player host
         # instantiate plugin entities from map data without the editor palette.
         self._entity_classes: dict = {}
         # Normalised entity-type name -> list[PropertySpec]. Optional typed
         # schemas plugins declare for their entities' editable properties.
         self._property_schemas: dict = {}
-        # Cross-level key/value store shared with map LogicState stores in the
+        # Cross-level key/value store shared with the map LogicState entities in the
         # editor, and a process-local dict in the dependency-light player.
         self.global_store = GlobalStore()
         # The open-ended extension surface: a process-wide event bus the engine
@@ -168,19 +128,20 @@ class PluginManager:
         # property tabs. Both keyed/filtered by normalised entity type.
         self._extra_fields: dict = {}       # type -> list[PropertySpec]
         self._property_tabs: list = []      # list[(label, factory, type_or_None)]
-        # list[(label, factory, type_or_None, expanded)] -- editors that belong
-        # inside the Properties tab as a collapsible section rather than as a
-        # tab of their own. A tab suits a workspace; a section suits a handful
-        # of fields that read as part of the entity's own properties.
-        self._property_sections: list = []
+        # API 1.5.0 editor extensions, each recorded with its owning plugin so
+        # a disabled plugin's contributions drop out (as Tools actions do).
+        self._property_sections: list = []  # [(plugin, label, factory, type|None, expanded)]
+        self._kv_suggestion_providers: list = []  # [(plugin, provider)]
+        self._entity_inspectors: list = []  # [(plugin, provider, type|None)]
+        self._tools_actions: list = []
+        self._menu_actions: list = []
+        self._console_commands: dict = {}
         # Disabled plugin names (by directory or plugin.name). Populated from
-        # the FIO_DISABLED_PLUGINS env var, comma-separated. A mandatory plugin
-        # named there is ignored rather than honoured: the build does not run
-        # without it, so there is nothing an opt-out could usefully mean.
+        # the FIO_DISABLED_PLUGINS env var, comma-separated.
         self._disabled = {
             n.strip().lower()
             for n in os.environ.get("FIO_DISABLED_PLUGINS", "").split(",")
-            if n.strip() and not is_mandatory_name(n.strip())
+            if n.strip()
         }
         # Plugins switched on by a loaded level (auto_enable_*), as opposed to
         # a manual menu toggle. Tracked so an empty/new scene can revert exactly
@@ -204,15 +165,20 @@ class PluginManager:
 
     # -- discovery + load ---------------------------------------------------
     def discover_and_load(self):
-        """Find and load all plugins. Safe to call repeatedly."""
+        """Find and load all plugins installed under this package. Safe to call repeatedly.
+
+        Plugins come only from the installed ``plugins/`` directory: a
+        ``.fiopak`` is a world container and never a source of code.
+        """
         if self._loaded or self._loading:
             return
         self._loading = True
 
-        package_dir = os.path.dirname(os.path.abspath(__file__))
+        roots = [os.path.dirname(os.path.abspath(__file__))]
         found = 0
         self._deferred.clear()
-        for entry in sorted(pkgutil.iter_modules([package_dir])):
+        # Name order gives a deterministic load sequence.
+        for entry in sorted(pkgutil.iter_modules(roots), key=lambda e: e.name):
             mod_name = entry.name
             if not entry.ispkg:
                 continue
@@ -221,7 +187,8 @@ class PluginManager:
             if mod_name.lower() in self._disabled:
                 self._debug(f"Skipping disabled plugin package '{mod_name}'")
                 continue
-            if mod_name in self._loaded_modules:
+            if mod_name in self._loaded_modules or \
+                    mod_name.lower() in {m.lower() for m in self._loaded_modules}:
                 continue          # already loaded by an earlier, partial pass
             self._load_one(mod_name)
             found += 1
@@ -283,6 +250,18 @@ class PluginManager:
             self._debug(f"Skipping disabled plugin '{plugin.name}'")
             return
 
+        # Name gate: one plugin per name, first one loaded wins.  The module
+        # guard above is keyed on the package directory, which is not the same
+        # question -- two directories can declare the same plugin name, and
+        # registering it a second time would give the session two plugins
+        # answering to one name, with live entity classes split between them.
+        existing = {p.name.lower() for p in self.plugins}
+        if str(getattr(plugin, "name", "")).lower() in existing:
+            self._debug(
+                f"Plugin '{plugin.name}' is already loaded; keeping the "
+                f"running one and ignoring the copy in '{mod_name}'.")
+            return
+
         # API-compatibility gate: refuse a plugin that needs a newer API than
         # this host provides, with a clear message, rather than letting it fail
         # deep inside a hook later.
@@ -318,14 +297,6 @@ class PluginManager:
         self._loaded_modules.add(mod_name)
         self._enabled_generation += 1
 
-        # A mandatory plugin starts enabled whatever it declares: bigworld ships
-        # `enabled = False` upstream as an opt-in streaming layer, but in this
-        # build it is part of the product, so the load decides its state rather
-        # than the class attribute or any persisted choice.
-        if self.is_mandatory(plugin):
-            plugin.enabled = True
-            self._debug(f"Plugin '{plugin.name}' is mandatory; forced enabled")
-
     def _verify_requirements(self):
         """Disable any plugin whose declared ``requires`` aren't all loaded.
 
@@ -341,19 +312,133 @@ class PluginManager:
             reqs = getattr(plugin, "requires", None) or []
             missing = [r for r in reqs if str(r).lower() not in available]
             if missing:
-                if self.is_mandatory(plugin):
-                    # Mandatory plugins stay on regardless; say so rather than
-                    # claiming a disable that set_enabled will refuse.
-                    self._log(
-                        f"Mandatory plugin '{plugin.name}' requires missing "
-                        f"plugin(s): {', '.join(missing)}; leaving it enabled.")
-                    continue
                 self._log(
                     f"Plugin '{plugin.name}' requires missing plugin(s): "
                     f"{', '.join(missing)}; disabling it.")
                 self.set_enabled(plugin, False)
 
     # -- property schema ----------------------------------------------------
+    def _record_tools_action(self, plugin, label: str, callback, tooltip: str = "") -> None:
+        if callable(callback):
+            self._tools_actions.append((plugin, str(label), callback, str(tooltip or "")))
+
+    def tools_actions(self):
+        return list(self._tools_actions)
+
+    def _record_menu_action(self, plugin, label: str, callback, tooltip: str = "") -> None:
+        if callable(callback):
+            self._menu_actions.append((plugin, str(label), callback, str(tooltip or "")))
+
+    def menu_actions(self):
+        return list(self._menu_actions)
+
+    def _register_console_command(self, plugin, name: str, callback, help_text: str = "") -> None:
+        key = str(name).strip().lower()
+        if key and callable(callback):
+            self._console_commands[key] = (plugin, callback, str(help_text or ""))
+
+    def has_console_command(self, name: str) -> bool:
+        entry = self._console_commands.get(str(name).strip().lower())
+        return bool(entry and self.is_enabled(entry[0]))
+
+    def console_commands(self):
+        return {
+            name: {"plugin": plugin, "help": help_text}
+            for name, (plugin, _callback, help_text) in self._console_commands.items()
+            if self.is_enabled(plugin)
+        }
+
+    def dispatch_console_command(self, name: str, args: str, logic=None,
+                                 main_window=None, play_mode: bool = False):
+        entry = self._console_commands.get(str(name).strip().lower())
+        if entry is None:
+            return False, None
+        plugin, callback, _help_text = entry
+        if not self.is_enabled(plugin):
+            return False, None
+        try:
+            return True, callback(args, main_window, logic, bool(play_mode))
+        except Exception:
+            self._log(
+                f"console command '{name}' failed for '{plugin.name}':\n"
+                f"{traceback.format_exc()}"
+            )
+            return True, None
+
+    def _record_io_registration(self, plugin, kind, entity_type, inputs, outputs):
+        """Remember an I/O registration so it can be replayed.
+
+        *kind* is 'set' for a type the plugin owns and 'extend' for additions
+        to a type it does not. See :meth:`reapply_registrations`.
+        """
+        if getattr(self, '_replaying_registrations', False):
+            return
+        self._io_registrations.append(
+            (plugin, kind, entity_type, inputs, outputs))
+
+    def reapply_registrations(self):
+        """Re-issue every registration this manager's plugins have made.
+
+        Plugin registration happens once per process: ``discover_and_load``
+        early-outs on ``self._loaded``, so a plugin's ``register()`` runs on
+        first load and never again. The registries it writes into --
+        ``editor.io_system.IO_REGISTRY`` and ``editor.things.ENTITY_TYPES`` --
+        are module-level singletons, so anything that resets one of them
+        silently strips the plugins' declarations with no way to get them back:
+        the plugin is still loaded and still enabled, but its I/O and its
+        entity types have vanished.
+
+        This replays the *recorded* registrations rather than re-running
+        ``register()``, so it cannot re-trigger whatever else a plugin does at
+        registration time, and it is safe to call at any point.
+
+        Returns the number of I/O registrations replayed.
+        """
+        try:
+            from editor.io_system import register_io
+        except Exception:
+            return 0
+
+        # Snapshot, and suppress recording: replaying through the API would
+        # otherwise append to the very list being walked.
+        pending = list(self._io_registrations)
+        self._replaying_registrations = True
+        try:
+            self._replay_io(pending, register_io)
+        finally:
+            self._replaying_registrations = False
+
+        try:
+            from editor.things import ENTITY_TYPES, ENTITY_CATEGORIES
+        except Exception:
+            return len(pending)
+
+        for key, cls in list(self._entity_classes.items()):
+            if not isinstance(cls, type):
+                continue
+            plugin = self._entity_owner.get(key)
+            ENTITY_TYPES.setdefault(cls.__name__, cls)
+            category = getattr(plugin, 'category', None) or 'Plugins'
+            ENTITY_CATEGORIES.setdefault(category, [])
+            if cls.__name__ not in ENTITY_CATEGORIES[category]:
+                ENTITY_CATEGORIES[category].append(cls.__name__)
+
+        return len(pending)
+
+    def _replay_io(self, pending, register_io):
+        for entry in pending:
+            plugin, kind, entity_type, inputs, outputs = entry
+            try:
+                if kind == 'extend':
+                    # Re-merge against the live registry rather than pinning
+                    # the core declarations as they were at load time.
+                    api = EditorAPI(self, plugin)
+                    api.extend_io(entity_type, inputs, outputs)
+                else:
+                    register_io(entity_type, list(inputs), list(outputs))
+            except Exception:
+                self._log(f"could not replay I/O registration for '{entity_type}'")
+
     def _record_property_schema(self, entity_type: str, specs):
         """Store a typed property schema for *entity_type* (normalised key)."""
         if not specs:
@@ -438,97 +523,6 @@ class PluginManager:
     def is_singleton_entity(self, type_name: str) -> bool:
         return self._normalise_type(type_name) in self._singleton_types
 
-    # -- editor-extension providers -----------------------------------------
-    def register_kv_suggestion_provider(self, provider) -> None:
-        """Register a key/value quick-insert provider for the State Store editor.
-
-        ``provider() -> list[(label, key, default_value, tooltip)]`` supplies the
-        store keys a game layer uses, so the generic editor carries no
-        game-specific knowledge.
-        """
-        if callable(provider):
-            self._kv_suggestion_providers.append(provider)
-
-    def kv_key_suggestions(self) -> list:
-        """Every registered provider's key/value quick-insert suggestions."""
-        out: list = []
-        for provider in self._kv_suggestion_providers:
-            try:
-                out.extend(provider() or [])
-            except Exception:
-                self._log(f"kv suggestion provider failed:\n{traceback.format_exc()}")
-        return out
-
-    def register_inspector_provider(self, provider) -> None:
-        """Register an actor *inspector* snapshot builder for the debug popup.
-
-        ``provider(thing, monster_state, logic_thread) -> dict | None`` returns
-        a display snapshot, letting a game supply its own view of an actor
-        without the engine importing the game.
-        """
-        if callable(provider):
-            self._inspector_providers.append(provider)
-
-    def inspector_snapshot(self, thing, monster_state=None, logic_thread=None):
-        """First non-empty snapshot from a registered provider, or None."""
-        for provider in self._inspector_providers:
-            try:
-                snap = provider(thing, monster_state, logic_thread)
-                if snap:
-                    return snap
-            except Exception:
-                self._log(f"inspector provider failed:\n{traceback.format_exc()}")
-        return None
-
-    # -- console commands (API 1.4.0) ---------------------------------------
-    def register_console_command(self, name: str, handler, help: str = "",
-                                 owner=None) -> None:
-        """Register ``handler(ctx, args)`` as the console command *name*."""
-        key = str(name or "").strip().lower()
-        if not key or not callable(handler):
-            return
-        if key in self._console_commands:
-            prev_owner = self._console_commands[key][0]
-            if prev_owner is not owner:
-                self._log(f"console command '{key}' re-registered by "
-                          f"'{getattr(owner, 'name', '?')}' (was "
-                          f"'{getattr(prev_owner, 'name', '?')}')")
-        self._console_commands[key] = (owner, handler, str(help or ""))
-
-    def _console_owner_active(self, owner) -> bool:
-        if owner is None or getattr(owner, "is_builtin_game", False):
-            return True
-        return self.is_enabled(owner)
-
-    def has_console_command(self, name: str) -> bool:
-        entry = self._console_commands.get(str(name or "").lower())
-        return entry is not None and self._console_owner_active(entry[0])
-
-    def console_commands(self) -> list:
-        """``(name, help)`` for every command an active owner registered."""
-        return sorted((name, entry[2]) for name, entry in self._console_commands.items()
-                      if self._console_owner_active(entry[0]))
-
-    def dispatch_console_command(self, name: str, args: str, logic_thread=None,
-                                 play_mode: bool = False, main_window=None):
-        """Run a registered command. Returns ``(handled, reply)``.
-
-        A handler that raises is still *handled* -- the failure is logged with
-        its traceback rather than reported as an unknown command.
-        """
-        entry = self._console_commands.get(str(name or "").lower())
-        if entry is None or not self._console_owner_active(entry[0]):
-            return False, None
-        from .api import ConsoleContext
-        ctx = ConsoleContext(logic_thread=logic_thread, play_mode=bool(play_mode),
-                             main_window=main_window)
-        try:
-            reply = entry[1](ctx, args or "")
-        except Exception:
-            self._log(f"console command '{name}' failed:\n{traceback.format_exc()}")
-            return True, None
-        return True, reply
-
     def _participants(self, hook: str) -> list:
         """Enabled plugins + built-in layers that implement *hook*.
 
@@ -570,42 +564,6 @@ class PluginManager:
     def is_enabled(self, plugin) -> bool:
         return bool(getattr(plugin, "enabled", True))
 
-    # -- mandatory plugins --------------------------------------------------
-    def is_mandatory(self, plugin_or_name) -> bool:
-        """Whether this build refuses to run without *plugin_or_name*.
-
-        Accepts a loaded plugin or a package/plugin name. A plugin matches on
-        either spelling, so ``MANDATORY_PLUGINS`` can name the package
-        directory without knowing what the plugin calls itself.
-        """
-        if isinstance(plugin_or_name, str):
-            return is_mandatory_name(plugin_or_name)
-        if plugin_or_name is None:
-            return False
-        return (is_mandatory_name(getattr(plugin_or_name, "name", "")) or
-                is_mandatory_name(self.plugin_package_name(plugin_or_name)))
-
-    def missing_mandatory(self) -> List[str]:
-        """Mandatory plugin names that discovery did not produce.
-
-        Empty when every mandatory plugin loaded. Note this is only meaningful
-        once loading has finished — call :func:`load_plugins` first.
-        """
-        return [name for name in MANDATORY_PLUGINS
-                if self.find_plugin(name) is None]
-
-    def require_mandatory_plugins(self):
-        """Raise :class:`MandatoryPluginMissing` if a mandatory plugin is absent.
-
-        The application bootstrap calls this straight after discovery and before
-        it builds anything, so a build missing a plugin it is made of stops with
-        one clear message instead of failing later, halfway into a map, in terms
-        that only make sense to someone who knows the plugin system.
-        """
-        missing = self.missing_mandatory()
-        if missing:
-            raise MandatoryPluginMissing(missing[0])
-
     def set_enabled(self, plugin_or_name, enabled: bool, auto: bool = False):
         """Enable/disable a plugin at runtime.
 
@@ -619,20 +577,11 @@ class PluginManager:
         New/empty scene can revert them; any manual call clears that memory, so
         a plugin the user turned on by hand is never auto-disabled underneath
         them.
-
-        A mandatory plugin cannot be disabled through here — by a menu toggle, a
-        missing ``requires`` or the revert an empty scene does — so every caller
-        gets the guarantee without having to know about it.
         """
         plugin = plugin_or_name
         if isinstance(plugin_or_name, str):
             plugin = self.find_plugin(plugin_or_name)
         if plugin is None:
-            return
-        if not enabled and self.is_mandatory(plugin):
-            self._debug(
-                f"Refusing to disable mandatory plugin '{plugin.name}'")
-            self._auto_enabled.discard(plugin)
             return
         was = bool(getattr(plugin, "enabled", True))
         plugin.enabled = bool(enabled)
@@ -655,7 +604,9 @@ class PluginManager:
         return str(type_name).replace("_", "").lower()
 
     def _record_entity_owner(self, cls: type, plugin: FioPlugin):
-        key = cls.__name__.lower()
+        # Stored under the same normalisation every lookup applies, so a class
+        # name containing an underscore is still found by its map type.
+        key = self._normalise_type(cls.__name__)
         self._entity_owner[key] = plugin
         self._entity_classes[key] = cls
 
@@ -680,6 +631,39 @@ class PluginManager:
             if plugin is not None and id(plugin) not in seen:
                 seen.add(id(plugin))
                 out.append(plugin)
+        return out
+
+    def required_plugins_for_map(self, map_data) -> List[FioPlugin]:
+        """Plugins required by a map's entity types or plugin activation hook."""
+        if not isinstance(map_data, dict):
+            return []
+        types = []
+        for t in map_data.get("things", []) or []:
+            if not isinstance(t, dict):
+                continue
+            typ = t.get("type") or t.get("properties", {}).get("type")
+            if typ:
+                types.append(typ)
+
+        seen = set()
+        out = []
+        for plugin in self.required_plugins_for_types(types):
+            if id(plugin) not in seen:
+                seen.add(id(plugin))
+                out.append(plugin)
+
+        for plugin in self.plugins + self._builtin_games:
+            if id(plugin) in seen or not self._overrides(plugin, "map_uses_plugin"):
+                continue
+            try:
+                if plugin.map_uses_plugin(map_data):
+                    seen.add(id(plugin))
+                    out.append(plugin)
+            except Exception:
+                self._log(
+                    f"map_uses_plugin() failed for '{plugin.name}':\n"
+                    f"{traceback.format_exc()}"
+                )
         return out
 
     # -- auto-enable on level load -----------------------------------------
@@ -717,32 +701,23 @@ class PluginManager:
         """
         disabled: List[FioPlugin] = []
         for plugin in list(self._auto_enabled):
-            was_on = self.is_enabled(plugin)
-            self.set_enabled(plugin, False)
-            # A mandatory plugin refuses the disable, so read the state back
-            # rather than assuming the call took.
-            if was_on and not self.is_enabled(plugin):
+            if self.is_enabled(plugin):
                 disabled.append(plugin)
                 self._debug(
                     f"Auto-disabled plugin '{plugin.name}' for cleared level")
+            self.set_enabled(plugin, False)
         return disabled
 
     def auto_enable_for_map(self, map_data) -> List[FioPlugin]:
-        """Enable plugins whose entity types appear in *map_data*.
-
-        *map_data* is a loaded level dict; its ``things`` are scanned for the
-        same ``type`` strings the editor/player use to build entities. A no-op
-        (returns ``[]``) for maps that reference no plugin-owned entities.
-        """
-        types: List[str] = []
-        things = map_data.get("things", []) if isinstance(map_data, dict) else []
-        for t in things:
-            if not isinstance(t, dict):
-                continue
-            typ = t.get("type") or t.get("properties", {}).get("type")
-            if typ:
-                types.append(typ)
-        return self.auto_enable_for_types(types)
+        """Enable plugins required by entity types and map-specific activation hooks."""
+        newly: List[FioPlugin] = []
+        for plugin in self.required_plugins_for_map(map_data):
+            if not self.is_enabled(plugin):
+                self.set_enabled(plugin, True, auto=True)
+                self._debug(
+                    f"Auto-enabled plugin '{plugin.name}' for loaded level")
+                newly.append(plugin)
+        return newly
 
     def plugin_package_dir(self, plugin: FioPlugin) -> Optional[str]:
         """Absolute filesystem directory of a plugin's package, or None."""
@@ -868,27 +843,95 @@ class PluginManager:
         return [(label, factory) for (label, factory, t) in self._property_tabs
                 if t is None or t == norm]
 
-    def register_property_section(self, label: str, factory, entity_type=None,
-                                  expanded: bool = False):
-        """Register a collapsible section inside the Properties tab.
-
-        The same ``factory(thing) -> widget`` contract as
-        :meth:`register_property_tab`; the difference is placement. A section
-        is for an editor that reads as part of the entity's properties rather
-        than a workspace of its own, and *expanded* False means it costs no
-        vertical space until somebody opens it.
-        """
-        self._property_sections.append(
-            (label, factory,
-             self._normalise_type(entity_type) if entity_type else None,
-             bool(expanded)))
+    # -- API 1.5.0: property sections, key suggestions, entity inspectors ----
+    def _record_property_section(self, plugin, label: str, factory,
+                                 entity_type=None, expanded: bool = False) -> None:
+        if callable(factory):
+            self._property_sections.append(
+                (plugin, str(label), factory,
+                 self._normalise_type(entity_type) if entity_type else None,
+                 bool(expanded)))
 
     def property_sections_for(self, entity_type: str):
-        """``(label, factory, expanded)`` sections that apply to *entity_type*."""
+        """``(label, factory, expanded)`` sections that apply to *entity_type*.
+
+        Consumed by the editor integration when it builds the Properties tab.
+        Sections of a disabled plugin are left out.
+        """
         norm = self._normalise_type(entity_type)
-        return [(label, factory, exp)
-                for (label, factory, t, exp) in self._property_sections
-                if t is None or t == norm]
+        return [(label, factory, expanded)
+                for (plugin, label, factory, t, expanded) in self._property_sections
+                if (t is None or t == norm) and self.is_enabled(plugin)]
+
+    def _record_kv_suggestions(self, plugin, provider) -> None:
+        if callable(provider):
+            self._kv_suggestion_providers.append((plugin, provider))
+
+    def kv_suggestions(self, store=None) -> list:
+        """Every enabled provider's key suggestions for the LogicState *store*.
+
+        Returns ``(label, key, default_value, tooltip)`` rows, in registration
+        order. A malformed row is skipped and a failing provider is logged,
+        never raised; when two providers offer the same key the first wins.
+        """
+        out: list = []
+        seen: set = set()
+        for plugin, provider in self._kv_suggestion_providers:
+            if not self.is_enabled(plugin):
+                continue
+            try:
+                rows = list(provider(store) or [])
+            except Exception:
+                self._log(f"key suggestions failed for "
+                          f"'{getattr(plugin, 'name', '?')}':\n{traceback.format_exc()}")
+                continue
+            for row in rows:
+                if not isinstance(row, (tuple, list)) or len(row) < 3:
+                    continue
+                label, key, default = row[0], row[1], row[2]
+                tooltip = row[3] if len(row) > 3 else ""
+                key = str(key).strip()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                out.append((str(label), key, default, str(tooltip or "")))
+        return out
+
+    def _record_entity_inspector(self, plugin, provider, entity_type=None) -> None:
+        if callable(provider):
+            self._entity_inspectors.append(
+                (plugin, provider,
+                 self._normalise_type(entity_type) if entity_type else None))
+
+    def has_entity_inspector(self, entity_type=None) -> bool:
+        """Whether an enabled provider would be asked about *entity_type*."""
+        norm = self._normalise_type(entity_type) if entity_type else None
+        return any(self.is_enabled(plugin) and (t is None or t == norm)
+                   for plugin, _provider, t in self._entity_inspectors)
+
+    def inspect_entity(self, entity, logic=None):
+        """The first non-empty inspection document a provider returns for
+        *entity*, or None when no enabled provider has one.
+
+        A failing provider is logged and the next one asked.
+        """
+        props = getattr(entity, "properties", None)
+        etype = props.get("type") if isinstance(props, dict) else None
+        norm = self._normalise_type(etype) if etype else None
+        for plugin, provider, t in self._entity_inspectors:
+            if t is not None and t != norm:
+                continue
+            if not self.is_enabled(plugin):
+                continue
+            try:
+                document = provider(entity, logic)
+            except Exception:
+                self._log(f"entity inspector failed for "
+                          f"'{getattr(plugin, 'name', '?')}':\n{traceback.format_exc()}")
+                continue
+            if document:
+                return document
+        return None
 
     # -- lifecycle dispatch -------------------------------------------------
     @staticmethod

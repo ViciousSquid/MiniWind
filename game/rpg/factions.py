@@ -48,7 +48,7 @@ def _load_defaults() -> Dict[Tuple[str, str], str]:
     NEUTRAL, a team paired with itself is always FRIENDLY, and pairs are
     symmetric: ``(a, b)`` implies ``(b, a)``.
     """
-    from game import data
+    from .. import data
     out: Dict[Tuple[str, str], str] = {}
     for entry in (data.load("factions") or {}).get("relationships", []):
         if len(entry) >= 3:

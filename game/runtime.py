@@ -18,11 +18,15 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import random
 from itertools import chain as _chain
 from typing import Dict, List, Optional
 
-from engine.facing import face_heading
+import numpy as np
+
+from .facing import face_heading
+from engine.change_journal import touch as _journal
 from engine.spatial import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
                                 TIER_DORMANT)
 from .rpg import factions
@@ -60,6 +64,13 @@ _current_session = None
 WORLD_INDEX_MIN_ACTORS = 32
 
 DECISION_INTERVAL = 0.4
+#: When Big World's tiers are fitted to the overhead camera, ACTIVE means "off
+#: screen": such an NPC decides on one decision pass in this many and moves on
+#: one tick in this many, carrying the ticks it skipped.
+OFFSCREEN_STRIDE = 4
+#: The world's proximity checks (pickups, books, triggers, locations, quest
+#: conditions) run this often rather than every tick.
+PROXIMITY_INTERVAL = 0.1
 NPC_WALK_SPEED = 90.0
 #: How much quicker a frightened villager moves. Applied only while the NPC is
 #: in the FLEE state, which the decision tick re-evaluates constantly and drops
@@ -224,6 +235,18 @@ class _PlayerActor:
         return self
 
 
+#: Where interface sounds live (the engine's sound folder), and the one a
+#: purchase or sale makes.
+SOUND_DIR = os.path.join("assets", "sounds")
+TRANSACTION_SOUND = "transaction.mp3"
+#: A guard stopping the player to arrest them says one of these, at random.
+ARREST_SOUNDS = ("arrest1.mp3", "arrest2.mp3")
+
+#: Marks an NPC can show above its head: "!" heightened (alarmed, startled,
+#: coming for you), "?" puzzled (searching, unsure). game/ui/hud.py draws them.
+HEAD_MARKS = ("!", "?")
+
+
 class StateStore:
     """Adapter presenting a plugin ``GlobalStore`` as a string KV store."""
 
@@ -375,8 +398,12 @@ class MiniwindSession:
         #: pass matching their row parity, so half of the near world re-plans
         #: each pass and the cost is spread instead of spiking.
         self._decision_phase = 0
+        self._offscreen_tick = 0
+        self._proximity_accum = 0.0
         #: Guards currently running the player down (see _start_arrest_pursuit).
         self._arrest_pursuers = []
+        #: NPCs given a mark above their head by set_head_mark: id -> npc.
+        self._head_marked = {}
         #: Active Wisp companion light, or None. See _spawn_wisp / _update_wisp.
         self._wisp = None
         #: Reaper visits currently playing out, one per attended corpse. See
@@ -483,7 +510,7 @@ class MiniwindSession:
         self._sim_hours = 0.0
         if self.logic is not None:
             try:
-                self.logic.gameplay_paused = True
+                self.logic.set_world_paused("miniwind.screen", True)
             except Exception:
                 pass
 
@@ -630,6 +657,7 @@ class MiniwindSession:
                 p["custom_idle"] = path
                 p["custom_shoot"] = path
                 p.pop("custom_dead", None)   # no custom death sprite (removed)
+                _journal(t)
                 changed = True
         if changed:
             try:
@@ -714,13 +742,16 @@ class MiniwindSession:
         #   TIER_NEAR    full — decide every pass, move every tick
         #   TIER_ACTIVE  decide every other pass (staggered by row so the work
         #                spreads evenly), still move every tick so nothing the
-        #                player can see stutters
+        #                player can see stutters -- unless Big World's tiers are
+        #                fitted to the camera (sim_tiers_fit_view), when ACTIVE
+        #                is off screen: decide one pass in OFFSCREEN_STRIDE and
+        #                move one tick in OFFSCREEN_STRIDE, carrying the rest
         #   TIER_DISTANT no per-tick work at all — one coarse movement step per
         #                decision pass, carrying the whole elapsed interval
         #   TIER_DORMANT nothing; the streamer has parked it
         #
         # Observable behaviour is unchanged: everything inside the overhead
-        # camera's view is in NEAR or ACTIVE, and both move every tick.
+        # camera's view moves every tick (NEAR when fitted, else NEAR or ACTIVE).
         hour_int = int(self.clock.hour)
         # The NPCs worth ticking at all: the engine's live actor set, which
         # already excludes anything the streamer has parked. On a streamed world
@@ -732,6 +763,11 @@ class MiniwindSession:
         # below rather than asking again per pass per actor.
         tier_of = self._tier_of
         npc_tiers = [tier_of(n) for n in npcs]
+        # Fitted to the camera, ACTIVE is off screen, and nobody can see an
+        # off-screen NPC think or step less often.
+        offscreen = bool(getattr(self.logic, "sim_tiers_fit_view", False))
+        stride = OFFSCREEN_STRIDE if offscreen else 1
+        self._offscreen_tick = (self._offscreen_tick + 1) % OFFSCREEN_STRIDE
         self._decision_accum += delta
         decided = (self._decision_accum >= DECISION_INTERVAL
                    or hour_int != self._last_hour_int)
@@ -741,6 +777,8 @@ class MiniwindSession:
             self._last_hour_int = hour_int
             self._decision_phase ^= 1
             phase = self._decision_phase
+            pass_no = getattr(self, "_decision_pass", 0) + 1
+            self._decision_pass = pass_no
             self._refresh_actor_cache()
             for i, npc in enumerate(npcs):
                 tier = npc_tiers[i]
@@ -755,12 +793,22 @@ class MiniwindSession:
                     self._decide_distant(npc)
                     self._move(npc, coarse_delta)
                     continue
-                if tier == TIER_ACTIVE and (i & 1) != phase:
-                    continue
+                if tier == TIER_ACTIVE:
+                    if offscreen:
+                        if (i + pass_no) % OFFSCREEN_STRIDE:
+                            continue
+                    elif (i & 1) != phase:
+                        continue
                 self._decide(npc)
         for i, npc in enumerate(npcs):
-            if npc_tiers[i] >= TIER_DISTANT:
+            tier = npc_tiers[i]
+            if tier >= TIER_DISTANT:
                 continue          # moved coarsely on the decision pass above
+            if tier == TIER_ACTIVE and stride > 1:
+                if (i + self._offscreen_tick) % stride:
+                    continue
+                self._move(npc, delta * stride)
+                continue
             self._move(npc, delta)
 
         # Turn any NPC deaths (from player or engine combat) into persistent
@@ -777,12 +825,16 @@ class MiniwindSession:
         # their goods. Runs on game hours, so it is unaffected by frame rate.
         self._tick_sim(delta)
 
-        # world placeables: item pickups, spellbooks and quest triggers
-        self._tick_pickups()
-        self._tick_spellbooks()
-        self._tick_triggers()
-        self._tick_locations()
-        self._tick_quests()
+        # world placeables: item pickups, spellbooks and quest triggers --
+        # proximity checks, so a tenth of a second is soon enough.
+        self._proximity_accum += delta
+        if self._proximity_accum >= PROXIMITY_INTERVAL:
+            self._proximity_accum = 0.0
+            self._tick_pickups()
+            self._tick_spellbooks()
+            self._tick_triggers()
+            self._tick_locations()
+            self._tick_quests()
 
         # Decay player stab animation
         if self._attack_anim_time > 0:
@@ -1444,6 +1496,7 @@ class MiniwindSession:
                     sim_prod.note_collected(producer.properties, 1)
                 p["dead"] = True
                 p["hidden"] = True
+                _journal(it)
 
     def _tick_spellbooks(self) -> None:
         """Reading a world Spellbook (walking over it) teaches its spell."""
@@ -1469,9 +1522,14 @@ class MiniwindSession:
                 if not c.active_spell:
                     c.active_spell = spell_id
                 self.notify(f"Learned {spell.name} from {title}")
+            # A quest book: the reader carries it off as the quest item.
+            quest_item = str(p.get("quest_item", "") or "").strip()
+            if quest_item and not inv.has_item(c.inventory, quest_item, 1):
+                self.game.pick_up(quest_item, 1)
             if not p.get("respawn"):
                 p["dead"] = True
                 p["hidden"] = True
+                _journal(bk)
 
     def _tick_triggers(self) -> None:
         ppos = self._player_pos()
@@ -1825,10 +1883,15 @@ class MiniwindSession:
             raw = self._slug(st.condition_target())
             best = None
             ppos = self._player_pos()
-            for it in self._things_of_type("itempickup"):
+            # A pickup of the item, or a book that hands it over when read.
+            sources = [(it, it.properties.get("item_id", ""))
+                       for it in self._things_of_type("itempickup")]
+            sources += [(bk, bk.properties.get("quest_item", ""))
+                        for bk in self._things_of_type("spellbook")]
+            for it, item_id in sources:
                 if it.properties.get("dead"):
                     continue
-                if self._slug(it.properties.get("item_id", "")) == raw:
+                if self._slug(item_id) == raw:
                     if ppos is None:
                         pos = it.pos
                         break
@@ -1928,6 +1991,11 @@ class MiniwindSession:
                 nm = mk.properties.get("place_name") or mk.properties.get("name") or ""
                 if self._slug(nm) == tslug:
                     return nm
+        if kind == _quests.COND_FETCH:
+            from .rpg import items as rpg_items
+            item = rpg_items.get(str(raw).strip())
+            if item is not None and item.name:
+                return item.name
         # Fall back to a de-slugged, title-cased version of the raw target.
         return str(raw).replace("_", " ").strip() or "the objective"
 
@@ -2299,6 +2367,7 @@ class MiniwindSession:
                 guard.properties["_arrest_state"] = "ready"
                 guard.properties.pop("_dest", None)
                 self.notify("The guard stops you: you are wanted for a crime.", 4.0)
+                self.play_ui_sound(self.rng.choice(ARREST_SOUNDS))
                 player = getattr(self.logic, "player", None)
                 if player is not None:
                     self.start_dialogue(guard, player)
@@ -3484,15 +3553,18 @@ class MiniwindSession:
         wi = self._world_index()
         if wi is None:
             return self.npcs()
-        out = []
-        for t in wi.actors:
-            p = t.properties
-            if p.get("dead"):
-                continue
-            if str(p.get("type", "")).replace("_", "").lower() != "npc":
-                continue
-            out.append(t)
-        return out
+        # The index's alive mask already excludes the dead and whatever Big
+        # World has parked (nothing below would touch a parked NPC anyway), so
+        # only the resident rows are visited, and NPC-ness is one set lookup.
+        bucket = self._type_buckets().get("npc", ())
+        cached = getattr(self, "_npc_id_cache", None)
+        if cached is None or cached[0] is not bucket or cached[1] != len(bucket):
+            cached = self._npc_id_cache = (bucket, len(bucket),
+                                           frozenset(id(t) for t in bucket))
+        npc_ids = cached[2]
+        actors = wi.actors
+        return [actors[i] for i in np.flatnonzero(wi.alive[:wi.n]).tolist()
+                if id(actors[i]) in npc_ids]
 
     def _rally_mask(self, wi):
         """Per-row boolean: this actor has rallied. Built once per tick, so the
@@ -3924,6 +3996,7 @@ class MiniwindSession:
         # plane, so a melee swing is guaranteed to connect — no separate miss
         # roll to be foiled by camera pitch or anything else.
         res = self.game.attack_creature(target.properties, guaranteed=True)
+        _journal(target)     # a kill/gib changes how the target is drawn
         if res.get("hit"):
             tag = "sneak" if res.get("sneak") else ("crit" if res.get("crit") else "dmg")
             self.add_floater(f"-{int(res['damage'])}", kind=tag)
@@ -3963,6 +4036,7 @@ class MiniwindSession:
 
         def _on_hit(hit_monster):
             res = game.resolve_arrow_hit(hit_monster.properties)
+            _journal(hit_monster)
             if res.get("hit"):
                 tag = "sneak" if res.get("sneak") else ("crit" if res.get("crit") else "dmg")
                 self.add_floater(f"-{int(res['damage'])}", kind=tag)
@@ -4008,6 +4082,7 @@ class MiniwindSession:
         c.use_skill("destruction", 1.0)
         if target is not None:
             r = self.game.resolve_spell_on_creature(spell, target.properties)
+            _journal(target)
             self.add_floater(f"-{int(r['damage'])}", kind="fire")
             self._provoke(target)
             if r.get("killed"):
@@ -4056,6 +4131,7 @@ class MiniwindSession:
             target = self._acquire_target(BOW_REACH if spell.delivery != rpg_magic.TOUCH else MELEE_REACH)
             if target is not None:
                 r = self.game.resolve_spell_on_creature(spell, target.properties)
+                _journal(target)
                 if r.get("damage"):
                     self.add_floater(f"-{int(r['damage'])}", kind=spell.element)
                 self._apply_nondamage_spell(spell, target)
@@ -4143,6 +4219,7 @@ class MiniwindSession:
         p["dead"] = False
         p["hidden"] = False
         p["is_shooting"] = False
+        _journal(thing)
         try:
             mh = float(p.get("max_health", p.get("health", 100)) or 100)
         except (TypeError, ValueError):
@@ -4204,6 +4281,22 @@ class MiniwindSession:
         c = self.game.character
         return (eq.equipped_id(c, "weapon") or "",
                 str(getattr(c, "handed", "right") or "right"))
+
+    @staticmethod
+    def overhead_weapon_kind(weapon_id) -> str:
+        """``"melee"``, ``"bow"`` or ``"staff"``: how the viewport animates a
+        held weapon's attack, from the item database's own classification."""
+        from . import combat_loadout
+        style = combat_loadout._item_style(weapon_id)
+        if style == combat_loadout.MAGIC:
+            return "staff"
+        if style in (combat_loadout.MELEE, combat_loadout.BOW):
+            return style
+        return ""
+
+    def overhead_player_flash(self) -> float:
+        """Seconds left of the player's red hurt flash (0 when none)."""
+        return float(self._player_flash or 0.0)
 
     def overhead_pose(self):
         c = self.game.character
@@ -4465,13 +4558,66 @@ class MiniwindSession:
             return "talk"
         return None
 
+    # -- marks above heads ---------------------------------------------------
+    def set_head_mark(self, npc, mark) -> None:
+        """Show *mark* ("!" heightened, "?" puzzled) above *npc*'s head, or
+        clear it with None. What a mood system sets; a mark set here wins
+        over the ones the game derives (see :meth:`head_mark`)."""
+        if npc is None:
+            return
+        props = npc.properties
+        if mark in HEAD_MARKS:
+            props["_head_mark"] = mark
+            self._head_marked[id(npc)] = npc
+        else:
+            props.pop("_head_mark", None)
+            self._head_marked.pop(id(npc), None)
+
+    def head_mark(self, npc):
+        """The mark over *npc* now, or None.
+
+        Set explicitly (:meth:`set_head_mark`), or heightened by what the NPC
+        is doing: a guard coming to arrest the player, stopping them, or
+        running them down shows "!". Escorting a prisoner is calm.
+        """
+        props = getattr(npc, "properties", None) or {}
+        if props.get("dead"):
+            return None
+        mark = props.get("_head_mark")
+        if mark in HEAD_MARKS:
+            return mark
+        if npc is self._arrest_guard and self._arrest_state in ("approach", "ready"):
+            return "!"
+        if npc in self._arrest_pursuers:
+            return "!"
+        return None
+
+    def head_marks(self):
+        """(npc, mark) for every NPC with a mark over its head right now."""
+        seen = set()
+        out = []
+        candidates = list(self._head_marked.values())
+        candidates.append(self._arrest_guard)
+        candidates.extend(self._arrest_pursuers)
+        for npc in candidates:
+            if npc is None or id(npc) in seen:
+                continue
+            seen.add(id(npc))
+            mark = self.head_mark(npc)
+            if mark is not None:
+                out.append((npc, mark))
+        return out
+
     def bubble_npcs(self, player_pos, radius: float = BUBBLE_RADIUS):
-        """(npc, kind) for nearby NPCs that have something to say, nearest first."""
+        """(npc, kind) for nearby NPCs that have something to say, nearest first.
+
+        An NPC with a mark over its head (see :meth:`head_mark`) shows that
+        instead of a speech bubble."""
         out = []
         r2 = radius * radius
         for npc in self.npcs():
             kind = self.bubble_kind(npc)
-            if kind is None:
+            if kind is None or self.head_mark(npc) is not None:
                 continue
             dx = npc.pos[0] - player_pos[0]
             dz = npc.pos[2] - player_pos[2]
@@ -4689,6 +4835,7 @@ class MiniwindSession:
         self.game.pick_up(item_id, 1)
         c.use_skill("mercantile", 0.5)
         self._remember_trade()
+        self.play_ui_sound(TRANSACTION_SOUND)
         return True
 
     def sell(self, item_id: str) -> bool:
@@ -4701,6 +4848,21 @@ class MiniwindSession:
         c.gold += price
         c.use_skill("mercantile", 0.5)
         self._remember_trade()
+        self.play_ui_sound(TRANSACTION_SOUND)
+        return True
+
+    def play_ui_sound(self, name: str, volume: float = 1.0) -> bool:
+        """Play an interface sound from ``assets/sounds`` (heard everywhere).
+
+        Goes through the engine's sound queue like every other effect. A file
+        that is not there is skipped silently rather than reported on every
+        use. Returns whether it was queued.
+        """
+        game_state = getattr(self.logic, "game_state", None)
+        queue = getattr(game_state, "queue_sound", None)
+        if queue is None or not os.path.isfile(os.path.join(SOUND_DIR, name)):
+            return False
+        queue({"file": name, "volume": float(volume), "global": True})
         return True
 
     def _remember_trade(self) -> None:

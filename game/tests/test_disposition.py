@@ -18,10 +18,10 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game.rpg import disposition as disp
-from game.rpg import guilds
-from game.rpg.character import Character
-from game.rpg.dialogue import DictStore
+from ..rpg import disposition as disp
+from ..rpg import guilds
+from ..rpg.character import Character
+from ..rpg.dialogue import DictStore
 
 
 # --- pure memory model -----------------------------------------------------
@@ -152,8 +152,8 @@ class _FakeGlobals:
 
 def _build_world():
     import json
-    from game import data
-    from game.tools import make_settlement
+    from .. import data
+    from ..tools import make_settlement
     base_path = os.path.join(os.path.dirname(__file__), "..", "tools", "data",
                              "base_terrain.json")
     with open(os.path.abspath(base_path)) as f:
@@ -164,7 +164,7 @@ def _build_world():
 def _session_from(world, hour=12.0, globals_store=None):
     """A live session over a copy of *world*'s things — reusing the same world
     (and thus the same entity UUIDs) models reloading a saved map."""
-    from game.runtime import MiniwindSession
+    from ..runtime import MiniwindSession
     things = [_FakeThing(t["pos"], dict(t["properties"])) for t in world["things"]]
     session = MiniwindSession(_FakeLogic(things, _FakePlayer([300, 272, -100])),
                               cfg={"start_hour": hour, "minutes_per_day": 999999.0},
@@ -233,8 +233,8 @@ def test_a_bandit_killing_kin_is_not_blamed_on_the_player():
 
 
 def test_authored_dialogue_reacts_to_a_grudge():
-    from game.rpg.dialogue import DialogueRunner
-    from game import data
+    from ..rpg.dialogue import DialogueRunner
+    from .. import data
     thalen = next(n for n in data.load("settlement")["npcs"] if n["name"] == "Thalen")
     tree = thalen["dialogue"]
     # No grudge: the reproachful line stays hidden.

@@ -35,13 +35,17 @@ list/tuple (player build); both are read by index.
 
 from __future__ import annotations
 
+import math
 from typing import Optional
+
+from engine.change_journal import VISIBILITY, touch
 
 from .cell import cell_of_point
 from .manager import (BigWorldManager, DEFAULT_ACTIVATION_RADIUS,
                       DEFAULT_DEACTIVATION_RADIUS)
 from .persistence import (build_cell_delta_registry, flatten_cell_delta_registry,
                           normalize_streaming_state)
+from .config import bound_view_horizon, effective_streaming_radii
 
 # Marker keys the session writes onto objects it parks, so it can restore the
 # exact prior value and never clobber a user's own hidden/disabled state.
@@ -105,16 +109,45 @@ class BigWorldSession:
     #: camera is ever resident, so the size costs nothing.
     INFINITE_HALF_EXTENT = 1.0e7
 
+    #: Fit-to-overhead-camera mode (see ``fit_overhead_camera``). Residency is
+    #: refreshed whenever the player has moved this far since the last
+    #: refresh, and the activation radius carries the same distance past the
+    #: screen's corners, so whatever is on screen is always resident.
+    FIT_REFRESH = 256.0
+    #: Tiers are refreshed every this far, and NEAR's box carries the same
+    #: distance (plus :attr:`FIT_NEAR_MARGIN`) past the screen's edges.
+    FIT_RETIER = 128.0
+    FIT_NEAR_MARGIN = 96.0
+    #: Fitted radii are rounded up to this, so a resize jitter is not a
+    #: residency change.
+    FIT_QUANTUM = 64.0
+
     def __init__(self, logic, activation_radius: float = DEFAULT_ACTIVATION_RADIUS,
                  deactivation_radius: float = DEFAULT_DEACTIVATION_RADIUS,
                  terrain_fill: bool = False,
                  terrain_infinite: bool = False,
                  terrain_stream_radius: float = 0.0,
-                 sim_near_radius: float = DEFAULT_NEAR_RADIUS):
+                 sim_near_radius: float = DEFAULT_NEAR_RADIUS,
+                 terrain_stream: bool = False,
+                 fit_overhead_camera: bool = False):
         self.logic = logic
+        #: Stream the terrain's chunks around the camera within its authored
+        #: bounds (see the ``terrain_stream`` setting).
+        self.terrain_stream = bool(terrain_stream)
+        #: Size residency and tiers from the overhead camera's screen.
+        self.fit_overhead_camera = bool(fit_overhead_camera)
+        #: The radii currently fitted to the camera, or None when the authored
+        #: radii are in force: ``(activation, deactivation, near_rect, limit)``.
+        self._fit = None
+        self._fit_pos = None
+        self._tier_pos = None
+        self._authored_activation_radius = max(0.0, float(activation_radius))
+        self._authored_deactivation_radius = max(
+            self._authored_activation_radius, float(deactivation_radius)
+        )
         self.manager = BigWorldManager(
-            activation_radius=activation_radius,
-            deactivation_radius=deactivation_radius,
+            activation_radius=self._authored_activation_radius,
+            deactivation_radius=self._authored_deactivation_radius,
         )
         #: Assigns NEAR/ACTIVE/DISTANT/DORMANT to the resident set. Its active
         #: boundary is the manager's activation radius, so "how far out is the
@@ -138,9 +171,17 @@ class BigWorldSession:
         #: rather than stopping at the world's content bounds — no map edge.
         self.terrain_infinite = bool(terrain_infinite)
         #: World units of terrain kept resident around the player. 0 ⇒ derive it
-        #: from the activation radius when the session starts.
-        self.terrain_stream_radius = float(terrain_stream_radius)
+        #: from the effective activation radius. Keep the authored value
+        #: separately so a derived radius can continue following visibility
+        #: changes without treating a runtime-derived value as explicit config.
+        self._terrain_stream_radius_authored = max(0.0, float(terrain_stream_radius))
+        self.terrain_stream_radius = self._terrain_stream_radius_authored
         self._started = False
+        #: Last camera horizon applied to residency.
+        self._visual_horizon = None
+        #: Undoes the camera-horizon limit start() places (see
+        #: :func:`~plugins.bigworld.config.bound_view_horizon`).
+        self._release_view_horizon = None
         # Prior terrain config captured on start(), restored verbatim on stop()
         # so the editor/authored terrain is returned exactly as it was.
         self._terrain = None
@@ -164,6 +205,113 @@ class BigWorldSession:
         self._base_level: Optional[dict] = None
 
     # ------------------------------------------------------------------
+    # Residency / camera cooperation
+    # ------------------------------------------------------------------
+
+    def _current_visual_horizon(self):
+        """Return the renderer's useful horizon when the host exposes one."""
+        view_distance = getattr(self.logic, "view_distance", None)
+        return getattr(view_distance, "visual_horizon", None)
+
+    def _fitted_radii(self):
+        """``(activation, deactivation, near_rect, view_limit)`` sized from
+        the overhead camera's screen, or None to use the authored radii."""
+        if not self.fit_overhead_camera:
+            return None
+        footprint = getattr(self.logic, "overhead_ground_footprint", None)
+        try:
+            fp = footprint() if callable(footprint) else None
+        except Exception:
+            fp = None
+        if not fp:
+            return None
+        hx, hz = float(fp[0]), float(fp[1])
+        q = self.FIT_QUANTUM
+
+        def up(v):
+            return math.ceil(v / q) * q
+        activation = up(math.hypot(hx, hz) + self.FIT_REFRESH)
+        band = max(q, self._authored_deactivation_radius - self._authored_activation_radius)
+        margin = self.FIT_RETIER + self.FIT_NEAR_MARGIN
+        near_rect = (up(hx + margin), up(hz + margin))
+        # The camera's reach: from its height down to the residency edge, with
+        # room for ground lower than the player.
+        height = float(getattr(self.logic, "overhead_height", 800.0) or 800.0)
+        limit = up(math.hypot(activation + band, height + 400.0))
+        return activation, activation + band, near_rect, limit
+
+    def _sync_visual_horizon(self) -> bool:
+        """Keep residency outside the camera's visible/fogged region."""
+        fit = self._fitted_radii()
+        if fit is not None or self._fit is not None:
+            return self._sync_fit(fit)
+        horizon = self._current_visual_horizon()
+        activation, deactivation = effective_streaming_radii(
+            self._authored_activation_radius,
+            self._authored_deactivation_radius,
+            horizon,
+        )
+        changed = (
+            activation != self.manager.activation_radius
+            or deactivation != self.manager.deactivation_radius
+        )
+        self.manager.activation_radius = activation
+        self.manager.deactivation_radius = max(deactivation, activation)
+        # A zero terrain stream radius is the authored "derive from activation"
+        # sentinel. Keep that mode live as the camera horizon changes; an
+        # explicit terrain_stream_radius remains authoritative.
+        if self._terrain_stream_radius_authored <= 0.0:
+            self.terrain_stream_radius = activation
+            # _sync_visual_horizon() runs from the tick hot path; only touch
+            # the terrain object when the effective boundary actually changed.
+            if changed and self._terrain is not None:
+                try:
+                    self._terrain.set_streaming(True, self.terrain_stream_radius)
+                except Exception:
+                    pass
+        self._visual_horizon = horizon
+        if changed:
+            self.tiers.set_radii(self.sim_near_radius, activation)
+            self._publish_relevance_radii()
+        return changed
+
+    def _sync_fit(self, fit) -> bool:
+        """Apply camera-fitted radii (or, with ``fit`` None, go back to the
+        authored ones). Returns True when residency changed."""
+        if fit == self._fit:
+            return False
+        self._fit = fit
+        if fit is None:
+            activation = self._authored_activation_radius
+            deactivation = self._authored_deactivation_radius
+            near_rect, limit = None, self._authored_activation_radius
+        else:
+            activation, deactivation, near_rect, limit = fit
+        self.manager.activation_radius = activation
+        self.manager.deactivation_radius = max(deactivation, activation)
+        # The camera's far plane follows residency, as bound_view_horizon does
+        # for the authored radius.
+        if self._release_view_horizon is not None:
+            self._release_view_horizon()
+        self._release_view_horizon = bound_view_horizon(self.logic, limit)
+        if self._terrain_stream_radius_authored <= 0.0:
+            self.terrain_stream_radius = activation
+        near = activation if near_rect is None else math.hypot(*near_rect)
+        self.tiers.set_radii(near if near_rect else self.sim_near_radius, activation)
+        self.tiers.set_near_rect(near_rect)
+        self._publish_relevance_radii()
+        try:
+            self.logic.sim_tiers_fit_view = near_rect is not None
+        except Exception:
+            pass
+        return True
+
+    def _fit_moved(self, pos, last, step) -> bool:
+        if last is None:
+            return True
+        return math.hypot(pos[0] - last[0], pos[1] - last[1]) >= step
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
@@ -174,6 +322,13 @@ class BigWorldSession:
         not in the per-frame path. After this, everything is inactive except the
         cells inside the activation radius of ``player_pos``.
         """
+        # Fade the camera out at the activation radius before reading its
+        # horizon, so residency is the authored radius rather than whatever
+        # the view distance happens to reach.
+        if self._release_view_horizon is None:
+            self._release_view_horizon = bound_view_horizon(
+                self.logic, self._authored_activation_radius)
+        self._sync_visual_horizon()
         brushes = list(getattr(self.logic, "brushes", None) or [])
         things = list(getattr(self.logic, "things", None) or [])
         self.manager.index_world(brushes, things)
@@ -269,6 +424,9 @@ class BigWorldSession:
         self._clear_transient_markers()   # includes every tier stamp
         self.tiers.clear(())
         self._restore_terrain()
+        if self._release_view_horizon is not None:
+            self._release_view_horizon()
+            self._release_view_horizon = None
         self._started = False
 
     def _clear_transient_markers(self) -> None:
@@ -298,22 +456,53 @@ class BigWorldSession:
         if pos is None:
             return False
         px, pz = _xz(pos)
+        radius_changed = self._sync_visual_horizon()
+
         crossed = (cell_of_point(px, pz, self.manager.cell_size)
                    != self.manager._last_player_cell)
-        if not crossed:
-            # The hot path: a single cell-of-point compare, so a stationary or
-            # slow-moving player pays almost nothing.
+        # Fitted to the camera, residency and tiers follow the player's own
+        # movement rather than waiting for a cell crossing.
+        refresh = retier = False
+        if self._fit is not None:
+            refresh = self._fit_moved((px, pz), self._fit_pos, self.FIT_REFRESH)
+            retier = self._fit_moved((px, pz), self._tier_pos, self.FIT_RETIER)
+            if refresh:
+                self._fit_pos = (px, pz)
+            if retier:
+                self._tier_pos = (px, pz)
+            radius_changed = radius_changed or refresh
+            if refresh and not crossed:
+                moved = self.manager.refile_moved_things(pos)
+                if moved.changed:
+                    self._apply_delta(moved)
+        if not crossed and not radius_changed and not retier:
+            # The common path remains a cheap cell comparison plus a shared
+            # camera-horizon read. A render-distance change is the deliberate
+            # exception: residency must follow the new visual boundary.
             return False
 
-        # Entities walk, and the cell one was authored in stops describing
-        # where it is. Re-file the resident movers *before* residency is
-        # recomputed, so an entity that travelled with the player is measured
-        # from where it now stands rather than parked with the cell it left.
-        # Bounded by the active set — a parked entity carries ``disabled``, so
-        # it cannot have moved.
-        moved = self.manager.refile_moved_things(pos)
-        if moved.changed:
-            self._apply_delta(moved)
+        # When both the player crosses a cell and the effective residency
+        # radius changes, re-file movers before the forced residency recompute.
+        # That forced update can drop their old cell from _active_thing_ids; once
+        # that happens the later refile pass cannot see them.
+        moved = None
+        if crossed:
+            moved = self.manager.refile_moved_things(pos)
+            if moved.changed:
+                self._apply_delta(moved)
+
+        radius_delta = None
+        if radius_changed:
+            radius_delta = self.manager.update(pos, force=True)
+            if radius_delta.changed:
+                for coord in radius_delta.leaving_cells:
+                    self.commit_cell(coord)
+                self._apply_delta(radius_delta)
+
+        if not crossed:
+            self.tiers.update(self.manager, px, pz)
+            self._tier_pos = (px, pz)
+            return bool(radius_delta and radius_delta.changed)
 
         delta = self.manager.update(pos)
         if delta.changed:
@@ -330,7 +519,8 @@ class BigWorldSession:
         # restamping the entities of the ring whose distance band changed — and
         # on a crossing that changed no cell's residency, it is all that runs.
         self.tiers.update(self.manager, *_xz(pos))
-        return delta.changed or moved.changed
+        self._tier_pos = (px, pz)
+        return delta.changed or bool(moved and moved.changed)
 
     def _apply_delta(self, delta) -> None:
         """Switch the world on/off for one activation delta.
@@ -377,6 +567,8 @@ class BigWorldSession:
         thread via ``prune=False``.
         """
         if not self.terrain_fill:
+            if self.terrain_stream:
+                self._setup_terrain_stream()
             return
         terrain = getattr(self.logic, "terrain", None)
         if terrain is None:
@@ -408,6 +600,29 @@ class BigWorldSession:
             # Keep roughly a cell-radius of terrain resident around the player,
             # matched to how far brush/entity cells activate.
             radius = self.manager.activation_radius
+        terrain.set_streaming(True, radius)
+
+    def _setup_terrain_stream(self) -> None:
+        """Stream the terrain's chunks around the camera inside its authored
+        bounds (``terrain_stream``): the grid is not re-bounded, so anything
+        laid over the bounds -- a heightmap overlay -- stays where it was."""
+        terrain = getattr(self.logic, "terrain", None)
+        if terrain is None or not hasattr(terrain, "set_streaming"):
+            return
+        self._terrain = terrain
+        self._terrain_saved = {
+            "streaming": getattr(terrain, "streaming", False),
+            "stream_radius": getattr(terrain, "stream_radius", 1536.0),
+            "stream_evict_padding": getattr(terrain, "stream_evict_padding", 512.0),
+            "min_chunk_x": terrain.min_chunk_x,
+            "max_chunk_x": terrain.max_chunk_x,
+            "min_chunk_z": terrain.min_chunk_z,
+            "max_chunk_z": terrain.max_chunk_z,
+        }
+        radius = self._terrain_stream_radius_authored
+        if radius <= 0.0:
+            radius = self.manager.activation_radius + float(
+                getattr(terrain, "chunk_size", 2048.0))
         terrain.set_streaming(True, radius)
 
     def _restore_terrain(self) -> None:
@@ -467,6 +682,8 @@ class BigWorldSession:
             brush["hidden"] = True
             brush["bw_active"] = False
             self._parked_brushes[id(brush)] = brush
+        # Parking changes the live flag only; the authored value is stashed.
+        touch(brush, VISIBILITY)
 
     def _restore_brush(self, brush: dict) -> None:
         if _HID_MARK in brush:
@@ -499,6 +716,7 @@ class BigWorldSession:
             props["disabled"] = True
             props["bw_active"] = False
             self._parked_things[id(thing)] = thing
+        touch(thing, VISIBILITY)
 
     def _set_light_active(self, light, active: bool) -> None:
         props = getattr(light, "properties", None)
@@ -513,6 +731,7 @@ class BigWorldSession:
             props["hidden"] = True
             props["bw_active"] = False
             self._parked_lights[id(light)] = light
+        touch(light, VISIBILITY)
 
     def _restore_thing(self, thing) -> None:
         props = getattr(thing, "properties", None)
@@ -584,10 +803,40 @@ class BigWorldSession:
         if cell is None:
             return
         live = normalize_streaming_state(self._cell_live_level(cell))
-        sub = build_cell_delta_registry(self._base_level, live, self.manager.cell_size)
+        sub = build_cell_delta_registry(
+            self._base_subset(live), live, self.manager.cell_size)
         for k, entry in sub.items():
             if entry.get("things") or entry.get("brushes"):
                 self.registry[k] = entry
+
+    def _base_subset(self, live: dict) -> dict:
+        """The base records that share an id with *live*'s.
+
+        The delta only ever looks base records up by the ids *live* holds, so
+        diffing one cell against this subset gives the same result as diffing
+        it against the whole base world -- at the cost of the cell, not of the
+        world, for every cell committed on unload. The id index is built once
+        per captured base.
+        """
+        base = self._base_level or {}
+        index = getattr(self, "_base_index", None)
+        if index is None or index[0] is not base:
+            things = {}
+            for t in base.get("things", []) or []:
+                tid = (t.get("properties") or {}).get("id")
+                if tid:
+                    things[tid] = t
+            brushes = {b.get("id"): b for b in base.get("brushes", []) or []
+                       if isinstance(b, dict) and b.get("id")}
+            index = self._base_index = (base, things, brushes)
+        _base, things, brushes = index
+        sub_things = [things[tid] for tid in (
+            (t.get("properties") or {}).get("id") for t in live.get("things", []))
+            if tid in things]
+        sub_brushes = [brushes[bid] for bid in (
+            b.get("id") for b in live.get("brushes", []) if isinstance(b, dict))
+            if bid in brushes]
+        return {"things": sub_things, "brushes": sub_brushes}
 
     def commit_all(self) -> dict:
         """Flush every cell's current state into the registry and return it.
@@ -655,6 +904,9 @@ class BigWorldSession:
 
     def stats(self) -> dict:
         s = self.manager.stats()
+        s["configured_activation_radius"] = self._authored_activation_radius
+        s["configured_deactivation_radius"] = self._authored_deactivation_radius
+        s["visual_horizon"] = self._visual_horizon
         terrain = self._terrain
         if terrain is not None:
             s["terrain_fill"] = True

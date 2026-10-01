@@ -115,8 +115,8 @@ QCheckBox::indicator, QRadioButton::indicator {
     border: 1px solid #5a5d66;
 }
 QCheckBox::indicator:checked, QRadioButton::indicator:checked {
-    background-color: #C41E3A;
-    border: 1px solid #8d1529;
+    background-color: #F08000;
+    border: 1px solid #a35700;
 }
 QRadioButton::indicator { border-radius: 7px; }
 QHeaderView { background-color: #3A3A3A; }
@@ -371,11 +371,11 @@ def _InventoryTab(thing, QtWidgets, QtCore):
     picker, and an inline detail editor — replacing the old spreadsheet table."""
     Qt = QtCore.Qt
     try:
-        from game import item_icons
+        from . import item_icons
     except Exception:  # pragma: no cover
         item_icons = None
     try:
-        from game.rpg import items as itemdb
+        from .rpg import items as itemdb
     except Exception:  # pragma: no cover
         itemdb = None
 
@@ -857,7 +857,7 @@ def _SpawnTab(thing, QtWidgets, QtCore):
             if isinstance(invval, list):
                 return
             try:
-                from game.runtime import MiniwindSession
+                from .runtime import MiniwindSession
                 p["inventory"] = MiniwindSession._spawn_inventory(invval)
             except Exception:
                 p["inventory"] = []

@@ -36,7 +36,11 @@ WORD_WRAP = int(Qt.TextWordWrap)
 
 
 def font(size, bold=False, italic=False, family="Georgia"):
-    return QFont(family, size, QFont.Bold if bold else QFont.Normal, italic)
+    """A UI font. A sans *family* becomes MedievalSharp when that is installed
+    (see :func:`game.ui.fonts.game_family`)."""
+    from . import fonts
+    return QFont(fonts.game_family(family), size,
+                 QFont.Bold if bold else QFont.Normal, italic)
 
 
 #: Decorative "old RPG" family stack for titles — the same one the spell cards

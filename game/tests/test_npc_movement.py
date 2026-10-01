@@ -17,8 +17,8 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game import runtime
-from game.runtime import MiniwindSession
+from .. import runtime
+from ..runtime import MiniwindSession
 
 
 class _NPC:

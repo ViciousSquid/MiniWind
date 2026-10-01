@@ -15,12 +15,12 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-import game
+from .. import install as _install_game
 from plugins.manager import get_manager
 
 
 def _mgr():
-    game.install()
+    _install_game()
     return get_manager()
 
 
@@ -88,7 +88,7 @@ def test_creation_wizards_registered_and_headless_safe(monkeypatch):
     # "Headless" is decided by whether a QApplication exists. In a full run the
     # session-wide one does, and the real modal wizard would block forever, so
     # present this test with the headless process it is about.
-    from game import editor_wizards
+    from .. import editor_wizards
 
     def _headless():
         raise RuntimeError("no QApplication: this process is headless")
@@ -115,29 +115,45 @@ def test_game_settings_is_registered_as_a_singleton():
 
 
 def test_miniwind_registers_generic_editor_extension_providers():
-    # MiniWind supplies its editor extensions through the generic registration
-    # surface, so generic Fio editor/engine code carries no MiniWind knowledge.
+    # MiniWind supplies its content through Fio's plugin API 1.5.0 editor
+    # extensions; the mechanisms are Fio's and carry no MiniWind knowledge.
     m = _mgr()
 
-    # KeyValue quick-insert suggestions (quest/flag keys) come from the game.
-    kv = m.kv_key_suggestions()
+    # LogicState preset keys (quest/flag keys) come from the game.
+    class _Store:
+        properties = {"type": "logic_state", "store_name": "miniwind"}
+    kv = m.kv_suggestions(_Store())
     keys = {row[1] for row in kv}
     assert "flag" in keys
     assert any(k.startswith("quest.") for k in keys)
 
-    # The debug inspector snapshot is provided by the game, not the engine.
+    # The Entity Inspector's mental-state view is provided by the game.
     class _T:
         properties = {"type": "npc", "npc_role": "guard", "faction": "guards",
                       "sched_state": "WORKING"}
-    snap = m.inspector_snapshot(_T(), {}, None)
-    assert snap and snap["title"].startswith("Guard")
-    assert snap["tasks"]        # the rich mental-state view, from the game
+    doc = m.inspect_entity(_T(), None)
+    assert doc and doc["title"].startswith("Guard")
+    headings = [heading for heading, _rows in doc["sections"]]
+    tasks = dict(doc["sections"])["Task list (by priority)"]
+    assert tasks and all(len(row) == 3 and 0.0 <= row[2] <= 1.0 for row in tasks)
+    assert sum(row[0].startswith("\u25b6 ") for row in tasks) <= 1
+    assert headings[-1] == "Task list (by priority)"
+
+
+def test_the_mental_state_inspector_is_only_for_actors():
+    m = _mgr()
+    for etype in ("npc", "creature", "monster"):
+        assert m.has_entity_inspector(etype), etype
+
+    class _Light:
+        properties = {"type": "light", "name": "lamp"}
+    assert m.inspect_entity(_Light(), None) is None    # Fio's property view
 
 
 def test_markers_have_distinct_per_kind_sprites():
     # The 2D view now uses each marker's own sprite (custom_idle) so markers of
     # different kinds look different — matching the 3D view.
-    from game import entities
+    from .. import entities
     seen = {}
     for kind in ("home", "bed", "forge", "shop", "farm", "guardpost"):
         mk = entities.Marker(pos=[0, 0, 0], properties={"marker_kind": kind})

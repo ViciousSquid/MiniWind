@@ -203,6 +203,29 @@ free. Thalen the blacksmith forges the edged ones, Elowen's shop keeps the pail,
 and Bram the farmer will part with his own. The scythe is what the reaper
 carries.
 
+## The Vale of MiniWind (the shipped world)
+
+`maps/village_walled_source.json` is the game's one map and loads at startup.
+Millbrook sits at its centre; the rest of the Vale has been spread out over a
+world about 82 000 units square (40 x 40 terrain chunks) by
+
+```bash
+python -m game.tools.expand_world --preview vale.png
+```
+
+which moved every outlying site (Hollin's Cross, Mirrormere and its shore
+villages, the Old Mill, Greywood, the barrows and camps...) further from the
+village *with the ground it stands on*, raised a mountain wall around the edge
+and the Emberpeaks to the far north-east (a heightmap overlay kept clear of
+every site), and added open-country landmarks, wildlife and groves. Every lake
+and pond is a sculpted depression filled by a single water brush whose edges
+lie under dry bank. High in
+the Emberpeaks, up a cairn-marked pass beyond Frostcap Tor, the **Emberpeak
+Shrine** holds the old altar and the **Ember Tome** -- the firebolt spellbook,
+which is also the `ember_tome` quest item of Thalen's quest *The Ember Tome*.
+The quest arrow points at the book; reading it teaches firebolt, hands over the
+tome and completes the quest. The tool refuses to expand a map twice.
+
 ## The living settlement (vertical slice)
 
 The starter settlement **Millbrook** is authored entirely as data
@@ -309,7 +332,7 @@ game/                     the integrated MiniWind game layer (built-in, not a pl
     rpg/                   engine-agnostic RPG core (character, skills, magic, quests, combat…)
     ui/                    HUD, dialogue box, character/inventory/journal screens
     data/                  editable game content (+ mods overlay)
-    tools/                 make_settlement, make_world, make_sprites
+    tools/                 expand_world, make_settlement, make_world, make_sprites
     tests/                 headless tests (no Qt/OpenGL)
 
 engine/                   generic Fio technology (renderer, terrain, monster AI, save/load…)

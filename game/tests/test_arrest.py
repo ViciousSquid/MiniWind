@@ -19,8 +19,8 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game import runtime
-from game.runtime import MiniwindSession
+from .. import runtime
+from ..runtime import MiniwindSession
 
 
 class _Thing:
@@ -242,3 +242,92 @@ def test_clearing_an_arrest_calls_off_any_chase():
     session._clear_arrest()
     assert session._arrest_pursuers == []
     assert guard.properties["aggression"] == "defensive"
+
+
+# -------------------------------------------------------------------- sound
+
+def test_a_guard_stopping_the_player_says_one_of_the_arrest_lines(monkeypatch):
+    """Either arrest1.mp3 or arrest2.mp3, picked at random, once per stop."""
+    import random
+    played = []
+
+    class _Sounding(_Session):
+        play_ui_sound = MiniwindSession.play_ui_sound
+
+        def start_dialogue(self, npc, player):
+            self.talking_to = npc
+
+    for seed in range(12):
+        guard = _guard((10.0, 0.0, 0.0))
+        prison = _marker((5000.0, 0.0, 0.0), "prison")
+        session = _Sounding([guard, prison], player_pos=(0.0, 0.0, 0.0), bounty=200)
+        session.rng = random.Random(seed)
+        session.logic.game_state = type("GS", (), {
+            "queue_sound": staticmethod(played.append)})()
+        session._arrest_guard = guard
+        session._arrest_state = "approach"
+
+        session._update_arrest()
+        assert session._arrest_state == "ready"
+        session._update_arrest()                     # still standing there: no repeat
+
+    files = [p["file"] for p in played]
+    assert len(files) == 12                          # one per arrest, none repeated
+    assert set(files) == set(runtime.ARREST_SOUNDS)  # both lines get used
+    for name in runtime.ARREST_SOUNDS:               # and the files are in the game
+        assert os.path.isfile(os.path.join(runtime.SOUND_DIR, name))
+
+
+# ------------------------------------------------------------- head marks
+
+class _Marked(_Session):
+    head_mark = MiniwindSession.head_mark
+    head_marks = MiniwindSession.head_marks
+    set_head_mark = MiniwindSession.set_head_mark
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self._head_marked = {}
+
+
+def test_a_guard_coming_to_arrest_shows_an_exclamation_mark():
+    guard = _guard((10.0, 0.0, 0.0))
+    bystander = _guard((50.0, 0.0, 0.0), name="Other")
+    session = _Marked([guard, bystander], bounty=200)
+    assert session.head_marks() == []
+    for state in ("approach", "ready"):
+        session._arrest_guard, session._arrest_state = guard, state
+        assert session.head_marks() == [(guard, "!")]
+    session._arrest_state = "escorting"          # walking you to gaol is calm
+    assert session.head_marks() == []
+
+
+def test_every_guard_running_the_player_down_shows_one():
+    one, two = _guard((100.0, 0.0, 0.0), name="One"), _guard((120.0, 0.0, 0.0), name="Two")
+    session = _Marked([one, two], player_pos=(0.0, 0.0, 0.0), bounty=200)
+    session._start_arrest_pursuit()
+    assert sorted(m for _n, m in session.head_marks()) == ["!", "!"]
+    session.game.character.bounty = 0
+    session._update_arrest()                     # settled: the chase ends
+    assert session.head_marks() == []
+
+
+def test_any_npc_can_be_given_a_mark_and_have_it_taken_away():
+    villager = _Thing((0.0, 0.0, 0.0), type="npc", name="Ada")
+    session = _Marked([villager])
+    session.set_head_mark(villager, "?")
+    assert session.head_marks() == [(villager, "?")]
+    session.set_head_mark(villager, "!")
+    assert session.head_mark(villager) == "!"
+    villager.properties["dead"] = True
+    assert session.head_marks() == []
+    villager.properties.pop("dead")
+    session.set_head_mark(villager, None)
+    assert session.head_marks() == []
+    assert "_head_mark" not in villager.properties
+
+
+def test_both_mark_images_ship_with_the_game():
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    for name in ("exclamation.png", "question.png"):
+        assert os.path.isfile(os.path.join(root, "assets", "sprites", "marks", name))

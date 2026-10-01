@@ -64,7 +64,7 @@ def _load_bestiary() -> Dict[str, Creature]:
     The *content* (which creatures exist and their stats) is editable data; the
     :class:`Creature` template and everything that reads it stays code.
     """
-    from game import data
+    from .. import data
     out: Dict[str, Creature] = {}
     for role, row in (data.load("bestiary") or {}).items():
         row = dict(row)

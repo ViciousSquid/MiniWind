@@ -19,9 +19,9 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game import data
-from game.rpg import bestiary
-from game.tools import make_settlement
+from .. import data
+from ..rpg import bestiary
+from ..tools import make_settlement
 
 
 class _FakeThing:
@@ -100,7 +100,7 @@ def test_build_produces_loadable_map():
 
 def _load_session(hour, globals_store=None):
     """Materialise the built map's things into a live session at *hour*."""
-    from game.runtime import MiniwindSession
+    from ..runtime import MiniwindSession
     world = _built()
     things = [_FakeThing(t["pos"], t["properties"]) for t in world["things"]]
     player = _FakePlayer([300, 272, -100])  # near the square, away from the threat
@@ -152,7 +152,7 @@ def test_threat_starts_hostile_and_is_far_from_town():
 
 # --- guard patrol (a visibly moving watch) ---------------------------------
 def test_guard_patrols_its_circuit_by_day():
-    from game.rpg import schedule as sched
+    from ..rpg import schedule as sched
     session, things = _load_session(12.0)
     kestrel = _find(things, "Kestrel")
     start = list(kestrel.pos)
@@ -170,7 +170,7 @@ def test_guard_patrols_its_circuit_by_day():
 
 
 def test_guard_resumes_patrol_after_a_threat_passes():
-    from game.rpg import schedule as sched
+    from ..rpg import schedule as sched
     session, things = _load_session(12.0)
     kestrel = _find(things, "Kestrel")
     # The engine's entity constructor fills faction/team on load; the headless
@@ -246,7 +246,7 @@ def test_apply_settlement_content_upgrades_in_place():
     """The content-merge tool refreshes NPC dialogue/relationships/patrol on a
     hand-authored map without moving anything or touching geometry, and collapses
     exact-duplicate things."""
-    from game.tools.apply_settlement_content import apply_content
+    from ..tools.apply_settlement_content import apply_content
     s = data.load("settlement")
     # A tiny stand-in "hand-edited" map: a wall brush, a bare Kestrel at a
     # bespoke position, and an accidental duplicate threat.
@@ -275,7 +275,7 @@ def test_apply_settlement_content_upgrades_in_place():
 
 
 def test_dialogue_reflects_a_relatives_death():
-    from game.rpg.dialogue import DialogueRunner, DictStore
+    from ..rpg.dialogue import DialogueRunner, DictStore
     s = data.load("settlement")
     mara = next(n for n in s["npcs"] if n["name"] == "Mara")
     tree = mara["dialogue"]
@@ -302,7 +302,7 @@ def test_settlement_livestock_are_owned_producers():
     Nothing in the game knows what milk is. The cow yields an ordinary item, the
     item inherits the cow's owner, and taking it is a theft with a witness, a
     bounty and a farmer who remembers — all from two data fields."""
-    from game.sim import ownership, production
+    from ..sim import ownership, production
     world = _built()
     beasts = [t for t in world["things"]
               if t["properties"].get("npc_role") in ("cow", "hen", "sheep")]

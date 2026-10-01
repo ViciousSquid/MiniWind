@@ -48,19 +48,19 @@ FACE_BUTTON_STYLE = """
     QPushButton:disabled { background-color: #444; color: #888; border: 1px solid #555; }
 """
 
-# MiniWind's accent red, as the Settings window and the Asset Browser use it.
+# Fio's accent orange, as the Settings window and the Asset Browser use it.
 ACCENT_BUTTON_STYLE = """
     QPushButton {
-        background-color: #b52316;
+        background-color: #F08000;
         color: white;
         font: 9pt;
         font-weight: bold;
         padding: 6px 12px;
-        border: 1px solid #8a1a10;
+        border: 1px solid #B35F00;
         border-radius: 5px;
     }
-    QPushButton:hover { background-color: #d61604; }
-    QPushButton:pressed { background-color: #8a1a10; }
+    QPushButton:hover { background-color: #FF8C00; }
+    QPushButton:pressed { background-color: #B35F00; }
     QPushButton:disabled { background-color: #444; color: #888; border: 1px solid #555; }
 """
 
@@ -322,7 +322,7 @@ class SurfaceInspector(QDialog):
     # ------------------------------------------------------------------ #
     # Public API                                                          #
     # ------------------------------------------------------------------ #
-    def set_target(self, brush, face_key, raise_window=True):
+    def set_target(self, brush, face_key, raise_window=True, reveal=True):
         """Bind the inspector to a face, or to nothing, and show it.
 
         ``brush`` of None leaves the panel open with its controls disabled,
@@ -331,10 +331,16 @@ class SurfaceInspector(QDialog):
         ``raise_window`` is False when the editor re-binds the panel behind
         the user's back -- following a selection change, say -- since taking
         the focus away from the viewport on every click would be intolerable.
+
+        ``reveal`` is False for a re-bind that must not change whether the
+        panel is open at all: undo/redo re-point it at the rebuilt brush, and
+        a panel the user closed must stay closed.
         """
         self.target = (brush, face_key) if brush is not None else None
         self._fill_face_combo()
         self.refresh_from_face()
+        if not reveal and not self.isVisible():
+            return
         self.show()
         if raise_window:
             self.raise_()
@@ -571,7 +577,17 @@ class SurfaceInspector(QDialog):
     def _commit(self):
         """Push the change to the views and mark the map dirty."""
         self.editor.unsaved_changes = True
-        self.editor.state.mark_lighting_dirty()
+
+        # The Surface Inspector can edit a picked face whose brush is not in
+        # the editor's object selection. Pass the actual affected brushes so
+        # RenderTable invalidates the correct cold rows.
+        targets = self.target_faces()
+        dirty_brushes = list({id(brush): brush for brush, _ in targets}.values())
+        if dirty_brushes:
+            self.editor.state.mark_lighting_dirty(dirty_brushes)
+        else:
+            self.editor.state.mark_lighting_dirty()
+
         self.editor.update_views()
 
     # ------------------------------------------------------------------ #

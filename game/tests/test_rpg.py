@@ -17,13 +17,13 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game.rpg import (attributes as attr, skills as sk, races,
+from ..rpg import (attributes as attr, skills as sk, races,
                                   classes, birthsigns, items, inventory as inv,
                                   equipment as eq, combat, magic, quests,
                                   quests_content, loot, guilds, bestiary)
-from game.rpg.character import Character
-from game.rpg.game_state import GameState
-from game.rpg.dialogue import DictStore
+from ..rpg.character import Character
+from ..rpg.game_state import GameState
+from ..rpg.dialogue import DictStore
 
 
 # --- creation --------------------------------------------------------------
@@ -258,7 +258,7 @@ def test_disposition_reflects_personality_and_bounty():
 
 # --- authoring grammar (editor <-> runtime round-trip) ---------------------
 def test_authoring_response_roundtrip():
-    from game.rpg import authoring
+    from ..rpg import authoring
     line = "I'm looking for work. -> quest | if quest.wolves.state != active | do start_quest wolves ; give iron_arrow,10"
     r = authoring.parse_response_line(line)
     assert r["text"] == "I'm looking for work." and r["goto"] == "quest"
@@ -272,7 +272,7 @@ def test_authoring_response_roundtrip():
 
 
 def test_authoring_conditions_and_actions():
-    from game.rpg import authoring
+    from ..rpg import authoring
     assert authoring.parse_condition("has silver_amulet") == {"has_item": "silver_amulet"}
     assert authoring.parse_condition("flag == done") == {"key": "flag", "equals": "done"}
     acts = authoring.parse_actions("open_trade ; join_guild fighters ; set flag=1")

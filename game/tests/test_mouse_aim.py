@@ -23,7 +23,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game.runtime import MiniwindSession
+from ..runtime import MiniwindSession
 
 
 class _GameState:

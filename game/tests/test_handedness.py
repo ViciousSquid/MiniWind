@@ -16,7 +16,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game.rpg.character import Character
+from ..rpg.character import Character
 
 
 def test_character_defaults_to_right_handed():
@@ -53,7 +53,7 @@ class _FakeLogic:
 
 
 def _session(things):
-    from game.runtime import MiniwindSession
+    from ..runtime import MiniwindSession
     s = MiniwindSession(_FakeLogic(things, _FakePlayer([0, 272, 0])),
                         cfg={"start_hour": 12.0, "minutes_per_day": 999999.0})
     s.clock.set_time(12.0, 1)

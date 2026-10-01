@@ -22,9 +22,9 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game.rpg import equipment as eq
-from game.rpg import inventory as inv
-from game.rpg import items as rpg_items
+from ..rpg import equipment as eq
+from ..rpg import inventory as inv
+from ..rpg import items as rpg_items
 
 TOOLS = ("scythe", "pitchfork", "shovel", "bucket")
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))

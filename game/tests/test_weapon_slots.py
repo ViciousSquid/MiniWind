@@ -10,15 +10,16 @@ Run:  python -m pytest game/tests/test_weapon_slots.py -q
 
 from __future__ import annotations
 
+import pytest
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game import host
-from game.runtime import MiniwindSession
-from game.rpg import equipment as eq
-from game.rpg import items as rpg_items
+from .. import host
+from ..runtime import MiniwindSession
+from ..rpg import equipment as eq
+from ..rpg import items as rpg_items
 
 
 class _Character:
@@ -130,9 +131,10 @@ def test_the_slot_keys_do_not_clash_with_any_action_binding():
     assert not actions & set(host.WEAPON_SLOT_KEYS)
 
 
+@pytest.mark.qt
 def test_the_loadout_popup_lists_the_same_order_the_keys_use():
     """One source of truth: row 1 is what pressing 1 draws."""
-    from game.ui.loadout_window import LoadoutWindow
+    from ..ui.loadout_window import LoadoutWindow
 
     session = _pack("iron_shortsword", "bread", "hunting_bow")
     listed = [row[0] for row in LoadoutWindow._weapons(

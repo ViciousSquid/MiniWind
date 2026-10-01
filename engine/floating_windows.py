@@ -14,9 +14,6 @@ Pieces:
   * :class:`CallbackWindow` -- a window whose body is painted by a supplied
     callback, so a caller can present its own overlay through the same manager
     without subclassing anything.
-  * :class:`NpcDebugWindow` -- renders an actor's live snapshot dict
-    (identity / state / task list). The snapshot comes from a caller-supplied
-    callable, so the widget stays game-agnostic and never imports a game.
 
 All Qt drawing mirrors SysMon's look so the popups feel like one family. The
 manager is deliberately engine-light: it only needs a QPainter to draw and Qt
@@ -25,7 +22,7 @@ no engine, editor or game imports.
 """
 
 from PyQt5.QtCore import Qt, QRect, QPoint
-from PyQt5.QtGui import QPainter, QColor, QFont, QPen, QBrush, QFontMetrics
+from PyQt5.QtGui import QColor, QFont, QPen, QBrush, QFontMetrics
 
 
 # Shared palette (matches engine.sysmon so popups look like one family).
@@ -301,95 +298,3 @@ class CallbackWindow(FloatingWindow):
                 self._on_close_cb()
             except Exception as exc:
                 print(f"[CallbackWindow] on_close failed for '{self.key}': {exc}")
-
-
-class NpcDebugWindow(FloatingWindow):
-    """Live mental-state inspector for one monster/NPC.
-
-    ``thing`` is the inspected entity. ``snapshot_provider`` is a zero-arg
-    callable returning the display dict (the view supplies one that routes through
-    whichever built-in game registered an inspector, with a generic fallback).
-    This engine widget stays game-agnostic: it renders whatever dict it is given
-    and never imports a game.
-    """
-
-    LINE_H = 16
-    PAD = 10
-
-    def __init__(self, thing, snapshot_provider=None, x=60, y=60, width=360):
-        super().__init__("Inspector", x, y, width, body_height=260)
-        self.thing = thing
-        self._provider = snapshot_provider
-        self._snap = self._fetch()
-        self.title = self._snap.get("title", "Inspector") if self._snap else "Inspector"
-
-    def _fetch(self):
-        try:
-            if self._provider is not None:
-                return self._provider()
-        except Exception as exc:
-            print(f"[NpcDebugWindow] snapshot provider failed: {exc}")
-        return {"title": "Inspector", "subtitle": "", "sections": [], "tasks": []}
-
-    def refresh(self):
-        self._snap = self._fetch()
-        if self._snap:
-            self.title = self._snap.get("title", self.title)
-
-    def content_height(self):
-        snap = self._snap or {}
-        lines = 2  # subtitle + spacing
-        for _heading, rows in snap.get("sections", []):
-            lines += 1 + len(rows)
-        lines += 1 + len(snap.get("tasks", []))   # "Task list" heading + rows
-        return self.PAD * 2 + lines * self.LINE_H + 20
-
-    def draw_body(self, painter, x, y, w):
-        # Snapshot is refreshed by the view (throttled); draw whatever we hold.
-        snap = self._snap or {}
-        painter.setFont(self.font)
-        cx = x + self.PAD
-        cy = y + self.PAD + self.LINE_H
-
-        # Subtitle
-        painter.setPen(_ACCENT)
-        painter.drawText(cx, cy, str(snap.get("subtitle", "")))
-        cy += self.LINE_H + 4
-
-        label_w = 120
-        for heading, rows in snap.get("sections", []):
-            painter.setPen(_WHITE)
-            painter.setFont(self.title_font)
-            painter.drawText(cx, cy, str(heading))
-            painter.setFont(self.font)
-            cy += self.LINE_H
-            for label, value in rows:
-                painter.setPen(_MUTED)
-                painter.drawText(cx + 6, cy, f"{label}:")
-                painter.setPen(_TEXT)
-                painter.drawText(cx + 6 + label_w, cy, str(value))
-                cy += self.LINE_H
-
-        # --- Prioritised task list ---
-        painter.setPen(_WHITE)
-        painter.setFont(self.title_font)
-        painter.drawText(cx, cy, "Task list (by priority)")
-        painter.setFont(self.font)
-        cy += self.LINE_H
-        tasks = snap.get("tasks", [])
-        max_pri = max((p for p, _l, _a in tasks), default=1) or 1
-        bar_x = cx + 6
-        bar_w = 46
-        for pri, label, active in tasks:
-            # priority bar
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(QBrush(_BAR_BG))
-            painter.drawRect(bar_x, cy - self.LINE_H + 5, bar_w, 8)
-            fill = int(bar_w * (pri / max_pri))
-            painter.setBrush(QBrush(_ACCENT if active else _MUTED))
-            painter.drawRect(bar_x, cy - self.LINE_H + 5, fill, 8)
-            # label (active one highlighted with a marker)
-            painter.setPen(_GOOD if active else _TEXT)
-            marker = "▶ " if active else "  "
-            painter.drawText(bar_x + bar_w + 8, cy, f"{marker}{label}")
-            cy += self.LINE_H

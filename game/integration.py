@@ -21,6 +21,8 @@ than breaking startup.
 
 from __future__ import annotations
 
+import os
+
 _applied = False
 
 
@@ -40,6 +42,9 @@ def apply():
     _applied = True
     _register_wizards()
     _patch_editor_menu()
+    _patch_window_title()
+    _patch_map_loading()
+    _patch_play_menu()
 
 
 def _register_wizards():
@@ -85,9 +90,142 @@ def _patch_editor_menu():
             _add_tools_menu_entries(MainWindow)
         except Exception as exc:
             _log(f"MiniWind Tools-menu entries failed: {exc}")
+        # MiniWind's world comes from its settlement tools, not Fio's
+        # procedural map generator: it is not offered (Tools and Terrain menus
+        # share the one action).
+        action = getattr(MainWindow, "procedural_action", None)
+        if action is not None:
+            action.setVisible(False)
+            action.setEnabled(False)
 
     Ui_MainWindow.create_menu_bar = create_menu_bar
+
+    # MiniWind always plays overhead (host.PLAY_CAMERA), so Fio's
+    # First Person / Overhead play-camera dropdown has nothing to choose.
+    _orig_create_status_bar = Ui_MainWindow.create_status_bar
+
+    def create_status_bar(self, MainWindow):
+        _orig_create_status_bar(self, MainWindow)
+        try:
+            _hide_camera_dropdown(MainWindow)
+        except Exception as exc:
+            _log(f"camera dropdown removal failed: {exc}")
+
+    Ui_MainWindow.create_status_bar = create_status_bar
     Ui_MainWindow._miniwind_patched = True
+
+
+#: settings.ini switch (Settings > Editor > Maps > "Allow Fio maps") that lets
+#: the editor open plain Fio maps. Off by default: MiniWind ships game maps only.
+ALLOW_FIO_MAPS = ("Editor", "allow_fio_maps")
+
+#: What makes a map a MiniWind map: its game-settings entity.
+_GAME_MAP_MARKER = b'"miniwindsettings"'
+
+
+def is_game_map(path) -> bool:
+    """True when the map file at *path* carries MiniWind's settings entity."""
+    try:
+        with open(path, "rb") as f:
+            return _GAME_MAP_MARKER in f.read()
+    except OSError:
+        return True      # unreadable: let the editor report the real error
+
+
+def fio_maps_allowed(config) -> bool:
+    try:
+        return config.getboolean(*ALLOW_FIO_MAPS, fallback=False)
+    except Exception:
+        return False
+
+
+def _patch_map_loading():
+    """Refuse plain Fio maps unless Settings allows them.
+
+    Wraps ``MainWindow.load_level_file``, the one path every map open takes
+    (File > Open, recent files, the maps browser, a level change in play).
+    """
+    try:
+        from editor.main_window import MainWindow
+    except Exception as exc:
+        _log(f"map-loading gate skipped ({exc})")
+        return
+    if getattr(MainWindow, "_miniwind_maps_gated", False):
+        return
+    _orig_load = MainWindow.load_level_file
+
+    def load_level_file(self, filePath):
+        if not fio_maps_allowed(getattr(self, "config", None)) and not is_game_map(filePath):
+            name = os.path.basename(str(filePath))
+            message = (f"{name} is a plain Fio map. Turn on Settings > Editor > "
+                       f"Allow Fio maps to open it.")
+            _log(message)
+            toast = getattr(self, "show_toast", None)
+            if toast is not None:
+                toast(message, is_error=True)
+            return False
+        return _orig_load(self, filePath)
+
+    MainWindow.load_level_file = load_level_file
+    MainWindow._miniwind_maps_gated = True
+
+
+#: The editor window's product name.
+WINDOW_TITLE = "MiniWind"
+
+
+def _patch_window_title():
+    """Title the editor window "MiniWind <map> <*>" where Fio says "Fio - <map> <*>"."""
+    try:
+        from editor.main_window import MainWindow
+    except Exception as exc:
+        _log(f"window-title patch skipped ({exc})")
+        return
+    if getattr(MainWindow, "_miniwind_title_patched", False):
+        return
+    _orig_set_title = MainWindow.setWindowTitle
+
+    def setWindowTitle(self, title):
+        _orig_set_title(self, _product_title(title))
+
+    MainWindow.setWindowTitle = setWindowTitle
+    MainWindow._miniwind_title_patched = True
+
+
+def _product_title(title) -> str:
+    text = str(title)
+    if text == "Fio":
+        return WINDOW_TITLE
+    if text.startswith("Fio - "):
+        return f"{WINDOW_TITLE} {text[len('Fio - '):]}"
+    return text
+
+
+def _hide_camera_dropdown(MainWindow):
+    """Take Fio's play-camera dropdown, its "Camera:" label and the spacing in
+    front of them out of the status bar.
+
+    Hidden, not deleted: the window keeps its ``camera_mode_combobox``
+    attribute, so nothing that reads it can trip over a deleted widget.
+    """
+    from PyQt5.QtWidgets import QLabel, QLayout
+
+    combo = getattr(MainWindow, "camera_mode_combobox", None)
+    if combo is None:
+        return
+    layout = next((lay for lay in MainWindow.findChildren(QLayout)
+                   if lay.indexOf(combo) >= 0), None)
+    if layout is None:
+        combo.hide()
+        return
+    index = layout.indexOf(combo)
+    label = layout.itemAt(index - 1).widget() if index >= 1 else None
+    if isinstance(label, QLabel) and label.text().strip() == "Camera:":
+        label.hide()
+        spacer = layout.itemAt(index - 2) if index >= 2 else None
+        if spacer is not None and spacer.spacerItem() is not None:
+            layout.removeItem(spacer)
+    combo.hide()
 
 
 def _add_tools_menu_entries(MainWindow):
@@ -383,3 +521,63 @@ def _active_session(MainWindow):
     lt = getattr(view, "logic_thread", None) if view is not None else None
     return getattr(lt, "_miniwind", None) if lt is not None else None
 
+
+
+def _patch_play_menu():
+    """Give the 3D view MiniWind's pause menu, and the music its settings.
+
+    Fio's view keeps a ``play_menu`` slot that Escape raises during play (see
+    ``QtGameView.open_play_menu``); MiniWind fills it with
+    :class:`game.ui.pause_menu.PauseMenu` as each view is built, and points
+    the soundtrack at the editor's settings so the music switch persists.
+    """
+    try:
+        from engine.qt_game_view import QtGameView
+    except Exception as exc:
+        _log(f"pause menu skipped ({exc})")
+        return
+    if getattr(QtGameView, "_miniwind_play_menu", False):
+        return
+    _orig_init = QtGameView.__init__
+
+    def __init__(self, *args, **kwargs):
+        _orig_init(self, *args, **kwargs)
+        try:
+            install_play_menu(self)
+        except Exception as exc:
+            _log(f"pause menu not installed ({exc})")
+
+    QtGameView.__init__ = __init__
+    QtGameView._miniwind_play_menu = True
+
+
+def install_play_menu(view):
+    """Install the pause menu on *view* and configure the music from its editor."""
+    from .ui.pause_actions import PauseActions
+    from .ui.pause_menu import PauseMenu
+    from . import music
+    view.play_menu = PauseMenu(view, PauseActions(view))
+    # Character creation, trading and conversations take the mouse.
+    from .ui.hits import GamePointer
+    view.game_pointer = GamePointer(view)
+    _use_game_fonts_for_loading()
+    editor = getattr(view, "editor", None)
+    config = getattr(editor, "config", None)
+    if config is not None:
+        music.PLAYER.configure(config, getattr(editor, "save_config", None))
+
+
+def _use_game_fonts_for_loading():
+    """Set the loading bar in MiniWind's faces where they are installed:
+    Enchanted Land for the title, MedievalSharp for the bar's text."""
+    try:
+        from PyQt5.QtGui import QFont
+        from editor import loading_overlay
+        from .ui import fonts
+    except Exception:
+        return
+    title = fonts.menu_family()
+    text = fonts.dialogue_family()
+    loading_overlay.set_fonts(
+        title=QFont(title, 22) if title != fonts.FALLBACK_FAMILY else None,
+        bar=QFont(text, 12) if text != fonts.DIALOGUE_FALLBACK else None)

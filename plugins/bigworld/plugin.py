@@ -21,15 +21,9 @@ This module is the thin FioPlugin wiring:
 * ``connect``           — publish a ``bigworld`` service and draw the optional
                           debug overlay via the ``render.overlay`` event.
 
-The plugin is **mandatory for this build** (``plugins.manager.MANDATORY_PLUGINS``):
-it always loads, always starts enabled, cannot be switched off from the Plugins
-menu or ``settings.ini``, and the application refuses to start without it.
-
-Being enabled still costs an ordinary map nothing. The map-level opt-in is
-unchanged — a map streams only if it holds a ``BigWorldSettings`` entity — and
-every hook below early-outs before importing a line of the streaming runtime for
-a map that does not (§19/§20). "Enabled" means the layer is present and ready;
-it does not mean a map is streaming.
+The plugin ships **disabled by default** and is auto-enabled by the manager only
+for maps that contain a ``BigWorldSettings`` entity, so ordinary small maps pay
+nothing and behave exactly as before (§19/§20).
 """
 
 from __future__ import annotations
@@ -60,12 +54,10 @@ class BigWorldPlugin(FioPlugin):
     description = "Cell streaming: keep only the area around the player active in huge maps."
     category = "Big World"
     api_version = "1.2.0"   # needs the PluginHost / event bus (connect) surface
-    # Enabled by default, and kept that way: this build declares bigworld
-    # mandatory, so the manager forces it on at load and refuses any attempt to
-    # disable it. Whether a map *streams* is still decided per map by the
-    # presence of a BigWorldSettings entity (see map_uses_bigworld), so an
-    # ordinary map pays nothing for the plugin being on.
-    enabled = True
+    # Disabled by default: only maps that place a BigWorldSettings entity use it.
+    # The manager auto-enables the plugin when such a map loads (auto_enable_for_map),
+    # so streaming maps just work while ordinary maps never pay for it.
+    enabled = False
 
     #: Normalised ``type`` of the entity whose presence opts a map in. Kept here
     #: as a bare string rather than read off ``.entities`` so asking "does this
@@ -147,6 +139,13 @@ class BigWorldPlugin(FioPlugin):
                 )
                 session.start()
             except Exception:
+                # Undo whatever a half-started session already claimed (the
+                # camera-horizon limit, above all) before falling back.
+                try:
+                    if session is not None:
+                        session.stop()
+                except Exception:
+                    pass
                 session = None
         if session is None:
             session = BigWorldSession(
@@ -157,6 +156,8 @@ class BigWorldPlugin(FioPlugin):
                 terrain_infinite=cfg["terrain_infinite"],
                 terrain_stream_radius=cfg["terrain_stream_radius"],
                 sim_near_radius=cfg["sim_near_radius"],
+                terrain_stream=cfg["terrain_stream"],
+                fit_overhead_camera=cfg["fit_overhead_camera"],
             )
             session.start()
         session._show_debug = cfg["show_cell_debug"]
@@ -209,17 +210,20 @@ class BigWorldPlugin(FioPlugin):
             pass  # never let a debug draw take down the frame
 
     def _paint_debug(self, painter, session, width, height):
-        from PyQt5.QtCore import Qt, QRect
+        from PyQt5.QtCore import QRect
         from PyQt5.QtGui import QColor, QFont
 
         s = session.stats()
         pc = s.get("player_cell")
         pc_txt = f"{pc[0]}, {pc[1]}" if pc else "-"
+        horizon = s.get("visual_horizon")
         lines = [
             ("Player Cell", pc_txt),
             ("Active Cells", f"{s['active_cells']}"),
             ("Loaded Cells", f"{s['loaded_cells']}"),
-            ("Activation Radius", f"{s['activation_radius']:.0f}"),
+            ("Configured Radius", f"{s['configured_activation_radius']:.0f}"),
+            ("Visual Horizon", f"{horizon:.0f}" if horizon is not None else "-"),
+            ("Effective Radius", f"{s['activation_radius']:.0f}"),
             ("Active Brushes", f"{s['active_brushes']:,}"),
             ("Total Brushes", f"{s['total_brushes']:,}"),
             ("Active Entities", f"{s['active_entities']:,}"),

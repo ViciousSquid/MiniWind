@@ -73,7 +73,7 @@ def main():
     out_dir = os.path.join(root, "assets", "sprites", "spells")
     os.makedirs(out_dir, exist_ok=True)
 
-    from game.rpg import magic
+    from ..rpg import magic
     n = 0
     for sid, sp in magic.SPELLS.items():
         col = sp.color if getattr(sp, "color", None) else None

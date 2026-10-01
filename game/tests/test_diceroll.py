@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import random
 
-from game.diceroll import DiceNotationError, DiceRoller, dicerollAPI, parse_dice_notation
+from ..diceroll import DiceNotationError, DiceRoller, dicerollAPI, parse_dice_notation
 
 
 def test_parser_supports_shorthand_terms_and_modifiers():

@@ -1,0 +1,42 @@
+From c1b06a1aa87b2e4bb2880fe106293a816d323059 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 01:35:21 +0000
+Subject: [PATCH 3/3] API.md: document world pause and actor pick
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012JjvAUoz3TbsVAy6Nf24Am
+---
+ plugins/API.md | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/plugins/API.md b/plugins/API.md
+index a883f2e..9fd56ba 100644
+--- a/plugins/API.md
++++ b/plugins/API.md
+@@ -402,6 +402,23 @@ first provider returning a non-empty document is shown; with none the panel list
+ the entity's public properties. The panel refreshes about four times a second
+ while visible. With *entity_type* the provider is only asked about that type.
+ 
++### World pause and actor pick (engine, Play Mode)
++
++Not part of the versioned `EditorAPI`; engine objects a plugin already receives.
++
++```python
++logic.set_world_paused(owner, paused=True)   # hold/release a pause for *owner*
++logic.world_paused                           # True while any owner holds one
++main_window.begin_actor_pick(on_pick=None)   # arm click-to-pick of an actor
++```
++While any owner holds a world pause, a play tick advances nothing in the world
++(player, movers, doors, I/O timers, triggers, props, physics, projectiles, the
++monster AI thread) but plugins still tick, so a game's menus keep working. Each
++owner releases only its own request; entering or leaving Play Mode drops them
++all. `begin_actor_pick` pauses the world, frees the cursor and calls
++`on_pick(entity)` for the next actor clicked (default: open the Entity
++Inspector); Esc or a right-click cancels.
++
+ ### Global store & logging
+ 
+ ```python
+-- 
+2.43.0
+

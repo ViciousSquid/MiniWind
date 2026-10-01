@@ -1,15 +1,26 @@
 # Fio — Liminal World Editor & Procedural Engine
-#
-# https://github.com/ViciousSquid/Fio
+#    https://github.com/ViciousSquid/Fio
 
 import sys
 import os
-import shutil
-import argparse
 
 
 os.environ["QT_PLUGIN_PATH"] = ""
 os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = ""
+
+# PyOpenGL calls glGetError after every GL call unless told not to, which on a
+# frame of a few hundred calls is a measurable share of the paint. It must be
+# decided before anything imports OpenGL.GL. FIO_GL_DEBUG=1 keeps the checks
+# (the test suite never comes through here, so it always runs with them).
+if os.environ.get("FIO_GL_DEBUG") != "1":
+    os.environ.setdefault("PYOPENGL_ERROR_CHECKING", "0")
+
+# Fio runs the UI/renderer, the logic thread and the monster AI as Python
+# threads. Whenever one releases the GIL (every GL call, every large NumPy
+# operation) and another takes it, the first waits up to the switch interval to
+# get it back -- 5 ms by default, a third of a frame. Measured on a 24k-brush
+# map, 1 ms cuts the logic thread's p95 frame preparation from ~59 to ~25 ms.
+sys.setswitchinterval(0.001)
 
 
 # Dark theme
@@ -17,242 +28,170 @@ dark_stylesheet = """
     QMainWindow {
         background-color: #2b2b2b;
     }
-
     QWidget {
         background-color: #2b2b2b;
         color: #e0e0e0;
         font-family: "Segoe UI", Arial, sans-serif;
     }
-
     QPushButton {
         background-color: #3c3f41;
         border: 1px solid #555;
         padding: 5px;
         min-width: 60px;
     }
-
     QPushButton:hover {
         background-color: #4b4d4d;
     }
-
     QPushButton:pressed {
         background-color: #2b2b2b;
     }
-
     QLineEdit, QTextEdit, QSpinBox, QComboBox {
         background-color: #3c3f41;
         border: 1px solid #555;
         color: #e0e0e0;
         padding: 2px;
     }
-
     QMenuBar {
         background-color: #3c3f41;
         color: #e0e0e0;
     }
-
     QMenuBar::item:selected {
         background-color: #4b4d4d;
     }
-
     QMenu {
         background-color: #3c3f41;
         color: #e0e0e0;
         border: 1px solid #555;
     }
-
     QMenu::item:selected {
         background-color: #4b4d4d;
     }
-
     QDockWidget {
         titlebar-close-icon: url(assets/close.png);
         titlebar-normal-icon: url(assets/undock.png);
     }
-
     QDockWidget::title {
         background-color: #3c3f41;
         padding-left: 10px;
         padding-top: 4px;
     }
-
     QScrollBar:vertical {
         border: none;
         background: #2b2b2b;
         width: 12px;
         margin: 0px;
     }
-
     QScrollBar::handle:vertical {
         background: #4b4d4d;
         min-height: 20px;
         border-radius: 6px;
     }
-
-    QScrollBar::add-line:vertical,
-    QScrollBar::sub-line:vertical {
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
         height: 0px;
     }
-
     QTabWidget::pane {
         border: 1px solid #555;
     }
-
     QTabBar::tab {
         background-color: #3c3f41;
         padding: 8px 12px;
         border-right: 1px solid #555;
     }
-
     QTabBar::tab:selected {
         background-color: #2b2b2b;
-        border-bottom: 2px solid #C41E3A;
+        border-bottom: 2px solid #007acc;
     }
-
     QStatusBar {
         background-color: #3c3f41;
         color: #e0e0e0;
     }
-
     QProgressBar {
         border: 1px solid #555;
         border-radius: 3px;
         text-align: center;
     }
-
     QProgressBar::chunk {
-        background-color: #C41E3A;
+        background-color: #2b6132;
     }
-
     QFrame {
         border: 1px solid #555;
     }
 """
 
+def _missing_mandatory_plugins(config):
+    """Names in ``[Plugins] mandatory`` that discovery did not find.
 
-def _can_show_error_dialog() -> bool:
-    """Whether a modal error box would reach a person rather than hang.
-
-    A refusal has to be visible both ways round: a windowed launch may have no
-    console to read, and a scripted or headless one must never stop on a dialog
-    nobody can dismiss. So the dialog is offered only when there is a real GUI
-    session to show it in; stderr carries the message either way.
+    A build that lists a plugin as mandatory is made of it: it is enabled
+    here, whatever ``[Plugins] disabled`` says, and its absence stops the
+    launch with one clear message rather than surfacing later as unknown
+    entities halfway into a map.
     """
-    if os.environ.get("QT_QPA_PLATFORM", "").lower() in ("offscreen", "minimal"):
-        return False
-    if sys.platform.startswith("linux") and not (
-            os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-        return False
-    return True
-
-
-def _require_mandatory_plugins():
-    """Stop the launch if a plugin this build is made of is missing.
-
-    Big World is not an optional extra here: MiniWind is built on top of it, so
-    a tree without ``plugins/bigworld`` is a broken install rather than a
-    smaller feature set. Checking it in the bootstrap — after discovery, before
-    the main window, the game layer or any map — means the failure is one clear
-    sentence instead of a missing entity type surfacing halfway into a level.
-
-    Raises :class:`plugins.manager.MandatoryPluginMissing`.
-    """
+    names = [n.strip() for n in config.get('Plugins', 'mandatory', fallback='').split(',')
+             if n.strip()]
+    if not names:
+        return []
     from plugins.manager import get_manager, load_plugins
-
-    # The editor package bootstraps discovery on import, but a plugin caught
-    # mid-import there is deferred to the next call (see PluginManager), so ask
-    # for the load again before judging anything missing.
     load_plugins()
-    get_manager().require_mandatory_plugins()
+    manager = get_manager()
+    missing = []
+    for name in names:
+        plugin = manager.find_plugin(name)
+        if plugin is None:
+            missing.append(name)
+        else:
+            manager.set_enabled(plugin, True)
+    return missing
 
 
 if __name__ == "__main__":
 
     # ---------------------------------------------------------
     # Android / standalone player entry point.
-    # Under python-for-android (ANDROID_ARGUMENT is set), or when
-    # FIO_PLAYER=1 on the desktop, launch the touch-first .fiopak
-    # player instead of the PyQt5 editor. This branch runs before
-    # any PyQt import so the editor's desktop-only dependencies
-    # are never touched on mobile.
+    # Under python-for-android (ANDROID_ARGUMENT is set), or when FIO_PLAYER=1
+    # on the desktop, launch the touch-first .fiopak player instead of the
+    # PyQt5 editor. This branch runs before any PyQt import so the editor's
+    # desktop-only dependencies are never touched on mobile.
     # ---------------------------------------------------------
     if os.environ.get("ANDROID_ARGUMENT") or os.environ.get("FIO_PLAYER"):
         from player.main import main as _player_main
         raise SystemExit(_player_main([]))
 
-    from PyQt5.QtWidgets import (
-        QApplication,
-        QWidget,
-        QLabel,
-        QVBoxLayout,
-        QProgressBar,
-    )
+    from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QProgressBar
+    import configparser
+    import importlib
     from PyQt5.QtGui import QPixmap, QSurfaceFormat, QIcon
     from PyQt5.QtCore import Qt
     from editor.main_window import MainWindow
-    # MiniWind is the game layer of this build: register it with Fio's plugin
-    # manager (entities, properties, I/O, console commands, play lifecycle)
-    # and apply its editor integration *before* the main window builds its
-    # menus. It lives here, in the application bootstrap, so Fio's editor and
-    # engine packages never import the game.
-    import game as _miniwind
-
-    # Refuse to start without the plugins this build requires. This runs before
-    # install() and before any window exists, so nothing has been built by the
-    # time we bail out.
-    from plugins.manager import MandatoryPluginMissing
-    try:
-        _require_mandatory_plugins()
-    except MandatoryPluginMissing as exc:
-        print(f"\nerror: {exc}", file=sys.stderr)
-        # Surface it in the UI too, for a launch with no console attached. A
-        # throwaway QApplication is safe here: we exit immediately after, so it
-        # never competes with the real one (whose surface format is set below).
-        if _can_show_error_dialog():
-            try:
-                from PyQt5.QtWidgets import QMessageBox
-                _err_app = QApplication.instance() or QApplication(sys.argv)
-                QMessageBox.critical(None, "Fio cannot start", str(exc))
-            except Exception:
-                pass      # no usable display after all: stderr is the message
-        sys.exit(1)
-
-    _miniwind.install()
 
     # ---------------------------------------------------------
     # PATH RESOLUTION
     # ---------------------------------------------------------
-    if getattr(sys, "frozen", False) or "__compiled__" in globals():
+    if getattr(sys, 'frozen', False) or "__compiled__" in globals():
         root_directory = os.path.dirname(sys.executable)
     else:
         root_directory = os.path.dirname(os.path.abspath(__file__))
 
     os.chdir(root_directory)
-
+    
     # Set the application ID for Windows taskbar (required for Windows 7+)
-    if sys.platform == "win32":
+    if sys.platform == 'win32':
         try:
             import ctypes
-
-            myappid = "fio.editor.v1"  # arbitrary string
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                myappid
-            )
-        except:
+            myappid = 'fio.editor.v1'  # arbitrary string
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception:
             pass
+    # ---------------------------------------------------------
 
-    # ---------------------------------------------------------
     # Version print
-    # ---------------------------------------------------------
     try:
-        with open(
-            os.path.join(root_directory, "editor/version.txt"), "r"
-        ) as f:
-            print("")
+        with open(os.path.join(root_directory, 'editor/version.txt'), 'r') as f:
+            print(f"")
             print(f"       +++ Fio {f.read().strip()}")
     except FileNotFoundError:
         print("Version file not found")
 
+    # ---------------------------------------------------------
     # Configure OpenGL BEFORE QApplication is created
     # ---------------------------------------------------------
     fmt = QSurfaceFormat()
@@ -261,27 +200,19 @@ if __name__ == "__main__":
     fmt.setDepthBufferSize(24)
     fmt.setStencilBufferSize(8)
 
-    import configparser
-
     config = configparser.ConfigParser()
-    config.read("settings.ini")
-    vsync = config.getboolean("Display", "vsync", fallback=True)
-
+    config.read('settings.ini')
+    vsync = config.getboolean('Display', 'vsync', fallback=True)
     fmt.setSwapInterval(1 if vsync else 0)
 
     QSurfaceFormat.setDefaultFormat(fmt)
-
-
     # ---------------------------------------------------------
-    # Splash screen
-    # ---------------------------------------------------------
+
+    # Splash class defined AFTER Qt import
     class ProgressSplashScreen(QWidget):
         def __init__(self, pixmap_path):
             super().__init__()
-
-            self.setWindowFlags(
-                Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
-            )
+            self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
 
             pixmap = QPixmap(pixmap_path)
 
@@ -303,7 +234,6 @@ if __name__ == "__main__":
         def center_on_screen(self):
             screen = QApplication.primaryScreen()
             geo = screen.geometry()
-
             self.move(
                 (geo.width() - self.width()) // 2,
                 (geo.height() - self.height()) // 2
@@ -311,151 +241,131 @@ if __name__ == "__main__":
 
         def set_progress(self, value, message):
             self.progress_bar.setValue(value)
-            self.progress_bar.setFormat(
-                f"{message} ({value}%)"
-            )
+            self.progress_bar.setFormat(f"{message} ({value}%)")
             QApplication.processEvents()
 
         def finish(self, main_window):
             self.close()
 
-    # ---------------------------------------------------------
-    # Create application
-    # ---------------------------------------------------------
+    # Create app
     app = QApplication(sys.argv)
+    # Without this PyQt5 aborts the process on any exception escaping a Qt
+    # callback, losing the open map.
+    from editor.debug_console import install_excepthook
+    install_excepthook()
     app.setStyleSheet(dark_stylesheet)
 
-    # The user's font size, applied up front so the splash and the launcher
-    # match the editor rather than only the main window honouring it. Every
-    # launcher dimension is a multiple of this font, so it is also what makes
-    # the launcher scale on a high-DPI display.
+    # The user's font size, applied up front so the splash and a game's
+    # launcher match the editor rather than only the main window honouring it.
     app_font = app.font()
-    app_font.setPointSize(config.getint("Display", "font_size", fallback=11))
+    app_font.setPointSize(config.getint('Display', 'font_size', fallback=11))
     app.setFont(app_font)
 
     # ---------------------------------------------------------
-    # Set application icon
+    # Built-in game layer ([Startup] game_module in settings.ini)
     # ---------------------------------------------------------
-    icon_path = os.path.join(
-        root_directory,
-        "assets",
-        "icon.ico"
-    )
+    # Loaded by name, before the main window builds its menus, so the editor
+    # and engine never import a game. Its plugins must be present first.
+    game_module = None
+    game_name = config.get('Startup', 'game_module', fallback='').strip()
+    if game_name:
+        missing = _missing_mandatory_plugins(config)
+        if missing:
+            message = (f"{missing[0].capitalize()} plugin is mandatory: "
+                       f"could not be located")
+            print(f"\nerror: {message}", file=sys.stderr)
+            try:
+                from PyQt5.QtWidgets import QMessageBox
+                QMessageBox.critical(None, "Cannot start", message)
+            except Exception:
+                pass
+            sys.exit(1)
+        game_module = importlib.import_module(game_name)
+        game_module.install()
 
+    # Set application icon
+    icon_path = os.path.join(root_directory, 'assets', 'icon.ico')
     if os.path.exists(icon_path):
         app_icon = QIcon(icon_path)
         app.setWindowIcon(app_icon)
-
     else:
-        mac_icon_path = os.path.join(
-            root_directory,
-            "assets",
-            "icon.icns"
-        )
-
+        mac_icon_path = os.path.join(root_directory, 'assets', 'icon.icns')
         if os.path.exists(mac_icon_path):
             app_icon = QIcon(mac_icon_path)
             app.setWindowIcon(app_icon)
-
         else:
-            png_icon_path = os.path.join(
-                root_directory,
-                "assets",
-                "icon.png"
-            )
-
+            png_icon_path = os.path.join(root_directory, 'assets', 'icon.png')
             if os.path.exists(png_icon_path):
                 app_icon = QIcon(png_icon_path)
                 app.setWindowIcon(app_icon)
 
-    # ---------------------------------------------------------
-    # Splash
-    # ---------------------------------------------------------
-    splash = ProgressSplashScreen("assets/splash.png")
+    splash = ProgressSplashScreen('assets/splash.png')
     splash.show()
+    splash.set_progress(5, "Configuring OpenGL...")
 
-    splash.set_progress(
-        5,
-        "Configuring OpenGL..."
-    )
-
-    # ---------------------------------------------------------
-    # Launcher
-    # ---------------------------------------------------------
-    # MiniWind is both a game and the editor that builds it, so the launcher
-    # asks which one you came for and lets you set up the display first. It
-    # writes straight back to settings.ini, so anything chosen here is what the
-    # editor, the Settings window and the next launch all see — which is why it
-    # runs *before* the main window is built. Turn it off with
-    # [Startup] show_launcher = False.
+    # A game may ask what this launch is for (play or edit) and let the
+    # display be set up first. It writes settings.ini, so re-read the parts
+    # that must be applied before the first OpenGL widget exists.
     launch_choice = "edit"
-    if config.getboolean("Startup", "show_launcher", fallback=True):
-        from editor.launcher import launch as show_launcher, PLAY, QUIT
-
+    show_launcher = getattr(game_module, 'show_launcher', None)
+    if show_launcher is not None and config.getboolean(
+            'Startup', 'show_launcher', fallback=True):
         splash.hide()
         QApplication.processEvents()
         launch_choice = show_launcher(root_directory,
-                                      os.path.join(root_directory, "settings.ini"))
-        if launch_choice == QUIT:
+                                      os.path.join(root_directory, 'settings.ini'))
+        if launch_choice == "quit":
             sys.exit(0)
-
-        # Re-read what the launcher wrote and re-apply the parts that must be
-        # set before the first OpenGL widget exists.
-        config.read("settings.ini")
+        config.read('settings.ini')
         fmt.setSwapInterval(
-            1 if config.getboolean("Display", "vsync", fallback=True) else 0)
+            1 if config.getboolean('Display', 'vsync', fallback=True) else 0)
         QSurfaceFormat.setDefaultFormat(fmt)
         splash.show()
 
-    splash.set_progress(
-        25,
-        "Building editor UI..."
-    )
+    splash.set_progress(25, "Building editor UI...")
 
-    # ---------------------------------------------------------
-    # Main window
-    # ---------------------------------------------------------
     window = MainWindow(root_directory)
-
+    
     # Set icon on main window
-    if "app_icon" in locals():
+    if 'app_icon' in locals():
         window.setWindowIcon(app_icon)
-
+    
     # For macOS, set the dock icon explicitly
-    if sys.platform == "darwin":
+    if sys.platform == 'darwin':
         try:
             from Foundation import NSBundle
-
             bundle = NSBundle.mainBundle()
-
-            icon_file = os.path.join(
-                root_directory,
-                "assets",
-                "icon.icns"
-            )
-
+            icon_file = os.path.join(root_directory, 'assets', 'icon.icns')
             if os.path.exists(icon_file):
-                bundle.setInfoDictionary_(
-                    {"CFBundleIconFile": "icon"}
-                )
-
-        except:
+                bundle.setInfoDictionary_({'CFBundleIconFile': 'icon'})
+        except Exception:
             pass
 
-    splash.set_progress(
-        100,
-        "Ready."
-    )
+    splash.set_progress(100, "Ready.")
 
     window.show()
     splash.finish(window)
 
-    if launch_choice == "play":
-        # Deferred by one event-loop turn so the default map (queued by the
-        # main window with its own singleShot) has finished loading and the
-        # scene has a Player Start to spawn at. enter_kiosk_mode hides the
-        # editor UI and presents the window per [Kiosk] window_mode.
+    # The map this build opens with ([Startup] default_map), loaded one
+    # event-loop turn after the window is built.
+    # Playing goes straight on from there, under the same loading bar, so
+    # the scene has a Player Start to spawn at and the window never sits
+    # frozen between the two.
+    default_map = config.get('Startup', 'default_map', fallback='').strip()
+    default_map_path = os.path.join(root_directory, default_map) if default_map else ''
+
+    def _open_default_map():
+        title = (f"Loading {os.path.splitext(os.path.basename(default_map))[0]}"
+                 if default_map else "Starting the game")
+        with window.loading_overlay.busy(title, "Reading the map"):
+            if default_map_path and os.path.isfile(default_map_path):
+                window.load_level_file(default_map_path)
+            if launch_choice == "play":
+                window.loading_overlay.step("Starting the game", 90)
+                window.enter_kiosk_mode()
+
+    if (default_map_path and os.path.isfile(default_map_path)) or launch_choice == "play":
         from PyQt5.QtCore import QTimer
-        QTimer.singleShot(0, lambda: window.enter_kiosk_mode(standalone=True))
+        QTimer.singleShot(0, _open_default_map)
 
     sys.exit(app.exec_())

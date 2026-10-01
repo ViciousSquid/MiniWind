@@ -14,7 +14,7 @@ import os
 
 from PyQt5.QtWidgets import QMessageBox
 
-from editor.things import Light, Model, Monster, Portal
+from editor.things import Light, Monster, Portal, Prop
 
 try:
     from editor.io_system import get_connections
@@ -69,7 +69,9 @@ def collect_project_stats(state, file_path=None) -> dict:
         'triggers': sum(1 for b in brushes if b.get('is_trigger', False)),
         'lights': sum(1 for t in things if isinstance(t, Light)),
         'dynamic_lights': sum(1 for t in things if _casts_shadows(t)),
-        'models': sum(1 for t in things if isinstance(t, Model)),
+        'models': sum(1 for t in things
+                      if isinstance(t, Prop)
+                      and str(t.properties.get('render_mode', '')).lower() == 'model'),
         'monsters': sum(1 for t in things if isinstance(t, Monster)),
         'portals': sum(1 for t in things if isinstance(t, Portal)),
         'connections': connections,
@@ -154,7 +156,7 @@ def format_overview(stats: dict, map_name: str) -> str:
             % (label, stats.get(key, 0)))
 
     return (
-        '<div style="font-size:11pt;"><b style="color:#b52316;">%s</b></div>'
+        '<div style="font-size:11pt;"><b style="color:#F08000;">%s</b></div>'
         '<table style="margin-top:8px;">%s</table>'
         '<hr style="border:1px solid #444; margin-top:10px;">'
         '<div style="color:#aaaaaa;">Created: %s</div>'

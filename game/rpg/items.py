@@ -145,7 +145,7 @@ def make(item_id: str, qty: int = 1) -> Optional[Dict]:
 # whole new weapon by editing JSON — no code change.
 # ---------------------------------------------------------------------------
 def _load_items() -> None:
-    from game import data
+    from .. import data
     for iid, row in (data.load("items") or {}).items():
         row = dict(row)
         register(ItemDef(
