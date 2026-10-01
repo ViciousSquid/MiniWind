@@ -36,7 +36,7 @@ _IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
 SEVERE_RATIO = 3.0
 
 try:  # keep the mild end in step with the gib rule
-    from engine.gore import GIB_DAMAGE_FRACTION as _MILD_RATIO
+    from .gore import GIB_DAMAGE_FRACTION as _MILD_RATIO
 except Exception:  # pragma: no cover
     _MILD_RATIO = 1.2
 

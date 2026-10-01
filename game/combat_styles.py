@@ -9,7 +9,7 @@ the engine, and runs when the ``game`` package is imported.
 
 from __future__ import annotations
 
-from engine import combat_loadout
+from . import combat_loadout
 
 #: Weapon ``kind`` in the item database -> the engine's attack style.
 KIND_STYLES = {

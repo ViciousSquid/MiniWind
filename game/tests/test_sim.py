@@ -18,9 +18,9 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game.sim import appraisal, crime, knowledge, ownership, perception, production
-from game.sim.director import Director, PLAYER_KEY, actor_key
-from game.sim.events import EventBus, WorldEvent
+from ..sim import appraisal, crime, knowledge, ownership, perception, production
+from ..sim.director import Director, PLAYER_KEY, actor_key
+from ..sim.events import EventBus, WorldEvent
 
 
 # --------------------------------------------------------------- fixtures --
@@ -367,7 +367,7 @@ def test_stabbing_a_townie_produces_the_whole_chain():
     d.resolve_reports(actors)
     assert len(bounties) == 1, "one crime, one bounty"
     # ...and the victim's own opinion of the player has moved.
-    from game.rpg import disposition as disp
+    from ..rpg import disposition as disp
     assert disp.delta(d.store, mara.properties) < 0
 
 
@@ -565,9 +565,9 @@ class _FakeGlobals:
 def _settlement(hour=12.0):
     """A live session over the authored settlement, as test_disposition builds it."""
     import json
-    from game import data
-    from game.runtime import MiniwindSession
-    from game.tools import make_settlement
+    from .. import data
+    from ..runtime import MiniwindSession
+    from ..tools import make_settlement
     base_path = os.path.join(os.path.dirname(__file__), "..", "tools", "data",
                              "base_terrain.json")
     with open(os.path.abspath(base_path)) as f:
@@ -705,7 +705,7 @@ def test_the_designer_can_inject_an_event_and_watch_it_answer():
 
 
 def test_the_inspector_explains_the_behaviour_it_caused():
-    from game import mental_state
+    from .. import mental_state
     session, things = _settlement()
     mara = _named(things, "Mara")
     bram = _named(things, "Bram")

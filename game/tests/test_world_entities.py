@@ -11,8 +11,8 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game import entities
-from game.rpg import inventory as inv
+from .. import entities
+from ..rpg import inventory as inv
 
 
 class _FakeThing:
@@ -53,7 +53,7 @@ class _G:
 
 
 def _session(things, player):
-    from game.runtime import MiniwindSession, StateStore
+    from ..runtime import MiniwindSession, StateStore
     s = MiniwindSession(_FakeLogic(things, player), cfg={})
     store = StateStore(_G(), "miniwind")
     s.store = store
@@ -63,7 +63,7 @@ def _session(things, player):
 
 def test_markers_use_per_kind_sprites():
     import os
-    from game.entities import Marker, marker_sprite, MARKER_KINDS
+    from ..entities import Marker, marker_sprite, MARKER_KINDS
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     seen = set()
     for kind in MARKER_KINDS:
@@ -111,7 +111,7 @@ def test_enemy_faction_actors_stay_hostile():
 
 
 def test_gibbed_body_cannot_be_resurrected():
-    from game.runtime import BOW_REACH
+    from ..runtime import BOW_REACH
     dead = _FakeThing([50, 0, 0], {"type": "npc", "npc_role": "villager",
                                    "dead": True, "max_health": 40})
     gibbed = _FakeThing([60, 0, 0], {"type": "npc", "npc_role": "villager",
@@ -216,7 +216,7 @@ def test_spawn_point_defaults_to_creatures_unchanged():
 def test_spawn_inventory_parses_string_and_list_forms():
     """The inventory helper accepts a compact string or an authored list, and
     silently drops unknown ids."""
-    from game.runtime import MiniwindSession
+    from ..runtime import MiniwindSession
     fn = MiniwindSession._spawn_inventory
     assert fn("") == []
     # plain id defaults to qty 1; unknown ids are skipped

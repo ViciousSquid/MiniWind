@@ -21,8 +21,8 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from engine import combat_loadout as cl
-from game import combat_styles
+from .. import combat_loadout as cl
+from .. import combat_styles
 
 # The weapon lookup is MiniWind's; install it the way importing `game` does.
 combat_styles.register()

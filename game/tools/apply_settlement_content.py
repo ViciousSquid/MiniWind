@@ -33,7 +33,7 @@ import argparse
 import json
 import os
 
-from game import data
+from .. import data
 
 
 def _slug(text) -> str:

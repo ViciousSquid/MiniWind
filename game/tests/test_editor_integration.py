@@ -15,12 +15,12 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-import game
+from .. import install as _install_game
 from plugins.manager import get_manager
 
 
 def _mgr():
-    game.install()
+    _install_game()
     return get_manager()
 
 
@@ -88,7 +88,7 @@ def test_creation_wizards_registered_and_headless_safe(monkeypatch):
     # "Headless" is decided by whether a QApplication exists. In a full run the
     # session-wide one does, and the real modal wizard would block forever, so
     # present this test with the headless process it is about.
-    from game import editor_wizards
+    from .. import editor_wizards
 
     def _headless():
         raise RuntimeError("no QApplication: this process is headless")
@@ -153,7 +153,7 @@ def test_the_mental_state_inspector_is_only_for_actors():
 def test_markers_have_distinct_per_kind_sprites():
     # The 2D view now uses each marker's own sprite (custom_idle) so markers of
     # different kinds look different — matching the 3D view.
-    from game import entities
+    from .. import entities
     seen = {}
     for kind in ("home", "bed", "forge", "shop", "farm", "guardpost"):
         mk = entities.Marker(pos=[0, 0, 0], properties={"marker_kind": kind})

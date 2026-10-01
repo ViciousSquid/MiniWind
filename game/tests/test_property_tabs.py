@@ -29,7 +29,7 @@ QtCore = pytest.importorskip("PyQt5.QtCore")
 QtGui = pytest.importorskip("PyQt5.QtGui")
 QtWidgets = pytest.importorskip("PyQt5.QtWidgets")
 
-from game import editor_ui, sim_editor   # noqa: E402
+from .. import editor_ui, sim_editor   # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -215,9 +215,9 @@ def test_appearance_is_a_collapsed_section_not_a_tab(app):
     belongs with the other properties and should cost no tab and no vertical
     space until somebody opens it."""
     from plugins.manager import get_manager
-    import game
+    from .. import install
 
-    game.install()                       # idempotent; registers the surfaces
+    install()                       # idempotent; registers the surfaces
     mgr = get_manager()
 
     tab_labels = [label for label, _f in mgr.property_tabs_for("npc")]
@@ -271,7 +271,7 @@ def test_a_widgets_own_styling_still_wins(app):
 
 # --- Game Settings has its own icon ---------------------------------------
 def test_game_settings_does_not_borrow_the_keyvalue_store_icon():
-    from game.entities import GameSettings
+    from ..entities import GameSettings
     path = GameSettings.pixmap_path
     assert "logic_keyvalue" not in path
     assert os.path.isfile(os.path.join(ROOT_DIR, path)), path

@@ -65,7 +65,7 @@ DEFAULTS = {
 }
 
 
-_ACCENT = "#C41E3A"
+_ACCENT = "#F08000"   # Fio's accent
 _PLAY_GREEN = "#2E7D32"
 
 # --- sizing ---------------------------------------------------------------

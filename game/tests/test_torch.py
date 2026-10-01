@@ -18,10 +18,10 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game.rpg import items
-from game.rpg import equipment as eq
-from game.rpg import schedule as sched
-from game.rpg.character import Character
+from ..rpg import items
+from ..rpg import equipment as eq
+from ..rpg import schedule as sched
+from ..rpg.character import Character
 
 
 # --- item + equipment ------------------------------------------------------
@@ -35,7 +35,7 @@ def test_torch_is_a_light_source_in_the_light_slot():
 
 
 def test_equipping_a_torch_fills_the_light_slot_beside_a_weapon():
-    from game.rpg import inventory as inv
+    from ..rpg import inventory as inv
     c = Character()
     inv.add_item(c.inventory, items.make("iron_shortsword"))
     inv.add_item(c.inventory, items.make("torch"))
@@ -71,7 +71,7 @@ class _FakeLogic:
 
 
 def _session(things, player, hour):
-    from game.runtime import MiniwindSession
+    from ..runtime import MiniwindSession
     session = MiniwindSession(_FakeLogic(things, player),
                               cfg={"start_hour": hour, "minutes_per_day": 999999.0})
     session.clock.set_time(hour, 1)
@@ -83,7 +83,7 @@ def _torch_lights(things):
 
 
 def test_player_torch_spawns_a_following_light_and_clears_on_unequip():
-    from game.rpg import inventory as inv
+    from ..rpg import inventory as inv
     player = _FakePlayer([100, 272, 100])
     things = []
     session = _session(things, player, 12.0)
@@ -144,6 +144,6 @@ def test_torch_always_burns_by_day():
 
 def test_settlement_night_guard_carries_a_torch():
     # The authored settlement wires Kestrel with a torch flag.
-    from game import data
+    from .. import data
     kestrel = next(n for n in data.load("settlement")["npcs"] if n["name"] == "Kestrel")
     assert kestrel.get("torch") is True

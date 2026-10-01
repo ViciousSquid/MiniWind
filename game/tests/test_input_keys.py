@@ -15,7 +15,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game import host
+from .. import host
 
 #: The letters the engine reads as movement (see LogicThread._tick_play_mode).
 MOVEMENT_KEYS = {"w", "a", "s", "d"}

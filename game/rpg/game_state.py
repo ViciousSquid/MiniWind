@@ -36,7 +36,7 @@ from .character import Character
 from ..diceroll import CHECK_NOTATION, DiceRoller
 
 try:  # engine.gore is a tiny, Qt-free rule module; guard for non-engine contexts
-    from engine import gore as _gore
+    from . import gore as _gore
 except Exception:  # pragma: no cover
     _gore = None
 

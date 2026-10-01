@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game.rpg import magic
+from ..rpg import magic
 
 
 def test_element_colours_are_distinct_and_have_a_default():
@@ -48,7 +48,7 @@ def test_to_dict_from_dict_roundtrip():
 
 
 def test_castable_spells_lists_projectile_and_damage_spells():
-    from game.editor_ui import _castable_spells
+    from ..editor_ui import _castable_spells
     ids = {sid for sid, _label in _castable_spells()}
     assert "firebolt" in ids and "frostbite" in ids
     # a self-only heal is not castable as a bolt
@@ -97,7 +97,7 @@ def test_disintegrate_spell_is_always_red_and_kills_instantly():
     assert sp.delivery == magic.PROJECTILE
     assert sp.damage >= 99999
     # It's offered to NPCs as a castable projectile spell.
-    from game.editor_ui import _castable_spells
+    from ..editor_ui import _castable_spells
     assert "disintegrate" in {sid for sid, _ in _castable_spells()}
     # The old id no longer resolves (it was renamed, not aliased).
     assert magic.get("instadeath") is None

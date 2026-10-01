@@ -22,9 +22,9 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from engine.spatial import TIER_ACTIVE, TIER_DISTANT, TIER_NEAR
-from game import runtime
-from game.rpg import schedule as sched
-from game.runtime import MiniwindSession
+from .. import runtime
+from ..rpg import schedule as sched
+from ..runtime import MiniwindSession
 
 
 class _Clock:

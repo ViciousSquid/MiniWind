@@ -22,8 +22,8 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game import diceroll
-from game.diceroll import CHECK_DIE, CHECK_NOTATION, DICE_TYPES, check_threshold
+from .. import diceroll
+from ..diceroll import CHECK_DIE, CHECK_NOTATION, DICE_TYPES, check_threshold
 
 
 def test_the_check_die_is_one_of_the_games_own_dice():
@@ -83,7 +83,7 @@ def test_no_rule_module_writes_a_die_that_does_not_exist():
 
 def test_every_die_a_loot_quantity_roll_shows_is_a_real_one():
     """An odd quantity span must not invent a die (there is no d37)."""
-    from game.rpg import loot
+    from ..rpg import loot
 
     shown = []
 
@@ -100,7 +100,7 @@ def test_every_die_a_loot_quantity_roll_shows_is_a_real_one():
 
 
 def test_a_cast_check_succeeds_at_the_rate_its_chance_asks_for():
-    from game.rpg import magic
+    from ..rpg import magic
 
     # cast_check turns a 0..1 chance into a "roll at or above target" on the
     # check die; the winning faces must number check_threshold(chance).

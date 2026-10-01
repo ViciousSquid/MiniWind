@@ -17,8 +17,8 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game.rpg import needs
-from game.rpg import schedule as sched
+from ..rpg import needs
+from ..rpg import schedule as sched
 
 
 # --- the pure need model ---------------------------------------------------
@@ -126,7 +126,7 @@ def _villager(name, pos, home, schedule):
 
 
 def _session(things, hour):
-    from game.runtime import MiniwindSession
+    from ..runtime import MiniwindSession
     player = _FakePlayer([5000, 272, 5000])   # far away: no combat/flee interplay
     session = MiniwindSession(_FakeLogic(things, player),
                               cfg={"start_hour": hour, "minutes_per_day": 5.0})

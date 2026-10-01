@@ -64,7 +64,7 @@ CONFRONT = "CONFRONT"
 #: NPC already "lives". The schedule *planner* (:func:`evaluate`) is code; the
 #: schedules themselves are data.
 def _load_schedules() -> Dict[str, List[Dict]]:
-    from game import data
+    from .. import data
     return dict(data.load("schedules") or {})
 
 

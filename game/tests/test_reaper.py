@@ -21,9 +21,9 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game import runtime
-from game.runtime import MiniwindSession
-from game.rpg import items as rpg_items
+from .. import runtime
+from ..runtime import MiniwindSession
+from ..rpg import items as rpg_items
 
 
 class _Logic:

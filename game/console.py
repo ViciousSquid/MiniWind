@@ -4,16 +4,20 @@ MiniWind's debug-console commands.
 Registered through Fio's console-command surface
 (``EditorAPI.register_console_command``, plugin API 1.4.0) from
 :meth:`game.host.MiniwindGame.register`, so the generic console carries no
-knowledge of dice, quests or the reactive simulation. Each handler receives a
-:class:`plugins.api.ConsoleContext` (the live logic thread, whether a play
+knowledge of dice, quests or the reactive simulation. Fio calls a command as
+``callback(args, main_window, logic, play_mode)``; :func:`_adapt` hands each
+handler here a :class:`ConsoleContext` (the live logic thread, whether a play
 session is running, and the editor window) plus the raw argument string.
 
     diceroll | dice   roll a dice expression, optionally animated
     quest | quests    list / start / advance / complete / reset quests
     sim               inspect and drive the reactive simulation
+    inspect | mind    pause and click an actor for its live mental state
 """
 
 import time
+from dataclasses import dataclass
+from typing import Any
 
 try:
     from editor.debug_console import debug_log
@@ -24,6 +28,19 @@ except Exception:  # pragma: no cover - console unavailable (headless)
 from .diceroll import DiceRoller
 
 _CONSOLE_DICE = None
+
+
+@dataclass
+class ConsoleContext:
+    """What a MiniWind console handler is handed.
+
+    ``logic_thread`` is the live play session's logic thread (None in the
+    editor), ``play_mode`` whether a play session is running, and
+    ``main_window`` the editor window hosting the console (None headless).
+    """
+    logic_thread: Any = None
+    play_mode: bool = False
+    main_window: Any = None
 
 
 def _console_dice():
@@ -289,6 +306,28 @@ def cmd_quest(ctx, args):
         debug_log("Error", "quest: use list | start | advance | complete | reset.")
 
 
+def cmd_inspect(ctx, args):
+    """inspect | mind -- pause the world and click an actor to inspect it.
+
+    Arms Fio's Play Mode actor pick (``MainWindow.begin_actor_pick``): the
+    world freezes and the cursor is freed; the next click on an actor opens
+    Fio's Entity Inspector on it, which shows MiniWind's mental-state view for
+    NPCs, creatures and monsters (see ``host._miniwind_inspection``). Esc or a
+    right-click cancels. Play Mode only."""
+    if not ctx.play_mode:
+        debug_log("Error", "inspect: Play Mode only.")
+        return None
+    begin = getattr(ctx.main_window, "begin_actor_pick", None)
+    if begin is None or not begin():
+        debug_log("Error", "inspect: the actor picker is not available in this view.")
+        return None
+    toast = getattr(ctx.main_window, "show_toast", None)
+    if toast is not None:
+        toast("Inspect (paused): click an actor (Esc to cancel)")
+    debug_log("Info", "Inspect armed - world paused; click an actor.")
+    return None
+
+
 #: (names, handler, help) for every command this module provides.
 COMMANDS = (
     (("diceroll", "dice"), cmd_diceroll,
@@ -298,11 +337,23 @@ COMMANDS = (
     (("sim",), cmd_sim,
      "[events | crimes | actors | why|knows|forget <name> | tell <name> <id> | emit …]"
      " — Reactive simulation (Play Mode)"),
+    (("inspect", "mind"), cmd_inspect,
+     "— Pause and click an actor for its live mental state (Play Mode)"),
 )
+
+
+def _adapt(handler):
+    """Fio's ``callback(args, main_window, logic, play_mode)`` -> ``handler(ctx, args)``."""
+    def callback(args, main_window=None, logic=None, play_mode=False):
+        ctx = ConsoleContext(logic_thread=logic, play_mode=bool(play_mode),
+                             main_window=main_window)
+        return handler(ctx, args or "")
+    callback.__doc__ = handler.__doc__
+    return callback
 
 
 def register(api) -> None:
     """Register every MiniWind console command on *api* (an EditorAPI)."""
     for names, handler, help_text in COMMANDS:
         for name in names:
-            api.register_console_command(name, handler, help_text)
+            api.register_console_command(name, _adapt(handler), help_text)

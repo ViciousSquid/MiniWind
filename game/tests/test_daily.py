@@ -17,9 +17,9 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game.rpg import daily
-from game.rpg import disposition as disp
-from game.rpg.dialogue import DictStore
+from ..rpg import daily
+from ..rpg import disposition as disp
+from ..rpg.dialogue import DictStore
 
 
 # --- baseline & the once-per-day guard -------------------------------------
@@ -160,9 +160,9 @@ class _FakeGlobals:
 
 def _settlement_session(hour, globals_store):
     import json
-    from game import data
-    from game.tools import make_settlement
-    from game.runtime import MiniwindSession
+    from .. import data
+    from ..tools import make_settlement
+    from ..runtime import MiniwindSession
     base_path = os.path.join(os.path.dirname(__file__), "..", "tools", "data",
                              "base_terrain.json")
     with open(os.path.abspath(base_path)) as f:

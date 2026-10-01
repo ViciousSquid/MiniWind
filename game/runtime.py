@@ -22,7 +22,7 @@ import random
 from itertools import chain as _chain
 from typing import Dict, List, Optional
 
-from engine.facing import face_heading
+from .facing import face_heading
 from engine.spatial import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
                                 TIER_DORMANT)
 from .rpg import factions

@@ -28,7 +28,7 @@ QtCore = pytest.importorskip("PyQt5.QtCore")
 QtGui = pytest.importorskip("PyQt5.QtGui")
 QtWidgets = pytest.importorskip("PyQt5.QtWidgets")
 
-from engine.pause_menu import SLOT_COUNT, PauseMenu, slot_name
+from ..ui.pause_menu import SLOT_COUNT, PauseMenu, slot_name
 
 
 @pytest.fixture(scope="module")

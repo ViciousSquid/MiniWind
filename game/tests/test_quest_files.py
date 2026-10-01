@@ -12,9 +12,9 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game import entities
-from game.rpg import quest_files
-from game.rpg import quests
+from .. import entities
+from ..rpg import quest_files
+from ..rpg import quests
 
 
 # --- .quest file storage ---------------------------------------------------
@@ -140,7 +140,7 @@ class _G:
 
 
 def _session(things):
-    from game.runtime import MiniwindSession, StateStore
+    from ..runtime import MiniwindSession, StateStore
     s = MiniwindSession(_FakeLogic(things), cfg={})
     store = StateStore(_G(), "miniwind")
     s.store = store

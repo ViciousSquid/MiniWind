@@ -84,7 +84,7 @@ def _miniwind_kv_suggestions(store=None):
          "Current stage index of a quest. Replace <id>."),
     ]
     try:
-        from game import data
+        from . import data
         quests = data.load("quests") or {}
         for qid in sorted(quests.keys()):
             out.append((f"Quest '{qid}' state", f"quest.{qid}.state", "active",

@@ -18,8 +18,8 @@ import sys
 # Allow running as a plain script from the repo root.
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game import factions, schedule, inventory, gametime
-from game.dialogue import DialogueRunner, DictStore
+from .. import factions, schedule, inventory, gametime
+from ..dialogue import DialogueRunner, DictStore
 
 
 # --- factions --------------------------------------------------------------
@@ -39,7 +39,7 @@ def test_faction_relationships():
 # --- per-role art wiring ---------------------------------------------------
 def test_role_art_paths_and_files_exist():
     import os
-    from game import entities
+    from .. import entities
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     for role in ("villager", "guard", "bandit", "merchant", "wolf", "monster"):
         sp = entities.sprite_for(role)
@@ -53,7 +53,7 @@ def test_role_art_paths_and_files_exist():
 
 
 def test_npc_gets_role_sprite_and_portrait():
-    from game.entities import NPC, sprite_for, portrait_for
+    from ..entities import NPC, sprite_for, portrait_for
     guard = NPC(properties={"npc_role": "guard"})
     assert guard.properties["custom_idle"] == sprite_for("guard")
     assert guard.properties["portrait"] == portrait_for("guard")
@@ -180,7 +180,7 @@ class _FakeLogic:
 
 
 def _make_session(things, player):
-    from game.runtime import MiniwindSession
+    from ..runtime import MiniwindSession
     logic = _FakeLogic(things, player)
     session = MiniwindSession(logic, cfg={"start_hour": 9.0, "minutes_per_day": 20.0})
     return logic, session
@@ -246,7 +246,7 @@ def test_session_persist_restore_roundtrip():
     player = _FakePlayer([0, 0, 0])
     logic, session = _make_session([npc], player)
     # Use a real GlobalStore-like DictStore-backed store via the plugin store.
-    from game.dialogue import DictStore
+    from ..dialogue import DictStore
 
     class _G:
         def __init__(self):
@@ -261,7 +261,7 @@ def test_session_persist_restore_roundtrip():
         def all(self, store="plugins"):
             return {k[1]: v for k, v in self.d.items() if k[0] == store}
 
-    from game.runtime import MiniwindSession, StateStore
+    from ..runtime import MiniwindSession, StateStore
     g = _G()
     session.store = StateStore(g, "miniwind")
     session.game.store = session.store

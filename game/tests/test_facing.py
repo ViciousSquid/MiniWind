@@ -19,7 +19,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from engine import facing
+from .. import facing
 
 
 def test_heading_uses_the_engine_forward_convention():
@@ -90,7 +90,7 @@ class _Walker:
     rules. Wall collision has its own tests in game/tests/test_npc_movement.py.
     """
 
-    from game.runtime import MiniwindSession as _S
+    from ..runtime import MiniwindSession as _S
     _move = _S._move
     _step_to = _S._step_to
     _blocked_by_wall = _S._blocked_by_wall
@@ -119,8 +119,8 @@ def test_a_fleeing_villager_moves_at_double_speed():
     in sight, so the multiplier is inherently temporary — this pins the factor
     and that a calm NPC is unaffected.
     """
-    from game import runtime
-    from game.rpg import schedule as sched
+    from .. import runtime
+    from ..rpg import schedule as sched
 
     def _walk(state):
         props = {"move_speed": runtime.NPC_WALK_SPEED}

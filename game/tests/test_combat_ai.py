@@ -15,8 +15,8 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from game import factions
-from game.rpg import schedule as sched
+from .. import factions
+from ..rpg import schedule as sched
 
 
 class _FakeThing:
@@ -38,7 +38,7 @@ class _FakeLogic:
 
 
 def _session(things, player):
-    from game.runtime import MiniwindSession
+    from ..runtime import MiniwindSession
     logic = _FakeLogic(things, player)
     s = MiniwindSession(logic, cfg={"start_hour": 12.0, "minutes_per_day": 9e9})
     s.clock.set_time(12.0, 1)
@@ -209,7 +209,7 @@ def test_idle_villager_wanders_locally():
 
 
 def test_talk_range_lets_player_reach_a_bubbled_npc():
-    from game.runtime import TALK_RADIUS, BUBBLE_RADIUS
+    from ..runtime import TALK_RADIUS, BUBBLE_RADIUS
     assert TALK_RADIUS < BUBBLE_RADIUS
     npc = _villager([120, 0, 0], dialogue={"start": "g",
                                             "nodes": {"g": {"text": "hi", "responses": []}}})
@@ -251,7 +251,7 @@ def test_combat_capability_is_separate_from_faction():
     merchant = _FakeThing([0, 0, 0], {
         "type": "npc", "npc_role": "merchant", "faction": "villagers",
         "team": "villagers", "aggression": "passive", "combatant": False})
-    from game.runtime import MiniwindSession
+    from ..runtime import MiniwindSession
     assert MiniwindSession._is_combatant(guard_t) is True
     assert MiniwindSession._is_combatant(merchant) is False
     m = _villager([0, 0, 0], npc_role="merchant", home=[-300, 0, 0], courage=0.2)
