@@ -163,3 +163,26 @@ def choose_style(loadout, in_melee):
 def weapon_for(loadout, style):
     """The weapon id backing *style*, or '' when the style needs none."""
     return loadout.get(style) or ""
+
+
+def attack_style_for(thing, state, in_melee: bool) -> str:
+    """MiniWind's combat-loadout hook consumed by the generic MonsterAI."""
+    band = bool(in_melee)
+    if state.get("style_band") is not band:
+        state["style_band"] = band
+        props = getattr(thing, "properties", {}) or {}
+        current = build_loadout(props)
+        style = choose_style(current, band)
+        state["attack_style"] = style
+        if has_choice(current):
+            thing.properties["_active_weapon"] = weapon_for(current, style)
+        return style
+    return state.get("attack_style") or str(
+        getattr(thing, "properties", {}).get("attack_style", "") or ""
+    ).lower()
+
+
+def install_engine_hook() -> None:
+    """Install MiniWind's combat policy into Fio's generic MonsterAI."""
+    from engine.monster_ai import MonsterAI
+    MonsterAI._attack_style_hook = attack_style_for
