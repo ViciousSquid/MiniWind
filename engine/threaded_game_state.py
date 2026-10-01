@@ -314,6 +314,16 @@ class ThreadedGameState:
         # Shot Queue — deque for O(1) popleft
         self._shot_lock = threading.Lock()
         self._shot_queue = deque()
+        self._secondary_shot_queue = deque()
+        # Pointer aiming: where the on-screen pointer aims, published by the
+        # view each frame and read by the logic thread and a game layer.
+        # ``_aim_direction`` is a unit world vector from the player's eye toward
+        # the pointer, ``_aim_yaw`` the heading the player should face
+        # (overhead, where the pointer maps onto the ground). Both None while
+        # pointer aiming is off.
+        self._aim_lock = threading.Lock()
+        self._aim_direction = None
+        self._aim_yaw = None
 
         # Use key — protected by its own lock
         self._use_key_lock = threading.Lock()
@@ -493,6 +503,23 @@ class ThreadedGameState:
             self._mouse_delta = (0.0, 0.0)
             return delta
 
+    def set_aim(self, direction=None, yaw=None):
+        """Publish where the pointer aims, or clear it with no arguments."""
+        with self._aim_lock:
+            self._aim_direction = (tuple(float(c) for c in direction)
+                                   if direction is not None else None)
+            self._aim_yaw = float(yaw) if yaw is not None else None
+
+    def get_aim_direction(self):
+        """Unit aim vector toward the pointer, or None when pointer aiming is off."""
+        with self._aim_lock:
+            return self._aim_direction
+
+    def get_aim_yaw(self):
+        """Heading the player should face, or None to leave yaw to mouse look."""
+        with self._aim_lock:
+            return self._aim_yaw
+
     def set_use_key(self, pressed: bool):
         """Sets the state of the use key explicitly (True/False)."""
         with self._use_key_lock:
@@ -526,6 +553,21 @@ class ThreadedGameState:
         with self._shot_lock:
             if self._shot_queue:
                 self._shot_queue.popleft()
+                return True
+            return False
+
+    # --- Secondary fire: a second button, queued like the primary shot. ---
+
+    def queue_secondary_shot(self):
+        with self._shot_lock:
+            self._secondary_shot_queue.append(True)
+
+    def consume_secondary_shot(self):
+        if not self._secondary_shot_queue:
+            return False
+        with self._shot_lock:
+            if self._secondary_shot_queue:
+                self._secondary_shot_queue.popleft()
                 return True
             return False
 

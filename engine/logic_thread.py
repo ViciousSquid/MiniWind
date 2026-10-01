@@ -165,6 +165,25 @@ _NO_PROJECTILES = np.empty((0, 3), dtype=np.float32)
 _NO_PROJECTILES.flags.writeable = False
 
 
+
+def _projectile_impact(proj, pos, target):
+    """Tell a projectile's owner where it landed (``on_impact``).
+
+    ``on_impact(proj, pos, target)`` is called once when a projectile is
+    consumed by an actor (*target*) or a wall (*target* None); *pos* is a
+    ``glm.vec3``. It is how a game leaves arrows stuck in what they hit
+    without the engine knowing what an arrow is.
+    """
+    on_impact = proj.get('on_impact')
+    if callable(on_impact):
+        try:
+            on_impact(proj, pos, target)
+        except Exception:
+            import traceback
+            debug_log("Error", "projectile on_impact failed:\n"
+                      + traceback.format_exc())
+
+
 class LogicThread(threading.Thread):
     """
     Unified logic thread for both editor and play mode.
@@ -296,6 +315,20 @@ class LogicThread(threading.Thread):
         # another thread always sees a consistent set.
         self._world_pause_owners = frozenset()
         self._world_pause_lock = threading.Lock()
+
+        # ---- Game-layer hooks --------------------------------------------
+        # Generic hooks a built-in game installs; none names a game concept,
+        # and with none installed Fio behaves as shipped.
+        #: The running game layer's session, for engine code that duck-types
+        #: against it (overhead pose/weapon). None when no game is running.
+        self.game_session = None
+        #: ``handler(logic, mode) -> bool`` owning what the fire buttons do;
+        #: *mode* is ``"primary"`` or ``"secondary"``. True means handled, and
+        #: the stock weapon path is skipped.
+        self.player_fire_handler = None
+        #: ``filter(damage, damage_kind) -> damage`` applied before the
+        #: player's health drops (armour, resistances).
+        self._player_damage_filter = None
 
         # I/O System
         self.io_manager = None
@@ -466,6 +499,7 @@ class LogicThread(threading.Thread):
         self._monster_projectiles: list = []
         #: Their positions as the ``(N, 3)`` float32 array each frame publishes.
         self._projectile_positions = _NO_PROJECTILES
+        self._projectile_records = ()
 
         # Gunfire sound events for AI hearing (list of dicts with pos, time, source)
         self._gunfire_events: list = []
@@ -1352,6 +1386,7 @@ class LogicThread(threading.Thread):
             # Clear monster projectiles
             self._monster_projectiles.clear()
             self._projectile_positions = _NO_PROJECTILES
+            self._projectile_records = ()
 
             # Clear gunfire events
             self._gunfire_events.clear()
@@ -1434,6 +1469,7 @@ class LogicThread(threading.Thread):
             # Clear monster projectiles
             self._monster_projectiles.clear()
             self._projectile_positions = _NO_PROJECTILES
+            self._projectile_records = ()
 
             # Clear gunfire events
             self._gunfire_events.clear()
@@ -2114,6 +2150,12 @@ class LogicThread(threading.Thread):
         else:
             self._tick_editor_mode(delta)
 
+    #: Game-layer hooks (see __init__); class defaults so a LogicThread built
+    #: without __init__ (tests, tools) behaves as shipped Fio.
+    game_session = None
+    player_fire_handler = None
+    _player_damage_filter = None
+
     #: Set when an I/O input changed a brush's authored ``hidden`` during play;
     #: see :meth:`mark_collision_dirty`.
     _collision_dirty = False
@@ -2280,6 +2322,7 @@ class LogicThread(threading.Thread):
         self.game_state.consume_mouse_delta()
         use_key = self.game_state.consume_use_key()
         self.game_state.consume_shot()
+        self.game_state.consume_secondary_shot()
         if self.plugins is not None and self.plugins.wants_tick():
             self.plugins.tick(
                 self,
@@ -2325,6 +2368,7 @@ class LogicThread(threading.Thread):
             self.game_state.consume_mouse_delta()
             self.game_state.consume_use_key()
             self.game_state.consume_shot()
+            self.game_state.consume_secondary_shot()
             return
 
         # ---- Player dead: freeze all gameplay input ----
@@ -2332,6 +2376,7 @@ class LogicThread(threading.Thread):
             self.game_state.consume_mouse_delta()
             self.game_state.consume_use_key()
             self.game_state.consume_shot()
+            self.game_state.consume_secondary_shot()
             return
 
         # ---- Level Complete UI: freeze player input ----
@@ -2339,6 +2384,7 @@ class LogicThread(threading.Thread):
             self.game_state.consume_mouse_delta()
             self.game_state.consume_use_key()
             self.game_state.consume_shot()
+            self.game_state.consume_secondary_shot()
             return
         
         # Player input
@@ -2351,7 +2397,13 @@ class LogicThread(threading.Thread):
         self.player.angle -= mouse_dx * SENSITIVITY
         self.player.pitch -= mouse_dy * SENSITIVITY
         self.player.pitch = max(-1.5, min(1.5, self.player.pitch))
-        
+
+        # Pointer aiming with an overhead camera: the view publishes the
+        # heading under the pointer each frame; None leaves yaw to mouse look.
+        aim_yaw = self.game_state.get_aim_yaw()
+        if aim_yaw is not None:
+            self.player.angle = aim_yaw
+
         # Movement
         move_dir = glm.vec3(0)
         if Key_W in keys: move_dir.z += 1
@@ -2407,9 +2459,11 @@ class LogicThread(threading.Thread):
         # post-physics position is the one tested against portal planes.
         self._update_portals(delta)
         
-        # Player shooting
+        # Player shooting: primary and secondary fire
         if self.game_state.consume_shot():
             self._handle_shooting()
+        if self.game_state.consume_secondary_shot():
+            self._handle_shooting(secondary=True)
             
         self._update_bullet_marks()
 
@@ -3262,7 +3316,15 @@ class LogicThread(threading.Thread):
             if due_ids:
                 self._poll_triggers(trigger_ids=due_ids)
 
-    def _apply_player_damage(self, damage):
+    def _apply_player_damage(self, damage, damage_kind="physical"):
+        filt = self._player_damage_filter
+        if filt is not None:
+            try:
+                damage = filt(damage, damage_kind)
+            except Exception:
+                import traceback
+                debug_log("Error", "player damage filter failed:\n"
+                          + traceback.format_exc())
         with self._player_damage_lock:
             if self.god_mode:
                 return
@@ -3822,8 +3884,28 @@ class LogicThread(threading.Thread):
     # PLAYER SHOOTING
     # =========================================================================
 
-    def _handle_shooting(self):
-        if not self.player or not self.active_weapon:
+    def _handle_shooting(self, secondary=False):
+        """Resolve one press of a fire button.
+
+        An installed :attr:`player_fire_handler` owns what a shot *is*.
+        Without one, primary fire is Fio's weapon and secondary does nothing.
+        """
+        if not self.player:
+            return
+        handler = self.player_fire_handler
+        if handler is not None:
+            mode = "secondary" if secondary else "primary"
+            try:
+                handled = bool(handler(self, mode))
+            except Exception:
+                import traceback
+                debug_log("Error", "player fire handler failed:\n"
+                          + traceback.format_exc())
+                handled = True
+            if handled:
+                self._plugin_emit("player_shoot", weapon=self.active_weapon, mode=mode)
+                return
+        if secondary or not self.active_weapon:
             return
         # Non-firing weapons (e.g. cig) never fire: no muzzle flash, no
         # hitscan/projectile, no damage, and no gunfire noise event.
@@ -4104,6 +4186,7 @@ class LogicThread(threading.Thread):
         if not projectiles:
             self._monster_projectiles = []
             self._projectile_positions = _NO_PROJECTILES
+            self._projectile_records = ()
             return
 
         count = len(projectiles)
@@ -4125,7 +4208,11 @@ class LogicThread(threading.Thread):
                              dtype=np.float64) + speed * delta
         lifetime = np.array([p['lifetime'] for p in projectiles],
                             dtype=np.float64) - delta
-        live = (travelled < MONSTER_PROJECTILE_MAX_DIST) & (lifetime > 0.0)
+        # A projectile may carry its own range ('max_dist'); a player-fired one
+        # ('owner_is_player') never strikes the player who fired it.
+        max_dist = np.array([p.get('max_dist', MONSTER_PROJECTILE_MAX_DIST)
+                             for p in projectiles], dtype=np.float64)
+        live = (travelled < max_dist) & (lifetime > 0.0)
         pos32 = pos.astype(np.float32)
 
         # The player's hit sphere, in the float32 glm.distance used.
@@ -4137,6 +4224,8 @@ class LogicThread(threading.Thread):
             player_hit = (np.sqrt(d[:, 0] * d[:, 0] + d[:, 1] * d[:, 1]
                                   + d[:, 2] * d[:, 2])
                           < np.float32(self.PROJECTILE_PLAYER_RADIUS)) & live
+            player_hit &= ~np.array([bool(p.get('owner_is_player')) for p in projectiles],
+                                    dtype=bool)
 
         grid = getattr(self, '_spatial_grid', None)
         all_collision_brushes = self._collision_brushes_cache
@@ -4177,11 +4266,23 @@ class LogicThread(threading.Thread):
                         hit_monster = candidate
                         break
                 if hit_monster is not None:
-                    damage = proj['damage']
-                    self.monster_ai._apply_monster_damage(hit_monster, damage, attacker=None)
-                    if self.monster_ai.monster_debug_active:
-                        name = hit_monster.properties.get('name', '?')
-                        debug_log("MonsterAI", f"Projectile hit {name} for {damage} dmg")
+                    on_hit = proj.get('on_hit')
+                    if callable(on_hit):
+                        # The shooter resolves its own damage at impact rather
+                        # than a flat number baked in at fire time.
+                        try:
+                            on_hit(hit_monster)
+                        except Exception:
+                            import traceback
+                            debug_log("Error", "projectile on_hit failed:\n"
+                                      + traceback.format_exc())
+                    else:
+                        damage = proj['damage']
+                        self.monster_ai._apply_monster_damage(hit_monster, damage, attacker=None)
+                        if self.monster_ai.monster_debug_active:
+                            name = hit_monster.properties.get('name', '?')
+                            debug_log("MonsterAI", f"Projectile hit {name} for {damage} dmg")
+                    _projectile_impact(proj, glm.vec3(*pos[i].tolist()), hit_monster)
                     continue  # Projectile consumed
 
                 # ---- Collision with solid brushes (walls) ----
@@ -4202,6 +4303,7 @@ class LogicThread(threading.Thread):
                             hit_wall = True
                             break
                 if hit_wall:
+                    _projectile_impact(proj, glm.vec3(*pos[i].tolist()), None)
                     continue  # Projectile consumed
 
                 # Projectile survived this tick
@@ -4214,6 +4316,9 @@ class LogicThread(threading.Thread):
                 survivors.append(i)
 
         self._monster_projectiles = [projectiles[i] for i in survivors]
+        #: The survivors' records, in the order of _projectile_positions, for
+        #: a renderer that draws more than a dot (velocity, colour, kind).
+        self._projectile_records = tuple(self._monster_projectiles)
         # Published as one dense array by _prepare_render_state, every frame:
         # a frame that runs no tick must still carry the projectiles.
         self._projectile_positions = (pos32[survivors] if survivors

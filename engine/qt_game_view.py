@@ -3167,6 +3167,18 @@ class QtGameView(QOpenGLWidget):
                 self.editor.selected_face = face
                 self.update()
             return
+        # Fire buttons owned by a game layer: when one installed a player fire
+        # handler on the logic thread, left is primary fire and right is
+        # secondary; the handler decides what a shot is.
+        if (self.play_mode and not self.console_overlay_active
+                and getattr(self.logic_thread, 'player_fire_handler', None) is not None
+                and event.button() in (Qt.LeftButton, Qt.RightButton)):
+            if not self.game_state.published('player_dead', False):
+                if event.button() == Qt.LeftButton:
+                    self.game_state.queue_shot()
+                else:
+                    self.game_state.queue_secondary_shot()
+            return
         if self.play_mode and event.button() == Qt.LeftButton:
             if self.console_overlay_active:
                 return
