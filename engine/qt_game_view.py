@@ -1917,6 +1917,11 @@ class QtGameView(QOpenGLWidget):
         painter.drawText(10, 20, "Sprites")
 
     def _draw_hud(self, painter, render_state, viewport_width=None, viewport_height=None):
+        # A game layer that draws its own richer HUD through the render.overlay
+        # hook sets this so the stock health/weapon/prompt HUD does not overlap
+        # it.
+        if getattr(self, "_suppress_default_hud", False):
+            return
         # A LogicCamera owns the player's view completely: no HUD is shown
         # while the cinematic is running.
         if render_state is not None and getattr(
@@ -2436,6 +2441,9 @@ class QtGameView(QOpenGLWidget):
 
     def toggle_play_mode(self, player_start_pos, player_start_angle, physics_enabled=True):
         self.play_mode = not self.play_mode
+        # A game layer that draws its own HUD re-asserts this every frame of
+        # its play session; a new session starts with the stock HUD.
+        self._suppress_default_hud = False
         if self.play_mode:
             # Force split-screen OFF when entering play mode
             self.splitscreen_mode = False
