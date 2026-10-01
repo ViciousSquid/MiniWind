@@ -3293,6 +3293,13 @@ class MainWindow(QMainWindow):
                 self.view_3d.update()
                 return
 
+            elif event.key() == Qt.Key_Home:
+                # The camera back on the player, wherever it was showing.
+                back = getattr(self.view_3d, 'return_camera_to_player', None)
+                if back is not None:
+                    back()
+                return
+
             elif event.key() == Qt.Key_F1:
                 self.view_3d.show_connections_in_play_mode = not getattr(self.view_3d, 'show_connections_in_play_mode', False)
                 self.update_all_ui()

@@ -3577,6 +3577,13 @@ class QtGameView(QOpenGLWidget):
     # PLAY MENU (Play Mode)
     # =========================================================================
 
+    def return_camera_to_player(self):
+        """HOME in play: drop any camera focus and centre on the player now."""
+        logic = getattr(self, 'logic_thread', None)
+        if logic is not None and hasattr(logic, 'set_camera_focus'):
+            logic.set_camera_focus(None, glide=False)
+        self.update()
+
     def play_menu_active(self) -> bool:
         """True while an installed play menu is open over a play session."""
         return _play_menu_open(self)
@@ -3800,6 +3807,9 @@ class QtGameView(QOpenGLWidget):
         # An open play menu owns every key until it closes.
         if _play_menu_open(self):
             self.play_menu.handle_key(event)
+            return
+        if self.play_mode and event.key() == Qt.Key_Home:
+            self.return_camera_to_player()
             return
         # An armed actor pick owns Escape: it cancels the pick, not Play Mode.
         if (event.key() == Qt.Key_Escape and self.play_mode

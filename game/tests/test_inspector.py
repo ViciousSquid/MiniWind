@@ -143,3 +143,92 @@ def test_one_window_per_actor_and_the_close_button_closes_it(qt_app):
                               QtCore.Qt.NoModifier)
     assert view.window_manager.handle_mouse_press(press)
     assert inspector.open_windows(view) == []
+
+
+# ------------------------------------------------------------ place links
+
+class _FocusLogic(_Logic):
+    def __init__(self, things, session):
+        super().__init__(things, session)
+        self.camera_focus = None
+        self.glides = []
+
+    def set_camera_focus(self, point=None, glide=True):
+        self.camera_focus = None if point is None else tuple(point)
+        self.glides.append(glide)
+
+
+class _Named(_Session):
+    def __init__(self, places, things):
+        super().__init__(places)
+        self.things = things
+
+    def _find_named(self, name):
+        return next((t for t in self.things if t.properties.get("name") == name), None)
+
+
+def _linked_world():
+    forge = _Thing((300.0, 0.0, 400.0), type="marker", name="thalen_forge")
+    smith = _Thing((0.0, 0.0, 0.0), type="npc", display_name="Thalen",
+                   schedule=SCHEDULE, home=[10.0, 0.0, 20.0],
+                   work_location="thalen_forge")
+    session = _Named({}, [forge, smith])
+    logic = _FocusLogic([forge, smith], session)
+    view = _View(logic)
+    return smith, forge, logic, view
+
+
+def test_schedule_places_resolve_to_where_they_are(qt_app):
+    smith, forge, logic, _view = _linked_world()
+    session = logic._miniwind
+    assert inspector.resolve_place(session, smith, "home") == ([10.0, 0.0, 20.0], None, "home")
+    pos, entity, label = inspector.resolve_place(session, smith, "work")
+    assert (pos, entity) == ([300.0, 0.0, 400.0], forge) and "thalen_forge" in label
+    assert inspector.resolve_place(session, smith, "thalen_forge")[1] is forge
+    assert inspector.resolve_place(session, smith, "nowhere") is None
+
+
+def test_a_place_link_swings_the_camera_there_and_back(qt_app):
+    smith, forge, logic, view = _linked_world()
+    win = inspector.open_inspector(view, smith)
+    win._place_action("work")()
+    assert logic.camera_focus == (300.0, 0.0, 400.0)
+    assert inspector.focused_place(logic)["entity"] is forge   # its sprite is shown
+    assert any(kind == "back" for kind, _t, _v in win.build_rows())
+
+    win._place_action("work")()                     # the same link again: back
+    assert logic.camera_focus is None and inspector.focused_place(logic) is None
+
+
+def test_home_or_another_tool_moving_the_camera_drops_the_beacon(qt_app):
+    smith, forge, logic, view = _linked_world()
+    win = inspector.open_inspector(view, smith)
+    win._place_action("home")()
+    logic.set_camera_focus(None, glide=False)       # HOME in the view
+    assert inspector.focused_place(logic) is None
+
+
+def test_closing_the_window_snaps_the_camera_back(qt_app):
+    smith, forge, logic, view = _linked_world()
+    win = inspector.open_inspector(view, smith)
+    win._place_action("home")()
+    win.on_close()
+    assert logic.camera_focus is None and logic.glides[-1] is False
+
+
+def test_walking_brings_the_camera_back(qt_app):
+    smith, forge, logic, view = _linked_world()
+    win = inspector.open_inspector(view, smith)
+    win._place_action("home")()
+
+    class _Ctx:
+        def __init__(self, down):
+            self.down = down
+
+        def key_down(self, name):
+            return name in self.down
+
+    inspector.cancel_focus_on_move(logic, _Ctx(set()))
+    assert logic.camera_focus is not None
+    inspector.cancel_focus_on_move(logic, _Ctx({"w"}))
+    assert logic.camera_focus is None

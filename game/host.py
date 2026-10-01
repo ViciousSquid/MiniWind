@@ -766,6 +766,9 @@ class MiniwindGame:
             return
         from . import music
         music.PLAYER.poll()
+        # Walking brings a camera an inspector link sent away back home.
+        from .ui import inspector
+        inspector.cancel_focus_on_move(logic, ctx)
 
         just = self._just_pressed(ctx)
 

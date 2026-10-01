@@ -257,6 +257,12 @@ class LogicThread(threading.Thread):
         self.overhead_height = 800.0
         self.overhead_tilt = 0.0
         self.overhead_orientation = "north"
+        # Camera focus (set_camera_focus): a world point the overhead camera
+        # glides to and holds instead of the player, and glides back from.
+        self._camera_focus = None
+        self._camera_focus_from = None
+        self._camera_focus_blend = 0.0
+        self._camera_focus_clock = None
         # PERF: is_overhead() runs every render-state build (~60 Hz). Cache the
         # normalised boolean and only recompute when camera_mode actually
         # changes, so the hot path never re-does str().strip().lower().
@@ -1230,6 +1236,11 @@ class LogicThread(threading.Thread):
         # editor after one, never starts frozen by a request nobody released.
         with self._world_pause_lock:
             self._world_pause_owners = frozenset()
+        # Likewise a camera focus: every session starts following the player.
+        self._camera_focus = None
+        self._camera_focus_from = None
+        self._camera_focus_blend = 0.0
+        self._camera_focus_clock = None
         
         if enabled:
             # Read P2 turn sensitivity from editor config
@@ -1808,6 +1819,50 @@ class LogicThread(threading.Thread):
                            pz - direction.z * dist)
         up = self._safe_up(direction, glm.vec3(head_x, 0.0, head_z))
         return cam_pos, direction, up
+
+    #: Seconds the camera takes to glide to a focus point and back.
+    CAMERA_FOCUS_SECONDS = 0.6
+
+    def set_camera_focus(self, point=None, glide=True):
+        """Point the overhead camera at *point* ``(x, y, z)``; None returns it.
+
+        The camera glides there over :data:`CAMERA_FOCUS_SECONDS` and holds it
+        whatever the player does, until cleared, when it glides back to the
+        player (or, with ``glide=False``, snaps straight back). A tool or game
+        uses it to show a place without moving anyone (a debug inspector's
+        "show me where he works"). First person ignores it; streaming and
+        simulation stay centred on the player.
+        """
+        if point is None:
+            self._camera_focus = None
+            if not glide:
+                self._camera_focus_blend = 0.0
+            return
+        target = (float(point[0]), float(point[1]), float(point[2]))
+        self._camera_focus = target
+        self._camera_focus_from = target
+
+    @property
+    def camera_focus(self):
+        """The point the camera is held on, or None (following the player)."""
+        return self._camera_focus
+
+    def _focused_camera_centre(self, player_pos):
+        """Where the overhead camera centres this frame (see set_camera_focus)."""
+        now = time.perf_counter()
+        last = self._camera_focus_clock
+        self._camera_focus_clock = now
+        step = 0.0 if last is None else (now - last) / max(1e-3, self.CAMERA_FOCUS_SECONDS)
+        blend = self._camera_focus_blend
+        blend = min(1.0, blend + step) if self._camera_focus is not None else max(0.0, blend - step)
+        self._camera_focus_blend = blend
+        if blend <= 0.0 or self._camera_focus_from is None:
+            return player_pos
+        k = blend * blend * (3.0 - 2.0 * blend)
+        fx, fy, fz = self._camera_focus_from
+        return glm.vec3(player_pos.x + (fx - player_pos.x) * k,
+                        player_pos.y + (fy - player_pos.y) * k,
+                        player_pos.z + (fz - player_pos.z) * k)
 
     def overhead_ground_footprint(self):
         """Half extents ``(hx, hz)`` of the ground the overhead camera shows.
@@ -4612,7 +4667,8 @@ class LogicThread(threading.Thread):
                     # from this view_matrix, so overhead culling is correct; the
                     # up hint is horizontal, avoiding the straight-down lookAt
                     # degeneracy that would corrupt the view and every plane.
-                    cam_pos, direction, up_vec = self._overhead_camera(player_pos, player_angle)
+                    cam_pos, direction, up_vec = self._overhead_camera(
+                        self._focused_camera_centre(player_pos), player_angle)
                     view_matrix = glm.lookAt(cam_pos, cam_pos + direction, up_vec)
                     fov = 90.0
                 else:

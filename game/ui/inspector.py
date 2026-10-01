@@ -17,6 +17,13 @@ the actor to where it is heading, ending in a ring, in the window's own colour,
 and circles the actor so it is clear which window is whose. Several actors can
 be inspected at once.
 
+The places in the schedule ("@ work", "@ home", "@ thalen_bed") and the
+"Heading to" point are links: clicking one swings the play camera there
+(``LogicThread.set_camera_focus``) and puts a beacon on the spot, with the
+place's marker sprite, which play otherwise hides. Clicking it again, the
+"Back to player" link, walking, HOME or closing the window brings the camera
+back.
+
 Debug view: small sans text, not the game's display faces.
 """
 
@@ -41,6 +48,15 @@ _TEXT = QColor(220, 220, 220)
 _MUTED = QColor(150, 150, 160)
 _HEAD = QColor(240, 200, 120)
 _HILITE = QColor(90, 130, 128, 120)
+_LINK = QColor(120, 190, 255)
+_LINK_HOT = QColor(190, 230, 255)
+
+#: The place the camera is showing for an inspector window, or None:
+#: {"pos", "label", "entity", "window", "key"}.
+_focus = None
+
+#: Keys that, held, mean the player wants the camera back on them.
+_MOVE_KEYS = ("w", "a", "s", "d", "up", "down", "left", "right")
 
 _next_colour = 0
 
@@ -122,6 +138,89 @@ def destination(session, logic, thing):
     return None
 
 
+def resolve_place(session, thing, key):
+    """``(position, entity or None, label)`` for a schedule place, or None.
+
+    "home" is the NPC's home position; "work" / "market" its workplace (a
+    position, or the name of the marker it works at); anything else names a
+    marker or thing.
+    """
+    props = getattr(thing, "properties", {}) or {}
+    key = str(key or "").strip()
+    low = key.lower()
+    if not key or session is None:
+        return None
+    if low == "home":
+        home = props.get("home")
+        if isinstance(home, (list, tuple)) and len(home) == 3:
+            return list(home), None, "home"
+        return None
+    target = props.get("work_location") if low in ("work", "market") else key
+    if isinstance(target, (list, tuple)) and len(target) == 3:
+        return list(target), None, low
+    if isinstance(target, str) and target:
+        try:
+            ent = session._find_named(target)
+        except Exception:
+            ent = None
+        if ent is not None:
+            label = target if target == key else f"{low} ({target})"
+            return list(ent.pos), ent, label
+    return None
+
+
+def focused_place(logic=None):
+    """The place the camera shows for an inspector, or None.
+
+    Dropped as soon as the engine's focus has gone elsewhere (HOME, a new
+    session, another tool), so the beacon never outlives the view of it.
+    """
+    global _focus
+    if _focus is not None and logic is not None:
+        held = getattr(logic, "camera_focus", None)
+        pos = _focus["pos"]
+        if held is None or any(abs(float(a) - float(b)) > 1e-3
+                               for a, b in zip(held, pos)):
+            _focus = None
+    return _focus
+
+
+def show_place(window, key, pos, label, entity=None):
+    """Swing the camera to *pos* and mark it; the same place again goes back."""
+    global _focus
+    logic = window._logic()
+    if logic is None or not hasattr(logic, "set_camera_focus"):
+        return
+    current = focused_place(logic)
+    if current is not None and current["window"] is window and current["key"] == key:
+        clear_focus(logic)
+        return
+    _focus = {"pos": [float(pos[0]), float(pos[1]), float(pos[2])], "label": label,
+              "entity": entity, "window": window, "key": key,
+              "since": time.monotonic()}
+    logic.set_camera_focus(_focus["pos"])
+
+
+def clear_focus(logic=None, glide=True):
+    """Bring the camera back to the player (gliding, or at once)."""
+    global _focus
+    _focus = None
+    if logic is not None and hasattr(logic, "set_camera_focus"):
+        logic.set_camera_focus(None, glide=glide)
+
+
+def cancel_focus_on_move(logic, ctx):
+    """From the game tick: the player walking brings the camera back."""
+    if _focus is None or ctx is None:
+        return
+    try:
+        moving = any(ctx.key_down(k) for k in _MOVE_KEYS)
+    except Exception:
+        moving = False
+    if moving:
+        clear_focus(logic)
+
+
 class ActorInspectorWindow(FloatingWindow):
     """Live debug panel for one actor; see the module docstring."""
 
@@ -142,6 +241,7 @@ class ActorInspectorWindow(FloatingWindow):
         self._fm = QFontMetrics(self.font)
         self._rows = []          # [(kind, text, value)] kind: head/row/sched/sched_now
         self._refreshed = 0.0
+        self._links = []         # [(QRectF, action)] of the last paint
 
     # -- data ----------------------------------------------------------------
     def _logic(self):
@@ -168,6 +268,9 @@ class ActorInspectorWindow(FloatingWindow):
         def row(label, value):
             rows.append(("row", label, "" if value is None else str(value)))
 
+        focus = focused_place(logic)
+        if focus is not None and focus["window"] is self:
+            rows.append(("back", f"\u25c0 Back to player   (showing {focus['label']})", ""))
         head("Actor")
         row("Type", "{} / {}".format(props.get("type", "?"),
                                      props.get("npc_role") or props.get("creature_role")
@@ -210,10 +313,10 @@ class ActorInspectorWindow(FloatingWindow):
                 except Exception:
                     current = None
             for entry in sorted(schedule, key=lambda e: float(e.get("hour", 0))):
-                text = "{}  {:<14} @ {}".format(_fmt_hour(entry.get("hour", 0)),
-                                                str(entry.get("state", "?")),
-                                                entry.get("location", "-"))
-                rows.append(("sched_now" if entry is current else "sched", text, ""))
+                text = "{}  {:<14}".format(_fmt_hour(entry.get("hour", 0)),
+                                           str(entry.get("state", "?")))
+                rows.append(("sched_now" if entry is current else "sched", text,
+                             str(entry.get("location", "") or "")))
 
         snap = None
         try:
@@ -248,14 +351,72 @@ class ActorInspectorWindow(FloatingWindow):
         rect = self._full_rect()
         painter.fillRect(QRectF(rect.x(), rect.y(), 5, self.HEADER_H), self.colour)
 
+    def _link(self, painter, x, base, text, action, active=False):
+        """Draw *text* as a link at (x, base); a click on it runs *action*."""
+        from . import hits
+        fm = self._fm
+        rect = QRectF(x - 2, base - fm.ascent() - 1, fm.horizontalAdvance(text) + 4,
+                      fm.height() + 2)
+        hot = False
+        if hits.pointer is not None:
+            hot = rect.contains(QPointF(hits.pointer[0], hits.pointer[1]))
+        font = QFont(self.font)
+        font.setUnderline(hot or active)
+        font.setBold(active)
+        painter.setFont(font)
+        painter.setPen(_LINK_HOT if (hot or active) else _LINK)
+        painter.drawText(QPointF(x, base), text)
+        self._links.append((rect, action))
+        return rect.right()
+
+    def _place_action(self, key):
+        def action():
+            place = resolve_place(self._session(), self.thing, key)
+            if place is None:
+                return
+            pos, entity, label = place
+            show_place(self, key, pos, label, entity)
+        return action
+
+    def _dest_action(self):
+        dest = destination(self._session(), self._logic(), self.thing)
+        if dest is None:
+            return None
+        pos, why = dest
+
+        def action():
+            show_place(self, "@dest", pos, f"heading to ({why})")
+        return action
+
+    def handle_body_click(self, x, y):
+        point = QPointF(x, y)
+        for rect, action in reversed(self._links):
+            if rect.contains(point):
+                action()
+                return True
+        return False
+
+    def on_close(self):
+        # Closing the window that is showing a place snaps the camera home.
+        focus = focused_place(self._logic())
+        if focus is not None and focus["window"] is self:
+            clear_focus(self._logic(), glide=False)
+
     def draw_body(self, painter, x, y, w):
         self.refresh()
         painter.save()
+        self._links = []
+        focus = focused_place(self._logic())
+        mine = focus["key"] if focus is not None and focus["window"] is self else None
         ty = y + 6
         label_w = 112
         for kind, text, value in self._rows:
             base = ty + self.LINE_H - 3
-            if kind == "head":
+            if kind == "back":
+                logic = self._logic()
+                self._link(painter, x + 8, base, text,
+                           lambda logic=logic: clear_focus(logic))
+            elif kind == "head":
                 painter.setFont(self.bold)
                 painter.setPen(_HEAD)
                 painter.drawText(x + 8, base, text)
@@ -264,7 +425,12 @@ class ActorInspectorWindow(FloatingWindow):
                     painter.fillRect(QRectF(x + 4, ty, w - 8, self.LINE_H), _HILITE)
                 painter.setFont(self.bold if kind == "sched_now" else self.font)
                 painter.setPen(_TEXT if kind == "sched_now" else _MUTED)
-                painter.drawText(x + 14, base, ("▶ " if kind == "sched_now" else "  ") + text)
+                lead = ("▶ " if kind == "sched_now" else "  ") + text + "  @ "
+                painter.drawText(x + 14, base, lead)
+                lx = x + 14 + QFontMetrics(painter.font()).horizontalAdvance(lead)
+                if value:
+                    self._link(painter, lx, base, value, self._place_action(value),
+                               active=(mine == value))
             elif kind == "task":
                 # A task's description runs the whole width; its priority
                 # sits at the right.
@@ -277,9 +443,15 @@ class ActorInspectorWindow(FloatingWindow):
                 painter.setFont(self.font)
                 painter.setPen(_MUTED)
                 painter.drawText(x + 14, base, self._fm.elidedText(text, Qt.ElideRight, label_w - 8))
-                painter.setPen(_TEXT)
-                painter.drawText(x + 14 + label_w, base,
-                                 self._fm.elidedText(value, Qt.ElideRight, w - label_w - 24))
+                action = self._dest_action() if text == "Heading to" else None
+                if action is not None:
+                    self._link(painter, x + 14 + label_w, base,
+                               self._fm.elidedText(value, Qt.ElideRight, w - label_w - 24),
+                               action, active=(mine == "@dest"))
+                else:
+                    painter.setPen(_TEXT)
+                    painter.drawText(x + 14 + label_w, base,
+                                     self._fm.elidedText(value, Qt.ElideRight, w - label_w - 24))
             ty += self.LINE_H
         painter.restore()
 
@@ -330,11 +502,66 @@ def _project(glm, proj, view_m, pos, width, height):
     return QPointF((nx * 0.5 + 0.5) * width, (1.0 - (ny * 0.5 + 0.5)) * height)
 
 
+def _draw_beacon(painter, glm, proj, view_m, focus, width, height):
+    """The place an inspector link is showing: pulsing rings, a cross, its
+    marker's own sprite (play hides markers) and its name."""
+    centre = _project(glm, proj, view_m, focus["pos"], width, height)
+    if centre is None:
+        return
+    win = focus.get("window")
+    colour = QColor(win.colour) if win is not None else QColor(_LINK)
+    age = time.monotonic() - focus.get("since", 0.0)
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    painter.setBrush(Qt.NoBrush)
+    for i in range(2):
+        phase = (age * 0.8 + i * 0.5) % 1.0
+        ring = QColor(colour)
+        ring.setAlphaF(1.0 - phase)
+        painter.setPen(QPen(ring, 2))
+        r = 14 + 46 * phase
+        painter.drawEllipse(centre, r, r)
+    painter.setPen(QPen(colour, 2))
+    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        painter.drawLine(centre + QPointF(dx * 8, dy * 8), centre + QPointF(dx * 20, dy * 20))
+    entity = focus.get("entity")
+    pixmap = None
+    for getter in ("get_instance_pixmap", "get_icon_pixmap"):
+        fn = getattr(entity, getter, None) if entity is not None else None
+        if fn is None:
+            continue
+        try:
+            pixmap = fn()
+        except Exception:
+            pixmap = None
+        if pixmap is not None and not pixmap.isNull():
+            break
+        pixmap = None
+    if pixmap is not None:
+        size = 48.0
+        scale = size / max(1, max(pixmap.width(), pixmap.height()))
+        pw, ph = pixmap.width() * scale, pixmap.height() * scale
+        painter.drawPixmap(QRectF(centre.x() - pw / 2, centre.y() - ph - 22, pw, ph),
+                           pixmap, QRectF(pixmap.rect()))
+    painter.setFont(QFont("Arial", 9, QFont.Bold))
+    fm = QFontMetrics(painter.font())
+    text = str(focus.get("label", ""))
+    box = QRectF(centre.x() - fm.horizontalAdvance(text) / 2 - 6, centre.y() + 26,
+                 fm.horizontalAdvance(text) + 12, fm.height() + 4)
+    painter.fillRect(box, QColor(10, 10, 14, 200))
+    painter.setPen(colour)
+    painter.drawText(box, int(Qt.AlignCenter), text)
+    painter.restore()
+
+
 def draw_world_lines(painter, viewport, width, height):
     """For every open inspector: a ring round its actor and a line to where it
-    is heading, ending in a ring there."""
+    is heading, ending in a ring there; and the beacon on a place a link is
+    showing."""
+    logic = getattr(viewport, "logic_thread", None)
+    focus = focused_place(logic)
     windows = open_windows(viewport)
-    if not windows:
+    if not windows and focus is None:
         return
     try:
         import glm
@@ -342,8 +569,9 @@ def draw_world_lines(painter, viewport, width, height):
         view_m = viewport.view_matrix
     except Exception:
         return
-    logic = getattr(viewport, "logic_thread", None)
     session = getattr(logic, "_miniwind", None)
+    if focus is not None:
+        _draw_beacon(painter, glm, proj, view_m, focus, width, height)
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
     painter.setBrush(Qt.NoBrush)

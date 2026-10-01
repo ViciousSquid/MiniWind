@@ -318,14 +318,15 @@ def cmd_inspect(ctx, args):
     if not ctx.play_mode:
         debug_log("Error", "inspect: Play Mode only.")
         return None
-    view = getattr(ctx.main_window, "view_3d", None)
+    window = ctx.main_window
 
-    def _open(actor, view=view):
+    def _open(actor):
+        # The window opens on the view the pick was made in.
         from .ui import inspector
-        inspector.open_inspector(view, actor)
+        inspector.open_inspector(getattr(window, "view_3d", None), actor)
 
-    begin = getattr(ctx.main_window, "begin_actor_pick", None)
-    if begin is None or view is None or not begin(_open):
+    begin = getattr(window, "begin_actor_pick", None)
+    if begin is None or not begin(_open):
         debug_log("Error", "inspect: the actor picker is not available in this view.")
         return None
     toast = getattr(ctx.main_window, "show_toast", None)
