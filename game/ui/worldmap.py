@@ -8,12 +8,12 @@ over it from its brushes. That takes a few seconds for a big world, so it runs
 on a background thread, in strips, and is cached on disk per map (``cache/``),
 so a map is only ever painted once. Until it is ready the minimap says so.
 
-:func:`draw_minimap` paints the round minimap in the top-right corner of the
+:func:`draw_minimap` paints the square minimap in the top-right corner of the
 play view, under the clock: north up (the overhead camera's north), about
 :data:`MINIMAP_SPAN` world units across, with the player's arrow, the people
 and creatures nearby (red: hostile to the player, green: friendly, grey:
 anyone else), and the tracked quest's target as a yellow diamond, pinned to
-the rim when it is off the map.
+the edge when it is off the map.
 """
 
 from __future__ import annotations
@@ -308,7 +308,7 @@ def _relation_colour(session, thing):
 
 
 def draw_minimap(painter, session, viewport, width, height, world=None):
-    """Paint the round minimap (see the module docstring)."""
+    """Paint the square minimap (see the module docstring)."""
     from PyQt5.QtCore import QPointF, QRectF, Qt
     from PyQt5.QtGui import QBrush, QColor, QPainterPath, QPen, QPolygonF
     from . import theme as T
@@ -327,10 +327,11 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
     painter.setRenderHint(painter.SmoothPixmapTransform, True)
-    disc = QPainterPath()
-    disc.addEllipse(centre, radius, radius)
-    painter.fillPath(disc, QColor(20, 24, 20, 230))
-    painter.setClipPath(disc)
+    frame = QRectF(x0, y0, size, size)
+    window = QPainterPath()
+    window.addRect(frame)
+    painter.fillPath(window, QColor(20, 24, 20, 230))
+    painter.setClipPath(window)
 
     image = world.image() if world.ready else None
     if image is not None:
@@ -364,7 +365,7 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
         painter.setBrush(QBrush(_relation_colour(session, thing)))
         painter.drawEllipse(to_screen(thing.pos[0], thing.pos[2]), 3.2, 3.2)
 
-    # The tracked quest's target: a yellow diamond, held on the rim if far.
+    # The tracked quest's target: a yellow diamond, held on the edge if far.
     try:
         targets = session.quest_arrow_targets()
     except Exception:
@@ -372,10 +373,11 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
     for pos, _qid, _name in targets[:3]:
         p = to_screen(pos[0], pos[2])
         dx, dy = p.x() - centre.x(), p.y() - centre.y()
-        dist = math.hypot(dx, dy)
         limit = radius - 9
-        if dist > limit and dist > 0:
-            p = QPointF(centre.x() + dx / dist * limit, centre.y() + dy / dist * limit)
+        reach = max(abs(dx), abs(dy))
+        if reach > limit:
+            # Along the line to it, stopped at the square's inner edge.
+            p = QPointF(centre.x() + dx / reach * limit, centre.y() + dy / reach * limit)
         diamond = QPolygonF([p + QPointF(0, -7), p + QPointF(6, 0),
                              p + QPointF(0, 7), p + QPointF(-6, 0)])
         painter.setBrush(QBrush(QColor(250, 214, 70)))
@@ -396,9 +398,9 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
     painter.setClipping(False)
     painter.setBrush(Qt.NoBrush)
     painter.setPen(QPen(T.GILD, 2.5))
-    painter.drawEllipse(centre, radius, radius)
+    painter.drawRect(frame)
     painter.setPen(QPen(QColor(90, 74, 44), 1))
-    painter.drawEllipse(centre, radius - 4, radius - 4)
+    painter.drawRect(frame.adjusted(4, 4, -4, -4))
     # North.
     painter.setFont(T.font(10, bold=True))
     painter.setPen(T.GOLD_BRIGHT)
