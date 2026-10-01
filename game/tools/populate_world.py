@@ -1,9 +1,12 @@
 """
 Fill the expanded world's open land with places to find.
 
-``expand_world`` made the Vale huge but left most of it empty: thirty places
-in an 82 000-unit square. This adds about thirty more, spread over the open
-lowland between them, each a reason to leave the road:
+``expand_world`` made the Vale huge but left most of it empty: a few dozen
+major places in an 82 000-unit square. This pass keeps those major landmarks
+but also builds a much denser layer of small countryside content between them:
+cottages, small farms, pastures, roadside stops, minor ruins and shrines. The
+result should read as a lived-in countryside rather than a handful of isolated
+dots:
 
 * **hamlets** -- a handful of cottages round a well, a market stall, a few
   folk who live and work there, sheep and hens;
@@ -70,6 +73,23 @@ HOUSES = (("house01.png", 390, 260), ("house04.png", 340, 292), ("house05.png", 
           ("house06.png", 300, 225), ("house01.png", 330, 220), ("house06.png", 340, 255))
 STALLS = (("market01.png", 200, 200), ("market03.png", 200, 200), ("shop01.png", 180, 180),
           ("market02.png", 190, 138))
+
+# Secondary density is deliberately separate from SITES. Major locations remain
+# recognisable landmarks; these smaller locations make the intervening country
+# worth walking through without turning the whole map into a town.
+SECONDARY_TARGET = 120
+SECONDARY_MIN_GAP = 1250.0
+
+SECONDARY_PREFIXES = (
+    "Ash", "Alder", "Barley", "Black", "Briar", "Brook", "Cinder", "Cold",
+    "Copper", "Crow", "Elm", "Fox", "Gorse", "Green", "Hare", "Hazel",
+    "Hollow", "Moor", "Oak", "Old", "Raven", "Red", "River", "Rowan",
+    "Silver", "Stone", "Thorn", "Vale", "West", "Willow",
+)
+SECONDARY_SUFFIXES = (
+    "Cottage", "Croft", "End", "Fold", "Field", "Grove", "Hold", "Mead",
+    "Rest", "Run", "Side", "Stead", "Yard", "Watch", "Cross", "Bank",
+)
 
 def _slug(text):
     return "".join(c.lower() if c.isalnum() else "_" for c in text).strip("_")
@@ -279,6 +299,118 @@ class Populator(Expander):
         self.world["things"].append(t)
         return t
 
+    # -- secondary countryside ---------------------------------------------
+    def _secondary_name(self, kind, index):
+        """Deterministic readable names for small, mostly unmarked sites."""
+        a = SECONDARY_PREFIXES[index % len(SECONDARY_PREFIXES)]
+        b = SECONDARY_SUFFIXES[(index * 7) % len(SECONDARY_SUFFIXES)]
+        labels = {
+            "cottage": "Cottage",
+            "small_farm": "Farm",
+            "wayside": "Wayside Camp",
+            "pasture": "Pasture",
+            "ruinlet": "Ruins",
+            "shrinelet": "Shrine",
+            "camp": "Camp",
+        }
+        return f"{a} {b} {labels.get(kind, kind.title())}"
+
+    def cottage(self, name, x, z):
+        """A small occupied home: enough geometry to read as habitation."""
+        g = self._house(x, z)
+        home = (x, g + 48.0, z + 150.0)
+        if self.rng.random() < 0.75:
+            self._field(x - 360.0, z + 260.0, 150.0, 190.0)
+        if self.rng.random() < 0.65:
+            self._fence(x + 250.0, z + 330.0, 190.0, 150.0, gap=100.0)
+            self._herd("Hen", x + 250.0, z + 330.0, 2, 55.0)
+        work = f"{_slug(name)}_home"
+        self._work_marker(work, x - 300.0, z + 240.0)
+        self._person(name, x, z + 210.0, home, work, title="Cottager")
+
+    def small_farm(self, name, x, z):
+        """A lighter farmstead used to fill the countryside without full town density."""
+        g = self._house(x, z, ("house06.png", 340, 255))
+        home = (x, g + 48.0, z + 130.0)
+        if self.rng.random() < 0.8:
+            self._field(x - 540.0, z + 40.0, 220.0, 280.0)
+        if self.rng.random() < 0.85:
+            self._fence(x + 300.0, z + 380.0, 250.0, 180.0, gap=120.0)
+            self._herd("Cow" if self.rng.random() < 0.45 else "Sheep",
+                       x + 300.0, z + 380.0, 3, 120.0)
+        self._herd("Hen", x - 180.0, z + 220.0, 2, 60.0)
+        work = f"{_slug(name)}_field"
+        self._work_marker(work, x - 540.0, z + 40.0, kind="farm")
+        self._person(name, x, z + 200.0, home, work, title="Farmer")
+
+    def wayside(self, name, x, z):
+        """A tiny roadside stop: shelter, provisions and a traveller."""
+        self._tent(x, z, int(self.rng.integers(2, 4)))
+        self._container(x - 130.0, z + 120.0, "barrel",
+                        [("bread", 2), ("gold", int(self.rng.integers(2, 12)))])
+        work = f"{_slug(name)}_camp"
+        self._work_marker(work, x, z)
+        self._person(name, x + 80.0, z - 130.0,
+                     (x + 80.0, self._ground_now(x + 80.0, z - 130.0) + 48.0, z - 130.0),
+                     work, title="Wayfarer")
+
+    def pasture(self, name, x, z):
+        """A visible working pasture with enough geometry to break up empty land."""
+        hw = float(self.rng.uniform(260.0, 360.0))
+        hd = float(self.rng.uniform(220.0, 320.0))
+        self._fence(x, z, hw, hd, gap=140.0)
+        self._herd("Cow" if self.rng.random() < 0.5 else "Sheep", x, z, 4, 150.0)
+        self._herd("Hen", x - hw * 0.55, z - hd * 0.65, 2, 55.0)
+
+    def ruinlet(self, name, x, z):
+        """Small broken site: much lighter than a full ruin."""
+        self._walls(x, z, float(self.rng.uniform(300.0, 440.0)))
+        self._creature("Skeleton", x, z, roam=True)
+        if self.rng.random() < 0.35:
+            self._creature("Wraith", x + 90.0, z - 70.0)
+        if self.rng.random() < 0.7:
+            self._container(x + 80.0, z + 80.0, "chest",
+                            [("gold", int(self.rng.integers(10, 45)))])
+
+    def shrinelet(self, name, x, z):
+        """A minor roadside shrine using the same stones as the major shrines."""
+        stone = self._textured("Stone_09-512x512.png")
+        g = self._level(x, z, 60.0, 60.0, feather=90.0)
+        self._brush((x, 0, z), (100.0, 52.0, 80.0),
+                    self._textured("Stone_09-512x512.png", "fire01.png"),
+                    ground=g)
+        for k in range(3):
+            a = 2.0 * math.pi * k / 3.0
+            self._brush((x + math.cos(a) * 180.0, 0, z + math.sin(a) * 180.0),
+                        (40.0, float(self.rng.uniform(90.0, 160.0)), 40.0),
+                        stone)
+
+    def camp(self, name, x, z):
+        """A small hostile camp for wilderness stretches."""
+        self._tent(x - 130.0, z, int(self.rng.integers(2, 4)))
+        self._fire(x + 100.0, z + 30.0, name)
+        self._herd("Bandit", x, z, 2, 170.0)
+        if self.rng.random() < 0.65:
+            self._creature("Bandit Archer", x + 100.0, z - 80.0)
+        self._container(x - 40.0, z + 170.0, "chest",
+                        [("gold", int(self.rng.integers(8, 50)))])
+
+    def build_secondary(self, kind, name, x, z):
+        if kind == "cottage":
+            self.cottage(name, x, z)
+        elif kind == "small_farm":
+            self.small_farm(name, x, z)
+        elif kind == "wayside":
+            self.wayside(name, x, z)
+        elif kind == "pasture":
+            self.pasture(name, x, z)
+        elif kind == "ruinlet":
+            self.ruinlet(name, x, z)
+        elif kind == "shrinelet":
+            self.shrinelet(name, x, z)
+        elif kind == "camp":
+            self.camp(name, x, z)
+
     # -- the sites ---------------------------------------------------------
     def hamlet(self, name, x, z):
         r = 560.0
@@ -420,27 +552,106 @@ class Populator(Expander):
             self.shrine(name, x, z)
 
     def run(self):
-        placed = []
+        major = []
         for name, kind in SITES:
             lo, hi = REACH.get(kind, DANGER_REACH)
             spots = self._open_spots(1, self.rng, lo, hi, 2600.0, 0.0)
             spots = [s for s in spots if all(math.hypot(s[0] - a, s[1] - b) >= 5200.0
-                                             for a, b in placed)]
+                                             for a, b in major)]
             tries = 0
             while not spots and tries < 40:
                 tries += 1
                 spots = [s for s in self._open_spots(1, self.rng, lo, hi, 2600.0, 0.0)
-                         if all(math.hypot(s[0] - a, s[1] - b) >= 4200.0 for a, b in placed)]
+                         if all(math.hypot(s[0] - a, s[1] - b) >= 4200.0
+                                for a, b in major)]
             if not spots:
                 self.report(f"no room for {name}")
                 continue
             x, z = spots[0]
             self.build(kind, name, x, z)
             self._store_terrain()
-            placed.append((x, z))
+            major.append((x, z))
             self.added.append((name, kind, round(x), round(z)))
+
+        # The original pass stopped here, leaving huge stretches of empty
+        # countryside. Add a second, deliberately lighter layer of content.
+        # It is still generated once into the map; BigWorld remains responsible
+        # for deciding what is relevant at runtime.
+        if major:
+            candidates = self._open_spots(
+                max(SECONDARY_TARGET * 4, SECONDARY_TARGET + 40),
+                self.rng, 0.0, 35000.0, 700.0, 0.0)
+        else:
+            candidates = []
+
+        secondary = []
+        for x, z in candidates:
+            if len(secondary) >= SECONDARY_TARGET:
+                break
+            if not all(math.hypot(x - a, z - b) >= SECONDARY_MIN_GAP
+                       for a, b in major + secondary):
+                continue
+
+            nearest = min(math.hypot(x - a, z - b) for a, b in major)
+            roll = float(self.rng.random())
+
+            if nearest < 6500.0:
+                if roll < 0.46:
+                    kind = "cottage"
+                elif roll < 0.72:
+                    kind = "small_farm"
+                elif roll < 0.90:
+                    kind = "pasture"
+                else:
+                    kind = "wayside"
+            elif nearest < 13000.0:
+                if roll < 0.28:
+                    kind = "cottage"
+                elif roll < 0.48:
+                    kind = "small_farm"
+                elif roll < 0.68:
+                    kind = "pasture"
+                elif roll < 0.84:
+                    kind = "wayside"
+                elif roll < 0.93:
+                    kind = "shrinelet"
+                else:
+                    kind = "ruinlet"
+            else:
+                if roll < 0.28:
+                    kind = "wayside"
+                elif roll < 0.50:
+                    kind = "pasture"
+                elif roll < 0.70:
+                    kind = "camp"
+                elif roll < 0.86:
+                    kind = "ruinlet"
+                else:
+                    kind = "shrinelet"
+
+            name = self._secondary_name(kind, len(secondary))
+            self.build_secondary(kind, name, x, z)
+            secondary.append((x, z))
+
+            # _ground_now() sees the accumulated sculpt immediately, but
+            # periodically committing it keeps the serialized terrain state
+            # coherent during a long generation pass.
+            if len(secondary) % 8 == 0:
+                self._store_terrain()
+
+        if secondary:
+            self._store_terrain()
+
+        self.secondary_added = len(secondary)
         self.world.setdefault("_miniwind_world", {})["populated"] = True
+        self.world["_miniwind_world"]["population_density"] = {
+            "major_sites": len(major),
+            "secondary_sites": len(secondary),
+            "secondary_target": SECONDARY_TARGET,
+        }
+        self.report(f"added {len(secondary)} secondary countryside sites")
         return self.world
+
 
 
 def main():
@@ -466,7 +677,8 @@ def main():
         print(f"  {kind:<10} {name:<24} {x:>7} {z:>7}")
     out = args.out or args.map
     dump(world, out)
-    print(f"wrote {out} ({os.path.getsize(out) / 1e6:.1f} MB, {len(pop.added)} places added, "
+    print(f"wrote {out} ({os.path.getsize(out) / 1e6:.1f} MB, "
+          f"{len(pop.added)} major + {getattr(pop, 'secondary_added', 0)} secondary places, "
           f"{len(world['brushes'])} brushes, {len(world['things'])} things)")
     if args.preview:
         preview(world, args.preview)
