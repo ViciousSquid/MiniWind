@@ -206,13 +206,37 @@ class PauseActions:
         return True
 
     # ----------------------------------------------------------------- music
-    def pause_menu_music_enabled(self):
-        return bool(self.music.enabled)
+    def pause_menu_music_volume(self):
+        """The music volume, 0..1 (0 is off)."""
+        return float(self.music.effective_volume)
 
-    def pause_menu_toggle_music(self):
-        on = self.music.toggle()
-        self._toast("Music on" if on else "Music off")
-        return on
+    def pause_menu_set_music_volume(self, volume):
+        self.music.set_volume(volume)
+
+    # ---------------------------------------------------------------- options
+    def pause_menu_display_settings(self):
+        """The launcher's display settings, on the editor window's own config.
+
+        The same :class:`game.ui.launcher.DisplaySettings` the launcher uses,
+        so the two can never disagree; saved through the window, whose own
+        write of settings.ini then carries the change.
+        """
+        from .launcher import DisplaySettings
+        window = self.window
+        config = getattr(window, "config", None)
+        if config is None:
+            return DisplaySettings()
+        return DisplaySettings(getattr(window, "config_path", "settings.ini"),
+                               config=config,
+                               save=getattr(window, "save_config", None))
+
+    def pause_menu_apply_display(self):
+        """Show a changed window mode / resolution now, in a kiosk game."""
+        window = self.window
+        if getattr(window, "is_kiosk_mode", False):
+            apply = getattr(window, "apply_kiosk_display_mode", None)
+            if apply is not None:
+                apply()
 
     # --------------------------------------------------------------- leaving
     def pause_menu_to_editor(self):

@@ -3422,6 +3422,9 @@ class QtGameView(QOpenGLWidget):
 
     def mouseReleaseEvent(self, event):
         if _play_menu_open(self):
+            release = getattr(self.play_menu, 'handle_mouse_release', None)
+            if release is not None:
+                release(event)
             return
         manager = getattr(self, 'window_manager', None)
         if manager is not None and manager.handle_mouse_release(event):

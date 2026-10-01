@@ -4665,12 +4665,57 @@ class MainWindow(QMainWindow):
         # Hide sysmon overlay by default in kiosk mode (F3 to toggle back on)
         self.view_3d.sysmon.set_active(False)
 
-        # Go fullscreen
-        self.showFullScreen()
+        # Present it the way the player asked for it ([Kiosk] window_mode):
+        # Fullscreen, Borderless, or a window at the chosen resolution.
+        self.apply_kiosk_display_mode()
 
         # Launch play mode ONLY if not already in play mode
         if not self.view_3d.play_mode:
             self.enter_play_mode()
+
+    def apply_kiosk_display_mode(self):
+        """Size and present the kiosk window per ``[Kiosk]`` in settings.ini.
+
+        'Fullscreen' takes the whole screen (the default); 'Borderless' is a
+        frameless window filling the screen; 'Windowed' an ordinary window at
+        ``res_width`` x ``res_height``, centred. Called on entering kiosk mode
+        and again whenever a game's options change the mode, so the change
+        shows at once.
+        """
+        mode = str(self.config.get('Kiosk', 'window_mode',
+                                   fallback='Fullscreen')).strip().lower()
+        screen = QApplication.primaryScreen()
+        screen_geo = screen.geometry() if screen is not None else None
+        frameless = bool(self.windowFlags() & Qt.FramelessWindowHint)
+
+        if mode == 'borderless':
+            if not frameless:
+                self._kiosk_prev_flags = self.windowFlags()
+                self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
+            self.showNormal()
+            if screen_geo is not None:
+                self.setGeometry(screen_geo)
+            return
+
+        prev = getattr(self, '_kiosk_prev_flags', None)
+        if prev is not None and frameless:
+            self.setWindowFlags(prev)
+            self._kiosk_prev_flags = None
+
+        if mode == 'windowed':
+            try:
+                width = self.config.getint('Kiosk', 'res_width', fallback=1280)
+                height = self.config.getint('Kiosk', 'res_height', fallback=720)
+            except Exception:
+                width, height = 1280, 720
+            self.showNormal()
+            self.resize(width, height)
+            if screen_geo is not None:
+                self.move(max(0, (screen_geo.width() - width) // 2),
+                          max(0, (screen_geo.height() - height) // 2))
+            return
+
+        self.showFullScreen()
 
     def exit_kiosk_mode(self, keep_play_mode=False, confirm=True):
         """Restore editor UI and exit play mode.
@@ -4701,6 +4746,12 @@ class MainWindow(QMainWindow):
         else:
             # --- Restore previous tab ---
             self._restore_properties_tab()
+
+        # A borderless kiosk window gets its frame back.
+        prev = getattr(self, '_kiosk_prev_flags', None)
+        if prev is not None:
+            self.setWindowFlags(prev)
+            self._kiosk_prev_flags = None
 
         # Exit fullscreen FIRST - critical for proper geometry restoration
         self.showNormal()
