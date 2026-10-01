@@ -1,4 +1,3 @@
-```yaml
 name: Nuitka Build and Validate
 
 on:
@@ -406,4 +405,3 @@ jobs:
             release/Fio-Windows.zip
             release/Fio-macOS.zip
             release/Fio-Linux.zip
-```
