@@ -726,7 +726,7 @@ class Monster(Thing):
         The render thread must not reach back into the live Thing. Keep the
         resolved sprite, facing, and the weapon actually in hand in the snapshot.
         """
-        idle = str(self.properties.get('custom_idle', '')).replace('\\\\', '/')
+        idle = str(self.properties.get('custom_idle', '')).replace('\\', '/')
         base = idle.rsplit('/', 1)[-1]
         ttype = str(self.properties.get('type', '')).lower()
         if 'is_head' in self.properties:
