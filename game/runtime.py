@@ -242,6 +242,10 @@ TRANSACTION_SOUND = "transaction.mp3"
 #: A guard stopping the player to arrest them says one of these, at random.
 ARREST_SOUNDS = ("arrest1.mp3", "arrest2.mp3")
 
+#: Marks an NPC can show above its head: "!" heightened (alarmed, startled,
+#: coming for you), "?" puzzled (searching, unsure). game/ui/hud.py draws them.
+HEAD_MARKS = ("!", "?")
+
 
 class StateStore:
     """Adapter presenting a plugin ``GlobalStore`` as a string KV store."""
@@ -398,6 +402,8 @@ class MiniwindSession:
         self._proximity_accum = 0.0
         #: Guards currently running the player down (see _start_arrest_pursuit).
         self._arrest_pursuers = []
+        #: NPCs given a mark above their head by set_head_mark: id -> npc.
+        self._head_marked = {}
         #: Active Wisp companion light, or None. See _spawn_wisp / _update_wisp.
         self._wisp = None
         #: Reaper visits currently playing out, one per attended corpse. See
@@ -4552,13 +4558,66 @@ class MiniwindSession:
             return "talk"
         return None
 
+    # -- marks above heads ---------------------------------------------------
+    def set_head_mark(self, npc, mark) -> None:
+        """Show *mark* ("!" heightened, "?" puzzled) above *npc*'s head, or
+        clear it with None. What a mood system sets; a mark set here wins
+        over the ones the game derives (see :meth:`head_mark`)."""
+        if npc is None:
+            return
+        props = npc.properties
+        if mark in HEAD_MARKS:
+            props["_head_mark"] = mark
+            self._head_marked[id(npc)] = npc
+        else:
+            props.pop("_head_mark", None)
+            self._head_marked.pop(id(npc), None)
+
+    def head_mark(self, npc):
+        """The mark over *npc* now, or None.
+
+        Set explicitly (:meth:`set_head_mark`), or heightened by what the NPC
+        is doing: a guard coming to arrest the player, stopping them, or
+        running them down shows "!". Escorting a prisoner is calm.
+        """
+        props = getattr(npc, "properties", None) or {}
+        if props.get("dead"):
+            return None
+        mark = props.get("_head_mark")
+        if mark in HEAD_MARKS:
+            return mark
+        if npc is self._arrest_guard and self._arrest_state in ("approach", "ready"):
+            return "!"
+        if npc in self._arrest_pursuers:
+            return "!"
+        return None
+
+    def head_marks(self):
+        """(npc, mark) for every NPC with a mark over its head right now."""
+        seen = set()
+        out = []
+        candidates = list(self._head_marked.values())
+        candidates.append(self._arrest_guard)
+        candidates.extend(self._arrest_pursuers)
+        for npc in candidates:
+            if npc is None or id(npc) in seen:
+                continue
+            seen.add(id(npc))
+            mark = self.head_mark(npc)
+            if mark is not None:
+                out.append((npc, mark))
+        return out
+
     def bubble_npcs(self, player_pos, radius: float = BUBBLE_RADIUS):
-        """(npc, kind) for nearby NPCs that have something to say, nearest first."""
+        """(npc, kind) for nearby NPCs that have something to say, nearest first.
+
+        An NPC with a mark over its head (see :meth:`head_mark`) shows that
+        instead of a speech bubble."""
         out = []
         r2 = radius * radius
         for npc in self.npcs():
             kind = self.bubble_kind(npc)
-            if kind is None:
+            if kind is None or self.head_mark(npc) is not None:
                 continue
             dx = npc.pos[0] - player_pos[0]
             dz = npc.pos[2] - player_pos[2]

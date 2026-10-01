@@ -1007,6 +1007,9 @@ class MiniwindGame:
                     hud.draw_bubbles(painter, session, viewport, w, h)
                 # The "stay near the guard" ring during a prison escort.
                 hud.draw_escort_ring(painter, session, viewport, w, h)
+                # "!" / "?" over heightened NPCs (a guard coming to arrest
+                # the player); shown in conversation too.
+                hud.draw_head_marks(painter, session, viewport, w, h)
             if not windowed:
                 if session.dialogue is not None:
                     dialogue_ui.draw(painter, session, w, h)
