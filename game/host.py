@@ -672,6 +672,8 @@ class MiniwindGame:
         def _kill(entity, param, logic):
             entity.properties["dead"] = True
             entity.properties["health"] = 0
+            from engine.change_journal import touch
+            touch(entity)
             api.fire_output(entity, "OnDied")
 
         def _wake(entity, param, logic):

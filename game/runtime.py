@@ -23,6 +23,7 @@ from itertools import chain as _chain
 from typing import Dict, List, Optional
 
 from .facing import face_heading
+from engine.change_journal import touch as _journal
 from engine.spatial import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
                                 TIER_DORMANT)
 from .rpg import factions
@@ -630,6 +631,7 @@ class MiniwindSession:
                 p["custom_idle"] = path
                 p["custom_shoot"] = path
                 p.pop("custom_dead", None)   # no custom death sprite (removed)
+                _journal(t)
                 changed = True
         if changed:
             try:
@@ -1444,6 +1446,7 @@ class MiniwindSession:
                     sim_prod.note_collected(producer.properties, 1)
                 p["dead"] = True
                 p["hidden"] = True
+                _journal(it)
 
     def _tick_spellbooks(self) -> None:
         """Reading a world Spellbook (walking over it) teaches its spell."""
@@ -1472,6 +1475,7 @@ class MiniwindSession:
             if not p.get("respawn"):
                 p["dead"] = True
                 p["hidden"] = True
+                _journal(bk)
 
     def _tick_triggers(self) -> None:
         ppos = self._player_pos()
@@ -3924,6 +3928,7 @@ class MiniwindSession:
         # plane, so a melee swing is guaranteed to connect — no separate miss
         # roll to be foiled by camera pitch or anything else.
         res = self.game.attack_creature(target.properties, guaranteed=True)
+        _journal(target)     # a kill/gib changes how the target is drawn
         if res.get("hit"):
             tag = "sneak" if res.get("sneak") else ("crit" if res.get("crit") else "dmg")
             self.add_floater(f"-{int(res['damage'])}", kind=tag)
@@ -3963,6 +3968,7 @@ class MiniwindSession:
 
         def _on_hit(hit_monster):
             res = game.resolve_arrow_hit(hit_monster.properties)
+            _journal(hit_monster)
             if res.get("hit"):
                 tag = "sneak" if res.get("sneak") else ("crit" if res.get("crit") else "dmg")
                 self.add_floater(f"-{int(res['damage'])}", kind=tag)
@@ -4008,6 +4014,7 @@ class MiniwindSession:
         c.use_skill("destruction", 1.0)
         if target is not None:
             r = self.game.resolve_spell_on_creature(spell, target.properties)
+            _journal(target)
             self.add_floater(f"-{int(r['damage'])}", kind="fire")
             self._provoke(target)
             if r.get("killed"):
@@ -4056,6 +4063,7 @@ class MiniwindSession:
             target = self._acquire_target(BOW_REACH if spell.delivery != rpg_magic.TOUCH else MELEE_REACH)
             if target is not None:
                 r = self.game.resolve_spell_on_creature(spell, target.properties)
+                _journal(target)
                 if r.get("damage"):
                     self.add_floater(f"-{int(r['damage'])}", kind=spell.element)
                 self._apply_nondamage_spell(spell, target)
@@ -4143,6 +4151,7 @@ class MiniwindSession:
         p["dead"] = False
         p["hidden"] = False
         p["is_shooting"] = False
+        _journal(thing)
         try:
             mh = float(p.get("max_health", p.get("health", 100)) or 100)
         except (TypeError, ValueError):

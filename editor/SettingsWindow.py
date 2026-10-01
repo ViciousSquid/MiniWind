@@ -86,6 +86,16 @@ class SettingsWindow(QDialog):
         autosave_group.setLayout(autosave_layout)
         layout.addWidget(autosave_group)
 
+        maps_group = QGroupBox("Maps")
+        maps_layout = QVBoxLayout()
+        self.allow_fio_maps_checkbox = QCheckBox("Allow Fio maps")
+        self.allow_fio_maps_checkbox.setToolTip(
+            "Open plain Fio maps (maps without game settings) in the editor.\n"
+            "Off: only game maps open; a plain Fio map is refused with a message.")
+        maps_layout.addWidget(self.allow_fio_maps_checkbox)
+        maps_group.setLayout(maps_layout)
+        layout.addWidget(maps_group)
+
         view_3d_group = QGroupBox("3D View")
         view_3d_layout = QVBoxLayout()
         
@@ -521,6 +531,8 @@ class SettingsWindow(QDialog):
             self.config.getboolean('Editor', 'property_editor_tooltips', fallback=True))
         self.toolbar_tooltips_checkbox.setChecked(
             self.config.getboolean('Editor', 'toolbar_tooltips', fallback=True))
+        self.allow_fio_maps_checkbox.setChecked(
+            self.config.getboolean('Editor', 'allow_fio_maps', fallback=False))
 
         self.show_fps_checkbox.setChecked(self.config.getboolean('Display', 'show_fps', fallback=True))
         self.always_show_sysmon_checkbox.setChecked(self.config.getboolean('Display', 'always_show_sysmon', fallback=False))
@@ -656,6 +668,8 @@ class SettingsWindow(QDialog):
                         str(self.property_editor_tooltips_checkbox.isChecked()))
         self.config.set('Editor', 'toolbar_tooltips',
                         str(self.toolbar_tooltips_checkbox.isChecked()))
+        self.config.set('Editor', 'allow_fio_maps',
+                        str(self.allow_fio_maps_checkbox.isChecked()))
 
         if not self.config.has_section('Renderer'): 
             self.config.add_section('Renderer')

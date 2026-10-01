@@ -21,6 +21,8 @@ than breaking startup.
 
 from __future__ import annotations
 
+import os
+
 _applied = False
 
 
@@ -41,6 +43,7 @@ def apply():
     _register_wizards()
     _patch_editor_menu()
     _patch_window_title()
+    _patch_map_loading()
 
 
 def _register_wizards():
@@ -109,6 +112,61 @@ def _patch_editor_menu():
 
     Ui_MainWindow.create_status_bar = create_status_bar
     Ui_MainWindow._miniwind_patched = True
+
+
+#: settings.ini switch (Settings > Editor > Maps > "Allow Fio maps") that lets
+#: the editor open plain Fio maps. Off by default: MiniWind ships game maps only.
+ALLOW_FIO_MAPS = ("Editor", "allow_fio_maps")
+
+#: What makes a map a MiniWind map: its game-settings entity.
+_GAME_MAP_MARKER = b'"miniwindsettings"'
+
+
+def is_game_map(path) -> bool:
+    """True when the map file at *path* carries MiniWind's settings entity."""
+    try:
+        with open(path, "rb") as f:
+            return _GAME_MAP_MARKER in f.read()
+    except OSError:
+        return True      # unreadable: let the editor report the real error
+
+
+def fio_maps_allowed(config) -> bool:
+    try:
+        return config.getboolean(*ALLOW_FIO_MAPS, fallback=False)
+    except Exception:
+        return False
+
+
+def _patch_map_loading():
+    """Refuse plain Fio maps unless Settings allows them.
+
+    Wraps ``MainWindow.load_level_file``, the one path every map open takes
+    (File > Open, recent files, the maps browser, a level change in play).
+    """
+    try:
+        from editor.main_window import MainWindow
+    except Exception as exc:
+        _log(f"map-loading gate skipped ({exc})")
+        return
+    if getattr(MainWindow, "_miniwind_maps_gated", False):
+        return
+    _orig_load = MainWindow.load_level_file
+
+    def load_level_file(self, filePath):
+        if not fio_maps_allowed(getattr(self, "config", None)) and not is_game_map(filePath):
+            name = os.path.basename(str(filePath))
+            message = (f"{name} is a plain Fio map. Turn on Settings > Editor > "
+                       f"Allow Fio maps to open it.")
+            _log(message)
+            toast = getattr(self, "show_toast", None)
+            if toast is not None:
+                toast(message, is_error=True)
+            return False
+        return _orig_load(self, filePath)
+
+    MainWindow.load_level_file = load_level_file
+    MainWindow._miniwind_maps_gated = True
 
 
 #: The editor window's product name.

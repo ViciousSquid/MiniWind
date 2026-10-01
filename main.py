@@ -346,6 +346,15 @@ if __name__ == "__main__":
     window.show()
     splash.finish(window)
 
+    # The map this build opens with ([Startup] default_map), loaded one
+    # event-loop turn after the window is built.
+    default_map = config.get('Startup', 'default_map', fallback='').strip()
+    if default_map:
+        default_map_path = os.path.join(root_directory, default_map)
+        if os.path.isfile(default_map_path):
+            from PyQt5.QtCore import QTimer
+            QTimer.singleShot(0, lambda: window.load_level_file(default_map_path))
+
     if launch_choice == "play":
         # One event-loop turn later, so the default map the main window queues
         # has loaded and the scene has a Player Start to spawn at.

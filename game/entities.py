@@ -597,11 +597,22 @@ def _container_pixmap(cont):
 SPELLBOOK_COVERS = ("red", "green", "brown", "purple")
 
 
-def spellbook_sprite(cover: str) -> str:
+#: The spellbook's 3D model (the Tidy plugin's book) and its cover textures.
+SPELLBOOK_MODEL = "assets/models/spellbook/book.obj"
+
+
+def _cover(cover) -> str:
     c = str(cover or "red").lower()
-    if c not in SPELLBOOK_COVERS:
-        c = "red"
-    return f"{_SPRITE_DIR}/spellbook_{c}.png"
+    return c if c in SPELLBOOK_COVERS else "red"
+
+
+def spellbook_sprite(cover: str) -> str:
+    return f"{_SPRITE_DIR}/spellbook_{_cover(cover)}.png"
+
+
+def spellbook_texture(cover: str) -> str:
+    """Texture-library name (assets/textures/...) of the cover for *cover*."""
+    return f"spellbook/cover_{_cover(cover)}.png"
 
 
 def _init_spellbook(self):
@@ -612,7 +623,45 @@ def _init_spellbook(self):
     p.setdefault("pickup_radius", 70.0)
     p.setdefault("respawn", False)
     p.setdefault("title", "")             # optional display title
-    p["custom_idle"] = spellbook_sprite(p.get("cover", "red"))
+    # A Prop: the book model by default (lying cover-up), or its cover sprite
+    # with render_mode "billboard". Inert as a Prop -- the game, not Fio's
+    # Prop runtime, handles reading it (MiniwindSession._tick_spellbooks).
+    p.pop("custom_idle", None)            # the pre-Prop sprite key
+    p["model_path"] = SPELLBOOK_MODEL
+    sync_spellbook_cover(self)
+
+
+def _spellbook_defaults(properties):
+    """The Prop representation a spellbook starts with, seeded *before*
+    Prop.__init__ fills its generic defaults; anything a map authored wins."""
+    props = dict(properties or {})
+    props.setdefault("model_path", SPELLBOOK_MODEL)
+    props.setdefault("render_mode", "model")
+    props.setdefault("rotation", [-90.0, 0.0, 0.0])
+    props.setdefault("scale", [2.5, 2.5, 2.5])
+    props.setdefault("sprite_size", [32.0, 32.0])
+    return props
+
+
+def sync_spellbook_cover(book) -> bool:
+    """Point the book's model texture and sprite at its ``cover`` colour.
+
+    Returns True (and journals the change, so the renderer re-resolves it)
+    when either path changed.
+    """
+    p = book.properties
+    texture = spellbook_texture(p.get("cover"))
+    sprite = spellbook_sprite(p.get("cover"))
+    if p.get("texture") == texture and p.get("sprite_path") == sprite:
+        return False
+    p["texture"] = texture
+    p["sprite_path"] = sprite
+    try:
+        from engine.change_journal import touch
+        touch(book)
+    except Exception:
+        pass
+    return True
 
 
 def _spellbook_pixmap(book):
@@ -636,19 +685,27 @@ def _spellbook_pixmap(book):
     return pix
 
 
+try:
+    from engine.prop_entity import Prop as _PropBase
+except Exception:  # pragma: no cover - no engine (tools)
+    _PropBase = Thing
+
 if _HAVE_EDITOR:
-    class Spellbook(Thing):
-        """A world spellbook that teaches its ``spell`` to the player on pickup."""
+    class Spellbook(_PropBase):
+        """A world spellbook that teaches its ``spell`` to the player on pickup.
+
+        A Fio Prop: drawn as the book model with its cover, or as the cover
+        sprite (render_mode "billboard")."""
+        map_type = "spellbook"
         pixmap_path = "assets/sprites/miniwind/spellbook.png"
 
         def __init__(self, pos=None, properties=None):
-            super().__init__(pos, properties)
+            super().__init__(pos, _spellbook_defaults(properties))
             _init_spellbook(self)
 
         def get_instance_pixmap(self):
-            # Keep the sprite in step with the chosen cover colour.
-            self.properties["custom_idle"] = spellbook_sprite(
-                self.properties.get("cover", "red"))
+            # Keep the model texture and sprite in step with the chosen cover.
+            sync_spellbook_cover(self)
             pix = _spellbook_pixmap(self)
             return pix if pix is not None else super().get_instance_pixmap()
 
@@ -659,9 +716,11 @@ if _HAVE_EDITOR:
                 return pix.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             return super().get_icon_pixmap()
 else:  # pragma: no cover - headless player
-    class Spellbook(Thing):
+    class Spellbook(_PropBase):
+        map_type = "spellbook"
+
         def __init__(self, pos=None, properties=None):
-            super().__init__(pos, properties)
+            super().__init__(pos, _spellbook_defaults(properties))
             _init_spellbook(self)
 CreatureSpawn = _make_thing_pair(_init_creature_spawn, "assets/sprites/logic_spawner.png")
 CreatureSpawn.__name__ = CreatureSpawn.__qualname__ = "CreatureSpawn"
