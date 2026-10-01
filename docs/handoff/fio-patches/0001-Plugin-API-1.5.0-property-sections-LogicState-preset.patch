@@ -1,0 +1,1765 @@
+From c31cd3e0491808adca07e610a2cc809b2d162192 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 01:11:05 +0000
+Subject: [PATCH 1/3] Plugin API 1.5.0: property sections, LogicState preset
+ keys, entity inspectors
+
+Three editor content extensions. Fio provides the mechanism; a plugin or
+built-in game layer provides the content.
+
+* EditorAPI.register_property_section(label, factory, entity_type=None,
+  expanded=False): a collapsible section at the end of the Properties tab,
+  same factory(thing) contract as register_property_tab, built lazily the
+  first time it is opened (plugins/integration.py).
+* EditorAPI.register_kv_suggestions(provider): provider(store) returns
+  (label, key, default[, tooltip]) rows for the LogicState being edited; the
+  panel shows a "Preset key" picker whose Insert adds a typed designer
+  default, or selects the key if present (editor/property_editor.py).
+* EditorAPI.register_entity_inspector(provider, entity_type=None):
+  provider(entity, logic) returns an inspection document drawn by the new
+  Entity Inspector (editor/entity_inspector.py), a live read-only panel
+  opened from the Scene Hierarchy's Inspect action or
+  MainWindow.show_entity_inspector(entity). With no provider it lists the
+  entity's public properties.
+
+Like the 1.4.0 Tools actions, each registration is recorded with its plugin
+and drops out while that plugin is disabled. The change is additive: 1.4.0
+plugins load and behave unchanged, and a plugin needing 1.6.0 is refused.
+
+Two guard tests are updated, deliberately: test_keyvalue_group_is_generic
+banned any suggestion hook in the property editor (to keep a game-specific
+copy out of Fio); it now asserts the hook reaches the editor only through
+the plugin manager and the editor carries no keys or game vocabulary of its
+own. test_manager_has_no_rpg_inspector_provider still bans the old
+game-side names and now names the generic hook it allows.
+
+Full suite: 3958 passed, 5 skipped (opt-in benchmarks).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012JjvAUoz3TbsVAy6Nf24Am
+---
+ editor/entity_inspector.py                    | 253 ++++++++++
+ editor/main_window.py                         |  35 ++
+ editor/property_editor.py                     |  71 ++-
+ editor/scene_hierarchy.py                     |   8 +-
+ plugins/API.md                                |  56 ++-
+ plugins/api.py                                |  57 ++-
+ plugins/integration.py                        |  55 +++
+ plugins/manager.py                            |  95 ++++
+ tests/editor/test_api_1_5_editor.py           | 455 ++++++++++++++++++
+ tests/integration/test_backport_boundaries.py |   8 +
+ .../integration/test_backport_integration.py  |  18 +-
+ .../fixtures/api_1_4_plugin/__init__.py       |  31 ++
+ .../fixtures/editor_extensions/__init__.py    |  58 +++
+ .../fixtures/next_minor_api/__init__.py       |  19 +
+ tests/plugins/test_api_1_5_extensions.py      | 250 ++++++++++
+ tests/plugins/test_editor_patches.py          |   1 +
+ 16 files changed, 1454 insertions(+), 16 deletions(-)
+ create mode 100644 editor/entity_inspector.py
+ create mode 100644 tests/editor/test_api_1_5_editor.py
+ create mode 100644 tests/plugins/fixtures/api_1_4_plugin/__init__.py
+ create mode 100644 tests/plugins/fixtures/editor_extensions/__init__.py
+ create mode 100644 tests/plugins/fixtures/next_minor_api/__init__.py
+ create mode 100644 tests/plugins/test_api_1_5_extensions.py
+
+diff --git a/editor/entity_inspector.py b/editor/entity_inspector.py
+new file mode 100644
+index 0000000..47cc5bb
+--- /dev/null
++++ b/editor/entity_inspector.py
+@@ -0,0 +1,253 @@
++"""
++Entity Inspector: a live, read-only view of one entity (plugin API 1.5.0).
++
++What the inspector shows is supplied by plugins through
++``EditorAPI.register_entity_inspector``: a provider returns an *inspection
++document* for an entity, and this panel draws it. Fio contributes only the
++panel and a fallback -- with no provider, or none with anything to say about
++this entity, the inspector lists the entity's public properties -- so the
++inspector never needs to know what any plugin's entities mean.
++
++An inspection document is a plain dict::
++
++    {"title":    "Gate Keeper",
++     "subtitle": "patrolling · awake",
++     "sections": [("Vitals", [("Health", 80), ("Speed", 1.5)]),
++                  ("Goals",  [("Patrol", "", 0.9), ("Rest", "", 0.2)])]}
++
++A row is ``(label, value)`` or ``(label, value, fraction)``; a fraction in
++0..1 is drawn as a bar with the value as its text. :func:`normalise_document`
++turns anything a provider returns into that shape, so a sloppy provider costs
++a blank row, never an exception in the editor.
++
++The panel refreshes itself a few times a second while it is visible, so values
++a running play session changes are seen changing.
++"""
++
++from __future__ import annotations
++
++import weakref
++
++from PyQt5.QtCore import Qt, QTimer
++from PyQt5.QtWidgets import (QDialog, QLabel, QProgressBar, QTreeWidget,
++                             QTreeWidgetItem, QVBoxLayout)
++
++#: Properties the fallback document leaves out: identity it already shows in
++#: the title, and editor bookkeeping.
++_FALLBACK_SKIP = frozenset({"name", "type", "id", "_io_connections"})
++
++
++def _row(raw):
++    """``(label, value, fraction|None)`` from a provider row, or None."""
++    if not isinstance(raw, (tuple, list)) or len(raw) < 2:
++        return None
++    label, value = raw[0], raw[1]
++    fraction = None
++    if len(raw) > 2 and raw[2] is not None:
++        try:
++            fraction = max(0.0, min(1.0, float(raw[2])))
++        except (TypeError, ValueError):
++            fraction = None
++    return str(label), "" if value is None else str(value), fraction
++
++
++def normalise_document(document) -> dict:
++    """Coerce a provider's document into the shape the panel draws."""
++    if not isinstance(document, dict):
++        document = {}
++    sections = []
++    for section in document.get("sections") or ():
++        if not isinstance(section, (tuple, list)) or len(section) < 2:
++            continue
++        heading, rows = section[0], section[1]
++        if not isinstance(rows, (tuple, list)):
++            continue
++        clean = [r for r in (_row(raw) for raw in rows) if r is not None]
++        sections.append((str(heading), clean))
++    return {
++        "title": str(document.get("title") or "Inspector"),
++        "subtitle": str(document.get("subtitle") or ""),
++        "sections": sections,
++    }
++
++
++def generic_document(entity) -> dict:
++    """What the inspector shows when no plugin describes *entity*."""
++    props = getattr(entity, "properties", None)
++    props = props if isinstance(props, dict) else {}
++    name = str(props.get("name") or getattr(entity, "name", "") or "Entity")
++    etype = str(props.get("type") or type(entity).__name__)
++    rows = [(key, props[key]) for key in sorted(props, key=str)
++            if not str(key).startswith("_") and key not in _FALLBACK_SKIP]
++    sections = []
++    pos = getattr(entity, "pos", None)
++    if pos is not None:
++        try:
++            x, y, z = (float(pos[0]), float(pos[1]), float(pos[2]))
++            sections.append(("Position", [("x", f"{x:.1f}"), ("y", f"{y:.1f}"),
++                                          ("z", f"{z:.1f}")]))
++        except (TypeError, ValueError, IndexError):
++            pass
++    sections.append(("Properties", rows))
++    return normalise_document({"title": name, "subtitle": etype,
++                               "sections": sections})
++
++
++def inspect(entity, logic=None, manager=None) -> dict:
++    """The inspection document for *entity*: a plugin's, else the fallback."""
++    document = None
++    try:
++        if manager is None:
++            from plugins.manager import get_manager
++            manager = get_manager()
++        document = manager.inspect_entity(entity, logic)
++    except Exception:
++        document = None
++    return normalise_document(document) if document else generic_document(entity)
++
++
++def _shape(document):
++    """What must match for a refresh to update values in place."""
++    return tuple((heading, tuple((label, fraction is not None)
++                                 for label, _value, fraction in rows))
++                 for heading, rows in document["sections"])
++
++
++class EntityInspector(QDialog):
++    """Floating panel showing one entity's inspection document, kept live.
++
++    *logic* is a zero-argument callable returning the running logic thread,
++    or None outside Play Mode. *alive* is a zero-argument callable that says
++    whether the entity is still in the scene; once it is not, the panel says
++    so and stops refreshing.
++    """
++
++    #: ms between refreshes while visible.
++    REFRESH_MS = 250
++
++    def __init__(self, entity, logic=None, alive=None, parent=None):
++        super().__init__(parent)
++        try:
++            self._entity_ref = weakref.ref(entity)
++        except TypeError:
++            self._entity_ref = lambda _e=entity: _e
++        self._logic = logic if callable(logic) else (lambda: None)
++        self._alive = alive if callable(alive) else (lambda: True)
++        self._shape = None
++        self._value_cells = []    # [(item, bar|None)] in document row order
++
++        self.setWindowFlags(Qt.Tool | Qt.WindowStaysOnTopHint |
++                            Qt.WindowCloseButtonHint)
++        self.setAttribute(Qt.WA_DeleteOnClose, True)
++        self.setMinimumSize(320, 240)
++        self.resize(380, 460)
++
++        layout = QVBoxLayout(self)
++        layout.setContentsMargins(8, 8, 8, 8)
++        layout.setSpacing(6)
++        self.subtitle_label = QLabel("")
++        self.subtitle_label.setStyleSheet("color: #aaa;")
++        self.subtitle_label.setWordWrap(True)
++        layout.addWidget(self.subtitle_label)
++        self.tree = QTreeWidget()
++        self.tree.setColumnCount(2)
++        self.tree.setHeaderLabels(["Property", "Value"])
++        self.tree.setRootIsDecorated(True)
++        self.tree.setUniformRowHeights(True)
++        self.tree.setColumnWidth(0, 150)
++        layout.addWidget(self.tree, 1)
++
++        self._timer = QTimer(self)
++        self._timer.setInterval(self.REFRESH_MS)
++        self._timer.timeout.connect(self.refresh)
++        self.refresh()
++
++    @property
++    def entity(self):
++        return self._entity_ref()
++
++    def showEvent(self, event):
++        super().showEvent(event)
++        if not self._timer.isActive() and self.entity is not None:
++            self._timer.start()
++
++    def hideEvent(self, event):
++        self._timer.stop()
++        super().hideEvent(event)
++
++    def refresh(self):
++        """Re-read the entity's document and redraw it."""
++        entity = self.entity
++        gone = entity is None
++        if not gone:
++            try:
++                gone = not self._alive()
++            except Exception:
++                gone = False
++        if gone:
++            self._timer.stop()
++            self.subtitle_label.setText("This entity is no longer in the scene.")
++            return
++        try:
++            logic = self._logic()
++        except Exception:
++            logic = None
++        document = inspect(entity, logic)
++        self.setWindowTitle(f"Inspector - {document['title']}")
++        self.subtitle_label.setText(document["subtitle"])
++        self.subtitle_label.setVisible(bool(document["subtitle"]))
++        shape = _shape(document)
++        if shape == self._shape:
++            self._update_values(document)
++        else:
++            self._rebuild(document)
++            self._shape = shape
++
++    def _rebuild(self, document):
++        self.tree.clear()
++        self._value_cells = []
++        for heading, rows in document["sections"]:
++            parent = QTreeWidgetItem(self.tree, [heading])
++            font = parent.font(0)
++            font.setBold(True)
++            parent.setFont(0, font)
++            parent.setFirstColumnSpanned(True)
++            for label, value, fraction in rows:
++                item = QTreeWidgetItem(parent, [label, value])
++                bar = None
++                if fraction is not None:
++                    bar = QProgressBar()
++                    bar.setRange(0, 1000)
++                    bar.setTextVisible(True)
++                    bar.setMaximumHeight(16)
++                    self.tree.setItemWidget(item, 1, bar)
++                    self._set_bar(bar, value, fraction)
++                self._value_cells.append((item, bar))
++            parent.setExpanded(True)
++
++    def _update_values(self, document):
++        cells = iter(self._value_cells)
++        for _heading, rows in document["sections"]:
++            for _label, value, fraction in rows:
++                item, bar = next(cells)
++                if bar is not None:
++                    self._set_bar(bar, value, fraction)
++                elif item.text(1) != value:
++                    item.setText(1, value)
++
++    @staticmethod
++    def _set_bar(bar, value, fraction):
++        bar.setValue(int(round(fraction * 1000)))
++        bar.setFormat(value or f"{int(round(fraction * 100))}%")
++
++    def row_values(self) -> list:
++        """``[(section, label, value), ...]`` as currently shown (for tests)."""
++        out = []
++        for i in range(self.tree.topLevelItemCount()):
++            parent = self.tree.topLevelItem(i)
++            for j in range(parent.childCount()):
++                item = parent.child(j)
++                bar = self.tree.itemWidget(item, 1)
++                value = bar.format() if isinstance(bar, QProgressBar) else item.text(1)
++                out.append((parent.text(0), item.text(0), value))
++        return out
+diff --git a/editor/main_window.py b/editor/main_window.py
+index 9a89507..2def813 100644
+--- a/editor/main_window.py
++++ b/editor/main_window.py
+@@ -222,6 +222,7 @@ class MainWindow(QMainWindow):
+         self.terrain = None
+         self.terrain_editor_window = None
+         self.surface_inspector = None  # lazily created Face-mode Surface Inspector
++        self._entity_inspectors = {}   # id(entity) -> open EntityInspector (API 1.5.0)
+         self.shortcuts_window = None   # lazily created Help > Keys window
+ 
+         # debug_console is embedded in the properties tab widget (created in setupUi)
+@@ -2130,6 +2131,40 @@ class MainWindow(QMainWindow):
+         self.surface_inspector.set_target(brush, face_name,
+                                           raise_window=raise_window)
+ 
++    def show_entity_inspector(self, entity):
++        """Open (or raise) the Entity Inspector for *entity*.
++
++        The inspector is a live, read-only view whose contents plugins supply
++        through ``EditorAPI.register_entity_inspector`` (API 1.5.0); an entity
++        no plugin describes shows its public properties. One panel per entity:
++        asking again for an entity already being inspected raises its panel.
++        Plugins open it from their own commands, e.g. a console command's
++        ``callback(args, main_window, logic, play_mode)``.
++        """
++        if entity is None:
++            return None
++        inspectors = self._entity_inspectors
++        panel = inspectors.get(id(entity))
++        if panel is not None and panel.entity is entity:
++            panel.show()
++            panel.raise_()
++            panel.activateWindow()
++            return panel
++        from editor.entity_inspector import EntityInspector
++
++        def _logic():
++            return getattr(getattr(self, 'view_3d', None), 'logic_thread', None)
++
++        def _alive(e=entity):
++            return any(t is e for t in getattr(self.state, 'things', ()))
++
++        panel = EntityInspector(entity, logic=_logic, alive=_alive, parent=self)
++        key = id(entity)
++        inspectors[key] = panel
++        panel.destroyed.connect(lambda *_a, k=key: inspectors.pop(k, None))
++        panel.show()
++        return panel
++
+     def sync_surface_inspector(self):
+         """Point an open Surface Inspector at something worth editing.
+ 
+diff --git a/editor/property_editor.py b/editor/property_editor.py
+index 5d517c8..6c477c8 100644
+--- a/editor/property_editor.py
++++ b/editor/property_editor.py
+@@ -213,6 +213,22 @@ def _make_spin(value, range0, range1, suffix="", decimals=0, step=1, callback=No
+     return s
+ 
+ 
++def _kv_suggestions(store):
++    """Plugin-supplied preset keys for the LogicState editor (API 1.5.0).
++
++    Fio offers none of its own; plugins register them through
++    ``EditorAPI.register_kv_suggestions`` and this only collects what the
++    plugin manager holds for *store*. ``[]`` when none are registered or the
++    plugin system is unavailable.
++    """
++    try:
++        from plugins.manager import get_manager
++        return get_manager().kv_suggestions(store)
++    except Exception as exc:
++        debug_log("Plugins", f"LogicState key suggestions unavailable ({exc})")
++        return []
++
++
+ class ClickableLineEdit(QLineEdit):
+     clicked_while_empty = pyqtSignal()
+ 
+@@ -3932,21 +3948,34 @@ class PropertyEditor(QWidget):
+                 QPushButton:hover { background-color: #3a7a7a; }
+             """)
+ 
+-        def _add_pair():
++        def _add_pair(key=None, default="value"):
++            """Append a designer-default row.
++
++            With no *key* an unused name is generated.  A preset key (from a
++            plugin's suggestions) passes its own key and default; if that key
++            is already in the table, its value cell is selected instead of
++            adding a duplicate.
++            """
+             capacity = int(cap)
++            existing = [kv_table.item(r, 0).text() if kv_table.item(r, 0) else ""
++                        for r in range(kv_table.rowCount())]
++            if key is not None and str(key) in existing:
++                kv_table.setCurrentCell(existing.index(str(key)), 2)
++                return
+             if kv_table.rowCount() >= capacity:
+                 debug_log("Warning", f"Logic state store is full ({capacity} keys).")
+                 return
+-            existing = [kv_table.item(r, 0).text() if kv_table.item(r, 0) else ""
+-                        for r in range(kv_table.rowCount())]
++            if key is None:
++                key = self._unused_state_key(existing)
++            value = _sv.parse(default) if isinstance(default, str) else default
+             self._kv_loading = True
+             r = kv_table.rowCount()
+             kv_table.insertRow(r)
+-            kv_table.setItem(r, 0, QTableWidgetItem(self._unused_state_key(existing)))
+-            type_item = QTableWidgetItem("string")
++            kv_table.setItem(r, 0, QTableWidgetItem(str(key)))
++            type_item = QTableWidgetItem(_sv.type_of(value))
+             type_item.setFlags(type_item.flags() & ~Qt.ItemIsEditable)
+             kv_table.setItem(r, 1, type_item)
+-            kv_table.setItem(r, 2, QTableWidgetItem("value"))
++            kv_table.setItem(r, 2, QTableWidgetItem(_sv.format_value(value)))
+             state_item = QTableWidgetItem("default")
+             state_item.setFlags(state_item.flags() & ~Qt.ItemIsEditable)
+             kv_table.setItem(r, 3, state_item)
+@@ -3960,13 +3989,41 @@ class PropertyEditor(QWidget):
+                 kv_table.removeRow(row)
+                 _write_back_kv()
+ 
+-        add_btn.clicked.connect(_add_pair)
++        add_btn.clicked.connect(lambda _checked=False: _add_pair())
+         rem_btn.clicked.connect(_remove_selected)
+         btn_row.addWidget(add_btn)
+         btn_row.addWidget(rem_btn)
+         btn_row.addStretch()
+         layout.addLayout(btn_row)
+ 
++        # Preset keys a plugin knows this store uses (API 1.5.0).
++        suggestions = _kv_suggestions(thing)
++        if suggestions:
++            preset_row = QHBoxLayout()
++            preset_row.setSpacing(4)
++            preset_row.addWidget(QLabel("Preset key:"))
++            preset_combo = ClickableComboBox()
++            for label, key, default, tooltip in suggestions:
++                preset_combo.addItem(label, (key, default))
++                if tooltip:
++                    preset_combo.setItemData(preset_combo.count() - 1, tooltip,
++                                             Qt.ToolTipRole)
++            preset_row.addWidget(preset_combo, 1)
++            preset_btn = QPushButton("Insert")
++            preset_btn.setToolTip("Add the chosen key with its default value")
++            preset_btn.setStyleSheet(add_btn.styleSheet())
++
++            def _insert_preset(_checked=False):
++                data = preset_combo.currentData()
++                if data:
++                    _add_pair(data[0], data[1])
++
++            preset_btn.clicked.connect(_insert_preset)
++            preset_row.addWidget(preset_btn)
++            layout.addLayout(preset_row)
++            self._widgets['kv_preset_combo'] = preset_combo
++            self._widgets['kv_preset_button'] = preset_btn
++
+         self._kv_count_lbl = QLabel("")
+         self._kv_count_lbl.setStyleSheet("QLabel { color: #888; font-size: 10px; }")
+         layout.addWidget(self._kv_count_lbl)
+diff --git a/editor/scene_hierarchy.py b/editor/scene_hierarchy.py
+index 889168c..51bbdf4 100644
+--- a/editor/scene_hierarchy.py
++++ b/editor/scene_hierarchy.py
+@@ -943,12 +943,18 @@ class SceneHierarchy(QWidget):
+                 action.triggered.connect(lambda checked, c=colour_name: self.set_thing_colour(thing_obj, c, checked))
+ 
+             menu.addSeparator()
++            inspect_action = None
++            if hasattr(self.main_window, 'show_entity_inspector'):
++                inspect_action = menu.addAction("Inspect")
++                inspect_action.setToolTip("Open a live, read-only view of this entity")
+             properties_action = menu.addAction("Properties")
+             properties_action.setToolTip("Show this object in the Properties panel")
+ 
+             action = menu.exec_(self.tree.viewport().mapToGlobal(position))
+ 
+-            if action == lock_action:
++            if action is not None and action == inspect_action:
++                self.main_window.show_entity_inspector(thing_obj)
++            elif action == lock_action:
+                 self.main_window.save_state()
+                 thing_obj.properties['lock'] = not is_locked
+                 self.main_window.update_all_ui()
+diff --git a/plugins/API.md b/plugins/API.md
+index 746b2f5..a883f2e 100644
+--- a/plugins/API.md
++++ b/plugins/API.md
+@@ -60,8 +60,8 @@ implements; `API_VERSION_INFO` is the same value as an `(int, int, int)` tuple.
+ 
+ | Value | Introduced |
+ |-------|------------|
+-| `API_VERSION` | `"1.4.0"` |
+-| `API_VERSION_INFO` | `(1, 4, 0)` |
++| `API_VERSION` | `"1.5.0"` |
++| `API_VERSION_INFO` | `(1, 5, 0)` |
+ 
+ History:
+ 
+@@ -71,6 +71,9 @@ History:
+   (`register_renderer`), editor-UI extensions (extra property fields on any
+   entity, custom property tabs), and the `FIO_NO_PLUGINS` kill-switch.
+ - **1.4.0** — optional editor Tools actions and console-command registration for developer plugins.
++- **1.5.0** — [editor content extensions](#editor-content-extensions-api-150): collapsible
++  property sections, LogicState preset keys and entity inspectors. Additive: every
++  1.4.0 plugin loads and behaves unchanged.
+ 
+ A plugin declares the minimum it needs with `FioPlugin.api_version`. If that is
+ **newer** than the host's `API_VERSION`, the manager refuses to load the plugin
+@@ -350,6 +353,55 @@ Both are gated by the plugin's enabled state and are available from API 1.4.0.
+ `register_menu_action` above is the plugin-specific menu counterpart for actions
+ that belong with the plugin rather than in Tools.
+ 
++### Editor content extensions (API 1.5.0)
++
++Fio provides the mechanism; the plugin provides the content. All three are
++recorded with the registering plugin and drop out while it is disabled. A plugin
++that calls them should declare `api_version = "1.5.0"`, so an older host refuses
++it with a clear message rather than failing at `register()`.
++
++```python
++def register_property_section(self, label: str, factory, entity_type=None,
++                              expanded: bool = False) -> None
++```
++Add a collapsible section at the end of the entity's **Properties** tab. Same
++`factory(thing) -> widget` contract as `register_property_tab`; use a section for
++a small editor that belongs with the entity's other properties, a tab for one
++that needs the room. *expanded* is the initial state, and a collapsed section's
++factory does not run until it is first opened. With *entity_type* the section
++appears only for that type.
++
++```python
++def register_kv_suggestions(self, provider) -> None
++```
++Offer preset keys in the LogicState editor. `provider(store)` receives the
++LogicState being edited and returns rows of `(label, key, default_value)` or
++`(label, key, default_value, tooltip)`; the panel lists them in a **Preset key**
++picker, and **Insert** adds the key with its default as a designer default (or
++selects it if already present). Return `[]` for stores the plugin does not use;
++`store.properties["store_name"]` tells stores apart. When two providers offer the
++same key the first registered wins; malformed rows are skipped.
++
++```python
++def register_entity_inspector(self, provider, entity_type=None) -> None
++```
++Supply the contents of the **Entity Inspector**, a live, read-only panel opened
++from the Scene Hierarchy's **Inspect** action or by calling
++`main_window.show_entity_inspector(entity)` (for example from a console
++command). `provider(entity, logic) -> dict | None`, where *logic* is the running
++logic thread or `None` outside Play Mode, returns an inspection document:
++
++```python
++{"title":    "Gate Keeper",
++ "subtitle": "patrolling · awake",
++ "sections": [("Vitals", [("Health", 80), ("Speed", 1.5)]),
++              ("Goals",  [("Patrol", "", 0.9), ("Rest", "", 0.2)])]}
++```
++A row is `(label, value)`, or `(label, value, fraction)` to draw a 0..1 bar. The
++first provider returning a non-empty document is shown; with none the panel lists
++the entity's public properties. The panel refreshes about four times a second
++while visible. With *entity_type* the provider is only asked about that type.
++
+ ### Global store & logging
+ 
+ ```python
+diff --git a/plugins/api.py b/plugins/api.py
+index 93ca489..408a81a 100644
+--- a/plugins/api.py
++++ b/plugins/api.py
+@@ -64,8 +64,10 @@ from typing import Any, Callable, List, Optional, Tuple
+ #:   the engine event bus, and the ``connect(host)`` hook.
+ #: * 1.3.0 — render hooks, swappable-renderer registration, and editor-UI extensions.
+ #: * 1.4.0 — optional editor Tools actions and console-command registration.
+-API_VERSION = "1.4.0"
+-API_VERSION_INFO = (1, 4, 0)
++#: * 1.5.0 — collapsible property sections, LogicState key suggestions and
++#:   entity inspectors.
++API_VERSION = "1.5.0"
++API_VERSION_INFO = (1, 5, 0)
+ 
+ 
+ def version_tuple(value: str) -> tuple:
+@@ -508,6 +510,57 @@ class EditorAPI:
+         """
+         self._manager.register_property_tab(label, factory, entity_type)
+ 
++    def register_property_section(self, label: str, factory, entity_type=None,
++                                  expanded: bool = False) -> None:
++        """Add a collapsible section to the property panel's Properties tab
++        (API 1.5.0).
++
++        The same ``factory(thing) -> widget`` contract as
++        :meth:`register_property_tab`; the difference is placement. A section
++        sits among the entity's own properties, under a titled header that
++        collapses, rather than in a tab of its own. Use it for a small editor
++        that belongs with the other properties, and a tab for one that needs
++        the room. *expanded* is the section's initial state; a collapsed
++        section's factory does not run until the section is first opened. If
++        *entity_type* is given the section appears only for that type,
++        otherwise for every entity.
++        """
++        self._manager._record_property_section(
++            self._plugin, label, factory, entity_type, expanded)
++
++    def register_kv_suggestions(self, provider) -> None:
++        """Offer ready-made keys in the LogicState editor (API 1.5.0).
++
++        ``provider(store)`` is called when a LogicState panel is built, with
++        that LogicState entity, and returns rows of
++        ``(label, key, default_value)`` or ``(label, key, default_value,
++        tooltip)``. The editor lists them in a "Preset key" picker; inserting
++        one adds *key* with *default_value* as a designer default. Return
++        ``[]`` for stores the plugin has nothing to say about (the store's
++        ``store_name`` property tells them apart).
++        """
++        self._manager._record_kv_suggestions(self._plugin, provider)
++
++    def register_entity_inspector(self, provider, entity_type=None) -> None:
++        """Supply the live contents of the entity inspector (API 1.5.0).
++
++        ``provider(entity, logic) -> dict | None``. *logic* is the running
++        :class:`~engine.logic_thread.LogicThread`, or None outside Play Mode.
++        The returned dict is an inspection document::
++
++            {"title":    "Gate Keeper",
++             "subtitle": "patrolling · awake",
++             "sections": [("Vitals", [("Health", 80), ("Speed", 1.5)]),
++                          ("Goals",  [("Patrol", "", 0.9), ("Rest", "", 0.2)])]}
++
++        A row is ``(label, value)``, or ``(label, value, fraction)`` to draw a
++        0..1 bar beside it. The first provider that returns a non-empty
++        document for an entity is shown; with none, the inspector shows the
++        entity's public properties. If *entity_type* is given the provider is
++        asked only about entities of that type.
++        """
++        self._manager._record_entity_inspector(self._plugin, provider, entity_type)
++
+     def register_singleton_entity(self, entity_type: str) -> None:
+         """Mark *entity_type* as a per-map singleton (at most one instance).
+ 
+diff --git a/plugins/integration.py b/plugins/integration.py
+index 9ebfd8b..507fd3e 100644
+--- a/plugins/integration.py
++++ b/plugins/integration.py
+@@ -646,6 +646,35 @@ def _patch_property_editor():
+ 
+     PropertyEditor._iterate_thing_properties = _iterate_thing_properties
+ 
++    # Property sections (API 1.5.0): small editors that belong with an entity's
++    # own properties rather than in a tab of their own. They go at the end of
++    # the Properties tab as collapsible sections, each built the first time it
++    # is opened, so a collapsed section costs nothing.
++    _orig_props_tab = PropertyEditor._create_thing_properties_tab
++
++    def _create_thing_properties_tab(self, thing):
++        tab = _orig_props_tab(self, thing)
++        try:
++            props = getattr(thing, "properties", None)
++            ttype = props.get("type") if isinstance(props, dict) else None
++            sections = get_manager().property_sections_for(ttype) if ttype else []
++            layout = tab.layout() if (sections and tab is not None) else None
++            if layout is None:
++                return tab
++            from editor.property_editor import CollapsibleSection
++
++            for label, factory, expanded in sections:
++                section = CollapsibleSection(label, expanded=expanded)
++                section.setObjectName(f"fio_property_section:{label}")
++                _wire_lazy_section(section, factory, thing, label)
++                # Before the tab's trailing stretch, so sections pack to the top.
++                layout.insertWidget(max(0, layout.count() - 1), section)
++        except Exception as exc:
++            _log(f"property sections failed ({exc})")
++        return tab
++
++    PropertyEditor._create_thing_properties_tab = _create_thing_properties_tab
++
+     # Custom property tabs: append plugin tabs after the stock ones are built.
+     _orig_populate = PropertyEditor.populate_for_thing
+ 
+@@ -707,6 +736,32 @@ def _patch_property_editor():
+     PropertyEditor._fio_plugins_patched = True
+ 
+ 
++def _wire_lazy_section(section, factory, thing, label):
++    """Build a property section's content the first time it is opened.
++
++    A section's factory can be as heavy as a tab's, and a collapsed section is
++    not being looked at, so nothing is built until it is expanded. One that
++    starts expanded is built immediately.
++    """
++    state = {"built": False}
++
++    def _build(*_args):
++        if state["built"]:
++            return
++        state["built"] = True
++        try:
++            inner = factory(thing)
++        except Exception as exc:
++            _log(f"property section '{label}' failed ({exc})")
++            return
++        if inner is not None:
++            section.addWidget(inner)
++
++    section.toggle.toggled.connect(lambda checked: checked and _build())
++    if section.toggle.isChecked():
++        _build()
++
++
+ def _append_extra_fields(editor_self, form, thing, specs):
+     """Append plugin-registered extra fields to *thing*'s property form."""
+     for spec in specs:
+diff --git a/plugins/manager.py b/plugins/manager.py
+index a080142..17db72e 100644
+--- a/plugins/manager.py
++++ b/plugins/manager.py
+@@ -128,6 +128,11 @@ class PluginManager:
+         # property tabs. Both keyed/filtered by normalised entity type.
+         self._extra_fields: dict = {}       # type -> list[PropertySpec]
+         self._property_tabs: list = []      # list[(label, factory, type_or_None)]
++        # API 1.5.0 editor extensions, each recorded with its owning plugin so
++        # a disabled plugin's contributions drop out (as Tools actions do).
++        self._property_sections: list = []  # [(plugin, label, factory, type|None, expanded)]
++        self._kv_suggestion_providers: list = []  # [(plugin, provider)]
++        self._entity_inspectors: list = []  # [(plugin, provider, type|None)]
+         self._tools_actions: list = []
+         self._menu_actions: list = []
+         self._console_commands: dict = {}
+@@ -838,6 +843,96 @@ class PluginManager:
+         return [(label, factory) for (label, factory, t) in self._property_tabs
+                 if t is None or t == norm]
+ 
++    # -- API 1.5.0: property sections, key suggestions, entity inspectors ----
++    def _record_property_section(self, plugin, label: str, factory,
++                                 entity_type=None, expanded: bool = False) -> None:
++        if callable(factory):
++            self._property_sections.append(
++                (plugin, str(label), factory,
++                 self._normalise_type(entity_type) if entity_type else None,
++                 bool(expanded)))
++
++    def property_sections_for(self, entity_type: str):
++        """``(label, factory, expanded)`` sections that apply to *entity_type*.
++
++        Consumed by the editor integration when it builds the Properties tab.
++        Sections of a disabled plugin are left out.
++        """
++        norm = self._normalise_type(entity_type)
++        return [(label, factory, expanded)
++                for (plugin, label, factory, t, expanded) in self._property_sections
++                if (t is None or t == norm) and self.is_enabled(plugin)]
++
++    def _record_kv_suggestions(self, plugin, provider) -> None:
++        if callable(provider):
++            self._kv_suggestion_providers.append((plugin, provider))
++
++    def kv_suggestions(self, store=None) -> list:
++        """Every enabled provider's key suggestions for the LogicState *store*.
++
++        Returns ``(label, key, default_value, tooltip)`` rows, in registration
++        order. A malformed row is skipped and a failing provider is logged,
++        never raised; when two providers offer the same key the first wins.
++        """
++        out: list = []
++        seen: set = set()
++        for plugin, provider in self._kv_suggestion_providers:
++            if not self.is_enabled(plugin):
++                continue
++            try:
++                rows = list(provider(store) or [])
++            except Exception:
++                self._log(f"key suggestions failed for "
++                          f"'{getattr(plugin, 'name', '?')}':\n{traceback.format_exc()}")
++                continue
++            for row in rows:
++                if not isinstance(row, (tuple, list)) or len(row) < 3:
++                    continue
++                label, key, default = row[0], row[1], row[2]
++                tooltip = row[3] if len(row) > 3 else ""
++                key = str(key).strip()
++                if not key or key in seen:
++                    continue
++                seen.add(key)
++                out.append((str(label), key, default, str(tooltip or "")))
++        return out
++
++    def _record_entity_inspector(self, plugin, provider, entity_type=None) -> None:
++        if callable(provider):
++            self._entity_inspectors.append(
++                (plugin, provider,
++                 self._normalise_type(entity_type) if entity_type else None))
++
++    def has_entity_inspector(self, entity_type=None) -> bool:
++        """Whether an enabled provider would be asked about *entity_type*."""
++        norm = self._normalise_type(entity_type) if entity_type else None
++        return any(self.is_enabled(plugin) and (t is None or t == norm)
++                   for plugin, _provider, t in self._entity_inspectors)
++
++    def inspect_entity(self, entity, logic=None):
++        """The first non-empty inspection document a provider returns for
++        *entity*, or None when no enabled provider has one.
++
++        A failing provider is logged and the next one asked.
++        """
++        props = getattr(entity, "properties", None)
++        etype = props.get("type") if isinstance(props, dict) else None
++        norm = self._normalise_type(etype) if etype else None
++        for plugin, provider, t in self._entity_inspectors:
++            if t is not None and t != norm:
++                continue
++            if not self.is_enabled(plugin):
++                continue
++            try:
++                document = provider(entity, logic)
++            except Exception:
++                self._log(f"entity inspector failed for "
++                          f"'{getattr(plugin, 'name', '?')}':\n{traceback.format_exc()}")
++                continue
++            if document:
++                return document
++        return None
++
+     # -- lifecycle dispatch -------------------------------------------------
+     @staticmethod
+     def _overrides(plugin: FioPlugin, hook: str) -> bool:
+diff --git a/tests/editor/test_api_1_5_editor.py b/tests/editor/test_api_1_5_editor.py
+new file mode 100644
+index 0000000..40262b7
+--- /dev/null
++++ b/tests/editor/test_api_1_5_editor.py
+@@ -0,0 +1,455 @@
++"""The editor side of plugin API 1.5.0, built as real widgets.
++
++``tests/plugins/test_api_1_5_extensions.py`` pins what the plugin manager
++records and hands back. This file pins what the editor does with it:
++
++* a property section appears in the Properties tab of its entity type, and its
++  factory does not run until the section is opened;
++* a LogicState panel lists a plugin's preset keys, and inserting one adds a
++  typed designer default (or selects the key if it is already there);
++* the Entity Inspector draws a plugin's document, falls back to the entity's
++  public properties, refreshes values in place, and stops once the entity has
++  left the scene.
++
++Registrations go onto the process-wide manager, because that is what the
++editor reads; ``monkeypatch`` restores its lists after every test.
++"""
++
++import configparser
++
++import pytest
++
++pytest.importorskip("PyQt5", reason="the property editor is Qt")
++
++from PyQt5.QtWidgets import QProgressBar, QPushButton, QWidget  # noqa: E402
++
++from editor.editor_state import EditorState  # noqa: E402
++from editor.entity_inspector import (EntityInspector, generic_document,  # noqa: E402
++                                     inspect, normalise_document)
++from editor.property_editor import CollapsibleSection, PropertyEditor  # noqa: E402
++from editor.things import LogicState, Thing  # noqa: E402
++from plugins.api import EditorAPI, FioPlugin  # noqa: E402
++from plugins.manager import get_manager  # noqa: E402
++
++pytestmark = pytest.mark.qt
++
++
++class _FakeView:
++    def update(self):
++        pass
++
++
++class FakeHost(QWidget):
++    """The slice of MainWindow the property editor talks to."""
++
++    def __init__(self):
++        super().__init__()
++        self.state = EditorState()
++        self.state.selected_objects = []
++        self.config = configparser.ConfigParser()
++        self.grid_size = 16
++        self.view_3d = _FakeView()
++
++    def save_state(self):
++        pass
++
++    def update_views(self):
++        pass
++
++    def update_all_ui(self):
++        pass
++
++
++@pytest.fixture
++def api(monkeypatch):
++    """An EditorAPI onto the live manager, with its 1.5 lists isolated."""
++    manager = get_manager()
++    monkeypatch.setattr(manager, "_property_sections", [])
++    monkeypatch.setattr(manager, "_kv_suggestion_providers", [])
++    monkeypatch.setattr(manager, "_entity_inspectors", [])
++    return EditorAPI(manager, FioPlugin())
++
++
++@pytest.fixture
++def panel(qt_app):
++    host = FakeHost()
++    return host, PropertyEditor(host)
++
++
++@pytest.fixture(autouse=True)
++def _clean_registry():
++    LogicState._persistent_registry.clear()
++    yield
++    LogicState._persistent_registry.clear()
++
++
++def _store(store_name="gauges", initial=None):
++    return LogicState(pos=[0, 0, 0], properties={
++        "store_name": store_name, "initial_data": dict(initial or {})})
++
++
++def _sections(editor):
++    return {s.objectName().split(":", 1)[1]: s
++            for s in editor._page.findChildren(CollapsibleSection)
++            if s.objectName().startswith("fio_property_section:")}
++
++
++def _kv_keys(editor):
++    table = editor._widgets["kv_table"]
++    return [table.item(r, 0).text() for r in range(table.rowCount())]
++
++
++# ---------------------------------------------------------------------------
++# Property sections
++# ---------------------------------------------------------------------------
++
++def test_a_section_appears_in_the_properties_tab_of_its_type(api, panel):
++    host, editor = panel
++    api.register_property_section("Calibration", lambda thing: QWidget(),
++                                  entity_type="logic_state")
++    editor.set_object(_store())
++    sections = _sections(editor)
++    assert list(sections) == ["Calibration"]
++    props_tab = editor.tab_widget.widget(0)
++    assert editor.tab_widget.tabText(0) == "Properties"
++    assert props_tab.isAncestorOf(sections["Calibration"])
++
++
++def test_a_section_for_another_type_does_not_appear(api, panel):
++    host, editor = panel
++    api.register_property_section("Elsewhere", lambda thing: QWidget(),
++                                  entity_type="light")
++    editor.set_object(_store())
++    assert _sections(editor) == {}
++
++
++def test_a_collapsed_section_is_built_the_first_time_it_is_opened(api, panel):
++    host, editor = panel
++    built = []
++
++    def factory(thing):
++        built.append(thing)
++        return QWidget()
++
++    api.register_property_section("Lazy", factory, entity_type="logic_state")
++    store = _store()
++    editor.set_object(store)
++    section = _sections(editor)["Lazy"]
++    assert built == []                       # collapsed: nothing built yet
++    section.toggle.setChecked(True)
++    assert built == [store]
++    section.toggle.setChecked(False)
++    section.toggle.setChecked(True)
++    assert built == [store]                  # built once, not per opening
++
++
++def test_an_expanded_section_is_built_straight_away(api, panel):
++    host, editor = panel
++    built = []
++    api.register_property_section("Open", lambda thing: built.append(thing) or QWidget(),
++                                  entity_type="logic_state", expanded=True)
++    editor.set_object(_store())
++    assert len(built) == 1
++
++
++def test_a_failing_section_factory_does_not_break_the_panel(api, panel):
++    host, editor = panel
++
++    def broken(thing):
++        raise RuntimeError("section bug")
++
++    api.register_property_section("Broken", broken, entity_type="logic_state",
++                                  expanded=True)
++    editor.set_object(_store())
++    assert "Broken" in _sections(editor)
++    assert "kv_table" in editor._widgets
++
++
++# ---------------------------------------------------------------------------
++# LogicState preset keys
++# ---------------------------------------------------------------------------
++
++def test_no_preset_picker_without_suggestions(api, panel):
++    host, editor = panel
++    editor.set_object(_store())
++    assert "kv_preset_combo" not in editor._widgets
++
++
++def test_the_preset_picker_lists_the_providers_keys_for_this_store(api, panel):
++    host, editor = panel
++    seen = []
++
++    def provider(store):
++        seen.append(store)
++        return [("Gauge level", "gauge.level", "3", "starting level"),
++                ("Gauge armed", "gauge.armed", "true")]
++
++    api.register_kv_suggestions(provider)
++    store = _store()
++    editor.set_object(store)
++    combo = editor._widgets["kv_preset_combo"]
++    assert [combo.itemText(i) for i in range(combo.count())] == ["Gauge level", "Gauge armed"]
++    assert seen[-1] is store
++
++
++def test_inserting_a_preset_adds_a_typed_designer_default(api, panel):
++    host, editor = panel
++    api.register_kv_suggestions(lambda store: [("Gauge level", "gauge.level", "3")])
++    store = _store()
++    editor.set_object(store)
++    editor._widgets["kv_preset_button"].click()
++    assert store.properties["initial_data"] == {"gauge.level": 3}
++    table = editor._widgets["kv_table"]
++    assert table.item(0, 1).text() == "int"
++
++
++def test_inserting_a_preset_already_present_selects_it_instead(api, panel):
++    host, editor = panel
++    api.register_kv_suggestions(lambda store: [("Gauge level", "gauge.level", "3")])
++    store = _store(initial={"other": 1, "gauge.level": 7})
++    editor.set_object(store)
++    editor._widgets["kv_preset_button"].click()
++    assert store.properties["initial_data"] == {"other": 1, "gauge.level": 7}
++    table = editor._widgets["kv_table"]
++    assert table.currentRow() == _kv_keys(editor).index("gauge.level")
++
++
++def test_the_add_key_button_still_invents_an_unused_key(api, panel):
++    host, editor = panel
++    store = _store(initial={"key1": 1})
++    editor.set_object(store)
++    buttons = [b for b in editor._page.findChildren(QPushButton)
++               if "Add Key" in b.text()]
++    assert len(buttons) == 1
++    buttons[0].click()
++    assert len(store.properties["initial_data"]) == 2
++    assert all(v == "value" for k, v in store.properties["initial_data"].items() if k != "key1")
++
++
++# ---------------------------------------------------------------------------
++# Entity Inspector: documents
++# ---------------------------------------------------------------------------
++
++def test_the_documented_example_is_a_valid_document():
++    example = {"title": "Gate Keeper", "subtitle": "patrolling · awake",
++               "sections": [("Vitals", [("Health", 80), ("Speed", 1.5)]),
++                            ("Goals", [("Patrol", "", 0.9), ("Rest", "", 0.2)])]}
++    assert normalise_document(example) == {
++        "title": "Gate Keeper", "subtitle": "patrolling · awake",
++        "sections": [("Vitals", [("Health", "80", None), ("Speed", "1.5", None)]),
++                     ("Goals", [("Patrol", "", 0.9), ("Rest", "", 0.2)])]}
++
++
++def test_a_sloppy_document_is_normalised_not_raised():
++    doc = normalise_document({"sections": [("Ok", [("a", 1), "junk", ("b", None, "x"),
++                                                   ("c", 2, 5.0)]),
++                                           "not a section"]})
++    assert doc["title"] == "Inspector"
++    assert doc["sections"] == [("Ok", [("a", "1", None), ("b", "", None),
++                                       ("c", "2", 1.0)])]
++    assert normalise_document(None)["sections"] == []
++
++
++def test_the_fallback_lists_public_properties_and_position():
++    thing = Thing(pos=[1, 2, 3], properties={"type": "widget", "name": "W1",
++                                             "id": "abc", "speed": 4,
++                                             "_private": 1})
++    doc = generic_document(thing)
++    assert doc["title"] == "W1" and doc["subtitle"] == "widget"
++    sections = dict(doc["sections"])
++    assert sections["Position"] == [("x", "1.0", None), ("y", "2.0", None),
++                                    ("z", "3.0", None)]
++    labels = [label for label, _v, _f in sections["Properties"]]
++    assert "speed" in labels
++    assert not {"name", "type", "id", "_private"} & set(labels)
++    assert labels == sorted(labels)
++
++
++def test_inspect_prefers_a_provider_and_falls_back_without_one(api):
++    thing = Thing(pos=[0, 0, 0], properties={"type": "widget", "name": "W1"})
++    assert inspect(thing)["title"] == "W1"
++    api.register_entity_inspector(lambda e, logic: {"title": "From plugin"})
++    assert inspect(thing)["title"] == "From plugin"
++
++
++# ---------------------------------------------------------------------------
++# Entity Inspector: panel
++# ---------------------------------------------------------------------------
++
++def test_the_panel_draws_rows_and_bars(api, qt_app):
++    thing = Thing(pos=[0, 0, 0], properties={"type": "gauge", "level": 4})
++    api.register_entity_inspector(lambda e, logic: {
++        "title": "Gauge", "subtitle": "calibrated",
++        "sections": [("Readout", [("Level", e.properties["level"]),
++                                  ("Fill", "", e.properties["level"] / 10)])]})
++    panel = EntityInspector(thing)
++    try:
++        assert panel.windowTitle() == "Inspector - Gauge"
++        assert panel.subtitle_label.text() == "calibrated"
++        assert panel.row_values() == [("Readout", "Level", "4"), ("Readout", "Fill", "40%")]
++        fill_item = panel.tree.topLevelItem(0).child(1)
++        assert isinstance(panel.tree.itemWidget(fill_item, 1), QProgressBar)
++    finally:
++        panel.deleteLater()
++
++
++def test_a_refresh_updates_values_in_place(api, qt_app):
++    thing = Thing(pos=[0, 0, 0], properties={"type": "gauge", "level": 4})
++    api.register_entity_inspector(lambda e, logic: {
++        "sections": [("Readout", [("Level", e.properties["level"])])]})
++    panel = EntityInspector(thing)
++    try:
++        item = panel.tree.topLevelItem(0).child(0)
++        thing.properties["level"] = 9
++        panel.refresh()
++        assert panel.tree.topLevelItem(0).child(0) is item
++        assert item.text(1) == "9"
++    finally:
++        panel.deleteLater()
++
++
++def test_a_refresh_rebuilds_when_the_rows_change(api, qt_app):
++    thing = Thing(pos=[0, 0, 0], properties={"type": "gauge", "rows": 1})
++    api.register_entity_inspector(lambda e, logic: {
++        "sections": [("Rows", [(f"r{i}", i) for i in range(e.properties["rows"])])]})
++    panel = EntityInspector(thing)
++    try:
++        thing.properties["rows"] = 3
++        panel.refresh()
++        assert [label for _s, label, _v in panel.row_values()] == ["r0", "r1", "r2"]
++    finally:
++        panel.deleteLater()
++
++
++def test_the_provider_is_handed_the_live_logic(api, qt_app):
++    seen = []
++    logic = object()
++    api.register_entity_inspector(lambda e, lg: seen.append(lg) or {"title": "x"})
++    thing = Thing(pos=[0, 0, 0], properties={"type": "t"})
++    panel = EntityInspector(thing, logic=lambda: logic)
++    try:
++        assert seen and seen[-1] is logic
++    finally:
++        panel.deleteLater()
++
++
++def test_the_panel_stops_once_the_entity_leaves_the_scene(api, qt_app):
++    calls = []
++    api.register_entity_inspector(lambda e, logic: calls.append(1) or {"title": "x"})
++    present = {"yes": True}
++    thing = Thing(pos=[0, 0, 0], properties={"type": "t"})
++    panel = EntityInspector(thing, alive=lambda: present["yes"])
++    try:
++        panel.show()
++        assert panel._timer.isActive()
++        present["yes"] = False
++        before = len(calls)
++        panel.refresh()
++        assert len(calls) == before
++        assert not panel._timer.isActive()
++        assert "no longer in the scene" in panel.subtitle_label.text()
++    finally:
++        panel.close()
++
++
++def test_the_panel_does_not_keep_a_deleted_entity_alive(api, qt_app):
++    """The panel holds the entity weakly: an entity the scene dropped is gone."""
++    import gc
++    thing = Thing(pos=[0, 0, 0], properties={"type": "t"})
++    panel = EntityInspector(thing)
++    try:
++        del thing
++        gc.collect()
++        assert panel.entity is None
++        panel.refresh()
++        assert "no longer in the scene" in panel.subtitle_label.text()
++    finally:
++        panel.deleteLater()
++
++
++# ---------------------------------------------------------------------------
++# MainWindow.show_entity_inspector
++# ---------------------------------------------------------------------------
++
++@pytest.fixture
++def inspector_host(qt_app):
++    from editor.main_window import MainWindow
++
++    class InspectorHost(QWidget):
++        show_entity_inspector = MainWindow.show_entity_inspector
++
++        def __init__(self):
++            super().__init__()
++            self.state = EditorState()
++            self._entity_inspectors = {}
++            self.view_3d = None
++
++    host = InspectorHost()
++    yield host
++    for panel in list(host._entity_inspectors.values()):
++        panel.close()
++    host.deleteLater()
++
++
++def test_one_inspector_per_entity(api, inspector_host):
++    a = Thing(pos=[0, 0, 0], properties={"type": "t", "name": "a"})
++    b = Thing(pos=[0, 0, 0], properties={"type": "t", "name": "b"})
++    inspector_host.state.things.extend([a, b])
++    first = inspector_host.show_entity_inspector(a)
++    assert inspector_host.show_entity_inspector(a) is first
++    other = inspector_host.show_entity_inspector(b)
++    assert other is not first
++    assert first.entity is a and other.entity is b
++
++
++def test_a_closed_inspector_is_forgotten(api, inspector_host, qt_app):
++    a = Thing(pos=[0, 0, 0], properties={"type": "t", "name": "a"})
++    inspector_host.state.things.append(a)
++    first = inspector_host.show_entity_inspector(a)
++    first.close()
++    qt_app.sendPostedEvents(None, 0)       # run the deferred delete
++    from PyQt5.QtCore import QEvent
++    qt_app.sendPostedEvents(None, QEvent.DeferredDelete)
++    assert id(a) not in inspector_host._entity_inspectors
++    assert inspector_host.show_entity_inspector(a) is not first
++
++
++def test_the_inspector_follows_the_scene(api, inspector_host):
++    a = Thing(pos=[0, 0, 0], properties={"type": "t", "name": "a"})
++    inspector_host.state.things.append(a)
++    panel = inspector_host.show_entity_inspector(a)
++    inspector_host.state.things.remove(a)
++    panel.refresh()
++    assert "no longer in the scene" in panel.subtitle_label.text()
++
++
++def test_the_inspector_reads_the_views_logic_thread(api, inspector_host):
++    seen = []
++    api.register_entity_inspector(lambda e, logic: seen.append(logic) or {"title": "x"})
++
++    class View:
++        logic_thread = object()
++
++    inspector_host.view_3d = View()
++    a = Thing(pos=[0, 0, 0], properties={"type": "t"})
++    inspector_host.state.things.append(a)
++    inspector_host.show_entity_inspector(a)
++    assert seen[-1] is View.logic_thread
++
++
++def test_no_entity_opens_nothing(inspector_host):
++    assert inspector_host.show_entity_inspector(None) is None
++    assert inspector_host._entity_inspectors == {}
++
++
++def test_the_hierarchy_offers_inspect_just_above_properties_for_entities():
++    """Read as source, like the Properties placement test beside it: the menu
++    is built and consumed inside a blocking ``menu.exec_()``."""
++    import re
++    source = open("editor/scene_hierarchy.py", encoding="utf-8").read()
++    start = source.index("if data and data[0] == 'thing':")
++    end = source.index("menu.exec_", start)
++    entries = re.findall(r"menu\.add(?:Action|Menu)\(\s*\"([^\"]+)\"", source[start:end])
++    assert entries[-2:] == ["Inspect", "Properties"]
++    handled = source[end:source.index("elif data", end) if "elif data" in source[end:] else None]
++    assert "show_entity_inspector(thing_obj)" in handled
+diff --git a/tests/integration/test_backport_boundaries.py b/tests/integration/test_backport_boundaries.py
+index f8acde2..b27b9f4 100644
+--- a/tests/integration/test_backport_boundaries.py
++++ b/tests/integration/test_backport_boundaries.py
+@@ -151,9 +151,17 @@ def test_console_has_no_rpg_commands():
+ 
+ 
+ def test_manager_has_no_rpg_inspector_provider():
++    """The manager's only inspector hook is the generic API 1.5.0 one.
++
++    ``register_entity_inspector`` / ``inspect_entity`` take any plugin's
++    provider and return its document unread; the game-side names this guard
++    was written against must not come back, and the manager stays free of RPG
++    vocabulary (see ``test_generic_modules_carry_no_rpg_vocabulary``).
++    """
+     src = _read("plugins/manager.py")
+     assert "register_inspector_provider" not in src
+     assert "inspector_snapshot" not in src
++    assert "def inspect_entity(self, entity, logic=None):" in src
+ 
+ 
+ # ---------------------------------------------------------------------------
+diff --git a/tests/integration/test_backport_integration.py b/tests/integration/test_backport_integration.py
+index d1c0b05..5c21359 100644
+--- a/tests/integration/test_backport_integration.py
++++ b/tests/integration/test_backport_integration.py
+@@ -352,13 +352,23 @@ def test_keyvalue_defaults_are_json_serialisable():
+ 
+ 
+ def test_keyvalue_group_is_generic():
+-    """No game-supplied suggestion hook may exist in the generic editor."""
++    """The generic editor carries no game's keys or vocabulary.
++
++    Preset keys exist since plugin API 1.5.0, but only as a plugin extension:
++    the LogicState panel lists whatever ``EditorAPI.register_kv_suggestions``
++    providers return, asked through the plugin manager, and knows no key of
++    its own. (Before 1.5.0 this guard banned the hook outright, to keep a
++    game-specific copy of it out of Fio.)
++    """
+     src = _read("editor/property_editor.py")
+-    assert "_kv_suggestions" not in src
+-    assert "kv_key_suggestions" not in src
+-    assert "Preset key" not in src
++    assert "kv_key_suggestions" not in src          # the old game-side name
++    assert "get_manager().kv_suggestions(store)" in src
+     for banned in ("quest", "faction", "miniwind"):
+         assert banned not in src.lower(), f"RPG term '{banned}' in property_editor"
++    start = src.index("def _kv_suggestions(store):")
++    helper = src[start:src.index("\nclass ", start)]
++    assert "return [(" not in helper and "append((" not in helper, (
++        "the generic editor must not supply preset keys of its own")
+ 
+ 
+ def test_keyvalue_group_has_its_helpers():
+diff --git a/tests/plugins/fixtures/api_1_4_plugin/__init__.py b/tests/plugins/fixtures/api_1_4_plugin/__init__.py
+new file mode 100644
+index 0000000..3238690
+--- /dev/null
++++ b/tests/plugins/fixtures/api_1_4_plugin/__init__.py
+@@ -0,0 +1,31 @@
++"""A plugin written against API 1.4.0, using what 1.4.0 offers.
++
++It must load and behave exactly as before on a newer host: 1.5.0 is additive.
++"""
++
++from plugins.api import FioPlugin
++
++
++class Api14Plugin(FioPlugin):
++    name = "api_1_4_plugin"
++    version = "1.0.0"
++    api_version = "1.4.0"
++    description = "Registers a property tab, a Tools action and a console command."
++    category = "Tests"
++    enabled = True
++
++    def __init__(self):
++        self.commands = []
++
++    def register(self, api):
++        api.register_property_tab("Legacy Tab", lambda thing: None,
++                                  entity_type="api14entity")
++        api.register_tools_action("Legacy Tool", lambda main_window: None)
++        api.register_console_command("legacy", self._on_command, "a 1.4 command")
++
++    def _on_command(self, args, main_window, logic, play_mode):
++        self.commands.append(args)
++        return "legacy:" + args
++
++
++PLUGIN = Api14Plugin()
+diff --git a/tests/plugins/fixtures/editor_extensions/__init__.py b/tests/plugins/fixtures/editor_extensions/__init__.py
+new file mode 100644
+index 0000000..43d4e2a
+--- /dev/null
++++ b/tests/plugins/fixtures/editor_extensions/__init__.py
+@@ -0,0 +1,58 @@
++"""A plugin using the API 1.5.0 editor content extensions.
++
++It owns an entity type and supplies a property section for it, preset keys
++for its own LogicState store, and the inspector document for its entities.
++Every provider records its calls so a test can assert what it was handed.
++"""
++
++from plugins.api import FioPlugin
++from plugins.entitybase import Thing
++
++
++class GaugeEntity(Thing):
++    def __init__(self, pos=None, properties=None):
++        super().__init__(pos, properties)
++        self.properties.setdefault("type", "gaugeentity")
++        self.properties.setdefault("level", 3)
++
++
++class EditorExtensionsPlugin(FioPlugin):
++    name = "editor_extensions"
++    version = "1.0.0"
++    api_version = "1.5.0"
++    description = "Property section, LogicState preset keys and an inspector."
++    category = "Tests"
++    enabled = True
++
++    STORE = "gauges"
++
++    def __init__(self):
++        self.stores_seen = []
++        self.inspected = []
++
++    def register(self, api):
++        api.register_entity(GaugeEntity, menu_label="Gauge")
++        api.register_property_section("Calibration", self.make_section,
++                                      entity_type="gaugeentity")
++        api.register_kv_suggestions(self.suggest_keys)
++        api.register_entity_inspector(self.inspect, entity_type="gaugeentity")
++
++    def make_section(self, thing):
++        return None
++
++    def suggest_keys(self, store):
++        self.stores_seen.append(store)
++        props = getattr(store, "properties", {}) or {}
++        if props.get("store_name") != self.STORE:
++            return []
++        return [("Gauge level", "gauge.level", "3", "The level every gauge starts at."),
++                ("Gauge armed", "gauge.armed", "true")]
++
++    def inspect(self, entity, logic):
++        self.inspected.append((entity, logic))
++        level = entity.properties.get("level", 0)
++        return {"title": "Gauge", "subtitle": "calibrated",
++                "sections": [("Readout", [("Level", level, level / 10.0)])]}
++
++
++PLUGIN = EditorExtensionsPlugin()
+diff --git a/tests/plugins/fixtures/next_minor_api/__init__.py b/tests/plugins/fixtures/next_minor_api/__init__.py
+new file mode 100644
+index 0000000..373dde7
+--- /dev/null
++++ b/tests/plugins/fixtures/next_minor_api/__init__.py
+@@ -0,0 +1,19 @@
++"""A plugin that needs the next minor API version (1.6.0).
++
++A 1.5.0 host must refuse it up front, exactly as it refuses a far-future one.
++"""
++
++from plugins.api import FioPlugin
++
++
++class NextMinorPlugin(FioPlugin):
++    name = "next_minor_api"
++    version = "1.0.0"
++    api_version = "1.6.0"
++    description = "Needs a newer minor plugin API than this host has."
++
++    def register(self, api):
++        raise AssertionError("a plugin needing a newer API must never register")
++
++
++PLUGIN = NextMinorPlugin()
+diff --git a/tests/plugins/test_api_1_5_extensions.py b/tests/plugins/test_api_1_5_extensions.py
+new file mode 100644
+index 0000000..ccf1e68
+--- /dev/null
++++ b/tests/plugins/test_api_1_5_extensions.py
+@@ -0,0 +1,250 @@
++"""Plugin API 1.5.0: property sections, LogicState preset keys, entity inspectors.
++
++1.5.0 adds three editor *content* extensions: Fio owns the mechanism, a plugin
++supplies the content. These tests pin the manager's side of each — what is
++recorded, what a consumer is handed back, and that a disabled plugin's
++contributions drop out — plus the version contract: 1.5.0 is additive, so a
++plugin written against 1.4.0 loads and behaves unchanged, while one needing a
++newer minor version is refused up front.
++
++The Qt consumers (the Properties-tab sections, the LogicState "Preset key"
++picker and the Entity Inspector panel) are covered in
++``tests/editor/test_api_1_5_editor.py``.
++"""
++
++import pytest
++
++from plugins.api import (API_VERSION, API_VERSION_INFO, EditorAPI, FioPlugin,
++                         version_tuple)
++from plugins.entitybase import Thing
++
++
++def _thing(type_name, **props):
++    props.setdefault("type", type_name)
++    return Thing(pos=[1.0, 2.0, 3.0], properties=props)
++
++
++# ---------------------------------------------------------------------------
++# Version
++# ---------------------------------------------------------------------------
++
++def test_the_host_api_is_1_5_0():
++    assert API_VERSION == "1.5.0"
++    assert API_VERSION_INFO == version_tuple(API_VERSION) == (1, 5, 0)
++
++
++def test_the_editor_api_offers_the_1_5_methods():
++    for name in ("register_property_section", "register_kv_suggestions",
++                 "register_entity_inspector"):
++        assert callable(getattr(EditorAPI, name, None)), name
++
++
++def test_a_1_4_plugin_loads_under_1_5_with_its_registrations_intact(plugin_manager):
++    manager = plugin_manager("api_1_4_plugin")
++    plugin = manager.find_plugin("api_1_4_plugin")
++    assert plugin is not None, "an API 1.4.0 plugin was refused by a 1.5.0 host"
++    assert [label for label, _f in manager.property_tabs_for("api14entity")] == ["Legacy Tab"]
++    assert [label for _p, label, _cb, _tip in manager.tools_actions()] == ["Legacy Tool"]
++    assert manager.dispatch_console_command("legacy", "go") == (True, "legacy:go")
++    assert plugin.commands == ["go"]
++
++
++def test_a_1_4_plugin_contributes_nothing_to_the_1_5_extensions(plugin_manager):
++    manager = plugin_manager("api_1_4_plugin")
++    assert manager.property_sections_for("api14entity") == []
++    assert manager.kv_suggestions(_thing("logic_state")) == []
++    assert manager.inspect_entity(_thing("api14entity")) is None
++    assert manager.has_entity_inspector("api14entity") is False
++
++
++def test_a_plugin_needing_the_next_minor_api_is_refused(plugin_manager):
++    manager = plugin_manager("next_minor_api", "editor_extensions")
++    loaded = [p.name for p in manager.plugins]
++    assert "next_minor_api" not in loaded
++    assert "editor_extensions" in loaded
++
++
++def test_a_1_5_plugin_loads(plugin_manager):
++    manager = plugin_manager("editor_extensions")
++    assert manager.find_plugin("editor_extensions") is not None
++
++
++# ---------------------------------------------------------------------------
++# Property sections
++# ---------------------------------------------------------------------------
++
++def test_a_property_section_applies_only_to_its_entity_type(plugin_manager):
++    manager = plugin_manager("editor_extensions")
++    plugin = manager.find_plugin("editor_extensions")
++    assert manager.property_sections_for("gaugeentity") == [
++        ("Calibration", plugin.make_section, False)]
++    assert manager.property_sections_for("wellbehavedentity") == []
++
++
++def test_a_property_section_matches_the_type_however_it_is_spelled(plugin_manager):
++    manager = plugin_manager("editor_extensions")
++    assert len(manager.property_sections_for("Gauge_Entity")) == 1
++
++
++def test_an_untyped_section_applies_to_every_entity(plugin_manager):
++    manager = plugin_manager()
++    owner = FioPlugin()
++    EditorAPI(manager, owner).register_property_section(
++        "Everywhere", lambda thing: None, expanded=True)
++    assert [(label, expanded) for label, _f, expanded
++            in manager.property_sections_for("anything")] == [("Everywhere", True)]
++
++
++def test_a_section_without_a_callable_factory_is_ignored(plugin_manager):
++    manager = plugin_manager()
++    EditorAPI(manager, FioPlugin()).register_property_section("Broken", None)
++    assert manager.property_sections_for("anything") == []
++
++
++# ---------------------------------------------------------------------------
++# LogicState preset keys
++# ---------------------------------------------------------------------------
++
++def test_key_suggestions_are_offered_for_the_plugins_own_store(plugin_manager):
++    manager = _fresh_extensions(plugin_manager)
++    store = _thing("logic_state", store_name="gauges")
++    assert manager.kv_suggestions(store) == [
++        ("Gauge level", "gauge.level", "3", "The level every gauge starts at."),
++        ("Gauge armed", "gauge.armed", "true", ""),
++    ]
++    assert manager.find_plugin("editor_extensions").stores_seen[-1] is store
++
++
++def test_key_suggestions_can_decline_a_store(plugin_manager):
++    manager = plugin_manager("editor_extensions")
++    assert manager.kv_suggestions(_thing("logic_state", store_name="other")) == []
++
++
++def test_key_suggestions_skip_bad_rows_and_duplicate_keys(plugin_manager):
++    manager = plugin_manager()
++    api = EditorAPI(manager, FioPlugin())
++    api.register_kv_suggestions(lambda store: [
++        ("A", "shared", 1),
++        "not a row",
++        ("too short",),
++        ("Blank key", "  ", 0),
++        ("B", "own", 2, "tip"),
++    ])
++    api.register_kv_suggestions(lambda store: [("A again", "shared", 9)])
++    assert manager.kv_suggestions(None) == [("A", "shared", 1, ""),
++                                            ("B", "own", 2, "tip")]
++
++
++def test_a_failing_key_provider_is_logged_and_the_rest_still_answer(plugin_manager):
++    manager = plugin_manager()
++    api = EditorAPI(manager, FioPlugin())
++    logged = []
++    manager._log = logged.append
++
++    def broken(store):
++        raise RuntimeError("provider bug")
++
++    api.register_kv_suggestions(broken)
++    api.register_kv_suggestions(lambda store: [("Fine", "fine", 1)])
++    assert manager.kv_suggestions(None) == [("Fine", "fine", 1, "")]
++    assert any("provider bug" in line for line in logged)
++
++
++# ---------------------------------------------------------------------------
++# Entity inspectors
++# ---------------------------------------------------------------------------
++
++def _fresh_extensions(plugin_manager):
++    """The fixture plugin's manager, with its call logs emptied.
++
++    The fixture module (and so its ``PLUGIN``) is imported once per session,
++    so its logs would otherwise carry calls over from earlier tests.
++    """
++    manager = plugin_manager("editor_extensions")
++    plugin = manager.find_plugin("editor_extensions")
++    plugin.inspected.clear()
++    plugin.stores_seen.clear()
++    return manager
++
++
++def test_the_inspector_provider_describes_its_entities(plugin_manager):
++    manager = _fresh_extensions(plugin_manager)
++    gauge = _thing("gaugeentity", level=4)
++    logic = object()
++    document = manager.inspect_entity(gauge, logic)
++    assert document["title"] == "Gauge"
++    assert document["sections"] == [("Readout", [("Level", 4, 0.4)])]
++    assert manager.find_plugin("editor_extensions").inspected == [(gauge, logic)]
++
++
++def test_a_typed_inspector_is_not_asked_about_other_entities(plugin_manager):
++    manager = _fresh_extensions(plugin_manager)
++    assert manager.inspect_entity(_thing("wellbehavedentity")) is None
++    assert manager.find_plugin("editor_extensions").inspected == []
++    assert manager.has_entity_inspector("gaugeentity") is True
++    assert manager.has_entity_inspector("wellbehavedentity") is False
++
++
++def test_the_first_provider_with_a_document_wins(plugin_manager):
++    manager = plugin_manager()
++    api = EditorAPI(manager, FioPlugin())
++    api.register_entity_inspector(lambda entity, logic: None)
++    api.register_entity_inspector(lambda entity, logic: {"title": "second"})
++    api.register_entity_inspector(lambda entity, logic: {"title": "third"})
++    assert manager.inspect_entity(_thing("anything")) == {"title": "second"}
++
++
++def test_a_failing_inspector_is_logged_and_the_next_one_asked(plugin_manager):
++    manager = plugin_manager()
++    api = EditorAPI(manager, FioPlugin())
++    logged = []
++    manager._log = logged.append
++
++    def broken(entity, logic):
++        raise RuntimeError("inspector bug")
++
++    api.register_entity_inspector(broken)
++    api.register_entity_inspector(lambda entity, logic: {"title": "ok"})
++    assert manager.inspect_entity(_thing("anything")) == {"title": "ok"}
++    assert any("inspector bug" in line for line in logged)
++
++
++# ---------------------------------------------------------------------------
++# Enabled state
++# ---------------------------------------------------------------------------
++
++def test_a_disabled_plugins_extensions_drop_out_and_return(plugin_manager):
++    manager = plugin_manager("editor_extensions")
++    plugin = manager.find_plugin("editor_extensions")
++    store = _thing("logic_state", store_name="gauges")
++    gauge = _thing("gaugeentity")
++
++    manager.set_enabled(plugin, False)
++    assert manager.property_sections_for("gaugeentity") == []
++    assert manager.kv_suggestions(store) == []
++    assert manager.inspect_entity(gauge) is None
++    assert manager.has_entity_inspector("gaugeentity") is False
++
++    manager.set_enabled(plugin, True)
++    assert len(manager.property_sections_for("gaugeentity")) == 1
++    assert len(manager.kv_suggestions(store)) == 2
++    assert manager.inspect_entity(gauge)["title"] == "Gauge"
++
++
++def test_a_builtin_game_layer_can_use_the_extensions(plugin_manager):
++    """A built-in game layer has no ``enabled`` switch and is always on."""
++    manager = plugin_manager()
++
++    class Layer:
++        name = "layer"
++
++        def register(self, api):
++            api.register_property_section("Layer", lambda thing: None)
++            api.register_kv_suggestions(lambda store: [("L", "layer.key", 1)])
++            api.register_entity_inspector(lambda entity, logic: {"title": "L"})
++
++    manager.register_builtin_game(Layer())
++    assert [label for label, _f, _e in manager.property_sections_for("x")] == ["Layer"]
++    assert manager.kv_suggestions(None) == [("L", "layer.key", 1, "")]
++    assert manager.inspect_entity(_thing("x")) == {"title": "L"}
++
+diff --git a/tests/plugins/test_editor_patches.py b/tests/plugins/test_editor_patches.py
+index 5b071b4..fb97390 100644
+--- a/tests/plugins/test_editor_patches.py
++++ b/tests/plugins/test_editor_patches.py
+@@ -30,6 +30,7 @@ pytestmark = pytest.mark.qt
+ PATCHED_METHODS = [
+     (PropertyEditor, "_iterate_thing_properties", "_patch_property_editor"),
+     (PropertyEditor, "populate_for_thing", "_patch_property_editor"),
++    (PropertyEditor, "_create_thing_properties_tab", "_patch_property_editor"),
+ ]
+ 
+ 
+-- 
+2.43.0
+

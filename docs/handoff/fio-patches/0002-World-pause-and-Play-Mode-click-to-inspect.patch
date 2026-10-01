@@ -1,0 +1,1183 @@
+From 3696656596b8252c01080bbd78b79d32641df4c2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 1 Oct 2026 01:35:08 +0000
+Subject: [PATCH 2/3] World pause and Play Mode click-to-inspect
+
+* LogicThread.set_world_paused(owner, paused) / world_paused: per-owner pause
+  requests. While any is held a play tick advances nothing in the world
+  (player, movers, doors, I/O timers, light fades, triggers, props, physics,
+  projectiles, portals) but plugins still tick with the use key, so a game's
+  menus keep working; look and fire input is drained, not queued. The
+  MonsterAIThread idles and drops the paused time instead of catching up.
+  Entering or leaving Play Mode drops every request.
+* engine/actor_pick.py: which actor a screen ray hits, from the published
+  EntityTable (monster rows, not hidden, sphere = billboard) and RenderTable
+  (visible solid brushes occlude; triggers, glass, fog, water, glow and
+  subtract brushes do not). Vectorised; no walk over scene objects.
+* QtGameView.begin_actor_pick(on_pick=None): pauses the world, frees the
+  cursor, shows a banner naming the actor under the cursor, and on a left
+  click hands the actor over (default: the Entity Inspector). Esc or a right
+  click cancels. The ray leaves the camera the frame was drawn from, so it
+  is right in first person and overhead. MainWindow.begin_actor_pick
+  delegates, for plugin commands.
+
+Tests: tests/engine/test_world_pause.py (owners, paused tick vs unpaused
+control, AI thread idle/no catch-up) and tests/engine/test_actor_pick.py
+(real EntityTable/RenderTable picks and the view's pick mode). Full suite:
+4006 passed, 5 skipped.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_012JjvAUoz3TbsVAy6Nf24Am
+---
+ editor/main_window.py            |  11 +
+ engine/actor_pick.py             | 118 ++++++++++
+ engine/logic_thread.py           |  73 ++++++-
+ engine/monster_ai.py             |   6 +
+ engine/qt_game_view.py           | 184 +++++++++++++++-
+ tests/engine/test_actor_pick.py  | 363 +++++++++++++++++++++++++++++++
+ tests/engine/test_world_pause.py | 253 +++++++++++++++++++++
+ 7 files changed, 1000 insertions(+), 8 deletions(-)
+ create mode 100644 engine/actor_pick.py
+ create mode 100644 tests/engine/test_actor_pick.py
+ create mode 100644 tests/engine/test_world_pause.py
+
+diff --git a/editor/main_window.py b/editor/main_window.py
+index 2def813..0f700c6 100644
+--- a/editor/main_window.py
++++ b/editor/main_window.py
+@@ -2165,6 +2165,17 @@ class MainWindow(QMainWindow):
+         panel.show()
+         return panel
+ 
++    def begin_actor_pick(self, on_pick=None):
++        """Arm the Play Mode click-to-pick of an actor (see
++        ``QtGameView.begin_actor_pick``): the world pauses and the next click
++        on an actor calls ``on_pick(entity)``, by default opening the Entity
++        Inspector on it. Returns False when there is no play session to pick
++        in. Plugins arm it from their own commands.
++        """
++        view = getattr(self, 'view_3d', None)
++        begin = getattr(view, 'begin_actor_pick', None)
++        return bool(begin(on_pick)) if begin is not None else False
++
+     def sync_surface_inspector(self):
+         """Point an open Surface Inspector at something worth editing.
+ 
+diff --git a/engine/actor_pick.py b/engine/actor_pick.py
+new file mode 100644
+index 0000000..95d8887
+--- /dev/null
++++ b/engine/actor_pick.py
+@@ -0,0 +1,118 @@
++"""
++Which actor is under the cursor: a ray test against the published tables.
++
++The play view's entity picker (``QtGameView.begin_actor_pick``) asks this
++module for the actor a screen ray hits. It reads the same dense projection the
++renderer drew the frame from -- :class:`~engine.entity_table.EntityTable` for
++the actors and :class:`~engine.render_table.RenderTable` for the walls in front
++of them -- so a pick is a handful of vectorised operations over numeric
++columns, with no walk over the scene's objects.
++
++* **Actors** are the table's monster rows that are not hidden (Big World
++  parks through ``hidden``, so a parked actor cannot be picked). Each is a
++  sphere centred on its row position -- where the sprite pass centres the
++  billboard -- with half the billboard's larger side as radius, so aiming at a
++  tall sprite's head hits it.
++* **Occluders** are the visible solid brushes (``CLASS_SHADOW_CASTER``: not a
++  trigger, fog, water, glass or glow volume, not a subtract brush), tested as
++  their bounding boxes. An actor behind a wall is not clickable; a trigger
++  volume around it does not get in the way.
++
++The nearest actor hit in front of the nearest wall wins.
++"""
++
++from __future__ import annotations
++
++import numpy as np
++
++#: Smallest pick-sphere radius, so a tiny sprite can still be clicked.
++MIN_PICK_RADIUS = 24.0
++
++#: No actor was hit.
++NO_SLOT = -1
++
++
++def _as_vec(value):
++    return np.asarray([float(value[0]), float(value[1]), float(value[2])],
++                      dtype=np.float64)
++
++
++def nearest_wall(ray_o, ray_d, render_table, limit=np.inf) -> float:
++    """Distance along the ray to the first visible solid brush, or *limit*."""
++    if render_table is None or not getattr(render_table, 'count', 0):
++        return float(limit)
++    from engine.render_table import CLASS_SHADOW_CASTER
++    n = render_table.count
++    solid = ((render_table.class_bits[:n] & CLASS_SHADOW_CASTER) != 0) \
++        & ~render_table.hidden[:n]
++    rows = np.flatnonzero(solid)
++    if not len(rows):
++        return float(limit)
++    bounds = render_table.bounds[rows]
++    lo = bounds[:, 0:3] - bounds[:, 3:6]
++    hi = bounds[:, 0:3] + bounds[:, 3:6]
++    o, d = _as_vec(ray_o), _as_vec(ray_d)
++    with np.errstate(divide='ignore', invalid='ignore'):
++        inv = 1.0 / d
++        t1 = (lo - o) * inv
++        t2 = (hi - o) * inv
++    t_near = np.fmin(t1, t2)
++    t_far = np.fmax(t1, t2)
++    # An axis the ray runs parallel to: inside the slab it constrains nothing,
++    # outside it the box is missed.
++    flat = d == 0.0
++    if flat.any():
++        inside = (o >= lo) & (o <= hi)
++        t_near[:, flat] = np.where(inside[:, flat], -np.inf, np.inf)
++        t_far[:, flat] = np.where(inside[:, flat], np.inf, -np.inf)
++    enter = np.max(t_near, axis=1)
++    leave = np.min(t_far, axis=1)
++    hit = (enter <= leave) & (leave > 0.0)
++    if not hit.any():
++        return float(limit)
++    # A box the eye is inside does not occlude what is in front of the eye.
++    hit &= enter > 0.0
++    if not hit.any():
++        return float(limit)
++    return float(min(limit, enter[hit].min()))
++
++
++def pick_actor(ray_o, ray_d, entity_table, render_table=None,
++               min_radius: float = MIN_PICK_RADIUS) -> int:
++    """The entity-table slot of the actor the ray hits first, or ``NO_SLOT``.
++
++    *ray_d* must be unit length. Brushes in *render_table* occlude; pass None
++    to ignore walls.
++    """
++    if entity_table is None:
++        return NO_SLOT
++    slots = np.asarray(getattr(entity_table, 'monster_slots', ()), dtype=np.intp)
++    if not len(slots):
++        return NO_SLOT
++    slots = slots[~entity_table.hidden[slots]]
++    if not len(slots):
++        return NO_SLOT
++    o, d = _as_vec(ray_o), _as_vec(ray_d)
++    centres = entity_table.pos[slots].astype(np.float64)
++    radius = np.maximum(entity_table.sprite_size[slots].max(axis=1) * 0.5,
++                        float(min_radius)).astype(np.float64)
++    oc = o - centres
++    b = oc @ d
++    c = np.einsum('ij,ij->i', oc, oc) - radius * radius
++    disc = b * b - c
++    hit = disc >= 0.0
++    if not hit.any():
++        return NO_SLOT
++    root = np.sqrt(np.where(hit, disc, 0.0))
++    t = -b - root
++    # The eye inside a sphere: the far crossing is the one in front of it.
++    t = np.where(t > 0.0, t, -b + root)
++    hit &= t > 0.0
++    if not hit.any():
++        return NO_SLOT
++    wall = nearest_wall(o, d, render_table)
++    hit &= t < wall
++    if not hit.any():
++        return NO_SLOT
++    candidates = np.flatnonzero(hit)
++    return int(slots[candidates[np.argmin(t[candidates])]])
+diff --git a/engine/logic_thread.py b/engine/logic_thread.py
+index 9c3f20f..5f84284 100644
+--- a/engine/logic_thread.py
++++ b/engine/logic_thread.py
+@@ -288,7 +288,15 @@ class LogicThread(threading.Thread):
+         self.god_mode = False
+         self.buddha_mode = False
+         self.notarget = False
+-        
++
++        # World pause: each owner (a modal game screen, the entity picker, a
++        # pause menu) holds its own request, and the world stays frozen while
++        # any is held, so one owner releasing never unpauses another's. See
++        # set_world_paused(). Replaced whole, never mutated, so a reader on
++        # another thread always sees a consistent set.
++        self._world_pause_owners = frozenset()
++        self._world_pause_lock = threading.Lock()
++
+         # I/O System
+         self.io_manager = None
+         if IO_AVAILABLE and IOManager:
+@@ -1184,6 +1192,10 @@ class LogicThread(threading.Thread):
+ 
+     def _apply_play_mode(self, enabled: bool):
+         self.play_mode = enabled
++        # A pause belongs to the session that took it: a new session, or the
++        # editor after one, never starts frozen by a request nobody released.
++        with self._world_pause_lock:
++            self._world_pause_owners = frozenset()
+         
+         if enabled:
+             # Read P2 turn sensitivity from editor config
+@@ -2222,10 +2234,69 @@ class LogicThread(threading.Thread):
+                     d_new[i] = kept_d[id(brush)]
+         self.door_states = d_new
+ 
++    # =========================================================================
++    # WORLD PAUSE
++    # =========================================================================
++
++    def set_world_paused(self, owner, paused: bool = True) -> None:
++        """Hold (or release) a pause of the play-mode world for *owner*.
++
++        While any owner holds one, a play tick advances nothing in the world:
++        no player movement, look or shooting, no movers, doors, I/O timers,
++        triggers, props, physics, projectiles or portals, and the monster AI
++        thread idles. Plugins still tick, with the input they would normally
++        see, so a game's menus keep working over the frozen world. The frame is
++        still published, so the view keeps drawing it.
++
++        *owner* is any hashable key naming who paused (a modal screen, the
++        entity picker, a pause menu); each releases only its own request.
++        Callable from any thread. Leaving or entering Play Mode drops every
++        request.
++        """
++        with self._world_pause_lock:
++            owners = set(self._world_pause_owners)
++            if paused:
++                owners.add(owner)
++            else:
++                owners.discard(owner)
++            self._world_pause_owners = frozenset(owners)
++
++    @property
++    def world_paused(self) -> bool:
++        """True while any owner holds a world pause (see set_world_paused)."""
++        return bool(self._world_pause_owners)
++
++    def world_pause_owners(self) -> frozenset:
++        """The owners currently holding a world pause."""
++        return self._world_pause_owners
++
++    def _tick_paused_world(self, delta):
++        """One play tick with the world frozen: input drained, plugins run.
++
++        Look and fire input is discarded rather than queued, so nothing the
++        player did over a menu lands in the world when it resumes. The use key
++        goes to the plugins, which is how a game's screen closes on it.
++        """
++        self.game_state.consume_mouse_delta()
++        use_key = self.game_state.consume_use_key()
++        self.game_state.consume_shot()
++        if self.plugins is not None and self.plugins.wants_tick():
++            self.plugins.tick(
++                self,
++                use_pressed=use_key,
++                interaction_consumed=False,
++                delta=delta,
++                keys=self.game_state.get_keys,
++            )
++
+     def _tick_play_mode(self, delta):
+         if not self.player:
+             return
+         self._watch_world_rows()
++
++        if self._world_pause_owners:
++            self._tick_paused_world(delta)
++            return
+         
+         # Update movers & doors first (for platform carrying)
+         self._update_movers(delta)
+diff --git a/engine/monster_ai.py b/engine/monster_ai.py
+index 3b761e3..db26dd3 100644
+--- a/engine/monster_ai.py
++++ b/engine/monster_ai.py
+@@ -2001,6 +2001,12 @@ class MonsterAIThread(threading.Thread):
+ 
+             accumulator += frame_time
+ 
++            # The world is paused (LogicThread.set_world_paused): monsters hold
++            # still, and the paused time is dropped rather than caught up on
++            # resume, which would fast-forward every monster at once.
++            if getattr(self.lt, 'world_paused', False):
++                accumulator = 0.0
++
+             while accumulator >= self.tick_duration and self.running:
+                 started = time.perf_counter()
+                 with self.lock:
+diff --git a/engine/qt_game_view.py b/engine/qt_game_view.py
+index 69127ea..8e51760 100644
+--- a/engine/qt_game_view.py
++++ b/engine/qt_game_view.py
+@@ -54,7 +54,7 @@ from engine.renderer_core import restore_default_pixel_store
+ from engine.view_distance import ViewDistance
+ from engine.logic_thread import LogicThread
+ from engine.constants import RENDER_MODE_LIT, RENDER_MODE_UNLIT, RENDER_MODE_WIREFRAME, RENDER_MODE_VERTEX
+-from editor.debug_console import DebugConsole
++from editor.debug_console import DebugConsole, debug_log
+ from .sysmon import SysMon
+ 
+ # Pygame for gamepad support
+@@ -279,6 +279,11 @@ class QtGameView(QOpenGLWidget):
+         self.projection_matrix = glm.mat4(1.0)
+         self.view_matrix = glm.mat4(1.0)
+         self._cached_aspect_ratio = 1.0
++        #: An armed play-mode actor pick (see begin_actor_pick): ``{'on_pick':
++        #: callable}``, or None. ``actor_pick_hover`` is the actor under the
++        #: cursor while one is armed.
++        self._actor_pick = None
++        self.actor_pick_hover = None
+         # The camera's draw distance and the fog that hides its far plane, in
+         # one object shared with the renderer and the logic thread so the
+         # editor spinbox and the r_* console commands take effect on the next
+@@ -2019,6 +2024,8 @@ class QtGameView(QOpenGLWidget):
+             painter.drawText(cx - tw // 2 + 2, cy + 2, hint)
+             painter.setPen(self._hud_grey_pen)
+             painter.drawText(cx - tw // 2, cy, hint)
++        if self._actor_pick is not None:
++            self._draw_actor_pick_hint(painter, viewport_width)
+         # Overhead: held weapon shown as a bottom-right collectible icon (like keys).
+         # It takes the rightmost slot; keys shift left so both fit side by side.
+         key_slot_offset = 0
+@@ -2387,6 +2394,8 @@ class QtGameView(QOpenGLWidget):
+             # looping speaker channels and one-shot mixer channels, and discard
+             # any sound requests queued by the logic thread during teardown.
+             self.stop_all_sounds()
++            self._actor_pick = None
++            self.actor_pick_hover = None
+             if self.console_overlay_active:
+                 self._console_input.hide()
+                 self.console_overlay_active = False
+@@ -3000,6 +3009,12 @@ class QtGameView(QOpenGLWidget):
+                                           shear=armed['shear'])
+ 
+     def mousePressEvent(self, event):
++        if self.play_mode and self._actor_pick is not None:
++            if event.button() == Qt.RightButton:
++                self.cancel_actor_pick()
++            elif event.button() == Qt.LeftButton:
++                self._click_actor_pick(event.x(), event.y())
++            return
+         if (self.play_mode and getattr(self, '_cached_level_complete_ui', None)
+                 and getattr(self, '_level_complete_btn_rect', None)):
+             if self._level_complete_btn_rect.contains(event.pos()):
+@@ -3146,6 +3161,9 @@ class QtGameView(QOpenGLWidget):
+         if self.play_mode:
+             if self.console_overlay_active:
+                 return
++            if self._actor_pick is not None:
++                self._update_actor_pick_hover(event.x(), event.y())
++                return
+             cp = event.pos()
+             dx, dy = cp.x() - self.last_mouse_pos.x(), cp.y() - self.last_mouse_pos.y()
+             if dx == 0 and dy == 0:
+@@ -3307,12 +3325,159 @@ class QtGameView(QOpenGLWidget):
+         self._console_input.clearFocus()
+         self.setFocus()
+         if self.play_mode:
+-            while QApplication.overrideCursor() is not None:
+-                QApplication.restoreOverrideCursor()
+-            QApplication.setOverrideCursor(Qt.BlankCursor)
+-            center = self.mapToGlobal(self.rect().center())
+-            QCursor.setPos(center)
+-            self.last_mouse_pos = self.mapFromGlobal(center)
++            if self._actor_pick is not None:
++                # A command just armed a pick: the cursor stays free for it.
++                self._show_pick_cursor()
++            else:
++                self._capture_play_cursor()
++
++    def _capture_play_cursor(self):
++        """Hide the cursor and re-centre it for mouse look (Play Mode)."""
++        while QApplication.overrideCursor() is not None:
++            QApplication.restoreOverrideCursor()
++        QApplication.setOverrideCursor(Qt.BlankCursor)
++        center = self.mapToGlobal(self.rect().center())
++        QCursor.setPos(center)
++        self.last_mouse_pos = self.mapFromGlobal(center)
++
++    def _show_pick_cursor(self):
++        while QApplication.overrideCursor() is not None:
++            QApplication.restoreOverrideCursor()
++        QApplication.setOverrideCursor(Qt.CrossCursor)
++
++    # =========================================================================
++    # ACTOR PICK (Play Mode)
++    # =========================================================================
++
++    #: The world-pause owner key an armed pick holds.
++    ACTOR_PICK_PAUSE = "actor_pick"
++
++    @property
++    def actor_pick_active(self) -> bool:
++        return self._actor_pick is not None
++
++    def begin_actor_pick(self, on_pick=None) -> bool:
++        """Arm a one-shot click-to-pick of an actor in Play Mode.
++
++        The world pauses (``LogicThread.set_world_paused``) so the actor holds
++        still, and the cursor is freed. The next left-click on an actor ends
++        the pick and calls ``on_pick(entity)``; by default that opens the
++        Entity Inspector on it. A click on nothing keeps the pick armed; Esc
++        or a right-click cancels it. Returns False outside Play Mode.
++        """
++        if not self.play_mode:
++            return False
++        self._actor_pick = {'on_pick': on_pick}
++        self.actor_pick_hover = None
++        logic = self.logic_thread
++        if logic is not None and hasattr(logic, 'set_world_paused'):
++            logic.set_world_paused(self.ACTOR_PICK_PAUSE, True)
++        if not self.console_overlay_active:
++            self._show_pick_cursor()
++        self.update()
++        return True
++
++    def cancel_actor_pick(self):
++        """Disarm a pick without choosing anything."""
++        self._end_actor_pick()
++
++    def _end_actor_pick(self):
++        if self._actor_pick is None:
++            return
++        self._actor_pick = None
++        self.actor_pick_hover = None
++        logic = self.logic_thread
++        if logic is not None and hasattr(logic, 'set_world_paused'):
++            logic.set_world_paused(self.ACTOR_PICK_PAUSE, False)
++        if self.play_mode and not self.console_overlay_active:
++            self._capture_play_cursor()
++        self.update()
++
++    def _pick_ray(self, mx, my):
++        """World ray through pixel (mx, my) of the frame last drawn.
++
++        Origin and direction both come from the matrices that frame was
++        drawn with, so the ray leaves the camera the player is looking
++        through -- first person or overhead -- not the editor camera.
++        """
++        w, h = self.width(), self.height()
++        if w <= 0 or h <= 0:
++            return None
++        ndc_x = (2.0 * mx / w) - 1.0
++        ndc_y = 1.0 - (2.0 * my / h)
++        inv_view = glm.inverse(self.view_matrix)
++        eye = glm.inverse(self.projection_matrix) * glm.vec4(ndc_x, ndc_y, -1.0, 1.0)
++        direction = glm.vec3(inv_view * glm.vec4(eye.x, eye.y, -1.0, 0.0))
++        if glm.length(direction) == 0.0:
++            return None
++        origin = glm.vec3(inv_view[3])
++        return origin, glm.normalize(direction)
++
++    def actor_at(self, mx, my):
++        """The actor under pixel (mx, my) in the frame last drawn, or None.
++
++        Reads the published entity and render tables (borrowed only for the
++        test) through :func:`engine.actor_pick.pick_actor`: brushes only
++        occlude, so the floor under an actor never wins the click.
++        """
++        ray = self._pick_ray(mx, my)
++        if ray is None:
++            return None
++        from engine.actor_pick import NO_SLOT, pick_actor
++        render_state = self.game_state.get_render_state() if self.logic_thread else None
++        try:
++            table = getattr(render_state, 'entity_table', None)
++            if table is None:
++                return None
++            slot = pick_actor(ray[0], ray[1], table,
++                              getattr(render_state, 'render_table', None))
++            if slot == NO_SLOT or slot >= len(table.things):
++                return None
++            return table.things[slot]
++        finally:
++            if render_state is not None:
++                self.game_state.release_render_state(render_state)
++
++    def _update_actor_pick_hover(self, mx, my):
++        hovered = self.actor_at(mx, my)
++        if hovered is not self.actor_pick_hover:
++            self.actor_pick_hover = hovered
++            self.update()
++
++    def _click_actor_pick(self, mx, my) -> bool:
++        """Resolve an armed pick at the clicked pixel. True if it ended."""
++        actor = self.actor_at(mx, my)
++        if actor is None:
++            return False
++        on_pick = self._actor_pick.get('on_pick') or self._open_inspector_for
++        self._end_actor_pick()
++        try:
++            on_pick(actor)
++        except Exception as exc:
++            debug_log("Error", f"actor pick handler failed: {exc}")
++        return True
++
++    def _open_inspector_for(self, actor):
++        show = getattr(self.editor, 'show_entity_inspector', None)
++        if show is not None:
++            show(actor)
++
++    def _draw_actor_pick_hint(self, painter, viewport_width):
++        hovered = self.actor_pick_hover
++        name = ""
++        if hovered is not None:
++            props = getattr(hovered, 'properties', {}) or {}
++            name = str(props.get('name') or props.get('type') or "")
++        text = (f"Inspect: {name} - click to open (Esc to cancel)" if name
++                else "Inspect (paused): click an actor (Esc to cancel)")
++        metrics = QFontMetrics(self._hud_msg_font)
++        tw = metrics.horizontalAdvance(text)
++        x, y = viewport_width // 2 - tw // 2, 40
++        painter.setFont(self._hud_msg_font)
++        painter.setPen(self._hud_shadow_pen)
++        painter.drawText(x + 2, y + 2, text)
++        painter.setPen(self._hud_grey_pen)
++        painter.drawText(x, y, text)
+ 
+     def _submit_console_command(self):
+         cmd = self._console_input.text().strip()
+@@ -3348,6 +3513,11 @@ class QtGameView(QOpenGLWidget):
+         self.game_state.set_p2_input(move_x, move_z, look_dx, look_dy, jump, crouch)
+ 
+     def keyPressEvent(self, event):
++        # An armed actor pick owns Escape: it cancels the pick, not Play Mode.
++        if (event.key() == Qt.Key_Escape and self.play_mode
++                and self._actor_pick is not None):
++            self.cancel_actor_pick()
++            return
+         # Sculpt mode owns Escape while active. Do this before normal
+         # editor/play-mode escape handling.
+         if event.key() == Qt.Key_Escape and self.terrain_sculpt_active and not self.play_mode:
+diff --git a/tests/engine/test_actor_pick.py b/tests/engine/test_actor_pick.py
+new file mode 100644
+index 0000000..af05794
+--- /dev/null
++++ b/tests/engine/test_actor_pick.py
+@@ -0,0 +1,363 @@
++"""Clicking an actor in Play Mode: the dense pick and the view's pick mode.
++
++``engine.actor_pick.pick_actor`` answers "which actor is under this ray" from
++the published tables the frame was drawn from; ``QtGameView.begin_actor_pick``
++arms a one-shot pick that pauses the world, frees the cursor and, on a click
++on an actor, hands it over -- by default to the Entity Inspector.
++
++The first half builds real ``EntityTable`` / ``RenderTable`` projections from
++real Monsters and brushes, so the column contract the picker reads is the one
++the renderer publishes. The second half drives the view's pick mode on a light
++host that borrows ``QtGameView``'s methods (a real view needs a GL context).
++"""
++
++import types
++
++import glm
++import numpy as np
++import pytest
++
++pytest.importorskip("PyQt5", reason="the entity classes live in editor.things")
++
++from PyQt5.QtCore import QEvent, QPoint, Qt          # noqa: E402
++from PyQt5.QtGui import QKeyEvent, QMouseEvent       # noqa: E402
++from PyQt5.QtWidgets import QApplication, QWidget    # noqa: E402
++
++from editor.things import Light, Monster             # noqa: E402
++from engine.actor_pick import NO_SLOT, nearest_wall, pick_actor  # noqa: E402
++from engine.entity_table import EntityTable          # noqa: E402
++from engine.qt_game_view import QtGameView           # noqa: E402
++from engine.render_table import RenderTable          # noqa: E402
++from tests.helpers.worlds import box_brush, make_thing  # noqa: E402
++
++pytestmark = pytest.mark.qt
++
++DOWN = (0.0, -1.0, 0.0)
++EAST = (1.0, 0.0, 0.0)
++
++
++def _actor(name, pos, w=128, h=128, **props):
++    return make_thing(Monster, name, pos, sprite_width=w, sprite_height=h, **props)
++
++
++def _tables(things=(), brushes=()):
++    entities = EntityTable()
++    entities.begin_frame(list(things), 1)
++    walls = RenderTable()
++    walls.begin_frame(list(brushes), 1)
++    return entities, walls
++
++
++def _picked(things, brushes, origin, direction):
++    entities, walls = _tables(things, brushes)
++    slot = pick_actor(origin, direction, entities, walls)
++    return None if slot == NO_SLOT else entities.things[slot]
++
++
++# ---------------------------------------------------------------------------
++# pick_actor
++# ---------------------------------------------------------------------------
++
++def test_a_ray_through_an_actor_picks_it():
++    npc = _actor("npc", (500, 64, 0))
++    assert _picked([npc], [], (0, 64, 0), EAST) is npc
++
++
++def test_a_ray_that_passes_by_picks_nothing():
++    npc = _actor("npc", (500, 64, 0))
++    assert _picked([npc], [], (0, 64, 300), EAST) is None
++
++
++def test_the_pick_sphere_matches_the_billboard_that_was_drawn():
++    """A 128x192 sprite reaches 96 units from its centre: aiming at the head
++    of a tall sprite hits it, just past the top does not."""
++    tall = _actor("tall", (500, 100, 0), w=128, h=192)
++    assert _picked([tall], [], (0, 100 + 90, 0), EAST) is tall
++    assert _picked([tall], [], (0, 100 + 100, 0), EAST) is None
++
++
++def test_a_tiny_sprite_is_still_clickable():
++    tiny = _actor("tiny", (500, 64, 0), w=8, h=8)
++    assert _picked([tiny], [], (0, 64 + 20, 0), EAST) is tiny
++
++
++def test_the_floor_under_an_actor_never_wins_the_click():
++    """Brushes only occlude: looking down at an actor standing on a floor."""
++    npc = _actor("npc", (0, 64, 0))
++    floor = box_brush("floor", (0, -16, 0), (2048, 32, 2048))
++    assert _picked([npc], [floor], (0, 1000, 0), DOWN) is npc
++
++
++def test_an_actor_behind_a_wall_is_not_clickable():
++    npc = _actor("npc", (500, 64, 0))
++    wall = box_brush("wall", (250, 64, 0), (32, 512, 512))
++    assert _picked([npc], [wall], (0, 64, 0), EAST) is None
++
++
++@pytest.mark.parametrize("props", [
++    {"is_trigger": True}, {"hidden": True}, {"shader": "Glass"},
++    {"operation": "subtract"},
++])
++def test_only_visible_solid_brushes_occlude(props):
++    npc = _actor("npc", (500, 64, 0))
++    volume = box_brush("volume", (250, 64, 0), (32, 512, 512), **props)
++    assert _picked([npc], [volume], (0, 64, 0), EAST) is npc
++
++
++def test_a_brush_around_the_eye_does_not_occlude():
++    npc = _actor("npc", (500, 64, 0))
++    room = box_brush("room", (0, 64, 0), (256, 256, 256))
++    assert _picked([npc], [room], (0, 64, 0), EAST) is npc
++
++
++def test_the_nearest_of_two_actors_wins():
++    near = _actor("near", (300, 64, 0))
++    far = _actor("far", (700, 64, 0))
++    assert _picked([far, near], [], (0, 64, 0), EAST) is near
++
++
++def test_a_hidden_actor_is_not_pickable():
++    """Big World parks through ``hidden``: a parked actor is not there."""
++    npc = _actor("npc", (500, 64, 0), hidden=True)
++    assert _picked([npc], [], (0, 64, 0), EAST) is None
++
++
++def test_scenery_is_not_an_actor():
++    lamp = make_thing(Light, "lamp", (500, 64, 0))
++    assert _picked([lamp], [], (0, 64, 0), EAST) is None
++
++
++def test_an_actor_behind_the_eye_is_not_picked():
++    npc = _actor("npc", (-500, 64, 0))
++    assert _picked([npc], [], (0, 64, 0), EAST) is None
++
++
++def test_the_eye_inside_an_actors_sphere_still_picks_it():
++    npc = _actor("npc", (10, 64, 0))
++    assert _picked([npc], [], (0, 64, 0), EAST) is npc
++
++
++def test_nearest_wall_handles_a_ray_parallel_to_an_axis():
++    entities, walls = _tables(brushes=[box_brush("w", (250, 64, 0), (32, 64, 64))])
++    assert nearest_wall((0, 64, 0), EAST, walls) == pytest.approx(234.0)
++    assert nearest_wall((0, 500, 0), EAST, walls) == np.inf
++
++
++def test_no_tables_pick_nothing():
++    assert pick_actor((0, 0, 0), EAST, None) == NO_SLOT
++    entities, _walls = _tables()
++    assert pick_actor((0, 0, 0), EAST, entities, None) == NO_SLOT
++
++
++# ---------------------------------------------------------------------------
++# The view's pick mode
++# ---------------------------------------------------------------------------
++
++class _Logic:
++    def __init__(self):
++        self.owners = set()
++
++    def set_world_paused(self, owner, paused=True):
++        (self.owners.add if paused else self.owners.discard)(owner)
++
++
++class _GameState:
++    """Hands out a render state and checks every borrow is returned."""
++
++    def __init__(self, render_state):
++        self.render_state = render_state
++        self.borrowed = 0
++
++    def get_render_state(self):
++        self.borrowed += 1
++        return self.render_state
++
++    def release_render_state(self, snapshot):
++        assert snapshot is self.render_state
++        self.borrowed -= 1
++
++
++class _Editor:
++    def __init__(self):
++        self.inspected = []
++
++    def show_entity_inspector(self, entity):
++        self.inspected.append(entity)
++
++
++class PickView(QWidget):
++    """The slice of QtGameView pick mode touches, with its real methods."""
++
++    ACTOR_PICK_PAUSE = QtGameView.ACTOR_PICK_PAUSE
++    actor_pick_active = QtGameView.actor_pick_active
++    begin_actor_pick = QtGameView.begin_actor_pick
++    cancel_actor_pick = QtGameView.cancel_actor_pick
++    _end_actor_pick = QtGameView._end_actor_pick
++    _pick_ray = QtGameView._pick_ray
++    actor_at = QtGameView.actor_at
++    _update_actor_pick_hover = QtGameView._update_actor_pick_hover
++    _click_actor_pick = QtGameView._click_actor_pick
++    _open_inspector_for = QtGameView._open_inspector_for
++    _show_pick_cursor = QtGameView._show_pick_cursor
++    _capture_play_cursor = QtGameView._capture_play_cursor
++    _close_console_overlay = QtGameView._close_console_overlay
++    keyPressEvent = QtGameView.keyPressEvent
++    mousePressEvent = QtGameView.mousePressEvent
++
++    def __init__(self, things=(), brushes=(), eye=(0.0, 64.0, 0.0), target=(1.0, 64.0, 0.0)):
++        super().__init__()
++        self.resize(200, 200)
++        self.play_mode = True
++        self.console_overlay_active = False
++        self._console_input = QWidget()
++        self._actor_pick = None
++        self.actor_pick_hover = None
++        self.logic_thread = _Logic()
++        entities, walls = _tables(things, brushes)
++        self.game_state = _GameState(types.SimpleNamespace(
++            entity_table=entities, render_table=walls))
++        self.editor = _Editor()
++        self.projection_matrix = glm.perspective(glm.radians(60.0), 1.0, 1.0, 10000.0)
++        self.view_matrix = glm.lookAt(glm.vec3(*eye), glm.vec3(*target), glm.vec3(0, 1, 0))
++        self.last_mouse_pos = QPoint(0, 0)
++
++
++@pytest.fixture
++def view(qt_app):
++    created = []
++
++    def build(*args, **kwargs):
++        v = PickView(*args, **kwargs)
++        created.append(v)
++        return v
++
++    yield build
++    while QApplication.overrideCursor() is not None:
++        QApplication.restoreOverrideCursor()
++    for v in created:
++        v.deleteLater()
++
++
++def _centre(v):
++    return v.width() // 2, v.height() // 2
++
++
++def _press(v, button, x=None, y=None):
++    cx, cy = _centre(v)
++    pos = QPoint(cx if x is None else x, cy if y is None else y)
++    v.mousePressEvent(QMouseEvent(QEvent.MouseButtonPress, pos, button, button,
++                                  Qt.NoModifier))
++
++
++def _key(v, key):
++    v.keyPressEvent(QKeyEvent(QEvent.KeyPress, key, Qt.NoModifier))
++
++
++def test_arming_a_pick_pauses_the_world_and_frees_the_cursor(view):
++    v = view()
++    assert v.begin_actor_pick() is True
++    assert v.actor_pick_active
++    assert v.logic_thread.owners == {QtGameView.ACTOR_PICK_PAUSE}
++    assert QApplication.overrideCursor().shape() == Qt.CrossCursor
++
++
++def test_there_is_no_pick_outside_play_mode(view):
++    v = view()
++    v.play_mode = False
++    assert v.begin_actor_pick() is False
++    assert not v.actor_pick_active and not v.logic_thread.owners
++
++
++def test_clicking_an_actor_opens_the_inspector_and_resumes(view):
++    npc = _actor("npc", (500, 64, 0))
++    v = view([npc])
++    v.begin_actor_pick()
++    _press(v, Qt.LeftButton)
++    assert v.editor.inspected == [npc]
++    assert not v.actor_pick_active
++    assert not v.logic_thread.owners, "the world stayed paused after the pick"
++    assert QApplication.overrideCursor().shape() == Qt.BlankCursor
++    assert v.game_state.borrowed == 0, "the render state was not released"
++
++
++def test_a_pick_can_hand_the_actor_to_its_own_handler(view):
++    npc = _actor("npc", (500, 64, 0))
++    v = view([npc])
++    chosen = []
++    v.begin_actor_pick(chosen.append)
++    _press(v, Qt.LeftButton)
++    assert chosen == [npc] and v.editor.inspected == []
++
++
++def test_a_click_on_nothing_keeps_the_pick_armed(view):
++    v = view([_actor("npc", (500, 64, 0))])
++    v.begin_actor_pick()
++    _press(v, Qt.LeftButton, 5, 5)
++    assert v.actor_pick_active
++    assert v.logic_thread.owners == {QtGameView.ACTOR_PICK_PAUSE}
++    assert v.editor.inspected == []
++
++
++@pytest.mark.parametrize("cancel", ["escape", "right_click"])
++def test_a_pick_can_be_cancelled(view, cancel):
++    v = view([_actor("npc", (500, 64, 0))])
++    v.begin_actor_pick()
++    if cancel == "escape":
++        _key(v, Qt.Key_Escape)
++    else:
++        _press(v, Qt.RightButton)
++    assert not v.actor_pick_active
++    assert not v.logic_thread.owners
++    assert v.editor.inspected == []
++
++
++def test_hovering_names_the_actor_and_repaints_only_on_change(view, monkeypatch):
++    npc = _actor("npc", (500, 64, 0))
++    v = view([npc])
++    repaints = []
++    monkeypatch.setattr(v, "update", lambda: repaints.append(1))
++    v.begin_actor_pick()
++    repaints.clear()
++    v._update_actor_pick_hover(*_centre(v))
++    assert v.actor_pick_hover is npc and len(repaints) == 1
++    v._update_actor_pick_hover(*_centre(v))
++    assert len(repaints) == 1
++    v._update_actor_pick_hover(5, 5)
++    assert v.actor_pick_hover is None and len(repaints) == 2
++
++
++def test_the_ray_leaves_the_camera_the_frame_was_drawn_from(view):
++    """Not the editor camera: in Play Mode the view matrix is the player's."""
++    v = view(eye=(100.0, 300.0, -40.0), target=(100.0, 0.0, -39.0))
++    origin, direction = v._pick_ray(*_centre(v))
++    assert glm.distance(origin, glm.vec3(100.0, 300.0, -40.0)) < 1e-3
++    assert direction.y < -0.99
++
++
++def test_an_overhead_camera_picks_the_actor_below_the_cursor(view):
++    npc = _actor("npc", (0, 64, 0))
++    floor = box_brush("floor", (0, -16, 0), (2048, 32, 2048))
++    v = view([npc], [floor], eye=(0.0, 1200.0, 1.0), target=(0.0, 0.0, 0.0))
++    v.begin_actor_pick()
++    _press(v, Qt.LeftButton)
++    assert v.editor.inspected == [npc]
++
++
++def test_closing_the_console_overlay_keeps_an_armed_picks_cursor(view):
++    """'inspect' is typed into the overlay, which closes right after it runs."""
++    v = view()
++    v.console_overlay_active = True
++    v.begin_actor_pick()
++    v._close_console_overlay()
++    assert QApplication.overrideCursor().shape() == Qt.CrossCursor
++    assert v.actor_pick_active
++
++
++def test_the_main_window_arms_the_views_pick(qt_app):
++    from editor.main_window import MainWindow
++    armed = []
++    host = types.SimpleNamespace(view_3d=types.SimpleNamespace(
++        begin_actor_pick=lambda on_pick=None: armed.append(on_pick) or True))
++    assert MainWindow.begin_actor_pick(host) is True
++    assert armed == [None]
++    assert MainWindow.begin_actor_pick(types.SimpleNamespace(view_3d=None)) is False
+diff --git a/tests/engine/test_world_pause.py b/tests/engine/test_world_pause.py
+new file mode 100644
+index 0000000..463914e
+--- /dev/null
++++ b/tests/engine/test_world_pause.py
+@@ -0,0 +1,253 @@
++"""World pause: owners hold it, the play tick and the monster AI honour it.
++
++``LogicThread.set_world_paused(owner, paused)`` freezes the play-mode world
++while any owner holds a request -- a game's modal screen, the actor picker, a
++pause menu -- and keeps plugins ticking so a game's menus still work. These
++tests pin the three halves of that contract:
++
++* requests are per owner, so releasing one never unpauses another, and a play
++  session never inherits a request from the one before it;
++* a paused play tick moves nothing and drains look/fire input, while plugins
++  still tick with the use key;
++* the monster AI thread idles while paused and does not fast-forward after.
++
++Every "nothing happened" assertion has an unpaused control beside it, so a
++test cannot pass because the thing it watches would not have moved anyway.
++"""
++
++import threading
++import time
++
++import glm
++import pytest
++
++pytest.importorskip("PyQt5", reason="drives the real editor state and logic thread")
++
++from editor.editor_state import EditorState               # noqa: E402
++from editor.things import PlayerStart                     # noqa: E402
++from engine.logic_thread import Key_W, LogicThread        # noqa: E402
++from engine.monster_ai import MonsterAIThread             # noqa: E402
++from engine.player import Player                          # noqa: E402
++from engine.threaded_game_state import ThreadedGameState  # noqa: E402
++from tests.helpers.worlds import box_brush, make_thing    # noqa: E402
++
++pytestmark = [pytest.mark.qt, pytest.mark.integration]
++
++TICK = 1.0 / 60.0
++
++
++@pytest.fixture
++def logic():
++    state = EditorState()
++    state.brushes = [box_brush("floor", (0, -16, 0), (2048, 32, 2048))]
++    state.things = [make_thing(PlayerStart, "spawn", (0, 64, 0))]
++    thread = LogicThread(ThreadedGameState(), state)
++    thread.player = Player(0.0, 0.0)
++    thread.player.pos.y = 40.0
++    yield thread
++    thread.set_play_mode(False)
++    thread.stop()
++
++
++@pytest.fixture
++def playing(logic):
++    logic.set_play_mode(True)
++    # The AI thread is not under test here; keep the tick single-threaded.
++    logic._stop_monster_ai()
++    return logic
++
++
++class _RecordingPlugins:
++    def __init__(self):
++        self.ticks = []
++
++    def wants_tick(self):
++        return True
++
++    def tick(self, logic, **kwargs):
++        self.ticks.append(kwargs)
++
++
++def _ticks(logic, n=10):
++    for _ in range(n):
++        logic._tick_play_mode(TICK)
++
++
++# ---------------------------------------------------------------------------
++# Owners
++# ---------------------------------------------------------------------------
++
++def test_the_world_is_paused_while_any_owner_holds_a_request(logic):
++    assert logic.world_paused is False
++    logic.set_world_paused("menu", True)
++    logic.set_world_paused("picker", True)
++    assert logic.world_paused is True
++    assert logic.world_pause_owners() == {"menu", "picker"}
++    logic.set_world_paused("menu", False)
++    assert logic.world_paused is True, "releasing one owner unpaused the other"
++    logic.set_world_paused("picker", False)
++    assert logic.world_paused is False
++
++
++def test_releasing_twice_or_releasing_a_stranger_is_harmless(logic):
++    logic.set_world_paused("menu", True)
++    logic.set_world_paused("stranger", False)
++    logic.set_world_paused("menu", False)
++    logic.set_world_paused("menu", False)
++    assert logic.world_pause_owners() == frozenset()
++
++
++def test_holding_twice_is_still_one_request(logic):
++    logic.set_world_paused("menu", True)
++    logic.set_world_paused("menu", True)
++    logic.set_world_paused("menu", False)
++    assert logic.world_paused is False
++
++
++@pytest.mark.parametrize("entering", [True, False])
++def test_a_play_mode_change_drops_every_request(logic, entering):
++    if not entering:
++        logic.set_play_mode(True)
++    logic.set_world_paused("leftover", True)
++    logic.set_play_mode(entering)
++    assert logic.world_paused is False
++
++
++def test_requests_from_many_threads_are_not_lost(logic):
++    def hold(i):
++        for _ in range(200):
++            logic.set_world_paused(("t", i), True)
++            logic.set_world_paused(("t", i), False)
++        logic.set_world_paused(("t", i), True)
++
++    threads = [threading.Thread(target=hold, args=(i,)) for i in range(8)]
++    for t in threads:
++        t.start()
++    for t in threads:
++        t.join(timeout=5.0)
++    assert logic.world_pause_owners() == {("t", i) for i in range(8)}
++
++
++# ---------------------------------------------------------------------------
++# The play tick
++# ---------------------------------------------------------------------------
++
++def test_an_unpaused_tick_moves_the_player(playing):
++    """The control: holding W does move the player in this world."""
++    start = glm.vec3(playing.player.pos)
++    playing.game_state.set_keys({Key_W})
++    _ticks(playing, 20)
++    assert glm.distance(playing.player.pos, start) > 1.0
++
++
++def test_a_paused_tick_does_not_move_the_player(playing):
++    start = glm.vec3(playing.player.pos)
++    playing.set_world_paused("menu", True)
++    playing.game_state.set_keys({Key_W})
++    _ticks(playing, 20)
++    assert glm.distance(playing.player.pos, start) == 0.0
++
++
++def test_look_and_fire_over_a_paused_world_are_discarded(playing, monkeypatch):
++    shots = []
++    monkeypatch.setattr(playing, "_handle_shooting", lambda *a, **k: shots.append(1))
++    angle = playing.player.angle
++    playing.set_world_paused("menu", True)
++    playing.game_state.set_mouse_delta(80.0, 30.0)
++    playing.game_state.queue_shot()
++    _ticks(playing, 1)
++    assert playing.player.angle == angle
++    playing.set_world_paused("menu", False)
++    _ticks(playing, 1)
++    assert playing.player.angle == angle, "look input queued over a menu landed on resume"
++    assert shots == [], "a shot fired over a menu landed on resume"
++
++
++def test_a_paused_tick_advances_no_world_system(playing, monkeypatch):
++    calls = []
++    for name in ("_update_movers", "_update_doors", "_update_logic_timers",
++                 "_update_light_fades", "_handle_triggers",
++                 "_update_monster_projectiles", "_update_portals"):
++        monkeypatch.setattr(playing, name,
++                            lambda *a, _n=name, **k: calls.append(_n))
++    if playing.io_manager is not None:
++        monkeypatch.setattr(playing.io_manager, "update",
++                            lambda *a, **k: calls.append("io"))
++    playing.set_world_paused("menu", True)
++    _ticks(playing, 5)
++    assert calls == []
++    playing.set_world_paused("menu", False)
++    _ticks(playing, 1)
++    assert "_update_movers" in calls and "_handle_triggers" in calls   # the control
++
++
++def test_plugins_still_tick_over_a_paused_world(playing):
++    plugins = _RecordingPlugins()
++    playing.plugins = plugins
++    playing.set_world_paused("menu", True)
++    playing.game_state.set_use_key_pressed()
++    _ticks(playing, 2)
++    assert len(plugins.ticks) == 2
++    assert plugins.ticks[0]["use_pressed"] is True
++    assert plugins.ticks[0]["delta"] == pytest.approx(TICK)
++    assert plugins.ticks[1]["use_pressed"] is False
++
++
++# ---------------------------------------------------------------------------
++# The monster AI thread
++# ---------------------------------------------------------------------------
++
++class _CountingAI:
++    def __init__(self):
++        self.updates = 0
++
++    def update(self, delta):
++        self.updates += 1
++
++
++class _Host:
++    world_paused = False
++
++
++def _wait_for(predicate, timeout=2.0):
++    deadline = time.perf_counter() + timeout
++    while time.perf_counter() < deadline:
++        if predicate():
++            return True
++        time.sleep(0.01)
++    return predicate()
++
++
++def test_the_monster_ai_thread_idles_while_the_world_is_paused():
++    host, ai = _Host(), _CountingAI()
++    thread = MonsterAIThread(host, ai, threading.Lock(), tick_rate=100)
++    thread.start()
++    try:
++        assert _wait_for(lambda: ai.updates > 3), "the control: the AI runs"
++        host.world_paused = True
++        time.sleep(0.05)                     # let an in-flight frame finish
++        frozen = ai.updates
++        time.sleep(0.3)
++        assert ai.updates == frozen
++        host.world_paused = False
++        assert _wait_for(lambda: ai.updates > frozen), "the AI did not resume"
++    finally:
++        thread.stop()
++        thread.join(timeout=2.0)
++
++
++def test_the_monster_ai_does_not_fast_forward_after_a_pause():
++    """0.5 s paused at 100 Hz would be ~50 catch-up updates in one burst."""
++    host, ai = _Host(), _CountingAI()
++    host.world_paused = True
++    thread = MonsterAIThread(host, ai, threading.Lock(), tick_rate=100)
++    thread.start()
++    try:
++        time.sleep(0.5)
++        assert ai.updates == 0
++        host.world_paused = False
++        time.sleep(0.03)
++        assert ai.updates < 15
++    finally:
++        thread.stop()
++        thread.join(timeout=2.0)
+-- 
+2.43.0
+
