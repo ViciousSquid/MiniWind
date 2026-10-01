@@ -3459,6 +3459,11 @@ class QtGameView(QOpenGLWidget):
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event):
+        if _play_menu_open(self):
+            wheel = getattr(self.play_menu, 'handle_wheel', None)
+            if wheel is not None:
+                wheel(event)
+            return
         if not self.play_mode:
             self.camera.fov = np.clip(self.camera.fov - event.angleDelta().y() * 0.05, 30, 120)
             self.editor.update_views()

@@ -75,6 +75,7 @@ class PauseMenu:
     #: ``game`` is the header of the :data:`GAME_ITEMS` dropdown.
     ROOT_ITEMS = (
         ('resume', 'RESUME'),
+        ('map', 'MAP'),
         ('game', 'GAME'),
         ('options', 'OPTIONS'),
         ('editor', 'EDITOR'),
@@ -105,6 +106,12 @@ class PauseMenu:
         from .options_page import OptionsPage
         #: The OPTIONS page (game/ui/options_page.py).
         self.options = OptionsPage(self)
+        from .map_page import MapPage
+        #: The MAP page (game/ui/map_page.py).
+        self.map = MapPage(self)
+        #: Whether MAP was opened straight from play (M, Show on map): then
+        #: leaving it resumes the game rather than showing the menu.
+        self._map_direct = False
         #: Whether the GAME dropdown is open, and its highlighted entry.
         self.expanded = False
         self.sub_index = 0
@@ -258,6 +265,9 @@ class PauseMenu:
         if self.page == 'options':
             self.options.handle_key(key)
             return True
+        if self.page == 'map':
+            self.map.handle_key(key)
+            return True
         items = self._items()
         if self.page == 'root' and self.expanded:
             # The open dropdown takes the keys until it folds.
@@ -317,6 +327,9 @@ class PauseMenu:
         if self.page == 'options':
             self.options.handle_mouse_move(event.pos(), event.buttons())
             return True
+        if self.page == 'map':
+            self.map.handle_mouse_move(event.pos(), event.buttons())
+            return True
         sub = self._dropdown_at(event.pos())
         if sub is not None:
             if sub != self.sub_index:
@@ -339,6 +352,9 @@ class PauseMenu:
         if self.page == 'options':
             self.options.handle_mouse_press(event.pos())
             return True
+        if self.page == 'map':
+            self.map.handle_mouse_press(event.pos())
+            return True
         sub = self._dropdown_at(event.pos())
         if sub is not None:
             self.sub_index = sub
@@ -360,7 +376,40 @@ class PauseMenu:
             return False
         if self.page == 'options':
             self.options.handle_mouse_release()
+        elif self.page == 'map':
+            self.map.handle_mouse_release()
         return True
+
+    def handle_wheel(self, event) -> bool:
+        if not self.active:
+            return False
+        if self.page == 'map':
+            self.map.handle_wheel(event.pos(), event.angleDelta().y())
+        return True
+
+    def open_map(self, focus=None):
+        """Open straight onto the MAP page (M in play, or a quest's *Show on
+        map*), on the player or on *focus* = ``(x, z, label)``."""
+        was_open = self.active
+        if not was_open:
+            self.open()
+        self._map_direct = not was_open
+        self.page = 'map'
+        self.expanded = False
+        self.map.open(focus)
+        self.view.update()
+
+    def _leave_map(self):
+        """Back from MAP: to the game when it was opened from play, else to
+        the root row on MAP."""
+        if self._map_direct:
+            self._map_direct = False
+            self.close()
+            return
+        self.page = 'root'
+        keys = [key for key, _ in self.ROOT_ITEMS]
+        self.index = keys.index('map')
+        self.view.update()
 
     def _leave_options(self):
         """Back from OPTIONS to the root row, on OPTIONS."""
@@ -373,6 +422,9 @@ class PauseMenu:
         """Escape: fold the dropdown, leave a sub-page, or leave the menu."""
         if self.page == 'options':
             self._leave_options()
+            return
+        if self.page == 'map':
+            self._leave_map()
             return
         if self.page == 'confirm':
             (self.page, self.index, self.expanded,
@@ -459,6 +511,11 @@ class PauseMenu:
             self.page = 'options'
             self.options.open()
             self.view.update()
+        elif key == 'map':
+            self._map_direct = False
+            self.page = 'map'
+            self.map.open()
+            self.view.update()
         elif key == 'editor':
             self._confirm("Leave for the editor?",
                           "The game ends and the editor opens this map.",
@@ -539,6 +596,10 @@ class PauseMenu:
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(QColor(10, 10, 14, 150)))
         painter.drawRect(0, 0, w, h)
+
+        if self.page == 'map':
+            self.map.draw(painter, w, h, _text_font, _display_font)
+            return
 
         # --- banner ---
         title_size = max(24, min(72, w // 20, h // 10))

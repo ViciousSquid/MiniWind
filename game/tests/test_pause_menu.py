@@ -180,7 +180,7 @@ def _draw(menu):
 def test_the_root_page_offers_its_options_in_order(app):
     menu = _menu()
     menu.open()
-    assert _labels(menu) == ["RESUME", "GAME", "OPTIONS", "EDITOR", "QUIT"]
+    assert _labels(menu) == ["RESUME", "MAP", "GAME", "OPTIONS", "EDITOR", "QUIT"]
 
 
 def test_new_load_and_save_live_in_the_game_dropdown(app):
