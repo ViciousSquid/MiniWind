@@ -27,7 +27,6 @@ Run once on an expanded map (it refuses to run twice):
 """
 
 from __future__ import annotations
-
 import argparse
 import copy
 import glob
@@ -63,3 +62,415 @@ DANGER_REACH = (9000, 33000)
 #: Names for the folk who live in the new places.
 FOLK = ("Aldous", "Berta", "Cedric", "Dorcas", "Edwin", "Freya", "Godric", "Hilda",
         "Ivo", "Joan", "Kenric", "Leofa", "Maud", "Nell", "Osric", "Prue", "Quill",
+        "Rowan", "Sabine", "Tamsin", "Ulric", "Wynn", "Yarrow", "Agnes", "Bertram",
+        "Cuthbert", "Elsie", "Fulk", "Gwen", "Hamon", "Isolde", "Jory", "Kit", "Lettice",
+        "Merrick", "Odo", "Piers", "Rosamund", "Sim", "Tobias", "Wat", "Wilmot")
+
+HOUSES = (("house01.png", 390, 260), ("house04.png", 340, 292), ("house05.png", 400, 200),
+          ("house06.png", 300, 225), ("house01.png", 330, 220), ("house06.png", 340, 255))
+STALLS = (("market01.png", 200, 200), ("market03.png", 200, 200), ("shop01.png", 180, 180),
+          ("market02.png", 190, 138))
+
+def _slug(text):
+    return "".join(c.lower() if c.isalnum() else "_" for c in text).strip("_")
+
+
+class Populator(Expander):
+    """Adds :data:`SITES` to an expanded world, reusing the expander's terrain
+    and placement helpers."""
+
+    def __init__(self, world, seed=31, report=print):
+        self.world = world
+        self.report = report
+        self.rng = np.random.default_rng(seed)
+        td = world["terrain_data"]
+        self.heightmap = _load_heightmap(td)
+        self.res = float(td.get("sculpt_grid_resolution", 16.0))
+        self.sculpt = {(int(a), int(b)): float(v) for a, b, v in td.get("sculpt_offsets", ())}
+        self._stored_sculpt = dict(self.sculpt)
+        self.new_terrain = _terrain(td, heightmap=self.heightmap)
+        self.new_base = _terrain(td, heightmap=self.heightmap, sculpt=False)
+        (lo, hi), _ = self.new_terrain.get_terrain_bounds()
+        self.bounds = (lo, hi)
+        things = world["things"]
+        self._protos = {
+            "farmhand": self._find(things, "npc", name="Pell"),
+            "merchant": self._find(things, "npc", npc_role="merchant", merchant=True),
+        }
+        for label in ("Sheep", "Cow", "Hen", "Skeleton", "Skeleton Archer", "Wraith",
+                      "Greenskin", "Giant Spider", "Shroomling", "Bandit", "Bandit Archer"):
+            self._protos[label] = self._find(things, "creature", display_name=label)
+        self._heads = sorted(os.path.splitext(os.path.basename(p))[0]
+                             for p in glob.glob(os.path.join("assets", "sprites", "heads", "head*.png")))
+        self._folk = list(FOLK)
+        self.rng.shuffle(self._folk)
+        self.added = []
+
+    @staticmethod
+    def _find(things, ttype, **want):
+        for t in things:
+            if t.get("type") != ttype:
+                continue
+            p = _props(t)
+            if all(p.get(k) == v for k, v in want.items()):
+                return t
+        return None
+
+    # -- ground ------------------------------------------------------------
+    def _level(self, x, z, half_w, half_d, feather=112.0):
+        """Level the ground under a footprint to its median height, feathered
+        out over *feather* units. Returns that height."""
+        res = self.res
+        gxs = np.arange(int((x - half_w - feather) // res), int((x + half_w + feather) // res) + 2)
+        gzs = np.arange(int((z - half_d - feather) // res), int((z + half_d + feather) // res) + 2)
+        GX, GZ = np.meshgrid(gxs, gzs, indexing="ij")
+        WX, WZ = GX * res, GZ * res
+        cur = self._grid_heights(GX, GZ).reshape(GX.shape)
+        out = np.hypot(np.maximum(np.abs(WX - x) - half_w, 0.0),
+                       np.maximum(np.abs(WZ - z) - half_d, 0.0))
+        inside = out <= 0.0
+        g = float(np.median(cur[inside])) if inside.any() else float(np.median(cur))
+        w = 1.0 - _smoothstep(0.0, feather, out)
+        delta = (g - cur) * w
+        for a, b, d in zip(GX.ravel().tolist(), GZ.ravel().tolist(), delta.ravel().tolist()):
+            if abs(d) >= 0.25:
+                self.sculpt[(a, b)] = self.sculpt.get((a, b), 0.0) + d
+        return g
+
+    def _ground_now(self, x, z):
+        """Ground height including sculpting not yet stored."""
+        gx, gz = int(round(x / self.res)), int(round(z / self.res))
+        return float(self._grid_heights([gx], [gz])[0])
+
+    # -- pieces ------------------------------------------------------------
+    def _house(self, x, z, art=None):
+        tex, w, d = art or HOUSES[int(self.rng.integers(len(HOUSES)))]
+        g = self._level(x, z, w / 2.0 + 24, d / 2.0 + 24)
+        self._brush((x, 0, z), (w, 248.0, d), self._textured("nodraw.jpg", tex), ground=g)
+        return g
+
+    def _stall(self, x, z):
+        tex, w, d = STALLS[int(self.rng.integers(len(STALLS)))]
+        g = self._level(x, z, w / 2.0 + 16, d / 2.0 + 16)
+        self._brush((x, 0, z), (w, 88.0, d), self._textured("nodraw.jpg", tex), ground=g)
+
+    def _well(self, x, z):
+        g = self._level(x, z, 70, 70)
+        stone = self._textured("Stone_09-512x512.png")
+        for dx, dz, sx, sz in ((0, -48, 112, 16), (0, 48, 112, 16), (-48, 0, 16, 112), (48, 0, 16, 112)):
+            self._brush((x + dx, 0, z + dz), (sx, 56.0, sz), stone, ground=g)
+        self._brush((x, 0, z), (80.0, 4.0, 80.0), self._textured("nodraw.jpg"), ground=g - 2.0,
+                    sink=0.0, **self._water_props())
+
+    def _fence(self, x, z, half_w, half_d, gap=120.0):
+        """A rectangular paddock fence with a gate gap on the south side."""
+        fence = self._textured("nodraw.jpg", "Fence2.png")
+        step = 160.0
+        for side in ("n", "s", "e", "w"):
+            horiz = side in ("n", "s")
+            length = 2 * (half_w if horiz else half_d)
+            n = max(1, int(math.ceil(length / step)))
+            seg = length / n
+            for k in range(n):
+                t = -length / 2.0 + seg * (k + 0.5)
+                if side == "s" and abs(t) < gap / 2.0:
+                    continue
+                if horiz:
+                    px, pz = x + t, z + (-half_d if side == "n" else half_d)
+                    size = (seg, 56.0, 16.0)
+                else:
+                    px, pz = x + (half_w if side == "e" else -half_w), z + t
+                    size = (16.0, 56.0, seg)
+                self._brush((px, 0, pz), size, fence, ground=self._ground_now(px, pz), sink=4.0)
+
+    def _field(self, x, z, half_w, half_d):
+        g = self._level(x, z, half_w, half_d, feather=96.0)
+        self._brush((x, 0, z), (2 * half_w, 4.0, 2 * half_d),
+                    self._textured("nodraw.jpg", "pixelated-ground-texture-stockcake.jpg"),
+                    ground=g, sink=0.0)
+
+    def _fire(self, x, z, name):
+        g = self._ground_now(x, z)
+        self._brush((x, 0, z), (110.0, 24.0, 90.0),
+                    self._textured("Stone_09-512x512.png", "fire01.png"), ground=g)
+        self.world["things"].append(self._light(f"Light_{_slug(name)}_fire", [x, g + 160.0, z],
+                                                520.0, [255, 160, 90]))
+
+    def _tent(self, x, z, kind=2):
+        g = self._ground_now(x, z)
+        self._brush((x, 0, z), (180.0, 126.0, 176.0),
+                    self._textured("nodraw.jpg", f"canopy0{kind}.png"), ground=g)
+
+    def _walls(self, x, z, size, ruined=True):
+        """A broken square of walls (*ruined*: random heights, a gap or two)."""
+        wall = self._textured("stone-wall-v0-63mmfjnritm81.png")
+        g = self._level(x, z, size / 2.0 + 32, size / 2.0 + 32, feather=160.0)
+        h = size / 2.0
+        pieces = []
+        for side in range(4):
+            for k in range(3):
+                t = -h + size * (k + 0.5) / 3.0
+                if ruined and self.rng.random() < 0.3:
+                    continue
+                if side < 2:
+                    pieces.append((x + t, z + (h if side else -h), size / 3.0, 32.0))
+                else:
+                    pieces.append((x + (h if side == 3 else -h), z + t, 32.0, size / 3.0))
+        for px, pz, sx, sz in pieces:
+            tall = float(self.rng.uniform(60.0, 280.0)) if ruined else 220.0
+            self._brush((px, 0, pz), (sx, tall, sz), wall, ground=g)
+        self._brush((x, 0, z), (size - 40.0, 4.0, size - 40.0),
+                    self._textured("nodraw.jpg", "flagstone.jpg"), ground=g, sink=0.0)
+        return g
+
+    # -- life --------------------------------------------------------------
+    def _clean(self, proto):
+        t = copy.deepcopy(proto)
+        p = _props(t)
+        for k in [k for k in p if k.startswith("_")]:
+            del p[k]
+        return t, p
+
+    def _creature(self, label, x, z, roam=True):
+        proto = self._protos.get(label)
+        if proto is None:
+            return
+        t, p = self._clean(proto)
+        g = self._ground_now(x, z)
+        t["pos"] = [round(x, 1), round(g + 48.0, 1), round(z, 1)]
+        p.update({"id": _uid(), "home": list(t["pos"]),
+                  "name": f"{p.get('name', label)}_{len(self.world['things'])}"})
+        if roam and p.get("aggression") != "hostile":
+            p["roam"] = True
+        self.world["things"].append(t)
+
+    def _herd(self, label, x, z, count, spread=220.0):
+        for _ in range(count):
+            self._creature(label, x + float(self.rng.normal(0, spread)),
+                           z + float(self.rng.normal(0, spread)))
+
+    def _work_marker(self, name, x, z, kind="work"):
+        g = self._ground_now(x, z)
+        self.world["things"].append({
+            "type": "marker", "pos": [round(x, 1), round(g + 16.0, 1), round(z, 1)],
+            "properties": {"type": "marker", "name": name, "id": _uid(), "marker_kind": kind,
+                           "hidden_in_game": True},
+            "io_connections": []})
+
+    def _person(self, place, x, z, home, work, role="farmhand", line=None, title=None):
+        proto = self._protos.get(role)
+        if proto is None:
+            return None
+        t, p = self._clean(proto)
+        name = self._folk.pop() if self._folk else f"Folk{len(self.world['things'])}"
+        g = self._ground_now(x, z)
+        t["pos"] = [round(x, 1), round(g + 48.0, 1), round(z, 1)]
+        head = self._heads[int(self.rng.integers(len(self._heads)))] if self._heads else p.get("head")
+        p.update({"id": _uid(), "name": f"{name}_{_slug(place)}",
+                  "display_name": f"{name} of {place}" if not title else f"{name} the {title}",
+                  "home": [round(home[0], 1), round(home[1], 1), round(home[2], 1)],
+                  "work_location": work, "head": head,
+                  "custom_idle": f"assets/sprites/heads/{head}.png",
+                  "custom_shoot": f"assets/sprites/heads/{head}.png",
+                  "quest_flags": {}, "relationships": {}})
+        if line:
+            p["dialogue"] = {"start": "greeting", "nodes": {"greeting": {
+                "text": line, "responses": [{"text": "Farewell.", "goto": "END"}]}}}
+        self.world["things"].append(t)
+        return t
+
+    # -- the sites ---------------------------------------------------------
+    def hamlet(self, name, x, z):
+        r = 560.0
+        homes = []
+        n = int(self.rng.integers(3, 6))
+        for k in range(n):
+            a = 2.0 * math.pi * k / n + float(self.rng.uniform(-0.25, 0.25))
+            hx, hz = x + math.cos(a) * r, z + math.sin(a) * r
+            g = self._house(hx, hz)
+            # The door side faces the well.
+            homes.append((hx - math.cos(a) * 170.0, g + 48.0, hz - math.sin(a) * 170.0))
+        self._well(x, z)
+        self._stall(x + 220.0, z - 160.0)
+        work = f"{_slug(name)}_green"
+        self._work_marker(work, x + 120.0, z + 120.0)
+        lines = (f"Welcome to {name}. Quiet, most days. We like it that way.",
+                 "Mind the well, the stones are slick.",
+                 f"Travellers don't often come out to {name}. What brings you?",
+                 "There's talk of something in the old ruins. Stay on the road.")
+        for k, home in enumerate(homes[:3]):
+            self._person(name, home[0], home[2], home, work, line=lines[k % len(lines)])
+        self._herd("Hen", x - 160.0, z + 220.0, 3, 120.0)
+        self._herd("Sheep", x + r + 420.0, z, 4, 180.0)
+        self.world["things"].append(self._light(f"Light_{_slug(name)}", [x, self._ground_now(x, z) + 260.0, z],
+                                                700.0, [255, 200, 140]))
+        self._container(x - 260.0, z - 180.0, "barrel", [("bread", 3), ("gold", int(self.rng.integers(5, 25)))])
+        self._marker(name, x, z, 1200.0)
+
+    def farm(self, name, x, z):
+        g = self._house(x, z, ("house05.png", 400, 200))
+        home = (x, g + 48.0, z + 160.0)
+        self._house(x + 560.0, z - 60.0, ("house06.png", 340, 255))        # the barn
+        self._field(x - 760.0, z + 40.0, 280.0, 360.0)
+        px, pz = x + 200.0, z + 700.0
+        self._fence(px, pz, 420.0, 300.0)
+        self._herd("Cow" if self.rng.random() < 0.5 else "Sheep", px, pz, 4, 140.0)
+        self._herd("Hen", x - 200.0, z + 260.0, 2, 80.0)
+        work = f"{_slug(name)}_field"
+        self._work_marker(work, x - 760.0, z + 40.0, kind="farm")
+        self._person(name, x, z + 220.0, home, work, title="Farmer",
+                     line=f"This is {name}. The soil's thin but it's ours.")
+        self._person(name, x - 600.0, z, home, work,
+                     line="Plough, sow, reap, repeat. Don't let me keep you.")
+        self._container(x + 560.0, z + 140.0, "barrel", [("milk", 2), ("egg", 4)])
+        self._marker(name, x, z, 1000.0)
+
+    def inn(self, name, x, z):
+        g = self._house(x, z, ("house04.png", 420, 360))
+        self._fire(x + 360.0, z + 240.0, name)
+        self._stall(x - 360.0, z + 220.0)
+        work = f"{_slug(name)}_bar"
+        self._work_marker(work, x, z + 230.0)
+        self._person(name, x, z + 260.0, (x, g + 48.0, z), work, role="merchant",
+                     title="Innkeeper",
+                     line=f"Welcome to {name}! Warm fire, cold ale, and no questions asked.")
+        self._herd("Hen", x + 300.0, z - 300.0, 2, 80.0)
+        self.world["things"].append(self._light(f"Light_{_slug(name)}", [x, g + 300.0, z],
+                                                800.0, [255, 190, 120]))
+        self._marker(name, x, z, 1000.0)
+
+    def ruin(self, name, x, z):
+        self._walls(x, z, float(self.rng.uniform(560.0, 760.0)))
+        self._herd("Skeleton", x, z, 3, 160.0)
+        self._creature("Skeleton Archer", x + 120.0, z - 120.0)
+        if self.rng.random() < 0.5:
+            self._creature("Wraith", x - 100.0, z + 60.0)
+        self._container(x, z, "chest", [("gold", int(self.rng.integers(40, 120))),
+                                        ("potion_heal", int(self.rng.integers(1, 3)))])
+        self.world["things"].append(self._light(f"Light_{_slug(name)}", [x, self._ground_now(x, z) + 220.0, z],
+                                                500.0, [150, 190, 255]))
+        self._marker(name, x, z, 900.0)
+
+    def barrow(self, name, x, z):
+        stone = self._textured("Stone_09-512x512.png")
+        g = self._level(x, z, 200.0, 140.0, feather=200.0)
+        self._brush((x, 0, z), (360.0, 120.0, 220.0), stone, ground=g + 30.0)    # the mound's lid
+        for k in range(6):
+            a = 2.0 * math.pi * k / 6.0
+            self._brush((x + math.cos(a) * 380.0, 0, z + math.sin(a) * 300.0),
+                        (60.0, float(self.rng.uniform(120.0, 220.0)), 60.0), stone)
+        self._herd("Skeleton", x, z + 260.0, 4, 200.0)
+        self._creature("Wraith", x, z - 220.0)
+        self._container(x + 240.0, z, "chest", [("gold", int(self.rng.integers(60, 160))),
+                                                ("potion_heal", 2)])
+        self._marker(name, x, z, 900.0)
+
+    def lair(self, name, x, z, label, archer=None, count=4, tents=False, debris=True):
+        if tents:
+            self._tent(x + 240.0, z - 120.0, 2)
+            self._tent(x - 220.0, z + 160.0, 3)
+            self._fire(x, z, name)
+        if debris:
+            for _ in range(3):
+                dx, dz = self.rng.normal(0, 260, 2)
+                g = self._ground_now(x + dx, z + dz)
+                self._brush((x + dx, 0, z + dz), (190.0, 2.0, 190.0),
+                            self._textured("nodraw.jpg", "debris01.png"), ground=g + 2.0, sink=0.0)
+        self._herd(label, x, z, count, 260.0)
+        if archer:
+            self._herd(archer, x, z, 2, 260.0)
+        self._container(x + 100.0, z + 220.0, "chest", [("gold", int(self.rng.integers(30, 110)))])
+        self._marker(name, x, z, 900.0)
+
+    def shrine(self, name, x, z):
+        stone = self._textured("Stone_09-512x512.png")
+        g = self._level(x, z, 90.0, 90.0)
+        self._brush((x, 0, z), (140.0, 70.0, 100.0), self._textured("Stone_09-512x512.png", "fire01.png"),
+                    ground=g)
+        for k in range(5):
+            a = 2.0 * math.pi * k / 5.0
+            self._brush((x + math.cos(a) * 300.0, 0, z + math.sin(a) * 300.0),
+                        (60.0, float(self.rng.uniform(140.0, 240.0)), 60.0), stone)
+        self.world["things"].append(self._light(f"Light_{_slug(name)}", [x, g + 220.0, z],
+                                                650.0, [200, 220, 255]))
+        self._container(x, z + 140.0, "chest", [("potion_heal", 2)])
+        self._marker(name, x, z, 800.0)
+
+    def build(self, kind, name, x, z):
+        if kind == "hamlet":
+            self.hamlet(name, x, z)
+        elif kind == "farm":
+            self.farm(name, x, z)
+        elif kind == "inn":
+            self.inn(name, x, z)
+        elif kind == "ruin":
+            self.ruin(name, x, z)
+        elif kind == "barrow":
+            self.barrow(name, x, z)
+        elif kind == "greenskins":
+            self.lair(name, x, z, "Greenskin", count=5, tents=True)
+        elif kind == "spiders":
+            self.lair(name, x, z, "Giant Spider", count=4)
+        elif kind == "shrooms":
+            self.lair(name, x, z, "Shroomling", count=5)
+        elif kind == "brigands":
+            self.lair(name, x, z, "Bandit", archer="Bandit Archer", count=3, tents=True,
+                      debris=False)
+        elif kind == "shrine":
+            self.shrine(name, x, z)
+
+    def run(self):
+        placed = []
+        for name, kind in SITES:
+            lo, hi = REACH.get(kind, DANGER_REACH)
+            spots = self._open_spots(1, self.rng, lo, hi, 2600.0, 0.0)
+            spots = [s for s in spots if all(math.hypot(s[0] - a, s[1] - b) >= 5200.0
+                                             for a, b in placed)]
+            tries = 0
+            while not spots and tries < 40:
+                tries += 1
+                spots = [s for s in self._open_spots(1, self.rng, lo, hi, 2600.0, 0.0)
+                         if all(math.hypot(s[0] - a, s[1] - b) >= 4200.0 for a, b in placed)]
+            if not spots:
+                self.report(f"no room for {name}")
+                continue
+            x, z = spots[0]
+            self.build(kind, name, x, z)
+            self._store_terrain()
+            placed.append((x, z))
+            self.added.append((name, kind, round(x), round(z)))
+        self.world.setdefault("_miniwind_world", {})["populated"] = True
+        return self.world
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("map", nargs="?", default=MAP)
+    ap.add_argument("-o", "--out", help="write here instead of over the input")
+    ap.add_argument("--preview", help="also write a top-down PNG of the result")
+    ap.add_argument("--seed", type=int, default=31)
+    ap.add_argument("--force", action="store_true", help="populate a populated map again")
+    args = ap.parse_args()
+    import json
+    with open(args.map) as f:
+        world = json.load(f)
+    meta = world.get("_miniwind_world", {})
+    if not meta.get("expanded"):
+        raise SystemExit(f"{args.map} is not expanded; run game.tools.expand_world first")
+    if meta.get("populated") and not args.force:
+        raise SystemExit(f"{args.map} is already populated (use --force to do it again)")
+    pop = Populator(world, seed=args.seed)
+    pop.run()
+    for name, kind, x, z in pop.added:
+        print(f"  {kind:<10} {name:<24} {x:>7} {z:>7}")
+    out = args.out or args.map
+    dump(world, out)
+    print(f"wrote {out} ({os.path.getsize(out) / 1e6:.1f} MB, {len(pop.added)} places added, "
+          f"{len(world['brushes'])} brushes, {len(world['things'])} things)")
+    if args.preview:
+        preview(world, args.preview)
+
+
+if __name__ == "__main__":
+    main()
