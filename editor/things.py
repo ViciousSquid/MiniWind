@@ -720,6 +720,47 @@ class Monster(Thing):
             print(f"[Monster] Custom sprite not found, using default: {custom_path}")
         return default_path
 
+    def get_render_snapshot(self):
+        """Return the actor state consumed by threaded rendering.
+
+        The render thread must not reach back into the live Thing. Keep the
+        resolved sprite, facing, and the weapon actually in hand in the snapshot.
+        """
+        idle = str(self.properties.get('custom_idle', '')).replace('\\\\', '/')
+        base = idle.rsplit('/', 1)[-1]
+        ttype = str(self.properties.get('type', '')).lower()
+        if 'is_head' in self.properties:
+            is_head = bool(self.properties['is_head'])
+        else:
+            is_head = (
+                ttype in ('npc', 'creature', 'monster')
+                and ('/heads/' in idle or idle.startswith('heads/'))
+                and base.startswith('head')
+            )
+        return {
+            'id': id(self),
+            'pos': list(self.pos),
+            'dead': self.properties.get('dead', False),
+            'is_shooting': self.properties.get('is_shooting', False),
+            'monster_type': self.properties.get('monster_type', 'human'),
+            'variant': self.properties.get('variant', '<None>'),
+            'sprite_width': self.properties.get('sprite_width', 128),
+            'sprite_height': self.properties.get('sprite_height', 128),
+            'custom_idle': self.properties.get('custom_idle', ''),
+            'custom_shoot': self.properties.get('custom_shoot', ''),
+            'hit_flash': self.properties.get('_hit_flash', 0.0),
+            'angle': float(self.properties.get('_facing', 0.0) or 0.0),
+            'sprite_path': self.get_sprite_path(),
+            'weapon_id': self.properties.get('_active_weapon') or self.properties.get(
+                'equipped_weapon',
+                (self.properties.get('equipment') or {}).get('weapon', '')
+                if isinstance(self.properties.get('equipment'), dict) else ''),
+            'is_head': is_head,
+            'gibbed': bool(self.properties.get('gibbed')),
+            'gib_sprite': self.properties.get('gib_sprite', ''),
+            'opacity': float(self.properties.get('_opacity', 1.0) or 0.0),
+        }
+
     def get_sprite_path(self) -> str:
         """
         Return the sprite path for the current monster type and state.
