@@ -50,7 +50,7 @@ def _wolf():
 
 
 def _install_engine_hook():
-    MonsterAI = _install_engine_hook()
+    from engine.monster_ai import MonsterAI
     MonsterAI._attack_style_hook = cl.attack_style_for
     return MonsterAI
 
