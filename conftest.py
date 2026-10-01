@@ -75,26 +75,52 @@ def pytest_collection_modifyitems(config, items):
 # ---------------------------------------------------------------------------
 
 def pytest_ignore_collect(collection_path, config):
-    """Do not import Qt/GL test modules in the dependency-light CI tier."""
-    if not os.environ.get("FIO_HEADLESS_TIER"):
+    """Keep dependency tiers from importing modules they cannot execute."""
+    headless = bool(os.environ.get("FIO_HEADLESS_TIER"))
+    markexpr = str(config.getoption("markexpr") or "").strip()
+    selected_gl = markexpr == "gl"
+    selected_benchmark = markexpr == "benchmark"
+    if not (headless or selected_gl or selected_benchmark):
         return False
     try:
         if not collection_path.is_file() or collection_path.suffix != ".py":
             return False
-        tree = ast.parse(collection_path.read_text(encoding="utf-8"),
-                         filename=str(collection_path))
+        source = collection_path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(collection_path))
     except (OSError, UnicodeDecodeError, SyntaxError):
         return False
-    nodes = ast.walk(tree)
-    for node in nodes:
-        if isinstance(node, ast.Import):
-            roots = [alias.name.split('.')[0] for alias in node.names]
-        elif isinstance(node, ast.ImportFrom):
-            roots = [node.module.split('.')[0]] if node.module else []
-        else:
-            continue
-        if "PyQt5" in roots or "OpenGL" in roots:
-            return True
+
+    if headless:
+        # The core tier intentionally has neither Qt nor OpenGL installed.
+        # Also catch module-level pytest.importorskip() declarations.
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                roots = [alias.name.split('.')[0] for alias in node.names]
+                if "PyQt5" in roots or "OpenGL" in roots:
+                    return True
+            elif isinstance(node, ast.ImportFrom):
+                root = node.module.split('.')[0] if node.module else ""
+                if root in ("PyQt5", "OpenGL"):
+                    return True
+            elif isinstance(node, ast.Call):
+                func = node.func
+                if (isinstance(func, ast.Attribute)
+                        and isinstance(func.value, ast.Name)
+                        and func.value.id == "pytest"
+                        and func.attr == "importorskip"
+                        and node.args
+                        and isinstance(node.args[0], ast.Constant)
+                        and node.args[0].value in ("PyQt5", "OpenGL")):
+                    return True
+
+    # -m gl / -m benchmark still imports every test module during collection
+    # unless we isolate the selected tier first. A non-GL module that imports
+    # PyOpenGL at module scope must never break the renderer tier before pytest
+    # can apply its mark expression.
+    if selected_gl and "pytest.mark.gl" not in source:
+        return True
+    if selected_benchmark and "pytest.mark.benchmark" not in source:
+        return True
     return False
 
 
