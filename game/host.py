@@ -1007,6 +1007,13 @@ class MiniwindGame:
                 from .ui import inspector
                 inspector.draw_world_lines(painter, viewport, w, h)
                 hud.draw(painter, session, w, h)
+                # The minimap, from the world's map picture (painted once,
+                # in the background, then cached per map).
+                from .ui import worldmap
+                if not getattr(session, "_worldmap_requested", False):
+                    session._worldmap_requested = True
+                    worldmap.ensure_for(logic, viewport)
+                worldmap.draw_minimap(painter, session, viewport, w, h)
                 # Speech bubbles over nearby NPCs (only during free play, not
                 # while a menu or conversation is open).
                 if session.open_screen is None and session.dialogue is None \
