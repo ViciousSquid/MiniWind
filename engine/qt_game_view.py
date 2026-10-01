@@ -98,6 +98,7 @@ class QtGameView(QOpenGLWidget):
         # Play-mode camera: "First Person" or "Overhead" (native top-down),
         # set from the editor's "Camera" dropdown.
         self.camera_mode = "First Person"
+        self._chosen_camera_mode = self.camera_mode
         # PERF: _is_overhead() is queried several times per rendered frame
         # (paintGL, sprite draw, HUD). Cache the normalised boolean and only
         # recompute when camera_mode changes — no per-frame string allocation.
@@ -736,6 +737,9 @@ class QtGameView(QOpenGLWidget):
         immediately in play mode; otherwise it applies on the next play session.
         """
         self.camera_mode = str(mode)
+        #: The user's choice; Play Mode may change the camera (a game, the
+        #: ``cam`` command) and leaving it comes back to this.
+        self._chosen_camera_mode = self.camera_mode
         lt = getattr(self, "logic_thread", None)
         if lt is not None and hasattr(lt, "set_camera_mode"):
             lt.set_camera_mode(self.camera_mode)
@@ -1356,6 +1360,10 @@ class QtGameView(QOpenGLWidget):
 
     def _paint_frame(self, render_state):
         """Draw one frame from *render_state* (None when not threaded)."""
+        # In Play Mode the logic thread owns the camera mode (a game or the
+        # ``cam`` command may switch it); the view's own drawing follows it.
+        if self.play_mode and self.logic_thread is not None:
+            self.camera_mode = getattr(self.logic_thread, 'camera_mode', self.camera_mode)
         if render_state:
             self._cached_health = render_state.player_health
             self._cached_max_health = render_state.player_max_health
@@ -2406,6 +2414,12 @@ class QtGameView(QOpenGLWidget):
             while QApplication.overrideCursor() is not None:
                 QApplication.restoreOverrideCursor()
             self.setCursor(Qt.ArrowCursor)
+            # Back to the camera the user chose; Play Mode's changes end here.
+            chosen = getattr(self, '_chosen_camera_mode', None)
+            if chosen is not None:
+                self.camera_mode = chosen
+                if self.logic_thread and hasattr(self.logic_thread, 'set_camera_mode'):
+                    self.logic_thread.set_camera_mode(chosen)
             if self.logic_thread:
                 self.logic_thread.set_play_mode(False)
                 self.logic_thread.set_player(None)

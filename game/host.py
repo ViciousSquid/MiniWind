@@ -161,6 +161,11 @@ def _perception_props():
     ]
 
 
+#: MiniWind is a top-down game: every play session starts in the overhead
+#: camera. The editor's own camera choice is untouched and comes back when
+#: play stops (QtGameView restores it).
+PLAY_CAMERA = "Overhead"
+
 #: The world-pause owner key MiniWind holds while a modal screen or a
 #: conversation is open (see LogicThread.set_world_paused).
 SCREEN_PAUSE = "miniwind.screen"
@@ -695,6 +700,9 @@ class MiniwindGame:
         cfg = dict(settings.properties) if settings is not None else {}
         host = getattr(self, "_host", None)
         globals_store = host.globals if host is not None else None
+        set_camera = getattr(logic, "set_camera_mode", None)
+        if set_camera is not None:
+            set_camera(PLAY_CAMERA)
         session = MiniwindSession(logic, cfg=cfg, globals_store=globals_store)
         session.restore()
         session.install()
