@@ -75,9 +75,20 @@ def _guard(pos):
 
 # --- faction model handed to the engine ------------------------------------
 def test_faction_model_is_installed_on_play():
+    class _AI:
+        hostility = None
+
+        def set_hostility(self, model):
+            self.hostility = model
+
     s = _session([], _FakePlayer([0, 0, 0]))
+    s.logic.monster_ai = _AI()
     s.install()
-    assert s.logic._faction_hostile is factions.is_hostile
+    try:
+        assert s.logic.monster_ai.hostility.is_hostile("bandits", "villagers")
+    finally:
+        s.uninstall()
+    assert s.logic.monster_ai.hostility is None          # removed with the session
     assert factions.is_hostile("bandits", "villagers")
     assert factions.is_hostile("guards", "bandits")
     assert not factions.is_hostile("wildlife", "villagers")

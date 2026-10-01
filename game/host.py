@@ -721,8 +721,6 @@ class MiniwindGame:
         ai = getattr(logic, "monster_ai", None)
         if ai is not None:
             ai.ENEMY_BATCH_MIN_MONSTERS = ENEMY_BATCH_MIN_ACTORS
-            from . import combat_loadout
-            combat_loadout.install_engine_hook()
         session = MiniwindSession(logic, cfg=cfg, globals_store=globals_store)
         session.restore()
         session.install()

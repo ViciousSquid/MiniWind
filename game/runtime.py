@@ -535,10 +535,12 @@ class MiniwindSession:
             logic.blood_stain_sprites = tuple(gib.stain_paths(magical=False))
         except Exception as exc:
             print(f"[MiniWind] blood stain art unavailable: {exc}")
-        # Teach the engine's team-aware MonsterAI MiniWind's faction relationships
-        # so wild animals stay neutral to villagers while bandits are hostile to
-        # both — instead of "every different team is an enemy".
-        logic._faction_hostile = factions.is_hostile
+        # Teach the engine's MonsterAI MiniWind's faction relationships and
+        # who hunts the player (game/faction_ai.py), so wild animals stay
+        # neutral to villagers while bandits are hostile to both, instead of
+        # "every different team is an enemy, everyone hunts the player".
+        from . import faction_ai
+        faction_ai.install(logic)
         self.spawn_creature_points()   # materialise CreatureSpawn points once
         self._assign_npc_handedness()  # random handedness (left rare) where unset
         self._wire_quest_givers()      # make quest givers offer their quests
@@ -553,8 +555,8 @@ class MiniwindSession:
             self.logic._player_damage_filter = None
         if getattr(self.logic, "player_fire_handler", None) == self.fire_player_weapon:
             self.logic.player_fire_handler = None
-        if getattr(self.logic, "_faction_hostile", None) is factions.is_hostile:
-            self.logic._faction_hostile = None
+        from . import faction_ai
+        faction_ai.uninstall(self.logic)
 
     def _mitigate_incoming(self, raw_damage, damage_kind="physical") -> float:
         c = self.game.character
