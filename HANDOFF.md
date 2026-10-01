@@ -72,12 +72,11 @@ before, just on the new 2.5.10 engine"*.
   camera". This is the clean Fio-side version of §5. It's gated on *Big World
   running AND the camera overhead*; Big World off, or first person, is
   unchanged. It has no map setting.
-- **Not upstream anywhere:** plugin API 1.5.0, world pause and actor pick. Those
-  Fio commits exist only in MiniWind's vendored copy and as patches in
-  [`docs/handoff/fio-patches/`](docs/handoff/fio-patches/). Canary's
-  `plugins/api.py` is still `API_VERSION = "1.4.0"`.
-  - `0001` is based on `f612655e`; `0002`/`0003` on that plus `b0598fb`.
-  - Ask the user before proposing them upstream.
+- **`Canary` `28b688b`, `2d8b603`, `08f97c1`:** plugin API 1.5.0, world pause
+  and Play Mode actor pick, and their API.md docs. These are the same commits
+  MiniWind vendors. Fio's full suite passes on `08f97c1`: 4,067 passed, 5
+  skipped. [`docs/handoff/fio-patches/`](docs/handoff/fio-patches/) keeps the
+  original patches for reference only.
 
 ---
 
