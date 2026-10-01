@@ -406,3 +406,47 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
     painter.setPen(T.GOLD_BRIGHT)
     painter.drawText(QRectF(centre.x() - 10, y0 - 2, 20, 16), int(Qt.AlignCenter), "N")
     painter.restore()
+
+
+# ------------------------------------------------------------------ full map
+
+def map_features(session):
+    """What the full map marks, read off the session.
+
+    ``{"player": (x, z, angle) | None, "places": [(name, x, z)],
+    "quests": [(name, x, z, quest_id, tracked)]}`` -- the places are the
+    *discovered* location markers (an undiscovered town is not on your map),
+    the quests every active quest whose objective has a place in the world.
+    """
+    out = {"player": None, "places": [], "quests": []}
+    logic = getattr(session, "logic", None)
+    player = getattr(logic, "player", None)
+    if player is not None and getattr(player, "pos", None) is not None:
+        out["player"] = (float(player.pos[0]), float(player.pos[2]),
+                         float(getattr(player, "angle", 0.0)))
+    try:
+        markers = session._markers_of_kind("location")
+    except Exception:
+        markers = []
+    seen = set()
+    for m in markers:
+        p = getattr(m, "properties", {}) or {}
+        name = str(p.get("place_name") or "").strip()
+        if not name or not p.get("_discovered") or name in seen:
+            continue
+        seen.add(name)
+        out["places"].append((name, float(m.pos[0]), float(m.pos[2])))
+    try:
+        quests = session.game.quests.active_quests()
+        tracked = session.tracked_quest_id()
+    except Exception:
+        quests, tracked = [], ""
+    for q in quests:
+        try:
+            pos = session._arrow_destination(q)
+        except Exception:
+            pos = None
+        if pos is not None:
+            out["quests"].append((q.name, float(pos[0]), float(pos[2]), q.id,
+                                  bool(tracked) and q.id == tracked))
+    return out

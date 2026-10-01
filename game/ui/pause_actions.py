@@ -239,6 +239,16 @@ class PauseActions:
                 apply()
 
     # --------------------------------------------------------------- leaving
+    def pause_menu_map_data(self):
+        """``(world map, features)`` for the MAP page (see game/ui/worldmap)."""
+        from . import worldmap
+        session = self._session()
+        if session is None:
+            return worldmap.WORLD, {"player": None, "places": [], "quests": []}
+        if not worldmap.WORLD.ready and not worldmap.WORLD.building:
+            worldmap.ensure_for(self._logic(), self.view)
+        return worldmap.WORLD, worldmap.map_features(session)
+
     def pause_menu_to_editor(self):
         """Leave the game and hand the map back to the editor."""
         window = self.window
