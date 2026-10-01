@@ -999,6 +999,10 @@ class MiniwindGame:
 
             if not session.needs_char_creation and session.open_screen != "charcreate":
                 hud.draw_time_tint(painter, session, w, h)
+                # Inspector lines (console 'inspect') lie on the world, under
+                # the HUD; their windows float above everything.
+                from .ui import inspector
+                inspector.draw_world_lines(painter, viewport, w, h)
                 hud.draw(painter, session, w, h)
                 # Speech bubbles over nearby NPCs (only during free play, not
                 # while a menu or conversation is open).

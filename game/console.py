@@ -310,15 +310,22 @@ def cmd_inspect(ctx, args):
     """inspect | mind -- pause the world and click an actor to inspect it.
 
     Arms Fio's Play Mode actor pick (``MainWindow.begin_actor_pick``): the
-    world freezes and the cursor is freed; the next click on an actor opens
-    Fio's Entity Inspector on it, which shows MiniWind's mental-state view for
-    NPCs, creatures and monsters (see ``host._miniwind_inspection``). Esc or a
-    right-click cancels. Play Mode only."""
+    world freezes and the cursor is freed; the next click on an NPC, creature
+    or monster opens a floating debug window on it (game/ui/inspector.py):
+    its schedule, where it is heading and why, and its AI state, with a line
+    in the world to its destination. Esc or a right-click cancels. Play Mode
+    only."""
     if not ctx.play_mode:
         debug_log("Error", "inspect: Play Mode only.")
         return None
+    view = getattr(ctx.main_window, "view_3d", None)
+
+    def _open(actor, view=view):
+        from .ui import inspector
+        inspector.open_inspector(view, actor)
+
     begin = getattr(ctx.main_window, "begin_actor_pick", None)
-    if begin is None or not begin():
+    if begin is None or view is None or not begin(_open):
         debug_log("Error", "inspect: the actor picker is not available in this view.")
         return None
     toast = getattr(ctx.main_window, "show_toast", None)
@@ -338,7 +345,7 @@ COMMANDS = (
      "[events | crimes | actors | why|knows|forget <name> | tell <name> <id> | emit …]"
      " — Reactive simulation (Play Mode)"),
     (("inspect", "mind"), cmd_inspect,
-     "— Pause and click an actor for its live mental state (Play Mode)"),
+     "— Pause and click an actor: schedule, destination, AI state (Play Mode)"),
 )
 
 

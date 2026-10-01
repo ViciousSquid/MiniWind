@@ -56,6 +56,7 @@ from engine.logic_thread import LogicThread
 from engine.constants import RENDER_MODE_LIT, RENDER_MODE_UNLIT, RENDER_MODE_WIREFRAME, RENDER_MODE_VERTEX
 from editor.debug_console import DebugConsole, debug_log
 from .sysmon import SysMon
+from .floating_windows import WindowManager
 
 # Pygame for gamepad support
 import pygame
@@ -100,6 +101,19 @@ def _game_pointer_open(view) -> bool:
         return bool(pointer.wants_pointer())
     except Exception:
         return False
+
+
+def _window_wants_cursor(view) -> bool:
+    """Whether an open floating window asks for a free cursor in play
+    (``FloatingWindow.wants_cursor``), so it can be dragged and closed."""
+    manager = getattr(view, 'window_manager', None)
+    if (manager is None or not getattr(view, 'play_mode', False)
+            or getattr(view, 'console_overlay_active', False)
+            or getattr(view, '_actor_pick', None) is not None
+            or _play_menu_open(view)):
+        return False
+    return any(getattr(w, 'active', False) and getattr(w, 'wants_cursor', False)
+               for w in manager.windows)
 
 
 class QtGameView(QOpenGLWidget):
@@ -336,6 +350,11 @@ class QtGameView(QOpenGLWidget):
         #: to it instead of the camera and the fire buttons.
         self.game_pointer = None
         self._game_pointer_shown = False
+
+        #: Floating, draggable, closable panels over the view, SysMon-style
+        #: (engine/floating_windows.py): debug popups a game or tool opens.
+        #: Play windows are closed when Play stops.
+        self.window_manager = WindowManager()
 
         self.console_overlay_active = False
         self._console_input = QLineEdit(self)
@@ -1908,6 +1927,10 @@ class QtGameView(QOpenGLWidget):
                        width=self.width(), height=self.height(),
                        play_mode=self.play_mode)
 
+        # Floating windows (inspectors and the like) over the game's overlay.
+        if self.window_manager.windows:
+            self.window_manager.draw_all(painter)
+
         # The play menu is modal: painted last, over the game's own overlay.
         if _play_menu_open(self):
             self.play_menu.draw(painter)
@@ -2543,6 +2566,7 @@ class QtGameView(QOpenGLWidget):
             if self.play_menu is not None and self.play_menu.active:
                 self.play_menu.close()
             self._game_pointer_shown = False
+            self.window_manager.clear()
             self._actor_pick = None
             self.actor_pick_hover = None
             if self.console_overlay_active:
@@ -3167,6 +3191,14 @@ class QtGameView(QOpenGLWidget):
         if _play_menu_open(self):
             self.play_menu.handle_mouse_press(event)
             return
+        # Floating windows take clicks on themselves first: dragging, folding
+        # or closing one never leaks through to the game or the editor.
+        manager = getattr(self, 'window_manager', None)
+        if (manager is not None and manager.windows
+                and event.button() == Qt.LeftButton
+                and manager.handle_mouse_press(event)):
+            self.update()
+            return
         if _game_pointer_open(self):
             self.game_pointer.pointer_press(event)
             return
@@ -3305,8 +3337,19 @@ class QtGameView(QOpenGLWidget):
         if _play_menu_open(self):
             self.play_menu.handle_mouse_move(event)
             return
+        manager = getattr(self, 'window_manager', None)
+        if (manager is not None
+                and manager.handle_mouse_move(event, self.width(), self.height())):
+            self.update()
+            return
         if _game_pointer_open(self):
             self.game_pointer.pointer_move(event)
+            return
+        if _window_wants_cursor(self):
+            # A free cursor for a window: no mouse-look, no recentring.
+            pointer = getattr(self, 'game_pointer', None)
+            if pointer is not None:
+                pointer.pointer_move(event)
             return
         if self.sysmon.handle_mouse_move(event, self.play_mode, self.width(), self.height()):
             self.update()
@@ -3377,6 +3420,10 @@ class QtGameView(QOpenGLWidget):
 
     def mouseReleaseEvent(self, event):
         if _play_menu_open(self):
+            return
+        manager = getattr(self, 'window_manager', None)
+        if manager is not None and manager.handle_mouse_release(event):
+            self.update()
             return
         if self.terrain_sculpt_painting and event.button() == Qt.LeftButton:
             self.terrain_sculpt_painting = False
@@ -3568,8 +3615,9 @@ class QtGameView(QOpenGLWidget):
         self.update()
 
     def _sync_game_pointer(self):
-        """Show the cursor while the game wants the pointer, recapture it after."""
-        want = _game_pointer_open(self)
+        """Show the cursor while the game wants the pointer (or a floating
+        window does), recapture it after."""
+        want = _game_pointer_open(self) or _window_wants_cursor(self)
         if want == getattr(self, '_game_pointer_shown', False):
             return
         self._game_pointer_shown = want
