@@ -242,3 +242,37 @@ def test_clearing_an_arrest_calls_off_any_chase():
     session._clear_arrest()
     assert session._arrest_pursuers == []
     assert guard.properties["aggression"] == "defensive"
+
+
+# -------------------------------------------------------------------- sound
+
+def test_a_guard_stopping_the_player_says_one_of_the_arrest_lines(monkeypatch):
+    """Either arrest1.mp3 or arrest2.mp3, picked at random, once per stop."""
+    import random
+    played = []
+
+    class _Sounding(_Session):
+        play_ui_sound = MiniwindSession.play_ui_sound
+
+        def start_dialogue(self, npc, player):
+            self.talking_to = npc
+
+    for seed in range(12):
+        guard = _guard((10.0, 0.0, 0.0))
+        prison = _marker((5000.0, 0.0, 0.0), "prison")
+        session = _Sounding([guard, prison], player_pos=(0.0, 0.0, 0.0), bounty=200)
+        session.rng = random.Random(seed)
+        session.logic.game_state = type("GS", (), {
+            "queue_sound": staticmethod(played.append)})()
+        session._arrest_guard = guard
+        session._arrest_state = "approach"
+
+        session._update_arrest()
+        assert session._arrest_state == "ready"
+        session._update_arrest()                     # still standing there: no repeat
+
+    files = [p["file"] for p in played]
+    assert len(files) == 12                          # one per arrest, none repeated
+    assert set(files) == set(runtime.ARREST_SOUNDS)  # both lines get used
+    for name in runtime.ARREST_SOUNDS:               # and the files are in the game
+        assert os.path.isfile(os.path.join(runtime.SOUND_DIR, name))

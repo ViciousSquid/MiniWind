@@ -239,6 +239,8 @@ class _PlayerActor:
 #: purchase or sale makes.
 SOUND_DIR = os.path.join("assets", "sounds")
 TRANSACTION_SOUND = "transaction.mp3"
+#: A guard stopping the player to arrest them says one of these, at random.
+ARREST_SOUNDS = ("arrest1.mp3", "arrest2.mp3")
 
 
 class StateStore:
@@ -2359,6 +2361,7 @@ class MiniwindSession:
                 guard.properties["_arrest_state"] = "ready"
                 guard.properties.pop("_dest", None)
                 self.notify("The guard stops you: you are wanted for a crime.", 4.0)
+                self.play_ui_sound(self.rng.choice(ARREST_SOUNDS))
                 player = getattr(self.logic, "player", None)
                 if player is not None:
                     self.start_dialogue(guard, player)
