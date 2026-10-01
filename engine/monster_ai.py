@@ -139,26 +139,22 @@ class MonsterAI:
     # Main update entry point
     # -------------------------------------------------------------------------
 
+    # Optional application hook. Fio remains standalone: with no hook installed
+    # an actor keeps its authored attack style and no MiniWind/game package is
+    # imported from the engine.
+    _attack_style_hook = None
+
     @staticmethod
     def _attack_style_for(thing, state, in_melee: bool) -> str:
-        """Choose the actor's current combat style, rebuilding only on a range-band change.
+        """Choose the actor's current combat style via an optional game hook.
 
-        The MiniWind game layer owns item/style knowledge. The engine only keeps
-        the cheap state transition here, so an ordinary tick does not rescan the
-        actor's inventory.
+        The engine owns the cheap range-band transition; an installed game layer
+        owns inventory/item/style knowledge. With no hook, the authored style is
+        preserved exactly.
         """
-        from game import combat_loadout
-
-        band = bool(in_melee)
-        if state.get('style_band') is not band:
-            state['style_band'] = band
-            loadout = combat_loadout.build_loadout(thing.properties)
-            style = combat_loadout.choose_style(loadout, band)
-            state['attack_style'] = style
-            if combat_loadout.has_choice(loadout):
-                thing.properties['_active_weapon'] = combat_loadout.weapon_for(
-                    loadout, style)
-            return style
+        hook = MonsterAI._attack_style_hook
+        if hook is not None:
+            return hook(thing, state, in_melee)
         return state.get('attack_style') or str(
             thing.properties.get('attack_style', '') or '').lower()
 
