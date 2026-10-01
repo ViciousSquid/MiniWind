@@ -113,3 +113,9 @@ class BigWorldSettings(Thing):
 
     def sim_near_radius(self) -> float:
         return float(self._get("sim_near_radius"))
+
+    def terrain_stream(self) -> bool:
+        return bool(self._get("terrain_stream"))
+
+    def fit_overhead_camera(self) -> bool:
+        return bool(self._get("fit_overhead_camera"))

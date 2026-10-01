@@ -67759,11 +67759,13 @@
                 "activation_radius": 2048.0,
                 "deactivation_radius": 2304.0,
                 "sim_near_radius": 1024.0,
-                "show_cell_debug": true,
+                "show_cell_debug": false,
                 "terrain_fill": false,
                 "terrain_infinite": false,
                 "terrain_stream_radius": 0.0,
-                "disk_streaming": false
+                "disk_streaming": false,
+                "fit_overhead_camera": true,
+                "terrain_stream": true
             },
             "io_connections": []
         },

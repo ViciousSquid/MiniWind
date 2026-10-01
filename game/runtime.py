@@ -22,6 +22,8 @@ import random
 from itertools import chain as _chain
 from typing import Dict, List, Optional
 
+import numpy as np
+
 from .facing import face_heading
 from engine.change_journal import touch as _journal
 from engine.spatial import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
@@ -61,6 +63,13 @@ _current_session = None
 WORLD_INDEX_MIN_ACTORS = 32
 
 DECISION_INTERVAL = 0.4
+#: When Big World's tiers are fitted to the overhead camera, ACTIVE means "off
+#: screen": such an NPC decides on one decision pass in this many and moves on
+#: one tick in this many, carrying the ticks it skipped.
+OFFSCREEN_STRIDE = 4
+#: The world's proximity checks (pickups, books, triggers, locations, quest
+#: conditions) run this often rather than every tick.
+PROXIMITY_INTERVAL = 0.1
 NPC_WALK_SPEED = 90.0
 #: How much quicker a frightened villager moves. Applied only while the NPC is
 #: in the FLEE state, which the decision tick re-evaluates constantly and drops
@@ -376,6 +385,8 @@ class MiniwindSession:
         #: pass matching their row parity, so half of the near world re-plans
         #: each pass and the cost is spread instead of spiking.
         self._decision_phase = 0
+        self._offscreen_tick = 0
+        self._proximity_accum = 0.0
         #: Guards currently running the player down (see _start_arrest_pursuit).
         self._arrest_pursuers = []
         #: Active Wisp companion light, or None. See _spawn_wisp / _update_wisp.
@@ -716,13 +727,16 @@ class MiniwindSession:
         #   TIER_NEAR    full — decide every pass, move every tick
         #   TIER_ACTIVE  decide every other pass (staggered by row so the work
         #                spreads evenly), still move every tick so nothing the
-        #                player can see stutters
+        #                player can see stutters -- unless Big World's tiers are
+        #                fitted to the camera (sim_tiers_fit_view), when ACTIVE
+        #                is off screen: decide one pass in OFFSCREEN_STRIDE and
+        #                move one tick in OFFSCREEN_STRIDE, carrying the rest
         #   TIER_DISTANT no per-tick work at all — one coarse movement step per
         #                decision pass, carrying the whole elapsed interval
         #   TIER_DORMANT nothing; the streamer has parked it
         #
         # Observable behaviour is unchanged: everything inside the overhead
-        # camera's view is in NEAR or ACTIVE, and both move every tick.
+        # camera's view moves every tick (NEAR when fitted, else NEAR or ACTIVE).
         hour_int = int(self.clock.hour)
         # The NPCs worth ticking at all: the engine's live actor set, which
         # already excludes anything the streamer has parked. On a streamed world
@@ -734,6 +748,11 @@ class MiniwindSession:
         # below rather than asking again per pass per actor.
         tier_of = self._tier_of
         npc_tiers = [tier_of(n) for n in npcs]
+        # Fitted to the camera, ACTIVE is off screen, and nobody can see an
+        # off-screen NPC think or step less often.
+        offscreen = bool(getattr(self.logic, "sim_tiers_fit_view", False))
+        stride = OFFSCREEN_STRIDE if offscreen else 1
+        self._offscreen_tick = (self._offscreen_tick + 1) % OFFSCREEN_STRIDE
         self._decision_accum += delta
         decided = (self._decision_accum >= DECISION_INTERVAL
                    or hour_int != self._last_hour_int)
@@ -743,6 +762,8 @@ class MiniwindSession:
             self._last_hour_int = hour_int
             self._decision_phase ^= 1
             phase = self._decision_phase
+            pass_no = getattr(self, "_decision_pass", 0) + 1
+            self._decision_pass = pass_no
             self._refresh_actor_cache()
             for i, npc in enumerate(npcs):
                 tier = npc_tiers[i]
@@ -757,12 +778,22 @@ class MiniwindSession:
                     self._decide_distant(npc)
                     self._move(npc, coarse_delta)
                     continue
-                if tier == TIER_ACTIVE and (i & 1) != phase:
-                    continue
+                if tier == TIER_ACTIVE:
+                    if offscreen:
+                        if (i + pass_no) % OFFSCREEN_STRIDE:
+                            continue
+                    elif (i & 1) != phase:
+                        continue
                 self._decide(npc)
         for i, npc in enumerate(npcs):
-            if npc_tiers[i] >= TIER_DISTANT:
+            tier = npc_tiers[i]
+            if tier >= TIER_DISTANT:
                 continue          # moved coarsely on the decision pass above
+            if tier == TIER_ACTIVE and stride > 1:
+                if (i + self._offscreen_tick) % stride:
+                    continue
+                self._move(npc, delta * stride)
+                continue
             self._move(npc, delta)
 
         # Turn any NPC deaths (from player or engine combat) into persistent
@@ -779,12 +810,16 @@ class MiniwindSession:
         # their goods. Runs on game hours, so it is unaffected by frame rate.
         self._tick_sim(delta)
 
-        # world placeables: item pickups, spellbooks and quest triggers
-        self._tick_pickups()
-        self._tick_spellbooks()
-        self._tick_triggers()
-        self._tick_locations()
-        self._tick_quests()
+        # world placeables: item pickups, spellbooks and quest triggers --
+        # proximity checks, so a tenth of a second is soon enough.
+        self._proximity_accum += delta
+        if self._proximity_accum >= PROXIMITY_INTERVAL:
+            self._proximity_accum = 0.0
+            self._tick_pickups()
+            self._tick_spellbooks()
+            self._tick_triggers()
+            self._tick_locations()
+            self._tick_quests()
 
         # Decay player stab animation
         if self._attack_anim_time > 0:
@@ -3502,15 +3537,18 @@ class MiniwindSession:
         wi = self._world_index()
         if wi is None:
             return self.npcs()
-        out = []
-        for t in wi.actors:
-            p = t.properties
-            if p.get("dead"):
-                continue
-            if str(p.get("type", "")).replace("_", "").lower() != "npc":
-                continue
-            out.append(t)
-        return out
+        # The index's alive mask already excludes the dead and whatever Big
+        # World has parked (nothing below would touch a parked NPC anyway), so
+        # only the resident rows are visited, and NPC-ness is one set lookup.
+        bucket = self._type_buckets().get("npc", ())
+        cached = getattr(self, "_npc_id_cache", None)
+        if cached is None or cached[0] is not bucket or cached[1] != len(bucket):
+            cached = self._npc_id_cache = (bucket, len(bucket),
+                                           frozenset(id(t) for t in bucket))
+        npc_ids = cached[2]
+        actors = wi.actors
+        return [actors[i] for i in np.flatnonzero(wi.alive[:wi.n]).tolist()
+                if id(actors[i]) in npc_ids]
 
     def _rally_mask(self, wi):
         """Per-row boolean: this actor has rallied. Built once per tick, so the

@@ -3627,6 +3627,19 @@ layout (location = 10) in float iInstanceAlpha;
         return slots[(dx * dx + dz * dz) <= limit_sq]
 
     @staticmethod
+    def _cull_brush_slots_frustum(table, slots, planes):
+        """The *slots* whose AABB meets the view frustum *planes*."""
+        if not len(slots):
+            return slots
+        c = table.center[slots]
+        h = table.half[slots]
+        keep = np.ones(len(slots), dtype=bool)
+        for a, b, cc, d in planes:
+            reach = abs(a) * h[:, 0] + abs(b) * h[:, 1] + abs(cc) * h[:, 2]
+            keep &= (a * c[:, 0] + b * c[:, 1] + cc * c[:, 2] + d + reach) >= 0.0
+        return slots[keep]
+
+    @staticmethod
     def _sort_slots_by_distance(table, slots, cx, cz, reverse=True):
         """Depth-order *slots* from the projection's centres.
 

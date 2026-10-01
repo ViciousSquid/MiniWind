@@ -1041,6 +1041,19 @@ class Expander:
                 placed += 1
         self.report(f"{placed} trees scattered over the new land")
 
+    # -- streaming -------------------------------------------------------
+    #: Big World settings for a world this size seen from overhead: residency
+    #: and simulation fitted to the screen, terrain streamed around the camera
+    #: inside its own bounds (so the mountains' heightmap stays put), and no
+    #: debug overlay in the shipped game.
+    STREAMING = {"fit_overhead_camera": True, "terrain_stream": True,
+                 "terrain_fill": False, "show_cell_debug": False}
+
+    def tune_streaming(self):
+        for t in self.world["things"]:
+            if str(t.get("type", "")).lower() == "bigworldsettings":
+                _props(t).update(self.STREAMING)
+
     # -- all of it ---------------------------------------------------------
     def run(self):
         self.plan()
@@ -1053,6 +1066,7 @@ class Expander:
         self.build_shrine()
         self.add_wilds()
         self.scatter_trees()
+        self.tune_streaming()
         self.world["_miniwind_world"] = {"expanded": True, "spread": SPREAD,
                                          "chunks": self.chunks}
         return self.world

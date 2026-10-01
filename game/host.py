@@ -204,6 +204,11 @@ def _miniwind_inspection(entity, logic):
             "sections": sections}
 
 
+#: See on_play_start: the actor count from which the AI's batched enemy search
+#: is used instead of its per-actor walk.
+ENEMY_BATCH_MIN_ACTORS = 16
+
+
 class MiniwindGame:
     """The native MiniWind game layer.
 
@@ -709,6 +714,13 @@ class MiniwindGame:
         set_camera = getattr(logic, "set_camera_mode", None)
         if set_camera is not None:
             set_camera(PLAY_CAMERA)
+        # Nearly every MiniWind actor carries a team and asks for its nearest
+        # enemy every AI tick, so the batched search beats the per-actor walk
+        # at far smaller counts than Fio's default break-even assumes (that
+        # was measured with a few queries a tick; a village asks dozens).
+        ai = getattr(logic, "monster_ai", None)
+        if ai is not None:
+            ai.ENEMY_BATCH_MIN_MONSTERS = ENEMY_BATCH_MIN_ACTORS
         session = MiniwindSession(logic, cfg=cfg, globals_store=globals_store)
         session.restore()
         session.install()

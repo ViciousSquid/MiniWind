@@ -973,6 +973,12 @@ class Renderer_F(BaseRenderer):
         solid_opaque = groups['solid']
         transparent_brushes = groups['transparent']
         glow_brushes = groups['glow']
+        # Water and glass each copy the whole frame for their refraction, so
+        # only ask for that when one of them is actually in view.
+        if len(groups['water']) or len(groups['glass']):
+            _planes = self._frustum_planes(projection * view)
+            for key in ('water', 'glass'):
+                groups[key] = self._cull_brush_slots_frustum(table, groups[key], _planes)
         water_brushes = groups['water']
         glass_brushes = groups['glass']
         fog_volumes = groups['fog']

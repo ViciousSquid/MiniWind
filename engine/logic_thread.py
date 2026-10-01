@@ -1809,6 +1809,36 @@ class LogicThread(threading.Thread):
         up = self._safe_up(direction, glm.vec3(head_x, 0.0, head_z))
         return cam_pos, direction, up
 
+    def overhead_ground_footprint(self):
+        """Half extents ``(hx, hz)`` of the ground the overhead camera shows.
+
+        The axis-aligned box around the player that holds the four points
+        where the view's corner rays meet the ground at the player's height,
+        or None when the camera is not overhead (or looks at the horizon, so
+        the view has no ground edge). Used to fit world streaming and
+        simulation tiers to what is actually on screen.
+        """
+        if not self.is_overhead() or self.player is None:
+            return None
+        pos = self.player.pos
+        cam, direction, up = self._overhead_camera(pos, getattr(self.player, "angle", 0.0))
+        d = glm.normalize(glm.vec3(direction))
+        right = glm.normalize(glm.cross(d, glm.vec3(up)))
+        true_up = glm.cross(right, d)
+        tan_v = math.tan(math.radians(90.0) / 2.0)
+        tan_h = tan_v * max(0.1, float(getattr(self, "frustum_aspect", 16.0 / 9.0)))
+        ground = float(pos.y)
+        hx = hz = 0.0
+        for sx in (-1.0, 1.0):
+            for sy in (-1.0, 1.0):
+                ray = d + true_up * (sy * tan_v) + right * (sx * tan_h)
+                if ray.y >= -1e-3:
+                    return None
+                t = (ground - cam.y) / ray.y
+                hx = max(hx, abs(cam.x + ray.x * t - pos.x))
+                hz = max(hz, abs(cam.z + ray.z * t - pos.z))
+        return hx, hz
+
     @staticmethod
     def _safe_up(direction, up):
         """A non-degenerate up vector for ``glm.lookAt`` (see _overhead_camera)."""
