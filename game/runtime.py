@@ -4205,6 +4205,22 @@ class MiniwindSession:
         return (eq.equipped_id(c, "weapon") or "",
                 str(getattr(c, "handed", "right") or "right"))
 
+    @staticmethod
+    def overhead_weapon_kind(weapon_id) -> str:
+        """``"melee"``, ``"bow"`` or ``"staff"``: how the viewport animates a
+        held weapon's attack, from the item database's own classification."""
+        from . import combat_loadout
+        style = combat_loadout._item_style(weapon_id)
+        if style == combat_loadout.MAGIC:
+            return "staff"
+        if style in (combat_loadout.MELEE, combat_loadout.BOW):
+            return style
+        return ""
+
+    def overhead_player_flash(self) -> float:
+        """Seconds left of the player's red hurt flash (0 when none)."""
+        return float(self._player_flash or 0.0)
+
     def overhead_pose(self):
         c = self.game.character
         armed = bool(eq.equipped_id(c, "weapon")) or bool(c.active_spell)

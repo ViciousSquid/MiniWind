@@ -47491,6 +47491,7 @@
             "properties": {
                 "type": "bigworldsettings",
                 "name": "BigWorldSettings_1",
+                "render_mode": "model",
                 "id": "847067f8-8f14-4808-9504-a4faf726bced",
                 "enabled": true,
                 "activation_radius": 2048.0,

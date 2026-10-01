@@ -1,20 +1,25 @@
-"""Ownership guards for MiniWind on Fio 2.4.1.
+"""Ownership guards for MiniWind on Fio 2.5.10.
 
 MiniWind adds game meaning to Fio primitives; it does not reimplement Fio's
 infrastructure. These tests pin the dependency direction and the ownership
-decisions taken when MiniWind moved onto Fio 2.4.1:
+decisions MiniWind keeps on Fio 2.5.10 (Fio's own guards, in
+test_backport_boundaries.py, cover Fio's features surviving):
 
 * Fio's packages (``engine``, ``editor``, ``plugins``, ``player``) never import
-  the ``game`` package. The game is installed by the application bootstrap.
+  the ``game`` package. The application bootstrap loads it by name from
+  settings.ini ``[Startup] game_module``.
 * World streaming, residency and simulation tiers belong to Fio's Big World
   plugin; there is no MiniWind streaming layer or ``BigWorldSettings`` entity.
 * Typed state is ``LogicState``; the pre-2.4 key/value store is gone entirely.
 * Shooting is the engine's: fire buttons reach the game through
   ``LogicThread.player_fire_handler``.
-* Fio 2.4.1 functionality survives the merge.
+* MiniWind's product choices (title, overhead play, no procedural map
+  generator) are applied by the game's editor integration, not by editing
+  Fio's editor.
 """
 
 import ast
+import importlib
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -60,7 +65,14 @@ def test_fio_packages_never_import_the_game():
 
 
 def test_the_game_is_installed_by_the_application_bootstrap():
-    assert "_miniwind.install()" in _read("main.py")
+    import configparser
+    main = _read("main.py")
+    assert "config.get('Startup', 'game_module'" in main
+    assert "game_module = importlib.import_module(game_name)" in main
+    assert "game_module.install()" in main
+    config = configparser.ConfigParser()
+    config.read(ROOT / "settings.ini")
+    assert config.get("Startup", "game_module") == "game"
     assert "import game" not in _read("editor/main_window.py")
 
 
@@ -107,7 +119,10 @@ def test_the_actor_index_is_the_games():
 
 def test_the_pre_2_4_key_value_store_is_removed_from_code():
     offenders = []
-    for path in _sources(*FIO_PACKAGES, "game"):
+    # MiniWind's own code. Fio's tests/logic/test_logic_state.py guards the
+    # engine side (upstream still lists an inert "logickeyvaluestore" token in
+    # Big World's persistent types, which is Fio's to remove).
+    for path in _sources("game"):
         rel = path.relative_to(ROOT)
         if "tests" in rel.parts:
             continue
@@ -138,63 +153,11 @@ def test_fire_buttons_go_through_the_engine_shot_path():
 # Removed from MiniWind
 # ---------------------------------------------------------------------------
 
-def test_procedural_map_generator_is_removed():
-    for rel in ("editor/procedural_generator.py", "editor/procedural_map_gen.py",
-                "tools/procedural_map_gen.py"):
-        assert not (ROOT / rel).exists(), rel
-    for rel in ("editor/main_window.py", "editor/ui.py"):
-        src = _read(rel)
-        assert "procedural_generator" not in src, rel
-        assert "procedural_action" not in src, rel
-
-
-# ---------------------------------------------------------------------------
-# Fio 2.4.1 functionality preserved
-# ---------------------------------------------------------------------------
-
-def test_angled_brush_geometry_helpers_survive():
-    src = _read("engine/brush_geometry.py")
-    for fn in ("def face_key(", "def iter_surface_faces(", "def find_surface_face(",
-               "def face_plane_index(", "def ray_convex_face(", "def _ray_triangle("):
-        assert fn in src, f"Fio geometry helper missing: {fn}"
-
-
-def test_angled_faces_are_pickable_in_the_3d_view():
-    src = _read("engine/qt_game_view.py")
-    assert "brush_geometry.ray_convex_face(convex, ray_o_t, ray_d_t)" in src
-
-
-def test_cut_face_highlight_and_texturing_survive():
-    core = _read("engine/renderer_core.py")
-    for name in ("_geo_face_highlight_verts", "_draw_face_highlight_verts", "_geo_run_plane"):
-        assert name in core
-    face_tex = _read("editor/face_texture.py")
-    assert "def face_plane(" in face_tex
-    assert "def is_cut_face(" in face_tex
-    assert "face_texture" in _read("editor/surface_inspector.py")
-    assert "brush_geometry.face_plane_index(brush, face_name)" in _read("editor/main_window.py")
-
-
-def test_component_editing_and_scene_search_survive():
-    assert "def set_component_mode(" in _read("editor/main_window.py")
-    assert "self.search_box = QLineEdit()" in _read("editor/scene_hierarchy.py")
-    assert (ROOT / "editor" / "project_overview.py").exists()
-
-
-def test_io_widget_rewrite_survives():
-    src = _read("editor/io_editor_widget.py")
-    assert "self._row_height = self.table.fontMetrics().height() + 12" in src
-    assert "setSectionResizeMode(QHeaderView.Fixed)" in src
-
-
-def test_renderer_light_capacities_come_from_the_shaders():
-    src = _read("engine/renderer_core.py")
-    assert "MAX_LIGHTS = shaders.MAX_LIGHTS" in src
-    assert "MAX_SHADOW_LIGHTS = shaders.MAX_SHADOW_LIGHTS" in src
-    from engine import shaders as shader_module
-    for name in ("lit.frag", "textured.frag"):
-        source = shader_module.DEFAULT_SHADERS[name]
-        assert "lights[%d]" % shader_module.MAX_LIGHTS in source, name
+def test_the_procedural_map_generator_is_not_offered():
+    """Fio's guard keeps the generator's files; MiniWind hides its one action."""
+    src = _read("game/integration.py")
+    assert 'getattr(MainWindow, "procedural_action", None)' in src
+    assert "action.setVisible(False)" in src and "action.setEnabled(False)" in src
 
 
 def test_dice_are_the_games_not_fios_io():
@@ -216,8 +179,14 @@ def test_thing_counters_keep_fios_semantics():
 # ---------------------------------------------------------------------------
 
 def test_window_title_is_miniwind():
-    assert 'self.setWindowTitle("MiniWind")' in _read("editor/main_window.py")
+    integration = importlib.import_module("game.integration")
+    assert integration._product_title("Fio") == "MiniWind"
+    assert integration._product_title("Fio - village.json *") == "MiniWind village.json *"
+    assert integration._product_title("Unsaved Changes") == "Unsaved Changes"
 
 
-def test_overhead_is_the_default_camera():
-    assert 'MainWindow.camera_mode_combobox.setCurrentText("Overhead")' in _read("editor/ui.py")
+def test_play_is_always_overhead_and_the_camera_choice_is_hidden():
+    host = importlib.import_module("game.host")
+    assert host.PLAY_CAMERA == "Overhead"
+    assert "set_camera(PLAY_CAMERA)" in _read("game/host.py")
+    assert "_hide_camera_dropdown(MainWindow)" in _read("game/integration.py")

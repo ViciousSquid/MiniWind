@@ -40,6 +40,7 @@ def apply():
     _applied = True
     _register_wizards()
     _patch_editor_menu()
+    _patch_window_title()
 
 
 def _register_wizards():
@@ -85,9 +86,87 @@ def _patch_editor_menu():
             _add_tools_menu_entries(MainWindow)
         except Exception as exc:
             _log(f"MiniWind Tools-menu entries failed: {exc}")
+        # MiniWind's world comes from its settlement tools, not Fio's
+        # procedural map generator: it is not offered (Tools and Terrain menus
+        # share the one action).
+        action = getattr(MainWindow, "procedural_action", None)
+        if action is not None:
+            action.setVisible(False)
+            action.setEnabled(False)
 
     Ui_MainWindow.create_menu_bar = create_menu_bar
+
+    # MiniWind always plays overhead (host.PLAY_CAMERA), so Fio's
+    # First Person / Overhead play-camera dropdown has nothing to choose.
+    _orig_create_status_bar = Ui_MainWindow.create_status_bar
+
+    def create_status_bar(self, MainWindow):
+        _orig_create_status_bar(self, MainWindow)
+        try:
+            _hide_camera_dropdown(MainWindow)
+        except Exception as exc:
+            _log(f"camera dropdown removal failed: {exc}")
+
+    Ui_MainWindow.create_status_bar = create_status_bar
     Ui_MainWindow._miniwind_patched = True
+
+
+#: The editor window's product name.
+WINDOW_TITLE = "MiniWind"
+
+
+def _patch_window_title():
+    """Title the editor window "MiniWind <map> <*>" where Fio says "Fio - <map> <*>"."""
+    try:
+        from editor.main_window import MainWindow
+    except Exception as exc:
+        _log(f"window-title patch skipped ({exc})")
+        return
+    if getattr(MainWindow, "_miniwind_title_patched", False):
+        return
+    _orig_set_title = MainWindow.setWindowTitle
+
+    def setWindowTitle(self, title):
+        _orig_set_title(self, _product_title(title))
+
+    MainWindow.setWindowTitle = setWindowTitle
+    MainWindow._miniwind_title_patched = True
+
+
+def _product_title(title) -> str:
+    text = str(title)
+    if text == "Fio":
+        return WINDOW_TITLE
+    if text.startswith("Fio - "):
+        return f"{WINDOW_TITLE} {text[len('Fio - '):]}"
+    return text
+
+
+def _hide_camera_dropdown(MainWindow):
+    """Take Fio's play-camera dropdown, its "Camera:" label and the spacing in
+    front of them out of the status bar.
+
+    Hidden, not deleted: the window keeps its ``camera_mode_combobox``
+    attribute, so nothing that reads it can trip over a deleted widget.
+    """
+    from PyQt5.QtWidgets import QLabel, QLayout
+
+    combo = getattr(MainWindow, "camera_mode_combobox", None)
+    if combo is None:
+        return
+    layout = next((lay for lay in MainWindow.findChildren(QLayout)
+                   if lay.indexOf(combo) >= 0), None)
+    if layout is None:
+        combo.hide()
+        return
+    index = layout.indexOf(combo)
+    label = layout.itemAt(index - 1).widget() if index >= 1 else None
+    if isinstance(label, QLabel) and label.text().strip() == "Camera:":
+        label.hide()
+        spacer = layout.itemAt(index - 2) if index >= 2 else None
+        if spacer is not None and spacer.spacerItem() is not None:
+            layout.removeItem(spacer)
+    combo.hide()
 
 
 def _add_tools_menu_entries(MainWindow):

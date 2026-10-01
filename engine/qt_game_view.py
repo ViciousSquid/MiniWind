@@ -780,6 +780,21 @@ class QtGameView(QOpenGLWidget):
             return
         if self._overhead_sprite_ctrl is None:
             self._overhead_sprite_ctrl = SpriteController(walk_fps=float(self.overhead_walk_fps))
+        # A game can replace the player's look with one still image
+        # (``logic.player_head_sprite``, a repo-relative path): every frame maps
+        # to it, and the renderer is rebuilt whenever it changes.
+        head_rel = getattr(self.logic_thread, "player_head_sprite", None)
+        if head_rel and head_rel != getattr(self, "_overhead_head", None):
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            head_abs = os.path.join(root, head_rel)
+            frames = {k: head_abs for k in (
+                SpriteController.IDLE, SpriteController.WALK_A, SpriteController.WALK_B,
+                SpriteController.IDLE_G, SpriteController.WALK_A_G,
+                SpriteController.WALK_B_G, SpriteController.SHOOT)}
+            self._overhead_sprite_renderer = OverheadSpriteRenderer(
+                frame_files=frames, size=float(self.overhead_sprite_size),
+                facing_offset_deg=float(self.overhead_sprite_facing_offset))
+            self._overhead_head = head_rel
         if self._overhead_sprite_renderer is None:
             self._overhead_sprite_renderer = OverheadSpriteRenderer(
                 size=float(self.overhead_sprite_size),
@@ -795,11 +810,79 @@ class QtGameView(QOpenGLWidget):
         angle = float(getattr(render_state, "player_angle", 0.0))
         armed = bool(getattr(render_state, "active_weapon", None))
         shooting = bool(getattr(render_state, "muzzle_flash_active", False))
+        # A game session (``logic.game_session``) may drive the player's pose,
+        # hurt flash and held weapon through duck-typed hooks:
+        # ``overhead_pose() -> (armed, attacking)``, ``overhead_player_flash()
+        # -> seconds``, ``overhead_player_weapon() -> (weapon_id, handed)`` and
+        # ``overhead_weapon_kind(weapon_id) -> "melee" | "bow" | "staff"``.
+        sess = getattr(self.logic_thread, "game_session", None)
+        pose = getattr(sess, "overhead_pose", None)
+        if pose is not None:
+            try:
+                armed, shooting = pose()
+            except Exception:
+                pass
         self._overhead_sprite_ctrl.update(gpos, angle, time.perf_counter(),
                                           armed=armed, shooting=shooting)
+        flash = 0.0
+        flash_fn = getattr(sess, "overhead_player_flash", None)
+        if flash_fn is not None:
+            try:
+                flash = float(flash_fn() or 0.0)
+            except Exception:
+                flash = 0.0
+        tint = (1.0, 0.15, 0.1, min(0.8, flash * 4.0)) if flash > 0 else (0.0, 0.0, 0.0, 0.0)
         self._overhead_sprite_renderer.draw(
             self.projection_matrix, self.view_matrix, gpos,
-            self._overhead_sprite_ctrl.facing, self._overhead_sprite_ctrl.frame())
+            self._overhead_sprite_ctrl.facing, self._overhead_sprite_ctrl.frame(),
+            tint=tint)
+        held = getattr(sess, "overhead_player_weapon", None)
+        if held is None:
+            return
+        try:
+            weapon_id, handed = held()
+        except Exception as exc:
+            debug_log("Error", f"overhead_player_weapon failed: {exc}")
+            return
+        weapon_path = self._weapon_asset_path(weapon_id)
+        if weapon_path:
+            self._overhead_sprite_renderer.draw_weapon(
+                self.projection_matrix, self.view_matrix, gpos,
+                self._overhead_sprite_ctrl.facing, weapon_path,
+                time.perf_counter(), attacking=shooting,
+                weapon_kind=self._weapon_kind(weapon_id, sess),
+                handed=handed)
+
+    @staticmethod
+    def _weapon_asset_path(weapon_id):
+        """A held weapon's transparent overhead icon: assets/sprites/items/<id>.png."""
+        if not weapon_id:
+            return ""
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "assets", "sprites", "items", f"{weapon_id}.png")
+        return path if os.path.isfile(path) else ""
+
+    @staticmethod
+    def _weapon_kind(weapon_id, session=None):
+        """``"melee"``, ``"bow"`` or ``"staff"``, for the weapon's attack animation.
+
+        The game session's ``overhead_weapon_kind`` answers first; for an id it
+        does not know, or with no game, a name heuristic keeps it sensible.
+        """
+        kind_fn = getattr(session, "overhead_weapon_kind", None)
+        if kind_fn is not None:
+            try:
+                kind = kind_fn(weapon_id)
+                if kind in ("melee", "bow", "staff"):
+                    return kind
+            except Exception:
+                pass
+        wid = str(weapon_id or "").lower()
+        if "bow" in wid:
+            return "bow"
+        if "staff" in wid or "wand" in wid:
+            return "staff"
+        return "melee"
 
 
     def initializeGL(self):
