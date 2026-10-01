@@ -65,6 +65,7 @@ before, just on the new 2.5.10 engine"*.
 | `987d637` | Lakes and ponds are one water brush over a sculpted bowl; ground raised under the old slab-borne decals |
 | `c40280e` | Restored `_suppress_default_hud` in `QtGameView._draw_hud` (doubled "Press E" prompt, Fio's big health number) |
 | `c2b4dc9` | **Overhead performance**, see §5 |
+| (this session) | **Pause menu, music, loading bar, fonts**, see §5a |
 
 ### Fio repo (upstream)
 
@@ -191,6 +192,38 @@ Also:
 
 ---
 
+## 5a. Pause menu, music, loading bar, fonts
+
+- **Pause menu** (`game/ui/pause_menu.py`): Escape in play raises it, in the
+  editor's play mode and in kiosk play alike (the old "Quit game and return to
+  editor?" box is gone wherever the game is installed). One horizontal row:
+  RESUME, GAME (a dropdown: NEW GAME / LOAD GAME / SAVE GAME; its arrow points
+  down folded, up open), MUSIC: ON/OFF, EDITOR, QUIT. Mouse (the arrow cursor
+  shows while it is up) and keyboard both work.
+  - Fio side, generic: `QtGameView.play_menu` slot, `open_play_menu()`,
+    `play_menu_closed()`; the view routes input to an open menu and paints it
+    last; `MainWindow` hands Escape to a game modal that closes on it
+    (`game_session.escape_closes_modal()`), else opens the menu, else the old
+    exit. `game/integration.py _patch_play_menu` installs MiniWind's menu.
+  - Actions (`game/ui/pause_actions.py`): slots are `saves/slotN.fiosave`
+    (console `save`/`load`) plus a `"miniwind"` block holding MiniWind's
+    key/value store (character, quests, clock). Load stops play, puts the
+    store back, then the console load reloads the map and overlays the world.
+    New Game stops play, wipes progress, reloads the map, starts play.
+- **Music** (`game/music.py`): every `.mp3` in `assets/music` (moved from
+  `assets/sounds/music`), shuffled, no repeats back to back, through
+  `pygame.mixer.music`, during play only. `[GAME] music` in settings.ini
+  remembers the pause-menu switch; `[GAME] music_volume` (default 0.5).
+- **Loading bar** (`editor/loading_overlay.py`): the splash's progress bar over
+  the window during map loads and play start, stepped at each stage
+  (`_loading_step` in `main_window.py`); `main.py` opens the default map and
+  kiosk play under one bar.
+- **Fonts** (`game/ui/fonts.py`, files in `assets/fonts`): Enchanted Land for
+  the pause menu's banner/options and the loading title; MedievalSharp (OFL,
+  licence beside it) for conversations, the menu's small print and the bar.
+  Arial/Georgia only if a file is missing. The rest of the HUD and screens
+  still use `game/ui/theme.py`'s fonts.
+
 ## 6. What still needs doing
 
 ### Known failing tests (4, in MiniWind only)
@@ -231,7 +264,6 @@ never per-NPC Python draws. Player head and weapons are done.
 
 - Mouse control and aim publication from `QtGameView` (the `set_aim` hook
   exists).
-- Pause menu wiring and save slots.
 - Sound falloff.
 - Stuck arrows and projectile visuals.
 - Marker pins.

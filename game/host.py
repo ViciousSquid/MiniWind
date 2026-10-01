@@ -732,6 +732,9 @@ class MiniwindGame:
         logic._miniwind = session
         logic.game_session = session
         self._prev_keys = frozenset()
+        from . import music
+        if music.PLAYER.configured:
+            music.PLAYER.start()
         if host is not None:
             try:
                 host.provide("miniwind", session)
@@ -740,6 +743,8 @@ class MiniwindGame:
                 pass
 
     def on_play_stop(self, logic):
+        from . import music
+        music.PLAYER.stop()
         session = getattr(logic, "_miniwind", None)
         if session is not None:
             session.persist(force=True)
@@ -759,6 +764,8 @@ class MiniwindGame:
         session = getattr(logic, "_miniwind", None)
         if session is None:
             return
+        from . import music
+        music.PLAYER.poll()
 
         just = self._just_pressed(ctx)
 

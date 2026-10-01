@@ -18,6 +18,7 @@ from PyQt5.QtCore import QRect, QRectF, Qt
 from PyQt5.QtGui import (QColor, QFont, QPixmap, QPainterPath, QLinearGradient,
                          QBrush, QPen, QFontMetrics)
 
+from . import fonts
 from . import theme as T
 from ..rpg import guilds, heads
 
@@ -68,9 +69,14 @@ HEAD_OVERLAP = 40
 #: Clear gap kept between the head's left edge and the text/labels beside it.
 _HEAD_GAP = 8
 
-#: Body text (the speaker's line) font — kept in one place so the wrap
-#: measurement in :func:`_layout` uses exactly the font the drawing uses.
-_BODY_FONT = T.font(12, italic=True)
+def _body_font():
+    """Body text (the speaker's line) font, MedievalSharp (game/ui/fonts.py).
+
+    One place, so the wrap measurement in :func:`_layout` uses exactly the
+    font the drawing uses. A function rather than a constant: the font file
+    can only be registered once Qt is running.
+    """
+    return fonts.dialogue_font(13)
 
 
 def _head_shown(session):
@@ -125,7 +131,7 @@ def _layout(session, w):
     text_w = max(80, _content_right_off(w, head_shown) - text_x)
 
     body = view["text"] if view else ""
-    fm = QFontMetrics(_BODY_FONT)
+    fm = QFontMetrics(_body_font())
     br = fm.boundingRect(QRect(0, 0, text_w, 100000), int(Qt.TextWordWrap), body)
     text_h = max(fm.height(), br.height())
 
@@ -208,10 +214,10 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
         _draw_head(painter, head, x, y, w, box_h)
 
     painter.setPen(T.GOLD_BRIGHT)
-    painter.setFont(T.font(16, bold=True))
+    painter.setFont(fonts.dialogue_font(17))
     painter.drawText(tx, y + pad + 16, speaker)
     if subtitle:
-        painter.setFont(T.font(8, italic=True, family="Segoe UI"))
+        painter.setFont(fonts.dialogue_font(9))
         painter.setPen(T.DIM)
         painter.drawText(QRect(int(tx), int(y + pad), int(cr - tx), 18),
                          int(Qt.AlignRight | Qt.AlignVCenter), subtitle)
@@ -219,7 +225,7 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
     painter.drawLine(int(tx), y + pad + 26, int(cr), y + pad + 26)
 
     painter.setPen(T.PARCH)
-    painter.setFont(_BODY_FONT)
+    painter.setFont(_body_font())
     painter.drawText(QRect(tx, y + _TEXT_TOP, lay["text_w"], lay["text_h"]),
                      int(Qt.TextWordWrap), view["text"])
 
@@ -230,15 +236,15 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
         painter.setPen(QPen(T.GILD, 1))
         painter.drawRoundedRect(chip, 4, 4)
         painter.setPen(T.GOLD_BRIGHT)
-        painter.setFont(T.font(9, bold=True, family="Segoe UI"))
+        painter.setFont(fonts.dialogue_font(10))
         painter.drawText(chip, T.ALIGN_CENTER, str(i + 1))
         painter.setPen(QColor(180, 210, 255))
-        painter.setFont(T.font(11, family="Segoe UI"))
+        painter.setFont(fonts.dialogue_font(12))
         painter.drawText(tx + 26, ry, resp.get("text", ""))
         ry += _RESP_LINE_H
 
     painter.setPen(T.DIM)
-    painter.setFont(T.font(8, family="Segoe UI"))
+    painter.setFont(fonts.dialogue_font(9))
     painter.drawText(QRect(int(x + pad), int(y + box_h - 22), int(cr - (x + pad)), 16),
                      int(Qt.AlignRight | Qt.AlignVCenter), "[1-9] choose   [Esc] leave")
 

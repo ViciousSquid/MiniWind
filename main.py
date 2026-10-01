@@ -348,17 +348,24 @@ if __name__ == "__main__":
 
     # The map this build opens with ([Startup] default_map), loaded one
     # event-loop turn after the window is built.
+    # Playing goes straight on from there, under the same loading bar, so
+    # the scene has a Player Start to spawn at and the window never sits
+    # frozen between the two.
     default_map = config.get('Startup', 'default_map', fallback='').strip()
-    if default_map:
-        default_map_path = os.path.join(root_directory, default_map)
-        if os.path.isfile(default_map_path):
-            from PyQt5.QtCore import QTimer
-            QTimer.singleShot(0, lambda: window.load_level_file(default_map_path))
+    default_map_path = os.path.join(root_directory, default_map) if default_map else ''
 
-    if launch_choice == "play":
-        # One event-loop turn later, so the default map the main window queues
-        # has loaded and the scene has a Player Start to spawn at.
+    def _open_default_map():
+        title = (f"Loading {os.path.splitext(os.path.basename(default_map))[0]}"
+                 if default_map else "Starting the game")
+        with window.loading_overlay.busy(title, "Reading the map"):
+            if default_map_path and os.path.isfile(default_map_path):
+                window.load_level_file(default_map_path)
+            if launch_choice == "play":
+                window.loading_overlay.step("Starting the game", 90)
+                window.enter_kiosk_mode()
+
+    if (default_map_path and os.path.isfile(default_map_path)) or launch_choice == "play":
         from PyQt5.QtCore import QTimer
-        QTimer.singleShot(0, window.enter_kiosk_mode)
+        QTimer.singleShot(0, _open_default_map)
 
     sys.exit(app.exec_())

@@ -77,6 +77,13 @@ def perspective_projection(fov, aspect, near, far):
     return glm.perspective(glm.radians(fov), aspect, near, far)
 
 
+def _play_menu_open(view) -> bool:
+    """True while *view* has a play menu open over a play session."""
+    menu = getattr(view, 'play_menu', None)
+    return bool(getattr(view, 'play_mode', False) and menu is not None
+                and menu.active)
+
+
 class QtGameView(QOpenGLWidget):
     def __init__(self, editor):
         super().__init__(editor)
@@ -295,6 +302,14 @@ class QtGameView(QOpenGLWidget):
 
         self._proj_ptr = None
         self._view_ptr = None
+
+        #: A modal play-mode menu a game layer may install (None: Escape keeps
+        #: its stock meaning). Duck-typed: ``active``, ``open()``, ``close()``,
+        #: ``handle_key(ev)``, ``handle_mouse_press(ev)``,
+        #: ``handle_mouse_move(ev)`` and ``draw(painter)``. While it is active
+        #: it owns the keyboard and mouse and is painted over everything else;
+        #: see :meth:`open_play_menu`.
+        self.play_menu = None
 
         self.console_overlay_active = False
         self._console_input = QLineEdit(self)
@@ -1005,7 +1020,8 @@ class QtGameView(QOpenGLWidget):
         self._process_sound_queue()
         self._process_console_command_queue()
         if self.use_threading and self.logic_thread:
-            keys = set() if self.console_overlay_active else self.editor.keys_pressed
+            keys = (set() if self.console_overlay_active or _play_menu_open(self)
+                    else self.editor.keys_pressed)
             self.game_state.set_keys(keys)
             # Update Player 2 input from arrow keys (if no gamepad)
             self._update_p2_keyboard_input()
@@ -1865,6 +1881,10 @@ class QtGameView(QOpenGLWidget):
                        width=self.width(), height=self.height(),
                        play_mode=self.play_mode)
 
+        # The play menu is modal: painted last, over the game's own overlay.
+        if _play_menu_open(self):
+            self.play_menu.draw(painter)
+
         painter.end()
 
 
@@ -2493,6 +2513,8 @@ class QtGameView(QOpenGLWidget):
             # looping speaker channels and one-shot mixer channels, and discard
             # any sound requests queued by the logic thread during teardown.
             self.stop_all_sounds()
+            if self.play_menu is not None and self.play_menu.active:
+                self.play_menu.close()
             self._actor_pick = None
             self.actor_pick_hover = None
             if self.console_overlay_active:
@@ -3114,6 +3136,9 @@ class QtGameView(QOpenGLWidget):
                                           shear=armed['shear'])
 
     def mousePressEvent(self, event):
+        if _play_menu_open(self):
+            self.play_menu.handle_mouse_press(event)
+            return
         if self.play_mode and self._actor_pick is not None:
             if event.button() == Qt.RightButton:
                 self.cancel_actor_pick()
@@ -3246,6 +3271,9 @@ class QtGameView(QOpenGLWidget):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if _play_menu_open(self):
+            self.play_menu.handle_mouse_move(event)
+            return
         if self.sysmon.handle_mouse_move(event, self.play_mode, self.width(), self.height()):
             self.update()
             return
@@ -3314,6 +3342,8 @@ class QtGameView(QOpenGLWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if _play_menu_open(self):
+            return
         if self.terrain_sculpt_painting and event.button() == Qt.LeftButton:
             self.terrain_sculpt_painting = False
             return
@@ -3461,6 +3491,44 @@ class QtGameView(QOpenGLWidget):
         while QApplication.overrideCursor() is not None:
             QApplication.restoreOverrideCursor()
         QApplication.setOverrideCursor(Qt.CrossCursor)
+
+    # =========================================================================
+    # PLAY MENU (Play Mode)
+    # =========================================================================
+
+    def play_menu_active(self) -> bool:
+        """True while an installed play menu is open over a play session."""
+        return _play_menu_open(self)
+
+    def open_play_menu(self) -> bool:
+        """Raise the installed play menu. False when there is none to raise.
+
+        The menu freezes the world itself; here the view frees the cursor so
+        the menu can be pointed at, and drops anything the console was doing.
+        """
+        menu = self.play_menu
+        if not self.play_mode or menu is None:
+            return False
+        if menu.active:
+            return True
+        if self.console_overlay_active:
+            self._close_console_overlay()
+        menu.open()
+        while QApplication.overrideCursor() is not None:
+            QApplication.restoreOverrideCursor()
+        QApplication.setOverrideCursor(Qt.ArrowCursor)
+        self.update()
+        return True
+
+    def play_menu_closed(self):
+        """The play menu calls this as it closes: take the cursor back."""
+        if not self.play_mode:
+            return
+        if self._actor_pick is not None:
+            self._show_pick_cursor()
+        else:
+            self._capture_play_cursor()
+        self.update()
 
     # =========================================================================
     # ACTOR PICK (Play Mode)
@@ -3630,6 +3698,10 @@ class QtGameView(QOpenGLWidget):
         self.game_state.set_p2_input(move_x, move_z, look_dx, look_dy, jump, crouch)
 
     def keyPressEvent(self, event):
+        # An open play menu owns every key until it closes.
+        if _play_menu_open(self):
+            self.play_menu.handle_key(event)
+            return
         # An armed actor pick owns Escape: it cancels the pick, not Play Mode.
         if (event.key() == Qt.Key_Escape and self.play_mode
                 and self._actor_pick is not None):

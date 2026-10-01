@@ -13,3 +13,6 @@ assets/sprites/heads/dead_cache/
 
 # Audit working files (regenerate with git rev-list)
 audit/_commits*.txt
+
+# Play-session saves written by the console and the pause menu
+saves/

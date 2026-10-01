@@ -131,6 +131,19 @@ class Toast(QLabel):
         self.anim.start()
         
 
+def _loading_overlay(window):
+    """*window*'s loading bar (a no-op stand-in where it has none)."""
+    from editor.loading_overlay import overlay_for
+    return overlay_for(window)
+
+
+def _loading_step(window, stage, percent=None):
+    """Name the stage of a long load on *window*'s loading bar, if one is up."""
+    overlay = getattr(window, '_loading_overlay', None)
+    if overlay is not None and overlay.active:
+        overlay.step(stage, percent)
+
+
 class MainWindow(QMainWindow):
     load_level_signal = pyqtSignal(str)
     def __init__(self, root_dir):
@@ -2259,9 +2272,10 @@ class MainWindow(QMainWindow):
                 }
             """)
 
-        self._capture_pre_play_world()
-        physics_enabled = self.config.getboolean('Settings', 'physics', fallback=True)
-        self.view_3d.toggle_play_mode(player_start.pos, player_start.get_angle(), physics_enabled)
+        with _loading_overlay(self).busy("Starting the game", "Building the world", 40):
+            self._capture_pre_play_world()
+            physics_enabled = self.config.getboolean('Settings', 'physics', fallback=True)
+            self.view_3d.toggle_play_mode(player_start.pos, player_start.get_angle(), physics_enabled)
         self.view_3d.setFocus()
         
         # Update play button color
@@ -2310,8 +2324,29 @@ class MainWindow(QMainWindow):
         self.update_title()
         self.update_all_ui()
 
+    def _game_modal_wants_escape(self):
+        """True when the running game will close something on Escape.
+
+        Asks the logic thread's ``game_session`` (``escape_closes_modal()``).
+        A game that offers no opinion, or none running, leaves Escape to play
+        mode; a screen that refuses Escape answers False so the key is never
+        swallowed by something that was not going to close.
+        """
+        logic = getattr(self.view_3d, 'logic_thread', None)
+        session = getattr(logic, 'game_session', None) if logic else None
+        asks = getattr(session, 'escape_closes_modal', None)
+        if not callable(asks):
+            return False
+        try:
+            return bool(asks())
+        except Exception:
+            return False
+
     def _exit_play_mode(self):
         """Exit play mode and return to editor."""
+        play_menu = getattr(self.view_3d, 'play_menu', None)
+        if play_menu is not None and play_menu.active:
+            play_menu.close()
         if hasattr(self.view_3d, 'play_mode') and self.view_3d.play_mode:
             self.view_3d.toggle_play_mode(None, None)
             self.view_3d.play_mode = False  # Force state change before UI update
@@ -3200,6 +3235,14 @@ class MainWindow(QMainWindow):
         # PLAY MODE HANDLING (hardcoded shortcuts first)
         # ------------------------------------------------------------------
         if self.view_3d.play_mode:
+            # A play menu a game installed is modal over the game: while it is
+            # up it takes every key (arrow autorepeat included), so nothing
+            # below, Escape's way out included, can fire.
+            play_menu_active = getattr(self.view_3d, 'play_menu_active', None)
+            if play_menu_active is not None and play_menu_active():
+                self.view_3d.play_menu.handle_key(event)
+                return
+
             # Autorepeat: holding a key down makes the OS/Qt resend keyPress
             # (and, on some platforms, interleaved keyRelease) events for as
             # long as it's held. The play-mode actions below are edge-triggered
@@ -3222,6 +3265,18 @@ class MainWindow(QMainWindow):
                 return
 
             if event.key() == Qt.Key_Escape:
+                # A game screen or conversation that closes on Escape gets the
+                # key, as the game's own input.
+                if self._game_modal_wants_escape():
+                    self.keys_pressed.add(event.key())
+                    return
+                # A game that installed a play menu pauses instead of ending;
+                # leaving play is one of the menu's options.
+                open_play_menu = getattr(self.view_3d, 'open_play_menu', None)
+                if open_play_menu is not None and open_play_menu():
+                    self.keys_pressed.clear()
+                    return
+
                 self._exit_play_mode()
 
                 if getattr(self, 'is_kiosk_mode', False):
@@ -4051,7 +4106,9 @@ class MainWindow(QMainWindow):
             if self.terrain is None:
                 from engine.terrain import Terrain
                 self.terrain = Terrain()
+            _loading_step(self, "Building terrain", 40)
             self.terrain.from_dict(self.state.terrain_data)
+            _loading_step(self, "Preparing terrain shaders", 65)
 
             if getattr(self.view_3d, 'renderer', None):
                 self.view_3d.renderer.setup_terrain_shader(self.terrain)
@@ -4059,17 +4116,33 @@ class MainWindow(QMainWindow):
             if getattr(self.view_3d, 'logic_thread', None):
                 self.view_3d.logic_thread.set_terrain(self.terrain)
 
+    @property
+    def loading_overlay(self):
+        """The window's "still working" loading bar (editor/loading_overlay.py)."""
+        return _loading_overlay(self)
+
     def load_level_file(self, filePath):
         """Loads a level from disk. Used for both normal loading and LevelChanger."""
         print(f"[MainWindow] Loading level: {filePath}")
-        try:
-            with open(filePath, 'r', encoding='utf-8') as f:
-                level_data = json.load(f)
-        except Exception as e:
-            print(f"ERROR loading level {filePath}: {e}")
-            self.show_toast(f"Failed to load level: {e}", is_error=True)
-            return False
-        return self._load_level(level_data, filePath)
+        name = os.path.splitext(os.path.basename(str(filePath)))[0]
+        with _loading_overlay(self).busy(f"Loading {name}", "Reading the map", 5):
+            try:
+                with open(filePath, 'r', encoding='utf-8') as f:
+                    level_data = json.load(f)
+            except Exception as e:
+                print(f"ERROR loading level {filePath}: {e}")
+                self.show_toast(f"Failed to load level: {e}", is_error=True)
+                return False
+            loaded = self._load_level(level_data, filePath)
+            if loaded and not getattr(self.view_3d, 'play_mode', False):
+                # The first frame of a new map uploads it to the GPU, which
+                # is a long paint of its own: draw it under the loading bar.
+                _loading_step(self, "Drawing the world", 85)
+                try:
+                    self.view_3d.repaint()
+                except Exception:
+                    pass
+            return loaded
 
     def _load_level(self, level_data, file_path=None):
         """Make *level_data* the open level.
@@ -4113,7 +4186,9 @@ class MainWindow(QMainWindow):
                           getattr(self.state, 'brushes', None),
                           getattr(self.state, 'things', None))
             self.file_path = None
+            _loading_step(self, "Building the scene", 30)
             self._apply_level_data(level_data)
+            _loading_step(self, "Refreshing the editor", 75)
 
             # --- Find PlayerStart and reposition camera ---
             player_start_pos = None
@@ -4168,6 +4243,7 @@ class MainWindow(QMainWindow):
             # Resume play on the new level.
             if was_playing:
                 print("[MainWindow] Restarting Play Mode with new level...")
+                _loading_step(self, "Restarting play", 85)
                 self.enter_play_mode()
                 if (loadout is not None
                         and getattr(self.view_3d, 'play_mode', False)):

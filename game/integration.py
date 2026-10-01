@@ -44,6 +44,7 @@ def apply():
     _patch_editor_menu()
     _patch_window_title()
     _patch_map_loading()
+    _patch_play_menu()
 
 
 def _register_wizards():
@@ -520,3 +521,60 @@ def _active_session(MainWindow):
     lt = getattr(view, "logic_thread", None) if view is not None else None
     return getattr(lt, "_miniwind", None) if lt is not None else None
 
+
+
+def _patch_play_menu():
+    """Give the 3D view MiniWind's pause menu, and the music its settings.
+
+    Fio's view keeps a ``play_menu`` slot that Escape raises during play (see
+    ``QtGameView.open_play_menu``); MiniWind fills it with
+    :class:`game.ui.pause_menu.PauseMenu` as each view is built, and points
+    the soundtrack at the editor's settings so the music switch persists.
+    """
+    try:
+        from engine.qt_game_view import QtGameView
+    except Exception as exc:
+        _log(f"pause menu skipped ({exc})")
+        return
+    if getattr(QtGameView, "_miniwind_play_menu", False):
+        return
+    _orig_init = QtGameView.__init__
+
+    def __init__(self, *args, **kwargs):
+        _orig_init(self, *args, **kwargs)
+        try:
+            install_play_menu(self)
+        except Exception as exc:
+            _log(f"pause menu not installed ({exc})")
+
+    QtGameView.__init__ = __init__
+    QtGameView._miniwind_play_menu = True
+
+
+def install_play_menu(view):
+    """Install the pause menu on *view* and configure the music from its editor."""
+    from .ui.pause_actions import PauseActions
+    from .ui.pause_menu import PauseMenu
+    from . import music
+    view.play_menu = PauseMenu(view, PauseActions(view))
+    _use_game_fonts_for_loading()
+    editor = getattr(view, "editor", None)
+    config = getattr(editor, "config", None)
+    if config is not None:
+        music.PLAYER.configure(config, getattr(editor, "save_config", None))
+
+
+def _use_game_fonts_for_loading():
+    """Set the loading bar in MiniWind's faces where they are installed:
+    Enchanted Land for the title, MedievalSharp for the bar's text."""
+    try:
+        from PyQt5.QtGui import QFont
+        from editor import loading_overlay
+        from .ui import fonts
+    except Exception:
+        return
+    title = fonts.menu_family()
+    text = fonts.dialogue_family()
+    loading_overlay.set_fonts(
+        title=QFont(title, 22) if title != fonts.FALLBACK_FAMILY else None,
+        bar=QFont(text, 12) if text != fonts.DIALOGUE_FALLBACK else None)
