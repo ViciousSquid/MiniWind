@@ -65,6 +65,8 @@ def test_generic_modules_carry_no_rpg_vocabulary():
     # example is not RPG machinery and predates this back-port.
     ALLOWED = {
         ("editor/things.py", "quest"),   # LogicState docstring example
+        ("editor/things.py", "hit_flash"), # generic render-state field
+        ("editor/things.py", "npc"),       # Fio's generic actor entity type
     }
     offenders = []
     for rel in GENERIC_MODULES:
