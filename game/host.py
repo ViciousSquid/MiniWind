@@ -788,31 +788,6 @@ class MiniwindGame:
             except Exception:
                 pass
 
-    def _offer_cutscene_cleanup(self, session):
-        """Offer to remove the actors and trigger used by a completed cutscene."""
-        candidates = session.cutscenes.consume_cleanup_offer()
-        if not candidates:
-            return
-        names = []
-        for obj in candidates:
-            props = getattr(obj, "properties", {})
-            name = str(props.get("display_name") or props.get("name") or props.get("type") or "object")
-            if name not in names:
-                names.append(name)
-        preview = ", ".join(names[:8])
-        if len(names) > 8:
-            preview += f", and {len(names) - 8} more"
-        result = QtWidgets.QMessageBox.question(
-            None,
-            "Cutscene finished",
-            f"The cutscene has finished. Clean up the scene?\n\n"
-            f"This will delete {len(names)} object(s) used by the cutscene:\n{preview}",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            QtWidgets.QMessageBox.No,
-        )
-        if result == QtWidgets.QMessageBox.Yes:
-            session.cutscenes.cleanup_scene(candidates)
-            session.persist(force=True)
 
     def on_play_stop(self, logic):
         from . import music
@@ -874,7 +849,6 @@ class MiniwindGame:
         if world_paused:
             if session.cutscenes.active:
                 session.cutscenes.tick(ctx.delta)
-                self._offer_cutscene_cleanup(session)
                 scene = session.cutscenes.scene
                 if (K_ESCAPE in just and scene is not None
                         and scene.properties.get("stop_on_escape", True)):
@@ -899,7 +873,6 @@ class MiniwindGame:
 
         # Normal play: simulate the world, then handle combat/interaction input.
         session.tick(ctx.delta)
-        self._offer_cutscene_cleanup(session)
         if session.cutscenes.active:
             logic.set_world_paused(SCREEN_PAUSE, True)
             scene = session.cutscenes.scene
