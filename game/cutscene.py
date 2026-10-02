@@ -140,6 +140,7 @@ class CutsceneManager:
         self._actor_restore = []
         self._restore_enabled = True
         self._played = set()
+        self._play_start_checked = False
 
     @property
     def active(self):
@@ -368,8 +369,9 @@ class CutsceneManager:
         return False
 
     def trigger_at_play_start(self):
-        if self.active:
+        if self.active or self._play_start_checked:
             return False
+        self._play_start_checked = True
         for scene in self.session._things_of_type("miniwindcutscene"):
             if str(scene.properties.get("trigger_mode", "")) == "play_start":
                 if self.start(scene):
