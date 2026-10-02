@@ -36,6 +36,9 @@ class CutsceneWizard(QtWidgets.QWizard):
         self.main_window = main_window
         self.setWindowTitle("MiniWind Cutscene Wizard")
         self.setMinimumSize(980, 720)
+        self.resize(980, 720)
+        self.setWindowModality(QtCore.Qt.NonModal)
+        self.setWindowFlag(QtCore.Qt.Tool, True)
 
         self.actor_meta = {}
         self.actor_tracks = {}
