@@ -105,6 +105,8 @@ def normalise_cutscene(raw):
                 row["duration"] = max(0.05, float(row.get("duration", 5.0)))
             except (TypeError, ValueError):
                 row["duration"] = 5.0
+            style = str(row.get("style", "normal") or "normal").lower()
+            row["style"] = style if style in ("normal", "melee", "bow", "magic") else "normal"
         elif kind == "blood":
             row["position"] = _vec3(row.get("position"))
             try:
@@ -156,6 +158,7 @@ class CutsceneManager:
         self._restore_enabled = True
         self._fired_events = set()
         self._fight_cooldowns = {}
+        self._fight_original_styles = {}
         self._spawned_blood = []
         self._played = set()
         self._play_start_checked = False
@@ -351,6 +354,13 @@ class CutsceneManager:
                 dz = target_pos[2] - here[2]
                 distance = math.sqrt(dx * dx + dy * dy + dz * dz)
                 style = str(actor.properties.get("attack_style", "melee")).lower()
+                forced_style = str(event.get("style", "normal") or "normal").lower()
+                if forced_style != "normal":
+                    if id(actor) not in self._fight_original_styles:
+                        self._fight_original_styles[id(actor)] = (
+                            actor, actor.properties.get("attack_style"))
+                    actor.properties["attack_style"] = forced_style
+                    style = forced_style
                 attack_range = 640.0 if style in ("bow", "magic") else 100.0
                 if distance > attack_range * 0.85:
                     length = max(1e-6, distance)
@@ -597,6 +607,12 @@ class CutsceneManager:
         self.elapsed = 0.0
         self.dialogue = None
         self.message_lines = {}
+        for actor, original_style in self._fight_original_styles.values():
+            if original_style is None:
+                actor.properties.pop("attack_style", None)
+            else:
+                actor.properties["attack_style"] = original_style
+        self._fight_original_styles = {}
         self._fight_cooldowns = {}
         self._spawned_blood = []
         self.session.logic.cinematic_state = None
