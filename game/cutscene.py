@@ -318,6 +318,9 @@ class CutsceneManager:
             return False
         if scene is None:
             return False
+        if (getattr(self.session, "dialogue", None) is not None
+                or getattr(self.session, "open_screen", None) is not None):
+            return False
         props = getattr(scene, "properties", {})
         scene_id = str(props.get("id", "") or "")
         if scene_id and scene_id in self._played and props.get("once", True):
