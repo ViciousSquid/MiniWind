@@ -21,6 +21,8 @@ and the :mod:`game.ui` screens; this file is just the seam.
 import json
 import time
 
+from PyQt5 import QtWidgets
+
 # Generic Fio API helpers (entity-I/O and property descriptors, the per-tick
 # context type, and key-name translation). These are engine-side utilities, not
 # the plugin lifecycle: MiniWind uses them the way any native game layer would.
@@ -786,12 +788,38 @@ class MiniwindGame:
             except Exception:
                 pass
 
+    def _offer_cutscene_cleanup(self, session):
+        """Offer to remove the actors and trigger used by a completed cutscene."""
+        candidates = session.cutscenes.consume_cleanup_offer()
+        if not candidates:
+            return
+        names = []
+        for obj in candidates:
+            props = getattr(obj, "properties", {})
+            name = str(props.get("display_name") or props.get("name") or props.get("type") or "object")
+            if name not in names:
+                names.append(name)
+        preview = ", ".join(names[:8])
+        if len(names) > 8:
+            preview += f", and {len(names) - 8} more"
+        result = QtWidgets.QMessageBox.question(
+            None,
+            "Cutscene finished",
+            f"The cutscene has finished. Clean up the scene?\n\n"
+            f"This will delete {len(names)} object(s) used by the cutscene:\n{preview}",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if result == QtWidgets.QMessageBox.Yes:
+            session.cutscenes.cleanup_scene(candidates)
+            session.persist(force=True)
+
     def on_play_stop(self, logic):
         from . import music
         music.PLAYER.stop()
         session = getattr(logic, "_miniwind", None)
         if session is not None:
-            session.cutscenes.stop()
+            session.cutscenes.stop(reason="cancelled")
             session.persist(force=True)
             session.uninstall()
             logic._miniwind = None
@@ -846,6 +874,7 @@ class MiniwindGame:
         if world_paused:
             if session.cutscenes.active:
                 session.cutscenes.tick(ctx.delta)
+                self._offer_cutscene_cleanup(session)
                 scene = session.cutscenes.scene
                 if (K_ESCAPE in just and scene is not None
                         and scene.properties.get("stop_on_escape", True)):
@@ -870,12 +899,13 @@ class MiniwindGame:
 
         # Normal play: simulate the world, then handle combat/interaction input.
         session.tick(ctx.delta)
+        self._offer_cutscene_cleanup(session)
         if session.cutscenes.active:
             logic.set_world_paused(SCREEN_PAUSE, True)
             scene = session.cutscenes.scene
             if (K_ESCAPE in just and scene is not None
                     and scene.properties.get("stop_on_escape", True)):
-                session.cutscenes.stop()
+                session.cutscenes.stop(reason="cancelled")
                 logic.set_world_paused(SCREEN_PAUSE, False)
             ctx.set_prompt("", priority=100)
             session.persist()
