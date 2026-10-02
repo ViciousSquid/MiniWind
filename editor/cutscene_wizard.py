@@ -107,7 +107,16 @@ class CutsceneWizard(QtWidgets.QWizard):
         fight = QtWidgets.QWidget(); fv = QtWidgets.QVBoxLayout(fight)
         self.fight_time = QtWidgets.QDoubleSpinBox(); self.fight_time.setRange(0, 3600); self.fight_time.setDecimals(2); self.fight_time.setValue(0)
         self.fight_duration = QtWidgets.QDoubleSpinBox(); self.fight_duration.setRange(0.05, 300); self.fight_duration.setDecimals(2); self.fight_duration.setValue(5)
-        ff = QtWidgets.QFormLayout(); ff.addRow("Start time", self.fight_time); ff.addRow("Duration", self.fight_duration); fv.addLayout(ff)
+        self.fight_style = QtWidgets.QComboBox()
+        self.fight_style.addItem("Use each NPC's normal combat style", "normal")
+        self.fight_style.addItem("Melee — swords / claws / close combat", "melee")
+        self.fight_style.addItem("Archery — bows / ranged attacks", "bow")
+        self.fight_style.addItem("Spell — magical ranged attack", "magic")
+        self.fight_form = QtWidgets.QFormLayout()
+        self.fight_form.addRow("Start time", self.fight_time)
+        self.fight_form.addRow("Duration", self.fight_duration)
+        self.fight_form.addRow("How they fight", self.fight_style)
+        fv.addLayout(self.fight_form)
         lists = QtWidgets.QHBoxLayout()
         self.attackers = QtWidgets.QListWidget(); self.attackers.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.defenders = QtWidgets.QListWidget(); self.defenders.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
@@ -223,7 +232,12 @@ class CutsceneWizard(QtWidgets.QWizard):
         a = [str(x.data(QtCore.Qt.UserRole)) for x in self.attackers.selectedItems()]
         d = [str(x.data(QtCore.Qt.UserRole)) for x in self.defenders.selectedItems()]
         if not a or not d: QtWidgets.QMessageBox.warning(self, "Fight", "Choose at least one attacker and one defender."); return
-        self.events.append({"time": float(self.fight_time.value()), "type": "fight", "duration": float(self.fight_duration.value()), "attackers": a, "defenders": d})
+        self.events.append({
+            "time": float(self.fight_time.value()), "type": "fight",
+            "duration": float(self.fight_duration.value()),
+            "attackers": a, "defenders": d,
+            "style": self.fight_style.currentData(),
+        })
         self._refresh_event_list()
 
     def _use_selected_position(self):
