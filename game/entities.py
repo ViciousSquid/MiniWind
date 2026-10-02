@@ -757,5 +757,5 @@ def _init_cutscene(self):
 
 
 MiniwindCutscene = _make_thing_pair(
-    _init_cutscene, "assets/sprites/logic_camera.png")
+    _init_cutscene, "assets/sprites/logic_relay.png")
 MiniwindCutscene.__name__ = MiniwindCutscene.__qualname__ = "MiniwindCutscene"
