@@ -533,6 +533,17 @@ class CutsceneManager:
         if not self.active:
             return
         self.elapsed += max(0.0, float(delta))
+        active_fight_ids = set()
+        for event in (self.cutscene or {}).get("events", []):
+            if event["type"] == "fight" and self._event_is_active(event):
+                active_fight_ids.update(event.get("attackers", []))
+                active_fight_ids.update(event.get("defenders", []))
+        for row in self._actor_restore:
+            row["actor"].properties.pop("_cutscene_in_fight", None)
+        for actor_id in active_fight_ids:
+            actor = self._find_actor(actor_id)
+            if actor is not None:
+                actor.properties["_cutscene_in_fight"] = True
         for row in self._actor_restore:
             actor = row["actor"]
             pose = self._actor_track_pose(actor.properties.get("id"), self.elapsed)
@@ -542,10 +553,6 @@ class CutsceneManager:
         self._fire_events()
         for event in (self.cutscene or {}).get("events", []):
             if event["type"] == "fight" and self._event_is_active(event):
-                for actor_id in event.get("attackers", []) + event.get("defenders", []):
-                    actor = self._find_actor(actor_id)
-                    if actor is not None:
-                        actor.properties["_cutscene_in_fight"] = True
                 self._advance_fight(event, delta)
         self._clear_shooting_flags()
         self._apply_camera()
