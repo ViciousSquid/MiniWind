@@ -334,6 +334,17 @@ class MiniwindGame:
             prop("hidden_in_game", "bool", "Hidden during play", default=True,
                  group="TRIGGER"),
         ])
+        api.register_io("miniwindcutscene",
+            inputs=[
+                io_def("Start", "Start this cutscene"),
+                io_def("Stop", "Stop this cutscene"),
+            ],
+            outputs=[
+                io_def("OnStarted", "Fired when the cutscene begins"),
+                io_def("OnFinished", "Fired when the cutscene ends"),
+            ],
+        )
+
         api.register_properties("miniwindcutscene", [
             prop("name", "string", "Name", default="cutscene", group="CUTSCENE"),
             prop("display_name", "string", "Display name", default="Cutscene", group="CUTSCENE"),
