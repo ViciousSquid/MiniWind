@@ -196,3 +196,19 @@ def test_cutscene_dialogue_and_message_events_are_time_based(monkeypatch):
     assert manager.message_lines["message2"] == "Battle!"
     manager.tick(0.6)
     assert manager.dialogue is None
+
+
+def test_cutscene_fight_normalises_explicit_combat_style():
+    from game.cutscene import normalise_cutscene
+
+    data = normalise_cutscene({
+        "camera": [{"time": 0, "pos": [0, 0, 0]}],
+        "events": [
+            {"time": 1, "type": "fight", "attackers": ["a"], "defenders": ["b"],
+             "duration": 4, "style": "magic"},
+            {"time": 2, "type": "fight", "attackers": ["a"], "defenders": ["b"],
+             "duration": 4, "style": "nonsense"},
+        ],
+    })
+    assert data["events"][0]["style"] == "magic"
+    assert data["events"][1]["style"] == "normal"
