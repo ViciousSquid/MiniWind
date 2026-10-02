@@ -340,8 +340,6 @@ class CutsceneManager:
 
         if scene_id:
             self._played.add(scene_id)
-        if props.get("once", True):
-            props["_played"] = True
 
         io = getattr(self.session.logic, "io_manager", None)
         if io is not None:
@@ -361,7 +359,8 @@ class CutsceneManager:
             props = scene.properties
             if str(props.get("trigger_mode", "proximity")) != "proximity":
                 continue
-            if props.get("_played") and props.get("once", True):
+            scene_id = str(props.get("id", "") or "")
+            if scene_id in self._played and props.get("once", True):
                 continue
             radius = max(1.0, float(props.get("trigger_radius", 160.0) or 160.0))
             if self.session._dist2d(player_pos, scene.pos) <= radius:
