@@ -162,7 +162,7 @@ class CutsceneWizard(QtWidgets.QWizard):
         # --------------------------------------------------------------- page 6
         page = QtWidgets.QWizardPage(); page.setTitle("Save cutscene"); self.summary = QtWidgets.QLabel(); self.summary.setWordWrap(True)
         v = QtWidgets.QVBoxLayout(page); v.addWidget(self.summary); v.addStretch(1); self.addPage(page)
-        self.currentPageChanged.connect(self._page_changed)
+        self.currentIdChanged.connect(self._page_changed)
         self._refresh_actor_lists()
 
     @staticmethod
