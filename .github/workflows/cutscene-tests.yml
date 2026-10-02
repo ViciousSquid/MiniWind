@@ -9,6 +9,7 @@ on:
       - "game/entities.py"
       - "game/host.py"
       - "game/tests/test_cutscene.py"
+      - "game/tests/test_actor_2d_sprite_resolution.py"
       - "cutscenes/**"
 
 jobs:
@@ -27,4 +28,4 @@ jobs:
       - name: Run cutscene regression suite
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q game/tests/test_cutscene.py
+        run: python -m pytest -q game/tests/test_cutscene.py game/tests/test_actor_2d_sprite_resolution.py
