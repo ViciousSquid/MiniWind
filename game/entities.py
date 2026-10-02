@@ -729,3 +729,33 @@ CreatureSpawn.__name__ = CreatureSpawn.__qualname__ = "CreatureSpawn"
 # own generic Trigger entity (type 'trigger'), which is preserved unchanged.
 MiniwindTrigger = _make_thing_pair(_init_trigger, "assets/sprites/logic_relay.png")
 MiniwindTrigger.__name__ = MiniwindTrigger.__qualname__ = "MiniwindTrigger"
+
+
+# ---------------------------------------------------------------------------
+# Cutscene authoring anchor.  The sequence itself is JSON so the map remains
+# ordinary data and can be inspected, copied and versioned without Python.
+# ---------------------------------------------------------------------------
+def _init_cutscene(self):
+    p = self.properties
+    p["type"] = "miniwindcutscene"
+    p.setdefault("id", "")
+    p.setdefault("name", "cutscene")
+    p.setdefault("display_name", "Cutscene")
+    p.setdefault("trigger_mode", "manual")   # proximity | play_start | manual
+    p.setdefault("trigger_radius", 180.0)
+    p.setdefault("once", True)
+    p.setdefault("restore_actors", True)
+    p.setdefault("stop_on_escape", True)
+    p.setdefault("hidden_in_game", True)
+    p.setdefault("sequence", '{"version":1,"actors":[],"shots":[]}')
+    if not p["id"]:
+        try:
+            import uuid
+            p["id"] = str(uuid.uuid4())
+        except Exception:
+            p["id"] = "cutscene"
+
+
+MiniwindCutscene = _make_thing_pair(
+    _init_cutscene, "assets/sprites/logic_camera.png")
+MiniwindCutscene.__name__ = MiniwindCutscene.__qualname__ = "MiniwindCutscene"
