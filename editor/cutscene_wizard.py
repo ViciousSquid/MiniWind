@@ -301,6 +301,7 @@ class CutsceneWizard(QtWidgets.QWizard):
             "sequence": json.dumps(sequence, ensure_ascii=False, separators=(",", ":")),
         }
         scene = MiniwindCutscene(pos=pos, properties=props)
+        self.main_window.state.save_state()
         self.main_window.state.things.append(scene)
         self.main_window.set_selected_object(scene)
         self.main_window.unsaved_changes = True
