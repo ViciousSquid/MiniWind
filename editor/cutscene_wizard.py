@@ -132,7 +132,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         setup_layout.addWidget(header)
         setup_help = QtWidgets.QLabel(
             "<b>Simple workflow:</b> add temporary actors, place them in the 3D view, "
-            "capture their movement as waypoints, then set the camera and dialogue. "
+            "capture their movement as waypoints, then set the camera. Dialogue and other events are optional. "
             "The temporary actors are removed after the cutscene finishes."
         )
         setup_help.setWordWrap(True)
@@ -335,7 +335,7 @@ class CutsceneWizard(QtWidgets.QDialog):
             )
 
         advanced_toggle.toggled.connect(toggle_advanced)
-        tabs.addTab(events_page, "4. Dialogue & Events")
+        tabs.addTab(events_page, "4. Events (optional)")
 
         footer = QtWidgets.QHBoxLayout()
         self.summary = QtWidgets.QLabel("No actors created yet.")
