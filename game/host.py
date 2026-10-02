@@ -782,6 +782,7 @@ class MiniwindGame:
         music.PLAYER.stop()
         session = getattr(logic, "_miniwind", None)
         if session is not None:
+            session.cutscenes.stop()
             session.persist(force=True)
             session.uninstall()
             logic._miniwind = None
