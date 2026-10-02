@@ -244,8 +244,8 @@ class MiniwindGame:
     def register(self, api):
         from .entities import (NPC, Creature, GameSettings, MiniwindSettings,
                                Marker, MARKER_KINDS, ItemPickup, CreatureSpawn,
-                               MiniwindTrigger, Spellbook, SPELLBOOK_COVERS,
-                               Container, CONTAINER_KINDS)
+                               MiniwindTrigger, MiniwindCutscene, Spellbook,
+                               SPELLBOOK_COVERS, Container, CONTAINER_KINDS)
         from .rpg import bestiary
         from .rpg import items as rpg_items
         from .rpg import magic as rpg_magic
@@ -254,6 +254,7 @@ class MiniwindGame:
         api.register_entity(ItemPickup, menu_label="Item")
         api.register_entity(Spellbook, menu_label="Spellbook")
         api.register_entity(MiniwindTrigger, menu_label="Trigger")
+        api.register_entity(MiniwindCutscene, menu_label="Cutscene")
         api.register_entity(CreatureSpawn, menu_label="Spawn Point")
         api.register_entity(Marker, menu_label="Path / Schedule Marker")
         api.register_entity(Container, menu_label="Container (chest / barrel)")
@@ -332,6 +333,25 @@ class MiniwindGame:
                  help="A quest id to start when the player enters."),
             prop("hidden_in_game", "bool", "Hidden during play", default=True,
                  group="TRIGGER"),
+        ])
+        api.register_properties("miniwindcutscene", [
+            prop("name", "string", "Name", default="cutscene", group="CUTSCENE"),
+            prop("display_name", "string", "Display name", default="Cutscene", group="CUTSCENE"),
+            prop("trigger_mode", "enum", "Trigger", default="manual",
+                 choices=["proximity", "play_start", "manual"], group="TRIGGER",
+                 help="Proximity starts when the player enters the radius; "
+                      "play_start starts with Play Mode; manual uses the Start input."),
+            prop("trigger_radius", "float", "Trigger radius", default=180.0,
+                 min=1.0, max=100000.0, group="TRIGGER"),
+            prop("once", "bool", "Play once", default=True, group="TRIGGER"),
+            prop("restore_actors", "bool", "Restore actors", default=True, group="ACTORS",
+                 help="Put staged actors back where they were before the cutscene."),
+            prop("stop_on_escape", "bool", "Escape stops cutscene", default=True,
+                 group="CONTROL"),
+            prop("hidden_in_game", "bool", "Hidden during play", default=True,
+                 group="CONTROL"),
+            prop("sequence", "string", "Sequence JSON", default="",
+                 group="DATA", help="Managed by Tools > Cutscene Wizard."),
         ])
         api.register_properties("marker", [
             prop("marker_kind", "enum", "Marker kind", default="idle",
@@ -621,6 +641,16 @@ class MiniwindGame:
     def register_runtime(self, api):
         from .rpg import inventory as inv
 
+        def _start_cutscene(entity, param, logic):
+            session = getattr(logic, "_miniwind", None)
+            if session is not None:
+                return session.cutscenes.start(entity)
+
+        def _stop_cutscene(entity, param, logic):
+            session = getattr(logic, "_miniwind", None)
+            if session is not None:
+                session.cutscenes.stop()
+
         def _start_dialogue(entity, param, logic):
             session = getattr(logic, "_miniwind", None)
             player = getattr(logic, "player", None)
@@ -689,6 +719,9 @@ class MiniwindGame:
             entity.properties["triggered"] = False
             entity.properties["awake"] = True
 
+        api.register_input_handler("miniwindcutscene", "start", _start_cutscene)
+        api.register_input_handler("miniwindcutscene", "stop", _stop_cutscene)
+
         for etype in ("npc", "creature"):
             api.register_input_handler(etype, "startdialogue", _start_dialogue)
             api.register_input_handler(etype, "giveitem", _give_item)
@@ -731,6 +764,8 @@ class MiniwindGame:
             logic.set_world_paused(SCREEN_PAUSE, True)
         logic._miniwind = session
         logic.game_session = session
+        if not session.needs_char_creation:
+            session.cutscenes.trigger_at_play_start()
         self._prev_keys = frozenset()
         from . import music
         if music.PLAYER.configured:
@@ -813,6 +848,14 @@ class MiniwindGame:
 
         # Normal play: simulate the world, then handle combat/interaction input.
         session.tick(ctx.delta)
+        if session.cutscenes.active:
+            scene = session.cutscenes.scene
+            if (K_ESCAPE in just and scene is not None
+                    and scene.properties.get("stop_on_escape", True)):
+                session.cutscenes.stop()
+            ctx.set_prompt("", priority=100)
+            session.persist()
+            return
         self._handle_gameplay_input(session, just, ctx)
         self._handle_interaction(logic, ctx, session, just)
         session.persist()
@@ -992,12 +1035,21 @@ class MiniwindGame:
                 pass
         w, h = ev.get("width", 0), ev.get("height", 0)
         try:
-            from .ui import hud, dialogue_ui, screens
-            # Present dialogue / menu screens as draggable, collapsible, closable
+            from .ui import hud, dialogue_ui, cutscene_ui, screens
+            # Present cutscenes, dialogue and menu screens as draggable,
+            # collapsible, closable floating windows.
             # floating windows through the viewport's WindowManager (same chrome
             # as SysMon and the NPC inspector). Falls back to the legacy
             # full-screen draw where no window manager exists (e.g. headless).
             windowed = self._sync_overlay_windows(session, viewport, w, h)
+            if session is not None and session.cutscenes.active:
+                cutscene_ui.draw_message_lines(
+                    painter, session.cutscenes, ev.get("width", 0), ev.get("height", 0))
+                if not windowed:
+                    cutscene_ui.draw(
+                        painter, session.cutscenes, ev.get("width", 0), ev.get("height", 0))
+                hud.draw_fade(painter, session, ev.get("width", 0), ev.get("height", 0))
+                return
             # The non-modal loadout popup (weapons + spells) lives alongside the
             # modal popups; it stays open while the player fights.
             self._sync_loadout_window(session, viewport, w, h)
@@ -1138,7 +1190,9 @@ class MiniwindGame:
         except Exception:
             return False
 
-        if session.dialogue is not None:
+        if session.cutscenes.active:
+            key = "cutscene"
+        elif session.dialogue is not None:
             key = "dialogue"
         elif session.open_screen is not None:
             key = f"screen:{session.open_screen}"
@@ -1165,7 +1219,13 @@ class MiniwindGame:
         if cur is None:
             click_cb = None
             wants_cursor = False
-            if key == "dialogue":
+            if key == "cutscene":
+                title = "Cutscene"
+                bw, bh = cutscene_ui.window_body_size(session.cutscenes)
+                draw_fn = (lambda p, x, y, ww, hh, s=session:
+                           cutscene_ui.draw_in_rect(p, s.cutscenes, x, y, ww, hh))
+                on_close = session.cutscenes.stop
+            elif key == "dialogue":
                 # The window chrome is a generic "Conversation"; the speaker's
                 # name is drawn inside the body (dialogue_ui), so titling the
                 # window with the name too would show it twice.
@@ -1196,6 +1256,9 @@ class MiniwindGame:
             wm.add(win)
             session._overlay_win = win
             session._overlay_key = key
+        elif key == "cutscene":
+            bw, bh = cutscene_ui.window_body_size(session.cutscenes)
+            cur.set_body_size(bw, bh)
         elif key == "dialogue":
             # The conversation box grows/shrinks with the number of responses.
             bw, bh = dialogue_ui.window_body_size(session)
