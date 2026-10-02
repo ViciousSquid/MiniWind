@@ -313,3 +313,35 @@ def test_cutscene_spawned_actor_is_removed_when_cutscene_stops(monkeypatch):
     manager.stop()
     assert spawned not in session.logic.things
     assert not manager.active
+
+
+def test_cutscene_ui_draw_helpers_render_without_text_helper_signature_error():
+    from PyQt5.QtGui import QImage, QPainter
+    from game.ui import cutscene_ui
+
+    class Cutscene:
+        active = True
+        dialogue = {
+            "speaker": "Guard",
+            "speaker_id": "",
+            "text": "Move to the gate before the attack begins.",
+        }
+        message_lines = {
+            "message": "The gates are under attack!",
+            "message2": "",
+            "message3": "",
+        }
+
+        @staticmethod
+        def _find_actor(_actor_id):
+            return None
+
+    cutscene = Cutscene()
+    image = QImage(900, 300, QImage.Format_ARGB32)
+    image.fill(0)
+    painter = QPainter(image)
+    try:
+        cutscene_ui.draw_in_rect(painter, cutscene, 0, 0, 760, 180)
+        cutscene_ui.draw_message_lines(painter, cutscene, 900, 300)
+    finally:
+        painter.end()
