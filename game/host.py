@@ -816,7 +816,7 @@ class MiniwindGame:
         # own freeze below follows the engine's verdict over all of them.
         logic.set_world_paused(SCREEN_PAUSE, bool(
             session.needs_char_creation or session.open_screen is not None
-            or session.dialogue is not None))
+            or session.dialogue is not None or session.cutscenes.active))
         world_paused = logic.world_paused
 
         # The interact key (E) both opens a container/conversation and, inside
@@ -831,6 +831,15 @@ class MiniwindGame:
             self._suppress_interact = False
 
         if world_paused:
+            if session.cutscenes.active:
+                session.cutscenes.tick(ctx.delta)
+                scene = session.cutscenes.scene
+                if (K_ESCAPE in just and scene is not None
+                        and scene.properties.get("stop_on_escape", True)):
+                    session.cutscenes.stop()
+                ctx.set_prompt("", priority=100)
+                session.persist()
+                return
             session.tick_ui(ctx.delta)   # ages toasts/floaters only, no world sim
             # Clicks on the open menu, queued by the UI thread (game/ui/hits).
             from .ui import hits
@@ -849,10 +858,12 @@ class MiniwindGame:
         # Normal play: simulate the world, then handle combat/interaction input.
         session.tick(ctx.delta)
         if session.cutscenes.active:
+            logic.set_world_paused(SCREEN_PAUSE, True)
             scene = session.cutscenes.scene
             if (K_ESCAPE in just and scene is not None
                     and scene.properties.get("stop_on_escape", True)):
                 session.cutscenes.stop()
+                logic.set_world_paused(SCREEN_PAUSE, False)
             ctx.set_prompt("", priority=100)
             session.persist()
             return
