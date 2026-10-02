@@ -106,6 +106,63 @@ def _apply_head_sprite(p: dict) -> None:
     p.pop("custom_dead", None)
 
 
+def _actor_2d_sprite_path(actor) -> str:
+    """Return the authored/instance sprite that represents this actor in 2D.
+
+    NPCs and creatures use a generic Monster icon in Fio's default 2D path.
+    MiniWind actors, however, can have a concrete head selected (and at runtime
+    every actor is assigned one). Prefer that head so the 2D editor matches the
+    actor's actual identity. Fall back to a custom idle sprite, then role art.
+    """
+    p = getattr(actor, "properties", {}) or {}
+
+    head_id = str(p.get("head", "") or "").strip()
+    if head_id:
+        from .rpg import heads
+        if heads.is_any_head(head_id):
+            return heads.any_head_path(head_id)
+
+    custom_idle = str(p.get("custom_idle", "") or "").replace("\\", "/").strip()
+    if custom_idle:
+        return custom_idle
+
+    return sprite_for(p.get("npc_role", "villager"))
+
+
+_ACTOR_2D_PIXMAP_CACHE = {}
+
+
+def _actor_2d_pixmap(actor, icon=False):
+    """Load the actor's own 2D sprite, optionally at standard icon size."""
+    if not _HAVE_EDITOR:
+        return None
+
+    from PyQt5.QtGui import QPixmap
+    from PyQt5.QtCore import Qt
+
+    path = _actor_2d_sprite_path(actor)
+    cache = _ACTOR_2D_PIXMAP_CACHE
+    pix = cache.get(path)
+
+    if pix is None:
+        try:
+            root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+            abs_path = os.path.join(root, path)
+            if os.path.exists(abs_path):
+                loaded = QPixmap(abs_path)
+                if not loaded.isNull():
+                    pix = loaded
+        except Exception:
+            pix = None
+        cache[path] = pix
+
+    if pix is None:
+        return None
+    if icon:
+        return pix.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    return pix
+
+
 def _apply_actor_common(thing, entity_type, default_role, default_faction):
     """Fill the properties both actor entities share, from the bestiary template.
 
@@ -287,6 +344,14 @@ class NPC(Monster):
         p.setdefault("relationships", {})
         p.setdefault("disposition_base", 45 if faction in ("villagers", "guards") else 30)
 
+    def get_instance_pixmap(self):
+        pix = _actor_2d_pixmap(self, icon=False)
+        return pix if pix is not None else super().get_instance_pixmap()
+
+    def get_icon_pixmap(self):
+        pix = _actor_2d_pixmap(self, icon=True)
+        return pix if pix is not None else super().get_icon_pixmap()
+
 
 class Creature(Monster):
     """A monster or wild animal (wolf, bear, bandit, cultist, skeleton…)."""
@@ -309,6 +374,14 @@ class Creature(Monster):
         # a boss/quest creature can be given them without a new entity type.
         p.setdefault("home", list(self.pos))
         p.setdefault("inventory", [])
+
+    def get_instance_pixmap(self):
+        pix = _actor_2d_pixmap(self, icon=False)
+        return pix if pix is not None else super().get_instance_pixmap()
+
+    def get_icon_pixmap(self):
+        pix = _actor_2d_pixmap(self, icon=True)
+        return pix if pix is not None else super().get_icon_pixmap()
 
 
 def _init_settings(self):
