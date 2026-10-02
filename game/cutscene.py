@@ -226,12 +226,26 @@ class CutsceneManager:
             if self._restore_enabled:
                 self._assign_pos(actor, row["pos"])
                 actor.angle = row["yaw"]
-                for key in ("health", "dead", "triggered", "awake", "target_name", "_aggro_target", "is_shooting"):
-                    old = row[key if key != "_aggro_target" else "aggro"] if key == "_aggro_target" else row[key]
+                for key in ("health", "dead"):
+                    old = row[key]
                     if old is None:
                         props.pop(key, None)
                     else:
                         props[key] = old
+            # Runtime AI control flags are always restored. With restore_actors
+            # disabled the battle outcome/positions survive, but the NPCs must
+            # still return to their normal simulation state instead of remaining
+            # parked forever by the cutscene director.
+            for key, saved_key in (
+                ("triggered", "triggered"), ("awake", "awake"),
+                ("target_name", "target_name"), ("_aggro_target", "aggro"),
+                ("is_shooting", "is_shooting"),
+            ):
+                old = row[saved_key]
+                if old is None:
+                    props.pop(key, None)
+                else:
+                    props[key] = old
             props.pop("_cutscene_staged", None)
         self._actor_restore = []
 
