@@ -57,7 +57,7 @@ def draw_in_rect(painter, cutscene, x, y, w, h):
 
     painter.save()
     painter.setRenderHint(painter.TextAntialiasing, True)
-    painter.setPen(T.text())
+    painter.setPen(T.INK)
     painter.setFont(T.font(15, bold=True))
     painter.drawText(QRectF(x + PAD, y + PAD, w - PAD * 2, 25),
                      Qt.AlignLeft | Qt.AlignVCenter, speaker)
