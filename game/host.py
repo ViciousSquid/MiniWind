@@ -819,6 +819,9 @@ class MiniwindGame:
 
         just = self._just_pressed(ctx)
 
+        if not session.needs_char_creation and not session.cutscenes.active:
+            session.cutscenes.trigger_at_play_start()
+
         # While a modal screen (character creation, inventory, journal…) or a
         # conversation is open, the *world* is frozen: hold MiniWind's own
         # world-pause request so the engine idles the monsters/physics, advance
