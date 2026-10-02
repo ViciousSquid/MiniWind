@@ -331,7 +331,27 @@ def _init_settings(self):
 if _HAVE_EDITOR:
     class GameSettings(Thing):
         """Per-map RPG settings + game-clock config. Presence = RPG map opt-in."""
+
         map_type = "miniwindsettings"
+
+        # The Property Editor deliberately exposes only explicitly classified
+        # properties on the main Properties tab.  GameSettings used to declare
+        # none, so the entity rendered a completely blank Properties tab even
+        # though _init_settings() populated all of its authored settings.
+        EDITOR_PRIMARY_PROPERTIES = (
+            "start_hour",
+            "start_day",
+            "minutes_per_day",
+            "show_clock",
+            "state_store",
+            "difficulty",
+            "start_scenario",
+            "region_name",
+        )
+        EDITOR_ADVANCED_PROPERTIES = (
+            "player_spells",
+        )
+
         # Its own icon (a cog around a clock), not the Key/Value Store's: the
         # one entity that configures the whole map should not be
         # indistinguishable from a logic node in the 2D views.
