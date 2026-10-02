@@ -4861,6 +4861,17 @@ class MainWindow(QMainWindow):
             # and press Apply to persist the connections.
             self.open_logic_graph()
 
+    def open_cutscene_wizard(self):
+        """Open the MiniWind cutscene generator and capture the current editor pose."""
+        try:
+            from editor.cutscene_wizard import CutsceneWizard
+        except Exception as exc:
+            QMessageBox.warning(self, "Cutscene Wizard",
+                                f"The Cutscene Wizard is unavailable: {exc}")
+            return
+        wiz = CutsceneWizard(self, parent=self)
+        wiz.exec_()
+
     def open_project_overview(self):
         """Show what this map contains, as a report rather than a panel.
 
