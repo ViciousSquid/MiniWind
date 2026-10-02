@@ -162,6 +162,7 @@ class CutsceneManager:
         self._spawned_blood = []
         self._played = set()
         self._play_start_checked = False
+        self._cleanup_offer = None
 
     @property
     def active(self):
@@ -586,12 +587,33 @@ class CutsceneManager:
             duration_candidates.append(float(event.get("time", 0.0)) + (float(event.get("duration", 0.0)) if event["type"] in ("fight", "dialogue") else 0.0))
         total = max(duration_candidates or [0.0])
         if self.elapsed >= total and not any(self._event_is_active(e) for e in self.cutscene.get("events", [])):
-            self.stop()
+            self.stop(reason="finished")
 
-    def stop(self):
+    def consume_cleanup_offer(self):
+        offer = self._cleanup_offer
+        self._cleanup_offer = None
+        return list(offer or [])
+
+    def cleanup_scene(self, objects):
+        things = getattr(self.session.logic, "things", None)
+        if things is None:
+            return 0
+        removed = 0
+        for obj in list(objects or []):
+            try:
+                things.remove(obj)
+                removed += 1
+            except ValueError:
+                pass
+        return removed
+
+    def stop(self, reason="cancelled"):
         if not self.active:
             return
         scene = self.scene
+        cleanup_candidates = [row["actor"] for row in self._actor_restore]
+        if scene is not None:
+            cleanup_candidates.append(scene)
         for row in self._actor_restore:
             row["actor"].properties.pop("_cutscene_in_fight", None)
             row["actor"].properties.pop("_cutscene_shooting_until", None)
@@ -615,6 +637,7 @@ class CutsceneManager:
         self._fight_original_styles = {}
         self._fight_cooldowns = {}
         self._spawned_blood = []
+        self._cleanup_offer = cleanup_candidates if reason == "finished" else None
         self.session.logic.cinematic_state = None
         io = getattr(self.session.logic, "io_manager", None)
         if io is not None:
