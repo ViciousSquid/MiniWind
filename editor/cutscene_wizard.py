@@ -75,12 +75,22 @@ class CutsceneWizard(QtWidgets.QDialog):
         self._cleaned = False
 
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(10, 10, 10, 10)
+        root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
+        # The wizard is deliberately wider than tall: most authoring happens
+        # through the 3D viewport, while the wizard provides compact controls.
+        self.setMinimumSize(900, 620)
+        self.resize(980, 720)
+
+        tabs = QtWidgets.QTabWidget()
+        root.addWidget(tabs, 1)
+
         # -----------------------------------------------------------------
-        # Always-visible essentials.
+        # Setup
         # -----------------------------------------------------------------
+        setup_page = QtWidgets.QWidget()
+        setup_layout = QtWidgets.QVBoxLayout(setup_page)
         header = QtWidgets.QGroupBox("Cutscene")
         form = QtWidgets.QFormLayout(header)
         self.name = QtWidgets.QLineEdit("cutscene")
@@ -106,16 +116,30 @@ class CutsceneWizard(QtWidgets.QDialog):
         form.addRow("", self.once)
         form.addRow("", self.restore)
         form.addRow("", self.stop_escape)
-        root.addWidget(header)
+        setup_layout.addWidget(header)
+        setup_help = QtWidgets.QLabel(
+            "<b>Simple workflow:</b> add temporary actors, place them in the 3D view, "
+            "capture their movement as waypoints, then set the camera and dialogue. "
+            "The temporary actors are removed after the cutscene finishes."
+        )
+        setup_help.setWordWrap(True)
+        setup_help.setMinimumHeight(55)
+        setup_layout.addWidget(setup_help)
+        setup_layout.addStretch(1)
+        tabs.addTab(setup_page, "1. Setup")
+
+        # -----------------------------------------------------------------
+        # Actors + waypoints — the main authoring workflow.
+        # -----------------------------------------------------------------
+        actors_page = QtWidgets.QWidget()
+        actors_layout = QtWidgets.QVBoxLayout(actors_page)
 
         actors_box = QtWidgets.QGroupBox("Actors")
         av = QtWidgets.QVBoxLayout(actors_box)
-        av.setContentsMargins(7, 7, 7, 7)
-
         help_label = QtWidgets.QLabel(
-            "<b>Live scene authoring:</b> create an actor here, then move it in the "
-            "3D view exactly like any other entity. Select an actor below to author "
-            "its waypoints."
+            "<b>Step 1:</b> Add an NPC or creature. <b>Step 2:</b> select it, "
+            "then move it directly in the 3D view. <b>Step 3:</b> capture its "
+            "current position below. Repeat for each point in the performance."
         )
         help_label.setWordWrap(True)
         av.addWidget(help_label)
@@ -126,63 +150,68 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.capture_button = QtWidgets.QPushButton("Capture selected")
         self.remove_actor_button = QtWidgets.QPushButton("Remove")
         self.focus_actor_button = QtWidgets.QPushButton("Focus")
-        actor_buttons.addWidget(self.add_npc_button)
-        actor_buttons.addWidget(self.add_creature_button)
-        actor_buttons.addWidget(self.capture_button)
-        actor_buttons.addWidget(self.remove_actor_button)
-        actor_buttons.addWidget(self.focus_actor_button)
+        for button in (self.add_npc_button, self.add_creature_button,
+                       self.capture_button, self.remove_actor_button,
+                       self.focus_actor_button):
+            actor_buttons.addWidget(button)
         av.addLayout(actor_buttons)
 
         self.actor_list = QtWidgets.QListWidget()
         self.actor_list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-        self.actor_list.setMinimumHeight(125)
+        self.actor_list.setMinimumHeight(90)
         av.addWidget(self.actor_list)
-
-        selected_row = QtWidgets.QHBoxLayout()
         self.selected_actor_label = QtWidgets.QLabel("No actor selected")
         self.selected_actor_label.setStyleSheet("font-weight: bold;")
-        selected_row.addWidget(self.selected_actor_label)
-        selected_row.addStretch(1)
-        av.addLayout(selected_row)
-        root.addWidget(actors_box)
+        av.addWidget(self.selected_actor_label)
+        actors_layout.addWidget(actors_box)
 
-        waypoint_box = QtWidgets.QGroupBox("Waypoints")
+        waypoint_box = QtWidgets.QGroupBox("Waypoints — record where the selected actor should go")
         wv = QtWidgets.QVBoxLayout(waypoint_box)
-        wv.setContentsMargins(7, 7, 7, 7)
+
         waypoint_help = QtWidgets.QLabel(
-            "Move the selected actor in the 3D view, then press Add waypoint. "
-            "Attack waypoints automatically create the corresponding fight event."
+            "<b>How it works:</b> select an actor above → move that actor in the 3D view "
+            "→ press <b>Capture waypoint</b>. Each press records the actor's current "
+            "position at the displayed time. The next time is advanced automatically."
         )
         waypoint_help.setWordWrap(True)
+        waypoint_help.setStyleSheet("padding: 4px;")
         wv.addWidget(waypoint_help)
 
-        waypoint_row = QtWidgets.QHBoxLayout()
+        time_row = QtWidgets.QHBoxLayout()
+        time_row.addWidget(QtWidgets.QLabel("<b>At time</b>"))
         self.waypoint_time = QtWidgets.QDoubleSpinBox()
         self.waypoint_time.setRange(0, 3600)
         self.waypoint_time.setDecimals(2)
         self.waypoint_time.setValue(0)
+        self.waypoint_time.setSuffix(" s")
+        time_row.addWidget(self.waypoint_time)
+        time_row.addStretch(1)
         self.waypoint_action = QtWidgets.QComboBox()
-        self.waypoint_action.addItem("Move", "move")
-        self.waypoint_action.addItem("Attack", "attack")
+        self.waypoint_action.addItem("Move to this position", "move")
+        self.waypoint_action.addItem("Attack another actor", "attack")
+        time_row.addWidget(QtWidgets.QLabel("Action"))
+        time_row.addWidget(self.waypoint_action)
+        wv.addLayout(time_row)
+
+        target_row = QtWidgets.QHBoxLayout()
+        target_row.addWidget(QtWidgets.QLabel("Target"))
         self.waypoint_target = QtWidgets.QComboBox()
+        self.waypoint_target.setMinimumWidth(240)
+        target_row.addWidget(self.waypoint_target, 1)
+        target_row.addWidget(QtWidgets.QLabel("Attack for"))
         self.waypoint_attack_duration = QtWidgets.QDoubleSpinBox()
         self.waypoint_attack_duration.setRange(0.05, 300)
         self.waypoint_attack_duration.setDecimals(2)
         self.waypoint_attack_duration.setValue(5)
-        waypoint_row.addWidget(QtWidgets.QLabel("Time"))
-        waypoint_row.addWidget(self.waypoint_time)
-        waypoint_row.addWidget(QtWidgets.QLabel("Action"))
-        waypoint_row.addWidget(self.waypoint_action)
-        waypoint_row.addWidget(QtWidgets.QLabel("Target"))
-        waypoint_row.addWidget(self.waypoint_target, 1)
-        waypoint_row.addWidget(QtWidgets.QLabel("Attack for"))
-        waypoint_row.addWidget(self.waypoint_attack_duration)
-        wv.addLayout(waypoint_row)
+        self.waypoint_attack_duration.setSuffix(" s")
+        target_row.addWidget(self.waypoint_attack_duration)
+        wv.addLayout(target_row)
 
         waypoint_buttons = QtWidgets.QHBoxLayout()
-        self.add_waypoint_button = QtWidgets.QPushButton("Add waypoint")
+        self.add_waypoint_button = QtWidgets.QPushButton("Capture waypoint")
+        self.add_waypoint_button.setDefault(True)
         self.capture_now_button = QtWidgets.QPushButton("Capture current position")
-        self.remove_waypoint_button = QtWidgets.QPushButton("Remove selected")
+        self.remove_waypoint_button = QtWidgets.QPushButton("Remove selected waypoint")
         waypoint_buttons.addWidget(self.add_waypoint_button)
         waypoint_buttons.addWidget(self.capture_now_button)
         waypoint_buttons.addWidget(self.remove_waypoint_button)
@@ -191,57 +220,89 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.waypoint_list = QtWidgets.QListWidget()
         self.waypoint_list.setMinimumHeight(130)
         wv.addWidget(self.waypoint_list)
-        root.addWidget(waypoint_box)
+        actors_layout.addWidget(waypoint_box, 1)
 
-        camera_box = QtWidgets.QGroupBox("Camera")
+        tabs.addTab(actors_page, "2. Actors & Waypoints")
+
+        # -----------------------------------------------------------------
+        # Camera
+        # -----------------------------------------------------------------
+        camera_page = QtWidgets.QWidget()
+        camera_layout = QtWidgets.QVBoxLayout(camera_page)
+        camera_box = QtWidgets.QGroupBox("Camera keyframes")
         cv = QtWidgets.QVBoxLayout(camera_box)
-        cv.setContentsMargins(7, 7, 7, 7)
+        camera_help = QtWidgets.QLabel(
+            "Move the editor camera to the shot you want, choose a time, then "
+            "press Capture. Optionally make the camera look at an actor."
+        )
+        camera_help.setWordWrap(True)
+        cv.addWidget(camera_help)
         camera_row = QtWidgets.QHBoxLayout()
         self.camera_time = QtWidgets.QDoubleSpinBox()
         self.camera_time.setRange(0, 3600)
         self.camera_time.setDecimals(2)
         self.camera_time.setValue(0)
+        self.camera_time.setSuffix(" s")
         self.look_at = QtWidgets.QComboBox()
         self.look_at.addItem("Keep camera rotation", "")
-        camera_row.addWidget(QtWidgets.QLabel("Time"))
+        camera_row.addWidget(QtWidgets.QLabel("At time"))
         camera_row.addWidget(self.camera_time)
         camera_row.addWidget(QtWidgets.QLabel("Look at"))
         camera_row.addWidget(self.look_at, 1)
-        camera_row.addWidget(QtWidgets.QPushButton("Capture"), 0)
-        self.capture_camera_button = camera_row.itemAt(camera_row.count() - 1).widget()
+        self.capture_camera_button = QtWidgets.QPushButton("Capture camera position")
+        camera_row.addWidget(self.capture_camera_button)
         self.capture_camera_button.clicked.connect(self._capture_camera_keyframe)
         cv.addLayout(camera_row)
         self.camera_keys_list = QtWidgets.QListWidget()
-        self.camera_keys_list.setMaximumHeight(90)
+        self.camera_keys_list.setMinimumHeight(120)
         cv.addWidget(self.camera_keys_list)
-        root.addWidget(camera_box)
+        camera_layout.addWidget(camera_box)
+        camera_layout.addStretch(1)
+        tabs.addTab(camera_page, "3. Camera")
 
         # -----------------------------------------------------------------
-        # Advanced = old functionality, deliberately retained rather than
-        # forcing it into the simple workflow.
+        # Events / dialogue. Advanced functionality remains available, but
+        # it no longer makes the primary wizard vertically enormous.
         # -----------------------------------------------------------------
+        events_page = QtWidgets.QWidget()
+        events_layout = QtWidgets.QVBoxLayout(events_page)
+        events_tabs = QtWidgets.QTabWidget()
+        self._build_fight_tab(events_tabs)
+        self._build_blood_tab(events_tabs)
+        self._build_dialogue_tab(events_tabs)
+        self._build_message_tab(events_tabs)
+        events_layout.addWidget(events_tabs, 1)
+
+        self.event_list = QtWidgets.QListWidget()
+        self.event_list.setMinimumHeight(100)
+        events_layout.addWidget(self.event_list)
+        remove_event = QtWidgets.QPushButton("Remove selected event")
+        remove_event.clicked.connect(self._remove_event)
+        events_layout.addWidget(remove_event)
+
+        # Keep the exact keyframe authoring functionality, but tuck it behind
+        # the Events tab rather than forcing it into the simple workflow.
         advanced_toggle = QtWidgets.QToolButton()
-        advanced_toggle.setText("Advanced timeline & events")
+        advanced_toggle.setText("Advanced: exact actor keyframes")
         advanced_toggle.setCheckable(True)
         advanced_toggle.setChecked(False)
         advanced_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         advanced_toggle.setArrowType(QtCore.Qt.RightArrow)
-        root.addWidget(advanced_toggle)
+        events_layout.addWidget(advanced_toggle)
 
         advanced = QtWidgets.QWidget()
         advanced.setVisible(False)
         advanced_layout = QtWidgets.QVBoxLayout(advanced)
-        advanced_layout.setContentsMargins(0, 0, 0, 0)
-
         exact_box = QtWidgets.QGroupBox("Exact actor keyframes")
         exact_form = QtWidgets.QFormLayout(exact_box)
         self.actor_time = QtWidgets.QDoubleSpinBox()
         self.actor_time.setRange(0, 3600)
         self.actor_time.setDecimals(2)
         self.actor_time.setValue(0)
+        self.actor_time.setSuffix(" s")
         exact_form.addRow("Keyframe time", self.actor_time)
         self.actor_keys_list = QtWidgets.QListWidget()
-        self.actor_keys_list.setMinimumHeight(85)
+        self.actor_keys_list.setMinimumHeight(70)
         exact_form.addRow(self.actor_keys_list)
         exact_buttons = QtWidgets.QHBoxLayout()
         self.capture_actor_button = QtWidgets.QPushButton(
@@ -251,31 +312,16 @@ class CutsceneWizard(QtWidgets.QDialog):
         exact_buttons.addWidget(self.capture_actor_button)
         exact_form.addRow(exact_buttons)
         advanced_layout.addWidget(exact_box)
-
-        events_tabs = QtWidgets.QTabWidget()
-        self._build_fight_tab(events_tabs)
-        self._build_blood_tab(events_tabs)
-        self._build_dialogue_tab(events_tabs)
-        self._build_message_tab(events_tabs)
-        advanced_layout.addWidget(events_tabs)
-
-        self.event_list = QtWidgets.QListWidget()
-        self.event_list.setMinimumHeight(120)
-        advanced_layout.addWidget(self.event_list)
-        remove_event = QtWidgets.QPushButton("Remove selected event")
-        remove_event.clicked.connect(self._remove_event)
-        advanced_layout.addWidget(remove_event)
-
-        root.addWidget(advanced, 1)
+        events_layout.addWidget(advanced)
 
         def toggle_advanced(checked):
             advanced.setVisible(checked)
             advanced_toggle.setArrowType(
                 QtCore.Qt.DownArrow if checked else QtCore.Qt.RightArrow
             )
-            self.adjustSize()
 
         advanced_toggle.toggled.connect(toggle_advanced)
+        tabs.addTab(events_page, "4. Dialogue & Events")
 
         footer = QtWidgets.QHBoxLayout()
         self.summary = QtWidgets.QLabel("No actors created yet.")
@@ -284,6 +330,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.save_button = QtWidgets.QPushButton("Save Cutscene")
         self.cancel_button = QtWidgets.QPushButton("Cancel")
         self.save_button.setDefault(True)
+        self.cancel_button.setDefault(False)
         footer.addWidget(self.save_button)
         footer.addWidget(self.cancel_button)
         root.addLayout(footer)
