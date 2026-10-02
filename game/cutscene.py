@@ -76,7 +76,31 @@ def normalise_cutscene(raw):
         aid = str(actor.get("id", "")).strip()
         if not aid:
             continue
-        actor_rows.append({"id": aid, "name": str(actor.get("name", "") or "")})
+
+        row = {
+            "id": aid,
+            "name": str(actor.get("name", "") or ""),
+        }
+
+        # A wizard-created actor is embedded as a portable definition.  Older
+        # cutscenes simply point at an actor already present in the map, so the
+        # legacy form remains untouched.
+        definition = actor.get("definition")
+        if isinstance(definition, dict):
+            props = definition.get("properties", {})
+            if not isinstance(props, dict):
+                props = {}
+            dtype = str(definition.get("type") or props.get("type") or "npc").lower()
+            row["spawn"] = bool(actor.get("spawn", True))
+            row["definition"] = {
+                "type": dtype,
+                "pos": _vec3(definition.get("pos")),
+                "properties": dict(props),
+            }
+        elif actor.get("spawn"):
+            row["spawn"] = True
+
+        actor_rows.append(row)
 
     tracks = raw.get("actor_tracks", {})
     if not isinstance(tracks, dict):
@@ -160,6 +184,9 @@ class CutsceneManager:
         self._fight_cooldowns = {}
         self._fight_original_styles = {}
         self._spawned_blood = []
+        # Actors authored by the wizard are runtime-only and must disappear
+        # when the cutscene ends or is cancelled.
+        self._spawned_actors = []
         self._played = set()
         self._play_start_checked = False
         self._cleanup_offer = None
@@ -203,12 +230,54 @@ class CutsceneManager:
         except Exception:
             actor.pos = list(pos)
 
+    def _instantiate_spawned_actor(self, row):
+        """Build a wizard-authored temporary actor from its embedded definition."""
+        definition = row.get("definition")
+        if not isinstance(definition, dict):
+            return None
+
+        try:
+            from .entities import NPC, Creature
+            actor_type = str(
+                definition.get("type")
+                or definition.get("properties", {}).get("type")
+                or "npc"
+            ).replace("_", "").lower()
+            cls = Creature if actor_type == "creature" else NPC
+            props = dict(definition.get("properties") or {})
+            props["id"] = str(row.get("id") or props.get("id") or uuid.uuid4())
+            props["type"] = "creature" if cls is Creature else "npc"
+            props.pop("_io_connections", None)
+            actor = cls(
+                pos=_vec3(definition.get("pos")),
+                properties=props,
+            )
+            actor.properties["_cutscene_temporary"] = True
+            actor.properties["triggered"] = True
+            return actor
+        except Exception:
+            return None
+
     def _stage_actors(self):
         self._actor_restore = []
+        self._spawned_actors = []
+        things = getattr(self.session.logic, "things", None)
+        if things is None:
+            return
+
         for row in (self.cutscene or {}).get("actors", []):
-            actor = self._find_actor(row.get("id"))
+            actor = None
+            spawned = bool(row.get("spawn") and isinstance(row.get("definition"), dict))
+            if spawned:
+                actor = self._instantiate_spawned_actor(row)
+                if actor is not None:
+                    things.append(actor)
+                    self._spawned_actors.append(actor)
+            if actor is None:
+                actor = self._find_actor(row.get("id"))
             if actor is None:
                 continue
+
             props = actor.properties
             pos, yaw = self._actor_pose(actor)
             self._actor_restore.append({
@@ -218,6 +287,7 @@ class CutsceneManager:
                 "target_name": props.get("target_name"),
                 "aggro": props.get("_aggro_target"),
                 "is_shooting": props.get("is_shooting"),
+                "spawned": actor in self._spawned_actors,
             })
             props["triggered"] = True
             props["awake"] = False
@@ -509,6 +579,7 @@ class CutsceneManager:
         self._fired_events = set()
         self._fight_cooldowns = {}
         self._spawned_blood = []
+        self._spawned_actors = []
         self._restore_enabled = bool(self.cutscene.get("settings", {}).get("restore_actors", props.get("restore_actors", True)))
         self._stage_actors()
         self._apply_camera()
@@ -637,6 +708,12 @@ class CutsceneManager:
                 actor.properties["attack_style"] = original_style
         self._fight_original_styles = {}
         self._fight_cooldowns = {}
+        for actor in self._spawned_actors:
+            try:
+                self.session.logic.things.remove(actor)
+            except ValueError:
+                pass
+        self._spawned_actors = []
         self._spawned_blood = []
         self._cleanup_offer = cleanup_candidates if reason == "finished" else None
         self.session.logic.cinematic_state = None
