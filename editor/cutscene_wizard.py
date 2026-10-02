@@ -118,7 +118,7 @@ class CutsceneWizard(QtWidgets.QWizard):
         self.blood_variant = QtWidgets.QComboBox(); self.blood_variant.addItem("Random", "random")
         try:
             from game.rpg import gib
-            for i, path in enumerate(gib.stain_paths(False)): self.blood_variant.addItem(f"Variant {i + 1} — {path.rsplit("/", 1)[-1]}", i)
+            for i, path in enumerate(gib.stain_paths(False)): self.blood_variant.addItem(f'Variant {i + 1} — {path.rsplit("/", 1)[-1]}', i)
         except Exception: pass
         self.blood_x = QtWidgets.QDoubleSpinBox(); self.blood_y = QtWidgets.QDoubleSpinBox(); self.blood_z = QtWidgets.QDoubleSpinBox()
         for spin in (self.blood_x, self.blood_y, self.blood_z): spin.setRange(-100000, 100000); spin.setDecimals(2)
@@ -250,7 +250,7 @@ class CutsceneWizard(QtWidgets.QWizard):
         self.event_list.clear()
         for event in sorted(self.events, key=lambda x: x.get("time", 0)):
             kind = event["type"]; label = f"{event['time']:.2f}s — {kind}"
-            if kind == "fight": label += f" ({len(event["attackers"])} vs {len(event["defenders"])})"
+            if kind == "fight": label += f" ({len(event['attackers'])} vs {len(event['defenders'])})"
             elif kind == "dialogue": label += f" — {event["text"][:45]}"
             elif kind == "message": label += f" — {event["line"]}: {event["text"][:45]}"
             self.event_list.addItem(label)
