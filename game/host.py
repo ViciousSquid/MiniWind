@@ -1069,6 +1069,8 @@ class MiniwindGame:
             # full-screen draw where no window manager exists (e.g. headless).
             windowed = self._sync_overlay_windows(session, viewport, w, h)
             if session is not None and session.cutscenes.active:
+                session.show_loadout = False
+                self._sync_loadout_window(session, viewport, w, h)
                 cutscene_ui.draw_message_lines(
                     painter, session.cutscenes, ev.get("width", 0), ev.get("height", 0))
                 if not windowed:
