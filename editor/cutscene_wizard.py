@@ -147,7 +147,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         actor_buttons = QtWidgets.QHBoxLayout()
         self.add_npc_button = QtWidgets.QPushButton("+ NPC")
         self.add_creature_button = QtWidgets.QPushButton("+ Creature")
-        self.capture_button = QtWidgets.QPushButton("Capture selected")
+        self.capture_button = QtWidgets.QPushButton("Add selected editor actors")
         self.remove_actor_button = QtWidgets.QPushButton("Remove")
         self.focus_actor_button = QtWidgets.QPushButton("Focus")
         for button in (self.add_npc_button, self.add_creature_button,
@@ -210,7 +210,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         waypoint_buttons = QtWidgets.QHBoxLayout()
         self.add_waypoint_button = QtWidgets.QPushButton("Capture waypoint")
         self.add_waypoint_button.setDefault(True)
-        self.capture_now_button = QtWidgets.QPushButton("Capture current position")
+        self.capture_now_button = QtWidgets.QPushButton("Capture current position (shortcut)")
         self.remove_waypoint_button = QtWidgets.QPushButton("Remove selected waypoint")
         waypoint_buttons.addWidget(self.add_waypoint_button)
         waypoint_buttons.addWidget(self.capture_now_button)
@@ -792,14 +792,16 @@ class CutsceneWizard(QtWidgets.QDialog):
     def _refresh_waypoints(self):
         self.waypoint_list.clear()
         aid = self._current_actor_id()
-        for row in self.actor_tracks.get(aid, []):
-            action = str(row.get("action", "move")).capitalize()
+        for index, row in enumerate(self.actor_tracks.get(aid, []), 1):
+            action = str(row.get("action", "move")).lower()
             target = row.get("target_id")
             target_name = self.actor_meta.get(str(target), {}).get("name", "") if target else ""
-            suffix = f" → {target_name}" if target_name else ""
-            self.waypoint_list.addItem(
-                f"{float(row.get('time', 0.0)):.2f}s — {action}{suffix} — {row.get('pos')}"
-            )
+            time = float(row.get("time", 0.0))
+            if action == "attack":
+                label = f"{index}. At {time:.2f}s — ATTACK {target_name or "target"}"
+            else:
+                label = f"{index}. At {time:.2f}s — MOVE to captured position"
+            self.waypoint_list.addItem(label)
 
     # ------------------------------------------------------------------
     # Camera + exact keyframes.
