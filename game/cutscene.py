@@ -138,6 +138,7 @@ class CutsceneManager:
         self.message_lines = {}
         self._from_camera = None
         self._actor_restore = []
+        self._restore_enabled = True
         self._played = set()
 
     @property
@@ -192,7 +193,8 @@ class CutsceneManager:
                 continue
             old_pos = _vec3(getattr(actor, "pos", (0, 0, 0)))
             old_yaw = getattr(actor, "angle", None)
-            self._actor_restore.append((actor, old_pos, old_yaw))
+            old_triggered = actor.properties.get("triggered", None)
+            self._actor_restore.append((actor, old_pos, old_yaw, old_triggered))
             try:
                 import glm
                 actor.pos = glm.vec3(*_vec3(authored.get("pos")))
@@ -203,17 +205,25 @@ class CutsceneManager:
                     actor.angle = float(authored.get("yaw", old_yaw))
                 except (TypeError, ValueError):
                     pass
+            # Park staged actors so the normal MonsterAI thread cannot walk
+            # them away from the authored blocking while the cutscene runs.
+            actor.properties["triggered"] = True
             actor.properties["_cutscene_staged"] = True
 
     def _restore_actors(self):
-        for actor, pos, yaw in self._actor_restore:
-            try:
-                import glm
-                actor.pos = glm.vec3(*pos)
-            except Exception:
-                actor.pos = list(pos)
-            if yaw is not None:
-                actor.angle = yaw
+        for actor, pos, yaw, triggered in self._actor_restore:
+            if self._restore_enabled:
+                try:
+                    import glm
+                    actor.pos = glm.vec3(*pos)
+                except Exception:
+                    actor.pos = list(pos)
+                if yaw is not None:
+                    actor.angle = yaw
+            if triggered is None:
+                actor.properties.pop("triggered", None)
+            else:
+                actor.properties["triggered"] = triggered
             actor.properties.pop("_cutscene_staged", None)
         self._actor_restore = []
 
@@ -320,6 +330,7 @@ class CutsceneManager:
         self.sequence = sequence
         self.shot_index = 0
         self.elapsed = 0.0
+        self._restore_enabled = bool(props.get("restore_actors", True))
         self._stage_actors()
 
         self._set_shot_ui(self.sequence["shots"][0])
