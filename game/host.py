@@ -1212,7 +1212,7 @@ class MiniwindGame:
             return False
         try:
             from engine.floating_windows import CallbackWindow
-            from .ui import dialogue_ui, screens
+            from .ui import dialogue_ui, cutscene_ui, screens
         except Exception:
             return False
 
