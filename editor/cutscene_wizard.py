@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 import uuid
 
+import glm
+
 from PyQt5 import QtWidgets, QtCore
 
 from game import cutscene_files
@@ -73,6 +75,17 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.events = []
         self._saved = False
         self._cleaned = False
+
+        # Editor-side cutscene preview transport. This previews choreography
+        # without firing gameplay combat or permanently changing the map.
+        self._preview_timer = QtCore.QTimer(self)
+        self._preview_timer.setInterval(33)
+        self._preview_timer.timeout.connect(self._preview_tick)
+        self._preview_time = 0.0
+        self._preview_rate = 0.0
+        self._preview_duration = 0.0
+        self._preview_actor_baseline = {}
+        self._preview_camera_baseline = None
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -336,6 +349,32 @@ class CutsceneWizard(QtWidgets.QDialog):
         footer.addWidget(self.cancel_button)
         root.addLayout(footer)
 
+        # Preview transport is deliberately a separate control strip.
+        playback_box = QtWidgets.QGroupBox("Preview")
+        playback = QtWidgets.QHBoxLayout(playback_box)
+        playback.setContentsMargins(8, 6, 8, 6)
+        self.rewind_button = QtWidgets.QPushButton("⏪ RW")
+        self.play_button = QtWidgets.QPushButton("▶ Play")
+        self.fast_forward_button = QtWidgets.QPushButton("FF ⏩")
+        self.play_button.setStyleSheet(
+            "QPushButton { background: #238636; color: white; font-weight: bold; "
+            "padding: 6px 18px; border-radius: 4px; }"
+            "QPushButton:hover { background: #2ea043; }"
+        )
+        self.preview_time_label = QtWidgets.QLabel("0.00s / 0.00s")
+        self.preview_time_label.setMinimumWidth(110)
+        self.preview_time_label.setAlignment(QtCore.Qt.AlignCenter)
+        playback.addWidget(self.rewind_button)
+        playback.addWidget(self.play_button)
+        playback.addWidget(self.fast_forward_button)
+        playback.addStretch(1)
+        playback.addWidget(self.preview_time_label)
+        root.insertWidget(root.count() - 1, playback_box)
+
+        self.rewind_button.clicked.connect(self._preview_rewind)
+        self.play_button.clicked.connect(self._preview_play)
+        self.fast_forward_button.clicked.connect(self._preview_fast_forward)
+
         self.add_npc_button.clicked.connect(lambda: self._create_temporary_actor("npc"))
         self.add_creature_button.clicked.connect(
             lambda: self._create_temporary_actor("creature")
@@ -363,6 +402,180 @@ class CutsceneWizard(QtWidgets.QDialog):
         self._refresh_actor_lists()
         self._update_waypoint_controls()
         self._refresh_summary()
+
+    # ------------------------------------------------------------------
+    # Editor-side preview transport.
+    # ------------------------------------------------------------------
+    def _preview_end_time(self):
+        times = [float(row.get("time", 0.0)) for rows in self.actor_tracks.values() for row in rows]
+        times += [float(row.get("time", 0.0)) for row in self.camera_keys]
+        times += [float(row.get("time", 0.0)) for row in self.events]
+        return max(times, default=0.0)
+
+    @staticmethod
+    def _preview_pose(frames, elapsed):
+        if not frames:
+            return None
+        frames = sorted(frames, key=lambda row: float(row.get("time", 0.0)))
+        if elapsed <= float(frames[0].get("time", 0.0)):
+            row = frames[0]
+            return list(row.get("pos", (0, 0, 0))), float(row.get("yaw", 0.0))
+        if elapsed >= float(frames[-1].get("time", 0.0)):
+            row = frames[-1]
+            return list(row.get("pos", (0, 0, 0))), float(row.get("yaw", 0.0))
+        for left, right in zip(frames, frames[1:]):
+            lt = float(left.get("time", 0.0))
+            rt = float(right.get("time", 0.0))
+            if lt <= elapsed <= rt:
+                t = max(0.0, min(1.0, (elapsed - lt) / max(1e-6, rt - lt)))
+                t = t * t * (3.0 - 2.0 * t)
+                lp = list(left.get("pos", (0, 0, 0)))
+                rp = list(right.get("pos", lp))
+                pos = [lp[i] + (rp[i] - lp[i]) * t for i in range(3)]
+                yaw = float(left.get("yaw", 0.0)) + (
+                    float(right.get("yaw", 0.0)) - float(left.get("yaw", 0.0))
+                ) * t
+                return pos, yaw
+        return None
+
+    def _preview_start(self):
+        if self._preview_camera_baseline is None:
+            camera = self.main_window.view_3d.camera
+            self._preview_camera_baseline = {
+                "pos": _v3(camera.pos),
+                "yaw": float(camera.yaw),
+                "pitch": float(camera.pitch),
+                "fov": float(getattr(camera, "fov", 90.0)),
+            }
+        for aid, actor in self.actor_objects.items():
+            if aid not in self._preview_actor_baseline and actor is not None:
+                self._preview_actor_baseline[aid] = {
+                    "pos": _v3(actor.pos),
+                    "yaw": float(getattr(actor, "angle", 0.0)),
+                }
+        self._preview_duration = self._preview_end_time()
+
+    def _preview_apply(self):
+        for aid, frames in self.actor_tracks.items():
+            actor = self.actor_objects.get(aid)
+            pose = self._preview_pose(frames, self._preview_time)
+            if actor is None or pose is None:
+                continue
+            pos, yaw = pose
+            actor.pos = glm.vec3(*pos)
+            actor.angle = yaw
+
+        pose = self._preview_pose(self.camera_keys, self._preview_time)
+        if pose is not None:
+            pos, yaw = pose
+            frames = sorted(self.camera_keys, key=lambda row: float(row.get("time", 0.0)))
+            if len(frames) == 1:
+                pitch = float(frames[0].get("pitch", 0.0))
+                fov = float(frames[0].get("fov", 90.0))
+            elif self._preview_time >= float(frames[-1].get("time", 0.0)):
+                pitch = float(frames[-1].get("pitch", 0.0))
+                fov = float(frames[-1].get("fov", 90.0))
+            else:
+                pitch = float(frames[0].get("pitch", 0.0))
+                fov = float(frames[0].get("fov", 90.0))
+                for left, right in zip(frames, frames[1:]):
+                    lt = float(left.get("time", 0.0)); rt = float(right.get("time", 0.0))
+                    if lt <= self._preview_time <= rt:
+                        t = max(0.0, min(1.0, (self._preview_time - lt) / max(1e-6, rt - lt)))
+                        t = t * t * (3.0 - 2.0 * t)
+                        pitch = float(left.get("pitch", 0.0)) + (float(right.get("pitch", 0.0)) - float(left.get("pitch", 0.0))) * t
+                        fov = float(left.get("fov", 90.0)) + (float(right.get("fov", 90.0)) - float(left.get("fov", 90.0))) * t
+                        break
+            camera = self.main_window.view_3d.camera
+            camera.pos = glm.vec3(*pos)
+            camera.yaw = yaw
+            camera.pitch = pitch
+            camera.fov = fov
+            logic = getattr(self.main_window.view_3d, "logic_thread", None)
+            if logic is not None and hasattr(logic, "set_editor_camera"):
+                logic.set_editor_camera(camera.pos, camera.yaw, camera.pitch, camera.fov)
+
+        self.preview_time_label.setText(f"{self._preview_time:.2f}s / {self._preview_duration:.2f}s")
+        try:
+            self.main_window.update_all_ui()
+        except Exception:
+            pass
+
+    def _preview_tick(self):
+        if self._preview_rate == 0.0:
+            return
+        self._preview_time += 0.033 * self._preview_rate
+        if self._preview_time >= self._preview_duration:
+            self._preview_time = self._preview_duration
+            self._preview_rate = 0.0
+            self._preview_timer.stop()
+            self.play_button.setText("▶ Play")
+        elif self._preview_time <= 0.0:
+            self._preview_time = 0.0
+            self._preview_rate = 0.0
+            self._preview_timer.stop()
+            self.play_button.setText("▶ Play")
+        self._preview_apply()
+
+    def _preview_play(self):
+        self._preview_start()
+        if self._preview_duration <= 0.0:
+            self._preview_time = 0.0
+            self._preview_apply()
+            return
+        if self._preview_rate == 1.0:
+            self._preview_rate = 0.0
+            self._preview_timer.stop()
+            self.play_button.setText("▶ Play")
+            return
+        if self._preview_time >= self._preview_duration:
+            self._preview_time = 0.0
+        self._preview_rate = 1.0
+        self._preview_timer.start()
+        self.play_button.setText("⏸ Pause")
+        self._preview_apply()
+
+    def _preview_rewind(self):
+        self._preview_start()
+        self._preview_rate = -2.0
+        self._preview_timer.start()
+        self.play_button.setText("▶ Play")
+        self._preview_apply()
+
+    def _preview_fast_forward(self):
+        self._preview_start()
+        self._preview_rate = 2.0
+        self._preview_timer.start()
+        self.play_button.setText("▶ Play")
+        self._preview_apply()
+
+    def _preview_stop_and_restore(self):
+        self._preview_timer.stop()
+        self._preview_rate = 0.0
+        self.play_button.setText("▶ Play")
+        for aid, baseline in self._preview_actor_baseline.items():
+            actor = self.actor_objects.get(aid)
+            if actor is not None:
+                actor.pos = glm.vec3(*baseline["pos"])
+                actor.angle = baseline["yaw"]
+        if self._preview_camera_baseline is not None:
+            camera = self.main_window.view_3d.camera
+            camera.pos = glm.vec3(*self._preview_camera_baseline["pos"])
+            camera.yaw = self._preview_camera_baseline["yaw"]
+            camera.pitch = self._preview_camera_baseline["pitch"]
+            camera.fov = self._preview_camera_baseline["fov"]
+            logic = getattr(self.main_window.view_3d, "logic_thread", None)
+            if logic is not None and hasattr(logic, "set_editor_camera"):
+                logic.set_editor_camera(camera.pos, camera.yaw, camera.pitch, camera.fov)
+        self._preview_camera_baseline = None
+        self._preview_actor_baseline.clear()
+        self._preview_time = 0.0
+        self._preview_duration = 0.0
+        self.preview_time_label.setText("0.00s / 0.00s")
+        try:
+            self.main_window.update_all_ui()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Advanced event widgets — these retain the original wizard controls.
@@ -1038,6 +1251,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         self._delete_temporary_actors()
 
     def accept(self):
+        self._preview_stop_and_restore()
         if not self.camera_keys:
             QtWidgets.QMessageBox.warning(
                 self, "No camera keyframes",
@@ -1127,10 +1341,12 @@ class CutsceneWizard(QtWidgets.QDialog):
         super().accept()
 
     def reject(self):
+        self._preview_stop_and_restore()
         self._cleanup_after_cancel()
         super().reject()
 
     def closeEvent(self, event):
+        self._preview_stop_and_restore()
         if not self._saved:
             self._cleanup_after_cancel()
         super().closeEvent(event)
