@@ -212,3 +212,104 @@ def test_cutscene_fight_normalises_explicit_combat_style():
     })
     assert data["events"][0]["style"] == "magic"
     assert data["events"][1]["style"] == "normal"
+
+
+
+def test_cutscene_normalises_embedded_temporary_actor_definition():
+    from game.cutscene import normalise_cutscene
+
+    data = normalise_cutscene({
+        "version": 2,
+        "actors": [{
+            "id": "temp-actor",
+            "name": "Guard",
+            "spawn": True,
+            "definition": {
+                "type": "npc",
+                "pos": [10, 20, 30],
+                "properties": {
+                    "type": "npc",
+                    "id": "temp-actor",
+                    "npc_role": "guard",
+                },
+            },
+        }],
+        "camera": [{"time": 0, "pos": [0, 50, 0]}],
+    })
+
+    actor = data["actors"][0]
+    assert actor["spawn"] is True
+    assert actor["definition"]["type"] == "npc"
+    assert actor["definition"]["pos"] == [10.0, 20.0, 30.0]
+    assert actor["definition"]["properties"]["npc_role"] == "guard"
+
+
+def test_cutscene_spawned_actor_is_removed_when_cutscene_stops(monkeypatch):
+    from game.cutscene import CutsceneManager
+
+    class P:
+        def __init__(self, pos):
+            self.pos = list(pos)
+            self.angle = 0.0
+            self.properties = {"id": "temp-actor", "display_name": "Guard"}
+
+    class Logic:
+        def __init__(self):
+            self.things = []
+            self.player = P([0, 0, 0])
+            self.cinematic_state = None
+            self.io_manager = None
+
+    class Session:
+        def __init__(self):
+            self.logic = Logic()
+
+    session = Session()
+    manager = CutsceneManager(session)
+
+    scene = P([0, 0, 0])
+    scene.properties = {
+        "id": "scene",
+        "cutscene_file": "scene.json",
+        "once": False,
+    }
+    session.logic.things.append(scene)
+
+    spawned = P([10, 20, 30])
+    monkeypatch.setattr(
+        manager,
+        "_instantiate_spawned_actor",
+        lambda row: spawned,
+    )
+    monkeypatch.setattr(
+        "game.cutscene.cutscene_files.load_cutscene",
+        lambda filename: {
+            "version": 2,
+            "name": "Spawned",
+            "actors": [{
+                "id": "temp-actor",
+                "name": "Guard",
+                "spawn": True,
+                "definition": {
+                    "type": "npc",
+                    "pos": [10, 20, 30],
+                    "properties": {
+                        "type": "npc",
+                        "id": "temp-actor",
+                    },
+                },
+            }],
+            "camera": [{"time": 0, "pos": [0, 50, 0]}],
+            "actor_tracks": {},
+            "events": [],
+            "settings": {},
+        },
+    )
+
+    assert manager.start(scene)
+    assert spawned in session.logic.things
+    assert manager.active
+
+    manager.stop()
+    assert spawned not in session.logic.things
+    assert not manager.active
