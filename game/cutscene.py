@@ -1,19 +1,15 @@
-"""
-MiniWind cutscene runtime.
-
-Cutscenes are authored as ordinary map entities.  Their sequence is data: a
-list of camera shots, actor staging, optional dialogue, and transient
-message/message2/message3 lines.  No Lua or scene-specific Python is involved.
-"""
+"""MiniWind cutscene director: standalone JSON timeline + deterministic playback."""
 
 from __future__ import annotations
 
 import json
 import math
+import uuid
 
+from . import cutscene_files
 
+_EVENT_TYPES = {"fight", "blood", "dialogue", "message"}
 _MESSAGE_KEYS = ("message", "message2", "message3")
-
 
 def _vec3(value, default=(0.0, 0.0, 0.0)):
     try:
@@ -26,6 +22,12 @@ def _vec3(value, default=(0.0, 0.0, 0.0)):
         pass
     return list(default)
 
+def _lerp(a, b, t):
+    return float(a) + (float(b) - float(a)) * float(t)
+
+def _smooth(t):
+    t = max(0.0, min(1.0, float(t)))
+    return t * t * (3.0 - 2.0 * t)
 
 def _angle_to(from_pos, to_pos):
     fx, fy, fz = from_pos
@@ -36,109 +38,125 @@ def _angle_to(from_pos, to_pos):
         return 0.0, 0.0
     return math.atan2(dx, dz), math.asin(max(-1.0, min(1.0, dy / dist)))
 
+def _sorted_keyframes(value):
+    if not isinstance(value, list):
+        return []
+    out = []
+    for row in value:
+        if not isinstance(row, dict):
+            continue
+        try:
+            row = dict(row)
+            row["time"] = max(0.0, float(row.get("time", 0.0)))
+        except (TypeError, ValueError):
+            continue
+        out.append(row)
+    out.sort(key=lambda row: row["time"])
+    return out
 
-def _lerp(a, b, t):
-    return float(a) + (float(b) - float(a)) * float(t)
-
-
-def _camera_from_logic(logic):
-    player = getattr(logic, "player", None)
-    if player is not None:
-        pos = _vec3(getattr(player, "pos", (0, 0, 0)))
-        return {
-            "pos": pos,
-            "yaw": float(getattr(player, "angle", 0.0)),
-            "pitch": float(getattr(player, "pitch", 0.0)),
-            "fov": 90.0,
-        }
-    return {"pos": [0.0, 0.0, 0.0], "yaw": 0.0, "pitch": 0.0, "fov": 90.0}
-
-
-def normalise_sequence(raw):
-    """Return a validated, versioned sequence dictionary."""
+def normalise_cutscene(raw):
     if isinstance(raw, str):
         try:
             raw = json.loads(raw) if raw.strip() else {}
         except json.JSONDecodeError:
-            return {"version": 1, "actors": [], "shots": []}
+            return {"version": 2, "actors": [], "camera": [], "actor_tracks": {}, "events": [], "settings": {}}
     if not isinstance(raw, dict):
-        return {"version": 1, "actors": [], "shots": []}
+        raw = {}
 
+    settings = raw.get("settings", {})
+    if not isinstance(settings, dict):
+        settings = {}
     actors = raw.get("actors", [])
-    shots = raw.get("shots", [])
     if not isinstance(actors, list):
         actors = []
-    if not isinstance(shots, list):
-        shots = []
-
-    clean_actors = []
+    actor_rows = []
     for actor in actors:
         if not isinstance(actor, dict):
             continue
         aid = str(actor.get("id", "")).strip()
         if not aid:
             continue
-        clean_actors.append({
-            "id": aid,
-            "name": str(actor.get("name", "") or ""),
-            "pos": _vec3(actor.get("pos")),
-            "yaw": float(actor.get("yaw", actor.get("angle", 0.0)) or 0.0),
-        })
+        actor_rows.append({"id": aid, "name": str(actor.get("name", "") or "")})
 
-    clean_shots = []
-    for shot in shots:
-        if not isinstance(shot, dict):
+    tracks = raw.get("actor_tracks", {})
+    if not isinstance(tracks, dict):
+        tracks = {}
+    clean_tracks = {str(aid): _sorted_keyframes(frames) for aid, frames in tracks.items()}
+
+    camera = _sorted_keyframes(raw.get("camera", []))
+    events = []
+    for index, event in enumerate(raw.get("events", []) if isinstance(raw.get("events", []), list) else []):
+        if not isinstance(event, dict):
             continue
-        cam = shot.get("camera", {})
-        if not isinstance(cam, dict):
-            cam = {}
-        dialogue = shot.get("dialogue", {})
-        if not isinstance(dialogue, dict):
-            dialogue = {}
-        messages = shot.get("messages", {})
-        if not isinstance(messages, dict):
-            messages = {}
-        camera = {
-            "pos": _vec3(cam.get("pos")),
-            "yaw": float(cam.get("yaw", 0.0) or 0.0),
-            "pitch": float(cam.get("pitch", 0.0) or 0.0),
-            "fov": float(cam.get("fov", 90.0) or 90.0),
-        }
-        clean_shots.append({
-            "duration": max(0.05, float(shot.get("duration", 2.0) or 2.0)),
-            "camera": camera,
-            "look_at": str(shot.get("look_at", "") or ""),
-            "dialogue": {
-                "speaker_id": str(dialogue.get("speaker_id", "") or ""),
-                "text": str(dialogue.get("text", "") or ""),
-                "duration": max(0.0, float(dialogue.get("duration", 0.0) or 0.0)),
-            },
-            "messages": {
-                key: str(messages.get(key, "") or "") for key in _MESSAGE_KEYS
-            },
-        })
+        kind = str(event.get("type", "")).strip().lower()
+        if kind not in _EVENT_TYPES:
+            continue
+        try:
+            start = max(0.0, float(event.get("time", 0.0)))
+        except (TypeError, ValueError):
+            start = 0.0
+        row = dict(event)
+        row["type"] = kind
+        row["time"] = start
+        if kind == "fight":
+            row["attackers"] = [str(x) for x in row.get("attackers", []) if x]
+            row["defenders"] = [str(x) for x in row.get("defenders", []) if x]
+            try:
+                row["duration"] = max(0.05, float(row.get("duration", 5.0)))
+            except (TypeError, ValueError):
+                row["duration"] = 5.0
+        elif kind == "blood":
+            row["position"] = _vec3(row.get("position"))
+            try:
+                row["width"] = max(8.0, float(row.get("width", 72.0)))
+                row["height"] = max(8.0, float(row.get("height", 48.0)))
+            except (TypeError, ValueError):
+                row["width"], row["height"] = 72.0, 48.0
+        elif kind == "dialogue":
+            row["speaker_id"] = str(row.get("speaker_id", "") or "")
+            row["text"] = str(row.get("text", "") or "")
+            try:
+                row["duration"] = max(0.05, float(row.get("duration", 3.0)))
+            except (TypeError, ValueError):
+                row["duration"] = 3.0
+        elif kind == "message":
+            line = str(row.get("line", "message") or "message").lower()
+            row["line"] = line if line in _MESSAGE_KEYS else "message"
+            row["text"] = str(row.get("text", "") or "")
+        row["_index"] = index
+        events.append(row)
 
+    events.sort(key=lambda row: (row["time"], row["_index"]))
     return {
-        "version": int(raw.get("version", 1) or 1),
-        "actors": clean_actors,
-        "shots": clean_shots,
+        "version": int(raw.get("version", 2) or 2),
+        "id": str(raw.get("id", "") or ""),
+        "name": str(raw.get("name", "Cutscene") or "Cutscene"),
+        "actors": actor_rows,
+        "camera": camera,
+        "actor_tracks": clean_tracks,
+        "events": events,
+        "settings": {
+            "restore_actors": bool(settings.get("restore_actors", True)),
+            "stop_on_escape": bool(settings.get("stop_on_escape", True)),
+        },
     }
 
-
 class CutsceneManager:
-    """Runs one authored MiniWind cutscene at a time."""
+    """Play one external JSON cutscene at a time."""
 
     def __init__(self, session):
         self.session = session
         self.scene = None
-        self.sequence = {"version": 1, "actors": [], "shots": []}
+        self.cutscene = None
         self.shot_index = -1
         self.elapsed = 0.0
         self.dialogue = None
         self.message_lines = {}
-        self._from_camera = None
         self._actor_restore = []
         self._restore_enabled = True
+        self._fired_events = set()
+        self._fight_cooldowns = {}
+        self._spawned_blood = []
         self._played = set()
         self._play_start_checked = False
 
@@ -148,210 +166,340 @@ class CutsceneManager:
 
     @property
     def current_shot(self):
-        if not self.active:
-            return None
-        shots = self.sequence.get("shots", [])
-        if 0 <= self.shot_index < len(shots):
-            return shots[self.shot_index]
         return None
 
     @property
     def current_title(self):
-        shot = self.current_shot
-        if not shot:
-            return "Cutscene"
-        dialog = shot.get("dialogue", {})
-        speaker = self._find_actor(dialog.get("speaker_id"))
-        if speaker is not None:
-            return str(speaker.properties.get("display_name")
-                       or speaker.properties.get("name")
-                       or "Conversation")
-        return "Cutscene"
+        return str((self.cutscene or {}).get("name", "Cutscene"))
 
     def _find_actor(self, actor_id):
         if not actor_id:
             return None
-        for thing in self.session.logic.things:
+        for thing in getattr(self.session.logic, "things", ()):
             props = getattr(thing, "properties", {})
             if str(props.get("id", "")) == str(actor_id):
                 return thing
         return None
 
-    def _find_scene(self, scene_id):
-        if not scene_id:
-            return None
-        for thing in self.session.logic.things:
-            props = getattr(thing, "properties", {})
-            if str(props.get("id", "")) == str(scene_id):
-                return thing
-        return None
+    def _actor_name(self, actor_id):
+        actor = self._find_actor(actor_id)
+        if actor is None:
+            return "Narrator"
+        props = actor.properties
+        return str(props.get("display_name") or props.get("name") or "Actor")
+
+    def _actor_pose(self, actor):
+        return _vec3(getattr(actor, "pos", (0, 0, 0))), float(getattr(actor, "angle", 0.0))
+
+    @staticmethod
+    def _assign_pos(actor, pos):
+        try:
+            import glm
+            actor.pos = glm.vec3(*pos)
+        except Exception:
+            actor.pos = list(pos)
 
     def _stage_actors(self):
         self._actor_restore = []
-        for authored in self.sequence.get("actors", []):
-            actor = self._find_actor(authored.get("id"))
+        for row in (self.cutscene or {}).get("actors", []):
+            actor = self._find_actor(row.get("id"))
             if actor is None:
                 continue
-            old_pos = _vec3(getattr(actor, "pos", (0, 0, 0)))
-            old_yaw = getattr(actor, "angle", None)
-            old_triggered = actor.properties.get("triggered", None)
-            self._actor_restore.append((actor, old_pos, old_yaw, old_triggered))
-            try:
-                import glm
-                actor.pos = glm.vec3(*_vec3(authored.get("pos")))
-            except Exception:
-                actor.pos = list(_vec3(authored.get("pos")))
-            if old_yaw is not None:
-                try:
-                    actor.angle = float(authored.get("yaw", old_yaw))
-                except (TypeError, ValueError):
-                    pass
-            # Park staged actors so the normal MonsterAI thread cannot walk
-            # them away from the authored blocking while the cutscene runs.
-            actor.properties["triggered"] = True
-            actor.properties["_cutscene_staged"] = True
+            props = actor.properties
+            pos, yaw = self._actor_pose(actor)
+            self._actor_restore.append({
+                "actor": actor, "pos": pos, "yaw": yaw,
+                "health": props.get("health"), "dead": props.get("dead"),
+                "triggered": props.get("triggered"), "awake": props.get("awake"),
+                "target_name": props.get("target_name"),
+                "aggro": props.get("_aggro_target"),
+                "is_shooting": props.get("is_shooting"),
+            })
+            props["triggered"] = True
+            props["awake"] = False
+            props["_cutscene_staged"] = True
 
     def _restore_actors(self):
-        for actor, pos, yaw, triggered in self._actor_restore:
+        for row in self._actor_restore:
+            actor = row["actor"]
+            props = actor.properties
             if self._restore_enabled:
-                try:
-                    import glm
-                    actor.pos = glm.vec3(*pos)
-                except Exception:
-                    actor.pos = list(pos)
-                if yaw is not None:
-                    actor.angle = yaw
-            if triggered is None:
-                actor.properties.pop("triggered", None)
-            else:
-                actor.properties["triggered"] = triggered
-            actor.properties.pop("_cutscene_staged", None)
+                self._assign_pos(actor, row["pos"])
+                actor.angle = row["yaw"]
+                for key in ("health", "dead", "triggered", "awake", "target_name", "_aggro_target", "is_shooting"):
+                    old = row[key if key != "_aggro_target" else "aggro"] if key == "_aggro_target" else row[key]
+                    if old is None:
+                        props.pop(key, None)
+                    else:
+                        props[key] = old
+            props.pop("_cutscene_staged", None)
         self._actor_restore = []
 
-    def _camera_dict(self, shot):
-        cam = dict(shot.get("camera", {}) or {})
-        return {
-            "pos": _vec3(cam.get("pos")),
-            "yaw": float(cam.get("yaw", 0.0) or 0.0),
-            "pitch": float(cam.get("pitch", 0.0) or 0.0),
-            "fov": float(cam.get("fov", 90.0) or 90.0),
+    def _actor_track_pose(self, actor_id, elapsed):
+        frames = (self.cutscene or {}).get("actor_tracks", {}).get(str(actor_id), [])
+        if not frames:
+            return None
+        if elapsed <= frames[0]["time"]:
+            frame = frames[0]
+            return _vec3(frame.get("pos")), float(frame.get("yaw", 0.0) or 0.0)
+        if elapsed >= frames[-1]["time"]:
+            frame = frames[-1]
+            return _vec3(frame.get("pos")), float(frame.get("yaw", 0.0) or 0.0)
+        for left, right in zip(frames, frames[1:]):
+            if left["time"] <= elapsed <= right["time"]:
+                span = max(1e-6, right["time"] - left["time"])
+                t = _smooth((elapsed - left["time"]) / span)
+                lp, rp = _vec3(left.get("pos")), _vec3(right.get("pos"))
+                return ([ _lerp(lp[i], rp[i], t) for i in range(3) ],
+                        _lerp(left.get("yaw", 0.0), right.get("yaw", 0.0), t))
+        return None
+
+    def _camera_pose(self, elapsed):
+        frames = (self.cutscene or {}).get("camera", [])
+        if not frames:
+            return None
+        if len(frames) == 1:
+            frame = frames[0]
+            return self._camera_frame(frame, elapsed)
+        if elapsed <= frames[0]["time"]:
+            return self._camera_frame(frames[0], elapsed)
+        for left, right in zip(frames, frames[1:]):
+            if left["time"] <= elapsed <= right["time"]:
+                span = max(1e-6, right["time"] - left["time"])
+                t = _smooth((elapsed - left["time"]) / span)
+                lp, rp = _vec3(left.get("pos")), _vec3(right.get("pos"))
+                pos = [_lerp(lp[i], rp[i], t) for i in range(3)]
+                yaw = _lerp(left.get("yaw", 0.0), right.get("yaw", 0.0), t)
+                pitch = _lerp(left.get("pitch", 0.0), right.get("pitch", 0.0), t)
+                fov = _lerp(left.get("fov", 90.0), right.get("fov", 90.0), t)
+                return self._look_camera(pos, yaw, pitch, fov, right.get("look_at") or left.get("look_at"))
+        return self._camera_frame(frames[-1], elapsed)
+
+    def _camera_frame(self, frame, elapsed):
+        pos = _vec3(frame.get("pos"))
+        return self._look_camera(pos, float(frame.get("yaw", 0.0)),
+                                 float(frame.get("pitch", 0.0)),
+                                 float(frame.get("fov", 90.0)),
+                                 frame.get("look_at"))
+
+    def _look_camera(self, pos, yaw, pitch, fov, look_at):
+        if isinstance(look_at, dict) and look_at.get("actor"):
+            actor = self._find_actor(look_at.get("actor"))
+            target = _vec3(getattr(actor, "pos", pos)) if actor is not None else pos
+            yaw, pitch = _angle_to(pos, target)
+        elif isinstance(look_at, (list, tuple)) and len(look_at) >= 3:
+            yaw, pitch = _angle_to(pos, _vec3(look_at))
+        return {"pos": pos, "yaw": yaw, "pitch": pitch, "fov": fov}
+
+    def _apply_camera(self):
+        pose = self._camera_pose(self.elapsed)
+        if pose is None:
+            return
+        self.session.logic.cinematic_state = {
+            "active": False, "paused": False, "cutscene": True,
+            "cam_pos": pose["pos"], "cam_angle": pose["yaw"],
+            "cam_pitch": pose["pitch"], "fov": pose["fov"],
         }
 
-    def _apply_camera(self, camera):
+    def _event_is_active(self, event):
+        start = float(event.get("time", 0.0))
+        if event["type"] in ("fight", "dialogue"):
+            return start <= self.elapsed < start + float(event.get("duration", 0.0))
+        return False
+
+    def _fight_pairs(self, event):
+        attackers = [self._find_actor(aid) for aid in event.get("attackers", [])]
+        defenders = [self._find_actor(aid) for aid in event.get("defenders", [])]
+        attackers = [a for a in attackers if a is not None and not a.properties.get("dead", False)]
+        defenders = [d for d in defenders if d is not None and not d.properties.get("dead", False)]
+        return attackers, defenders
+
+    @staticmethod
+    def _dist(a, b):
+        return math.sqrt(sum((float(a[i]) - float(b[i])) ** 2 for i in range(3)))
+
+    def _advance_fight(self, event, delta):
         logic = self.session.logic
-        state = getattr(logic, "cinematic_state", None)
-        if not isinstance(state, dict):
-            state = {}
-        state.update({
-            "active": False,
-            "paused": False,
-            "cutscene": True,
-            "cam_pos": list(camera["pos"]),
-            "cam_angle": float(camera["yaw"]),
-            "cam_pitch": float(camera["pitch"]),
-            "fov": float(camera.get("fov", 90.0)),
-        })
-        logic.cinematic_state = state
+        monster_ai = getattr(logic, "monster_ai", None)
+        attackers, defenders = self._fight_pairs(event)
+        if not attackers or not defenders:
+            return
+        now = self.elapsed
+        for side, enemies in ((attackers, defenders), (defenders, attackers)):
+            for actor in side:
+                if actor.properties.get("dead", False):
+                    continue
+                target = min(enemies, key=lambda x: self._dist(actor.pos, x.pos))
+                target_pos = _vec3(target.pos)
+                here = _vec3(actor.pos)
+                dx = target_pos[0] - here[0]
+                dy = target_pos[1] - here[1]
+                dz = target_pos[2] - here[2]
+                distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+                style = str(actor.properties.get("attack_style", "melee")).lower()
+                attack_range = 640.0 if style in ("bow", "magic") else 100.0
+                if distance > attack_range * 0.85:
+                    length = max(1e-6, distance)
+                    speed = max(20.0, float(actor.properties.get("move_speed", 90.0)))
+                    step = min(distance - attack_range * 0.7, speed * max(0.0, float(delta)))
+                    if step > 0:
+                        self._assign_pos(actor, [here[0] + dx / length * step,
+                                                here[1] + dy / length * step,
+                                                here[2] + dz / length * step])
+                    continue
+                key = id(actor)
+                if now < self._fight_cooldowns.get(key, -1.0):
+                    continue
+                self._fight_cooldowns[key] = now + (0.7 if style != "melee" else 0.9)
+                if monster_ai is not None and hasattr(monster_ai, "_monster_attack"):
+                    try:
+                        import glm
+                        src = glm.vec3(*_vec3(actor.pos))
+                        dst = glm.vec3(*_vec3(target.pos))
+                        monster_ai._monster_attack(
+                            actor, actor.properties.get("monster_type", "human"),
+                            dst, target, distance * distance,
+                            glm.vec3(src.x, src.y + 64.0, src.z),
+                            glm.vec3(dst.x, dst.y + 64.0, dst.z))
+                    except Exception:
+                        self._fallback_damage(actor, target)
+                else:
+                    self._fallback_damage(actor, target)
+                actor.properties["is_shooting"] = True
+                actor.properties["_cutscene_shooting_until"] = now + 0.22
 
-    def _look_at_camera(self, camera, actor_id):
-        actor = self._find_actor(actor_id)
-        if actor is None:
-            return camera
-        pos = _vec3(getattr(actor, "pos", (0, 0, 0)))
-        yaw, pitch = _angle_to(camera["pos"], pos)
-        out = dict(camera)
-        out["yaw"] = yaw
-        out["pitch"] = pitch
-        return out
+    def _fallback_damage(self, attacker, target):
+        damage = max(1, int(attacker.properties.get("damage", 10)))
+        health = int(target.properties.get("health", 100)) - damage
+        target.properties["health"] = health
+        if health <= 0:
+            target.properties["dead"] = True
+            target.properties["health"] = 0
 
-    def _shot_camera(self, shot):
-        camera = self._camera_dict(shot)
-        return self._look_at_camera(camera, shot.get("look_at", ""))
+    def _spawn_blood(self, event):
+        try:
+            from engine.prop_entity import Prop
+            from .rpg import gib
+            import random
+            paths = gib.stain_paths(magical=False)
+            if not paths:
+                return
+            variant = event.get("variant", "random")
+            if str(variant).lower() == "random":
+                sprite = random.choice(paths)
+            else:
+                try:
+                    sprite = paths[max(0, min(len(paths) - 1, int(variant)))]
+                except (TypeError, ValueError):
+                    sprite = paths[0]
+            props = {
+                "type": "prop", "id": str(uuid.uuid4()),
+                "name": "cutscene_blood", "display_name": "Blood",
+                "render_mode": "billboard", "sprite_path": sprite,
+                "sprite_size": [float(event.get("width", 72.0)), float(event.get("height", 48.0))],
+                "collision_shape": "none", "hidden_in_game": False,
+            }
+            blood = Prop(pos=_vec3(event.get("position")), properties=props)
+            self.session.logic.things.append(blood)
+            self._spawned_blood.append((blood, bool(event.get("persist", True))))
+        except Exception:
+            return
+
+    def _fire_events(self):
+        for index, event in enumerate((self.cutscene or {}).get("events", [])):
+            if event.get("_index", index) in self._fired_events:
+                continue
+            if float(event.get("time", 0.0)) > self.elapsed + 1e-8:
+                continue
+            self._fired_events.add(event.get("_index", index))
+            kind = event["type"]
+            if kind == "blood":
+                self._spawn_blood(event)
+            elif kind == "message":
+                line = event.get("line", "message")
+                text = str(event.get("text", ""))
+                self.message_lines[line] = text
+                self._queue_engine_message(line, text)
+            elif kind == "dialogue":
+                self.dialogue = {
+                    "speaker_id": str(event.get("speaker_id", "") or ""),
+                    "speaker": self._actor_name(event.get("speaker_id")),
+                    "text": str(event.get("text", "") or ""),
+                }
+        active_dialogue = None
+        for event in (self.cutscene or {}).get("events", []):
+            if event["type"] == "dialogue" and self._event_is_active(event):
+                active_dialogue = event
+        if active_dialogue is None:
+            self.dialogue = None
+        for key in _MESSAGE_KEYS:
+            current = None
+            for event in reversed((self.cutscene or {}).get("events", [])):
+                if event["type"] == "message" and event.get("line") == key and float(event.get("time", 0.0)) <= self.elapsed:
+                    current = str(event.get("text", ""))
+                    break
+            if current is None:
+                self.message_lines.pop(key, None)
+            else:
+                self.message_lines[key] = current
 
     def _queue_engine_message(self, key, text):
-        if not text:
-            return
         logic = self.session.logic
         gs = getattr(logic, "game_state", None)
         queue = getattr(gs, "queue_console_command", None)
-        if queue is None:
+        if queue is None or not text:
             return
-        import json as _json
         try:
-            queue(f"{key} {_json.dumps(text, ensure_ascii=False)}")
+            queue(f"{key} {json.dumps(text, ensure_ascii=False)}")
         except Exception:
             pass
 
-    def _set_shot_ui(self, shot):
-        self.dialogue = None
-        dialog = shot.get("dialogue", {}) or {}
-        text = str(dialog.get("text", "") or "").strip()
-        speaker = str(dialog.get("speaker_id", "") or "")
-        if text:
-            speaker_obj = self._find_actor(speaker)
-            self.dialogue = {
-                "speaker_id": speaker,
-                "speaker": (
-                    str(speaker_obj.properties.get("display_name")
-                        or speaker_obj.properties.get("name")
-                        or "Unknown")
-                    if speaker_obj is not None else "Narrator"
-                ),
-                "text": text,
-            }
-
-        self.message_lines = {
-            key: str((shot.get("messages", {}) or {}).get(key, "") or "")
-            for key in _MESSAGE_KEYS
-        }
-        for key in _MESSAGE_KEYS:
-            self._queue_engine_message(key, self.message_lines[key])
-
-    def _set_camera_to_shot(self, shot, from_camera=None):
-        target = self._shot_camera(shot)
-        self._from_camera = dict(from_camera or target)
-        self._apply_camera(target)
+    def _clear_shooting_flags(self):
+        for row in self._actor_restore:
+            actor = row["actor"]
+            until = float(actor.properties.get("_cutscene_shooting_until", 0.0) or 0.0)
+            if until <= self.elapsed:
+                actor.properties.pop("_cutscene_shooting_until", None)
+                actor.properties["is_shooting"] = False
 
     def start(self, scene=None):
-        """Start *scene*. Returns False for invalid/already-running scenes."""
-        if self.active:
+        if self.active or scene is None:
             return False
-        if scene is None:
-            return False
-        if (getattr(self.session, "dialogue", None) is not None
-                or getattr(self.session, "open_screen", None) is not None):
+        if getattr(self.session, "dialogue", None) is not None or getattr(self.session, "open_screen", None) is not None:
             return False
         props = getattr(scene, "properties", {})
-        scene_id = str(props.get("id", "") or "")
-        if scene_id and scene_id in self._played and props.get("once", True):
+        filename = str(props.get("cutscene_file", "") or "").strip()
+        if not filename:
             return False
-
-        sequence = normalise_sequence(props.get("sequence", ""))
-        if not sequence.get("shots"):
+        raw = cutscene_files.load_cutscene(filename)
+        self.cutscene = normalise_cutscene(raw)
+        if not (self.cutscene.get("camera") or self.cutscene.get("actor_tracks") or self.cutscene.get("events")):
+            self.cutscene = None
             return False
-
+        scene_id = str(props.get("id", "") or self.cutscene.get("id", "") or filename)
+        if scene_id in self._played and props.get("once", True):
+            return False
         self.scene = scene
-        self.sequence = sequence
-        self.shot_index = 0
         self.elapsed = 0.0
-        self._restore_enabled = bool(props.get("restore_actors", True))
+        self._fired_events = set()
+        self._fight_cooldowns = {}
+        self._spawned_blood = []
+        self._restore_enabled = bool(self.cutscene.get("settings", {}).get("restore_actors", props.get("restore_actors", True)))
         self._stage_actors()
-
-        self._set_shot_ui(self.sequence["shots"][0])
-        current = _camera_from_logic(self.session.logic)
-        self._from_camera = current
-        self._set_camera_to_shot(self.sequence["shots"][0], current)
-
+        self._apply_camera()
+        self._fire_events()
         if scene_id:
             self._played.add(scene_id)
-
         io = getattr(self.session.logic, "io_manager", None)
         if io is not None:
             io.fire_output(scene, "OnStarted")
         return True
 
     def start_by_id(self, scene_id):
-        return self.start(self._find_scene(scene_id))
+        for scene in self.session._things_of_type("miniwindcutscene"):
+            if str(scene.properties.get("id", "")) == str(scene_id):
+                return self.start(scene)
+        return False
 
     def trigger_proximity(self):
         if self.active:
@@ -384,59 +532,53 @@ class CutsceneManager:
     def tick(self, delta):
         if not self.active:
             return
-        shot = self.current_shot
-        if shot is None:
-            self.stop()
-            return
-
         self.elapsed += max(0.0, float(delta))
-        duration = max(float(shot.get("duration", 2.0) or 2.0), 0.05)
-        dialog = shot.get("dialogue", {}) or {}
-        dialog_duration = float(dialog.get("duration", 0.0) or 0.0)
-        duration = max(duration, dialog_duration)
-
-        target = self._shot_camera(shot)
-        progress = min(1.0, self.elapsed / duration)
-        camera = {
-            "pos": [_lerp(a, b, progress)
-                    for a, b in zip(self._from_camera["pos"], target["pos"])],
-            "yaw": _lerp(self._from_camera["yaw"], target["yaw"], progress),
-            "pitch": _lerp(self._from_camera["pitch"], target["pitch"], progress),
-            "fov": _lerp(self._from_camera["fov"], target["fov"], progress),
-        }
-        if shot.get("look_at"):
-            camera = self._look_at_camera(camera, shot.get("look_at"))
-        self._apply_camera(camera)
-
-        if self.elapsed >= duration:
-            next_index = self.shot_index + 1
-            if next_index >= len(self.sequence.get("shots", [])):
-                self.stop()
-                return
-            self.shot_index = next_index
-            self.elapsed = 0.0
-            self._set_shot_ui(self.sequence["shots"][next_index])
-            self._set_camera_to_shot(self.sequence["shots"][next_index], camera)
+        for row in self._actor_restore:
+            actor = row["actor"]
+            pose = self._actor_track_pose(actor.properties.get("id"), self.elapsed)
+            if pose is not None and not actor.properties.get("_cutscene_in_fight", False):
+                self._assign_pos(actor, pose[0])
+                actor.angle = pose[1]
+        self._fire_events()
+        for event in (self.cutscene or {}).get("events", []):
+            if event["type"] == "fight" and self._event_is_active(event):
+                for actor_id in event.get("attackers", []) + event.get("defenders", []):
+                    actor = self._find_actor(actor_id)
+                    if actor is not None:
+                        actor.properties["_cutscene_in_fight"] = True
+                self._advance_fight(event, delta)
+        self._clear_shooting_flags()
+        self._apply_camera()
+        duration_candidates = [float(f.get("time", 0.0)) for f in self.cutscene.get("camera", [])]
+        duration_candidates += [float(f.get("time", 0.0)) for frames in self.cutscene.get("actor_tracks", {}).values() for f in frames]
+        for event in self.cutscene.get("events", []):
+            duration_candidates.append(float(event.get("time", 0.0)) + (float(event.get("duration", 0.0)) if event["type"] in ("fight", "dialogue") else 0.0))
+        total = max(duration_candidates or [0.0])
+        if self.elapsed >= total and not any(self._event_is_active(e) for e in self.cutscene.get("events", [])):
+            self.stop()
 
     def stop(self):
         if not self.active:
             return
         scene = self.scene
-        scene_id = str(getattr(scene, "properties", {}).get("id", "") or "")
+        for row in self._actor_restore:
+            row["actor"].properties.pop("_cutscene_in_fight", None)
+            row["actor"].properties.pop("_cutscene_shooting_until", None)
         self._restore_actors()
+        for blood, persist in self._spawned_blood:
+            if not persist:
+                try:
+                    self.session.logic.things.remove(blood)
+                except ValueError:
+                    pass
         self.scene = None
-        self.shot_index = -1
+        self.cutscene = None
         self.elapsed = 0.0
         self.dialogue = None
         self.message_lines = {}
-        self._from_camera = None
+        self._fight_cooldowns = {}
+        self._spawned_blood = []
         self.session.logic.cinematic_state = None
         io = getattr(self.session.logic, "io_manager", None)
         if io is not None:
             io.fire_output(scene, "OnFinished")
-
-    def toggle(self, scene):
-        if self.active:
-            self.stop()
-            return True
-        return self.start(scene)
