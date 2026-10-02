@@ -612,6 +612,7 @@ class CutsceneManager:
             return
         scene = self.scene
         cleanup_candidates = [row["actor"] for row in self._actor_restore]
+        cleanup_candidates.extend(blood for blood, _persist in self._spawned_blood)
         if scene is not None:
             cleanup_candidates.append(scene)
         for row in self._actor_restore:
