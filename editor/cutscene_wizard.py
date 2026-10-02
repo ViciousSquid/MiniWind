@@ -950,6 +950,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         return {
             "type": str(props.get("type") or "npc"),
             "pos": _v3(actor.pos),
+            "yaw": float(getattr(actor, "angle", 0.0)),
             "properties": props,
         }
 
