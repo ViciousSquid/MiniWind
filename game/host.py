@@ -346,8 +346,8 @@ class MiniwindGame:
         )
 
         api.register_properties("miniwindcutscene", [
-            prop("name", "string", "Name", default="cutscene", group="CUTSCENE"),
-            prop("display_name", "string", "Display name", default="Cutscene", group="CUTSCENE"),
+            prop("cutscene_file", "string", "Cutscene JSON", default="", group="CUTSCENE",
+                 help="Filename in the project's cutscenes/ folder. Authored by Tools > Cutscene Wizard."),
             prop("trigger_mode", "enum", "Trigger", default="manual",
                  choices=["proximity", "play_start", "manual"], group="TRIGGER",
                  help="Proximity starts when the player enters the radius; "
@@ -356,13 +356,11 @@ class MiniwindGame:
                  min=1.0, max=100000.0, group="TRIGGER"),
             prop("once", "bool", "Play once", default=True, group="TRIGGER"),
             prop("restore_actors", "bool", "Restore actors", default=True, group="ACTORS",
-                 help="Put staged actors back where they were before the cutscene."),
+                 help="Restore actor position/health/death state after playback."),
             prop("stop_on_escape", "bool", "Escape stops cutscene", default=True,
                  group="CONTROL"),
             prop("hidden_in_game", "bool", "Hidden during play", default=True,
                  group="CONTROL"),
-            prop("sequence", "string", "Sequence JSON", default="",
-                 group="DATA", help="Managed by Tools > Cutscene Wizard."),
         ])
         api.register_properties("marker", [
             prop("marker_kind", "enum", "Marker kind", default="idle",
