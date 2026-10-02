@@ -252,6 +252,10 @@ class CutsceneManager:
                 pos=_vec3(definition.get("pos")),
                 properties=props,
             )
+            try:
+                actor.angle = float(definition.get("yaw", getattr(actor, "angle", 0.0)))
+            except (TypeError, ValueError):
+                pass
             actor.properties["_cutscene_temporary"] = True
             actor.properties["triggered"] = True
             return actor
