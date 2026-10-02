@@ -73,7 +73,6 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.events = []
         self._saved = False
         self._cleaned = False
-        self._dirty_before = bool(getattr(main_window, "unsaved_changes", False))
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
@@ -473,32 +472,17 @@ class CutsceneWizard(QtWidgets.QDialog):
         except Exception:
             pos = _v3(camera.pos)
 
-        roles = self.NPC_ROLES if entity_type == "npc" else self.CREATURE_ROLES
-        role, ok = QtWidgets.QInputDialog.getItem(
-            self,
-            "Create cutscene actor",
-            "Role",
-            list(roles),
-            0,
-            False,
-        )
-        if not ok:
-            return
-        default_name = f"Cutscene {'NPC' if entity_type == 'npc' else 'Creature'} {len(self.actor_meta) + 1}"
-        name, ok = QtWidgets.QInputDialog.getText(
-            self,
-            "Create cutscene actor",
-            "Actor name",
-            text=default_name,
-        )
-        if not ok:
-            return
-
+        # One click creates a usable actor.  Role/name remain editable through
+        # the normal Properties panel, so authoring a shot never turns into a
+        # sequence of setup dialogs.
+        role = "villager" if entity_type == "npc" else "wolf"
+        label = "NPC" if entity_type == "npc" else "Creature"
+        default_name = f"Cutscene {label} {len(self.actor_meta) + 1}"
         props = {
             "type": entity_type,
             "id": str(uuid.uuid4()),
-            "name": name.strip() or default_name,
-            "display_name": name.strip() or default_name,
+            "name": default_name,
+            "display_name": default_name,
             "npc_role": role,
             "triggered": True,
             "_cutscene_temporary": True,
@@ -520,7 +504,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         self._refresh_actor_lists()
         self._select_actor_id(str(actor.properties.get("id")))
         self.main_window.show_toast(
-            f"{name.strip() or default_name} created in the current 3D view"
+            f"{default_name} created in the current 3D view"
         )
 
     def _capture_selected_actors(self):
@@ -983,7 +967,11 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.temporary_actor_ids.clear()
         self._cleaned = True
         try:
-            self.main_window.set_selected_object(None)
+            selected = getattr(self.main_window.state, "selected_object", None)
+            if selected is not None and bool(
+                getattr(selected, "properties", {}).get("_cutscene_temporary")
+            ):
+                self.main_window.set_selected_object(None)
         except Exception:
             pass
         try:
@@ -992,12 +980,10 @@ class CutsceneWizard(QtWidgets.QDialog):
             pass
 
     def _cleanup_after_cancel(self):
+        # Temporary actors are authoring state, not a map edit.  Do not touch
+        # the editor's dirty flag here: the user may have made unrelated map
+        # edits while this modeless panel was open.
         self._delete_temporary_actors()
-        try:
-            self.main_window.unsaved_changes = self._dirty_before
-            self.main_window.update_title()
-        except Exception:
-            pass
 
     def accept(self):
         if not self.camera_keys:
