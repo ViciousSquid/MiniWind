@@ -204,7 +204,7 @@ class CutsceneWizard(QtWidgets.QWizard):
         self.actor_keys_list.clear()
         for aid, rows in sorted(self.actor_tracks.items()):
             name = self.actor_meta.get(aid, {}).get("name", aid)
-            for row in rows: self.actor_keys_list.addItem(f"{row["time"]:.2f}s — {name} → {row["pos"]}")
+            for row in rows: self.actor_keys_list.addItem(f"{row['time']:.2f}s — {name} → {row['pos']}")
 
     def _capture_camera_keyframe(self):
         camera = self.main_window.view_3d.camera
@@ -214,7 +214,7 @@ class CutsceneWizard(QtWidgets.QWizard):
         self.camera_keys.append(frame); self.camera_keys.sort(key=lambda x: x["time"])
 
         self.camera_keys_list.clear()
-        for row in self.camera_keys: self.camera_keys_list.addItem(f"{row["time"]:.2f}s — camera {row["pos"]}")
+        for row in self.camera_keys: self.camera_keys_list.addItem(f"{row['time']:.2f}s — camera {row['pos']}")
 
     def _add_fight(self):
         a = [str(x.data(QtCore.Qt.UserRole)) for x in self.attackers.selectedItems()]
@@ -249,7 +249,7 @@ class CutsceneWizard(QtWidgets.QWizard):
     def _refresh_event_list(self):
         self.event_list.clear()
         for event in sorted(self.events, key=lambda x: x.get("time", 0)):
-            kind = event["type"]; label = f"{event["time"]:.2f}s — {kind}"
+            kind = event["type"]; label = f"{event['time']:.2f}s — {kind}"
             if kind == "fight": label += f" ({len(event["attackers"])} vs {len(event["defenders"])})"
             elif kind == "dialogue": label += f" — {event["text"][:45]}"
             elif kind == "message": label += f" — {event["line"]}: {event["text"][:45]}"
@@ -257,7 +257,7 @@ class CutsceneWizard(QtWidgets.QWizard):
 
     def _page_changed(self, index):
         if index == 5:
-            self.summary.setText(f"<b>{self.name.text().strip() or "cutscene"}</b><br><br>"
+            self.summary.setText(f"<b>{self.name.text().strip() or 'cutscene'}</b><br><br>"
                 f"File: cutscenes/{self._filename()}<br>"
                 f"Actors: {len(self.actor_meta)}<br>"
                 f"Actor keyframes: {sum(len(v) for v in self.actor_tracks.values())}<br>"
