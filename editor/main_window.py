@@ -4862,7 +4862,12 @@ class MainWindow(QMainWindow):
             self.open_logic_graph()
 
     def open_cutscene_wizard(self):
-        """Open the MiniWind cutscene generator and capture the current editor pose."""
+        """Open the modeless MiniWind cutscene generator."""
+        existing = getattr(self, "_cutscene_wizard", None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return
         try:
             from editor.cutscene_wizard import CutsceneWizard
         except Exception as exc:
@@ -4870,7 +4875,11 @@ class MainWindow(QMainWindow):
                                 f"The Cutscene Wizard is unavailable: {exc}")
             return
         wiz = CutsceneWizard(self, parent=self)
-        wiz.exec_()
+        self._cutscene_wizard = wiz
+        wiz.finished.connect(lambda *_args: setattr(self, "_cutscene_wizard", None))
+        wiz.show()
+        wiz.raise_()
+        wiz.activateWindow()
 
     def open_project_overview(self):
         """Show what this map contains, as a report rather than a panel.
