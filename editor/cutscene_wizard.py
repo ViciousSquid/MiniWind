@@ -798,7 +798,7 @@ class CutsceneWizard(QtWidgets.QDialog):
             target_name = self.actor_meta.get(str(target), {}).get("name", "") if target else ""
             time = float(row.get("time", 0.0))
             if action == "attack":
-                label = f"{index}. At {time:.2f}s — ATTACK {target_name or "target"}"
+                label = f"{index}. At {time:.2f}s — ATTACK {target_name or 'target'}"
             else:
                 label = f"{index}. At {time:.2f}s — MOVE to captured position"
             self.waypoint_list.addItem(label)
