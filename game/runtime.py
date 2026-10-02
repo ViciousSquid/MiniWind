@@ -50,6 +50,7 @@ from .sim import knowledge as sim_knowledge
 from .sim import ownership as sim_own
 from .sim import production as sim_prod
 from .sim.director import Director, PLAYER_KEY, actor_key
+from .cutscene import CutsceneManager
 from .rpg.dialogue import DialogueRunner
 from .rpg import inventory as inv
 from .rpg.game_state import GameState
@@ -403,6 +404,9 @@ class MiniwindSession:
         self._decision_phase = 0
         self._offscreen_tick = 0
         self._proximity_accum = 0.0
+        # One active cinematic owns the camera/input while it runs.  The
+        # cutscene data remains part of the world, not a separate script.
+        self.cutscenes = CutsceneManager(self)
         #: Guards currently running the player down (see _start_arrest_pursuit).
         self._arrest_pursuers = []
         #: NPCs given a mark above their head by set_head_mark: id -> npc.
@@ -720,6 +724,13 @@ class MiniwindSession:
         self._wi_live = True
 
     def tick(self, delta: float) -> None:
+        # A cutscene is a first-class world pause.  Advance only its deterministic
+        # camera/dialogue timeline; do not run clocks, combat, schedules or AI
+        # decisions underneath it.
+        if self.cutscenes.active:
+            self.cutscenes.tick(delta)
+            return
+
         # Rebuild the actor index once, then resolve it once here rather than
         # through an attribute chain at each of the tens of thousands of asks a
         # settlement tick makes.
@@ -838,6 +849,8 @@ class MiniwindSession:
             self._tick_pickups()
             self._tick_spellbooks()
             self._tick_triggers()
+            if self.cutscenes.trigger_proximity():
+                return
             self._tick_locations()
             self._tick_quests()
 
