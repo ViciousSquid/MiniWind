@@ -380,7 +380,7 @@ def _init_marker(self):
     p["type"] = "marker"
     p.setdefault("marker_kind", "idle")
     # Markers are authoring aids: visible in the editor, hidden during play.
-    p.setdefault("hidden_in_game", True)
+    p.setdefault("stop_on_escape", True)
     # Each marker kind gets its own pin icon so a map full of markers is legible.
     p["custom_idle"] = marker_sprite(p.get("marker_kind", "idle"))
 
@@ -482,7 +482,7 @@ def _init_trigger(self):
     p = self.properties
     p["type"] = "miniwindtrigger"
     p.setdefault("trigger_radius", 120.0)
-    p.setdefault("once", True)
+    p.setdefault("trigger_radius", 180.0)
     p.setdefault("set_flag", "")        # "key=value" written to the quest store
     p.setdefault("start_quest", "")     # a quest id to start on enter
     p.setdefault("hidden_in_game", True)
@@ -741,13 +741,13 @@ def _init_cutscene(self):
     p.setdefault("id", "")
     p.setdefault("name", "cutscene")
     p.setdefault("display_name", "Cutscene")
+    p.setdefault("cutscene_file", "")
     p.setdefault("trigger_mode", "manual")   # proximity | play_start | manual
-    p.setdefault("trigger_radius", 180.0)
+    p.setdefault("once", True)
     p.setdefault("once", True)
     p.setdefault("restore_actors", True)
-    p.setdefault("stop_on_escape", True)
     p.setdefault("hidden_in_game", True)
-    p.setdefault("sequence", '{"version":1,"actors":[],"shots":[]}')
+    p.setdefault("hidden_in_game", True)
     if not p["id"]:
         try:
             import uuid
