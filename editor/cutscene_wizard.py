@@ -187,14 +187,15 @@ class CutsceneWizard(QtWidgets.QDialog):
         time_row.addWidget(self.waypoint_time)
         time_row.addStretch(1)
         self.waypoint_action = QtWidgets.QComboBox()
-        self.waypoint_action.addItem("Move to this position", "move")
-        self.waypoint_action.addItem("Attack another actor", "attack")
+        self.waypoint_action.addItem("MOVE — to this captured location", "move")
+        self.waypoint_action.addItem("ATTACK — this person", "attack")
         time_row.addWidget(QtWidgets.QLabel("Action"))
         time_row.addWidget(self.waypoint_action)
         wv.addLayout(time_row)
 
         target_row = QtWidgets.QHBoxLayout()
-        target_row.addWidget(QtWidgets.QLabel("Target"))
+        self.waypoint_target_label = QtWidgets.QLabel("Target")
+        target_row.addWidget(self.waypoint_target_label)
         self.waypoint_target = QtWidgets.QComboBox()
         self.waypoint_target.setMinimumWidth(240)
         target_row.addWidget(self.waypoint_target, 1)
@@ -696,9 +697,10 @@ class CutsceneWizard(QtWidgets.QDialog):
     def _update_waypoint_controls(self):
         is_attack = self.waypoint_action.currentData() == "attack"
         self.waypoint_attack_duration.setEnabled(is_attack)
+        self.waypoint_target_label.setText("Attack this person" if is_attack else "Move to location")
         self.waypoint_target.setToolTip(
-            "Attack this actor" if is_attack else
-            "Move to this actor's current position"
+            "Choose the person to attack" if is_attack else
+            "Optional: use another actor as the destination location"
         )
 
     def _add_waypoint(self, from_current=True):
@@ -800,7 +802,7 @@ class CutsceneWizard(QtWidgets.QDialog):
             if action == "attack":
                 label = f"{index}. At {time:.2f}s — ATTACK {target_name or 'target'}"
             else:
-                label = f"{index}. At {time:.2f}s — MOVE to captured position"
+                label = f"{index}. At {time:.2f}s — MOVE to captured location"
             self.waypoint_list.addItem(label)
 
     # ------------------------------------------------------------------
