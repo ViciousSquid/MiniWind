@@ -25,7 +25,7 @@ jobs:
       - name: Run the tests that need no Qt, no OpenGL, no display
         env:
           FIO_HEADLESS_TIER: '1'
-        run: python -m pytest --ignore=game/tests -m "not qt and not gl and not benchmark" -q
+        run: python -m pytest tests plugins player -m "not qt and not gl and not benchmark" -q
 
   editor:
     name: Editor + engine (Qt, offscreen)
