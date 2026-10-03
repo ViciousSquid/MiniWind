@@ -8,7 +8,7 @@ import uuid
 
 from . import cutscene_files
 
-_EVENT_TYPES = {"fight", "blood", "dialogue", "message"}
+_EVENT_TYPES = {"fight", "blood", "dialogue", "message", "io"}
 _MESSAGE_KEYS = ("message", "message2", "message3")
 
 def _vec3(value, default=(0.0, 0.0, 0.0)):
@@ -149,6 +149,15 @@ def normalise_cutscene(raw):
             line = str(row.get("line", "message") or "message").lower()
             row["line"] = line if line in _MESSAGE_KEYS else "message"
             row["text"] = str(row.get("text", "") or "")
+        elif kind == "io":
+            row["target_id"] = str(row.get("target_id", "") or "")
+            row["target_name"] = str(row.get("target_name", "") or "")
+            row["input"] = str(row.get("input", "") or "").strip()
+            row["source_id"] = str(row.get("source_id", "") or "")
+            row["source_name"] = str(row.get("source_name", "") or "")
+            row["output"] = str(row.get("output", "") or "").strip()
+            if "parameter" in row and row.get("parameter") is not None:
+                row["parameter"] = str(row.get("parameter"))
         row["_index"] = index
         events.append(row)
 
@@ -164,6 +173,9 @@ def normalise_cutscene(raw):
         "settings": {
             "restore_actors": bool(settings.get("restore_actors", True)),
             "stop_on_escape": bool(settings.get("stop_on_escape", True)),
+            "trigger_mode": str(settings.get("trigger_mode", "manual") or "manual"),
+            "trigger_radius": float(settings.get("trigger_radius", 180.0) or 180.0),
+            "trigger_once": bool(settings.get("trigger_once", True)),
         },
     }
 
@@ -504,6 +516,57 @@ class CutsceneManager:
         except Exception:
             return
 
+    def _fire_io_event(self, event):
+        """Fire one timed cutscene I/O event through MiniWind's normal I/O system."""
+        logic = getattr(self.session, "logic", None)
+        io = getattr(logic, "io_manager", None)
+        if io is None:
+            return True
+
+        target_id = str(event.get("target_id", "") or "")
+        target_name = str(event.get("target_name", "") or "")
+        input_name = str(event.get("input", "") or "").strip()
+
+        if target_name or target_id or input_name:
+            target = None
+            if target_id:
+                target = self._find_actor(target_id)
+                if target is None:
+                    finder = getattr(logic, "_find_entity_by_id", None)
+                    if finder is not None:
+                        target = finder(target_id)
+                if not target_name and target is not None:
+                    target_name = str(getattr(target, "properties", {}).get("name", "") or target_id)
+            if target_name and input_name:
+                execute_input = getattr(io, "_execute_input", None)
+                if execute_input is not None:
+                    execute_input(
+                        target_name,
+                        input_name,
+                        event.get("parameter"),
+                        "Cutscene",
+                        target_id=target_id,
+                    )
+            return self.scene is not None
+
+        source_id = str(event.get("source_id", "") or "")
+        source_name = str(event.get("source_name", "") or "")
+        output_name = str(event.get("output", "") or "").strip()
+        source = None
+        if source_id:
+            source = self._find_actor(source_id)
+            if source is None:
+                finder = getattr(logic, "_find_entity_by_id", None)
+                if finder is not None:
+                    source = finder(source_id)
+        if source is None and source_name:
+            finder = getattr(logic, "_find_entity_by_name", None)
+            if finder is not None:
+                source = finder(source_name)
+        if source is not None and output_name:
+            io.fire_output(source, output_name, event.get("parameter"))
+        return self.scene is not None
+
     def _fire_events(self):
         for index, event in enumerate((self.cutscene or {}).get("events", [])):
             if event.get("_index", index) in self._fired_events:
@@ -525,6 +588,12 @@ class CutsceneManager:
                     "speaker": self._actor_name(event.get("speaker_id")),
                     "text": str(event.get("text", "") or ""),
                 }
+            elif kind == "io":
+                before_scene = self.scene
+                if not self._fire_io_event(event):
+                    return
+                if self.scene is not before_scene:
+                    return
         active_dialogue = None
         for event in (self.cutscene or {}).get("events", []):
             if event["type"] == "dialogue" and self._event_is_active(event):
