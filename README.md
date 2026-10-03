@@ -102,6 +102,18 @@ the game.
 | Editor UI | `register_property_tab`, typed property schemas, right-click placement | sectioned property panels, composable Inventory/Schedule/Dialogue/Loot/Quest components, creation **wizards**, "Add MiniWind Entity" submenu |
 | Top-down view | overhead camera (default) + `render.overlay` | HUD, dialogue box, character/inventory screens |
 
+## Requirements
+
+MiniWind's supported baseline is **CPython 3.14**.
+
+Install the exact runtime dependency set with:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+The repository uses **pygame-ce** (imported in Python as `pygame`) rather than the legacy `pygame` distribution.
+
 ## Running it
 
 ```bash
