@@ -120,7 +120,7 @@ def draw_message_lines(painter, cutscene, width, height):
         painter.fillRect(QRect(x, y, tw, rh), QColor(10, 10, 10, 180))
         painter.setPen(QColor(226, 190, 92, 235))
         painter.drawRect(QRect(x, y, tw, rh))
-        painter.setPen(T.text())
+        painter.setPen(T.PARCH)
         painter.drawText(QRect(x + 16, y + 7, tw - 32, rh - 10),
                          Qt.AlignCenter, text)
         y += rh + 5
