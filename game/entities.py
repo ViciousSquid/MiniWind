@@ -106,6 +106,63 @@ def _apply_head_sprite(p: dict) -> None:
     p.pop("custom_dead", None)
 
 
+def _actor_2d_sprite_path(actor) -> str:
+    """Return the authored/instance sprite that represents this actor in 2D.
+
+    NPCs and creatures use a generic Monster icon in Fio's default 2D path.
+    MiniWind actors, however, can have a concrete head selected (and at runtime
+    every actor is assigned one). Prefer that head so the 2D editor matches the
+    actor's actual identity. Fall back to a custom idle sprite, then role art.
+    """
+    p = getattr(actor, "properties", {}) or {}
+
+    head_id = str(p.get("head", "") or "").strip()
+    if head_id:
+        from .rpg import heads
+        if heads.is_any_head(head_id):
+            return heads.any_head_path(head_id)
+
+    custom_idle = str(p.get("custom_idle", "") or "").replace("\\", "/").strip()
+    if custom_idle:
+        return custom_idle
+
+    return sprite_for(p.get("npc_role", "villager"))
+
+
+_ACTOR_2D_PIXMAP_CACHE = {}
+
+
+def _actor_2d_pixmap(actor, icon=False):
+    """Load the actor's own 2D sprite, optionally at standard icon size."""
+    if not _HAVE_EDITOR:
+        return None
+
+    from PyQt5.QtGui import QPixmap
+    from PyQt5.QtCore import Qt
+
+    path = _actor_2d_sprite_path(actor)
+    cache = _ACTOR_2D_PIXMAP_CACHE
+    pix = cache.get(path)
+
+    if pix is None:
+        try:
+            root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+            abs_path = os.path.join(root, path)
+            if os.path.exists(abs_path):
+                loaded = QPixmap(abs_path)
+                if not loaded.isNull():
+                    pix = loaded
+        except Exception:
+            pix = None
+        cache[path] = pix
+
+    if pix is None:
+        return None
+    if icon:
+        return pix.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    return pix
+
+
 def _apply_actor_common(thing, entity_type, default_role, default_faction):
     """Fill the properties both actor entities share, from the bestiary template.
 
@@ -287,6 +344,14 @@ class NPC(Monster):
         p.setdefault("relationships", {})
         p.setdefault("disposition_base", 45 if faction in ("villagers", "guards") else 30)
 
+    def get_instance_pixmap(self):
+        pix = _actor_2d_pixmap(self, icon=False)
+        return pix if pix is not None else super().get_instance_pixmap()
+
+    def get_icon_pixmap(self):
+        pix = _actor_2d_pixmap(self, icon=True)
+        return pix if pix is not None else super().get_icon_pixmap()
+
 
 class Creature(Monster):
     """A monster or wild animal (wolf, bear, bandit, cultist, skeleton…)."""
@@ -310,6 +375,14 @@ class Creature(Monster):
         p.setdefault("home", list(self.pos))
         p.setdefault("inventory", [])
 
+    def get_instance_pixmap(self):
+        pix = _actor_2d_pixmap(self, icon=False)
+        return pix if pix is not None else super().get_instance_pixmap()
+
+    def get_icon_pixmap(self):
+        pix = _actor_2d_pixmap(self, icon=True)
+        return pix if pix is not None else super().get_icon_pixmap()
+
 
 def _init_settings(self):
     p = self.properties
@@ -331,7 +404,27 @@ def _init_settings(self):
 if _HAVE_EDITOR:
     class GameSettings(Thing):
         """Per-map RPG settings + game-clock config. Presence = RPG map opt-in."""
+
         map_type = "miniwindsettings"
+
+        # The Property Editor deliberately exposes only explicitly classified
+        # properties on the main Properties tab.  GameSettings used to declare
+        # none, so the entity rendered a completely blank Properties tab even
+        # though _init_settings() populated all of its authored settings.
+        EDITOR_PRIMARY_PROPERTIES = (
+            "start_hour",
+            "start_day",
+            "minutes_per_day",
+            "show_clock",
+            "state_store",
+            "difficulty",
+            "start_scenario",
+            "region_name",
+        )
+        EDITOR_ADVANCED_PROPERTIES = (
+            "player_spells",
+        )
+
         # Its own icon (a cog around a clock), not the Key/Value Store's: the
         # one entity that configures the whole map should not be
         # indistinguishable from a logic node in the 2D views.
@@ -380,7 +473,7 @@ def _init_marker(self):
     p["type"] = "marker"
     p.setdefault("marker_kind", "idle")
     # Markers are authoring aids: visible in the editor, hidden during play.
-    p.setdefault("hidden_in_game", True)
+    p.setdefault("stop_on_escape", True)
     # Each marker kind gets its own pin icon so a map full of markers is legible.
     p["custom_idle"] = marker_sprite(p.get("marker_kind", "idle"))
 
@@ -482,7 +575,7 @@ def _init_trigger(self):
     p = self.properties
     p["type"] = "miniwindtrigger"
     p.setdefault("trigger_radius", 120.0)
-    p.setdefault("once", True)
+    p.setdefault("trigger_radius", 180.0)
     p.setdefault("set_flag", "")        # "key=value" written to the quest store
     p.setdefault("start_quest", "")     # a quest id to start on enter
     p.setdefault("hidden_in_game", True)
@@ -729,3 +822,33 @@ CreatureSpawn.__name__ = CreatureSpawn.__qualname__ = "CreatureSpawn"
 # own generic Trigger entity (type 'trigger'), which is preserved unchanged.
 MiniwindTrigger = _make_thing_pair(_init_trigger, "assets/sprites/logic_relay.png")
 MiniwindTrigger.__name__ = MiniwindTrigger.__qualname__ = "MiniwindTrigger"
+
+
+# ---------------------------------------------------------------------------
+# Cutscene authoring anchor.  The sequence itself is JSON so the map remains
+# ordinary data and can be inspected, copied and versioned without Python.
+# ---------------------------------------------------------------------------
+def _init_cutscene(self):
+    p = self.properties
+    p["type"] = "miniwindcutscene"
+    p.setdefault("id", "")
+    p.setdefault("name", "cutscene")
+    p.setdefault("display_name", "Cutscene")
+    p.setdefault("cutscene_file", "")
+    p.setdefault("trigger_mode", "manual")   # proximity | play_start | manual
+    p.setdefault("once", True)
+    p.setdefault("once", True)
+    p.setdefault("restore_actors", True)
+    p.setdefault("hidden_in_game", True)
+    p.setdefault("hidden_in_game", True)
+    if not p["id"]:
+        try:
+            import uuid
+            p["id"] = str(uuid.uuid4())
+        except Exception:
+            p["id"] = "cutscene"
+
+
+MiniwindCutscene = _make_thing_pair(
+    _init_cutscene, "assets/sprites/logic_relay.png")
+MiniwindCutscene.__name__ = MiniwindCutscene.__qualname__ = "MiniwindCutscene"

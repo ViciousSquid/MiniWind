@@ -1,0 +1,31 @@
+name: MiniWind Cutscene Tests
+
+on:
+  pull_request:
+    paths:
+      - "game/cutscene.py"
+      - "game/cutscene_files.py"
+      - "editor/cutscene_wizard.py"
+      - "game/entities.py"
+      - "game/host.py"
+      - "game/tests/test_cutscene.py"
+      - "game/tests/test_actor_2d_sprite_resolution.py"
+      - "cutscenes/**"
+
+jobs:
+  cutscene-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+      - name: Run cutscene regression suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q game/tests/test_cutscene.py game/tests/test_actor_2d_sprite_resolution.py

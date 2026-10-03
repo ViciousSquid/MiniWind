@@ -424,6 +424,13 @@ class Ui_MainWindow(object):
         MainWindow.logic_wizard_action.setToolTip('Guided setup for common I/O scenarios')
         MainWindow.logic_wizard_action.triggered.connect(MainWindow.open_logic_wizard)
 
+        MainWindow.cutscene_wizard_action = QAction('Cutscene Wizard…', MainWindow)
+        MainWindow.cutscene_wizard_action.setShortcut('Ctrl+Shift+C')
+        MainWindow.cutscene_wizard_action.setToolTip(
+            'Capture editor camera and actor staging into a MiniWind cutscene')
+        MainWindow.cutscene_wizard_action.triggered.connect(
+            MainWindow.open_cutscene_wizard)
+
         MainWindow.project_overview_action = QAction('Project Overview…', MainWindow)
         MainWindow.project_overview_action.setToolTip(
             'What this map contains: brushes, movers, lights, monsters, '
@@ -446,6 +453,7 @@ class Ui_MainWindow(object):
         
         MainWindow.tools_menu.addAction(MainWindow.logic_graph_action)
         MainWindow.tools_menu.addAction(MainWindow.logic_wizard_action)
+        MainWindow.tools_menu.addAction(MainWindow.cutscene_wizard_action)
         MainWindow.tools_menu.addSeparator()
         MainWindow.tools_menu.addAction(MainWindow.terrain_action)
         MainWindow.tools_menu.addAction(MainWindow.procedural_action)
