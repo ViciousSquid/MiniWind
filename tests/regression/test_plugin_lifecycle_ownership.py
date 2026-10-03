@@ -212,7 +212,7 @@ def test_repeated_play_cycles_pair_one_start_with_one_stop(streaming_session):
 
     for cycle in range(3):
         thread.set_play_mode(True)
-        sessions.append(id(getattr(thread, "_bigworld", None)))
+        sessions.append(getattr(thread, "_bigworld", None))
         assert len(counter.starts) == cycle + 1, (
             "cycle %d: %d starts for %d play sessions"
             % (cycle, len(counter.starts), cycle + 1))
@@ -224,7 +224,8 @@ def test_repeated_play_cycles_pair_one_start_with_one_stop(streaming_session):
         assert getattr(thread, "_bigworld", None) is None, (
             "cycle %d: the streaming session outlived play mode" % cycle)
 
-    assert len(set(sessions)) == len(sessions), (
+    assert all(session is not None for session in sessions)
+    assert len({id(session) for session in sessions}) == len(sessions), (
         "two play sessions shared one streaming session object")
     # Nothing of the session may survive into the authored world.
     leaked = [b.get("name") for b in state.brushes

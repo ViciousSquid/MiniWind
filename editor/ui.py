@@ -414,6 +414,14 @@ class Ui_MainWindow(object):
 
         # Benchmark action is inserted by MainWindow immediately below Autocaulk.
 
+        MainWindow.cutscene_wizard_action = QAction('Cutscenes...', MainWindow)
+        MainWindow.cutscene_wizard_action.setShortcut('Ctrl+Shift+C')
+        MainWindow.cutscene_wizard_action.setToolTip(
+            'Author a camera-and-actor cutscene from the 3D view')
+        MainWindow.cutscene_wizard_action.triggered.connect(
+            MainWindow.open_cutscene_wizard)
+        MainWindow.tools_menu.addAction(MainWindow.cutscene_wizard_action)
+
         MainWindow.logic_graph_action = QAction('Logic Graph Editor…', MainWindow)
         MainWindow.logic_graph_action.setShortcut('Ctrl+L')
         MainWindow.logic_graph_action.setToolTip('Open the visual I/O node graph editor')
@@ -423,13 +431,6 @@ class Ui_MainWindow(object):
         MainWindow.logic_wizard_action.setShortcut('Ctrl+Shift+W')
         MainWindow.logic_wizard_action.setToolTip('Guided setup for common I/O scenarios')
         MainWindow.logic_wizard_action.triggered.connect(MainWindow.open_logic_wizard)
-
-        MainWindow.cutscene_wizard_action = QAction('Cutscene Wizard…', MainWindow)
-        MainWindow.cutscene_wizard_action.setShortcut('Ctrl+Shift+C')
-        MainWindow.cutscene_wizard_action.setToolTip(
-            'Capture editor camera and actor staging into a MiniWind cutscene')
-        MainWindow.cutscene_wizard_action.triggered.connect(
-            MainWindow.open_cutscene_wizard)
 
         MainWindow.project_overview_action = QAction('Project Overview…', MainWindow)
         MainWindow.project_overview_action.setToolTip(
@@ -453,7 +454,6 @@ class Ui_MainWindow(object):
         
         MainWindow.tools_menu.addAction(MainWindow.logic_graph_action)
         MainWindow.tools_menu.addAction(MainWindow.logic_wizard_action)
-        MainWindow.tools_menu.addAction(MainWindow.cutscene_wizard_action)
         MainWindow.tools_menu.addSeparator()
         MainWindow.tools_menu.addAction(MainWindow.terrain_action)
         MainWindow.tools_menu.addAction(MainWindow.procedural_action)
@@ -709,6 +709,15 @@ class Ui_MainWindow(object):
         terrain_menu = QMenu(MainWindow)
         terrain_menu.addAction(MainWindow.terrain_action)
         terrain_menu.addAction(MainWindow.procedural_action)
+        MainWindow.cutscenes_btn = make_btn(
+            "assets/sprites/logic_camera.png", "Cutscenes",
+            on_click=MainWindow.open_cutscene_wizard, checkable=True,
+            checked=False, bottom_color=group_3_color, toggle_strip=True)
+        MainWindow.cutscenes_btn.setChecked(False)
+        MainWindow.cutscenes_btn.clicked.connect(
+            lambda: MainWindow.cutscenes_btn.setChecked(
+                getattr(MainWindow, "_cutscene_wizard_active", False)))
+
         terrain_btn = make_btn("assets/terrain.png", "Procedural Tools", bottom_color=group_3_color)
         terrain_btn.clicked.connect(lambda: terrain_menu.popup(
             terrain_btn.mapToGlobal(terrain_btn.rect().bottomLeft())))

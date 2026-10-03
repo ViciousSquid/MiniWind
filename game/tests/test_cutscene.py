@@ -316,7 +316,7 @@ def test_cutscene_spawned_actor_is_removed_when_cutscene_stops(monkeypatch):
 
 
 def test_cutscene_ui_draw_helpers_render_without_text_helper_signature_error():
-    from PyQt5.QtGui import QImage, QPainter
+    from PyQt5.QtGui import QGuiApplication, QImage, QPainter
     from game.ui import cutscene_ui
 
     class Cutscene:
@@ -336,6 +336,7 @@ def test_cutscene_ui_draw_helpers_render_without_text_helper_signature_error():
         def _find_actor(_actor_id):
             return None
 
+    app = QGuiApplication.instance() or QGuiApplication([])
     cutscene = Cutscene()
     image = QImage(900, 300, QImage.Format_ARGB32)
     image.fill(0)

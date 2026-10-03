@@ -4862,7 +4862,7 @@ class MainWindow(QMainWindow):
             self.open_logic_graph()
 
     def open_cutscene_wizard(self):
-        """Open the modeless MiniWind cutscene generator."""
+        """Open the live cutscene authoring wizard."""
         existing = getattr(self, "_cutscene_wizard", None)
         if existing is not None and existing.isVisible():
             existing.raise_()
@@ -4871,12 +4871,16 @@ class MainWindow(QMainWindow):
         try:
             from editor.cutscene_wizard import CutsceneWizard
         except Exception as exc:
-            QMessageBox.warning(self, "Cutscene Wizard",
-                                f"The Cutscene Wizard is unavailable: {exc}")
+            QMessageBox.warning(self, "Cutscenes",
+                                f"The Cutscenes editor is unavailable: {exc}")
             return
+        self._cutscene_wizard_active = True
         wiz = CutsceneWizard(self, parent=self)
         self._cutscene_wizard = wiz
-        wiz.finished.connect(lambda *_args: setattr(self, "_cutscene_wizard", None))
+        wiz.finished.connect(lambda *_args: (
+            setattr(self, "_cutscene_wizard", None),
+            setattr(self, "_cutscene_wizard_active", False),
+        ))
         wiz.show()
         wiz.raise_()
         wiz.activateWindow()

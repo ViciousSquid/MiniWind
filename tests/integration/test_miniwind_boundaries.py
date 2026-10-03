@@ -22,6 +22,8 @@ import ast
 import importlib
 import pathlib
 
+import pytest
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 FIO_PACKAGES = ("engine", "editor", "plugins", "player")
@@ -178,6 +180,7 @@ def test_thing_counters_keep_fios_semantics():
 # MiniWind identity
 # ---------------------------------------------------------------------------
 
+@pytest.mark.qt
 def test_window_title_is_miniwind():
     integration = importlib.import_module("game.integration")
     assert integration._product_title("Fio") == "MiniWind"
@@ -185,6 +188,7 @@ def test_window_title_is_miniwind():
     assert integration._product_title("Unsaved Changes") == "Unsaved Changes"
 
 
+@pytest.mark.qt
 def test_play_is_always_overhead_and_the_camera_choice_is_hidden():
     host = importlib.import_module("game.host")
     assert host.PLAY_CAMERA == "Overhead"
