@@ -21,8 +21,6 @@ from PyQt5 import QtWidgets, QtCore
 
 from pathlib import Path
 
-from game import cutscene_files
-
 CUTSCENE_DIR = "cutscenes"
 
 
@@ -1831,7 +1829,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.main_window.show_toast(f"Loaded cutscene {Path(filename).name}")
 
     def _apply_cutscene_entity(self, filename):
-        from game.entities import MiniwindCutscene
+        from .things import Thing
 
         pos = (
             list(self.camera_keys[0].get("pos", [0.0, 0.0, 0.0]))
@@ -1842,6 +1840,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         scene = self._existing_cutscene_entity(cutscene_file)
         props = {
             "type": "miniwindcutscene",
+            "sprite_path": "assets/sprites/logic_relay.png",
             "name": self.name.text().strip() or "Cutscene",
             "display_name": self.name.text().strip() or "Cutscene",
             "cutscene_file": cutscene_file,
@@ -1855,7 +1854,8 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.main_window.save_state()
         if scene is None:
             props["id"] = str(uuid.uuid4())
-            scene = MiniwindCutscene(pos=pos, properties=props)
+            scene = Thing(pos=pos, properties=props)
+            scene.pixmap_path = "assets/sprites/logic_relay.png"
             self.main_window.state.things.append(scene)
         else:
             scene.pos = [float(v) for v in pos]
@@ -1912,8 +1912,8 @@ class CutsceneWizard(QtWidgets.QDialog):
         return self._filename()
 
     def _write_cutscene(self, filename, prompt_overwrite=False):
-        path = Path(cutscene_files.cutscene_path(
-            filename, getattr(self.main_window, "root_dir", None)))
+        path = Path(getattr(self.main_window, "root_dir", ".")) / CUTSCENE_DIR / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
         if prompt_overwrite and path.exists():
             result = QtWidgets.QMessageBox.question(
                 self, "Overwrite cutscene",
@@ -1922,22 +1922,17 @@ class CutsceneWizard(QtWidgets.QDialog):
             if result != QtWidgets.QMessageBox.Yes:
                 return False
         try:
-            written = cutscene_files.save_cutscene(
-                self._build_cutscene_data(),
-                filename,
-                root=getattr(self.main_window, "root_dir", None),
+            path.write_text(
+                json.dumps(self._build_cutscene_data(), indent=2, ensure_ascii=False),
+                encoding="utf-8",
             )
         except (OSError, TypeError, ValueError) as exc:
             QtWidgets.QMessageBox.warning(
                 self, "Save failed", f"The cutscene JSON could not be written:\n{exc}"
             )
             return False
-        if not written:
-            QtWidgets.QMessageBox.warning(
-                self, "Save failed", "The cutscene JSON could not be written."
-            )
-            return False
         return True
+
     def _save_and_close(self):
         filename = self._validate_for_save()
         if not filename:

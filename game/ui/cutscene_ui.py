@@ -72,7 +72,7 @@ def draw_in_rect(painter, cutscene, x, y, w, h):
 
     body_width = max(120, int(text_right - (x + PAD)))
     painter.setFont(fonts.dialogue_font(13))
-    painter.setPen(T.text())
+    painter.setPen(T.PARCH)
     lines = _wrap_lines(painter, text, body_width)
     line_h = painter.fontMetrics().height() + 3
     for i, line in enumerate(lines[:9]):
