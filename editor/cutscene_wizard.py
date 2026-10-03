@@ -1,4 +1,4 @@
-"""MiniWind cutscene authoring panel.
+"""Fio cutscene authoring panel.
 
 The normal workflow is deliberately direct:
 
@@ -19,7 +19,11 @@ import glm
 
 from PyQt5 import QtWidgets, QtCore
 
+from pathlib import Path
+
 from game import cutscene_files
+
+CUTSCENE_DIR = "cutscenes"
 
 
 def _v3(value):
@@ -32,12 +36,12 @@ def _v3(value):
 def _selected_actors(main_window):
     out = []
     for obj in getattr(main_window.state, "selected_objects", []) or []:
-        if getattr(obj, "properties", {}).get("type") in ("npc", "creature"):
+        if getattr(obj, "properties", {}).get("type") == "monster":
             out.append(obj)
     single = getattr(main_window.state, "selected_object", None)
     if (
         single is not None
-        and getattr(single, "properties", {}).get("type") in ("npc", "creature")
+        and getattr(single, "properties", {}).get("type") == "monster"
         and single not in out
     ):
         out.append(single)
@@ -61,11 +65,15 @@ class CutsceneWizard(QtWidgets.QDialog):
     def __init__(self, main_window, parent=None):
         super().__init__(parent or main_window)
         self.main_window = main_window
-        self.setWindowTitle("MiniWind Cutscene Wizard")
+        self.setWindowTitle("MiniWind Cutscenes")
         self.setMinimumSize(560, 760)
         self.resize(640, 900)
         self.setWindowModality(QtCore.Qt.NonModal)
         self.setWindowFlag(QtCore.Qt.Tool, True)
+        # Use the same application stylesheet as the rest of Fio.
+        app = QtWidgets.QApplication.instance()
+        if app is not None and app.styleSheet():
+            self.setStyleSheet(app.styleSheet())
 
         self.actor_meta = {}
         self.actor_objects = {}
@@ -75,6 +83,8 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.events = []
         self._saved = False
         self._cleaned = False
+        self._saved_signature = None
+        self._close_prompt_active = False
 
         # Editor-side cutscene preview transport. This previews choreography
         # without firing gameplay combat or permanently changing the map.
@@ -97,6 +107,9 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.resize(980, 720)
 
         tabs = QtWidgets.QTabWidget()
+        tabs.setStyleSheet(
+            "QTabBar::tab:selected { border-bottom: 2px solid #e67e22; }"
+        )
         root.addWidget(tabs, 1)
 
         # -----------------------------------------------------------------
@@ -118,10 +131,18 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.radius.setDecimals(1)
         self.once = QtWidgets.QCheckBox("Play once per game session")
         self.once.setChecked(True)
-        self.restore = QtWidgets.QCheckBox("Restore existing actors after the cutscene")
+        self.restore = QtWidgets.QCheckBox("Restore existing actors after cutscene")
         self.restore.setChecked(True)
         self.stop_escape = QtWidgets.QCheckBox("Escape stops the cutscene")
         self.stop_escape.setChecked(True)
+        checkbox_style = (
+            "QCheckBox::indicator:checked { background-color: #e67e22; "
+            "border: 1px solid #e67e22; }"
+            "QCheckBox::indicator:unchecked { background-color: transparent; "
+            "border: 1px solid #e67e22; }"
+        )
+        for checkbox in (self.once, self.restore, self.stop_escape):
+            checkbox.setStyleSheet(checkbox_style)
         form.addRow("Name", self.name)
         form.addRow("File", self.filename)
         form.addRow("Trigger", self.trigger_mode)
@@ -139,7 +160,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         setup_help.setMinimumHeight(55)
         setup_layout.addWidget(setup_help)
         setup_layout.addStretch(1)
-        tabs.addTab(setup_page, "1. Setup")
+        tabs.addTab(setup_page, "Setup")
 
         # -----------------------------------------------------------------
         # Actors + waypoints — the main authoring workflow.
@@ -150,7 +171,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         actors_box = QtWidgets.QGroupBox("Actors")
         av = QtWidgets.QVBoxLayout(actors_box)
         help_label = QtWidgets.QLabel(
-            "<b>Step 1:</b> Add an NPC or creature. <b>Step 2:</b> select it, "
+            "<b>Step 1:</b> Add an actor. <b>Step 2:</b> select it, "
             "then move it directly in the 3D view. <b>Step 3:</b> capture its "
             "current position below. Repeat for each point in the performance."
         )
@@ -158,9 +179,9 @@ class CutsceneWizard(QtWidgets.QDialog):
         av.addWidget(help_label)
 
         actor_buttons = QtWidgets.QHBoxLayout()
-        self.add_npc_button = QtWidgets.QPushButton("+ NPC")
-        self.add_creature_button = QtWidgets.QPushButton("+ Creature")
-        self.capture_button = QtWidgets.QPushButton("Add selected editor actors")
+        self.add_npc_button = QtWidgets.QPushButton("+ Actor")
+        self.add_creature_button = QtWidgets.QPushButton("+ Actor")
+        self.capture_button = QtWidgets.QPushButton("+ Selected")
         self.remove_actor_button = QtWidgets.QPushButton("Remove")
         self.focus_actor_button = QtWidgets.QPushButton("Focus")
         for button in (self.add_npc_button, self.add_creature_button,
@@ -200,8 +221,8 @@ class CutsceneWizard(QtWidgets.QDialog):
         time_row.addWidget(self.waypoint_time)
         time_row.addStretch(1)
         self.waypoint_action = QtWidgets.QComboBox()
-        self.waypoint_action.addItem("MOVE — to this captured location", "move")
-        self.waypoint_action.addItem("ATTACK — this person", "attack")
+        self.waypoint_action.addItem("MOVE", "move")
+        self.waypoint_action.addItem("ATTACK", "attack")
         time_row.addWidget(QtWidgets.QLabel("Action"))
         time_row.addWidget(self.waypoint_action)
         wv.addLayout(time_row)
@@ -222,10 +243,10 @@ class CutsceneWizard(QtWidgets.QDialog):
         wv.addLayout(target_row)
 
         waypoint_buttons = QtWidgets.QHBoxLayout()
-        self.add_waypoint_button = QtWidgets.QPushButton("Capture waypoint")
+        self.add_waypoint_button = QtWidgets.QPushButton("Capture")
         self.add_waypoint_button.setDefault(True)
-        self.capture_now_button = QtWidgets.QPushButton("Capture current position (shortcut)")
-        self.remove_waypoint_button = QtWidgets.QPushButton("Remove selected waypoint")
+        self.capture_now_button = QtWidgets.QPushButton("Position")
+        self.remove_waypoint_button = QtWidgets.QPushButton("Remove")
         waypoint_buttons.addWidget(self.add_waypoint_button)
         waypoint_buttons.addWidget(self.capture_now_button)
         waypoint_buttons.addWidget(self.remove_waypoint_button)
@@ -236,14 +257,14 @@ class CutsceneWizard(QtWidgets.QDialog):
         wv.addWidget(self.waypoint_list)
         actors_layout.addWidget(waypoint_box, 1)
 
-        tabs.addTab(actors_page, "2. Actors & Waypoints")
+        tabs.addTab(actors_page, "Actors && Waypoints")
 
         # -----------------------------------------------------------------
         # Camera
         # -----------------------------------------------------------------
         camera_page = QtWidgets.QWidget()
         camera_layout = QtWidgets.QVBoxLayout(camera_page)
-        camera_box = QtWidgets.QGroupBox("Camera keyframes")
+        camera_box = QtWidgets.QGroupBox("Keyframes")
         cv = QtWidgets.QVBoxLayout(camera_box)
         camera_help = QtWidgets.QLabel(
             "Move the editor camera to the shot you want, choose a time, then "
@@ -263,16 +284,41 @@ class CutsceneWizard(QtWidgets.QDialog):
         camera_row.addWidget(self.camera_time)
         camera_row.addWidget(QtWidgets.QLabel("Look at"))
         camera_row.addWidget(self.look_at, 1)
-        self.capture_camera_button = QtWidgets.QPushButton("Capture camera position")
-        camera_row.addWidget(self.capture_camera_button)
-        self.capture_camera_button.clicked.connect(self._capture_camera_keyframe)
+        self.camera_teleport = QtWidgets.QCheckBox("Teleport")
+        self.camera_teleport.setToolTip(
+            "Cut instantly to this keyframe instead of moving the camera from the previous one."
+        )
+        camera_row.addWidget(self.camera_teleport)
         cv.addLayout(camera_row)
+        self.capture_camera_button = QtWidgets.QPushButton("Capture camera position")
+        self.capture_camera_button.setStyleSheet(
+            "QPushButton { background: #e67e22; color: white; font-weight: bold; padding: 6px 12px; }"
+            "QPushButton:hover { background: #f39c12; }"
+        )
+        self.capture_camera_button.clicked.connect(self._capture_camera_keyframe)
+        cv.addWidget(self.capture_camera_button)
         self.camera_keys_list = QtWidgets.QListWidget()
         self.camera_keys_list.setMinimumHeight(120)
-        cv.addWidget(self.camera_keys_list)
-        camera_layout.addWidget(camera_box)
-        camera_layout.addStretch(1)
-        tabs.addTab(camera_page, "3. Camera")
+        cv.addWidget(self.camera_keys_list, 1)
+        camera_buttons = QtWidgets.QHBoxLayout()
+        camera_buttons.addWidget(QtWidgets.QLabel("Selected time"))
+        self.camera_edit_time = QtWidgets.QDoubleSpinBox()
+        self.camera_edit_time.setRange(0, 3600)
+        self.camera_edit_time.setDecimals(2)
+        self.camera_edit_time.setSuffix(" s")
+        self.camera_edit_time.setEnabled(False)
+        camera_buttons.addWidget(self.camera_edit_time)
+        set_camera_time_button = QtWidgets.QPushButton("Set")
+        set_camera_time_button.clicked.connect(self._set_selected_camera_keyframe_time)
+        camera_buttons.addWidget(set_camera_time_button)
+        delete_camera_button = QtWidgets.QPushButton("Remove")
+        delete_camera_button.clicked.connect(self._remove_selected_camera_keyframe)
+        camera_buttons.addWidget(delete_camera_button)
+        camera_buttons.addStretch(1)
+        cv.addLayout(camera_buttons)
+        self.camera_keys_list.currentRowChanged.connect(self._camera_keyframe_selected)
+        camera_layout.addWidget(camera_box, 1)
+        tabs.addTab(camera_page, "Keyframes")
 
         # -----------------------------------------------------------------
         # Events / dialogue. Advanced functionality remains available, but
@@ -281,15 +327,14 @@ class CutsceneWizard(QtWidgets.QDialog):
         events_page = QtWidgets.QWidget()
         events_layout = QtWidgets.QVBoxLayout(events_page)
         events_tabs = QtWidgets.QTabWidget()
-        self._build_fight_tab(events_tabs)
-        self._build_blood_tab(events_tabs)
-        self._build_dialogue_tab(events_tabs)
         self._build_message_tab(events_tabs)
+        self._build_io_tab(events_tabs)
         events_layout.addWidget(events_tabs, 1)
 
         self.event_list = QtWidgets.QListWidget()
         self.event_list.setMinimumHeight(100)
         events_layout.addWidget(self.event_list)
+        self.event_list.itemDoubleClicked.connect(self._edit_selected_event)
         remove_event = QtWidgets.QPushButton("Remove selected event")
         remove_event.clicked.connect(self._remove_event)
         events_layout.addWidget(remove_event)
@@ -335,17 +380,25 @@ class CutsceneWizard(QtWidgets.QDialog):
             )
 
         advanced_toggle.toggled.connect(toggle_advanced)
-        tabs.addTab(events_page, "4. Events (optional)")
+        tabs.addTab(events_page, "Events")
 
         footer = QtWidgets.QHBoxLayout()
         self.summary = QtWidgets.QLabel("No actors created yet.")
         self.summary.setWordWrap(True)
         footer.addWidget(self.summary, 1)
-        self.save_button = QtWidgets.QPushButton("Save Cutscene")
+        self.load_button = QtWidgets.QPushButton("Load")
+        self.save_button = QtWidgets.QPushButton("Save")
+        self.apply_button = QtWidgets.QPushButton("Apply")
+        self.apply_button.setStyleSheet(
+            "QPushButton { background: #e67e22; color: white; font-weight: bold; padding: 6px 12px; }"
+            "QPushButton:hover { background: #f39c12; }"
+        )
         self.cancel_button = QtWidgets.QPushButton("Cancel")
         self.save_button.setDefault(True)
         self.cancel_button.setDefault(False)
+        footer.addWidget(self.load_button)
         footer.addWidget(self.save_button)
+        footer.addWidget(self.apply_button)
         footer.addWidget(self.cancel_button)
         root.addLayout(footer)
 
@@ -375,10 +428,9 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.play_button.clicked.connect(self._preview_play)
         self.fast_forward_button.clicked.connect(self._preview_fast_forward)
 
-        self.add_npc_button.clicked.connect(lambda: self._create_temporary_actor("npc"))
-        self.add_creature_button.clicked.connect(
-            lambda: self._create_temporary_actor("creature")
-        )
+        self.add_npc_button.clicked.connect(lambda: self._create_temporary_actor("monster"))
+        self.add_creature_button.clicked.connect(lambda: self._create_temporary_actor("monster"))
+        self.add_creature_button.hide()
         self.capture_button.clicked.connect(self._capture_selected_actors)
         self.remove_actor_button.clicked.connect(self._remove_selected_actors)
         self.focus_actor_button.clicked.connect(self._focus_selected_actor)
@@ -396,12 +448,70 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.waypoint_action.currentIndexChanged.connect(
             lambda _index: self._update_waypoint_controls()
         )
-        self.save_button.clicked.connect(self.accept)
+        self.load_button.clicked.connect(self._load_cutscene)
+        self.save_button.clicked.connect(self._save_and_close)
+        self.apply_button.clicked.connect(self._apply_to_map)
         self.cancel_button.clicked.connect(self.reject)
 
         self._refresh_actor_lists()
         self._update_waypoint_controls()
         self._refresh_summary()
+        self._load_first_cutscene()
+        if self._saved_signature is None:
+            self._saved_signature = self._cutscene_signature()
+
+    def _cutscene_signature(self):
+        """Return a stable representation of the authored cutscene state."""
+        data = self._build_cutscene_data()
+        data.pop("id", None)
+        return json.dumps(data, sort_keys=True, ensure_ascii=False)
+
+    def _has_unsaved_changes(self):
+        return self._saved_signature != self._cutscene_signature()
+
+    def _confirm_close(self):
+        if self._close_prompt_active or not self._has_unsaved_changes():
+            return True
+
+        self._close_prompt_active = True
+        try:
+            box = QtWidgets.QMessageBox(self)
+            box.setIcon(QtWidgets.QMessageBox.Warning)
+            box.setWindowTitle("Unsaved cutscene changes!")
+            box.setText("Unsaved cutscene changes!")
+            box.setInformativeText("Do you want to save them before closing?")
+            save_button = box.addButton("Save", QtWidgets.QMessageBox.AcceptRole)
+            discard_button = box.addButton("Discard", QtWidgets.QMessageBox.DestructiveRole)
+            cancel_button = box.addButton("Cancel", QtWidgets.QMessageBox.RejectRole)
+            box.setDefaultButton(save_button)
+            box.exec_()
+
+            clicked = box.clickedButton()
+            if clicked is save_button:
+                self._save_and_close()
+                return False
+            if clicked is discard_button:
+                self._preview_stop_and_restore()
+                self._cleanup_after_cancel()
+                self._saved = False
+                return True
+            return False
+        finally:
+            self._close_prompt_active = False
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Keep the modeless wizard fully visible on screen.  Its height can
+        # exceed the available desktop height on smaller displays, so clamp
+        # the frame upward after Qt has applied window decorations.
+        screen = self.screen() or QtWidgets.QApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            frame = self.frameGeometry()
+            frame.moveTop(available.top())
+            self.move(frame.topLeft())
+        self.raise_()
+        self.activateWindow()
 
     # ------------------------------------------------------------------
     # Editor-side preview transport.
@@ -431,6 +541,10 @@ class CutsceneWizard(QtWidgets.QDialog):
                 t = t * t * (3.0 - 2.0 * t)
                 lp = list(left.get("pos", (0, 0, 0)))
                 rp = list(right.get("pos", lp))
+                if right.get("teleport", False):
+                    if elapsed < rt:
+                        return list(lp), float(left.get("yaw", 0.0))
+                    return list(rp), float(right.get("yaw", 0.0))
                 pos = [lp[i] + (rp[i] - lp[i]) * t for i in range(3)]
                 yaw = float(left.get("yaw", 0.0)) + (
                     float(right.get("yaw", 0.0)) - float(left.get("yaw", 0.0))
@@ -439,6 +553,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         return None
 
     def _preview_start(self):
+        getattr(self, "_refresh_actor_objects_from_state", lambda: None)()
         if self._preview_camera_baseline is None:
             camera = self.main_window.view_3d.camera
             self._preview_camera_baseline = {
@@ -456,6 +571,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         self._preview_duration = self._preview_end_time()
 
     def _preview_apply(self):
+        getattr(self, "_refresh_actor_objects_from_state", lambda: None)()
         for aid, frames in self.actor_tracks.items():
             actor = self.actor_objects.get(aid)
             pose = self._preview_pose(frames, self._preview_time)
@@ -482,9 +598,17 @@ class CutsceneWizard(QtWidgets.QDialog):
                     lt = float(left.get("time", 0.0)); rt = float(right.get("time", 0.0))
                     if lt <= self._preview_time <= rt:
                         t = max(0.0, min(1.0, (self._preview_time - lt) / max(1e-6, rt - lt)))
-                        t = t * t * (3.0 - 2.0 * t)
-                        pitch = float(left.get("pitch", 0.0)) + (float(right.get("pitch", 0.0)) - float(left.get("pitch", 0.0))) * t
-                        fov = float(left.get("fov", 90.0)) + (float(right.get("fov", 90.0)) - float(left.get("fov", 90.0))) * t
+                        if right.get("teleport", False):
+                            if self._preview_time < rt:
+                                pitch = float(left.get("pitch", 0.0))
+                                fov = float(left.get("fov", 90.0))
+                            else:
+                                pitch = float(right.get("pitch", 0.0))
+                                fov = float(right.get("fov", 90.0))
+                        else:
+                            t = t * t * (3.0 - 2.0 * t)
+                            pitch = float(left.get("pitch", 0.0)) + (float(right.get("pitch", 0.0)) - float(left.get("pitch", 0.0))) * t
+                            fov = float(left.get("fov", 90.0)) + (float(right.get("fov", 90.0)) - float(left.get("fov", 90.0))) * t
                         break
             camera = self.main_window.view_3d.camera
             camera.pos = glm.vec3(*pos)
@@ -505,16 +629,9 @@ class CutsceneWizard(QtWidgets.QDialog):
         if self._preview_rate == 0.0:
             return
         self._preview_time += 0.033 * self._preview_rate
-        if self._preview_time >= self._preview_duration:
-            self._preview_time = self._preview_duration
-            self._preview_rate = 0.0
-            self._preview_timer.stop()
-            self.play_button.setText("▶ Play")
-        elif self._preview_time <= 0.0:
-            self._preview_time = 0.0
-            self._preview_rate = 0.0
-            self._preview_timer.stop()
-            self.play_button.setText("▶ Play")
+        if self._preview_time >= self._preview_duration or self._preview_time <= 0.0:
+            self._preview_stop_and_restore()
+            return
         self._preview_apply()
 
     def _preview_play(self):
@@ -524,9 +641,7 @@ class CutsceneWizard(QtWidgets.QDialog):
             self._preview_apply()
             return
         if self._preview_rate == 1.0:
-            self._preview_rate = 0.0
-            self._preview_timer.stop()
-            self.play_button.setText("▶ Play")
+            self._preview_stop_and_restore()
             return
         if self._preview_time >= self._preview_duration:
             self._preview_time = 0.0
@@ -550,6 +665,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         self._preview_apply()
 
     def _preview_stop_and_restore(self):
+        getattr(self, "_refresh_actor_objects_from_state", lambda: None)()
         self._preview_timer.stop()
         self._preview_rate = 0.0
         self.play_button.setText("▶ Play")
@@ -580,6 +696,101 @@ class CutsceneWizard(QtWidgets.QDialog):
     # ------------------------------------------------------------------
     # Advanced event widgets — these retain the original wizard controls.
     # ------------------------------------------------------------------
+    def _refresh_io_sources(self):
+        """Refresh the I/O source list from the live map entities."""
+        current = self.io_source.currentData() if hasattr(self, "io_source") else None
+        self.io_source.blockSignals(True)
+        self.io_source.clear()
+        for thing in getattr(self.main_window.state, "things", []) or []:
+            props = getattr(thing, "properties", {})
+            if props.get("_cutscene_temporary"):
+                continue
+            entity_id = str(props.get("id", ""))
+            if not entity_id:
+                continue
+            name = str(props.get("name") or entity_id)
+            self.io_source.addItem(name, entity_id)
+        idx = self.io_source.findData(current)
+        self.io_source.setCurrentIndex(idx if idx >= 0 else (0 if self.io_source.count() else -1))
+        self.io_source.blockSignals(False)
+        self._refresh_io_outputs()
+
+    def _refresh_io_outputs(self):
+        from .io_system import get_input_names
+        current = self.io_output.currentText()
+        self.io_output.blockSignals(True)
+        self.io_output.clear()
+        source_id = str(self.io_source.currentData() or "")
+        source = next((t for t in getattr(self.main_window.state, "things", []) or []
+                       if str(getattr(t, "properties", {}).get("id", "")) == source_id), None)
+        if source is not None:
+            entity_type = str(source.properties.get("type", ""))
+            for output in sorted(get_input_names(entity_type)):
+                self.io_output.addItem(output)
+        self.io_output.setCurrentText(current)
+        self.io_output.blockSignals(False)
+
+    def _build_io_tab(self, tabs):
+        page = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(page)
+        box = QtWidgets.QGroupBox("Send an I/O input during the cutscene")
+        form = QtWidgets.QFormLayout(box)
+        self.io_time = QtWidgets.QDoubleSpinBox()
+        self.io_time.setRange(0, 3600)
+        self.io_time.setDecimals(2)
+        self.io_time.setSuffix(" s")
+        form.addRow("At time", self.io_time)
+        self.io_source = QtWidgets.QComboBox()
+        self.io_source.setMinimumWidth(260)
+        form.addRow("Target entity", self.io_source)
+        self.io_source.currentIndexChanged.connect(lambda _i: self._refresh_io_outputs())
+        self.io_output = QtWidgets.QComboBox()
+        self.io_output.setEditable(True)
+        self.io_output.setMinimumWidth(260)
+        form.addRow("Input", self.io_output)
+        self.io_parameter = QtWidgets.QLineEdit()
+        self.io_parameter.setPlaceholderText("Optional parameter")
+        form.addRow("Parameter", self.io_parameter)
+        add = QtWidgets.QPushButton("Add I/O input")
+        add.clicked.connect(self._add_io_event)
+        form.addRow("", add)
+        layout.addWidget(box)
+        help_text = QtWidgets.QLabel(
+            "This sends a real Fio input directly to the selected target entity at the authored cutscene time. "
+            "For example, Target entity = Door and Input = Open."
+        )
+        help_text.setWordWrap(True)
+        layout.addWidget(help_text)
+        layout.addStretch(1)
+        tabs.addTab(page, "I/O Input")
+        self._refresh_io_sources()
+
+    def _add_io_event(self):
+        source_id = str(self.io_source.currentData() or "")
+        source_name = self.io_source.currentText().strip()
+        output = self.io_output.currentText().strip()
+        if not source_id or not source_name:
+            QtWidgets.QMessageBox.warning(self, "I/O Input", "Choose a target entity first.")
+            return
+        if not output:
+            QtWidgets.QMessageBox.warning(self, "I/O Input", "Choose or enter an input name.")
+            return
+        event = {
+            "time": float(self.io_time.value()),
+            "type": "io",
+            "target_id": source_id,
+            "target_name": source_name,
+            "input": output,
+        }
+        parameter = self.io_parameter.text()
+        if parameter:
+            event["parameter"] = parameter
+        self.events.append(event)
+        self.events.sort(key=lambda x: x.get("time", 0))
+        self._refresh_event_list()
+        self._refresh_summary()
+        self.io_time.setValue(float(event["time"]) + 1.0)
+
     def _build_fight_tab(self, tabs):
         fight = QtWidgets.QWidget()
         fv = QtWidgets.QVBoxLayout(fight)
@@ -622,14 +833,6 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.blood_time.setDecimals(2)
         self.blood_variant = QtWidgets.QComboBox()
         self.blood_variant.addItem("Random", "random")
-        try:
-            from game.rpg import gib
-            for i, path in enumerate(gib.stain_paths(False)):
-                self.blood_variant.addItem(
-                    f'Variant {i + 1} — {path.rsplit("/", 1)[-1]}', i
-                )
-        except Exception:
-            pass
         self.blood_x = QtWidgets.QDoubleSpinBox()
         self.blood_y = QtWidgets.QDoubleSpinBox()
         self.blood_z = QtWidgets.QDoubleSpinBox()
@@ -713,11 +916,9 @@ class CutsceneWizard(QtWidgets.QDialog):
     # ------------------------------------------------------------------
     def _create_temporary_actor(self, entity_type):
         try:
-            from game.entities import Creature, NPC
+            from .things import Monster
         except Exception as exc:
-            QtWidgets.QMessageBox.warning(
-                self, "Actor", f"Could not create a MiniWind actor: {exc}"
-            )
+            QtWidgets.QMessageBox.warning(self, "Actor", f"Could not create a Fio actor: {exc}")
             return
 
         camera = getattr(getattr(self.main_window, "view_3d", None), "camera", None)
@@ -733,25 +934,18 @@ class CutsceneWizard(QtWidgets.QDialog):
         except Exception:
             pos = _v3(camera.pos)
 
-        # One click creates a usable actor.  Role/name remain editable through
-        # the normal Properties panel, so authoring a shot never turns into a
-        # sequence of setup dialogs.
-        role = "villager" if entity_type == "npc" else "wolf"
-        label = "NPC" if entity_type == "npc" else "Creature"
-        default_name = f"Cutscene {label} {len(self.actor_meta) + 1}"
+        default_name = f"Cutscene Actor {len(self.actor_meta) + 1}"
         props = {
-            "type": entity_type,
+            "type": "monster",
             "id": str(uuid.uuid4()),
             "name": default_name,
             "display_name": default_name,
-            "npc_role": role,
+            "monster_type": "human",
             "triggered": True,
             "_cutscene_temporary": True,
         }
-        actor = (NPC if entity_type == "npc" else Creature)(pos=pos, properties=props)
-        actor.properties["npc_role"] = role
+        actor = Monster(pos=pos, properties=props)
         actor.properties["_cutscene_temporary"] = True
-
         self.main_window.state.things.append(actor)
         self.actor_objects[str(actor.properties.get("id"))] = actor
         self.temporary_actor_ids.add(str(actor.properties.get("id")))
@@ -764,9 +958,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         self.main_window.update_all_ui()
         self._refresh_actor_lists()
         self._select_actor_id(str(actor.properties.get("id")))
-        self.main_window.show_toast(
-            f"{default_name} created in the current 3D view"
-        )
+        self.main_window.show_toast(f"{default_name} created in the current 3D view")
 
     def _capture_selected_actors(self):
         selected = _selected_actors(self.main_window)
@@ -793,27 +985,78 @@ class CutsceneWizard(QtWidgets.QDialog):
         self._select_actor_id(str(selected[0].properties.get("id", "")))
 
     def _remove_selected_actors(self):
+        getattr(self, "_refresh_actor_objects_from_state", lambda: None)()
         item = self.actor_list.currentItem()
         if item is None:
             return
         aid = str(item.data(QtCore.Qt.UserRole))
         self.actor_meta.pop(aid, None)
         self.actor_tracks.pop(aid, None)
+
+        # Remove every authored reference to the deleted actor. A cutscene
+        # must never save dangling actor IDs in fights, camera look-at targets,
+        # dialogue speakers, or waypoint destinations.
+        self.camera_keys = [
+            row for row in self.camera_keys
+            if str(row.get("look_at", {}).get("actor", "")) != aid
+        ]
+        for row in self.actor_tracks.values():
+            for frame in row:
+                if str(frame.get("target_id", "")) == aid:
+                    frame.pop("target_id", None)
+        cleaned_events = []
+        for event in self.events:
+            if event.get("type") == "fight":
+                attackers = [str(x) for x in event.get("attackers", []) if str(x) != aid]
+                defenders = [str(x) for x in event.get("defenders", []) if str(x) != aid]
+                if not attackers or not defenders:
+                    continue
+                event = dict(event)
+                event["attackers"] = attackers
+                event["defenders"] = defenders
+            elif event.get("type") == "dialogue" and str(event.get("speaker_id", "")) == aid:
+                event = dict(event)
+                event["speaker_id"] = ""
+            elif event.get("type") == "io" and str(event.get("source_id", "")) == aid:
+                continue
+            cleaned_events.append(event)
+        self.events = cleaned_events
+
         if aid in self.temporary_actor_ids:
-            actor = self.actor_objects.get(aid)
-            if actor is not None:
-                try:
-                    self.main_window.state.things.remove(actor)
-                except ValueError:
-                    pass
+            state = self.main_window.state
+
+            # Clear both editor selection fields before rebuilding the actor
+            # references. Otherwise the removed temporary actor can remain in
+            # selection and be captured again by "+ Selected".
+            if hasattr(state, "selected_objects"):
+                state.selected_objects = [
+                    actor for actor in (state.selected_objects or [])
+                    if str(getattr(actor, "properties", {}).get("id", "")) != aid
+                ]
+            if (
+                getattr(state, "selected_object", None) is not None
+                and str(getattr(state.selected_object, "properties", {}).get("id", "")) == aid
+            ):
+                state.selected_object = None
+
+            state.things[:] = [
+                actor for actor in state.things
+                if not (
+                    getattr(actor, "properties", {}).get("_cutscene_temporary")
+                    and str(getattr(actor, "properties", {}).get("id", "")) == aid
+                )
+            ]
             self.temporary_actor_ids.discard(aid)
         self.actor_objects.pop(aid, None)
         self._refresh_actor_lists()
         self._refresh_waypoints()
+        self._refresh_event_list()
+        self._refresh_camera_list()
         self.main_window.update_all_ui()
         self._refresh_summary()
 
     def _actor_selection_changed(self):
+        getattr(self, "_refresh_actor_objects_from_state", lambda: None)()
         aid = self._current_actor_id()
         actor = self.actor_objects.get(aid) if aid else None
         if actor is not None:
@@ -828,6 +1071,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         self._refresh_waypoints()
 
     def _focus_selected_actor(self):
+        getattr(self, "_refresh_actor_objects_from_state", lambda: None)()
         actor = self.actor_objects.get(self._current_actor_id())
         if actor is None:
             return
@@ -850,14 +1094,13 @@ class CutsceneWizard(QtWidgets.QDialog):
         return list(self.actor_meta.keys())
 
     def _refresh_actor_lists(self):
+        """Refresh actor widgets that are part of the current simple wizard UI.
+
+        The old advanced Fight/Dialogue controls are intentionally no longer
+        created in the Events tab.  Keep this refresh path aligned with the
+        widgets that actually exist instead of touching removed controls.
+        """
         wanted = self._current_actor_id()
-        widgets = [self.actor_list, self.attackers, self.defenders]
-        old_attackers = {
-            str(x.data(QtCore.Qt.UserRole)) for x in self.attackers.selectedItems()
-        } if hasattr(self, "attackers") else set()
-        old_defenders = {
-            str(x.data(QtCore.Qt.UserRole)) for x in self.defenders.selectedItems()
-        } if hasattr(self, "defenders") else set()
 
         self.actor_list.blockSignals(True)
         self.actor_list.clear()
@@ -865,33 +1108,27 @@ class CutsceneWizard(QtWidgets.QDialog):
             item = QtWidgets.QListWidgetItem(meta["name"])
             if meta.get("spawn"):
                 item.setText(f"★ {meta['name']}")
-                item.setToolTip("Temporary actor — embedded in the cutscene and deleted from the map after authoring")
+                item.setToolTip(
+                    "Temporary actor — embedded in the cutscene and deleted "
+                    "from the map after authoring"
+                )
             item.setData(QtCore.Qt.UserRole, aid)
             self.actor_list.addItem(item)
         self.actor_list.blockSignals(False)
 
-        for widget in (self.attackers, self.defenders):
-            widget.clear()
-            for aid, meta in self.actor_meta.items():
-                item = QtWidgets.QListWidgetItem(meta["name"])
-                item.setData(QtCore.Qt.UserRole, aid)
-                widget.addItem(item)
-
-        self._restore_multi_selection(self.attackers, old_attackers)
-        self._restore_multi_selection(self.defenders, old_defenders)
         if wanted:
             self._select_actor_id(wanted)
 
-        for combo in (self.look_at, self.waypoint_target, self.dialogue_speaker):
+        # Only these actor-selection combos are present in the simplified
+        # wizard.  Do not reference removed dialogue/fight widgets here.
+        for combo in (self.look_at, self.waypoint_target):
             current = combo.currentData()
             combo.blockSignals(True)
             combo.clear()
             if combo is self.look_at:
                 combo.addItem("Keep camera rotation", "")
-            elif combo is self.waypoint_target:
-                combo.addItem("No target — use actor's current position", "")
             else:
-                combo.addItem("Narrator", "")
+                combo.addItem("No target — use actor's current position", "")
             for aid, meta in self.actor_meta.items():
                 combo.addItem(meta["name"], aid)
             idx = combo.findData(current)
@@ -917,6 +1154,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         )
 
     def _add_waypoint(self, from_current=True):
+        getattr(self, "_refresh_actor_objects_from_state", lambda: None)()
         aid = self._current_actor_id()
         actor = self.actor_objects.get(aid)
         if not aid or actor is None:
@@ -1059,20 +1297,55 @@ class CutsceneWizard(QtWidgets.QDialog):
             "pitch": float(camera.pitch),
             "fov": float(getattr(camera, "fov", 90.0)),
         }
+        if self.camera_teleport.isChecked():
+            frame["teleport"] = True
         aid = self.look_at.currentData()
         if aid:
             frame["look_at"] = {"actor": str(aid)}
         self.camera_keys.append(frame)
         self.camera_keys.sort(key=lambda x: x["time"])
+        self._refresh_camera_list()
+        self.camera_time.setValue(float(frame["time"]) + 1.0)
+
+    def _camera_keyframe_selected(self, row):
+        valid = 0 <= row < len(self.camera_keys)
+        self.camera_edit_time.setEnabled(valid)
+        if valid:
+            self.camera_edit_time.blockSignals(True)
+            self.camera_edit_time.setValue(float(self.camera_keys[row].get("time", 0.0)))
+            self.camera_edit_time.blockSignals(False)
+
+    def _set_selected_camera_keyframe_time(self):
+        row = self.camera_keys_list.currentRow()
+        if not (0 <= row < len(self.camera_keys)):
+            return
+        selected = self.camera_keys[row]
+        selected["time"] = float(self.camera_edit_time.value())
+        self.camera_keys.sort(key=lambda x: float(x.get("time", 0.0)))
+        new_row = self.camera_keys.index(selected)
+        self._refresh_camera_list()
+        self.camera_keys_list.setCurrentRow(new_row)
+        self._refresh_summary()
+
+    def _remove_selected_camera_keyframe(self):
+        row = self.camera_keys_list.currentRow()
+        if not (0 <= row < len(self.camera_keys)):
+            return
+        self.camera_keys.pop(row)
+        self._refresh_camera_list()
+        self._refresh_summary()
+
+    def _refresh_camera_list(self):
         self.camera_keys_list.clear()
         for row in self.camera_keys:
             look = row.get("look_at", {}).get("actor", "")
             target = self.actor_meta.get(str(look), {}).get("name", "") if look else ""
             suffix = f" — look at {target}" if target else ""
+            if row.get("teleport", False):
+                suffix += " — TELEPORT"
             self.camera_keys_list.addItem(
                 f"{row['time']:.2f}s — camera {row['pos']}{suffix}"
             )
-        self.camera_time.setValue(float(frame["time"]) + 1.0)
 
     def _refresh_actor_keys_list(self):
         self.actor_keys_list.clear()
@@ -1172,6 +1445,164 @@ class CutsceneWizard(QtWidgets.QDialog):
             self._refresh_event_list()
             self._refresh_summary()
 
+
+    def _edit_selected_event(self, _item=None):
+        row = self.event_list.currentRow()
+        ordered = sorted(enumerate(self.events), key=lambda item: item[1].get("time", 0))
+        if not (0 <= row < len(ordered)):
+            return
+        index, event = ordered[row]
+
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Edit event")
+        dialog.setMinimumWidth(520)
+        layout = QtWidgets.QVBoxLayout(dialog)
+        form = QtWidgets.QFormLayout()
+        layout.addLayout(form)
+
+        time = QtWidgets.QDoubleSpinBox()
+        time.setRange(0, 3600)
+        time.setDecimals(2)
+        time.setSuffix(" s")
+        time.setValue(float(event.get("time", 0.0)))
+        form.addRow("At time", time)
+
+        kind = str(event.get("type", ""))
+        widgets = {}
+
+        if kind == "message":
+            line = QtWidgets.QComboBox()
+            line.addItems(["message", "message2", "message3"])
+            line.setCurrentText(str(event.get("line", "message")))
+            text = QtWidgets.QLineEdit(str(event.get("text", "")))
+            form.addRow("Line", line)
+            form.addRow("Text", text)
+            widgets.update(line=line, text=text)
+
+        elif kind == "io":
+            target = QtWidgets.QLineEdit(str(event.get("target_name", event.get("source_name", ""))))
+            input_name = QtWidgets.QLineEdit(str(event.get("input", event.get("output", ""))))
+            parameter = QtWidgets.QLineEdit(str(event.get("parameter", "")))
+            form.addRow("Target entity", target)
+            form.addRow("Input", input_name)
+            form.addRow("Parameter", parameter)
+            widgets.update(target=target, input_name=input_name, parameter=parameter)
+
+        elif kind == "dialogue":
+            speaker = QtWidgets.QLineEdit(str(event.get("speaker_id", "")))
+            duration = QtWidgets.QDoubleSpinBox()
+            duration.setRange(0.05, 300)
+            duration.setDecimals(2)
+            duration.setSuffix(" s")
+            duration.setValue(float(event.get("duration", 5.0)))
+            text = QtWidgets.QPlainTextEdit(str(event.get("text", "")))
+            form.addRow("Speaker", speaker)
+            form.addRow("Duration", duration)
+            form.addRow("Text", text)
+            widgets.update(speaker=speaker, duration=duration, text=text)
+
+        elif kind == "fight":
+            duration = QtWidgets.QDoubleSpinBox()
+            duration.setRange(0.05, 300)
+            duration.setDecimals(2)
+            duration.setSuffix(" s")
+            duration.setValue(float(event.get("duration", 5.0)))
+            style = QtWidgets.QComboBox()
+            for label, value in (("Normal", "normal"), ("Melee", "melee"), ("Archery", "bow"), ("Spell", "magic")):
+                style.addItem(label, value)
+            style.setCurrentIndex(max(0, style.findData(event.get("style", "normal"))))
+            attackers = QtWidgets.QLineEdit(", ".join(map(str, event.get("attackers", []))))
+            defenders = QtWidgets.QLineEdit(", ".join(map(str, event.get("defenders", []))))
+            form.addRow("Duration", duration)
+            form.addRow("Style", style)
+            form.addRow("Attackers", attackers)
+            form.addRow("Defenders", defenders)
+            widgets.update(duration=duration, style=style, attackers=attackers, defenders=defenders)
+
+        elif kind == "blood":
+            position = list(event.get("position", [0, 0, 0]))
+            spins = []
+            for label, value in zip(("Position X", "Position Y", "Position Z"), position[:3]):
+                spin = QtWidgets.QDoubleSpinBox()
+                spin.setRange(-100000, 100000)
+                spin.setDecimals(2)
+                spin.setValue(float(value))
+                form.addRow(label, spin)
+                spins.append(spin)
+            variant = QtWidgets.QLineEdit(str(event.get("variant", "random")))
+            width = QtWidgets.QDoubleSpinBox()
+            height = QtWidgets.QDoubleSpinBox()
+            for spin, value in ((width, event.get("width", 64)), (height, event.get("height", 64))):
+                spin.setRange(0.01, 100000)
+                spin.setDecimals(2)
+                spin.setValue(float(value))
+            form.addRow("Variant", variant)
+            form.addRow("Width", width)
+            form.addRow("Height", height)
+            widgets.update(spins=spins, variant=variant, width=width, height=height)
+
+        else:
+            raw = QtWidgets.QPlainTextEdit(json.dumps(
+                {key: value for key, value in event.items() if key != "type"},
+                indent=2,
+                ensure_ascii=False,
+            ))
+            form.addRow("Data", raw)
+            widgets["raw"] = raw
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec_() != QtWidgets.QDialog.Accepted:
+            return
+
+        event["time"] = float(time.value())
+        if kind == "message":
+            event["line"] = widgets["line"].currentText()
+            event["text"] = widgets["text"].text()
+        elif kind == "io":
+            event["target_name"] = widgets["target"].text().strip()
+            event["input"] = widgets["input_name"].text().strip()
+            event.pop("source_name", None)
+            event.pop("output", None)
+            if widgets["parameter"].text():
+                event["parameter"] = widgets["parameter"].text()
+            else:
+                event.pop("parameter", None)
+        elif kind == "dialogue":
+            event["speaker_id"] = widgets["speaker"].text().strip()
+            event["duration"] = float(widgets["duration"].value())
+            event["text"] = widgets["text"].toPlainText()
+        elif kind == "fight":
+            event["duration"] = float(widgets["duration"].value())
+            event["style"] = widgets["style"].currentData()
+            event["attackers"] = [x.strip() for x in widgets["attackers"].text().split(",") if x.strip()]
+            event["defenders"] = [x.strip() for x in widgets["defenders"].text().split(",") if x.strip()]
+        elif kind == "blood":
+            event["position"] = [float(spin.value()) for spin in widgets["spins"]]
+            event["variant"] = widgets["variant"].text().strip()
+            event["width"] = float(widgets["width"].value())
+            event["height"] = float(widgets["height"].value())
+        else:
+            try:
+                raw_data = json.loads(widgets["raw"].toPlainText())
+                if isinstance(raw_data, dict):
+                    event.clear()
+                    event["type"] = kind
+                    event.update(raw_data)
+                    event["time"] = float(time.value())
+            except (TypeError, ValueError):
+                QtWidgets.QMessageBox.warning(self, "Invalid event", "The event data is not valid JSON.")
+                return
+
+        self.events.sort(key=lambda x: x.get("time", 0))
+        self._refresh_event_list()
+        self._refresh_summary()
+
     def _refresh_event_list(self):
         self.event_list.clear()
         for event in sorted(self.events, key=lambda x: x.get("time", 0)):
@@ -1183,6 +1614,8 @@ class CutsceneWizard(QtWidgets.QDialog):
                 label += f" — {str(event.get('text', ''))[:45]}"
             elif kind == "message":
                 label += f" — {event.get('line', 'message')}: {str(event.get('text', ''))[:45]}"
+            elif kind == "io":
+                label += f" — {event.get('target_name', event.get('target_id', ''))}.{event.get('input', event.get('output', ''))}"
             self.event_list.addItem(label)
 
     # ------------------------------------------------------------------
@@ -1201,7 +1634,15 @@ class CutsceneWizard(QtWidgets.QDialog):
             name += ".json"
         return name.split("/")[-1].split("\\")[-1]
 
+    def _refresh_actor_objects_from_state(self):
+        """Rebind actor references after EditorState undo/redo reconstruction."""
+        for aid in list(self.actor_meta):
+            actor = self._find_map_actor(aid)
+            if actor is not None:
+                self.actor_objects[aid] = actor
+
     def _actor_definition(self, aid):
+        getattr(self, "_refresh_actor_objects_from_state", lambda: None)()
         actor = self.actor_objects.get(aid)
         if actor is None:
             return None
@@ -1212,7 +1653,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         }
         props["id"] = str(aid)
         return {
-            "type": str(props.get("type") or "npc"),
+            "type": str(props.get("type") or "monster"),
             "pos": _v3(actor.pos),
             "yaw": float(getattr(actor, "angle", 0.0)),
             "properties": props,
@@ -1221,14 +1662,15 @@ class CutsceneWizard(QtWidgets.QDialog):
     def _delete_temporary_actors(self):
         if self._cleaned:
             return
-        for aid in list(self.temporary_actor_ids):
-            actor = self.actor_objects.get(aid)
-            if actor is None:
-                continue
-            try:
-                self.main_window.state.things.remove(actor)
-            except ValueError:
-                pass
+        state = self.main_window.state
+        ids = set(self.temporary_actor_ids)
+        state.things[:] = [
+            actor for actor in state.things
+            if not (
+                getattr(actor, "properties", {}).get("_cutscene_temporary")
+                and str(getattr(actor, "properties", {}).get("id", "")) in ids
+            )
+        ]
         self.temporary_actor_ids.clear()
         self._cleaned = True
         try:
@@ -1250,31 +1692,183 @@ class CutsceneWizard(QtWidgets.QDialog):
         # edits while this modeless panel was open.
         self._delete_temporary_actors()
 
-    def accept(self):
-        self._preview_stop_and_restore()
-        if not self.camera_keys:
-            QtWidgets.QMessageBox.warning(
-                self, "No camera keyframes",
-                "Capture at least one camera position."
+    def _current_map_name(self):
+        path = getattr(self.main_window, "file_path", "") or ""
+        return Path(path).name if path else ""
+
+    def _find_map_actor(self, aid):
+        aid = str(aid or "")
+        if not aid:
+            return None
+        for obj in getattr(self.main_window.state, "things", []) or []:
+            if str(getattr(obj, "properties", {}).get("id", "")) == aid:
+                return obj
+        return None
+
+    def _existing_cutscene_entity(self, cutscene_file):
+        wanted = str(cutscene_file or "").replace("\\", "/")
+        for obj in getattr(self.main_window.state, "things", []) or []:
+            props = getattr(obj, "properties", {}) or {}
+            if str(props.get("type", "")).lower() != "miniwindcutscene":
+                continue
+            current = str(props.get("cutscene_file", "") or "").replace("\\", "/")
+            if current == wanted or Path(current).name == Path(wanted).name:
+                return obj
+        return None
+    def _load_first_cutscene(self):
+        cutscene_dir = Path(getattr(self.main_window, "root_dir", ".")) / CUTSCENE_DIR
+        try:
+            candidates = sorted(path for path in cutscene_dir.glob("*.json") if path.is_file())
+        except OSError:
+            candidates = []
+        if candidates:
+            self._load_cutscene(str(candidates[0]))
+
+    def _load_cutscene(self, filename=None):
+        if filename is None:
+            start_dir = Path(getattr(self.main_window, "root_dir", ".")) / CUTSCENE_DIR
+            filename, _ = QtWidgets.QFileDialog.getOpenFileName(
+                self, "Load Cutscene", str(start_dir),
+                "Cutscene JSON (*.json);;All files (*)",
             )
+            if not filename:
+                return
+        try:
+            data = json.loads(Path(filename).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            QtWidgets.QMessageBox.warning(self, "Load failed", f"The cutscene could not be read:\n{exc}")
             return
-        if not self.actor_meta and not self.events:
+        if not isinstance(data, dict) or not isinstance(data.get("camera"), list):
             QtWidgets.QMessageBox.warning(
-                self, "Empty cutscene",
-                "Create/capture at least one actor or add a timed event."
+                self, "Invalid cutscene",
+                "This file is not a valid MiniWind cutscene (keyframes are missing).",
             )
             return
 
-        filename = self._filename()
-        path = cutscene_files.cutscene_path(filename)
-        if QtCore.QFileInfo(path).exists():
+        saved_map = str((data.get("map") or {}).get("file", "") or "")
+        current_map = self._current_map_name()
+        if saved_map and current_map and saved_map.lower() != current_map.lower():
             result = QtWidgets.QMessageBox.question(
-                self, "Overwrite cutscene",
-                f"{filename} already exists. Replace it?"
+                self, "Different map",
+                f"This cutscene was created for '{saved_map}', but the current map is "
+                f"'{current_map}'.\n\nLoad it into the current map anyway?",
             )
             if result != QtWidgets.QMessageBox.Yes:
                 return
 
+        self._preview_stop_and_restore()
+        self._delete_temporary_actors()
+        # _delete_temporary_actors() marks the previous authoring session as
+        # cleaned. Loading a new cutscene starts a fresh authoring session, so
+        # its recreated spawn actors must be eligible for cleanup on Apply/Cancel.
+        self._cleaned = False
+        self.actor_meta.clear()
+        self.actor_objects.clear()
+        self.temporary_actor_ids.clear()
+        self.actor_tracks = {
+            str(aid): list(rows or [])
+            for aid, rows in (data.get("actor_tracks") or {}).items()
+            if isinstance(rows, list)
+        }
+        self.camera_keys = list(data.get("camera") or [])
+        self.events = list(data.get("events") or [])
+        self.name.setText(str(data.get("name") or "Cutscene"))
+        self.filename.setText(Path(filename).name)
+
+        settings = data.get("settings") or {}
+        self.restore.setChecked(bool(settings.get("restore_actors", True)))
+        self.stop_escape.setChecked(bool(settings.get("stop_on_escape", True)))
+        trigger = self.trigger_mode.findData(settings.get("trigger_mode", "manual"))
+        self.trigger_mode.setCurrentIndex(trigger if trigger >= 0 else 0)
+        self.radius.setValue(float(settings.get("trigger_radius", 180.0)))
+        self.once.setChecked(bool(settings.get("trigger_once", True)))
+
+        for row in data.get("actors") or []:
+            if not isinstance(row, dict):
+                continue
+            aid = str(row.get("id", "") or "")
+            if not aid:
+                continue
+            name = str(row.get("name") or aid)
+            definition = row.get("definition") if row.get("spawn") else None
+            actor = self._find_map_actor(aid)
+            if actor is None and isinstance(definition, dict):
+                try:
+                    from .things import Monster
+                    actor_props = dict(definition.get("properties") or {})
+                    actor_props["id"] = aid
+                    actor_props["_cutscene_temporary"] = True
+                    actor = Monster(
+                        pos=definition.get("pos") or [0.0, 0.0, 0.0],
+                        properties=actor_props,
+                    )
+                    actor.angle = float(definition.get("yaw", 0.0))
+                    self.main_window.state.things.append(actor)
+                    self.actor_objects[aid] = actor
+                    self.temporary_actor_ids.add(aid)
+                except Exception as exc:
+                    QtWidgets.QMessageBox.warning(
+                        self, "Actor load failed",
+                        f"Could not recreate actor '{name}': {exc}",
+                    )
+                    actor = None
+            if actor is not None:
+                self.actor_objects[aid] = actor
+                if aid in self.temporary_actor_ids:
+                    actor.properties["_cutscene_temporary"] = True
+            self.actor_meta[aid] = {
+                "id": aid, "name": name, "spawn": bool(row.get("spawn")),
+            }
+
+        self._refresh_actor_lists()
+        self._refresh_actor_keys_list()
+        self._refresh_camera_list()
+        self._refresh_event_list()
+        self._refresh_summary()
+        self._saved = True
+        self._saved_signature = self._cutscene_signature()
+        self.main_window.update_all_ui()
+        self.main_window.show_toast(f"Loaded cutscene {Path(filename).name}")
+
+    def _apply_cutscene_entity(self, filename):
+        from game.entities import MiniwindCutscene
+
+        pos = (
+            list(self.camera_keys[0].get("pos", [0.0, 0.0, 0.0]))
+            if self.camera_keys
+            else _v3(self.main_window.view_3d.camera.pos)
+        )
+        cutscene_file = Path(filename).name
+        scene = self._existing_cutscene_entity(cutscene_file)
+        props = {
+            "type": "miniwindcutscene",
+            "name": self.name.text().strip() or "Cutscene",
+            "display_name": self.name.text().strip() or "Cutscene",
+            "cutscene_file": cutscene_file,
+            "trigger_mode": self.trigger_mode.currentData(),
+            "trigger_radius": float(self.radius.value()),
+            "once": self.once.isChecked(),
+            "restore_actors": self.restore.isChecked(),
+            "stop_on_escape": self.stop_escape.isChecked(),
+            "hidden_in_game": True,
+        }
+        self.main_window.save_state()
+        if scene is None:
+            props["id"] = str(uuid.uuid4())
+            scene = MiniwindCutscene(pos=pos, properties=props)
+            self.main_window.state.things.append(scene)
+        else:
+            scene.pos = [float(v) for v in pos]
+            scene.properties.update(props)
+
+        self._delete_temporary_actors()
+        self.main_window.set_selected_object(scene)
+        self.main_window.unsaved_changes = True
+        self.main_window.update_all_ui()
+        self._saved = True
+        self.main_window.show_toast(f"Applied cutscene {cutscene_file} to current map")
+        return scene
+    def _build_cutscene_data(self):
         actors = []
         for aid, meta in self.actor_meta.items():
             row = {"id": aid, "name": meta["name"]}
@@ -1284,72 +1878,105 @@ class CutsceneWizard(QtWidgets.QDialog):
                     row["spawn"] = True
                     row["definition"] = definition
             actors.append(row)
-
-        data = {
+        return {
             "version": 2,
             "id": str(uuid.uuid4()),
             "name": self.name.text().strip() or "Cutscene",
             "actors": actors,
             "camera": self.camera_keys,
             "actor_tracks": self.actor_tracks,
-            "events": sorted(
-                self.events,
-                key=lambda x: x.get("time", 0)
-            ),
+            "events": sorted(self.events, key=lambda x: x.get("time", 0)),
+            "map": {"file": self._current_map_name()},
             "settings": {
                 "restore_actors": self.restore.isChecked(),
                 "stop_on_escape": self.stop_escape.isChecked(),
+                "trigger_mode": self.trigger_mode.currentData(),
+                "trigger_radius": float(self.radius.value()),
+                "trigger_once": self.once.isChecked(),
             },
         }
 
-        written = cutscene_files.save_cutscene(data, filename)
+    def _validate_for_save(self):
+        self._preview_stop_and_restore()
+        if not self.camera_keys:
+            QtWidgets.QMessageBox.warning(
+                self, "No keyframes", "Capture at least one camera position."
+            )
+            return None
+        if not self.actor_meta and not self.events:
+            QtWidgets.QMessageBox.warning(
+                self, "Empty cutscene",
+                "Create/capture at least one actor or add a timed event."
+            )
+            return None
+        return self._filename()
+
+    def _write_cutscene(self, filename, prompt_overwrite=False):
+        path = Path(cutscene_files.cutscene_path(
+            filename, getattr(self.main_window, "root_dir", None)))
+        if prompt_overwrite and path.exists():
+            result = QtWidgets.QMessageBox.question(
+                self, "Overwrite cutscene",
+                f"{filename} already exists. Replace it?"
+            )
+            if result != QtWidgets.QMessageBox.Yes:
+                return False
+        try:
+            written = cutscene_files.save_cutscene(
+                self._build_cutscene_data(),
+                filename,
+                root=getattr(self.main_window, "root_dir", None),
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            QtWidgets.QMessageBox.warning(
+                self, "Save failed", f"The cutscene JSON could not be written:\n{exc}"
+            )
+            return False
         if not written:
             QtWidgets.QMessageBox.warning(
-                self, "Save failed",
-                "The cutscene JSON could not be written."
+                self, "Save failed", "The cutscene JSON could not be written."
             )
+            return False
+        return True
+    def _save_and_close(self):
+        filename = self._validate_for_save()
+        if not filename:
             return
-
-        from game.entities import MiniwindCutscene
-        selected = _selected_actors(self.main_window)
-        pos = (
-            _v3(selected[0].pos)
-            if selected
-            else _v3(self.main_window.view_3d.camera.pos)
-        )
-        props = {
-            "type": "miniwindcutscene",
-            "id": str(uuid.uuid4()),
-            "cutscene_file": filename,
-            "trigger_mode": self.trigger_mode.currentData(),
-            "trigger_radius": float(self.radius.value()),
-            "once": self.once.isChecked(),
-            "restore_actors": self.restore.isChecked(),
-            "stop_on_escape": self.stop_escape.isChecked(),
-            "hidden_in_game": True,
-        }
-        scene = MiniwindCutscene(pos=pos, properties=props)
-        self.main_window.state.save_state()
-        self.main_window.state.things.append(scene)
-        self.main_window.set_selected_object(scene)
-        self.main_window.unsaved_changes = True
-        self.main_window.update_all_ui()
-
-        self._delete_temporary_actors()
+        if not self._write_cutscene(filename, prompt_overwrite=True):
+            return
         self._saved = True
-        self.main_window.show_toast(f"Created cutscene {filename}")
+        self._saved_signature = self._cutscene_signature()
+        self._delete_temporary_actors()
+        self.main_window.show_toast(f"Saved cutscene {filename}")
         super().accept()
 
+    def _apply_to_map(self):
+        filename = self._validate_for_save()
+        if not filename:
+            return
+        # Apply must update the JSON as well: LogicCamera stores a filename,
+        # so applying stale on-disk data would make the map reference an older
+        # version of the cutscene being authored.
+        if not self._write_cutscene(filename, prompt_overwrite=False):
+            return
+        self._apply_cutscene_entity(filename)
+        self._saved = True
+        self._saved_signature = self._cutscene_signature()
+
     def reject(self):
+        if not self._confirm_close():
+            return
         self._preview_stop_and_restore()
         self._cleanup_after_cancel()
         super().reject()
 
     def closeEvent(self, event):
+        if not self._confirm_close():
+            event.ignore()
+            return
         self._preview_stop_and_restore()
-        if not self._saved:
-            self._cleanup_after_cancel()
-        super().closeEvent(event)
+        self._cleanup_after_cancel()
+        event.accept()
 
 
 # Backwards-compatible class name retained for MainWindow.open_cutscene_wizard.
