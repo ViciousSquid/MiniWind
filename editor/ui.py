@@ -420,6 +420,7 @@ class Ui_MainWindow(object):
             'Author a camera-and-actor cutscene from the 3D view')
         MainWindow.cutscene_wizard_action.triggered.connect(
             MainWindow.open_cutscene_wizard)
+        MainWindow.tools_menu.addAction(MainWindow.cutscene_wizard_action)
 
         MainWindow.logic_graph_action = QAction('Logic Graph Editor…', MainWindow)
         MainWindow.logic_graph_action.setShortcut('Ctrl+L')
