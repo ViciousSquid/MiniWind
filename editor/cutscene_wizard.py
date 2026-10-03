@@ -1968,6 +1968,7 @@ class CutsceneWizard(QtWidgets.QDialog):
             return
         self._preview_stop_and_restore()
         self._cleanup_after_cancel()
+        setattr(self.main_window, "_cutscene_wizard_active", False)
         super().reject()
 
     def closeEvent(self, event):
@@ -1976,6 +1977,7 @@ class CutsceneWizard(QtWidgets.QDialog):
             return
         self._preview_stop_and_restore()
         self._cleanup_after_cancel()
+        setattr(self.main_window, "_cutscene_wizard_active", False)
         event.accept()
 
 
