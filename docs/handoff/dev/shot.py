@@ -92,10 +92,11 @@ if not args.editor:
             if args.player_head:
                 s._apply_player_head(args.player_head)
         if args.overhead_height and lt is not None:
-            lt.overhead_height = args.overhead_height
-        if args.teleport and lt is not None and lt.player is not None:
+            lt.camera.overhead_height = args.overhead_height
+        player = lt.player_runtime.player if lt is not None else None
+        if args.teleport and player is not None:
             x, z = (float(v) for v in args.teleport.split(","))
-            lt.player.pos.x, lt.player.pos.z = x, z
+            player.pos.x, player.pos.z = x, z
 if args.exec:
     lt = getattr(w.view_3d, "logic_thread", None)
     s = getattr(lt, "_miniwind", None)
@@ -111,20 +112,20 @@ pump(0.3)
 img = view.grabFramebuffer()
 img.save(args.out)
 lt = getattr(view, "logic_thread", None)
-if lt is not None and lt.player is not None:
-    pp = lt.player.pos
-    ter = getattr(lt, "terrain", None)
+if lt is not None and lt.player_runtime.player is not None:
+    pp = lt.player_runtime.player.pos
+    ter = lt.world_runtime.terrain
     th = ter.get_height_at(pp.x, pp.z) if ter is not None else None
     print("player", round(pp.x), round(pp.y, 1), round(pp.z), "terrain", th)
 print("saved", args.out, img.width(), "x", img.height(),
       "| play:", getattr(view, "play_mode", None),
       "| view camera:", getattr(view, "camera_mode", None),
-      "| logic overhead:", lt.is_overhead() if lt else None,
-      "| paused:", getattr(lt, "world_paused", None))
+      "| logic overhead:", lt.camera.is_overhead() if lt else None,
+      "| paused:", lt.session_runtime.world_paused if lt else None)
 if args.exit_check:
     w._exit_play_mode() if hasattr(w, "_exit_play_mode") else None
     pump(1.0)
     print("after exit | play:", view.play_mode, "| view camera:", view.camera_mode,
-          "| logic camera:", getattr(lt, "camera_mode", None),
+          "| logic camera:", lt.camera.camera_mode if lt else None,
           "| dropdown:", w.camera_mode_combobox.currentText())
 os._exit(0)

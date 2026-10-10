@@ -159,18 +159,26 @@ game's quest, dialogue and faction code reads and writes through.
 
 **Input routing is Fio's; its meaning is MiniWind's.** Qt and the editor route
 keys and clicks. The fire buttons are the engine's shot path: the view queues a
-primary or secondary shot, `LogicThread._handle_shooting` hands it to
-`player_fire_handler`, and `MiniwindSession.fire_player_weapon` decides what it
-is — a swing, an arrow, a spell. Arrows and bolts fly through the engine's
-projectile pipeline (`on_hit`, embedding, stuck arrows).
+primary or secondary shot, `LogicCombat._handle_shooting` hands it to
+`LogicThread.player_fire_handler`, and `MiniwindSession.fire_player_weapon`
+decides what it is — a swing, an arrow, a spell. Arrows and bolts fly through
+the engine's projectile store (`LogicCombat.spawn_projectile`: own range,
+`on_hit` damage at impact, `on_impact`).
+
+**Fio 3's runtimes, through one door.** Fio 3 split the logic thread into owned
+runtimes (`player_runtime`, `camera`, `session_runtime`, `world_runtime`,
+`combat_runtime`, `cutscene_runtime`, ...). Game code reaches them only through
+`game/fio.py`, so a future move in Fio changes one module.
 
 **The dependency runs one way.** `engine/`, `editor/`, `plugins/` and `player/`
 import nothing from `game/`. `main.py` calls `game.install()`; the game then
 publishes itself on the logic thread (`game_session`, `player_fire_handler`,
-`_player_damage_filter`, `_faction_hostile`, `blood_stain_sprites`), registers
-its weapon lookup with `engine.combat_loadout`, and extends the editor through
-the plugin API (property sections, key suggestions, inspector snapshots, console
-commands — API 1.4.0) and a built-in game's `reset_progress` hook.
+`_player_damage_filter`), installs its faction model on the monster AI
+(`MonsterAI.set_hostility`, `engine/hostility.py`) and its attack-style hook,
+and extends the editor through the plugin API (property sections, key
+suggestions, entity inspectors, console commands; plugin API 1.7.0) and a
+built-in game's `reset_progress` hook. Its pause menu takes Fio's place through
+`QtGameView.play_menu`. Cutscenes are Fio's (Tools > Cutscenes).
 `tests/integration/test_miniwind_boundaries.py` enforces this.
 
 **Fio's player runtime** (`player/`) is Fio's and left untouched.

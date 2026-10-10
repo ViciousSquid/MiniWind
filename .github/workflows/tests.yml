@@ -5,38 +5,75 @@ on:
     branches: ["**"]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
-# A failure in one optional graphical tier must not hide a failure in the core
-# suite, so each tier is its own job and none of them depends on another.
+permissions:
+  contents: read
+
+# Keep CI focused on the latest commit for a branch. Rapid hardening/release
+# work should not leave a queue of obsolete test runs behind it.
+concurrency:
+  group: fio-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+# Each tier is independent so a graphical failure cannot hide a core failure.
 jobs:
-  headless:
-    name: Core (headless, no Qt, no GL)
+  no_gpu:
+    name: No-GPU fast core (no Qt)
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
           cache: pip
-      - name: Install the dependency-light half
-        # No PyQt5 and no PyOpenGL: this job proves how much of Fio is testable
-        # without the desktop dependency set at all.
-        run: pip install pytest numpy==2.5.3 PyGLM==2.8.3 pygame-ce==2.5.8
-      - name: Run the tests that need no Qt, no OpenGL, no display
+      - name: Verify CPython 3.14+ GIL-enabled baseline
+        run: |
+          python - <<'PY'
+          import sys
+          import sysconfig
+
+          assert sys.implementation.name == "cpython"
+          assert sys.version_info[:2] >= (3, 14)
+          assert sysconfig.get_config_var("Py_GIL_DISABLED") not in (1, "1")
+          assert sys._is_gil_enabled()
+          print(sys.version)
+          PY
+      - name: Install headless runtime baseline
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest "numpy==2.5.3" "PyGLM==2.8.3" "pygame-ce==2.5.8"
+      - name: Verify headless dependency versions
+        run: |
+          python - <<'PY'
+          import numpy
+          import pygame
+
+          assert numpy.__version__ == "2.5.3"
+          assert pygame.version.ver == "2.5.8"
+          print("NumPy:", numpy.__version__)
+          print("pygame-ce:", pygame.version.ver)
+          PY
+      - name: Run fast core tests that do not need Qt or a GPU
         env:
           FIO_HEADLESS_TIER: '1'
-        run: python -m pytest tests plugins player -m "not qt and not gl and not benchmark" -q
+        run: python -m pytest -m "not qt and not gl and not benchmark and not slow" -q
 
-  editor:
-    name: Editor + engine (Qt, offscreen)
+  # The editor, the logic thread and everything reached through editor.things
+  # live in this tier. It ran only on manual dispatch, and 35 failures built up
+  # in it unseen; it runs on every push now.
+  qt_no_gpu:
+    name: Qt / no-GPU suite (offscreen)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
           cache: pip
-      - name: Install Qt's platform-plugin libraries
+      - name: Install Qt/XCB runtime libraries
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -46,70 +83,165 @@ jobs:
             libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
       - name: Install dependencies
         run: |
-          pip install pytest
-          pip install -r requirements.txt
-      - name: Run everything that does not need a GPU
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          python -m pip install -r requirements.txt
+      - name: Run the complete Qt suite without a GPU or a display
         env:
-          LIBGL_ALWAYS_SOFTWARE: '1'
-        run: xvfb-run -a python -m pytest -m "not gl and not benchmark" -q
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -m "qt and not gl and not benchmark" -q
 
   opengl:
     name: Renderer (OpenGL, software rasteriser)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
           cache: pip
       - name: Install Mesa and a virtual display
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb libgl1 libglx0 libopengl0 libgl1-mesa-dri libglx-mesa0 libegl1 \
-            libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
-            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
-            libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
+          sudo apt-get install -y --no-install-recommends             xvfb libgl1 libglx0 libopengl0 libgl1-mesa-dri libglx-mesa0 libegl1             libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0             libxcb-keysyms1 libxcb-randr0 libxcb-render-util0             libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 glslang-tools
       - name: Install dependencies
         run: |
-          pip install pytest
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          python -m pip install -r requirements.txt
+      - name: Verify pinned dependency baseline
+        run: |
+          python - <<'PY'
+          import numpy
+          import pygame
+          from OpenGL import GL
+
+          assert numpy.__version__ == "2.5.3"
+          assert pygame.version.ver == "2.5.8"
+          assert GL is not None
+          print("NumPy:", numpy.__version__)
+          print("pygame-ce:", pygame.version.ver)
+          print("PyOpenGL import: OK")
+          PY
       - name: Run the visual tier against llvmpipe
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
         run: xvfb-run -a python -m pytest -m gl -q
+      - name: Compile every shader with the Khronos reference compiler
+        env:
+          FIO_REQUIRE_GLSLANG: '1'
+        run: python -m pytest tests/renderer/test_shader_portability.py -q
 
   benchmark:
     name: Renderer benchmark (reported, never fails on timing)
     runs-on: ubuntu-latest
-    # Informational: a shared runner's speed is not a property of Fio.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
           cache: pip
       - name: Install Mesa and a virtual display
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb libgl1 libglx0 libopengl0 libgl1-mesa-dri libglx-mesa0 libegl1 \
-            libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
-            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
-            libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
+          sudo apt-get install -y --no-install-recommends             xvfb libgl1 libglx0 libopengl0 libgl1-mesa-dri libglx-mesa0 libegl1             libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0             libxcb-keysyms1 libxcb-randr0 libxcb-render-util0             libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
       - name: Install dependencies
         run: |
-          pip install pytest
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          python -m pip install -r requirements.txt
       - name: Measure and report
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
           FIO_BENCH_OUT: benchmark.json
-        run: xvfb-run -a python -m pytest -m benchmark --run-benchmarks -q -s
-      - uses: actions/upload-artifact@v4
+        run: xvfb-run -a python -m pytest tests/performance/test_renderer_benchmark.py -m benchmark --run-benchmarks -q -s
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: renderer-benchmark
           path: benchmark.json
           if-no-files-found: ignore
+
+  launch:
+    name: Fio launch (CPython 3.14, Qt + software GL)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+      - name: Install Qt/OpenGL runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             xvfb libgl1 libglx0 libopengl0 libgl1-mesa-dri libglx-mesa0 libegl1             libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0             libxcb-keysyms1 libxcb-randr0 libxcb-render-util0             libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
+      - name: Install Fio dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Verify CPython 3.14 GIL-enabled baseline
+        run: |
+          python - <<'PY'
+          import sys
+          import sysconfig
+
+          assert sys.implementation.name == "cpython"
+          assert sys.version_info >= (3, 14)
+          assert sysconfig.get_config_var("Py_GIL_DISABLED") not in (1, "1")
+          assert sys._is_gil_enabled()
+          print(sys.version)
+          PY
+      - name: Verify pinned runtime dependencies
+        run: |
+          python - <<'PY'
+          import numpy
+          import pygame
+          from PyQt5 import QtCore
+          import OpenGL
+
+          assert numpy.__version__ == "2.5.3"
+          assert pygame.version.ver == "2.5.8"
+          print("NumPy:", numpy.__version__)
+          print("pygame-ce:", pygame.version.ver)
+          print("PyQt5:", QtCore.PYQT_VERSION_STR)
+          print("PyOpenGL import: OK")
+          PY
+      - name: Launch Fio
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          QT_QPA_PLATFORM: xcb
+        run: |
+          xvfb-run -a python - <<'PY'
+          import os
+          import pathlib
+          import subprocess
+          import sys
+          import time
+
+          log_path = pathlib.Path("fio-launch.log")
+          with log_path.open("w", encoding="utf-8") as log:
+              proc = subprocess.Popen(
+                  [sys.executable, "main.py"],
+                  stdout=log,
+                  stderr=subprocess.STDOUT,
+                  env=os.environ.copy(),
+              )
+              try:
+                  time.sleep(12)
+                  returncode = proc.poll()
+                  if returncode is not None:
+                      raise SystemExit(
+                          f"Fio exited during launch with code {returncode}.\n"
+                          + log_path.read_text(encoding="utf-8")
+                      )
+                  print("Fio remained running for 12 seconds: launch succeeded.")
+              finally:
+                  if proc.poll() is None:
+                      proc.terminate()
+                  try:
+                      proc.wait(timeout=5)
+                  except subprocess.TimeoutExpired:
+                      proc.kill()
+                      proc.wait()
+          PY

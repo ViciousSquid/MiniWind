@@ -1792,6 +1792,10 @@ class QtGameView(QOpenGLWidget):
         """Draw one frame from the canonical published render state."""
         if render_state is None:
             return
+        # In Play Mode the logic thread owns the camera mode (a game or the
+        # ``cam`` command may switch it); the view's own drawing follows it.
+        if self.play_mode and self.logic_thread is not None:
+            self.camera_mode = self.logic_thread.camera.camera_mode
         # Keep all direct OpenGL rendering inside Qt's native-painting boundary.
         # QPainter owns the GL state again before any HUD/overlay drawing.
         painter = QPainter(self)
