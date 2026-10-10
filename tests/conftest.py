@@ -27,6 +27,7 @@ _FIO_CONTENT = [(name, os.path.join("maps", name)) for name in (
     "Simple_Map_Test.json", "Spawner_Test.json", "Terrain_Test_small.json",
     "Terrain_Test_medium.json", "BigWorld_streaming_test.json",
 )] + [
+    ("cutscenes/showcase.json", os.path.join("cutscenes", "showcase.json")),
     ("plugins.tidy", os.path.join("plugins", "tidy")),
     ("plugins/tidy", os.path.join("plugins", "tidy")),
     ("Tidy_Test.json", os.path.join("plugins", "tidy", "Tidy_Test.json")),
@@ -67,6 +68,11 @@ def _test_text(item):
         helper = getattr(module, name, None)
         if callable(helper):
             parts.append(_source(getattr(helper, "__wrapped__", helper)))
+    # Module constants the test names (``MAP = "maps/_SHOWCASE.json"``).
+    for name in set(re.findall(r"\b([A-Z][A-Z0-9_]+)\b", parts[0] if parts else "")):
+        value = getattr(module, name, None)
+        if isinstance(value, str):
+            parts.append(value)
     return "\n".join(parts)
 
 

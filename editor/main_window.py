@@ -4570,12 +4570,8 @@ class MainWindow(QMainWindow):
         """
         from load_throbber import MIN_LEVEL_BYTES, LoadThrobber, throbber_geometry
         throbber = None
-        # The staged loading bar, when it is up, already says so: one
-        # indicator, not two.
-        overlay = getattr(self, '_loading_overlay', None)
-        bar_up = overlay is not None and overlay.active
         try:
-            if not bar_up and os.path.getsize(path) >= MIN_LEVEL_BYTES:
+            if os.path.getsize(path) >= MIN_LEVEL_BYTES:
                 self._stop_load_throbber()
                 frame = self.frameGeometry()
                 throbber = LoadThrobber(

@@ -22,7 +22,10 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# Offscreen only without a display (as the root conftest does): forcing it
+# under Xvfb would take the OpenGL tier's context away from every later test.
+if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 QtCore = pytest.importorskip("PyQt5.QtCore")
 QtWidgets = pytest.importorskip("PyQt5.QtWidgets")
 
