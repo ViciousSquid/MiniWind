@@ -304,7 +304,14 @@ xvfb-run -a -s "-screen 0 1280x1024x24" $PY -m pytest -p no:cacheprovider -m gl 
 cp /tmp/settings.keep settings.ini
 ```
 
-Results at the Fio 3 migration are in docs/MIGRATION_FIO_3.0.md.
+Results at the Fio 3 migration (docs/MIGRATION_FIO_3.0.md): core 3,270
+passed; Qt 2,404 passed and 1 failed (`test_the_greyed_strip_is_used_by_the_
+toggles_and_nothing_else`, which fails identically on pristine Fio 3); GL 195
+passed. A tier takes about 1, 19 and 4 minutes here.
+
+Game test modules must not set `QT_QPA_PLATFORM=offscreen` unconditionally:
+under Xvfb that takes the GL context from every later test and the whole GL
+tier silently skips.
 
 Gotchas:
 - Fio's root `conftest.pytest_ignore_collect` returns False, which disables

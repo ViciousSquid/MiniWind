@@ -85,10 +85,21 @@ Run on CPython 3.14.6 (GIL) with the pinned requirements, in Fio 3's CI tiers.
 | | Result |
 |---|---|
 | Before (MiniWind on 2.5.10, one process) | 4,466 passed, 158 skipped |
-| After: core tier (`not qt and not gl`) | see HANDOFF.md §7 |
-| After: Qt tier (offscreen) | see HANDOFF.md §7 |
-| After: GL tier (xvfb + llvmpipe) | see HANDOFF.md §7 |
+| After: core tier (`not qt and not gl`) | 3,270 passed, 8 skipped, 0 failed |
+| After: Qt tier (offscreen) | 2,404 passed, 36 skipped, 1 failed (upstream, below) |
+| After: GL tier (xvfb + llvmpipe) | 195 passed, 4 skipped, 0 failed |
 | Real boot (dev harness): village map, play, exit | renders as before (HUD, minimap, heads, overhead camera); editor camera restored on exit |
+
+The one failure, `tests/editor/test_toolbar_buttons.py::
+test_the_greyed_strip_is_used_by_the_toggles_and_nothing_else`, fails the same
+way on pristine Fio 3: Fio added the Visgroups toolbar button after writing the
+test. It is left as Fio ships it. Skips are Fio tests needing content MiniWind
+does not ship (Fio's example maps, the Tidy plugin, the showcase cutscene).
+
+Also kept from the 2.5 behaviour, outside Fio's files: MiniWind's map opens
+with the editor camera at its Player Start (`game/integration.py`). Fio 3 sets
+that on the view alone, which the logic thread's editor camera undoes, and
+Fio's GL tests are written against the default camera.
 
 Note: upstream Fio 3's own suite segfaults when everything runs in one
 process here (Qt teardown in its `main_window` fixture); run it by tier, as
