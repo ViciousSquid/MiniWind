@@ -1,7 +1,7 @@
 """The editor's Display box is host state; renderers only receive it.
 
-The Display box ("Wireframe", "Points", "Solid Lit", "Textured", "Overlay") and
-``r_wireframe`` set the view's display mode. The host publishes it as the
+The Display box ("Wireframe", "Points", "Solid Lit", "Textured", "Overlay") defaults to
+Textured, and the box plus ``r_wireframe`` set the view's display mode. The host publishes it as the
 ``brush_display_mode`` frame input, so:
 
 * any renderer -- here one that shares nothing with ``ForwardRenderer`` -- sees
@@ -68,6 +68,8 @@ def _diff(a, b):
 def test_the_display_box_reaches_any_renderer_on_the_next_frame(fio_session, flat):
     session = _open(fio_session)
     window, view = session.window, session.view
+    assert window.display_mode_combobox.currentText() == "Textured"
+    assert view.brush_display_mode == "Textured"
     assert view.switch_renderer("Flat")
     renderer = view.renderer
     before = dict(vars(renderer))
