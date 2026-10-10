@@ -84,6 +84,11 @@ FIELDS: List[Field] = [
           "World units of terrain kept resident around the player. 0 derives "
           "it from the activation radius.",
           min=0.0, max=65536.0),
+    Field("terrain_stream", "bool", "Stream terrain within its bounds", False,
+          "Keep only the terrain chunks within the terrain stream radius (or, "
+          "at 0, the activation radius plus one chunk) resident around the "
+          "camera, without changing the terrain's authored bounds. For a large "
+          "authored terrain that 'Fill world with terrain' would re-bound."),
     Field("disk_streaming", "bool", "Disk streaming (free unloaded cells)", False,
           "Experimental: instead of only hiding inactive cells, remove an "
           "unloaded cell's objects from memory and re-stream them from a "

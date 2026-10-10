@@ -136,6 +136,38 @@ class Toast(QLabel):
         self.anim.start()
         
 
+def _sync_editor_camera(window):
+    """Hand *window*'s 3D view camera to the logic thread.
+
+    Outside play the logic thread's editor camera is the one the frame is
+    drawn from: a camera placed on the view alone (focusing on an object,
+    opening a map at its Player Start) is undone on the next frame unless it
+    is handed over.
+    """
+    view = getattr(window, 'view_3d', None)
+    logic = getattr(view, 'logic_thread', None)
+    camera = getattr(view, 'camera', None)
+    if logic is None or camera is None:
+        return
+    try:
+        logic.camera.set_editor_camera(camera.pos, camera.yaw, camera.pitch, camera.fov)
+    except Exception:
+        pass
+
+
+def _loading_overlay(window):
+    """*window*'s loading bar (a no-op stand-in where it has none)."""
+    from editor.loading_overlay import overlay_for
+    return overlay_for(window)
+
+
+def _loading_step(window, stage, percent=None):
+    """Name the stage of a long load on *window*'s loading bar, if one is up."""
+    overlay = getattr(window, '_loading_overlay', None)
+    if overlay is not None and overlay.active:
+        overlay.step(stage, percent)
+
+
 class MainWindow(QMainWindow):
     #: A LevelChanger asks for a map: ``(map path, destination spawn)``, the
     #: spawn being a PlayerStart name, or '' for the map's primary start.
@@ -690,19 +722,23 @@ class MainWindow(QMainWindow):
                 else obj.properties.get('name', '')) or 'object'
         self.show_toast("Focused on %s" % name)
 
-    def focus_on_bounds(self, centre, radius):
-        """Centre every view on a point, framed for something *radius* across.
+    def focus_on_bounds(self, centre, radius, views="both"):
+        """Centre the views on a point, framed for something *radius* across.
 
-        The 3D camera keeps its current yaw and pitch and simply moves so the
-        target is in front of it. Snapping to a canned angle would be easier and
-        would throw away the orientation the user had chosen, which is usually
-        the thing they were reasoning about.
+        *views* is ``"both"`` (default), ``"2d"`` (the three 2D views only) or
+        ``"3d"`` (the 3D view only). The 3D camera keeps its current yaw and
+        pitch and simply moves so the target is in front of it. Snapping to a
+        canned angle would be easier and would throw away the orientation the
+        user had chosen, which is usually the thing they were reasoning about.
         """
         radius = max(16.0, float(radius))
-        self.center_2d_views_on(centre)
+        do_2d = views in ("both", "2d")
+        do_3d = views in ("both", "3d")
+        if do_2d:
+            self.center_2d_views_on(centre)
         # Zoom so the object spans a comfortable fraction of the viewport rather
         # than whatever zoom happened to be set.
-        for view in (self.view_top, self.view_side, self.view_front):
+        for view in ((self.view_top, self.view_side, self.view_front) if do_2d else ()):
             try:
                 extent = min(view.width(), view.height())
                 if extent > 0:
@@ -712,11 +748,14 @@ class MainWindow(QMainWindow):
                 pass
 
         camera = self.view_3d.camera
+        if not do_3d:
+            return
         try:
             import glm
             front = camera.get_front_vector()
             distance = max(radius * 3.0, 128.0)
             camera.pos = glm.vec3(centre[0], centre[1], centre[2]) - front * distance
+            _sync_editor_camera(self)
             self.view_3d.update()
         except Exception:
             pass
@@ -2476,13 +2515,14 @@ class MainWindow(QMainWindow):
                 }
             """)
 
-        self._capture_pre_play_world()
-        logic = self.view_3d.logic_thread
-        if logic is not None:
-            # A played package's cutscenes are looked up in the package.
-            logic.package_root = self._package_level_dir
-        physics_enabled = self.config.getboolean('Settings', 'physics', fallback=True)
-        self.view_3d.toggle_play_mode(player_start, physics_enabled)
+        with _loading_overlay(self).busy("Starting the game", "Building the world", 40):
+            self._capture_pre_play_world()
+            logic = self.view_3d.logic_thread
+            if logic is not None:
+                # A played package's cutscenes are looked up in the package.
+                logic.package_root = self._package_level_dir
+            physics_enabled = self.config.getboolean('Settings', 'physics', fallback=True)
+            self.view_3d.toggle_play_mode(player_start, physics_enabled)
         self.view_3d.setFocus()
         
         # Update play button color
@@ -2531,8 +2571,29 @@ class MainWindow(QMainWindow):
         self.update_title()
         self.update_all_ui()
 
+    def _game_modal_wants_escape(self):
+        """True when the running game will close something on Escape.
+
+        Asks the logic thread's ``game_session`` (``escape_closes_modal()``).
+        A game that offers no opinion, or none running, leaves Escape to the
+        pause menu; a screen that refuses Escape answers False so the key is
+        never swallowed by something that was not going to close.
+        """
+        logic = self.view_3d.logic_thread
+        session = logic.game_session if logic is not None else None
+        asks = getattr(session, 'escape_closes_modal', None)
+        if not callable(asks):
+            return False
+        try:
+            return bool(asks())
+        except Exception:
+            return False
+
     def _exit_play_mode(self):
         """Exit play mode and return to editor."""
+        play_menu = self.view_3d.play_menu
+        if play_menu is not None and play_menu.active:
+            play_menu.close()
         if self.view_3d.play_mode:
             self.view_3d.toggle_play_mode()
             self.view_3d.play_mode = False  # Force state change before UI update
@@ -3512,6 +3573,13 @@ class MainWindow(QMainWindow):
         # PLAY MODE HANDLING (hardcoded shortcuts first)
         # ------------------------------------------------------------------
         if self.view_3d.play_mode:
+            # A game's own play menu is modal over the game: while it is up it
+            # takes every key (arrow autorepeat included), so nothing below,
+            # Escape's way out included, can fire.
+            if self.view_3d.play_menu_active():
+                self.view_3d.play_menu.handle_key(event)
+                return
+
             # Autorepeat: holding a key down makes the OS/Qt resend keyPress
             # (and, on some platforms, interleaved keyRelease) events for as
             # long as it's held. The play-mode actions below are edge-triggered
@@ -3531,6 +3599,17 @@ class MainWindow(QMainWindow):
                 if event.key() in (Qt.Key_QuoteLeft, Qt.Key_Escape):
                     self._hide_play_console_overlay()
                 # All other keys go to the overlay input — don't process as game input
+                return
+
+            # A game screen or conversation that closes on Escape gets the
+            # key, as the game's own input.
+            if event.key() == Qt.Key_Escape and self._game_modal_wants_escape():
+                self.keys_pressed.add(event.key())
+                return
+
+            if event.key() == Qt.Key_Home:
+                # The camera back on the player, wherever it was showing.
+                self.view_3d.return_camera_to_player()
                 return
 
             if event.key() == Qt.Key_Escape:
@@ -4377,7 +4456,9 @@ class MainWindow(QMainWindow):
             if self.terrain is None:
                 from engine.terrain import Terrain
                 self.terrain = Terrain()
+            _loading_step(self, "Building terrain", 40)
             self.terrain.from_dict(self.state.terrain_data)
+            _loading_step(self, "Preparing terrain", 65)
 
             if self.view_3d is not None and self.view_3d.logic_thread:
                 self.view_3d.logic_thread.world_runtime.terrain = self.terrain
@@ -4453,7 +4534,9 @@ class MainWindow(QMainWindow):
         player to; empty or None means the level's primary start.
         """
         print(f"[MainWindow] Loading level: {filePath}")
-        with self._loading_throbber(filePath):
+        name = os.path.splitext(os.path.basename(str(filePath)))[0]
+        with _loading_overlay(self).busy(f"Loading {name}", "Reading the map", 5), \
+                self._loading_throbber(filePath):
             try:
                 with open(filePath, 'r', encoding='utf-8') as f:
                     level_data = json.load(f)
@@ -4461,7 +4544,21 @@ class MainWindow(QMainWindow):
                 print(f"ERROR loading level {filePath}: {e}")
                 self.show_toast(f"Failed to load level: {e}", is_error=True)
                 return False
-            return self._load_level(level_data, filePath, destination_spawn, from_game)
+            loaded = self._load_level(level_data, filePath, destination_spawn, from_game)
+            if loaded and not self.view_3d.play_mode:
+                # The first frame of a new map uploads it to the GPU, which
+                # is a long paint of its own: draw it under the loading bar.
+                _loading_step(self, "Drawing the world", 85)
+                try:
+                    self.view_3d.repaint()
+                except Exception:
+                    pass
+            return loaded
+
+    @property
+    def loading_overlay(self):
+        """The window's staged loading bar (editor/loading_overlay.py)."""
+        return _loading_overlay(self)
 
     @contextlib.contextmanager
     def _loading_throbber(self, path):
@@ -4473,8 +4570,12 @@ class MainWindow(QMainWindow):
         """
         from load_throbber import MIN_LEVEL_BYTES, LoadThrobber, throbber_geometry
         throbber = None
+        # The staged loading bar, when it is up, already says so: one
+        # indicator, not two.
+        overlay = getattr(self, '_loading_overlay', None)
+        bar_up = overlay is not None and overlay.active
         try:
-            if os.path.getsize(path) >= MIN_LEVEL_BYTES:
+            if not bar_up and os.path.getsize(path) >= MIN_LEVEL_BYTES:
                 self._stop_load_throbber()
                 frame = self.frameGeometry()
                 throbber = LoadThrobber(
@@ -4574,7 +4675,9 @@ class MainWindow(QMainWindow):
                           self.state.things)
             self.file_path = None
             scene_replacement_started = True
+            _loading_step(self, "Building the scene", 30)
             self._apply_level_data(level_data)
+            _loading_step(self, "Refreshing the editor", 75)
 
             # --- The start the player will spawn at; the camera goes there ---
             spawn = self.state.resolve_player_start(destination_spawn)
@@ -4609,6 +4712,7 @@ class MainWindow(QMainWindow):
                 self.view_3d.camera.pos = glm.vec3(0, 150, 400)
                 self.view_3d.camera.yaw = -90
                 self.view_3d.camera.pitch = -20
+            _sync_editor_camera(self)
 
             # Update file path and UI state
             self.file_path = file_path
@@ -4633,6 +4737,7 @@ class MainWindow(QMainWindow):
             play_stopped = was_playing and spawn is None
             if was_playing and not play_stopped:
                 print("[MainWindow] Restarting Play Mode with new level...")
+                _loading_step(self, "Restarting play", 85)
                 self._start_play(spawn)
                 if (loadout is not None
                         and self.view_3d.play_mode):
