@@ -33,6 +33,9 @@ jobs:
             --include-qt-plugins=sensible,platforms,styles,imageformats `
             --include-package=engine `
             --include-package=editor `
+            --include-package=game `
+            --include-package-data=game `
+            --include-data-dir=quests=quests `
             --include-package=PIL `
             --include-data-dir=assets=assets `
             --include-package=plugins `
@@ -120,6 +123,9 @@ jobs:
             --include-package=plugins \
             --include-package-data=plugins \
             --include-package=editor \
+            --include-package=game \
+            --include-package-data=game \
+            --include-data-dir=quests=quests \
             --include-package=PIL \
             --include-data-dir=assets=assets \
             --include-data-dir=tools=tools \
@@ -283,6 +289,9 @@ jobs:
             --include-package=plugins \
             --include-package-data=plugins \
             --include-package=editor \
+            --include-package=game \
+            --include-package-data=game \
+            --include-data-dir=quests=quests \
             --include-package=PIL \
             --include-data-dir=assets=assets \
             --include-data-dir=tools=tools \

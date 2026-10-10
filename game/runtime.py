@@ -58,6 +58,18 @@ from .diceroll_anim import SHAKE_DURATION, ROLL_DURATION, FADE_DURATION
 
 _current_session = None
 
+#: The editor's live settings (settings.ini), handed over by the editor
+#: integration as the 3D view is built (game/integration.py). The logic thread
+#: has no way back to the window, so this is how a session reads the GAME
+#: settings; None outside the editor (tools, tests).
+_editor_config = None
+
+
+def set_editor_config(config) -> None:
+    """Give sessions the editor's live settings (see :data:`_editor_config`)."""
+    global _editor_config
+    _editor_config = config
+
 #: Below this many actors the vectorised index costs more to build than the
 #: scalar scans it replaces, so the session leaves it unbuilt and every query
 #: takes its scalar route. MiniWind's authored settlement sits under it; a
@@ -442,12 +454,8 @@ class MiniwindSession:
         self._sim_last_hour = float(self.clock.hour)
 
     def _editor_config(self):
-        """Best-effort handle on the live editor config (settings.ini), or None."""
-        config = getattr(self.logic, "editor_config", None)
-        if config is None:
-            editor_state = getattr(self.logic, "editor_state", None)
-            config = getattr(editor_state, "config", None)
-        return config
+        """The editor's live settings (settings.ini), or None without an editor."""
+        return _editor_config
 
     def _visualise_dice_rolls_enabled(self) -> bool:
         """Read the live editor setting controlling automatic dice visuals."""

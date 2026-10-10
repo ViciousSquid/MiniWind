@@ -243,15 +243,19 @@ rule).
 
 ## 6. What still needs doing
 
-### Found during the Fio 3 migration (pre-existing, left as they were)
+### Found during the Fio 3 migration
 
-- `.github/workflows/build.yml` never packaged the `game` package or
-  `quests/` (they are loaded by name at runtime), so a Nuitka build would
-  start without the game. Add `--include-package=game` and
-  `--include-data-dir=quests=quests`.
-- `MiniwindSession._editor_config()` looks for `logic.editor_config`, which no
-  Fio version has: `[GAME] visualise_dice_rolls` / `show_dialogue_heads` are
-  never read in play (their defaults apply).
+Fixed after the migration:
+- `.github/workflows/build.yml` now packages the `game` package (with its
+  data files) and `quests/`; before, a Nuitka build started without the game.
+- Settings has a **Game** tab again (`game/integration.py`
+  `_patch_settings_window`) for `[GAME] visualise_dice_rolls` and
+  `show_dialogue_heads`, and play sessions read them from the editor's live
+  config (`game.runtime.set_editor_config`). Before, neither was read in play.
+  The shipped `settings.ini` has dice visuals on, so every roll in play now
+  shows the dice.
+
+Still open (pre-existing):
 - `logic.blood_stain_sprites` is set by the session and read by nothing.
 - Upstream Fio 3's suite segfaults if every tier runs in one process here
   (Qt teardown in its `main_window` fixture). Run by tier (§7).

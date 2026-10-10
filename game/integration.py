@@ -45,6 +45,7 @@ def apply():
     _patch_window_title()
     _patch_map_loading()
     _patch_play_menu()
+    _patch_settings_window()
 
 
 def _register_wizards():
@@ -553,6 +554,76 @@ def _active_session(MainWindow):
 
 
 
+#: settings.ini keys of Settings > Game: (key, label, tooltip, default).
+GAME_SETTINGS = (
+    ("visualise_dice_rolls", "Visualise dice rolls",
+     "Show every dice roll the game makes (checks, attacks, the console's "
+     "'roll') as animated dice over the game.", False),
+    ("show_dialogue_heads", "Show dialogue heads",
+     "Show the character's head beside the conversation window when talking "
+     "to an NPC. The head always matches the NPC's world sprite.", True),
+)
+
+
+def _patch_settings_window():
+    """Give Settings a Game tab for MiniWind's [GAME] options.
+
+    Fio's settings dialog has no page a plugin can add, so the tab is built
+    after Fio's own and its values are written with Fio's; the window saves
+    the config to settings.ini as it does every other setting.
+    """
+    try:
+        from editor.SettingsWindow import SettingsWindow
+    except Exception as exc:
+        _log(f"settings tab skipped ({exc})")
+        return
+    if getattr(SettingsWindow, "_miniwind_game_tab", False):
+        return
+    _orig_init = SettingsWindow.__init__
+    _orig_save = SettingsWindow._save_settings
+
+    def __init__(self, config, parent=None):
+        _orig_init(self, config, parent)
+        try:
+            _add_game_settings_tab(self)
+        except Exception as exc:
+            _log(f"Game settings tab not built ({exc})")
+
+    def _save_settings(self):
+        _orig_save(self)
+        boxes = getattr(self, "_miniwind_game_boxes", None)
+        if not boxes:
+            return
+        if not self.config.has_section("GAME"):
+            self.config.add_section("GAME")
+        for key, box in boxes.items():
+            self.config.set("GAME", key, str(box.isChecked()))
+
+    SettingsWindow.__init__ = __init__
+    SettingsWindow._save_settings = _save_settings
+    SettingsWindow._miniwind_game_tab = True
+
+
+def _add_game_settings_tab(window):
+    from PyQt5.QtWidgets import QCheckBox, QVBoxLayout, QWidget
+
+    widget = QWidget()
+    layout = QVBoxLayout(widget)
+    boxes = {}
+    for key, label, tooltip, default in GAME_SETTINGS:
+        box = QCheckBox(label)
+        box.setToolTip(tooltip)
+        try:
+            box.setChecked(window.config.getboolean("GAME", key, fallback=default))
+        except ValueError:
+            box.setChecked(default)
+        layout.addWidget(box)
+        boxes[key] = box
+    layout.addStretch()
+    window.tabs.addTab(widget, "Game")
+    window._miniwind_game_boxes = boxes
+
+
 def _patch_play_menu():
     """Give the 3D view MiniWind's pause menu, and the music its settings.
 
@@ -595,6 +666,10 @@ def install_play_menu(view):
     config = getattr(editor, "config", None)
     if config is not None:
         music.PLAYER.configure(config, getattr(editor, "save_config", None))
+        # The GAME settings (dice visuals, dialogue heads) are read live from
+        # the same config by the play session.
+        from . import runtime
+        runtime.set_editor_config(config)
 
 
 def _use_game_fonts_for_loading():
