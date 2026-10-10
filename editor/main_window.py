@@ -4708,7 +4708,6 @@ class MainWindow(QMainWindow):
                 self.view_3d.camera.pos = glm.vec3(0, 150, 400)
                 self.view_3d.camera.yaw = -90
                 self.view_3d.camera.pitch = -20
-            _sync_editor_camera(self)
 
             # Update file path and UI state
             self.file_path = file_path

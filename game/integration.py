@@ -164,10 +164,40 @@ def _patch_map_loading():
             if toast is not None:
                 toast(message, is_error=True)
             return False
-        return _orig_load(self, filePath, *args, **kwargs)
+        loaded = _orig_load(self, filePath, *args, **kwargs)
+        if loaded and not getattr(self.view_3d, "play_mode", False):
+            _camera_to_player_start(self)
+        return loaded
 
     MainWindow.load_level_file = load_level_file
     MainWindow._miniwind_maps_gated = True
+
+
+def _camera_to_player_start(window):
+    """Open the map looking from its Player Start, as Fio's load means to.
+
+    Fio places the editor camera there on the 3D view alone, and the logic
+    thread's editor camera -- the one drawn, copied back to the view every
+    frame -- puts it back where it was. MiniWind places it on both.
+    """
+    config = getattr(window, "config", None)
+    try:
+        if config is not None and not config.getboolean(
+                "Display", "place_camera_at_player_start", fallback=True):
+            return
+        spawn = window.state.resolve_player_start(None)
+    except Exception:
+        return
+    if spawn is None:
+        return
+    import glm
+    from editor.main_window import _sync_editor_camera
+    camera = window.view_3d.camera
+    camera.pos = glm.vec3(spawn.pos)
+    camera.yaw = spawn.get_angle()
+    camera.pitch = 0.0
+    _sync_editor_camera(window)
+    window.view_3d.update()
 
 
 #: The editor window's product name.
