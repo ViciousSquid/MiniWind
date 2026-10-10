@@ -34,7 +34,7 @@ def context():
 
 @pytest.fixture
 def renderer(context):
-    """A real ``Renderer_F`` on that context, cleaned up afterwards."""
+    """A real ``ForwardRenderer`` on that context, cleaned up afterwards."""
     made = glh.make_renderer()
     yield made
     try:
@@ -52,7 +52,7 @@ def _render(renderer, context, brushes, things, **config_overrides):
                                **config_overrides)
     context.bind()
     gl.glClearColor(0.0, 0.0, 0.0, 1.0)
-    renderer.render_scene(projection, view, eye, brushes, things, None, config,
+    renderer.render_scene(projection, view, eye, None, config,
                           brush_slots=config["all_brush_slots"])
     gl.glFinish()
     return context.read_pixels()
@@ -229,6 +229,67 @@ def test_a_shadowed_region_differs_from_a_lit_one(renderer, context):
         "neither the cube nor its shadow is visible" % difference.max())
 
 
+def test_shadow_samplers_are_assigned_once_and_keep_their_units(
+        renderer, context, monkeypatch):
+    """A program's shadowMaps[i] samplers read units base+i on every frame.
+
+    Sampler units are program state, so they are assigned on a program's
+    first lit pass only; later passes bind the cube-maps and nothing else.
+    Checked against GL's own record of each program's uniforms, and against
+    the image, which must not change once the assignment stops being re-sent.
+    """
+    import ctypes
+    import OpenGL.GL as gl
+
+    brushes, things = glh.lit_cube_scene(shadows=True)
+    first = _render(renderer, context, brushes, things)
+    if not renderer._shadow_cubemaps:
+        pytest.skip("shadows are unavailable on this driver")
+
+    base = renderer.SHADOW_TEXTURE_UNIT_BASE
+    count = renderer.MAX_SHADOW_LIGHTS
+
+    def shadow_locations(program):
+        locations = {}
+        for i in range(count):
+            location = gl.glGetUniformLocation(program, "shadowMaps[%d]" % i)
+            if location != -1:
+                locations[location] = i
+        return locations
+
+    resent = []
+    real_uniform1i = gl.glUniform1i
+
+    def recording_uniform1i(location, value):
+        program = int(gl.glGetIntegerv(gl.GL_CURRENT_PROGRAM))
+        if program and location in shadow_locations(program):
+            resent.append((program, location, value))
+        return real_uniform1i(location, value)
+
+    monkeypatch.setattr(gl, "glUniform1i", recording_uniform1i)
+    again = _render(renderer, context, brushes, things)
+    monkeypatch.undo()
+
+    assert not resent, (
+        "shadow sampler units were re-sent on a later frame: %s" % resent)
+    checked = 0
+    for name, uniforms in renderer.uniforms.items():
+        if uniforms.shadow_slots is None:
+            continue
+        locations = shadow_locations(uniforms.program)
+        assert sorted(locations.values()) == list(uniforms.shadow_slots), name
+        for location, index in locations.items():
+            unit = (ctypes.c_int * 1)()
+            gl.glGetUniformiv(uniforms.program, location, unit)
+            assert unit[0] == base + index, (
+                "%s: shadowMaps[%d] reads unit %d, not %d"
+                % (name, index, unit[0], base + index))
+            checked += 1
+    assert checked, "no lit pass assigned any shadow sampler"
+    assert np.array_equal(first, again), (
+        "the second frame of an unchanged scene differs from the first")
+
+
 # ---------------------------------------------------------------------------
 # Visual test 2 — a moving dynamic light
 # ---------------------------------------------------------------------------
@@ -364,8 +425,7 @@ def test_resizing_the_target_between_frames_is_harmless(renderer, context):
     gl.glViewport(0, 0, SIZE // 2, SIZE // 2)
     with glh.no_gl_errors("rendering after a viewport change"):
         config = glh.render_config(all_brushes=brushes, all_things=things)
-        renderer.render_scene(*glh.camera_matrices(aspect=1.0),
-                              brushes, things, None, config,
+        renderer.render_scene(*glh.camera_matrices(aspect=1.0), None, config,
                               brush_slots=config["all_brush_slots"])
     gl.glViewport(0, 0, SIZE, SIZE)
 
@@ -421,3 +481,73 @@ def test_a_structural_edit_does_not_rebuild_unchanged_geometry_meshes(
     front.sync(scene, 3, dirty_objects={id(ramps[0])})
     renderer._prepare_geo_meshes(front, np.arange(front.count, dtype=np.int32))
     assert len(built) == len(ramps) + 1
+
+
+
+@pytest.mark.integration
+def test_editor_state_publication_is_submitted_to_the_real_renderer(context, renderer):
+    """EditorState -> LogicRender -> published tables -> real OpenGL renderer.
+
+    The world is authored through the real EditorState and projected by the
+    real LogicThread.  The renderer receives the resulting published tables
+    and slot arrays, not a freshly rebuilt test projection.
+    """
+    import OpenGL.GL as gl
+
+    from editor.editor_state import EditorState
+    from editor.things import Light
+    from engine.logic_thread import LogicThread
+    from engine.threaded_game_state import ThreadedGameState
+    from tests.helpers.worlds import box_brush, make_thing
+
+    state = EditorState()
+    state.brushes = [
+        box_brush("floor", (0, -16, 0), (1024, 32, 1024)),
+        box_brush("cube", (0, 64, 0), (128, 128, 128)),
+    ]
+    state.things = [
+        make_thing(Light, "publication-light", (0, 260, 160),
+                   intensity=2.0, radius=1400.0, state="on",
+                   casts_shadows=True)
+    ]
+
+    logic = LogicThread(ThreadedGameState(), state)
+    try:
+        logic.render_runtime.culling_enabled = False
+        logic.render_runtime.prepare_render_state()
+        assert logic._publish_frame() is True
+
+        published = logic.game_state.get_render_state()
+        try:
+            assert published.render_table.count == 2
+            assert published.entity_table.count == 1
+
+            config = glh.render_config(
+                render_table=published.render_table,
+                render_refs=published.render_refs,
+                all_brush_slots=published.all_brush_slots,
+                visible_brush_slots=published.visible_brush_slots,
+                entity_table=published.entity_table,
+                entity_refs=published.entity_refs,
+                visible_thing_slots=published.visible_thing_slots,
+                thing_hidden=published.thing_hidden,
+            )
+
+            projection, view, eye = glh.camera_matrices(aspect=1.0)
+            context.bind()
+            gl.glClearColor(0.0, 0.0, 0.0, 1.0)
+            with glh.no_gl_errors("published EditorState render"):
+                renderer.render_scene(
+                    projection, view, eye, None, config,
+                    brush_slots=published.all_brush_slots)
+                gl.glFinish()
+
+            image = context.read_pixels()
+            assert not glh.is_blank(image), (
+                "the real renderer received the published tables but submitted "
+                "no visible geometry")
+            assert renderer.render_stats.total_brushes == 2
+        finally:
+            logic.game_state.release_render_state(published)
+    finally:
+        logic.stop()

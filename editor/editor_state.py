@@ -6,7 +6,6 @@ Manages all the data for the current level being edited, including:
 - Things (entities)
 - Undo/redo history
 - Serialization/deserialization with I/O connections
-- Lightmap bake state (Stage 1: data structures only)
 """
 
 import json
@@ -15,8 +14,9 @@ import datetime
 import uuid
 import threading
 from collections import deque
-from .things import Thing
+from .things import PlayerStart, Thing
 from editor.things import update_all_counters_from_entities
+from engine import player_starts as start_rules
 
 # Import I/O system for serialization
 try:
@@ -41,11 +41,14 @@ from engine.brush_geometry import (
 # Runtime-only AABB cache keys written by the physics/AI hot paths (see
 # engine.constants.brush_aabb_bounds). Stripped on save/undo like the rest.
 from engine.constants import AABB_RUNTIME_KEYS
+from engine.items import ITEM_IDS, ItemDefinitions
+from engine.view_filters import ViewFilters
+from engine.level_validation import validate_level
 
 _RENDERER_PRIVATE_KEYS = frozenset({
-    '_mat_cache_key', '_mat_cache',      # model matrix cache (renderer_F)
-    '_nmat_cache_key', '_nmat_cache',    # normal matrix cache (renderer_F)
-    '_render_mesh', '_render_sig',       # angled-brush GPU mesh cache (renderer_F)
+    '_mat_cache_key', '_mat_cache',      # model matrix cache (renderer)
+    '_nmat_cache_key', '_nmat_cache',    # normal matrix cache (renderer)
+    '_render_mesh', '_render_sig',       # angled-brush GPU mesh cache (renderer)
 }) | GEO_RUNTIME_KEYS | frozenset(AABB_RUNTIME_KEYS)
 
 # Import lightmap bake state
@@ -81,11 +84,16 @@ class EditorState:
         self._render_dirty_history = deque(maxlen=32)
         self.brushes = []
         self.things = []
-        self.selected_object = None
         # The multi-selection lives here rather than being bolted on by the
         # main window, so undo/redo and scene loads can keep it pointing at
         # objects that are actually in the scene.
         self.selected_objects = []
+        #: Which kinds of object the editor shows (the Filter menu). View
+        #: state, never saved with the map; Play ignores it.
+        self.view_filters = ViewFilters()
+        #: What the item slots (gun1, gun2, custom1, custom2) are in this
+        #: world; the custom slots' definitions are saved with the map.
+        self.item_definitions = ItemDefinitions()
         self.terrain_data = None
         self._logic_graph_positions = {}  # Persisted node positions for the logic graph
         self.created_at = ''              # ISO timestamp, set on first save
@@ -241,7 +249,7 @@ class EditorState:
         # (the Surface Inspector) calls this per edit, so it is the signal that
         # catches what save_state alone would miss.
         if objects is None:
-            objects = getattr(self, "selected_objects", ())
+            objects = self.selected_objects
         self.mark_world_changed(objects)
         if self.bake_state is not None:
             self.bake_state.mark_dirty()
@@ -319,11 +327,6 @@ class EditorState:
     # SCENE MANAGEMENT
     # =========================================================================
 
-    def set_selected_object(self, obj):
-        """Sets the currently selected object."""
-        self.selected_object = obj
-        self.selected_objects = [] if obj is None else [obj]
-
     def edited_objects(self) -> tuple:
         """The objects an editor tool may be writing in place right now.
 
@@ -332,11 +335,7 @@ class EditorState:
         render projection re-reads these rows every frame instead of every
         row. Safe to call from the logic thread: the lists are copied.
         """
-        selected = tuple(self.selected_objects)
-        primary = self.selected_object
-        if primary is not None and primary not in selected:
-            selected += (primary,)
-        return selected
+        return tuple(self.selected_objects)
 
     def _invalidate_entity_caches(self):
         """Tell anything caching per-object data that the objects are changing.
@@ -365,23 +364,113 @@ class EditorState:
 
     def clear_scene(self):
         """Resets the scene to an empty state."""
+        from plugins.manager import get_manager
+        get_manager().disable_auto_enabled()
         self.brushes.clear()
         self.things.clear()
         self._invalidate_entity_caches()
-        self.selected_object = None
         self.selected_objects = []
         self.terrain_data = None
+        self.view_filters.load_level_data({})
+        self.item_definitions.reset()
         self.undo_stack.clear()
         self.redo_stack.clear()
         self.mark_lighting_dirty()
         self.save_state()
+
+    def set_item_definition(self, item_id, definition):
+        """Redefine custom item slot *item_id* and re-sync the Props it shows on.
+
+        Raises ``engine.items.ItemDefinitionError`` if *definition* does not
+        compile; nothing changes then. Checkpoint first (``save_state``) to make
+        the change undoable.
+        """
+        self.item_definitions.set_custom(item_id, definition)
+        self.sync_item_props()
+
+    def sync_item_props(self):
+        """Point every item pickup's world sprite at its item's definition.
+
+        A Prop that gives an item shows that item: it references the item by
+        id (``collect_item``) and its sprite follows the definition. Returns the
+        Props that changed.
+        """
+        changed = []
+        for thing in self.things:
+            props = getattr(thing, 'properties', None)
+            if (not isinstance(props, dict) or props.get('type') != 'prop'
+                    or not props.get('collect_enabled')
+                    or props.get('collect_type') != 'item'):
+                continue
+            item_id = props.get('collect_item')
+            if item_id not in ITEM_IDS:
+                continue
+            sprite = self.item_definitions.definition(item_id).get('world_sprite')
+            if sprite and props.get('sprite_path') != sprite:
+                props['sprite_path'] = sprite
+                changed.append(thing)
+        if changed:
+            self.mark_world_changed(changed)
+        return changed
+
+    # -- PlayerStarts ---------------------------------------------------------
+
+    def player_starts(self):
+        return [t for t in self.things if isinstance(t, PlayerStart)]
+
+    def resolve_player_start(self, name=None):
+        """The PlayerStart to spawn at: the one named *name*, else the primary.
+
+        None if there is no such start; a missing named start is never
+        replaced by another.
+        """
+        starts = self.player_starts()
+        position = start_rules.pick_start([s.properties for s in starts], name or None)
+        return starts[position] if position is not None else None
+
+    def settle_player_starts(self):
+        """Hold this level's PlayerStarts to the primary invariant.
+
+        The first PlayerStart created in a level becomes primary, later ones
+        do not, a copy of the primary is not, and deleting the primary promotes
+        the earliest-created remaining start (see
+        :func:`engine.player_starts.settle`). The editor runs this after every
+        operation, so it lands in that operation's undo step. Returns the
+        starts that changed.
+        """
+        starts = self.player_starts()
+        changed = [starts[i] for i in start_rules.settle([s.properties for s in starts])]
+        if changed:
+            self.mark_world_changed(changed)
+        return changed
+
+    def set_primary_player_start(self, start):
+        """Make *start* this level's primary PlayerStart, and no other.
+
+        Checkpoint first (``save_state``) to make the change undoable.
+        """
+        changed = []
+        for other in self.player_starts():
+            primary = other is start
+            if other.properties.get('primary') is not primary:
+                other.properties['primary'] = primary
+                changed.append(other)
+        if changed:
+            self.mark_world_changed(changed)
+        return changed
 
     def get_level_data(self):
         """Serializes the current scene state into a dictionary."""
         data = {
             'version': 3,  # Version 3 adds stable entity IDs and logic graph layout
             'brushes': self._serialize_brushes(),
-            'things': [t.to_dict() for t in self.things]
+            # Cutscene Wizard actors are live authoring entities. Their actual
+            # definitions live in the cutscene JSON and must never leak into
+            # the map when the user saves while the modeless wizard is open.
+            'things': [
+                t.to_dict() for t in self.things
+                if not bool(getattr(t, 'properties', {}).get('_cutscene_temporary'))
+            ]
         }
 
         # When this map was first written. Set once and carried forward on every
@@ -391,9 +480,22 @@ class EditorState:
             self.created_at = datetime.datetime.now().isoformat(timespec='seconds')
         data['created'] = self.created_at
 
+        # The custom item slots, where this world redefines them.
+        items = self.item_definitions.to_level_data()
+        if items:
+            data['items'] = items
+
         # Include terrain data if present
-        if hasattr(self, 'terrain_data') and self.terrain_data:
+        if self.terrain_data:
             data['terrain_data'] = self.terrain_data
+
+        # Visgroups and the cordon (Visgroups & Cordon window), when used.
+        filters = self.view_filters
+        if filters.visgroups or filters.cordon.enabled:
+            live = {str(b.get('id')) for b in self.brushes if b.get('id')}
+            live |= {str(t.properties.get('id')) for t in self.things
+                     if t.properties.get('id')}
+            data.update(filters.to_level_data(live))
 
         # Persist the scene hash so we can skip a rebake on reload
         if self.bake_state is not None and self.bake_state.scene_hash:
@@ -420,7 +522,7 @@ class EditorState:
         are right whether the window is open, has been closed, or was never
         opened at all.
         """
-        return getattr(self, '_logic_graph_positions', {})
+        return self._logic_graph_positions
 
     def _serialize_brushes(self):
         """Serialize brushes with I/O connections."""
@@ -518,18 +620,10 @@ class EditorState:
     def validate_level_data(level_data):
         """Raise ``ValueError`` if *level_data* is not shaped like a map.
 
-        Structural only (an object holding lists of objects), and cheap, so a
-        caller can reject a document before it clears the current scene.
+        Structural only, and cheap, so a caller can reject a document before
+        it clears the current scene (see :mod:`engine.level_validation`).
         """
-        if not isinstance(level_data, dict):
-            raise ValueError("a map document must be a JSON object")
-        for kind in ('brushes', 'things'):
-            items = level_data.get(kind) or []
-            if not isinstance(items, list):
-                raise ValueError(f"a map's '{kind}' must be a list")
-            for index, item in enumerate(items):
-                if not isinstance(item, dict):
-                    raise ValueError(f"{kind}[{index}] is not an object")
+        validate_level(level_data)
 
     def load_from_data(self, level_data, *, yield_hook=None, save_undo=True):
         """Populates the scene from a dictionary.
@@ -570,6 +664,14 @@ class EditorState:
         self._invalidate_entity_caches()
 
         self.terrain_data = level_data.get('terrain_data', None)
+        self.view_filters.load_level_data(level_data)
+        self.item_definitions.load(level_data.get('items'))
+        self.sync_item_props()
+        # A map from before PlayerStarts had an explicit primary (or one
+        # edited by hand) is held to the invariant here, once: its starts are
+        # numbered in file order and the first becomes primary, as it was the
+        # spawn before. Saved, the map then carries both explicitly.
+        self.settle_player_starts()
         # Absent in maps written before this existed; the overview falls back to
         # the file's own timestamps rather than inventing one.
         self.created_at = level_data.get('created', '')
@@ -585,7 +687,6 @@ class EditorState:
         # ===== NEW: Reset class counters based on loaded entity names =====
         update_all_counters_from_entities(self.brushes + self.things)
 
-        self.selected_object = None
         self.selected_objects = []
         self.undo_stack.clear()
         self.redo_stack.clear()
@@ -601,13 +702,16 @@ class EditorState:
             # at least once before the first Play in this session.
             self.bake_state.mark_dirty()
 
+        from plugins.manager import get_manager
+        get_manager().auto_enable_for_map(level_data)
+
         if save_undo:
             self.save_state()
 
     def _selection_identifiers(self):
         """Stable identifiers for the whole selection, for state restoration.
 
-        Every selected object is recorded, not just ``selected_object``: the
+        Every selected object is recorded in ``selected_objects``:
         editor acts on ``selected_objects`` (component picking, the clip tool,
         the Surface Inspector's "whole brush" scope, group transforms, delete),
         so a restore that put back only the primary would leave the rest of the
@@ -641,11 +745,9 @@ class EditorState:
         return out
 
     def _selection_list(self):
-        """The current selection, primary object first, with no duplicates."""
+        """Return the authoritative current selection without duplicates."""
         selection = []
-        if self.selected_object is not None:
-            selection.append(self.selected_object)
-        for obj in getattr(self, 'selected_objects', None) or ():
+        for obj in self.selected_objects:
             if not any(obj is existing for existing in selection):
                 selection.append(obj)
         return selection
@@ -661,7 +763,6 @@ class EditorState:
         """
         if not identifiers:
             self.selected_objects = []
-            self.selected_object = None
             return
         # Same reasoning as _selection_identifiers: one pass to build the id
         # lookups instead of scanning the scene once per selected object.
@@ -687,14 +788,33 @@ class EditorState:
                 seen.add(id(match))
                 restored.append(match)
         self.selected_objects = restored
-        self.selected_object = restored[0] if restored else None
 
     def snapshot(self):
         """The scene as it stands right now, as a JSON checkpoint string."""
+        terrain_csg = []
+        if isinstance(self.terrain_data, dict):
+            terrain_csg = [
+                list(cut) for cut in self.terrain_data.get('csg_subtractions', [])
+                if isinstance(cut, (list, tuple)) and len(cut) == 6
+            ]
+        terrain_texture_paint = []
+        if isinstance(self.terrain_data, dict):
+            entries = self.terrain_data.get('texture_paint', [])
+            if isinstance(entries, list):
+                terrain_texture_paint = [
+                    dict(entry) for entry in entries
+                    if isinstance(entry, dict)
+                    and len(entry.get('coord', [])) == 2
+                    and entry.get('data')
+                ]
+
         return json.dumps({
             'brushes': self._serialize_brushes_for_undo(),
             'things': [t.to_dict() for t in self.things],
             'selection': self._selection_identifiers(),
+            'terrain_csg_subtractions': terrain_csg,
+            'terrain_texture_paint': terrain_texture_paint,
+            'items': self.item_definitions.to_level_data(),
         }, separators=(',', ':'), check_circular=False)
 
     def save_state(self):
@@ -705,7 +825,7 @@ class EditorState:
         record of what the scene now looks like.  :meth:`undo` therefore has to
         capture the live scene itself — see the note there.
         """
-        selected = tuple(getattr(self, "selected_objects", ()))
+        selected = tuple(self.selected_objects)
         self.mark_world_changed(selected)
         # A checkpoint is taken *before* the operation changes anything, so a
         # render frame prepared in between consumes the journal entry while the
@@ -814,13 +934,26 @@ class EditorState:
         self.things = new_things
         self._invalidate_entity_caches()
 
-        if 'selection' in state:
-            self._restore_selection(state['selection'])
-        else:
-            # A checkpoint written before the whole selection was recorded.
-            kind = state.get('selected_type')
-            index = state.get('selected_index', -1)
-            self._restore_selection([[kind, index, '']] if kind else [])
+        self._restore_selection(state['selection'])
+        if 'items' in state:
+            self.item_definitions.load(state['items'])
+
+        # Terrain CSG and baked texture paint are the terrain fields included
+        # in lightweight editor history. Heightmaps remain outside checkpoints
+        # because their full blobs are much larger.
+        if 'terrain_csg_subtractions' in state and isinstance(self.terrain_data, dict):
+            cuts = state.get('terrain_csg_subtractions') or []
+            if cuts:
+                self.terrain_data['csg_subtractions'] = [list(cut) for cut in cuts]
+            else:
+                self.terrain_data.pop('csg_subtractions', None)
+
+        if 'terrain_texture_paint' in state and isinstance(self.terrain_data, dict):
+            paint = state.get('terrain_texture_paint') or []
+            if paint:
+                self.terrain_data['texture_paint'] = [dict(entry) for entry in paint]
+            else:
+                self.terrain_data.pop('texture_paint', None)
 
     def undo(self):
         """Step back one operation, making the current scene redoable.

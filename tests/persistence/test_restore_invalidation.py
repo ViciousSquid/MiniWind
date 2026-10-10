@@ -52,19 +52,19 @@ def session():
         state.things = list(things)
         thread = LogicThread(ThreadedGameState(), state)
         made.append(thread)
-        thread.player = Player(0.0, 0.0)
-        thread.set_play_mode(True)
+        thread.player_runtime.player = Player(0.0, 0.0)
+        thread.session_runtime.apply_play_mode(True)
         return state, thread
 
     yield _build
 
     for thread in made:
-        thread.set_play_mode(False)
+        thread.session_runtime.apply_play_mode(False)
         thread.stop()
 
 
 def _in_grid(thread, brush):
-    grid = thread._spatial_grid
+    grid = thread.session_runtime.spatial_grid
     return any(b is brush for b in grid._all_solid)
 
 
@@ -80,10 +80,8 @@ def test_the_logic_thread_implements_both_visibility_notifications(session):
     announcement went nowhere and every durable cache below stayed stale.
     """
     _state, thread = session(brushes=[box_brush("floor", (0, -16, 0), (1024, 32, 1024))])
-    for hook in ("notify_visibility_changed", "notify_authored_visibility_changed"):
-        assert callable(getattr(thread, hook, None)), (
-            "LogicThread is the streaming host and the savegame host; it must "
-            "implement %s(), or the announcement has no receiver" % hook)
+    assert callable(thread.world_runtime.notify_visibility_changed)
+    assert callable(thread.world_runtime.notify_authored_visibility_changed)
 
 
 def test_the_cheap_notification_does_not_rebuild_the_collision_grid(session):
@@ -96,13 +94,13 @@ def test_the_cheap_notification_does_not_rebuild_the_collision_grid(session):
     floor = box_brush("floor", (0, -16, 0), (1024, 32, 1024))
     _state, thread = session(brushes=[floor])
 
-    before = list(thread._spatial_grid._all_solid)
+    before = list(thread.session_runtime.spatial_grid._all_solid)
     floor["hidden"] = True                      # as a parking pass would not
-    thread.notify_visibility_changed()
-    assert [id(b) for b in thread._spatial_grid._all_solid] == \
+    thread.world_runtime.notify_visibility_changed()
+    assert [id(b) for b in thread.session_runtime.spatial_grid._all_solid] == \
            [id(b) for b in before], (
         "the cheap drawable-set notification rebuilt the collision grid")
-    assert thread.visibility_changes > 0, "the drawable-set counter did not move"
+    assert thread.world_runtime.visibility_changes > 0, "the drawable-set counter did not move"
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +122,7 @@ def test_restoring_a_visible_brush_puts_it_back_into_collision(session):
     snapshot = savegame.build_snapshot(thread, map_name=MAP)
 
     wall["hidden"] = True
-    thread._spatial_grid.populate(thread.brushes)   # as a Hide would
+    thread.session_runtime.spatial_grid.populate(thread.editor_state.brushes)   # as a Hide would
     assert not _in_grid(thread, wall), "fixture: the wall should now be gone"
 
     savegame.restore_auto(thread, snapshot, current_map_name=MAP)
@@ -145,7 +143,7 @@ def test_restoring_a_hidden_brush_takes_it_out_of_collision(session):
     snapshot = savegame.build_snapshot(thread, map_name=MAP)
 
     wall["hidden"] = False
-    thread._spatial_grid.populate(thread.brushes)   # as a Show would
+    thread.session_runtime.spatial_grid.populate(thread.editor_state.brushes)   # as a Show would
     assert _in_grid(thread, wall)
 
     savegame.restore_auto(thread, snapshot, current_map_name=MAP)
@@ -169,16 +167,16 @@ def test_the_announcement_happens_after_the_state_it_describes_moved(session):
     snapshot = savegame.build_snapshot(thread, map_name=MAP)
 
     wall["hidden"] = True
-    thread._spatial_grid.populate(thread.brushes)
+    thread.session_runtime.spatial_grid.populate(thread.editor_state.brushes)
 
     seen = []
-    real = thread.notify_authored_visibility_changed
+    real = thread.world_runtime.notify_authored_visibility_changed
 
     def _record():
         seen.append(bool(wall.get("hidden")))
         real()
 
-    thread.notify_authored_visibility_changed = _record
+    thread.world_runtime.notify_authored_visibility_changed = _record
     savegame.restore_auto(thread, snapshot, current_map_name=MAP)
 
     assert seen == [False], (
@@ -207,7 +205,7 @@ def test_a_delta_restore_invalidates_too(session):
 
     # Back to the base map's state, as loading it fresh would leave it.
     wall["hidden"] = False
-    thread._spatial_grid.populate(thread.brushes)
+    thread.session_runtime.spatial_grid.populate(thread.editor_state.brushes)
     assert _in_grid(thread, wall)
 
     report = savegame.restore_auto(thread, snapshot, current_map_name=MAP)

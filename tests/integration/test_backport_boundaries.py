@@ -20,7 +20,24 @@ GENERIC_MODULES = [
     "engine/constants.py",
     "engine/physics.py",
     "engine/player.py",
-    "engine/renderer_F.py",
+    "engine/renderer/__init__.py",
+    "engine/renderer/api.py",
+    "engine/renderer/registry.py",
+    "engine/renderer/core/__init__.py",
+    "engine/renderer/core/base.py",
+    "engine/renderer/core/diagnostics.py",
+    "engine/renderer/core/geometry.py",
+    "engine/renderer/core/overlays.py",
+    "engine/renderer/core/resources.py",
+    "engine/renderer/core/tables.py",
+    "engine/renderer/core/visibility.py",
+    "engine/renderer/forward/__init__.py",
+    "engine/renderer/forward/instancing.py",
+    "engine/renderer/forward/lighting.py",
+    "engine/renderer/forward/passes.py",
+    "engine/renderer/forward/portals.py",
+    "engine/renderer/forward/renderer.py",
+    "engine/renderer/forward/shaders.py",
     "engine/terrain.py",
     "engine/glb_loader.py",
     "editor/editor_state.py",
@@ -28,7 +45,6 @@ GENERIC_MODULES = [
     "editor/things.py",
     "plugins/manager.py",
     "plugins/api.py",
-    "plugins/integration.py",
 ]
 
 RPG_TERMS = [
@@ -65,8 +81,6 @@ def test_generic_modules_carry_no_rpg_vocabulary():
     # example is not RPG machinery and predates this back-port.
     ALLOWED = {
         ("editor/things.py", "quest"),   # LogicState docstring example
-        ("editor/things.py", "hit_flash"), # generic render-state field
-        ("editor/things.py", "npc"),       # Fio's generic actor entity type
     }
     offenders = []
     for rel in GENERIC_MODULES:
@@ -90,9 +104,7 @@ def test_no_module_imports_a_game_package():
     """Nothing in Fio may import MiniWind's `game` package."""
     pattern = re.compile(r"^\s*(from\s+game[\s.]|import\s+game\b)", re.M)
     offenders = [str(p.relative_to(ROOT))
-                 for p in _iter_source()
-                 if "game" not in p.relative_to(ROOT).parts
-                 and pattern.search(
+                 for p in _iter_source() if pattern.search(
                      p.read_text(encoding="utf-8", errors="replace"))]
     assert not offenders, f"game/ imports found: {offenders}"
 
@@ -180,7 +192,7 @@ def test_angled_brush_geometry_helpers_survive():
 
 
 def test_cut_face_highlight_and_texturing_survive():
-    core = _read("engine/renderer_core.py")
+    core = _read("engine/renderer/core/overlays.py")
     assert "_geo_face_highlight_verts" in core
     assert "_draw_face_highlight_verts" in core
     assert "def draw_face_highlight(" in core
@@ -222,9 +234,9 @@ def test_renderer_light_capacities_untouched():
     of its array. The budget is now the shader's own number, so the guard checks
     that relationship rather than a literal.
     """
-    src = _read("engine/renderer_core.py")
+    src = _read("engine/renderer/forward/lighting.py")
     assert "MAX_LIGHTS = shaders.MAX_LIGHTS" in src
-    assert "MAX_SHADOW_LIGHTS = 8" in src
+    assert "MAX_SHADOW_LIGHTS = shaders.MAX_SHADOW_LIGHTS" in src
 
     from engine import shaders as shader_module
     for name in ("lit.frag", "textured.frag"):

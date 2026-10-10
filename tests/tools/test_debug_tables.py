@@ -6,14 +6,16 @@ sampled until its next refresh, a quarter of a second later, and so held a
 borrow permanently -- with it open, the renderer never saw another frame.
 """
 
-from types import SimpleNamespace
-
+import io
+import os
+import random
 import numpy as np
 import pytest
 
 pytest.importorskip("PyQt5", reason="the instrument is a Qt window")
 
 from engine.threaded_game_state import ThreadedGameState      # noqa: E402
+from editor.things import Light                                 # noqa: E402
 from tests.helpers.worlds import box_brush                    # noqa: E402
 
 pytestmark = pytest.mark.qt
@@ -21,25 +23,28 @@ pytestmark = pytest.mark.qt
 
 @pytest.fixture
 def window(qt_app):
-    from PyQt5.QtWidgets import QMainWindow
     from tools.debug_tables import DebugTablesWindow
+    from editor.editor_state import EditorState
+    from editor.main_window import MainWindow
+    from engine.logic_thread import LogicThread
 
     game_state = ThreadedGameState()
+    logic = LogicThread(game_state, EditorState())
     write = game_state.get_write_state()
     write.render_table.sync([box_brush("wall")], 1)
     write.visible_brush_slots = np.array([0], dtype=np.int32)
     write.prepare_ms = 1.5
     assert game_state.request_swap() is True
 
-    host = QMainWindow()
-    host.view_3d = SimpleNamespace(
-        logic_thread=SimpleNamespace(game_state=game_state),
-        renderer=None, paint_ms=4.0)
-    host.state = SimpleNamespace(selected_object=None, selected_objects=[])
+    host = MainWindow(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+    host.view_3d.logic_thread = logic
     instrument = DebugTablesWindow(host)
     instrument.timer.stop()
     yield instrument, game_state
     instrument.close()
+    host.close()
+    host.deleteLater()
+    qt_app.processEvents()
 
 
 def test_sampling_does_not_hold_the_published_frame(window):
@@ -67,31 +72,51 @@ def test_what_it_shows_is_a_copy_of_the_sampled_frame(window):
 
 @pytest.fixture
 def monster_window(window):
-    """The instrument attached to a monster AI that has run one dense tick."""
-    import threading
-
+    """The instrument attached to the real MonsterAI after a dense tick."""
+    from editor.editor_state import EditorState
     from editor.things import Monster
-    from engine.monster_ai import MonsterAI
-    from tests.helpers.fakes import FakeLogicThread, FakePlayer
-    from tests.helpers.worlds import make_thing
+    from engine.logic_thread import LogicThread
+    from engine.monster_ai import MonsterAIThread
+    from engine.physics import SpatialGrid
+    from engine.player import Player
+    from engine.threaded_game_state import ThreadedGameState
+    from tests.helpers.worlds import box_brush, make_thing
 
     instrument, game_state = window
-    things = [make_thing(Monster, "m%d" % i, (300.0 * (i + 1), 96, 0),
-                         monster_type="human", awake=True, team="red")
-              for i in range(3)]
-    things.append(make_thing(Monster, "corpse", (0, 96, 900), dead=True))
-    logic = FakeLogicThread(brushes=[box_brush("ground", (0, -16, 0), (8192, 32, 8192))],
-                            things=things, player=FakePlayer((0.0, 0.0, 0.0)))
-    logic._monster_things = list(things)
-    ai = MonsterAI(logic)
-    ai.set_spatial_grid(logic.build_spatial_grid())
-    ai.update(1.0 / 30.0)
+    state = EditorState()
+    state.brushes = [
+        box_brush("ground", (0, -16, 0), (8192, 32, 8192))
+    ]
+    state.things = [
+        *[
+            make_thing(
+                Monster, "m%d" % i, (300.0 * (i + 1), 96, 0),
+                monster_type="human", awake=True, team="red",
+            )
+            for i in range(3)
+        ],
+        make_thing(Monster, "corpse", (0, 96, 900), dead=True),
+    ]
+
+    logic = LogicThread(ThreadedGameState(), state)
+    logic.player_runtime.player = Player(0.0, 0.0)
+    logic.player_runtime.player.pos.y = 0.0
+    logic.world_runtime.build_entity_caches()
+    logic.session_runtime.spatial_grid = SpatialGrid(cell_size=512.0)
+    logic.session_runtime.spatial_grid.populate(state.brushes)
+    logic.monster_ai.set_spatial_grid(logic.session_runtime.spatial_grid)
+    logic.monster_ai.update(1.0 / 30.0)
+
+    ai_thread = MonsterAIThread(
+        logic, logic.monster_ai, logic.session_runtime.monster_lock
+    )
+    ai_thread.update_ms = 2.0
+    ai_thread.lock_wait_ms = 0.5
+    logic.session_runtime.monster_ai_thread = ai_thread
+
     view = instrument.main_window.view_3d
-    view.logic_thread.monster_ai = ai
-    view.logic_thread._monster_lock = threading.RLock()
-    view.logic_thread.monster_ai_thread = SimpleNamespace(
-        update_ms=2.0, lock_wait_ms=0.5)
-    return instrument, ai, view.logic_thread._monster_lock
+    view.logic_thread = logic
+    return instrument, logic.monster_ai, view.logic_thread.session_runtime.monster_lock
 
 
 def test_the_monster_table_is_shown_after_a_dense_tick(monster_window):
@@ -177,8 +202,7 @@ def test_export_writes_every_table_of_a_real_frame(window, tmp_path):
 def test_follow_selection_names_the_render_row_key_and_run(window):
     instrument, game_state = window
     brush = game_state._read_state.render_table.brushes[0]
-    instrument.main_window.state = SimpleNamespace(
-        selected_object=brush, selected_objects=[brush])
+    instrument.main_window.state.selected_objects = [brush]
     instrument.refresh()
     status = instrument.status.text()
     assert "FOLLOW id=%s" % brush["id"] in status
@@ -190,19 +214,30 @@ def test_follow_selection_names_the_render_row_key_and_run(window):
 # ---------------------------------------------------------------------------
 
 def _terrain_host(instrument):
-    """Give the instrument's host a terrain with a few built chunks."""
-    from engine.terrain_table import TerrainTable
-    table = TerrainTable()
-    for cx in range(3):
-        slot = table.ensure(cx, 0, 256.0, 0.0, 0.0)
-        if cx < 2:
-            table.store(slot, 48, 0, np.full((51, 51), 10.0 * cx, dtype=np.float32))
-    table.release([table.slot_of_coord[(2, 0)]])     # a freed slot, awaiting reuse
-    terrain = SimpleNamespace(
-        table=table, enabled=True, streaming=True, stream_radius=2048.0,
-        drawn_slots=np.array([0, 1]), culled_chunks=0, total_triangles=9216,
-        _height_pages=[7], _page_layers=512, use_textures=True,
-        grass_enabled=False, UPDATE_BUDGET_MS=4.0, MAX_UPDATES_PER_FRAME=2)
+    """Attach a real generated Terrain with real dense height rows."""
+    from engine.terrain import Terrain
+
+    terrain = Terrain(seed=0xF10)
+    # Three 256-unit chunks in a row: two get built, one is released below so
+    # the table carries a freed slot inside its allocated extent.
+    terrain.set_world_extent(0.0, 0.0, 768.0, 256.0)
+    terrain.set_streaming(True, radius=768.0)
+
+    # Exercise the production residency calculation rather than manufacturing
+    # table rows. The Debug Tables instrument is observing the same dense table
+    # used by terrain streaming.
+    import glm
+    terrain._stream_chunks(glm.vec3(128.0, 0.0, 128.0))
+    slots = terrain.table.live_slots()
+    assert len(slots) >= 2
+
+    # Exercise the production heightfield construction and TerrainTable.store
+    # path. The test intentionally avoids fabricated height arrays.
+    for slot in slots[:2]:
+        heights = terrain._chunk_heights(int(slot), 48)
+        terrain.table.store(int(slot), 48, 0, heights)
+    terrain.table.release([int(slot) for slot in slots[2:]])
+
     instrument.main_window.terrain = terrain
     return terrain
 
@@ -225,8 +260,9 @@ def test_the_terrain_table_is_shown(window):
     assert "48x48: 2" in text
     assert "TerrainTable" in instrument.memory_text.toPlainText()
 
-    terrain.table.heights[0, 0, 0] = 999.0         # the live table moves on
-    assert instrument.terrain.heights[0, 0, 0] == 0.0, "the copy tracked the live table"
+    sampled = float(instrument.terrain.heights[0, 0, 0])
+    terrain.table.heights[0, 0, 0] = sampled + 999.0   # the live table moves on
+    assert instrument.terrain.heights[0, 0, 0] == sampled, "the copy tracked the live table"
 
 
 def test_a_map_without_terrain_has_no_terrain_table(window):
@@ -254,3 +290,616 @@ def test_the_export_includes_the_terrain_table(window, tmp_path, monkeypatch):
         pipeline = json.loads(archive.read("pipeline.json"))
     assert "TerrainTable/heights.npy" in names
     assert pipeline["terrain_resident"] == 2
+
+
+
+@pytest.fixture
+def real_world_window(qt_app):
+    """Attach Debug Tables to a real generated map and real LogicThread."""
+    from editor.editor_state import EditorState
+    from editor.main_window import MainWindow
+    from editor.procedural_generator import create_map_data
+    from editor.things import Light, Prop
+    from engine.logic_thread import LogicThread
+    from engine.threaded_game_state import ThreadedGameState
+    from tests.helpers.worlds import make_thing
+
+    random.seed(0xF10)
+    data = create_map_data({
+        "world_width": 1024,
+        "world_height": 1024,
+        "room_count": 8,
+        "min_room": 192,
+        "max_room": 256,
+        "wall_tex": "default.png",
+        "floor_tex": "default.png",
+        "random_wall_texture": False,
+        "random_floor_texture": False,
+        "enable_floors": False,
+        "spawn_monsters": False,
+        "spawn_health": False,
+    })
+
+    state = EditorState()
+    state.load_from_data(data, save_undo=False)
+
+    generated_lights = [thing for thing in state.things if isinstance(thing, Light)]
+    assert generated_lights, "procedural map must contain its generated room lights"
+    light = generated_lights[0]
+    light.properties["casts_shadows"] = True
+
+    # Billboard Props are the sprite primitive.
+    sprite = make_thing(Prop, "audit_sprite", light.pos,
+                        render_mode="billboard",
+                        sprite_path="assets/sprites/monster.png")
+    state.things.append(sprite)
+    state.mark_world_changed([light, sprite])
+
+    game_state = ThreadedGameState()
+    logic = LogicThread(game_state, state)
+    logic.render_runtime.prepare_render_state()
+    assert game_state.request_swap() is True
+    logic.render_runtime.prepare_render_state()
+    assert game_state.request_swap() is True
+
+    host = MainWindow(os.path.abspath(os.path.join(
+        os.path.dirname(__file__), "..", ".."
+    )))
+    host.state = state
+    host.view_3d.logic_thread = logic
+
+    from tools.debug_tables import DebugTablesWindow
+    instrument = DebugTablesWindow(host)
+    instrument.timer.stop()
+    yield instrument, state, logic
+
+    instrument.close()
+    host.close()
+    host.deleteLater()
+    qt_app.processEvents()
+
+
+def test_debug_tables_is_an_oracle_for_a_real_authored_world(real_world_window):
+    """Debug Tables must expose the dense rows produced by the real world path."""
+    instrument, state, logic = real_world_window
+    instrument.refresh()
+
+    assert instrument.render is not None
+    assert instrument.entities is not None
+    assert instrument.render.count == len(state.brushes)
+    assert instrument.entities.count == len(state.things)
+
+    for brush in state.brushes:
+        slot = instrument.render.slot_of_id[brush["id"]]
+        assert instrument.render.center[slot].tolist() == pytest.approx(brush["pos"])
+        assert instrument.render.bounds[slot, 3:6].tolist() == pytest.approx(
+            [brush["size"][i] * 0.5 for i in range(3)]
+        )
+
+    for thing in state.things:
+        ident = thing.properties["id"]
+        slot = instrument.entities.slot_of_id[ident]
+        assert instrument.entities.pos[slot].tolist() == pytest.approx(
+            [float(v) for v in thing.pos]
+        )
+
+    light = next(thing for thing in state.things if isinstance(thing, Light))
+    light_slot = instrument.entities.slot_of_id[light.properties["id"]]
+    assert instrument.entities.pos[light_slot].tolist() == pytest.approx(
+        [float(v) for v in light.pos]
+    )
+    assert bool(instrument.entities.light_casts_shadows[light_slot])
+    assert instrument.entities.light_params[light_slot, 0] == pytest.approx(1.2)
+    assert instrument.entities.light_params[light_slot, 1] == pytest.approx(512.0)
+
+    sprite = next(thing for thing in state.things if thing.properties["name"] == "audit_sprite")
+    sprite_slot = instrument.entities.slot_of_id[sprite.properties["id"]]
+    assert int(instrument.entities.sprite_key_id[sprite_slot]) >= 0
+
+
+def test_debug_tables_tracks_a_real_light_move_in_the_dense_entity_row(
+    real_world_window,
+):
+    """A real authoring mutation must become a new EntityTable row value."""
+    instrument, state, logic = real_world_window
+
+    instrument.refresh()
+    light = next(thing for thing in state.things if isinstance(thing, Light))
+    ident = light.properties["id"]
+    before = instrument.entities.slot_of_id[ident]
+    old = instrument.entities.pos[before].copy()
+
+    light.pos = [320.0, 256.0, 192.0]
+    state.mark_world_changed([light])
+    logic.render_runtime.prepare_render_state()
+    assert logic.game_state.request_swap() is True
+
+    instrument.refresh()
+    slot = instrument.entities.slot_of_id[ident]
+    assert slot == before
+    assert instrument.entities.pos[slot].tolist() == pytest.approx(
+        [320.0, 256.0, 192.0]
+    )
+    assert not np.array_equal(old, instrument.entities.pos[slot])
+
+
+def test_debug_tables_detects_the_real_brush_set_change(real_world_window):
+    """Adding authored geometry must appear as a new dense RenderTable row."""
+    instrument, state, logic = real_world_window
+    instrument.refresh()
+    before = instrument.render.count
+
+    added = box_brush("late_wall", (0, 128, -320), (128, 256, 64))
+    state.brushes.append(added)
+    state.mark_world_changed([added])
+    logic.render_runtime.prepare_render_state()
+    assert logic.game_state.request_swap() is True
+
+    instrument.refresh()
+    assert instrument.render.count == before + 1
+    slot = instrument.render.slot_of_id[added["id"]]
+    assert instrument.render.center[slot].tolist() == pytest.approx(added["pos"])
+
+
+
+def test_debug_tables_survives_a_real_map_save_load_round_trip(real_world_window):
+    """Reloading real map data must rebuild the same dense rows from scratch."""
+    instrument, original_state, _ = real_world_window
+    instrument.refresh()
+    original_render_ids = set(instrument.render.slot_of_id)
+    original_entity_ids = set(instrument.entities.slot_of_id)
+
+    # Use EditorState's actual persistence normalization, then feed that data
+    # through a fresh EditorState and fresh LogicThread. This deliberately
+    # avoids copying any dense table from the first world.
+    level_data = original_state.get_level_data()
+    from editor.editor_state import EditorState
+    from engine.logic_thread import LogicThread
+    from engine.threaded_game_state import ThreadedGameState
+
+    reloaded = EditorState()
+    reloaded.load_from_data(level_data, save_undo=False)
+    logic = LogicThread(ThreadedGameState(), reloaded)
+    logic.render_runtime.prepare_render_state()
+    assert logic.game_state.request_swap() is True
+
+    instrument.main_window.state = reloaded
+    instrument.main_window.view_3d.logic_thread = logic
+    instrument.refresh()
+
+    assert set(instrument.render.slot_of_id) == original_render_ids
+    assert set(instrument.entities.slot_of_id) == original_entity_ids
+    assert instrument.render.count == len(reloaded.brushes)
+    assert instrument.entities.count == len(reloaded.things)
+
+    for brush in reloaded.brushes:
+        slot = instrument.render.slot_of_id[brush["id"]]
+        assert instrument.render.center[slot].tolist() == pytest.approx(brush["pos"])
+
+    for thing in reloaded.things:
+        slot = instrument.entities.slot_of_id[thing.properties["id"]]
+        assert instrument.entities.pos[slot].tolist() == pytest.approx(
+            [float(v) for v in thing.pos]
+        )
+
+def test_debug_tables_is_an_oracle_for_a_real_terrain_table(window):
+    """A real Terrain must populate Debug Tables from its dense TerrainTable."""
+    from engine.terrain import Terrain
+    import glm
+
+    host = window[0].main_window
+    host.open_terrain_editor()
+    terrain = host.terrain
+    assert isinstance(terrain, Terrain)
+
+    # Use the production terrain bounds/streaming path to create resident
+    # chunks, then the production height sampler + TerrainTable.store path to
+    # build their dense rows. No fake TerrainTable rows are inserted.
+    terrain.set_world_extent(-256.0, -256.0, 512.0, 512.0)
+    terrain.set_streaming(True, radius=768.0)
+    terrain._stream_chunks(glm.vec3(0.0, 0.0, 0.0))
+
+    slots = terrain.table.live_slots()
+    assert len(slots) >= 2
+
+    for slot in slots[:2]:
+        terrain.table.store(
+            int(slot),
+            48,
+            0,
+            terrain._chunk_heights(int(slot), 48),
+        )
+
+    instrument = window[0]
+    instrument.refresh()
+
+    assert instrument.terrain is not None
+    shown = instrument.terrain
+    assert shown.count == terrain.table.count
+    assert shown.live_count == terrain.table.count
+
+    fields = {
+        instrument.terrain_raw.selector.itemText(i)
+        for i in range(instrument.terrain_raw.selector.count())
+    }
+    assert {"coord", "live", "built", "lod", "heights"} <= fields
+
+    table = terrain.table
+    for slot in slots[:2]:
+        slot = int(slot)
+        assert shown.coord[slot].tolist() == table.coord[slot].tolist()
+        assert shown.world[slot].tolist() == pytest.approx(table.world[slot].tolist())
+        np.testing.assert_allclose(shown.heights[slot], table.heights[slot])
+
+    text = instrument.dashboard.toPlainText()
+    assert "TERRAIN (TerrainTable)" in text
+    assert "resident %d" % table.count in text
+    assert "built 2" in text
+    assert "TerrainTable" in instrument.memory_text.toPlainText()
+
+    # Debug Tables is a snapshot/oracle: changing the live dense table after
+    # refresh must not mutate the sampled copy.
+    original = shown.heights[slots[0]].copy()
+    table.heights[slots[0], 0, 0] += 123.0
+    np.testing.assert_allclose(shown.heights[slots[0]], original)
+
+
+def test_debug_tables_tracks_real_terrain_streaming_residency(window):
+    """Moving the real terrain camera must recycle dense TerrainTable rows."""
+    from engine.terrain import Terrain
+    import glm
+
+    instrument, _ = window
+    terrain = Terrain(seed=0xF10)
+    terrain.set_world_extent(-4096.0, -4096.0, 4096.0, 4096.0)
+    terrain.set_streaming(True, radius=512.0)
+
+    terrain._stream_chunks(glm.vec3(0.0, 0.0, 0.0))
+    first_coords = {
+        tuple(map(int, terrain.table.coord[int(slot)]))
+        for slot in terrain.table.live_slots()
+    }
+    assert first_coords
+
+    for slot in terrain.table.live_slots()[:2]:
+        slot = int(slot)
+        terrain.table.store(
+            slot, 48, 0, terrain._chunk_heights(slot, 48)
+        )
+
+    instrument.main_window.terrain = terrain
+    instrument.refresh()
+    assert instrument.terrain.live_count == len(first_coords)
+
+    terrain._stream_chunks(glm.vec3(2048.0, 0.0, 2048.0))
+    second_coords = {
+        tuple(map(int, terrain.table.coord[int(slot)]))
+        for slot in terrain.table.live_slots()
+    }
+    assert second_coords
+    assert second_coords != first_coords
+    assert first_coords.isdisjoint(second_coords)
+
+    instrument.refresh()
+    assert instrument.terrain.live_count == len(second_coords)
+    shown_coords = {
+        tuple(map(int, row))
+        for row in instrument.terrain.coord[terrain.table.live_slots()]
+    }
+    assert shown_coords == second_coords
+
+
+
+def test_real_terrain_csg_survives_terrain_serialization(window):
+    """A CSG cutter must remain the terrain source of truth across save/load."""
+    from engine.terrain import Terrain
+    import glm
+
+    terrain = Terrain(seed=0xF10)
+    terrain.set_world_extent(0.0, 0.0, 512.0, 512.0)
+    terrain.set_streaming(True, radius=768.0)
+    terrain._stream_chunks(glm.vec3(128.0, 0.0, 128.0))
+    # Rows are compared by chunk, not slot: the restored terrain has different
+    # bounds, so the same slot number can hold a different chunk.
+    coord = (0, 0)
+    slot = int(terrain.table.slot_of_coord[coord])
+    terrain.table.store(slot, 48, 0, terrain._chunk_heights(slot, 48))
+
+    h = float(terrain._get_height_scalar(128.0, 128.0))
+    cut = ((64.0, h - 100.0, 64.0), (192.0, h + 100.0, 192.0))
+    assert terrain.subtract_aabb(*cut)
+    # The cut dirties the row; rebuild it as streaming would before comparing.
+    terrain.table.store(slot, 48, 0, terrain._chunk_heights(slot, 48))
+    saved = terrain.to_dict()
+    assert saved["csg_subtractions"] == [
+        [64.0, h - 100.0, 64.0, 192.0, h + 100.0, 192.0]
+    ]
+
+    restored = Terrain()
+    restored.from_dict(saved)
+    assert restored.csg_subtractions == terrain.csg_subtractions
+    restored.set_streaming(True, radius=768.0)
+    restored._stream_chunks(glm.vec3(128.0, 0.0, 128.0))
+    restored_slot = int(restored.table.slot_of_coord[coord])
+    restored.table.store(
+        restored_slot, 48, 0, restored._chunk_heights(restored_slot, 48)
+    )
+
+    np.testing.assert_array_equal(
+        restored.table.heights[restored_slot],
+        terrain.table.heights[slot],
+    )
+
+def test_debug_tables_observes_real_terrain_csg_rebuild(window):
+    """A terrain CSG edit must dirty and rebuild the dense heightfield row."""
+    from engine.terrain import Terrain
+    import glm
+
+    instrument, _ = window
+    terrain = Terrain(seed=0xF10)
+    terrain.set_world_extent(0.0, 0.0, 512.0, 512.0)
+    terrain.set_streaming(True, radius=768.0)
+    terrain._stream_chunks(glm.vec3(128.0, 0.0, 128.0))
+
+    slot = int(terrain.table.live_slots()[0])
+    terrain.table.store(slot, 48, 0, terrain._chunk_heights(slot, 48))
+    before = terrain.table.heights[slot].copy()
+    before_version = int(terrain.table.version[slot])
+
+    h = float(terrain._get_height_scalar(128.0, 128.0))
+    assert terrain.subtract_aabb(
+        (64.0, h - 100.0, 64.0),
+        (192.0, h + 100.0, 192.0),
+    )
+
+    # subtract_aabb owns invalidation: it must mark the affected dense row
+    # dirty without the test repairing the production state by hand.
+    assert bool(terrain.table.dirty[slot])
+
+    terrain.table.store(slot, 48, 0, terrain._chunk_heights(slot, 48))
+    assert int(terrain.table.version[slot]) == before_version + 1
+    assert not bool(terrain.table.dirty[slot])
+    assert not np.array_equal(before, terrain.table.heights[slot])
+
+    instrument.main_window.terrain = terrain
+    instrument.refresh()
+    shown = instrument.terrain
+    assert shown is not None
+    np.testing.assert_allclose(shown.heights[slot], terrain.table.heights[slot])
+
+
+# ---------------------------------------------------------------------------
+# The wiki page (https://github.com/ViciousSquid/Fio/wiki/Debug-Tables),
+# claim by claim
+# ---------------------------------------------------------------------------
+
+def test_wiki_it_opens_from_the_debug_menu(real_world_window):
+    instrument, _state, _logic = real_world_window
+    menu = [a.text() for a in instrument.main_window.debug_menu.actions() if a.text()]
+    assert "Debug Tables" in menu
+    assert any(t.startswith("Project Overview") for t in menu)
+    assert any(t.startswith("Validate All Connections") for t in menu)
+
+
+def test_wiki_the_window_has_the_described_tabs_and_controls(real_world_window):
+    from PyQt5.QtWidgets import QPushButton, QTabWidget
+    instrument, _state, _logic = real_world_window
+    tabs = instrument.findChild(QTabWidget)
+    names = [tabs.tabText(i) for i in range(tabs.count())]
+    for name in ("PIPELINE", "RENDERTABLE", "ENTITYTABLE", "KEY MICROSCOPE", "MEMORY"):
+        assert name in names
+    assert instrument.follow.text() == "FOLLOW SELECTION"
+    buttons = {b.text() for b in instrument.findChildren(QPushButton)}
+    assert {"Refresh", "Export"} <= buttons
+    assert instrument.timer.interval() == 250       # "refreshes automatically"
+
+
+def test_wiki_it_is_read_only(real_world_window):
+    instrument, _state, logic = real_world_window
+    snap = logic.game_state.get_render_state()
+    try:
+        from tools.debug_tables import _array_fields
+        before = {name: value.copy() for name, value in _array_fields(snap.render_table)
+                  if value.dtype != object}
+        assert "bounds" in before
+        count = snap.render_table.count
+        for _ in range(3):
+            instrument.refresh()
+        assert snap.render_table.count == count
+        for name, value in before.items():
+            assert np.array_equal(getattr(snap.render_table, name), value), name
+    finally:
+        logic.game_state.release_render_state(snap)
+
+
+def test_wiki_the_pipeline_tab_reports_its_numbers(real_world_window):
+    instrument, state, _logic = real_world_window
+    instrument.refresh()
+    text = instrument.dashboard.toPlainText()
+    assert f"RenderTable   rows={len(state.brushes):,}" in text
+    assert f"EntityTable   rows={len(state.things):,}" in text
+    assert f"capacity={len(instrument.render.center):,}" in text
+    assert "dense bytes=" in text and "TOTAL NUMERICAL STORAGE" in text
+    assert "frame age" in instrument.status.text()
+    for words in ("draw calls", "batched draws", "visible triangles", "renderer"):
+        assert words in text
+
+
+def test_wiki_a_raw_array_shows_shape_dtype_and_bytes(real_world_window):
+    instrument, _state, _logic = real_world_window
+    instrument.refresh()
+    raw = instrument.render_raw
+    raw.selector.setCurrentText("bounds")
+    value = instrument.render.bounds
+    count = int(instrument.render.count)
+    assert raw.meta.text() == (f"shape={(count, 6)}  dtype={value.dtype}  "
+                               f"bytes={int(value.nbytes):,}")
+    assert raw.model.rowCount() == count
+
+
+def test_wiki_the_key_microscope_shows_runs_of_logical_keys(real_world_window):
+    instrument, _state, _logic = real_world_window
+    instrument.refresh()
+    text = instrument.keys_text.toPlainText()
+    assert "Logical key layout: [ texture-name-id:32 | cube-face:3 ]" in text
+    data = instrument._key_snapshot()
+    assert f"visible cube rows   {len(data['visible_cube_slots']):,}" in text
+    assert f"drawable faces      {len(data['logical_keys']):,}" in text
+    assert f"contiguous runs     {len(data['run_starts']) - 1:,}" in text
+    assert "  000  rows " in text and "KEY DISTRIBUTION" in text
+    # Runs are contiguous stretches of equal keys over the sorted stream.
+    keys, starts = data["sorted_keys"], data["run_starts"]
+    for a, b in zip(starts[:-1], starts[1:]):
+        assert len(set(keys[a:b].tolist())) == 1
+
+
+def test_wiki_follow_selection_traces_a_brush_and_an_entity(real_world_window):
+    instrument, state, _logic = real_world_window
+    brush = state.brushes[0]
+    state.selected_objects = [brush]
+    instrument.refresh()
+    assert f"FOLLOW id={brush['id']} -> render-row=" in instrument.status.text()
+    instrument.refresh()            # the next refresh keeps showing it
+    assert f"FOLLOW id={brush['id']}" in instrument.status.text()
+
+    sprite = next(t for t in state.things if t.properties["name"] == "audit_sprite")
+    state.selected_objects = [sprite]
+    instrument.refresh()
+    status = instrument.status.text()
+    assert "entity-row=" in status and "sprite-key=" in status
+
+
+def test_wiki_follow_selection_reports_an_id_it_cannot_find(real_world_window):
+    instrument, state, _logic = real_world_window
+    state.selected_objects = [{"id": "not-in-any-table"}]
+    instrument.refresh()
+    assert "ID NOT PRESENT IN RENDERTABLE, ENTITYTABLE" in instrument.status.text()
+    assert "ID NOT PRESENT" in instrument._follow_export_text()
+
+
+def test_wiki_memory_lists_allocated_bytes_and_live_shapes(real_world_window):
+    instrument, _state, _logic = real_world_window
+    instrument.refresh()
+    text = instrument.memory_text.toPlainText()
+    assert "TABLE / FIELD" in text and "SHAPE" in text and "DTYPE" in text and "BYTES" in text
+    bounds = instrument.render.bounds
+    live = (int(instrument.render.count), 6)
+    assert any(line.split()[:1] == ["bounds"] and str(live) in line
+               and f"{int(bounds.nbytes):,}" in line for line in text.splitlines())
+
+
+def test_wiki_export_is_the_documented_archive(real_world_window, tmp_path):
+    import json
+    import zipfile
+    from unittest import mock
+
+    instrument, _state, _logic = real_world_window
+    instrument.refresh()
+    path = tmp_path / "snapshot.zip"
+    with mock.patch("tools.debug_tables.QFileDialog.getSaveFileName",
+                    return_value=(str(path), "")):
+        instrument.export_snapshot()
+    with zipfile.ZipFile(path) as archive:
+        names = set(archive.namelist())
+        manifest = json.loads(archive.read("manifest.json"))
+        memory = json.loads(archive.read("memory.json"))
+        bounds = np.load(io.BytesIO(archive.read("RenderTable/bounds.npy")))
+    assert manifest["format"] == "fio-debug-tables-v1"
+    for name in ("manifest.json", "pipeline.json", "pipeline.txt",
+                 "visible_brush_slots.npy", "key_microscope.json",
+                 "key_microscope.txt", "memory.json", "memory.txt",
+                 "follow_selection.txt"):
+        assert name in names, name
+    assert any(n.startswith("KeyMicroscope/") for n in names)
+    # Full allocated capacity, live shape recorded separately.
+    assert bounds.shape == instrument.render.bounds.shape
+    field = memory["tables"]["RenderTable"]["fields"]["bounds"]
+    assert field["shape"] == list(bounds.shape)
+    assert field["live_shape"] == [int(instrument.render.count), 6]
+
+
+# ---------------------------------------------------------------------------
+# Tracking an editor object: selecting it anywhere -- the Scene Hierarchy
+# included -- highlights its rows and shows its dense representation
+# ---------------------------------------------------------------------------
+
+def _select_in_hierarchy(host, kind, index):
+    from PyQt5.QtCore import Qt
+    from PyQt5.QtWidgets import QTreeWidgetItemIterator
+    hierarchy = host.scene_hierarchy
+    hierarchy.refresh_list()
+    found = QTreeWidgetItemIterator(hierarchy.tree)
+    while found.value() is not None:
+        item = found.value()
+        if item.data(0, Qt.UserRole) == (kind, index):
+            hierarchy.tree.clearSelection()
+            item.setSelected(True)
+            return item
+        found += 1
+    raise AssertionError(f"no hierarchy item for {(kind, index)}")
+
+
+def test_selecting_in_the_hierarchy_highlights_the_entity_row(real_world_window):
+    instrument, state, _logic = real_world_window
+    host = instrument.main_window
+    instrument.refresh()
+    index, sprite = next((i, t) for i, t in enumerate(state.things)
+                         if t.properties["name"] == "audit_sprite")
+    _select_in_hierarchy(host, "thing", index)
+    assert state.selected_objects == [sprite]
+
+    # Followed at once, without waiting for the next refresh.
+    row = instrument.entities.slot_of_id[sprite.properties["id"]]
+    assert instrument.entity_raw.model.highlight == row
+    assert instrument.render_raw.model.highlight == -1
+    assert [i.row() for i in instrument.entity_raw.view.selectionModel().selectedRows()] == [row]
+    assert f"entity-row={row}" in instrument.status.text()
+
+    # The SELECTION tab is the row itself, every column of it.
+    dump = instrument.selection_text.toPlainText()
+    assert f"EntityTable  row {row}" in dump
+    pos = " ".join(f"{float(v):.5g}" for v in instrument.entities.pos[row])
+    assert any(line.split()[:1] == ["pos"] and line.split()[1:] == pos.split()
+               for line in dump.splitlines()), dump
+    assert any(line.split()[:1] == ["sprite_key_id"] for line in dump.splitlines())
+
+
+def test_selecting_a_brush_in_the_hierarchy_highlights_its_render_row(real_world_window):
+    instrument, state, _logic = real_world_window
+    host = instrument.main_window
+    instrument.refresh()
+    brush = state.brushes[3]
+    _select_in_hierarchy(host, "brush", 3)
+    row = instrument.render.slot_of_id[brush["id"]]
+    assert instrument.render_raw.model.highlight == row
+    assert instrument.entity_raw.model.highlight == -1
+    dump = instrument.selection_text.toPlainText()
+    assert f"RenderTable  row {row}" in dump
+    bounds = [float(v) for v in instrument.render.bounds[row]]
+    assert bounds[:3] == pytest.approx(brush["pos"])
+    assert any(line.split()[:1] == ["bounds"] for line in dump.splitlines())
+
+    # The highlight survives refreshes and a change of the shown array.
+    instrument.refresh()
+    instrument.render_raw.selector.setCurrentText("class_bits")
+    assert instrument.render_raw.model.highlight == row
+
+    # Deselecting, or turning FOLLOW SELECTION off, clears it.
+    host.scene_hierarchy.tree.clearSelection()
+    assert instrument.render_raw.model.highlight == -1
+    _select_in_hierarchy(host, "brush", 3)
+    instrument.follow.setChecked(False)
+    instrument.refresh()
+    assert instrument.render_raw.model.highlight == -1
+
+
+def test_the_highlighted_row_is_drawn_marked(real_world_window):
+    from PyQt5.QtCore import Qt
+    instrument, state, _logic = real_world_window
+    instrument.refresh()
+    _select_in_hierarchy(instrument.main_window, "brush", 0)
+    model = instrument.render_raw.model
+    row = model.highlight
+    assert model.data(model.index(row, 0), Qt.BackgroundRole) is not None
+    other = (row + 1) % model.rowCount()
+    assert model.data(model.index(other, 0), Qt.BackgroundRole) is None

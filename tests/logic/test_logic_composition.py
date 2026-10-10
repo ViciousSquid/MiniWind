@@ -23,6 +23,8 @@ from editor.io_system import IOManager, OutputConnection  # noqa: E402
 from editor.io_handlers import register_all_input_handlers  # noqa: E402
 from editor.things import (LogicGate, LogicRelay, LogicState,  # noqa: E402
                            LogicTimer, Thing)
+from engine.logic_timing import LogicTiming                      # noqa: E402
+from engine.logic_world import LogicWorld                        # noqa: E402
 from tests.helpers.worlds import box_brush                # noqa: E402
 
 pytestmark = pytest.mark.qt
@@ -37,18 +39,13 @@ class Level:
         self.manager = IOManager()
         self.manager.set_logic_thread(self)
         self.io_manager = self.manager
-        self.brushes = []
-        self.things = []
-        self.gate_inputs = {}
-        self.timer_states = {}
-        self.door_states = {}
-        self.mover_states = {}
-        self._timer_things = []
+        self.editor_state = type("EditorStateStub", (), {})()
+        self.editor_state.brushes = []
+        self.editor_state.things = []
+        self.timing_runtime = LogicTiming(self)
+        self.world_runtime = LogicWorld(self, timer_type=LogicTimer)
         self.opened = []
         self.spawned = []
-
-        from engine.logic_thread import LogicThread
-        self._timer_key = LogicThread._timer_key
 
         self.manager.set_entity_finder(self._by_name)
         self.manager.set_entity_finder_by_id(self._by_id)
@@ -67,27 +64,27 @@ class Level:
 
     def brush(self, name, **props):
         b = box_brush(name, **props)
-        self.brushes.append(b)
+        self.editor_state.brushes.append(b)
         return b
 
     def thing(self, thing):
-        self.things.append(thing)
+        self.editor_state.things.append(thing)
         return thing
 
     def _by_name(self, name):
-        for b in self.brushes:
+        for b in self.editor_state.brushes:
             if b.get("name") == name:
                 return b
-        for t in self.things:
+        for t in self.editor_state.things:
             if t.properties.get("name") == name:
                 return t
         return None
 
     def _by_id(self, entity_id):
-        for b in self.brushes:
+        for b in self.editor_state.brushes:
             if b.get("id") == entity_id:
                 return b
-        for t in self.things:
+        for t in self.editor_state.things:
             if t.properties.get("id") == entity_id:
                 return t
         return None
@@ -287,26 +284,26 @@ def test_other_inputs_wired_into_a_gate_are_not_counted_as_signals(level):
 
 def test_a_trigger_starts_a_timer_that_drives_a_spawner(level):
     """Trigger -> Relay -> Timer -> Spawner, with no scripting runtime."""
-    from engine.logic_thread import LogicThread
+    from engine.logic_timing import LogicTiming
     trigger = level.brush("ambush", is_trigger=True)
     relay = level.thing(LogicRelay(pos=[0, 0, 0], properties={"name": "relay"}))
     timer = level.thing(LogicTimer(pos=[0, 0, 0],
                                    properties={"name": "timer", "interval": 2.0}))
     spawner = level.thing(Thing(pos=[0, 0, 0], properties={
         "name": "spawner", "type": "logic_spawner"}))
-    level._timer_things = [timer]
+    level.world_runtime.timer_things = [timer]
 
     level.wire(trigger, "OnTrigger", relay, "Trigger")
     level.wire(relay, "OnTrigger", timer, "Enable")
     level.wire(timer, "OnTimer", spawner, "Spawn")
 
-    LogicThread._update_logic_timers(level, 5.0)
+    level.timing_runtime.update_logic_timers(5.0)
     assert level.spawned == [], "the timer ran before anything started it"
 
     level.fire(trigger, "OnTrigger")
-    LogicThread._update_logic_timers(level, 1.0)
+    level.timing_runtime.update_logic_timers(1.0)
     assert level.spawned == []
-    LogicThread._update_logic_timers(level, 1.5)
+    level.timing_runtime.update_logic_timers(1.5)
     assert level.spawned == ["spawner"]
 
 
@@ -447,8 +444,9 @@ def test_the_logic_thread_has_no_state_evaluation_pass():
 def test_the_state_store_is_not_walked_per_frame():
     """A tick that touched every store would be a global gameplay runtime."""
     source = _read("engine/logic_thread.py")
-    tick = source[source.index("def _tick_play_mode"):
-                  source.index("def _update_water_sounds")]
+    tick_start = source.index("def _tick_play_mode")
+    tick_end = source.index("# Gameplay", tick_start)
+    tick = source[tick_start:tick_end]
     for name in ("LogicState", "logic_state", "_persistent_registry"):
         assert name not in tick, (
             "the play-mode tick touches %r — state must be event-driven" % name)

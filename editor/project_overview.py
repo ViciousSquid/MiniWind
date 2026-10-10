@@ -54,8 +54,8 @@ def collect_project_stats(state, file_path=None) -> dict:
     *file_path* is the map on disk, used only for the timestamps; a map that
     has never been saved simply has none.
     """
-    brushes = list(getattr(state, 'brushes', ()) or ())
-    things = list(getattr(state, 'things', ()) or ())
+    brushes = list(state.brushes)
+    things = list(state.things)
 
     connections = 0
     if IO_AVAILABLE:
@@ -167,7 +167,7 @@ def format_overview(stats: dict, map_name: str) -> str:
 
 def show_project_overview(main_window):
     """Open the Project Overview for the map the editor currently has open."""
-    file_path = getattr(main_window, 'file_path', None)
+    file_path = main_window.file_path
     map_name = os.path.basename(file_path) if file_path else 'Untitled'
     stats = collect_project_stats(main_window.state, file_path)
 

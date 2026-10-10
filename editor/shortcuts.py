@@ -70,7 +70,7 @@ DECLARED = (
     ('Component modes', 'Shift+V', 'Vertex mode'),
     ('Component modes', 'Shift+E', 'Edge mode'),
     ('Component modes', 'Shift+F', 'Face mode'),
-    ('Component modes', 'Q', 'Step Object -> Vertex -> Edge -> Face'),
+    ('Component modes', 'Q', 'Step Select -> Brush -> Vertex -> Edge -> Face'),
 
     ('Brush and texture', 'Page Up', "Rotate the hovered face's texture 90 clockwise"),
     ('Brush and texture', 'Page Down', "Rotate the hovered face's texture 90 anticlockwise"),
@@ -87,7 +87,7 @@ DECLARED = (
 
     ('Play mode', 'W A S D', 'Move'),
     ('Play mode', 'E', 'Use / interact'),
-    ('Play mode', 'Esc', 'Leave play mode'),
+    ('Play mode', 'Esc', 'Pause menu (Save, Load, Options, Exit)'),
     ('Play mode', 'F6', 'Toggle model collision'),
     ('Play mode', 'F7', 'Toggle monster debug'),
     ('Play mode', 'F9', 'Toggle the lighting debug view'),

@@ -1,16 +1,13 @@
 """Nearest-enemy search: the dense batch must answer what the walk answered.
 
-Every awake teamed monster without an aggro target used to walk every monster
-to find its closest enemy -- the same arithmetic N times over rather than once
-over N. The batch does all of them in one squared-distance matrix, three masks
-and an ``argmin``.
+Every awake teamed monster without an aggro target is answered from the
+dense table rather than walking every candidate in Python. The kernel uses
+vectorized squared-distance blocks masked by the team column.
 
-The walk is still in the tree, as the batch's reference and as its fallback
-below the size gate, so the two can be driven over the same monsters and
-compared. These tests do that, with the cases most likely to separate them:
-exact ties, teamless and dead and hidden monsters, the range boundary, and
-monsters that are still falling -- which is when positions move most within a
-tick and so when a batch is least like a per-monster search.
+The scalar walk remains only as the reference/fallback, so the two can be
+driven over the same monsters and compared. These tests cover exact ties,
+teamless, dead and hidden monsters, the range boundary, and monsters that
+are still falling.
 """
 
 import numpy as np
@@ -68,16 +65,33 @@ def _world(ai_world, monsters):
 # The gate
 # ---------------------------------------------------------------------------
 
-def test_a_small_monster_set_keeps_the_walk(ai_world, monster_factory):
-    """Below the gate the batch costs more to assemble than it saves."""
+def test_a_small_monster_set_uses_the_batch(ai_world, monster_factory):
+    """Nearest-enemy uses the same dense table path for small sets."""
     monsters = _teamed(monster_factory, [
         ((float(i) * 100.0, 0.0, 0.0), {"team": "red" if i % 2 else "blue"})
         for i in range(4)])
     ai, _ = _world(ai_world, monsters)
 
     ai._enemy_ready = False
-    assert ai._enemy_batch(MONSTER_SIGHT_RANGE) is None
-    _agree(ai, monsters, "below the gate")
+    assert ai._enemy_batch(MONSTER_SIGHT_RANGE) is not None
+    _agree(ai, monsters, "small dense field")
+
+
+def test_the_batch_reads_monster_table_columns(ai_world, monster_factory):
+    """The dense query uses the gathered table, not live object positions."""
+    monsters = _teamed(monster_factory, [
+        ((0.0, 0.0, 0.0), {"team": "red"}),
+        ((100.0, 0.0, 0.0), {"team": "blue"}),
+    ])
+    ai, _ = _world(ai_world, monsters)
+
+    ai.table.gather(monsters)
+    monsters[1].pos = [MONSTER_SIGHT_RANGE * 2, 0.0, 0.0]
+    ai._enemy_ready = False
+    nearest = ai._enemy_batch(MONSTER_SIGHT_RANGE)
+
+    assert nearest is not None
+    assert nearest[0] == 1
 
 
 def test_the_batch_is_built_once_per_tick(ai_world, monster_factory):
@@ -263,8 +277,11 @@ def test_falling_monsters_agree_tick_after_tick(ai_world, monster_factory):
              for i in range(72)]
     monsters = _teamed(monster_factory, specs)
     ai, logic = ai_world(brushes=room(2048, 512, 2048), things=monsters)
-    logic._monster_things = list(monsters)
-    ai.set_spatial_grid(logic.build_spatial_grid())
+    logic.world_runtime.monster_things = list(monsters)
+    from engine.physics import SpatialGrid
+    grid = SpatialGrid(cell_size=512.0)        # as play start builds it
+    grid.populate(logic.editor_state.brushes)
+    ai.set_spatial_grid(grid)
 
     for tick in range(40):
         _agree(ai, monsters, "falling, tick %d" % tick)

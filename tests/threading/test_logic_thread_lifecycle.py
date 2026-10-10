@@ -1,8 +1,8 @@
 """``LogicThread``: start, stop, tick, and the state a play session owns.
 
-The logic thread is Fio's simulation loop and the owner of the shared
-editor/runtime state — it reads the editor's brush and thing lists live and
-writes a render snapshot for the Qt view.  What has to be true of it is
+The logic thread is Fio's simulation loop and orchestration boundary: ``EditorState``
+owns the authored world, extracted ``Logic*`` runtimes own their domains, and the
+thread schedules ticks and publishes render state.  What has to be true of it is
 therefore less about any one tick and more about lifetime: nothing may be left
 running after ``stop()``, and entering and leaving play mode must leave the
 editor's world exactly as the mapper authored it.
@@ -19,6 +19,7 @@ import time
 import pytest
 
 pytest.importorskip("PyQt5", reason="the logic thread pulls in editor.things")
+from PyQt5.QtCore import QCoreApplication, QObject, pyqtSignal, pyqtSlot  # noqa: E402
 
 from editor.editor_state import EditorState          # noqa: E402
 from editor.things import Light, Monster, PlayerStart  # noqa: E402
@@ -30,6 +31,42 @@ pytestmark = pytest.mark.qt
 
 DEADLINE = 5.0
 TICK = 1.0 / 60.0
+
+
+class _FaultBridge(QObject):
+    fault = pyqtSignal(str)
+
+    def __init__(self, thread):
+        super().__init__()
+        self.thread = thread
+        self.calls = []
+        self.thread_ids = []
+        self.fault.connect(self._on_fault)
+
+    @pyqtSlot(str)
+    def _on_fault(self, message):
+        self.calls.append(message)
+        self.thread_ids.append(threading.get_ident())
+        self.thread.session_runtime.apply_play_mode(False)
+
+
+def test_player_health_state_belongs_to_logic_player(logic):
+    thread = logic()
+
+    assert not hasattr(thread, "player_health")
+    assert not hasattr(thread, "player_max_health")
+    assert not hasattr(thread, "player_dead")
+    assert not hasattr(thread, "player2_health")
+    assert not hasattr(thread, "player2_max_health")
+    assert not hasattr(thread, "player2_dead")
+
+    runtime = thread.player_runtime
+    assert runtime.player_health == 100
+    assert runtime.player_max_health == 100
+    assert runtime.player_dead is False
+    assert runtime.player2_health == 100
+    assert runtime.player2_max_health == 100
+    assert runtime.player2_dead is False
 
 
 @pytest.fixture
@@ -51,7 +88,7 @@ def logic():
         thread.stop()
         if thread.is_alive():
             thread.join(timeout=DEADLINE)
-        ai_thread = thread.monster_ai_thread
+        ai_thread = thread.session_runtime.monster_ai_thread
         if ai_thread is not None:
             ai_thread.stop()
             ai_thread.join(timeout=DEADLINE)
@@ -70,25 +107,35 @@ def _wait_for(predicate, timeout=DEADLINE, what="condition"):
 # The world is shared, not copied
 # ---------------------------------------------------------------------------
 
+def test_runtime_contracts_reject_a_runtime_bound_to_the_wrong_host(logic):
+    """The extracted domains must remain owned by this LogicThread instance."""
+    thread = logic()
+    runtime = thread.player_runtime
+    runtime.logic = object()
+    try:
+        with pytest.raises(AssertionError, match="player_runtime\\.logic"):
+            thread._validate_runtime_contracts()
+    finally:
+        runtime.logic = thread
+
+
 def test_the_logic_thread_reads_the_editor_state_live(logic):
     """Fio's whole premise: one world, no serialisation between the two."""
     state_brushes = [box_brush("wall")]
     thread = logic(brushes=state_brushes)
-    assert thread.brushes is thread.editor_state.brushes, (
-        "the logic thread copied the brush list; an edit in the editor would "
-        "not reach the running game")
+    assert not hasattr(thread, "brushes"), "LogicThread still owns a brush alias"
 
     thread.editor_state.brushes.append(box_brush("added_later"))
-    assert [b["name"] for b in thread.brushes] == ["wall", "added_later"], (
+    assert [b["name"] for b in thread.editor_state.brushes] == ["wall", "added_later"], (
         "a brush added in the editor did not appear in the logic thread's "
-        "view: %s" % ([b["name"] for b in thread.brushes],))
+        "view: %s" % ([b["name"] for b in thread.editor_state.brushes],))
 
 
 def test_things_are_shared_the_same_way(logic):
     thread = logic(things=[make_thing(Light, "lamp")])
-    assert thread.things is thread.editor_state.things
+    assert not hasattr(thread, "things"), "LogicThread still owns a thing alias"
     thread.editor_state.things.append(make_thing(Light, "lamp2"))
-    assert [t.name for t in thread.things] == ["lamp", "lamp2"]
+    assert [t.name for t in thread.editor_state.things] == ["lamp", "lamp2"]
 
 
 # ---------------------------------------------------------------------------
@@ -99,24 +146,24 @@ def test_entering_play_mode_builds_the_spatial_grid_from_the_live_world(logic):
     brushes = room(size=1024.0)
     thread = logic(brushes=brushes)
 
-    thread.set_play_mode(True)
+    thread.session_runtime.apply_play_mode(True)
 
-    assert thread._spatial_grid is not None, "no spatial grid was built"
-    filed = {id(b) for bucket in thread._spatial_grid.cells.values() for b in bucket}
+    assert thread.session_runtime.spatial_grid is not None, "no spatial grid was built"
+    filed = {id(b) for bucket in thread.session_runtime.spatial_grid.cells.values() for b in bucket}
     missing = [b["name"] for b in brushes if id(b) not in filed]
     assert not missing, "brushes missing from the play-mode grid: %s" % (missing,)
-    assert thread.monster_ai._grid is thread._spatial_grid, (
+    assert thread.monster_ai._grid is thread.session_runtime.spatial_grid, (
         "MonsterAI was not handed the grid the logic thread built")
 
 
 def test_leaving_play_mode_releases_the_spatial_grid(logic):
     thread = logic(brushes=room())
-    thread.set_play_mode(True)
-    grid = thread._spatial_grid
+    thread.session_runtime.apply_play_mode(True)
+    grid = thread.session_runtime.spatial_grid
 
-    thread.set_play_mode(False)
+    thread.session_runtime.apply_play_mode(False)
 
-    assert thread._spatial_grid is None, "the grid outlived the play session"
+    assert thread.session_runtime.spatial_grid is None, "the grid outlived the play session"
     assert grid.cells == {}, "the released grid still holds brush references"
     assert thread.monster_ai._grid is None, (
         "MonsterAI still holds the grid from the finished session")
@@ -125,22 +172,22 @@ def test_leaving_play_mode_releases_the_spatial_grid(logic):
 def test_entering_play_mode_starts_the_monster_ai_thread(logic):
     thread = logic(brushes=room(), things=[make_thing(Monster, "grunt", (0, 96, 0))])
 
-    thread.set_play_mode(True)
+    thread.session_runtime.apply_play_mode(True)
     try:
-        assert thread.monster_ai_thread is not None
-        assert thread.monster_ai_thread.is_alive(), "the AI thread did not start"
+        assert thread.session_runtime.monster_ai_thread is not None
+        assert thread.session_runtime.monster_ai_thread.is_alive(), "the AI thread did not start"
     finally:
-        thread.set_play_mode(False)
+        thread.session_runtime.apply_play_mode(False)
 
 
 def test_leaving_play_mode_stops_the_monster_ai_thread(logic):
     thread = logic(brushes=room(), things=[make_thing(Monster, "grunt", (0, 96, 0))])
-    thread.set_play_mode(True)
-    ai_thread = thread.monster_ai_thread
+    thread.session_runtime.apply_play_mode(True)
+    ai_thread = thread.session_runtime.monster_ai_thread
 
-    thread.set_play_mode(False)
+    thread.session_runtime.apply_play_mode(False)
 
-    assert thread.monster_ai_thread is None, (
+    assert thread.session_runtime.monster_ai_thread is None, (
         "the logic thread still holds a reference to the finished AI thread")
     _wait_for(lambda: not ai_thread.is_alive(),
               what="the monster AI thread to exit after leaving play mode")
@@ -148,24 +195,24 @@ def test_leaving_play_mode_stops_the_monster_ai_thread(logic):
 
 def test_restarting_play_mode_does_not_leave_the_old_ai_thread_running(logic):
     thread = logic(brushes=room(), things=[make_thing(Monster, "grunt", (0, 96, 0))])
-    thread.set_play_mode(True)
-    first = thread.monster_ai_thread
-    thread.set_play_mode(False)
-    thread.set_play_mode(True)
-    second = thread.monster_ai_thread
+    thread.session_runtime.apply_play_mode(True)
+    first = thread.session_runtime.monster_ai_thread
+    thread.session_runtime.apply_play_mode(False)
+    thread.session_runtime.apply_play_mode(True)
+    second = thread.session_runtime.monster_ai_thread
     try:
         assert second is not first, "play mode reused the previous AI thread"
         _wait_for(lambda: not first.is_alive(),
                   what="the first AI thread to exit")
         assert second.is_alive()
     finally:
-        thread.set_play_mode(False)
+        thread.session_runtime.apply_play_mode(False)
 
 
 def test_stop_ends_the_monster_ai_thread_as_well(logic):
     thread = logic(brushes=room(), things=[make_thing(Monster, "grunt", (0, 96, 0))])
-    thread.set_play_mode(True)
-    ai_thread = thread.monster_ai_thread
+    thread.session_runtime.apply_play_mode(True)
+    ai_thread = thread.session_runtime.monster_ai_thread
 
     thread.stop()
 
@@ -180,51 +227,51 @@ def test_stop_ends_the_monster_ai_thread_as_well(logic):
 
 def test_play_mode_resets_player_state_every_time(logic):
     thread = logic(brushes=room())
-    thread.set_play_mode(True)
-    thread.player_health = 3
-    thread.player_dead = True
-    thread.god_mode = True
-    thread.set_play_mode(False)
+    thread.session_runtime.apply_play_mode(True)
+    thread.player_runtime.player_health = 3
+    thread.player_runtime.player_dead = True
+    thread.player_runtime.god_mode = True
+    thread.session_runtime.apply_play_mode(False)
 
-    thread.set_play_mode(True)
+    thread.session_runtime.apply_play_mode(True)
     try:
-        assert thread.player_health == 100, (
+        assert thread.player_runtime.player_health == 100, (
             "player health carried over from the previous session (%d)"
-            % thread.player_health)
-        assert thread.player_dead is False
-        assert thread.god_mode is False, "a cheat leaked into the next session"
+            % thread.player_runtime.player_health)
+        assert thread.player_runtime.player_dead is False
+        assert thread.player_runtime.god_mode is False, "a cheat leaked into the next session"
     finally:
-        thread.set_play_mode(False)
+        thread.session_runtime.apply_play_mode(False)
 
 
 def test_leaving_play_mode_clears_the_session_only_state(logic):
     thread = logic(brushes=room())
-    thread.set_play_mode(True)
-    thread.collected_keys.add("red")
-    thread.current_hud_message = "you need the red key"
-    thread.bullet_marks.append({"pos": None, "time": 0.0})
+    thread.session_runtime.apply_play_mode(True)
+    thread.player_runtime.collected_keys.add("red")
+    thread.interaction_runtime.current_hud_message = "you need the red key"
+    thread.combat_runtime.bullet_marks.append({"pos": None, "time": 0.0})
 
-    thread.set_play_mode(False)
+    thread.session_runtime.apply_play_mode(False)
 
-    assert thread.collected_keys == set(), \
-        "collected keys survived into editor mode: %s" % (thread.collected_keys,)
-    assert thread.current_hud_message == ""
-    assert thread.bullet_marks == []
+    assert thread.player_runtime.collected_keys == set(), \
+        "collected keys survived into editor mode: %s" % (thread.player_runtime.collected_keys,)
+    assert thread.interaction_runtime.current_hud_message == ""
+    assert thread.combat_runtime.bullet_marks == []
 
 
 def test_a_monsters_runtime_state_is_reset_between_sessions(logic):
     monster = make_thing(Monster, "grunt", (0, 96, 0), awake=True)
     thread = logic(brushes=room(), things=[monster])
 
-    thread.set_play_mode(True)
+    thread.session_runtime.apply_play_mode(True)
     monster.properties["awake"] = True
     monster.properties["dead"] = True
-    thread.set_play_mode(False)
+    thread.session_runtime.apply_play_mode(False)
 
     assert monster.properties.get("dead") is True, (
         "leaving play mode with clear_dead=False should leave 'dead' alone so "
         "the editor still shows what happened")
-    thread.set_play_mode(True)
+    thread.session_runtime.apply_play_mode(True)
     try:
         assert "dead" not in monster.properties, (
             "a monster killed in the last session is still marked dead=%r at "
@@ -233,20 +280,20 @@ def test_a_monsters_runtime_state_is_reset_between_sessions(logic):
             "a wake_on_sight monster must start each session asleep, not %r"
             % monster.properties["awake"])
     finally:
-        thread.set_play_mode(False)
+        thread.session_runtime.apply_play_mode(False)
 
 
 def test_leaving_play_mode_removes_the_model_collision_pseudo_brushes(logic):
     thread = logic(brushes=room())
-    thread.set_play_mode(True)
-    thread.set_play_mode(False)
-    assert thread._model_collision_brushes == [], (
+    thread.session_runtime.apply_play_mode(True)
+    thread.session_runtime.apply_play_mode(False)
+    assert thread.collision_runtime._model_collision_brushes == [], (
         "model collision brushes built for the session were left behind")
     # The session's collision set is rebuilt when Play starts; kept past
     # Stop it pinned the session's brushes (see test_final_audit).
-    assert thread._collision_brushes_cache == []
-    thread.set_play_mode(True)
-    assert thread._collision_brushes_cache == thread.brushes
+    assert thread.collision_runtime._collision_brushes_cache == []
+    thread.session_runtime.apply_play_mode(True)
+    assert thread.collision_runtime._collision_brushes_cache == thread.editor_state.brushes
 
 
 def test_the_render_projection_survives_the_play_mode_round_trip(logic):
@@ -259,13 +306,13 @@ def test_the_render_projection_survives_the_play_mode_round_trip(logic):
     """
     brushes = room()
     thread = logic(brushes=brushes)
-    thread.set_play_mode(True)
-    thread._prepare_render_state()
-    table = thread._render_table
+    thread.session_runtime.apply_play_mode(True)
+    thread.render_runtime.prepare_render_state()
+    table = thread.game_state.get_write_state().render_table
     assert table.count == len(brushes)
 
-    thread.set_play_mode(False)
-    thread._prepare_render_state()
+    thread.session_runtime.apply_play_mode(False)
+    thread.render_runtime.prepare_render_state()
 
     assert table.count == len(brushes)
     for index, brush in enumerate(brushes):
@@ -280,89 +327,108 @@ def test_the_render_projection_survives_the_play_mode_round_trip(logic):
 
 def test_health_hud_fades_in_on_spawn_then_settles_at_50_percent(logic):
     thread = logic(brushes=room())
-    thread.set_play_mode(True)
+    thread.session_runtime.apply_play_mode(True)
     try:
-        start = thread._hud_health_fade_started
+        start = thread.render_runtime._hud_health_fade_started
         assert start is not None
-        assert thread._hud_health_fade_phase == "in"
-        assert thread._hud_health_alpha == 0.0
+        assert thread.render_runtime._hud_health_fade_phase == "in"
+        assert thread.render_runtime._hud_health_alpha == 0.0
 
-        alpha = thread._update_hud_health_alpha(start + 0.75)
+        alpha = thread.render_runtime.update_hud_health_alpha(start + 0.75)
         assert alpha == pytest.approx(0.5)
 
-        alpha = thread._update_hud_health_alpha(start + 1.5)
+        alpha = thread.render_runtime.update_hud_health_alpha(start + 1.5)
         assert alpha == pytest.approx(1.0)
-        assert thread._hud_health_fade_phase == "out"
+        assert thread.render_runtime._hud_health_fade_phase == "out"
 
-        alpha = thread._update_hud_health_alpha(start + 3.5)
+        alpha = thread.render_runtime.update_hud_health_alpha(start + 3.5)
         assert alpha == pytest.approx(0.75)
 
-        alpha = thread._update_hud_health_alpha(start + 5.5)
+        alpha = thread.render_runtime.update_hud_health_alpha(start + 5.5)
         assert alpha == pytest.approx(0.5)
-        assert thread._hud_health_fade_phase == "idle"
+        assert thread.render_runtime._hud_health_fade_phase == "idle"
     finally:
-        thread.set_play_mode(False)
+        thread.session_runtime.apply_play_mode(False)
+
+
+def test_disabling_health_hud_fade_keeps_full_alpha_after_damage(logic):
+    thread = logic(brushes=room())
+    thread.session_runtime.apply_play_mode(True)
+    try:
+        thread.render_runtime.set_hud_fade_enabled(False)
+        thread.player_runtime.player_health = 25
+
+        # Disabled fade mode clears the timing marker deliberately;
+        # sampling a timestamp is irrelevant because the disabled branch is
+        # immediately forced to full opacity.
+        alpha = thread.render_runtime.update_hud_health_alpha(0.0)
+
+        assert alpha == pytest.approx(1.0)
+        assert thread.render_runtime._hud_health_fade_phase == "idle"
+        assert thread.render_runtime._hud_health_fade_started is None
+    finally:
+        thread.session_runtime.apply_play_mode(False)
 
 
 def test_health_change_uses_fast_fade_in_then_slow_fade_out(logic):
     thread = logic(brushes=room())
-    thread.set_play_mode(True)
+    thread.session_runtime.apply_play_mode(True)
     try:
-        start = thread._hud_health_fade_started
+        start = thread.render_runtime._hud_health_fade_started
         assert start is not None
-        thread._update_hud_health_alpha(start + 5.5)
-        assert thread._hud_health_alpha == pytest.approx(0.5)
+        thread.render_runtime.update_hud_health_alpha(start + 5.5)
+        assert thread.render_runtime._hud_health_alpha == pytest.approx(0.5)
 
         change = start + 10.0
-        thread.player_health = 75
+        thread.player_runtime.player_health = 75
 
-        alpha = thread._update_hud_health_alpha(change)
+        alpha = thread.render_runtime.update_hud_health_alpha(change)
         assert alpha == pytest.approx(0.5)
-        assert thread._hud_health_fade_phase == "in"
+        assert thread.render_runtime._hud_health_fade_phase == "in"
 
-        alpha = thread._update_hud_health_alpha(change + 0.75)
+        alpha = thread.render_runtime.update_hud_health_alpha(change + 0.75)
         assert alpha == pytest.approx(0.75)
 
-        alpha = thread._update_hud_health_alpha(change + 1.5)
+        alpha = thread.render_runtime.update_hud_health_alpha(change + 1.5)
         assert alpha == pytest.approx(1.0)
-        assert thread._hud_health_fade_phase == "out"
+        assert thread.render_runtime._hud_health_fade_phase == "out"
 
-        alpha = thread._update_hud_health_alpha(change + 3.5)
+        alpha = thread.render_runtime.update_hud_health_alpha(change + 3.5)
         assert alpha == pytest.approx(0.75)
 
-        alpha = thread._update_hud_health_alpha(change + 5.5)
+        alpha = thread.render_runtime.update_hud_health_alpha(change + 5.5)
         assert alpha == pytest.approx(0.5)
-        assert thread._hud_health_fade_phase == "idle"
+        assert thread.render_runtime._hud_health_fade_phase == "idle"
     finally:
-        thread.set_play_mode(False)
+        thread.session_runtime.apply_play_mode(False)
 
 
 def test_further_health_changes_restart_the_fast_fade_from_current_opacity(logic):
     thread = logic(brushes=room())
-    thread.set_play_mode(True)
+    thread.session_runtime.apply_play_mode(True)
     try:
-        start = thread._hud_health_fade_started
+        start = thread.render_runtime._hud_health_fade_started
         assert start is not None
-        thread._update_hud_health_alpha(start + 5.5)
-        assert thread._hud_health_alpha == pytest.approx(0.5)
+        thread.render_runtime.update_hud_health_alpha(start + 5.5)
+        assert thread.render_runtime._hud_health_alpha == pytest.approx(0.5)
 
         first_change = start + 8.0
-        thread.player_health = 90
-        thread._update_hud_health_alpha(first_change)
-        thread._update_hud_health_alpha(first_change + 1.5)
-        assert thread._hud_health_alpha == pytest.approx(1.0)
+        thread.player_runtime.player_health = 90
+        thread.render_runtime.update_hud_health_alpha(first_change)
+        thread.render_runtime.update_hud_health_alpha(first_change + 1.5)
+        assert thread.render_runtime._hud_health_alpha == pytest.approx(1.0)
 
         second_change = first_change + 3.0
-        thread.player_health = 80
-        alpha = thread._update_hud_health_alpha(second_change)
+        thread.player_runtime.player_health = 80
+        alpha = thread.render_runtime.update_hud_health_alpha(second_change)
         assert alpha == pytest.approx(0.8125)
-        assert thread._hud_health_fade_phase == "in"
+        assert thread.render_runtime._hud_health_fade_phase == "in"
 
-        alpha = thread._update_hud_health_alpha(second_change + 1.5)
+        alpha = thread.render_runtime.update_hud_health_alpha(second_change + 1.5)
         assert alpha == pytest.approx(1.0)
-        assert thread._hud_health_fade_phase == "out"
+        assert thread.render_runtime._hud_health_fade_phase == "out"
     finally:
-        thread.set_play_mode(False)
+        thread.session_runtime.apply_play_mode(False)
 
 
 # ---------------------------------------------------------------------------
@@ -372,23 +438,23 @@ def test_further_health_changes_restart_the_fast_fade_from_current_opacity(logic
 def test_an_editor_tick_moves_the_editor_camera_and_nothing_else(logic):
     from PyQt5.QtCore import Qt
     thread = logic(brushes=room())
-    before = list(thread.editor_camera.pos)
+    before = list(thread.camera.editor_camera.pos)
     thread.game_state.set_keys({int(Qt.Key_W)})
 
     thread._tick(TICK)
 
-    assert list(thread.editor_camera.pos) != before, (
+    assert list(thread.camera.get_editor_camera().pos) != before, (
         "holding W for a tick did not move the editor camera from %s" % (before,))
 
 
 def test_a_play_tick_with_no_player_does_nothing(logic):
     thread = logic(brushes=room())
-    thread.set_play_mode(True)
+    thread.session_runtime.apply_play_mode(True)
     try:
-        thread.player = None
+        thread.player_runtime.player = None
         thread._tick(TICK)      # must not raise
     finally:
-        thread.set_play_mode(False)
+        thread.session_runtime.apply_play_mode(False)
 
 
 def test_the_io_manager_advances_with_the_tick(logic):
@@ -396,17 +462,55 @@ def test_the_io_manager_advances_with_the_tick(logic):
     update, so a stand-in without ``update`` would not exercise the path."""
     from engine.player import Player
     thread = logic(brushes=room())
-    thread.set_play_mode(True)
+    thread.session_runtime.apply_play_mode(True)
     try:
         before = thread.io_manager.current_time
-        thread.player = Player(0.0, 0.0)
+        thread.player_runtime.player = Player(0.0, 0.0)
         thread._tick(TICK)
         assert thread.io_manager.current_time > before, (
             "the I/O clock did not advance with the tick (%.4f -> %.4f); "
             "delayed connections would never fire"
             % (before, thread.io_manager.current_time))
     finally:
-        thread.set_play_mode(False)
+        thread.session_runtime.apply_play_mode(False)
+
+
+def test_a_fatal_tick_marshals_play_teardown_to_gui(logic):
+    """Fatal tick handling must never tear down the play session on the worker."""
+    app = QCoreApplication.instance() or QCoreApplication([])
+    thread = logic(brushes=room())
+    thread.session_runtime.play_mode = True
+    bridge = _FaultBridge(thread)
+    runner_ident = []
+
+    def _explode(delta):
+        raise RuntimeError("deliberate fatal tick failure")
+
+    thread._tick = _explode
+    thread.set_gui_fault_teardown(bridge.fault.emit)
+
+    def run_one_frame():
+        runner_ident.append(threading.get_ident())
+        thread._step_frame(thread.TICK_DURATION)
+
+    runner = threading.Thread(target=run_one_frame, daemon=True)
+    runner.start()
+    runner.join(timeout=DEADLINE)
+
+    assert not runner.is_alive(), "fatal tick frame did not finish"
+    assert thread.session_runtime.play_mode is True, (
+        "fatal tick teardown ran on the logic worker instead of waiting for the GUI"
+    )
+    assert bridge.calls == [], "GUI teardown ran before Qt processed the queued signal"
+
+    app.processEvents()
+    assert len(bridge.calls) == 1, "fatal tick did not reach the GUI thread"
+    assert thread.session_runtime.play_mode is False, (
+        "GUI fault teardown did not close the play session through LogicSession"
+    )
+    assert bridge.thread_ids[0] != runner_ident[0], (
+        "fatal tick teardown callback ran on the logic worker instead of the GUI thread"
+    )
 
 
 def test_a_tick_that_raises_does_not_kill_the_thread(logic):
@@ -452,8 +556,8 @@ def test_stopping_a_running_thread_leaves_nothing_alive(logic):
     thread = logic(brushes=room(), things=[make_thing(Monster, "grunt", (0, 96, 0))])
     thread.start()
     _wait_for(thread.game_state.peek_has_new_frame, what="the first frame")
-    thread.set_play_mode(True)
-    ai_thread = thread.monster_ai_thread
+    thread.session_runtime.apply_play_mode(True)
+    ai_thread = thread.session_runtime.monster_ai_thread
 
     thread.stop()
     thread.join(timeout=DEADLINE)

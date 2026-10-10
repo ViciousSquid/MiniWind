@@ -96,13 +96,14 @@ class FakeLogic:
     """The slice of the logic thread the plugin runtime surface reaches for."""
 
     def __init__(self, things=(), brushes=()):
-        self.things = list(things)
-        self.brushes = list(brushes)
-        self.play_mode = False
+        self.editor_state = type("EditorState", (), {
+            "things": list(things),
+            "brushes": list(brushes),
+        })()
+        self.session_runtime = type("SessionRuntime", (), {"play_mode": False})()
         self.player = None
         self.io_manager = None
         self.game_state = None
-        self.terrain = None
         self.monster_ai = None
 
 

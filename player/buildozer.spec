@@ -25,7 +25,7 @@ package.domain = org.vicioussquid.fio
 # refused by player/fiopak.py.
 source.dir = ..
 source.include_exts = py,png,jpg,jpeg,tga,bmp,ogg,wav,json,fiopak,glsl,vert,frag,obj,glb,mtl,ttf,otf
-source.include_patterns = player/*,engine/*,plugins/*,assets/*,game.fiopak
+source.include_patterns = player/*,engine/*,plugins/*,assets/*,game.fiopak,python_runtime.py
 # Exclude the desktop-only editor and its heavy PyQt5 dependency. The repo-root
 # main.py IS the entry point (it detects Android and launches the player), so it
 # is intentionally NOT excluded.
@@ -39,7 +39,7 @@ version = 0.1.0
 #   numpy   -> vector/matrix math and geometry batching (has a p4a recipe)
 #   pyopengl-> GL ES entry points
 #   pillow  -> texture decoding from streamed asset bytes
-requirements = python3,pygame,numpy,pyopengl,pillow
+requirements = python3,numpy==2.5.3,pygame-ce==2.5.8,pyopengl,pillow
 
 orientation = landscape
 fullscreen = 1
@@ -49,18 +49,19 @@ fullscreen = 1
 # launches on device while the same file still opens the editor on desktop.
 android.entrypoint = org.kivy.android.PythonActivity
 
-# --- Toolchain pin (IMPORTANT) ---
-# python-for-android master builds CPython 3.14, but its bundled pygame recipe
-# is still pygame 2.1.0, which cannot compile on Python >= 3.12 (fatal error:
-# 'longintrepr.h' file not found). Pin p4a to the last release that builds
-# CPython 3.10, where pygame 2.1.0 compiles cleanly, and pin the matching NDK.
-p4a.branch = v2023.09.16
-android.ndk = 25b
+# --- CPython 3.14 Android toolchain ---
+# Pin the stable p4a release used for the Fio Android baseline. The pygame-ce
+# recipe is supplied locally because the upstream recipe is not pinned to the
+# exact desktop baseline version.
+p4a.branch = master
+p4a.commit = 58d2114
+p4a.local_recipes = ./p4a-recipes
+android.ndk = 29
 
 # --- Android platform ---
 # minapi 24 = Android 7.0; GLES 3.x is universal by then. NOTE: buildozer does
 # NOT strip inline comments from value lines, so keep comments on their own line.
-android.api = 34
+android.api = 36
 android.minapi = 24
 android.ndk_api = 24
 # arm64-v8a covers essentially all modern phones and keeps CI fast. Add

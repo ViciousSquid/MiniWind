@@ -47,6 +47,8 @@ def run_cli(args):
         'max_room': args.max_room,
         'wall_tex': args.wall_tex,
         'floor_tex': args.floor_tex,
+        'random_wall_texture': args.random_wall_texture,
+        'random_floor_texture': args.random_floor_texture,
         'spawn_monsters': args.spawn_monsters,
         'monster_count': args.monster_count,
         'world_width': world_width,
@@ -91,6 +93,10 @@ def main():
                         help="Wall texture filename")
     parser.add_argument("--floor-tex", type=str, default="default.png",
                         help="Floor texture filename")
+    parser.add_argument("--random-wall-texture", action="store_true",
+                        help="Choose a random wall texture from the procedural sci-fi set")
+    parser.add_argument("--random-floor-texture", action="store_true",
+                        help="Choose a random floor texture from the procedural floor set")
     parser.add_argument("--spawn-monsters", action="store_true", default=True,
                         help="Spawn monsters (default: True)")
     parser.add_argument("--no-spawn-monsters", dest="spawn_monsters", action="store_false",

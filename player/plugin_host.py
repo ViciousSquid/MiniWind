@@ -3,17 +3,15 @@ Player-side plugin host.
 
 Lets the standalone ``.fiopak`` player load and *run* the plugins a package
 depends on — so a game built with, say, the Tidy plugin actually plays outside
-the editor. It is the player-side counterpart to the editor's
-``plugins.integration``: where the editor patches its logic thread to dispatch
-the plugin lifecycle, this drives the same dispatch from the player's frame loop.
+the editor. It is the player-side counterpart to the editor's native plugin lifecycle hooks; the player drives the same dispatch from its frame loop.
 
 Responsibilities:
 
 * **Load** plugins already installed with the player runtime. A ``.fiopak``
   is only a world container and is never used as a source of Python code.
-* **Bridge** the player's free-look camera to the minimal ``logic`` interface
-  plugin runtimes expect (``things`` / ``player`` / ``io_manager`` /
-  ``current_hud_message``), building entity instances from the map's data.
+* **Bridge** the player's free-look camera into the real ``LogicPlayer`` owner
+  exposed by the bridge, while providing the plugin host's scene/I/O surfaces
+  and building entity instances from the map's data.
 * **Dispatch** ``on_play_start`` / ``on_tick`` / ``on_play_stop`` each frame.
 
 Everything is guarded: if the plugin system isn't present or a package needs no
@@ -28,11 +26,18 @@ draws dynamic models.
 from __future__ import annotations
 
 import math
+import threading
+from types import SimpleNamespace
 from typing import List, Optional
 
 
+from engine.items import ItemDefinitions
 from engine.prop_runtime import PropSession
 from engine.prop_entity import Prop as CoreProp, legacy_model_properties
+from engine.logic_interaction import LogicInteraction
+from engine.logic_player import LogicPlayer
+from engine.logic_session import LogicSession
+from engine.logic_combat import LogicCombat
 
 
 class _CamPlayer:
@@ -67,13 +72,29 @@ class _NullIO:
 class _BridgeLogic:
     """The ``logic`` object the plugin lifecycle/tick hooks receive."""
 
-    def __init__(self, things):
+    def __init__(self, things, plugin_manager=None):
+        self.editor_state = SimpleNamespace(things=things, brushes=[])
         self.things = things
-        self.player = _CamPlayer()
+        self.play_mode = True
         self.io_manager = _NullIO()
-        self.current_hud_message = ""
-        self._props = None
+        self._tick_lock = threading.RLock()
+        self._plugin_manager = plugin_manager
+        self.player_runtime = LogicPlayer(self)
+        self.player_runtime.player = _CamPlayer()
+        self.session_runtime = LogicSession(self)
+        self.interaction_runtime = LogicInteraction(self)
+        self.combat_runtime = LogicCombat(self)
+        self.prop_runtime = PropSession(self)
         self._prop_drop_interceptor = None
+
+    def _plugin_emit(self, event: str, **data):
+        manager = self._plugin_manager
+        if manager is None:
+            return
+        try:
+            manager.emit(event, logic=self, **data)
+        except Exception:
+            pass
 
 
 class PlayerPluginHost:
@@ -197,13 +218,16 @@ class PlayerPluginHost:
             self.active = False
             return
 
-        self.bridge = _BridgeLogic(things)
+        self.bridge = _BridgeLogic(things, self.manager)
+        # The map's items, compiled as the editor's play session compiles them.
+        definitions = ItemDefinitions()
+        definitions.load(map_data.get("items"))
+        self.bridge.combat_runtime.items = definitions.registry()
         self._playing = True
         # The engine's Prop registry, exactly as the editor logic thread builds
         # it: one session, filled from the authoritative thing list.  The player
         # does not decide for itself which Things are Props.
-        self.bridge._props = PropSession(self.bridge)
-        self.bridge._props.start()
+        self.bridge.prop_runtime.start()
 
         try:
             binder = getattr(self.manager, "bind_host", None)
@@ -225,10 +249,11 @@ class PlayerPluginHost:
         if not self._playing or self.bridge is None or self.manager is None:
             return
 
-        self.bridge.player.update(cam_pos, cam_yaw_deg, cam_pitch_deg)
-        self.bridge.current_hud_message = ""
+        self.bridge.player_runtime.player.update(cam_pos, cam_yaw_deg, cam_pitch_deg)
+        self.bridge.interaction_runtime.current_hud_message = ""
+        self.bridge.interaction_runtime.current_hud_key_name = None
 
-        props = self.bridge._props
+        props = self.bridge.prop_runtime
         if props is not None:
             props.tick(dt, bool(use_pressed))
             props.sync_physics_positions()
@@ -237,13 +262,13 @@ class PlayerPluginHost:
             self.manager.tick(
                 self.bridge,
                 use_pressed=bool(use_pressed),
-                interaction_consumed=bool(self.bridge.current_hud_message),
+                interaction_consumed=bool(self.bridge.interaction_runtime.current_hud_message),
                 delta=dt,
             )
         except Exception:
             return
 
-        self.hud_message = self.bridge.current_hud_message
+        self.hud_message = self.bridge.interaction_runtime.current_hud_message
 
     def camera_override(self, cam_pos, cam_yaw_deg: float, cam_pitch_deg: float):
         """Let a plugin replace the render camera (pos, yaw°, pitch°).
@@ -265,9 +290,9 @@ class PlayerPluginHost:
         if has is not None and not has("camera.player_view"):
             return default
         try:
-            self.bridge.player.update(cam_pos, cam_yaw_deg, cam_pitch_deg)
+            self.bridge.player_runtime.player.update(cam_pos, cam_yaw_deg, cam_pitch_deg)
             ev = emit("camera.player_view", logic=self.bridge,
-                      player=self.bridge.player, pos=tuple(cam_pos),
+                      player=self.bridge.player_runtime.player, pos=tuple(cam_pos),
                       yaw=float(cam_yaw_deg), pitch=float(cam_pitch_deg))
             if ev is None:
                 return default
@@ -293,8 +318,8 @@ class PlayerPluginHost:
             return
         self._playing = False
 
-        props = getattr(bridge, "_props", None)
-        bridge._props = None
+        props = bridge.prop_runtime
+        bridge.prop_runtime = None
         if props is not None:
             try:
                 props.stop()

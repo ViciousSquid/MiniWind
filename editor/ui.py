@@ -81,11 +81,262 @@ class RotatablePlayButton(QPushButton):
         painter.end()
 
 
+#: Toolbar icon edge and Play button length, by Settings > Large Toolbar
+#: Buttons (``[Display] big_toolbar_buttons``).
+TOOLBAR_ICON_SIZES = {True: 45, False: 35}
+PLAY_BUTTON_LENGTHS = {True: 250, False: 170}
+
+
+def toolbar_metrics(config):
+    """``(icon size, Play button length)`` for the current setting."""
+    big = config.getboolean('Display', 'big_toolbar_buttons', fallback=False)
+    return TOOLBAR_ICON_SIZES[big], PLAY_BUTTON_LENGTHS[big]
+
+
 #: Bumped whenever the default dock arrangement changes.  A layout saved by
 #: an older version is dropped once, so a new default actually reaches an
 #: install that has been opened before -- settings.ini stores the layout on
 #: every close, and restoreState() would otherwise win forever.
 LAYOUT_VERSION = 3
+
+
+
+def _log(message: str):
+    try:
+        from editor.debug_console import debug_log
+        debug_log("Plugins", message)
+    except Exception:
+        print(f"[Plugins] {message}")
+
+
+def _plugin_menu_name(plugin):
+    """Return the human-readable name used for a plugin's editor menu."""
+    name = str(getattr(plugin, "name", "") or "")
+    return name[:1].upper() + name[1:] if name else name
+
+
+def _disabled_from_config(MainWindow):
+    """Read the persisted set of disabled plugin names from settings.ini."""
+    cfg = getattr(MainWindow, "config", None)
+    if cfg is None:
+        return set()
+    try:
+        raw = cfg.get("Plugins", "disabled", fallback="")
+    except Exception:
+        raw = ""
+    return {n.strip().lower() for n in raw.split(",") if n.strip()}
+
+
+def _persist_disabled(MainWindow):
+    """Write the current disabled-plugin set back to settings.ini."""
+    from plugins.manager import get_manager
+    cfg = getattr(MainWindow, "config", None)
+    if cfg is None:
+        return
+    mgr = get_manager()
+    disabled = sorted(mgr.plugin_package_name(p).lower()
+                      for p in mgr.plugins if not mgr.is_enabled(p))
+    try:
+        if not cfg.has_section("Plugins"):
+            cfg.add_section("Plugins")
+        cfg.set("Plugins", "disabled", ", ".join(disabled))
+        if hasattr(MainWindow, "save_config"):
+            MainWindow.save_config()
+    except Exception as exc:
+        _log(f"could not persist plugin toggle: {exc}")
+
+
+def _build_filter_menu(MainWindow, menu):
+    """The Filter menu (GtkRadiant style): one checkable entry per kind of
+    object, ticked while it shows, and Show All. See engine.view_filters."""
+    from engine.view_filters import FILTERS
+    MainWindow.filter_menu = menu
+    MainWindow.filter_actions = {}
+    for key, label in FILTERS:
+        action = QAction(label.replace('&', '&&'), MainWindow, checkable=True)
+        action.setChecked(True)
+        action.toggled.connect(
+            lambda shown, key=key: MainWindow.set_view_filter(key, shown))
+        menu.addAction(action)
+        MainWindow.filter_actions[key] = action
+    menu.addSeparator()
+    menu.addAction(QAction('Show All', MainWindow,
+                           triggered=MainWindow.show_all_view_filters))
+
+
+def _build_plugins_menu(MainWindow):
+    from PyQt5.QtWidgets import QMessageBox
+    from plugins.manager import get_manager
+
+    mgr = get_manager()
+
+    # Apply any persisted enable/disable choices before drawing the menu.
+    # Through set_enabled, not the attribute: the manager caches which plugins
+    # tick and dispatch keyed on its enabled generation, and a plugin is told
+    # (on_enabled_changed) so it can release what it holds.
+    persisted_off = _disabled_from_config(MainWindow)
+    for plugin in mgr.plugins:
+        if mgr.plugin_package_name(plugin).lower() in persisted_off or \
+                plugin.name.lower() in persisted_off:
+            mgr.set_enabled(plugin, False)
+
+    menubar = MainWindow.menuBar()
+
+    # Insert Plugins immediately before Help
+    help_action = None
+    for action in menubar.actions():
+        if action.text().replace("&", "") == "Help":
+            help_action = action
+            break
+
+    # Drop a previously built menu, so a rebuild never leaves two "Plugins"
+    # entries in the menu bar.
+    for action in list(menubar.actions()):
+        if action.text().replace("&", "") == "Plugins":
+            menubar.removeAction(action)
+
+    menu = QMenu("Plugins", menubar)
+    if help_action:
+        menubar.insertMenu(help_action, menu)
+    else:
+        menubar.addMenu(menu)
+
+    if not mgr.plugins:
+        act = menu.addAction("No plugins loaded")
+        act.setEnabled(False)
+        return
+
+    # (plugin, "Enabled" toggle, plugin-owned actions) per submenu, re-read
+    # from the live enabled state every time the menu opens. The menu is built
+    # once at startup, but a plugin's state changes after that without the
+    # menu being involved -- above all a level that auto-enables its plugin
+    # (Big World for a map with a BigWorldSettings entity). Without the
+    # refresh the toggle kept showing that plugin as off while it ran.
+    rows = []
+
+    def _sync_with_live_state():
+        for plugin, toggle, actions in rows:
+            on = mgr.is_enabled(plugin)
+            if toggle.isChecked() != on:
+                # Reflect the state; do not fire _toggle_plugin, which would
+                # persist it and turn an auto-enable into a manual one.
+                toggle.blockSignals(True)
+                toggle.setChecked(on)
+                toggle.blockSignals(False)
+            for act in actions:
+                act.setVisible(on)
+                act.setEnabled(on)
+
+    menu.aboutToShow.connect(_sync_with_live_state)
+
+    for plugin in mgr.plugins:
+        sub = menu.addMenu(_plugin_menu_name(plugin))
+
+        # Plugin-owned actions sit at the very top, and are hidden outright
+        # while that plugin is off rather than shown greyed out.
+        # _run_plugin_menu_action refuses to call them without their plugin, so
+        # a visible one is an offer the editor cannot honour -- Tidy's "Load
+        # Demo map" looked available and silently did nothing.
+        plugin_actions = []
+        enabled = mgr.is_enabled(plugin)
+        for label, callback, tooltip in [
+            (label, callback, tooltip)
+            for pl, label, callback, tooltip in mgr.menu_actions()
+            if pl is plugin
+        ]:
+            act = sub.addAction(label)
+            if tooltip:
+                act.setToolTip(tooltip)
+            act.triggered.connect(
+                lambda _checked=False, p=plugin, cb=callback:
+                _run_plugin_menu_action(MainWindow, p, cb))
+            plugin_actions.append(act)
+        if plugin_actions:
+            # The separator belongs to the group: with the actions hidden it
+            # would otherwise sit above "Enabled" on its own.
+            plugin_actions.append(sub.addSeparator())
+        for act in plugin_actions:
+            act.setVisible(enabled)
+            act.setEnabled(enabled)
+
+        # Enable/disable toggle (checked = on).
+        toggle = sub.addAction("Enabled")
+        toggle.setCheckable(True)
+        toggle.setChecked(mgr.is_enabled(plugin))
+        toggle.toggled.connect(
+            lambda checked, p=plugin, acts=plugin_actions:
+            _toggle_plugin(MainWindow, p, checked, acts))
+        rows.append((plugin, toggle, plugin_actions))
+        sub.addSeparator()
+
+        # Placement entries for this plugin's entities.
+        entries = [(label, cls) for pl, label, cls in mgr.menu_entries()
+                   if pl is plugin]
+        if entries:
+            place_hdr = sub.addAction("Add entity (at origin):")
+            place_hdr.setEnabled(False)
+            for label, cls in entries:
+                act = sub.addAction(f"   {label}")
+                act.triggered.connect(
+                    lambda _checked=False, c=cls, l=label, p=plugin:
+                    _place_plugin_entity(MainWindow, p, c, l))
+            sub.addSeparator()
+
+        about = sub.addAction("About…")
+        about.triggered.connect(
+            lambda _checked=False, p=plugin:
+            QMessageBox.information(
+                MainWindow, f"{_plugin_menu_name(p)} v{p.version}",
+                f"{p.description or '(no description)'}\n\n"
+                f"Version: {p.version}\n"
+                f"Category: {p.category}\n"
+                f"Place its entities from here or the 2D view's right-click "
+                f"menu under Plugins ▸ {_plugin_menu_name(p)}."))
+
+
+
+def _run_plugin_menu_action(MainWindow, plugin, callback):
+    """Invoke a plugin-owned editor menu action safely."""
+    if not getattr(plugin, "enabled", False):
+        return
+    try:
+        callback(MainWindow)
+    except Exception as exc:
+        _log(f"plugin menu action failed for '{plugin.name}': {exc}")
+
+
+#: Where the Plugins menu's "Add entity (at origin)" entries place an entity.
+PLUGIN_MENU_PLACE_POS = (0.0, 40.0, 0.0)
+
+
+def _place_plugin_entity(MainWindow, plugin, cls, label):
+    """Place a plugin entity at the origin from the Plugins menu.
+
+    Placement is owned by View2D (enabled check, singleton refusal, entity
+    wizard, undo checkpoint and selection), so the menu goes through the same
+    path as the 2D view's right-click menu rather than duplicating it.
+    """
+    try:
+        MainWindow.view_top._place_plugin_entity(
+            plugin, cls, label, list(PLUGIN_MENU_PLACE_POS))
+    except Exception as exc:
+        _log(f"menu placement failed for '{label}': {exc}")
+
+
+def _toggle_plugin(MainWindow, plugin, enabled, menu_actions=None):
+    from plugins.manager import get_manager
+    get_manager().set_enabled(plugin, enabled)
+    for action in menu_actions or ():
+        try:
+            action.setVisible(bool(enabled))
+            action.setEnabled(bool(enabled))
+        except Exception:
+            pass
+    _persist_disabled(MainWindow)
+    if hasattr(MainWindow, "show_toast"):
+        state = "enabled" if enabled else "disabled"
+        MainWindow.show_toast(f"Plugin '{plugin.name}' {state}"
+                              + ("" if enabled else " (restart to fully unload)"))
 
 
 class Ui_MainWindow(object):
@@ -237,9 +488,11 @@ class Ui_MainWindow(object):
         edit_menu = menubar.addMenu('Edit')
         select_menu = menubar.addMenu('Select')
         view_menu = menubar.addMenu('View')
+        _build_filter_menu(MainWindow, menubar.addMenu('Filter'))
         MainWindow.tools_menu = menubar.addMenu('Tools')
         MainWindow.debug_menu = menubar.addMenu('Debug')
         help_menu = menubar.addMenu('Help')
+        _build_plugins_menu(MainWindow)
 
         MainWindow.file_menu.addAction(QAction('New Map', MainWindow, shortcut='Ctrl+N', triggered=MainWindow.new_map))
         MainWindow.file_menu.addAction(QAction('&Open...', MainWindow, shortcut='Ctrl+O', triggered=MainWindow.load_level))
@@ -327,8 +580,8 @@ class Ui_MainWindow(object):
         select_menu.addAction(MainWindow.surface_inspector_action)
 
         select_menu.addSeparator()
-        cycle_action = QAction('Cycle Component Mode', MainWindow, shortcut='Q')
-        cycle_action.setToolTip('Step Object -> Vertex -> Edge -> Face')
+        cycle_action = QAction('Cycle Tool / Component Mode', MainWindow, shortcut='Q')
+        cycle_action.setToolTip('Step Select -> Brush -> Vertex -> Edge -> Face')
         cycle_action.triggered.connect(MainWindow.cycle_component_mode)
         select_menu.addAction(cycle_action)
 
@@ -371,6 +624,14 @@ class Ui_MainWindow(object):
             MainWindow.toggle_surface_inspector)
         view_menu.addAction(MainWindow.surface_inspector_view_action)
 
+        MainWindow.visgroups_view_action = QAction(
+            'Visgroups / Cordon', MainWindow, checkable=True)
+        MainWindow.visgroups_view_action.setToolTip(
+            'Show or hide the Visgroups & Cordon window (also the eye on the toolbar)')
+        MainWindow.visgroups_view_action.triggered.connect(
+            MainWindow.set_visgroups_window_visible)
+        view_menu.addAction(MainWindow.visgroups_view_action)
+
         MainWindow.connection_links_action = QAction(
             'Connection Links', MainWindow, checkable=True)
         MainWindow.connection_links_action.setChecked(
@@ -405,6 +666,17 @@ class Ui_MainWindow(object):
             MainWindow.toggle_system_monitor)
         MainWindow.debug_menu.addAction(MainWindow.system_monitor_action)
 
+        MainWindow.position_action = QAction('Position (P)', MainWindow)
+        MainWindow.position_action.setShortcut('P')
+        # Anywhere in the application, docks and floating windows included; a
+        # text field still takes a typed "p" (it claims printable keys first).
+        MainWindow.position_action.setShortcutContext(Qt.ApplicationShortcut)
+        MainWindow.position_action.setToolTip(
+            'Open the live camera-position window (P, or the console\'s pos)')
+        MainWindow.position_action.triggered.connect(
+            MainWindow.view_3d.show_pos_window)
+        MainWindow.debug_menu.addAction(MainWindow.position_action)
+
         # --- Tools Menu Actions ---
 
         autocaulk_action = QAction("Autocaulk", MainWindow)
@@ -412,14 +684,10 @@ class Ui_MainWindow(object):
         autocaulk_action.triggered.connect(MainWindow.autocaulk)
         MainWindow.tools_menu.addAction(autocaulk_action)
 
-        # Benchmark action is inserted by MainWindow immediately below Autocaulk.
-
         MainWindow.cutscene_wizard_action = QAction('Cutscenes...', MainWindow)
         MainWindow.cutscene_wizard_action.setShortcut('Ctrl+Shift+C')
-        MainWindow.cutscene_wizard_action.setToolTip(
-            'Author a camera-and-actor cutscene from the 3D view')
-        MainWindow.cutscene_wizard_action.triggered.connect(
-            MainWindow.open_cutscene_wizard)
+        MainWindow.cutscene_wizard_action.setToolTip('Author a camera-and-actor cutscene from the 3D view')
+        MainWindow.cutscene_wizard_action.triggered.connect(MainWindow.open_cutscene_wizard)
         MainWindow.tools_menu.addAction(MainWindow.cutscene_wizard_action)
 
         MainWindow.logic_graph_action = QAction('Logic Graph Editor…', MainWindow)
@@ -452,6 +720,11 @@ class Ui_MainWindow(object):
         MainWindow.procedural_action = QAction('Procedural Map Generator…', MainWindow)
         MainWindow.procedural_action.triggered.connect(MainWindow.show_procedural_map_generator)
         
+        MainWindow.item_editor_action = QAction('Custom Items…', MainWindow)
+        MainWindow.item_editor_action.setToolTip(
+            'Define the two custom item slots: weapons or pickups, with their sprites')
+        MainWindow.item_editor_action.triggered.connect(MainWindow.open_item_editor)
+        MainWindow.tools_menu.addAction(MainWindow.item_editor_action)
         MainWindow.tools_menu.addAction(MainWindow.logic_graph_action)
         MainWindow.tools_menu.addAction(MainWindow.logic_wizard_action)
         MainWindow.tools_menu.addSeparator()
@@ -490,8 +763,7 @@ class Ui_MainWindow(object):
         help_menu.addAction(QAction('About', MainWindow, triggered=MainWindow.show_about))
 
     def create_toolbars(self, MainWindow):
-        big_toolbar_buttons = MainWindow.config.getboolean('Display', 'big_toolbar_buttons', fallback=False)
-        icon_size_val = 45 if big_toolbar_buttons else 35
+        icon_size_val, _length = toolbar_metrics(MainWindow.config)
 
         MainWindow.play_button = RotatablePlayButton(
             QIcon("assets/b_test.png"), "Play", MainWindow)
@@ -533,8 +805,11 @@ class Ui_MainWindow(object):
         # Kept so Settings > Editor > Tooltips can reach its buttons.
         MainWindow.tool_toolbar = tool_toolbar
 
-        big = MainWindow.config.getboolean('Display', 'big_toolbar_buttons', fallback=False)
-        icon_size_val = 45 if big else 35
+        icon_size_val, play_length = toolbar_metrics(MainWindow.config)
+        # Read back by MainWindow.apply_toolbar_button_size when the setting
+        # changes, so a resize needs no restart.
+        MainWindow._toolbar_icon_size = icon_size_val
+        MainWindow._play_button_length = play_length
 
         #: The strip under a toggle button when it is off.
         strip_off_color = "#555"
@@ -553,6 +828,7 @@ class Ui_MainWindow(object):
             action buttons by colour.
             """
             b = QPushButton()
+            b.setProperty("toolbar_icon_button", True)
             b.setIcon(QIcon(icon))
             b.setIconSize(QSize(icon_size_val, icon_size_val))
             
@@ -636,7 +912,8 @@ class Ui_MainWindow(object):
         MainWindow.brush_tool_btn = make_btn(
             "assets/box.png",
             "Brush tool (Shift+B)\n"
-            "Drag in a 2D view to create geometry",
+            "Drag in a 2D view to create geometry\n"
+            "(Shift+click selects a brush)",
             on_click=lambda: MainWindow.set_tool_mode('brush'),
             checkable=True, checked=MainWindow.tool_mode == 'brush',
             shortcut="Shift+B", bottom_color=group_1_color,
@@ -692,7 +969,6 @@ class Ui_MainWindow(object):
 
         make_btn("assets/subtract.png", "Subtract",
                  on_click=MainWindow.perform_subtraction, bottom_color=group_2_color)
-
         MainWindow.scissor_btn = make_btn(
             "assets/scissor.png",
             "Scissor / Clip (X)\n"
@@ -722,6 +998,12 @@ class Ui_MainWindow(object):
         terrain_btn.clicked.connect(lambda: terrain_menu.popup(
             terrain_btn.mapToGlobal(terrain_btn.rect().bottomLeft())))
 
+        MainWindow.visgroups_btn = make_btn(
+            "assets/eye.png", "Visgroups & Cordon",
+            on_click=MainWindow.set_visgroups_window_visible,
+            checkable=True, checked=False, bottom_color=group_3_color,
+            toggle_strip=True)
+
         MainWindow.grid_btn = make_btn(
             "assets/b_grid.png", "Toggle 3D Grid (G)",
             on_click=MainWindow.toggle_grid,
@@ -737,11 +1019,14 @@ class Ui_MainWindow(object):
             # builder tolerant of lightweight test/fake windows too.
             if hasattr(MainWindow.play_button, "set_vertical"):
                 MainWindow.play_button.set_vertical(vertical)
+            icon = MainWindow._toolbar_icon_size
+            length = MainWindow._play_button_length
             if vertical:
-                MainWindow.play_button.setFixedSize(icon_size_val + 16, 250)
+                MainWindow.play_button.setFixedSize(icon + 16, length)
             else:
-                MainWindow.play_button.setFixedSize(250, icon_size_val + 16)
+                MainWindow.play_button.setFixedSize(length, icon + 16)
 
+        MainWindow._sync_play_button = sync_play_button_orientation
         tool_toolbar.orientationChanged.connect(sync_play_button_orientation)
         sync_play_button_orientation(tool_toolbar.orientation())
 
@@ -777,7 +1062,7 @@ class Ui_MainWindow(object):
         
         # 2. Mid-aligned Controls
         MainWindow.display_mode_combobox = QComboBox()
-        MainWindow.display_mode_combobox.addItems(["Wireframe", "Solid Lit", "Textured"])
+        MainWindow.display_mode_combobox.addItems(["Wireframe", "Points", "Solid Lit", "Textured", "Overlay"])
         MainWindow.display_mode_combobox.setCurrentText("Solid Lit")
         MainWindow.display_mode_combobox.currentTextChanged.connect(MainWindow.set_brush_display_mode)
         
@@ -840,5 +1125,3 @@ class Ui_MainWindow(object):
         bottom_layout.addWidget(self.notification_label)
         
         status_bar.addPermanentWidget(bottom_widget, 1)
-
-

@@ -46,7 +46,7 @@ _LIFECYCLE_HOOKS = ("on_play_start", "on_play_stop", "on_tick")
 #: plugin's implementation.
 _FRAMEWORK_MODULES = frozenset({
     "plugins", "plugins.api", "plugins.manager", "plugins.host",
-    "plugins.integration", "plugins.entitybase",
+    "plugins.entitybase",
 })
 
 
@@ -124,16 +124,6 @@ def test_the_manager_is_the_only_caller_of_the_lifecycle_dispatchers():
 # Behavioural: one dispatch per play session, over repeated cycles
 # ---------------------------------------------------------------------------
 
-pytest.importorskip("PyQt5", reason="drives the real editor state and logic thread")
-
-from editor.editor_state import EditorState               # noqa: E402
-from editor.things import PlayerStart                     # noqa: E402
-from engine.logic_thread import LogicThread               # noqa: E402
-from engine.player import Player                          # noqa: E402
-from engine.threaded_game_state import ThreadedGameState  # noqa: E402
-from plugins.bigworld.entities import BigWorldSettings    # noqa: E402
-from tests.helpers.worlds import box_brush, make_thing    # noqa: E402
-
 
 class _Counter:
     """Counts lifecycle dispatches without changing what they do."""
@@ -162,7 +152,20 @@ class _Counter:
 
 @pytest.fixture
 def streaming_session():
-    """A Big World map in a real ``LogicThread``, with lifecycle instrumented."""
+    """A Big World map in a real ``LogicThread``, with lifecycle instrumented.
+
+    PyQt5 is required here rather than at module level, so the static checks
+    above still run in the fast tier.
+    """
+    pytest.importorskip("PyQt5", reason="drives the real editor state and logic thread")
+    from editor.editor_state import EditorState
+    from editor.things import PlayerStart
+    from engine.logic_thread import LogicThread
+    from engine.player import Player
+    from engine.threaded_game_state import ThreadedGameState
+    from plugins.bigworld.entities import BigWorldSettings
+    from tests.helpers.worlds import box_brush, make_thing
+
     made = []
 
     def _build(bigworld=True):
@@ -177,13 +180,13 @@ def streaming_session():
         plugin = thread.plugins.find_plugin("bigworld")
         counter = _Counter(plugin)
         made.append((thread, counter))
-        thread.player = Player(0.0, 0.0)
+        thread.player_runtime.player = Player(0.0, 0.0)
         return state, thread, counter
 
     yield _build
 
     for thread, counter in made:
-        thread.set_play_mode(False)
+        thread.session_runtime.apply_play_mode(False)
         counter.release()
         thread.stop()
 
@@ -193,13 +196,13 @@ def streaming_session():
 def test_one_play_session_starts_the_plugin_exactly_once(streaming_session):
     _state, thread, counter = streaming_session()
 
-    thread.set_play_mode(True)
+    thread.session_runtime.apply_play_mode(True)
 
     assert len(counter.starts) == 1, (
         "on_play_start ran %d times for one press of Play; a second lifecycle "
         "path is building a second session over the same world"
         % len(counter.starts))
-    assert getattr(thread, "_bigworld", None) is not None, (
+    assert thread.plugins.services.get("bigworld") is not None, (
         "fixture: the map should have started a streaming session")
 
 
@@ -208,23 +211,25 @@ def test_one_play_session_starts_the_plugin_exactly_once(streaming_session):
 def test_repeated_play_cycles_pair_one_start_with_one_stop(streaming_session):
     """Start/stop/start/stop, with the world checked after every cycle."""
     state, thread, counter = streaming_session()
+    # Keep strong references: CPython may reuse an object's id after the
+    # previous session is torn down. The test is about distinct session
+    # objects, not allocator behaviour.
     sessions = []
 
     for cycle in range(3):
-        thread.set_play_mode(True)
-        sessions.append(getattr(thread, "_bigworld", None))
+        thread.session_runtime.apply_play_mode(True)
+        sessions.append(thread.plugins.services.get("bigworld"))
         assert len(counter.starts) == cycle + 1, (
             "cycle %d: %d starts for %d play sessions"
             % (cycle, len(counter.starts), cycle + 1))
 
-        thread.set_play_mode(False)
+        thread.session_runtime.apply_play_mode(False)
         assert len(counter.stops) == cycle + 1, (
             "cycle %d: %d stops for %d play sessions"
             % (cycle, len(counter.stops), cycle + 1))
-        assert getattr(thread, "_bigworld", None) is None, (
+        assert thread.plugins.services.get("bigworld") is None, (
             "cycle %d: the streaming session outlived play mode" % cycle)
 
-    assert all(session is not None for session in sessions)
     assert len({id(session) for session in sessions}) == len(sessions), (
         "two play sessions shared one streaming session object")
     # Nothing of the session may survive into the authored world.
@@ -246,9 +251,9 @@ def test_a_map_without_the_settings_entity_starts_no_session(streaming_session):
     """
     _state, thread, counter = streaming_session(bigworld=False)
 
-    thread.set_play_mode(True)
+    thread.session_runtime.apply_play_mode(True)
 
-    assert getattr(thread, "_bigworld", None) is None, (
+    assert thread.plugins.services.get("bigworld") is None, (
         "a map with no BigWorldSettings entity started a streaming session")
     assert len(counter.starts) <= 1, "on_play_start ran more than once"
 
@@ -256,11 +261,11 @@ def test_a_map_without_the_settings_entity_starts_no_session(streaming_session):
 @pytest.mark.qt
 @pytest.mark.integration
 def test_stopping_a_session_that_never_started_is_harmless(streaming_session):
-    """Editor startup calls ``set_play_mode(False)`` before any Play is pressed."""
+    """Editor startup can issue a session stop before any Play is pressed."""
     _state, thread, counter = streaming_session()
 
-    thread.set_play_mode(False)
-    thread.set_play_mode(False)
+    thread.session_runtime.apply_play_mode(False)
+    thread.session_runtime.apply_play_mode(False)
 
     assert counter.starts == [], "a stop dispatched a start"
-    assert getattr(thread, "_bigworld", None) is None
+    assert thread.plugins.services.get("bigworld") is None

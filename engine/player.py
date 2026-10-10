@@ -1,12 +1,36 @@
+"""The player controller: Fio's collision, Quake 2's movement rules.
+
+Collision is Fio's own -- the spatial grid's colliders, per-axis box
+resolution with the stair lip, capsule depenetration against angled brushes,
+terrain, and Fio's water. Gravity comes from the live PhysicsWorld, the one
+authority (``engine.physics.world_gravity``; Quake 2's 800 by default).
+
+On top of that, movement follows Quake 2 (qcommon/pmove.c, cl_input.c):
+200 walk / 300 run (sprint is +speed) / 100 ducked, with diagonal input
+adding up as Quake 2's does; ground acceleration 10 and friction 6 with stop
+speed 100, air acceleration 1, the wish shortened by a third of the view
+pitch; a 270 jump that must be released between jumps and is locked out
+briefly after a hard landing; stepping up 18 units in the air as well as on
+the ground; ducking that halves the hull; and ground no steeper than ~45
+degrees.
+"""
+
 import math
 import glm
 from .constants import (
-    TILE_SIZE, GRAVITY, JUMP_STRENGTH, TERMINAL_VELOCITY,
+    TILE_SIZE, JUMP_STRENGTH, TERMINAL_VELOCITY,
+    CL_FORWARDSPEED, CL_SIDESPEED, CL_RUN_SCALE,
+    PM_STOPSPEED, PM_MAXSPEED, PM_DUCKSPEED, PM_ACCELERATE, PM_AIRACCELERATE,
+    PM_FRICTION, PM_GROUND_NORMAL,
+    PM_LAND_SPEED, PM_HARD_LAND_SPEED, PM_LAND_TIME, PM_HARD_LAND_TIME,
+    PM_DUCK_HEIGHT_FRACTION, PM_DUCK_EYE_FRACTION,
+    PM_SPRINT_SCALE,
     WATER_SWIM_SPEED_MULT, WATER_VERTICAL_SPEED_MULT, WATER_DRAG,
     WATER_WADE_SPEED_MULT, WATER_MAX_SINK_SPEED,
     WATERJUMP_MAX_CLIMB, WATERJUMP_EDGE_ABOVE_SURFACE, WATERJUMP_MAX_BOOST,
     is_solid_world_brush, is_water_brush, brush_aabb_bounds,
 )
+from .physics import world_gravity
 
 
 # =============================================================================
@@ -159,11 +183,18 @@ class Player:
         self.angle = angle
         self.pitch = 0.0
 
-        # Physics constants
-        self.speed = 200.0
+        # Walking speed (Quake 2's cl_forwardspeed); sprint runs at PM_MAXSPEED.
+        self.speed = CL_FORWARDSPEED
         self.mouse_sensitivity = 0.0015
         self.width, self.height, self.depth = TILE_SIZE, TILE_SIZE * 2, TILE_SIZE
         self.camera_height = 40.0  # Offset from pos.y
+        # The standing hull and eye; ducking derives its own from these.
+        self.stand_height = self.height
+        self.stand_camera_height = self.camera_height
+        self.ducked = False
+        # Quake 2's landing lockout: no jumping for a moment after a hard landing.
+        self.landing = False
+        self.pm_time = 0.0
 
         # Physics state
         self.on_ground = False
@@ -181,8 +212,48 @@ class Player:
         self._waterjump_timer = 0.0    # while > 0, swim drag leaves the launch arc alone
         self._waterjump_cooldown = 0.0 # prevents re-triggering every frame
 
-        # Pre-computed half-extents (constant for the lifetime of this player instance)
+        # Pre-computed half-extents (they change only when ducking)
         self._half = glm.vec3(self.width / 2.0, self.height / 2.0, self.depth / 2.0)
+
+        # Quake 2's jump latch: set only by a jump, so holding jump does not
+        # repeat on landing, but a press made in the air jumps on landing.
+        self._jump_held = False
+        self._gravity = world_gravity()
+
+    def _duck_drop(self):
+        """How far the centre moves when the hull shrinks from the top."""
+        return self.stand_height * (1.0 - PM_DUCK_HEIGHT_FRACTION) * 0.5
+
+    def set_ducked(self, ducked):
+        """Set the hull and eye for ducking, leaving the centre where it is."""
+        ducked = bool(ducked)
+        stand_eye = self.stand_height * 0.5 + self.stand_camera_height
+        if ducked:
+            height = self.stand_height * PM_DUCK_HEIGHT_FRACTION
+            self.camera_height = stand_eye * PM_DUCK_EYE_FRACTION - height * 0.5
+        else:
+            height = self.stand_height
+            self.camera_height = self.stand_camera_height
+        self.ducked = ducked
+        self.height = height
+        self._half = glm.vec3(self.width / 2.0, height / 2.0, self.depth / 2.0)
+
+    def _check_duck(self, crouch, aabb_brushes):
+        """Duck on the ground with crouch held; stand up only where there is room."""
+        if crouch and self.on_ground:
+            if not self.ducked:
+                self.pos.y -= self._duck_drop()
+                self.set_ducked(True)
+            return
+        if not self.ducked:
+            return
+        lift = self._duck_drop()
+        half = glm.vec3(self.width / 2.0, self.stand_height / 2.0, self.depth / 2.0)
+        centre = glm.vec3(self.pos.x, self.pos.y + lift, self.pos.z)
+        lo, hi = centre - half, centre + half
+        if all(self._has_headroom(b, lo, hi) for b in aabb_brushes):
+            self.pos.y += lift
+            self.set_ducked(False)
 
     def get_view_matrix(self):
         """Calculate the view matrix for rendering."""
@@ -194,14 +265,21 @@ class Player:
         )
         return glm.lookAt(cam_pos, cam_pos + direction, glm.vec3(0, 1, 0))
 
-    def update(self, delta, move_input, jump, crouch, brushes, movers=None, doors=None, terrain=None, spatial_grid=None):
+    def update(self, delta, move_input, jump, crouch, brushes, movers=None, doors=None, terrain=None,
+           spatial_grid=None, sprint=False, gravity=None):
         """
         Update player physics.
+
+        *gravity* is the live PhysicsWorld's (``engine.physics.world_gravity``);
+        None means that world's default.
 
         PERF: If spatial_grid is provided, static brush colliders are fetched
         from the grid (only nearby cells) instead of iterating every brush.
         Movers and doors are always included since they're dynamic.
         """
+        if gravity is None:
+            gravity = world_gravity()
+        self._gravity = gravity
         # --- Build collider list ---
         if spatial_grid:
             # Use the grid to get only nearby static brushes
@@ -242,37 +320,64 @@ class Player:
             self._waterjump_timer = max(0.0, self._waterjump_timer - delta)
         if self._waterjump_cooldown > 0.0:
             self._waterjump_cooldown = max(0.0, self._waterjump_cooldown - delta)
+        if self.pm_time > 0.0:
+            self.pm_time -= delta
+            if self.pm_time <= 0.0:
+                self.pm_time = 0.0
+                self.landing = False
 
         # --- 1. Movement Physics ---
 
         forward_vec = glm.vec3(math.sin(self.angle), 0, math.cos(self.angle))
         right_vec   = glm.vec3(math.cos(self.angle), 0, -math.sin(self.angle))
 
-        wish_dir = forward_vec * move_input.z + right_vec * move_input.x
-
-        if glm.length(wish_dir) > 0.1:
-            wish_dir = glm.normalize(wish_dir)
+        # The wish as Quake 2 builds it: each key asks for 200 (400 with
+        # +speed), so diagonals add up; the forward part shortens by a third
+        # of the view pitch; then it is clamped to 300 (100 ducked).
+        run = CL_RUN_SCALE if sprint else 1.0
+        fmove = max(-1.0, min(1.0, float(move_input.z))) * CL_FORWARDSPEED * run
+        smove = max(-1.0, min(1.0, float(move_input.x))) * CL_SIDESPEED * run
+        wish = (forward_vec * (fmove * math.cos(self.pitch / 3.0))
+                + right_vec * smove)
+        wish_speed = glm.length(wish)
+        wish_dir = wish / wish_speed if wish_speed > 0.0 else glm.vec3(0.0)
+        wish_speed = min(wish_speed, PM_DUCKSPEED if self.ducked else PM_MAXSPEED)
 
         swimming = self.swimming and self.physics_enabled
+
+        # Preserve the existing kinematic/no-physics path.
+        if not self.physics_enabled:
+            self._jump_held = bool(jump)
+            target_speed = min(wish_speed, PM_DUCKSPEED) if crouch else wish_speed
+            if self.in_water:
+                target_speed *= WATER_WADE_SPEED_MULT
+            self.velocity.x = wish_dir.x * target_speed
+            self.velocity.z = wish_dir.z * target_speed
+            self.pos += self.velocity * delta
+            return
+
+        self._check_duck(crouch, aabb_brushes + mesh_brushes)
 
         if swimming:
             self._apply_swim_physics(delta, move_input, right_vec, jump, crouch)
         else:
-            target_speed = self.speed * (0.5 if crouch else 1.0)
             if self.in_water:
-                target_speed *= WATER_WADE_SPEED_MULT
+                wish_speed *= WATER_WADE_SPEED_MULT
 
-            self.velocity.x = wish_dir.x * target_speed
-            self.velocity.z = wish_dir.z * target_speed
+            # Ground friction and projected acceleration; weak air
+            # acceleration keeps momentum and allows strafing.
+            if self.on_ground:
+                self._apply_move_friction(delta)
+                self._accelerate(wish_dir, wish_speed, PM_ACCELERATE, delta)
+            else:
+                self._accelerate(wish_dir, wish_speed, PM_AIRACCELERATE, delta)
 
-        if not self.physics_enabled:
-            self.pos += self.velocity * delta
-            return
-
-        # --- 2. Gravity & Jumping (suspended while swimming) ---
+        # --- 2. Jumping & gravity (gravity suspended while swimming) ---
 
         if not swimming:
-            self.velocity.y += GRAVITY * delta
+            self._check_jump(jump)
+
+            self.velocity.y += gravity * delta
 
             if self.velocity.y < TERMINAL_VELOCITY:
                 self.velocity.y = TERMINAL_VELOCITY
@@ -280,11 +385,8 @@ class Player:
             # Wading: water resistance breaks a fall almost immediately
             if self.in_water and self.velocity.y < WATER_MAX_SINK_SPEED:
                 self.velocity.y = WATER_MAX_SINK_SPEED
-
-            if jump and self.on_ground:
-                self.velocity.y = JUMP_STRENGTH
-                self.on_ground  = False
-                self.ground_object = None
+        elif not jump:
+            self._jump_held = False
 
         # --- 2b. Waterjump: climbing out of pools ---
         # Holding jump while pushing against a wall whose top edge is near the
@@ -295,6 +397,9 @@ class Player:
             self._try_water_jump(aabb_brushes, wish_dir)
 
         # --- 3. Collision Resolution ---
+
+        was_on_ground = self.on_ground
+        fall_speed = float(self.velocity.y)
 
         # A. Horizontal movement with AABB collision.  This integrates X/Z
         # once (it advances pos even with an empty brush list), so mesh brushes
@@ -327,10 +432,72 @@ class Player:
                     self.on_ground     = True
                     self.ground_object = terrain
 
+        # A landing faster than 200 u/s holds off the next jump briefly.
+        if self.on_ground and not was_on_ground and fall_speed < PM_LAND_SPEED:
+            self.landing = True
+            self.pm_time = (PM_HARD_LAND_TIME if fall_speed < PM_HARD_LAND_SPEED
+                            else PM_LAND_TIME)
+
         # Floor safety clamp
         if self.pos.y < -2000:
             self.pos     = glm.vec3(0, 100, 0)
             self.velocity = glm.vec3(0, 0, 0)
+
+    # ------------------------------------------------------------------
+    # Quake-style ground / air movement
+    # ------------------------------------------------------------------
+
+    def _check_jump(self, jump):
+        """Quake 2's jump: released between jumps, never just after a hard landing."""
+        if self.landing:
+            return
+        if not jump:
+            self._jump_held = False
+            return
+        if self._jump_held or not self.on_ground:
+            return
+        self._jump_held = True
+        self.velocity.y = max(self.velocity.y + JUMP_STRENGTH, JUMP_STRENGTH)
+        self.on_ground = False
+        self.ground_object = None
+
+    def _apply_move_friction(self, delta):
+        """Quake 2 ground friction on horizontal velocity (6, stop speed 100)."""
+        speed = math.hypot(float(self.velocity.x), float(self.velocity.z))
+        if speed < 1.0:
+            self.velocity.x = 0.0
+            self.velocity.z = 0.0
+            return
+
+        control = max(speed, PM_STOPSPEED)
+        drop = control * PM_FRICTION * delta
+        newspeed = max(speed - drop, 0.0)
+
+        if newspeed == 0.0:
+            self.velocity.x = 0.0
+            self.velocity.z = 0.0
+            return
+
+        scale = newspeed / speed
+        self.velocity.x *= scale
+        self.velocity.z *= scale
+
+    def _accelerate(self, wish_dir, wish_speed, accelerate, delta):
+        """Quake 2's projected acceleration step."""
+        if wish_speed <= 0.0 or glm.length(wish_dir) < 0.0001:
+            return
+
+        current_speed = (
+            float(self.velocity.x) * float(wish_dir.x)
+            + float(self.velocity.z) * float(wish_dir.z)
+        )
+        add_speed = wish_speed - current_speed
+        if add_speed <= 0.0:
+            return
+
+        accel_speed = min(accelerate * delta * wish_speed, add_speed)
+        self.velocity.x += accel_speed * wish_dir.x
+        self.velocity.z += accel_speed * wish_dir.z
 
     # ------------------------------------------------------------------
     # Water / swimming
@@ -488,7 +655,7 @@ class Player:
                 continue
 
             rise = (ledge_top - feet_y) + 12.0
-            self.velocity.y = min(math.sqrt(2.0 * abs(GRAVITY) * rise), WATERJUMP_MAX_BOOST)
+            self.velocity.y = min(math.sqrt(2.0 * abs(self._gravity) * rise), WATERJUMP_MAX_BOOST)
             self._waterjump_timer = 0.6
             self._waterjump_cooldown = 0.7
             return
@@ -553,10 +720,9 @@ class Player:
         True if the player was stepped up (caller keeps the move), False
         if this is a real wall (caller reverts as before).
         """
-        # Only step while walking on the ground; never mid-jump or swimming
-        if self.swimming or not self.on_ground:
-            return False
-        if self.velocity.y > 0.01:
+        # Quake 2 steps in the air too (how a jump lands on a ledge a step
+        # above its peak); never while swimming.
+        if self.swimming:
             return False
 
         half = self._half
@@ -684,7 +850,7 @@ class Player:
             self.pos.y += push[1]
             self.pos.z += push[2]
 
-            if push_n[1] > 0.3:
+            if push_n[1] >= PM_GROUND_NORMAL:
                 if ground_normal is None or push_n[1] > ground_normal[1]:
                     ground_normal = push_n
             elif push_n[1] < -0.3:

@@ -307,6 +307,10 @@ class IOManager:
         # start of the next update() instead -- on the tick's thread.
         self._tick_thread = None
         self._foreign_outputs = deque()
+
+        # LogicGate signal state belongs to the event dispatcher: it is
+        # transient, session-local I/O state, not world-owner state.
+        self.gate_inputs = {}
     
     def set_logic_thread(self, logic_thread):
         """Set reference to logic thread."""
@@ -373,6 +377,7 @@ class IOManager:
         """Reset for new play session."""
         self.pending_events.clear()
         self._foreign_outputs.clear()
+        self.gate_inputs.clear()
         self.current_time = 0.0
         self._source_entity = None
         self._source_id = ""
@@ -397,7 +402,7 @@ class IOManager:
             return
         tick_thread = self._tick_thread
         if (tick_thread is not None and tick_thread != threading.get_ident()
-                and getattr(self._logic_thread, 'play_mode', False)):
+                and self._logic_thread.session_runtime.play_mode):
             self._foreign_outputs.append(
                 (source_entity, output_name, value, activator_entity))
             return
@@ -567,9 +572,8 @@ class IOManager:
             touch(target)
             if (was_hidden is not None
                     and authored_flag(target, 'hidden') != was_hidden):
-                mark = getattr(self._logic_thread, 'mark_collision_dirty', None)
-                if mark is not None:
-                    mark()
+                if self._logic_thread is not None:
+                    self._logic_thread.collision_runtime.mark_dirty()
             (self._source_entity, self._source_id,
              self._activator_entity, self._activator_id) = previous
     

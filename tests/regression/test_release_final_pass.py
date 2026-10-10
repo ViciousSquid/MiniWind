@@ -7,8 +7,6 @@ rebuild and against values derived straight from the world's dicts.
 """
 
 import json
-from types import SimpleNamespace
-
 import pytest
 
 pytest.importorskip("PyQt5", reason="editor state and console are editor-tier")
@@ -40,16 +38,20 @@ def _doors_world():
 
 def _console(state, logic):
     from editor.console_commands import ConsoleCommandHandler
-    window = SimpleNamespace(state=state,
-                             view_3d=SimpleNamespace(logic_thread=logic,
-                                                     play_mode=True),
-                             update_all_ui=lambda: None)
-    return ConsoleCommandHandler(window)
+    from editor.main_window import MainWindow
+    from tests.helpers.paths import REPO_ROOT
+
+    window = MainWindow(str(REPO_ROOT))
+    window.state = state
+    window.view_3d.logic_thread = logic
+    window.view_3d.play_mode = True
+    handler = ConsoleCommandHandler(window)
+    return handler, window
 
 
 def _assert_doors_follow_their_brushes(state, logic, door_a, door_b, lift,
                                        lift_progress):
-    for index, brush in logic.doors + logic.movers:
+    for index, brush in logic.mover_runtime.doors + logic.mover_runtime.movers:
         assert state.brushes[index] is brush, (
             f"door/mover {brush['name']} is keyed by index {index}, which now "
             f"holds {state.brushes[index]['name'] if index < len(state.brushes) else 'nothing'}")
@@ -60,7 +62,7 @@ def _assert_doors_follow_their_brushes(state, logic, door_a, door_b, lift,
         logic._tick(logic.TICK_DURATION)
     assert door_a["pos"] == closed_a, "Open aimed at door_b opened door_a"
     assert door_b["pos"][1] > 64.0 + 100.0, "the aimed door did not open"
-    assert (logic.mover_states[state.brushes.index(lift)]["progress"]
+    assert (logic.mover_runtime.mover_states[state.brushes.index(lift)]["progress"]
             >= lift_progress), "the lift lost its progress in the re-key"
 
 
@@ -74,14 +76,14 @@ def test_console_delete_of_a_brush_in_play_keeps_io_aimed_at_the_right_door():
     try:
         for _ in range(20):
             logic._tick(logic.TICK_DURATION)
-        progress = logic.mover_states[state.brushes.index(lift)]["progress"]
+        progress = logic.mover_runtime.mover_states[state.brushes.index(lift)]["progress"]
 
-        _console(state, logic).cmd_delete("crate")
+        _console(state, logic)[0].cmd_delete("crate")
         logic._tick(logic.TICK_DURATION)
 
         _assert_doors_follow_their_brushes(state, logic, door_a, door_b, lift,
                                            progress)
-        assert all(b is not crate for b in logic._collision_brushes_cache)
+        assert all(b is not crate for b in logic.collision_runtime._collision_brushes_cache)
     finally:
         logic.stop()
 
@@ -96,16 +98,16 @@ def test_editor_delete_then_a_console_command_before_the_next_tick():
     try:
         for _ in range(20):
             logic._tick(logic.TICK_DURATION)
-        progress = logic.mover_states[state.brushes.index(lift)]["progress"]
+        progress = logic.mover_runtime.mover_states[state.brushes.index(lift)]["progress"]
 
         state.save_state()
         state.brushes.remove(crate)                      # editor Delete
-        _console(state, logic).cmd_set_property("lift label up")
+        _console(state, logic)[0].cmd_set_property("lift label up")
         logic._tick(logic.TICK_DURATION)
 
         _assert_doors_follow_their_brushes(state, logic, door_a, door_b, lift,
                                            progress)
-        assert all(b is not crate for b in logic._collision_brushes_cache), (
+        assert all(b is not crate for b in logic.collision_runtime._collision_brushes_cache), (
             "the deleted crate is still in the collision set")
     finally:
         logic.stop()
@@ -126,14 +128,14 @@ def test_setprop_hidden_false_leaves_the_object_visible():
     lamp = Light(pos=[0.0, 100.0, 0.0], properties={"name": "lamp"})
     state, logic = _playing([lamp])
     try:
-        _console(state, logic).cmd_set_property("lamp hidden false")
+        _console(state, logic)[0].cmd_set_property("lamp hidden false")
         assert lamp.properties["hidden"] is False
-        logic._prepare_render_state()
+        logic.render_runtime.prepare_render_state()
         table = logic.game_state.get_write_state().entity_table
         assert not table.hidden[table.slot_of_id[lamp.properties["id"]]], (
             "setprop ... hidden false published the lamp as hidden")
 
-        _console(state, logic).cmd_set_property("lamp hidden TRUE")
+        _console(state, logic)[0].cmd_set_property("lamp hidden TRUE")
         assert lamp.properties["hidden"] is True
     finally:
         logic.stop()
@@ -146,16 +148,16 @@ def test_setprop_hidden_on_a_brush_in_play_updates_its_collision():
     wall = box_brush("wall", (200, 64, 0), (32, 128, 256))
     state, logic = _playing(brushes=[ground, wall])
     try:
-        console = _console(state, logic)
+        console = _console(state, logic)[0]
         console.cmd_set_property("wall hidden true")
         logic._tick(logic.TICK_DURATION)
         assert wall["hidden"] is True
-        assert all(b is not wall for b in logic._spatial_grid._all_solid), (
+        assert all(b is not wall for b in logic.session_runtime.spatial_grid._all_solid), (
             "a wall hidden with setprop is still solid")
 
         console.cmd_set_property("wall hidden false")
         logic._tick(logic.TICK_DURATION)
-        assert any(b is wall for b in logic._spatial_grid._all_solid)
+        assert any(b is wall for b in logic.session_runtime.spatial_grid._all_solid)
     finally:
         logic.stop()
 
@@ -167,7 +169,7 @@ def test_setprop_keeps_text_properties_as_text():
                                                      "label": "on"})
     state, logic = _playing([lamp])
     try:
-        _console(state, logic).cmd_set_property("lamp label false")
+        _console(state, logic)[0].cmd_set_property("lamp label false")
         assert lamp.properties["label"] == "false"
     finally:
         logic.stop()
@@ -179,11 +181,14 @@ def test_setprop_keeps_text_properties_as_text():
 
 def _setpos_console(logic):
     from editor.console_commands import ConsoleCommandHandler
-    window = SimpleNamespace(
-        state=logic.editor_state,
-        view_3d=SimpleNamespace(logic_thread=logic, play_mode=True,
-                                player=logic.player),
-        update_all_ui=lambda: None, show_toast=lambda *a, **k: None)
+    from editor.main_window import MainWindow
+    from tests.helpers.paths import REPO_ROOT
+
+    window = MainWindow(str(REPO_ROOT))
+    window.state = logic.editor_state
+    window.view_3d.logic_thread = logic
+    window.view_3d.play_mode = True
+    window.view_3d.player = logic.player_runtime.player
     return ConsoleCommandHandler(window)
 
 
@@ -194,10 +199,10 @@ def test_setpos_moves_the_player():
 
     state, logic = _playing()
     try:
-        logic.player.velocity = glm.vec3(0.0, -300.0, 0.0)
+        logic.player_runtime.player.velocity = glm.vec3(0.0, -300.0, 0.0)
         _setpos_console(logic).handle_command("setpos 100 200 -300")
-        assert tuple(logic.player.pos) == (100.0, 200.0, -300.0)
-        assert tuple(logic.player.velocity) == (0.0, 0.0, 0.0)
+        assert tuple(logic.player_runtime.player.pos) == (100.0, 200.0, -300.0)
+        assert tuple(logic.player_runtime.player.velocity) == (0.0, 0.0, 0.0)
     finally:
         logic.stop()
 
@@ -206,9 +211,9 @@ def test_setpos_moves_the_player():
 def test_setpos_refuses_non_finite_coordinates(coords):
     state, logic = _playing()
     try:
-        before = tuple(logic.player.pos)
+        before = tuple(logic.player_runtime.player.pos)
         _setpos_console(logic).handle_command(f"teleport {coords}")
-        assert tuple(logic.player.pos) == before
+        assert tuple(logic.player_runtime.player.pos) == before
     finally:
         logic.stop()
 
@@ -218,26 +223,14 @@ def test_setpos_refuses_non_finite_coordinates(coords):
 # ---------------------------------------------------------------------------
 
 def _window_host(state):
-    """What MainWindow._load_level/_apply_level_data touch, on a real
-    EditorState, bound to the real methods."""
+    """Use the real MainWindow for level replacement regressions."""
     from editor.main_window import MainWindow
+    from tests.helpers.paths import REPO_ROOT
 
-    host = SimpleNamespace(
-        state=state, file_path="maps/open.json", unsaved_changes=False,
-        terrain=None, terrain_editor_window=None, _current_overlay=None,
-        _pre_play_world=None,
-        view_3d=SimpleNamespace(play_mode=False, logic_thread=None,
-                                terrain=None, renderer=None,
-                                camera=SimpleNamespace(pos=None, yaw=0.0,
-                                                       pitch=0.0)),
-        config=SimpleNamespace(getboolean=lambda *a, **k: False),
-        toasts=[])
-    host.show_toast = lambda msg, **k: host.toasts.append(msg)
-    for name in ("update_title", "update_all_ui", "set_selected_object",
-                 "add_recent_file", "center_2d_views_on", "_refresh_logic_graph"):
-        setattr(host, name, lambda *a, **k: None)
-    for name in ("_load_level", "_apply_level_data", "_clear_terrain"):
-        setattr(host, name, getattr(MainWindow, name).__get__(host))
+    host = MainWindow(str(REPO_ROOT))
+    host.state = state
+    host.file_path = "maps/open.json"
+    host.unsaved_changes = False
     return host
 
 
@@ -262,12 +255,17 @@ def test_a_map_that_fails_to_parse_leaves_the_open_level_alone():
 
     corrupt = copy.deepcopy(good)
     corrupt["things"][0]["pos"] = 5            # a map's shape; unparseable
-    assert host._load_level(corrupt, "maps/corrupt.json") is False
+    try:
+        assert host._load_level(corrupt, "maps/corrupt.json") is False
 
-    assert state.brushes == brushes and state.things == things, (
-        "a map that failed to parse emptied the open level")
-    assert host.file_path == "maps/open.json"
-    assert host.unsaved_changes is False
+        assert state.brushes == brushes and state.things == things, (
+            "a map that failed to parse emptied the open level")
+        assert host.file_path == "maps/open.json"
+        assert host.unsaved_changes is False
+    finally:
+        host.unsaved_changes = False
+        host.close()
+        host.deleteLater()
 
 
 def test_opening_a_terrain_map_keeps_its_terrain():
@@ -282,9 +280,14 @@ def test_opening_a_terrain_map_keeps_its_terrain():
     assert level.get("terrain_data")
     state = EditorState()
     host = _window_host(state)
-    host._apply_level_data(level)
-    assert state.terrain_data == level["terrain_data"]
-    assert host.terrain is not None
+    try:
+        host._apply_level_data(level)
+        assert state.terrain_data == level["terrain_data"]
+        assert host.terrain is not None
+    finally:
+        host.unsaved_changes = False
+        host.close()
+        host.deleteLater()
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +334,7 @@ def test_rebuilding_recent_files_does_not_accumulate_actions(qt_app, tmp_path):
 # Debug -> Validate Connections
 # ---------------------------------------------------------------------------
 
-def test_validate_connections_names_the_connection_it_reports(monkeypatch):
+def test_validate_connections_names_the_connection_it_reports(main_window, monkeypatch):
     """The report listed an I/O problem as just "targets 'ghost', which is not
     in this map" -- nothing said which entity or output held the connection.
     A merge replaced the report body and left the previous one (which named
@@ -355,7 +358,8 @@ def test_validate_connections_names_the_connection_it_reports(monkeypatch):
     monkeypatch.setattr(mw.QMessageBox, "warning",
                         staticmethod(lambda _p, _t, text: shown.append(text)))
 
-    mw.MainWindow.validate_io_connections(SimpleNamespace(state=state))
+    main_window.state = state
+    main_window.validate_io_connections()
 
     lines = [l.strip() for l in shown[0].splitlines()[2:] if l.strip()]
     assert lines[0].startswith("Start.OnPlayerSpawn targets 'ghost'"), lines
@@ -416,14 +420,16 @@ def test_the_big_world_map_is_big_and_playable():
 # Cross-thread: the property panel reads a dict the logic thread writes to
 # ---------------------------------------------------------------------------
 
-def test_property_signature_survives_a_key_added_while_it_reads():
+def test_property_signature_survives_a_key_added_while_it_reads(qt_app):
     """Seen once in the real editor: Redo -> update_all_ui -> the property
     panel's signature iterated the selected brush while the logic thread,
     projecting that freshly restored brush for the first time, added its
     geometry cache keys: "dictionary changed size during iteration". The
     write is simulated at the one point the loop runs other code: a value's
     repr()."""
+    from editor.main_window import MainWindow
     from editor.property_editor import PropertyEditor
+    from tests.helpers.paths import REPO_ROOT
 
     brush = {"id": "b", "name": "wall", "pos": [0.0, 0.0, 0.0]}
 
@@ -433,13 +439,14 @@ def test_property_signature_survives_a_key_added_while_it_reads():
             return "Intruder"
 
     brush["note"] = Intruder()
-    panel = SimpleNamespace(_SIGNATURE_IGNORED=PropertyEditor._SIGNATURE_IGNORED,
-                            _hashable=PropertyEditor._hashable)
-    panel._connection_signature = (
-        lambda c: PropertyEditor._connection_signature(panel, c))
-
-    signature = PropertyEditor._object_signature(panel, brush)
-    assert signature[0] == "brush"
+    window = MainWindow(str(REPO_ROOT))
+    try:
+        panel = PropertyEditor(window)
+        signature = panel._object_signature(brush)
+        assert signature[0] == "brush"
+    finally:
+        window.close()
+        window.deleteLater()
 
 
 # ---------------------------------------------------------------------------
@@ -447,13 +454,12 @@ def test_property_signature_survives_a_key_added_while_it_reads():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("accept", [False, True], ids=["cancel", "ok-empty"])
-def test_bind_with_no_arguments_opens_the_dialog(qt_app, monkeypatch, accept):
+def test_bind_with_no_arguments_opens_the_dialog(main_window, monkeypatch, accept):
     """``bind`` alone is documented to open a key-binding dialog; building it
     called QKeySequenceEdit.setPlaceholderText, which Qt 5 does not have, so
     it raised every time and the dialog never appeared. Found by the hostile
     console fuzz."""
-    from PyQt5 import sip
-    from PyQt5.QtWidgets import QDialog, QMainWindow
+    from PyQt5.QtWidgets import QDialog
 
     from editor import debug_console
     from editor.console_commands import ConsoleCommandHandler
@@ -466,15 +472,10 @@ def test_bind_with_no_arguments_opens_the_dialog(qt_app, monkeypatch, accept):
     logged = []
     monkeypatch.setattr(debug_console.DebugLogger, "log",
                         lambda self, c, m: logged.append((c, m)))
-    host = QMainWindow()
-    host.state = SimpleNamespace()
-    try:
-        ConsoleCommandHandler(host).handle_command("bind")
-        assert shown == ["Bind Key"]
-        if accept:
-            assert ("Error", "No key selected") in logged
-    finally:
-        sip.delete(host)
+    ConsoleCommandHandler(main_window).handle_command("bind")
+    assert shown == ["Bind Key"]
+    if accept:
+        assert ("Error", "No key selected") in logged
 
 
 # ---------------------------------------------------------------------------
@@ -498,10 +499,10 @@ def _portal_session():
         state.load_from_data(json.load(f), save_undo=False)
     logic = LogicThread(ThreadedGameState(), state)
     start = next(t for t in state.things if isinstance(t, PlayerStart))
-    logic.player = Player(start.pos[0], start.pos[2])
-    logic.set_play_mode(True)
-    logic._stop_monster_ai()
-    logic.player.physics_enabled = False
+    logic.player_runtime.player = Player(start.pos[0], start.pos[2])
+    logic.session_runtime.apply_play_mode(True)
+    logic.session_runtime.stop_monster_ai()
+    logic.player_runtime.player.physics_enabled = False
     portal = next(t for t in state.things
                   if isinstance(t, Portal) and t.properties["name"] == "Portal_1")
     n, o = portal.get_normal(), portal.pos
@@ -512,12 +513,15 @@ def _portal_session():
 
 def _put(logic, where):
     import glm
-    logic.player.pos = glm.vec3(*where)
-    logic.player.velocity = glm.vec3(0.0, 0.0, 0.0)
+    if logic.player_runtime.player is None:
+        from engine.player import Player
+        logic.player_runtime.player = Player(0.0, 0.0)
+    logic.player_runtime.player.pos = glm.vec3(*where)
+    logic.player_runtime.player.velocity = glm.vec3(0.0, 0.0, 0.0)
 
 
 def _at(logic, where):
-    return all(abs(a - b) < 1.0 for a, b in zip(logic.player.pos, where))
+    return all(abs(a - b) < 1.0 for a, b in zip(logic.player_runtime.player.pos, where))
 
 
 def test_walking_through_a_portal_still_transits():
@@ -555,7 +559,7 @@ def test_a_teleport_across_a_portal_does_not_transit(route, tmp_path):
             _put(logic, back)
             logic._portal_prev_player_pos = None
             logic._tick(logic.TICK_DURATION)
-            ok, msg = logic.save_session(str(tmp_path / "s.fiosave"),
+            ok, msg = logic.session_runtime.save_session(str(tmp_path / "s.fiosave"),
                                          map_name="Portal_Test.json")
             assert ok, msg
         _put(logic, front)
@@ -568,18 +572,18 @@ def test_a_teleport_across_a_portal_does_not_transit(route, tmp_path):
         elif route == "trigger_input":
             node = PathNode(pos=list(back), properties={"name": "behind"})
             state.things.append(node)
-            logic._build_entity_caches()
+            logic.world_runtime.build_entity_caches()
             from editor.io_handlers import register_all_input_handlers  # noqa: F401
             handler = logic.io_manager._input_handlers[("trigger", "teleport")]
             handler({"name": "tele", "target_node": "behind"}, "behind", logic)
         else:
-            ok, msg = logic.load_session(str(tmp_path / "s.fiosave"),
+            ok, msg = logic.session_runtime.load_session(str(tmp_path / "s.fiosave"),
                                          map_name="Portal_Test.json")
             assert ok, msg
         logic._tick(logic.TICK_DURATION)
 
         assert _at(logic, back), (
             "a %s just behind Portal_1 sent the player through it, to %s"
-            % (route, [round(c) for c in logic.player.pos]))
+            % (route, [round(c) for c in logic.player_runtime.player.pos]))
     finally:
         logic.stop()

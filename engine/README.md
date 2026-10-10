@@ -1,179 +1,93 @@
 # `engine/`
 
-The runtime engine: world simulation, physics, resource loading, numerical render projection, OpenGL rendering, shaders, terrain, models, sprites and the Qt game viewport.
+| File | What it is |
+| --- | --- |
+| `__init__.py` | Package marker. |
+| `actor_pick.py` | Finds the actor under a screen ray, using the published tables. |
+| `animated_texture.py` | Decodes animated GIF textures and picks the frame for a play time. |
+| `brush_geometry.py` | Convex brush geometry from planes: faces, collision meshes, 2D outlines, bounds, component edits. |
+| `camera.py` | Camera state and view/projection matrices. |
+| `change_journal.py` | Records entity changes so the dense tables refresh only changed rows. |
+| `constants.py` | Shared engine constants: sizes, render modes, physics and movement tuning. |
+| `cutscene_runtime.py` | Cutscene playback: camera and actor tracks, timed events, world restore. |
+| `effect_entity.py` | The Effect entity (FIRE, ORB, EXPLOSION, CUSTOM). |
+| `effect_table.py` | Dense runtime state for Effects. |
+| `entity_table.py` | Dense table of entities for rendering. |
+| `fileio.py` | Atomic file writes for maps, autosaves and saves. |
+| `floating_windows.py` | Draggable, collapsible overlay windows drawn in the 3D view (SysMon style). |
+| `glasses.py` | Player glasses styles and their sprite paths. |
+| `glb_loader.py` | GLB/glTF model loader. |
+| `items.py` | Item definitions for the four item slots (`gun1`, `gun2`, `custom1`, `custom2`). |
+| `level_validation.py` | Checks the structure of maps and save games before loading them. |
+| `logic_camera.py` | LogicThread runtime: editor and play camera, overhead view, frustum. |
+| `logic_collision.py` | LogicThread runtime: brush and model collision data. |
+| `logic_combat.py` | LogicThread runtime: shooting, projectiles, bullet marks, noise events. |
+| `logic_editor.py` | LogicThread runtime: editor-mode camera input. |
+| `logic_interaction.py` | LogicThread runtime: door and LevelChanger use checks and prompts. |
+| `logic_movers.py` | LogicThread runtime: movers and doors. |
+| `logic_parenting.py` | LogicThread runtime: lights and portals that follow movers. |
+| `logic_player.py` | LogicThread runtime: player 1 and player 2 movement and input, water sounds. |
+| `logic_portals.py` | LogicThread runtime: portal fade and transit. |
+| `logic_render.py` | LogicThread runtime: publishes the render tables each tick, minus filtered/visgroup/cordon rows. |
+| `logic_session.py` | LogicThread runtime: play start/stop, save/load, world pause. |
+| `logic_thread.py` | The fixed-timestep simulation loop that runs the runtimes in order. |
+| `logic_timing.py` | LogicThread runtime: logic timers and light fades. |
+| `logic_triggers.py` | LogicThread runtime: triggers. |
+| `logic_world.py` | LogicThread runtime: entity lookup indexes for a play session. |
+| `monster_ai.py` | Monster behaviour: sight, movement, attacks, death, pathfinding. |
+| `monster_constants.py` | Monster tuning and sprite constants. |
+| `monster_table.py` | Dense per-monster data for MonsterAI. |
+| `mover_table.py` | Dense mover and door motion data. |
+| `obj_loader.py` | OBJ/MTL model loader; turns Z-up models upright. |
+| `overhead_sprite.py` | Player sprite for the overhead camera mode. |
+| `pause_menu.py` | Pause menu pages, items and cursor (no Qt). |
+| `pause_menu_window.py` | The pause menu's floating window. |
+| `physics.py` | Collision, spatial grid and dynamic-body physics; holds the world gravity. |
+| `player.py` | Player movement and collision (Quake 2 movement rules). |
+| `player_starts.py` | Picks the PlayerStart the player spawns at. |
+| `portal_transform.py` | Portal point/direction transforms. |
+| `projectile_table.py` | Dense storage for live monster projectiles. |
+| `prop_entity.py` | The Prop entity (model or billboard; carryable, collectable). |
+| `prop_runtime.py` | Prop carrying, collecting, dropping and respawning. |
+| `qt_game_view.py` | The 3D view widget: drawing, input, Play mode, HUD, pause menu, audio. |
+| `render_cull.py` | Distance culling over dense positions. |
+| `render_keys.py` | Packs draw state into sortable keys and finds equal-key runs. |
+| `render_table.py` | Dense table of brushes for rendering. |
+| `savegame.py` | Play-session save and load (`.fiosave`). |
+| `shaders.py` | Shader sources and light limits. |
+| `soa.py` | Growth helpers for the dense arrays. |
+| `spatial.py` | World cell maths and the cell index. |
+| `speaker_audio.py` | Rules for which files a Speaker may play (`assets/sounds`, `assets/music`). |
+| `sprite_layers.py` | Entity sprites as layers of one texture array. |
+| `sysmon.py` | The system monitor overlay. |
+| `terrain.py` | Terrain generation, meshes, drawing and height queries. |
+| `terrain_style.py` | Terrain appearance options. |
+| `terrain_table.py` | Dense terrain chunk data. |
+| `textures.py` | A small OpenGL texture cache; not used by Fio. |
+| `threaded_game_state.py` | Hands state between the logic thread and the 3D view. |
+| `view_distance.py` | View distance and distance fog settings. |
+| `view_filters.py` | What the editor hides: filter groups, user visgroups, the cordon. |
 
-The engine's authoritative gameplay/world state remains object-oriented. Performance-sensitive execution paths increasingly project that state into dense NumPy representations before entering hot loops. Rendering and physics both use this pattern: Python objects provide the API and world model; contiguous numerical arrays provide the execution representation.
+## `renderer/`
 
----
-
-### `brush_geometry.py`
-Convex brush geometry based on intersections of half-space planes. Computes surface windings, collision meshes, 2D silhouettes and bounds. The plane set is the source of truth; derived geometry is cached using a geometry signature and invalidation epoch. Also provides component-edit geometry operations including convex-hull reconstruction and plane/point dragging primitives. Uses NumPy without depending on Qt or the editor.
-
-### `camera.py`
-Camera state and view/projection matrix computation for first-person and other 3D views.
-
-### `constants.py`
-Shared engine constants covering window defaults, dimensions, render modes, physics tuning and water physics.
-
-### `fileio.py`
-Crash-safe JSON writes for maps, autosaves and saved games: the document is serialised first, written beside the destination and moved over it, so a failed save never truncates the previous file.
-
-### `floating_windows.py`
-Reusable Qt floating-window infrastructure used by `QtGameView` overlays such as SysMon. Provides draggable/collapsible window chrome, stacking and event routing without importing the editor or game systems.
-
-### `glb_loader.py`
-GLB/glTF 2.0 binary model loader. Extracts mesh geometry, normals, UVs, indices, PBR materials, embedded textures and node hierarchies and exposes an OpenGL-ready model interface.
-
-### `logic_thread.py`
-Fixed-timestep game simulation thread. Handles player movement and physics, entity interaction, trigger evaluation, I/O dispatch, movers, Props, death, portals and monster AI.
-
-Runtime entity creation is treated as a world mutation, not as a separate renderer-side operation: the relevant derived caches are rebuilt at the mutation boundary, including the prefiltered monster list used by MonsterAI. This keeps the authored `things` collection authoritative while allowing live-spawn workloads to enter the execution representation immediately.
-
-### `monster_ai.py`
-Monster behaviour, movement, sight, pursuit, attacks, projectile spawning, death handling and spatial-grid pathfinding.
-
-### `monster_constants.py`
-Monster AI tuning and asset constants: sight range, movement, attacks, projectile parameters, sprite frames, billboard dimensions and physics values.
-
-### `obj_loader.py`
-Wavefront OBJ/MTL model loader. Parses vertices, UVs, normals, faces and materials and builds the OpenGL buffers used by the renderer.
-
-### `overhead_sprite.py`
-Top-down player sprite controller and renderer for Overhead camera mode. Animation state is separated from drawing; the renderer draws the selected frame as a ground quad oriented to the player's heading.
-
-### `physics.py`
-Collision detection, spatial partitioning and dynamic-body physics. `PhysicsWorld` stores dynamic state in contiguous NumPy arrays and performs gravity, damping, pushing, horizontal motion, floor resolution and sleeping in batched operations. `PhysicsBody` is a lightweight handle into that numerical state rather than a separate per-body simulation store.
-
-`SpatialGrid` supplies cell-based brush lookup and collision/raycast/line-of-sight/water queries. Its cell convention comes from `engine.spatial`, shared with Big World streaming.
-
-### `player.py`
-Player movement and collision controller: first-person movement, noclip, gravity, jumping, swimming, waterjump, angled-brush collision and step climbing.
-
-### `qt_game_view.py`
-Qt `QOpenGLWidget` that owns the GL viewport and frame/update orchestration. Handles input dispatch, play-mode switching, HUD drawing, split-screen layout and renderer selection.
-
-### `entity_table.py`
-Dense numerical projection of the entity list — the entity half of `render_table.py`. One row per `Thing`, addressed by an integer slot and named by the entity's existing UUID, with a `uint16` class column resolving what the renderer used to re-derive per entity per frame (PathNode / Portal / Light / Prop / the entity-sprite classes, plus `model_path`, `render_mode` and `sprite_path`) and a position column refreshed in bulk.
-
-Split by change frequency, exactly as the brush table is: the class column moves only when the world epoch does, positions are re-read every frame, and `hidden` is never cached — Big World parks entities by writing it with no notification, so every per-frame consumer has to see it live.
-
-`classify_slots` is the array form of `_sort_objects`' Thing half: the model and sprite passes come out as slot arrays, from masks over the class column and the live hidden mask, with no entity touched.
-
-Sprites add three more columns, and are where the cold/warm split is made explicit rather than assumed. Position is warm and size is cold, both straightforwardly; a sprite's *texture* is neither, because a monster's frame follows `dead`/`is_shooting` and a gate's, a Prop's follow properties that change without an edit. Those rows — and only those — re-resolve their sprite identity every frame; everything else resolves once. The identity is a *name*, interned to a dense integer exactly as `render_table` interns face textures, and the renderer turns it into a GL texture id on the thread that has a context.
-
-This is deliberately not pushed into `render_table.py`, whose texture column is wholly cold. Two projections with two refresh disciplines is the honest shape; one projection that had to explain when its texture column could be trusted would not be.
-
-### `render_cull.py`
-GL-free numerical render-distance culling. Operates on contiguous position data, uses squared-distance arithmetic and reusable scratch buffers, and forms the broad phase before frustum/classification and draw-key processing. Shadow and portal paths can deliberately bypass this broad-phase cull.
-
-### `render_keys.py`
-Numerical draw-key machinery. `KeyLayout` declares which dense fields cannot vary within a draw, packs those fields into sortable `int64` keys, and `sort_into_runs` finds equal-key stretches after stable sorting.
-
-The rule is:
-
-> Everything that cannot vary within one draw belongs in the render key. Everything that can vary within the draw travels as instance data.
-
-### `render_table.py`
-Dense numerical render projection. Converts render-relevant world state into parallel NumPy arrays such as centres, extents, rotations, render-class flags, texture IDs, UV transforms, colours and geometry epochs.
-
-This is a derived execution representation, not a second source of truth. It exists so visibility, classification, batching and instance construction do not repeatedly traverse Python objects.
-
-Water is projected alongside the other special brush materials: the dense table carries opacity, Fresnel/reflectivity, wave state, refraction IOR, distortion and roughness. The current water path uses the same screen-space transmission/refraction model as Glass, with optional environment/cubemap resources where configured. The former planar reflection capture pass and its `Reflections` render property are no longer part of the renderer; old saved maps remain loadable and the legacy property simply projects to nothing. Water has two tiers (`water_quality` in `settings.ini`, Settings > Renderer Performance, console `r_waterquality`): **cheap** is that pass alone; **expensive** also copies the depth buffer once per water pass (`glCopyTexSubImage2D` into a depth texture - plain GL 3.3 core, no extra render target) and uses it for Beer-Lambert absorption, waterline foam, caustics on the visible bed and screen-space reflections with the procedural sky as fallback. Low-power machines default to cheap.
-
-### `renderer_core.py`
-`BaseRenderer`, the shared OpenGL rendering infrastructure used by renderer backends. Provides shader and texture management, VAOs/VBOs, terrain, models, sprites, water, glass, fog, portals, lighting, shadows, editor helpers, LOD support, statistics and cleanup. `render_scene()` is the concrete-renderer entry point rather than an artificial abstract interface.
-
-Dynamic-light capacity comes from `engine.shaders`; shader light limits are clamped to the capacity actually declared by each shader.
-
-Shadow rendering is part of the dense execution boundary. `render_shadow_maps(shadow_lights, config, camera_pos=None)` receives a dense `(EntityTable, light_slots)` light set and selects brush casters from `RenderTable` slots and model casters from `EntityTable` slots. The shadow pass does not traverse authored `Brush`, `Thing` or `Light` collections.
-
-### `renderer_F.py`
-Fio's production forward renderer. Implements the frame passes and brush batching, including lit/textured/glow brush paths, forward lighting, point-light shadow cube maps, portal virtual views and render-mode switching.
-
-The renderer consumes the dense numerical render representation and turns equal-key runs into GPU submissions. Billboards go the same way: `draw_sprites_instanced` reads position, size, yaw and texture identity from the entity projection's columns, packs one instance row per sprite and submits one `glDrawArraysInstanced` per texture run. The object-level sprite renderer has been removed; editor, portal and split-screen views all consume the same dense EntityTable sprite representation. Opaque filled brush passes also use back-face culling where safe, while transparent, wireframe and vertex paths leave culling disabled.
-
-### `savegame.py`
-Native play-session save/load. Serialises player state, entity/mover state, trigger/collection progress and I/O state to `.fiosave` files and restores it on a freshly loaded map.
-
-### `shaders.py`
-Shader source management, compilation and uniform binding. Owns the shared dynamic-light capacities and low-power hardware detection used to select cheaper shader variants.
-
-`detect_low_power_arm()` is a hardware-cost decision, not an architectural assumption that all ARM hardware is slow; `FIO_ARM_MODE` can override detection.
-
-### `spatial.py`
-The single world-cell convention used by Fio. Defines the 512-unit cell maths, AABB-to-cell operations, cell distance helpers and `CellIndex`. Physics and Big World streaming share this implementation so they cannot disagree about spatial locality.
-
-Also owns the distinction between mapper-authored hidden state and streaming-parked state.
-
-### `sprite_layers.py`
-Entity sprite images as layers of one `GL_TEXTURE_2D_ARRAY`. The billboard pass is blended with depth writes off, so it must draw back to front; with the image as per-instance layer data rather than draw state, the whole pass is one instanced draw in exact depth order. Layers are filled by readback and `glTexSubImage3D` (mip chain included) — never by rendering into the array, which made Mesa's llvmpipe stall the sampling draw on the whole frame.
-
-### `sysmon.py`
-System monitor overlay and machine-readable performance snapshot.
-
-SysMon's metrics have deliberately distinct time bases. Its FPS value is Fio's runtime FPS over the latest one-second interval maintained by `QtGameView`. Its frame-time values are derived from the current frame and a rolling 60-frame ring buffer, including the rolling p95. Geometry counts, draw calls, TPS and VRAM are read from the live renderer/runtime state. `get_metrics()` is a read-only snapshot of those existing values; asking for it does not introduce a second frame timer or a second renderer measurement path.
-
-Benchmark tooling consumes these same SysMon values rather than inventing a separate FPS/frame-time definition.
-
-### `terrain.py`
-Chunked terrain generation and rendering, including Perlin-noise heightmaps, chunk LOD meshes, normals, texture blending and collision queries.
-
-### `terrain_style.py`
-Terrain appearance options, all independent and saved with the map: texture height layers (sand, grass, rock and snow blended over the terrain's height range, rock on steep slopes), terracing (smooth, sharp, or square blocks with walls - blocks draw per-chunk column meshes, everything else goes through the heightfield, and collision follows both), colour sources (biome/textures, a palette by height, or repeating strata bands with editable colours), contour lines, tile grid, cliff tint and stripes, shrub dots, ground patches, banded lighting and dithered colour depth. Presets are starting points only. Pure NumPy, so it is tested headlessly.
-
-### `textures.py`
-OpenGL texture manager. Loads images through `QImage`, converts them to RGBA, uploads them and caches texture IDs.
-
-### `threaded_game_state.py`
-Thread-safe bridge between simulation and rendering. `ThreadedGameState` synchronises updates; `RenderState` provides the per-frame render snapshot containing camera, player, visible-world and HUD state.
-
-## Numerical execution architecture
-
-The performance-sensitive parts of the engine increasingly follow this shape:
-
-```
-authoritative world
-      ↓
-Python objects / dictionaries
-      ↓
-dense numerical execution representation
-      ↓
-batched visibility / classification
-      ↓
-numerical keys and stable sorting
-      ↓
-equal-key runs / packed payloads
-      ↓
-OpenGL
-```
-
-The renderer therefore is not merely a collection of Python draw calls with NumPy sprinkled around it. `render_table.py`, `entity_table.py`, `render_cull.py` and `render_keys.py` form a numerical frontend between the flexible world model and the GPU backend. Brushes and entities are projected the same way and on the same refresh discipline, so neither half of the world is re-interrogated object by object once a frame starts.
-
-This boundary is also the primary observability boundary. The Debug Tables instrumentation can inspect the live dense tables, packed key/range data and related counters directly, making the numerical execution state visible without adding a parallel representation or changing the renderer's production data path.
-
-The same principle is used by `physics.py`: simulation state is dense and contiguous while `PhysicsBody` remains a convenient object/API handle.
-
-The representation boundary is deliberately selective. Small scalar operations and stateful systems remain ordinary Python where vectorisation would add overhead without removing meaningful work; large homogeneous populations and repeated numerical decisions are moved into arrays.
-
-## Rendering stack
-
-```
-QtGameView
-    ↓
-Renderer_F
-    ↓
-render_table / entity_table / render_cull / render_keys
-    ↓
-BaseRenderer / OpenGL resources
-    ↓
-OpenGL 3.3 Core
-    ↓
-GPU
-```
-
-Fio uses programmable OpenGL 3.3 Core shaders, not the legacy fixed-function pipeline.
-
-The renderer is forward rather than deferred/G-buffer based. It supports texture batching and instanced brush paths, terrain, models, sprites, water, glass, fog, portals, point-light shadow cube maps and editor overlays.
-
-Low-power hardware is handled through cheaper shader variants and reduced-cost effects rather than a separate renderer architecture.
-
+| File | What it is |
+| --- | --- |
+| `__init__.py` | The renderer package's public names. |
+| `api.py` | The `Renderer` protocol and its data types. |
+| `registry.py` | Renderer names to factories. |
+| `core/__init__.py` | Exports `RendererCore`. |
+| `core/base.py` | `RendererCore`, optional shared renderer infrastructure. |
+| `core/diagnostics.py` | Pass timing. |
+| `core/geometry.py` | Shared GPU geometry (cube, sprite quad, angled-brush meshes). |
+| `core/overlays.py` | Editor and debug overlays. |
+| `core/resources.py` | Texture, model, effect-frame and shader loading; animates GIF textures. |
+| `core/tables.py` | Lookups into the render and entity tables. |
+| `core/visibility.py` | Culling, pass classification, light selection, portal cameras. |
+| `forward/__init__.py` | Exports `ForwardRenderer`. |
+| `forward/distance.py` | The Wireframe and Points display modes. |
+| `forward/instancing.py` | Instance buffers. |
+| `forward/lighting.py` | Lights and shadow maps. |
+| `forward/passes.py` | Draw passes. |
+| `forward/portals.py` | Stencil portals. |
+| `forward/renderer.py` | `ForwardRenderer`, the built-in renderer. |
+| `forward/shaders.py` | The forward renderer's shaders. |

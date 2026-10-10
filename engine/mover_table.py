@@ -19,11 +19,12 @@ approximately, and that is most of what is here:
   are committed, its event runs, and rows after it are recomputed if the event
   changed any of them.
 * **Some rows are always taken one at a time**, in list order: path-following
-  movers (``LogicThread._update_mover_path``, which walks named nodes), rows
+  movers (``LogicMovers._update_mover_path``, which walks named nodes), rows
   with no state yet (created lazily, as the loop did), and rows whose direction
   has not been resolved yet (resolved on first use, as the loop did).
 * **The state dicts stay the interface.** I/O handlers and saved games read and
-  write ``logic.mover_states[i]`` / ``logic.door_states[i]`` as dicts.
+  write ``logic.mover_runtime.mover_states[i]`` /
+  ``logic.mover_runtime.door_states[i]`` as dicts.
   :class:`StateView` and :class:`RowState` are mappings over the columns, so
   that code is unchanged. A state set for an index that is not a row (a door
   opened outside play mode) is kept as the plain dict it was given.
@@ -338,7 +339,7 @@ class _Group:
                                float(new[2]) - cur[2])
 
     def _ride(self, logic):
-        player = logic.player
+        player = logic.player_runtime.player
         if not player:
             return None
         ground = getattr(player, 'ground_object', None)
@@ -349,10 +350,15 @@ class _Group:
 
     def _walk(self, logic, delta, table):
         """One pass in list order: vectorised between sequence points."""
+        self.dirty.clear()
+        if not self.index:
+            # Most maps have no movers or no doors. With no rows the plan is
+            # empty and the pass below commits nothing, but building it cost
+            # some thirty NumPy calls per group per tick.
+            return
         io = logic.io_manager
         ride = self._ride(logic)
         version = self.version
-        self.dirty.clear()
         cursor = 0
         plan = self._plan(logic, cursor, delta, io)
         while True:
@@ -368,6 +374,13 @@ class _Group:
                 return          # an input rebuilt the rows (a level change)
             if ran:
                 table.sync()
+                # An input fired at the sequence point reaches this group's
+                # dirty set through table.sync() (the change journal) or the
+                # state views, so only a later dirty row can change the plan
+                # for the rest of the pass. Re-planning after every sequence
+                # point cost ~0.3 ms a tick on the showcase map and, checked
+                # against a fresh plan at 115k skipped re-plans in the
+                # equivalence oracle's worlds, never changed one.
                 changed = self.take_dirty()
                 if any(row >= cursor for row in changed):
                     plan = self._plan(logic, cursor, delta, io)
@@ -433,7 +446,7 @@ class LinearMovers(_Group):
         rows = np.arange(start, len(self.index))
         active = rows[~self.move_once[start:] & self.start_on[start:]]
         on_path = np.zeros(len(self.index), dtype=bool)
-        for i in logic.mover_path_states:
+        for i in logic.mover_runtime.mover_path_states:
             row = self.row_of_index.get(i)
             if row is not None:
                 on_path[row] = True
@@ -502,8 +515,8 @@ class LinearMovers(_Group):
         that could have changed another row (I/O, or a path step)."""
         brush = self.brushes[row]
         i = self.index[row]
-        if i in logic.mover_path_states:
-            logic._update_mover_path(i, brush, delta)
+        if i in logic.mover_runtime.mover_path_states:
+            logic.mover_runtime._update_mover_path(i, brush, delta)
             self.resync(row)
             self._store(np.array([row]), self.pos[[row]])
             return True
@@ -786,8 +799,8 @@ class MoverTable:
     def _link(self, logic):
         """Rows for the live lists, and the rows the two groups share."""
         movers, doors = self.movers, self.doors
-        movers.ensure(logic.movers)
-        doors.ensure(logic.doors)
+        movers.ensure(logic.mover_runtime.movers)
+        doors.ensure(logic.mover_runtime.doors)
         key = (movers.version, doors.version)
         if getattr(self, '_linked', None) == key:
             return

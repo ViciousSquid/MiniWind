@@ -109,7 +109,7 @@ def render(renderer, context, brushes, things, view_distance,
                                **config_overrides)
     context.bind()
     gl.glClearColor(clear[0], clear[1], clear[2], 1.0)
-    renderer.render_scene(projection, view, eye, brushes, things, None, config,
+    renderer.render_scene(projection, view, eye, None, config,
                           brush_slots=config["all_brush_slots"])
     gl.glFinish()
     return context.read_pixels()
@@ -184,7 +184,7 @@ def test_play_mode_with_dynamic_light_draws_cleanly(renderer, context):
     context.bind()
     gl.glClearColor(*FOG_RGB, 1.0)
     with glh.no_gl_errors("play-mode dynamic-light render"):
-        renderer.render_scene(projection, view, eye, brushes, things, None, config,
+        renderer.render_scene(projection, view, eye, None, config,
                           brush_slots=config["all_brush_slots"])
         gl.glFinish()
 
@@ -264,7 +264,7 @@ def test_the_broad_phase_cull_follows_the_view_distance(renderer, context):
     import numpy as np
     from editor.things import Thing
     from engine.entity_table import EntityTable
-    from engine.renderer_core import BaseRenderer
+    from engine.renderer.forward import ForwardRenderer
 
     inside = Thing(pos=[0.0, 0.0, 1500.0])
     outside = Thing(pos=[0.0, 0.0, 6000.0])
@@ -273,12 +273,12 @@ def test_the_broad_phase_cull_follows_the_view_distance(renderer, context):
     slots = np.asarray([0, 1], dtype=np.int32)
 
     renderer.view_distance = settings(8192.0)
-    kept = BaseRenderer._distance_cull_thing_slots(
+    kept = ForwardRenderer._distance_cull_thing_slots(
         table, slots, 0.0, 0.0, renderer.view_distance.distance ** 2)
     assert kept.tolist() == [0, 1]
 
     renderer.view_distance = settings(2048.0)
-    kept = BaseRenderer._distance_cull_thing_slots(
+    kept = ForwardRenderer._distance_cull_thing_slots(
         table, slots, 0.0, 0.0, renderer.view_distance.distance ** 2)
     assert kept.tolist() == [0]
 

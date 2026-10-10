@@ -230,7 +230,7 @@ class SceneHierarchy(QWidget):
                                                ("is_fog", 0))):
                 parts.append("brush")
         else:
-            props = getattr(obj, "properties", {}) or {}
+            props = obj.properties
             parts.append(props.get("name", "") or "")
             parts.append(props.get("type", "") or "")
             parts.append(type(obj).__name__)
@@ -255,7 +255,7 @@ class SceneHierarchy(QWidget):
             if is_match(self._searchable_text(brush, name)):
                 matches.append(brush)
         for thing in self.main_window.state.things:
-            name = thing.properties.get("name", "") if hasattr(thing, "properties") else ""
+            name = thing.properties.get("name", "")
             if is_match(self._searchable_text(thing, name)):
                 matches.append(thing)
         return matches
@@ -368,6 +368,40 @@ class SceneHierarchy(QWidget):
                                        QBrush(QColor("#4a4320")) if matched
                                        else QBrush(Qt.transparent))
 
+    def _add_visgroup_menu(self, menu, objects):
+        """The Visgroup submenu: put the clicked objects in a visgroup, take
+        them out, or manage visgroups in Visgroups & Cordon."""
+        main_window = self.main_window
+        filters = main_window.state.view_filters
+        objects = list(objects)
+        sub = menu.addMenu("Visgroup")
+        new = sub.addAction("New Visgroup from Selection...")
+        new.setToolTip("Make a visgroup of these objects and name it")
+        new.triggered.connect(
+            lambda _checked=False: main_window.add_to_visgroup(objects, None))
+        member_of = {id(g) for o in objects for g in filters.visgroups_of(o)}
+        if filters.visgroups:
+            sub.addSeparator()
+            for group in filters.visgroups:
+                add = sub.addAction("Add to '%s'" % group.name)
+                add.setEnabled(not all(group in filters.visgroups_of(o) for o in objects))
+                add.triggered.connect(
+                    lambda _checked=False, g=group: main_window.add_to_visgroup(objects, g))
+            removable = [g for g in filters.visgroups if id(g) in member_of]
+            if removable:
+                sub.addSeparator()
+                for group in removable:
+                    remove = sub.addAction("Remove from '%s'" % group.name)
+                    remove.triggered.connect(
+                        lambda _checked=False, g=group:
+                        main_window.remove_from_visgroup(objects, g))
+        sub.addSeparator()
+        groups = [g for g in filters.visgroups if id(g) in member_of]
+        manage = sub.addAction("Manage Visgroups...")
+        manage.triggered.connect(
+            lambda _checked=False: main_window.show_visgroup(groups[0] if groups else None))
+        return sub
+
     def cycle_sort_mode(self):
         """Cycle through sort modes and refresh."""
         self.sort_mode = (self.sort_mode + 1) % self.SORT_MODE_COUNT
@@ -453,7 +487,7 @@ class SceneHierarchy(QWidget):
 
     def _get_terrain_display_name(self):
         """Get a display name for the terrain based on its data."""
-        terrain_data = getattr(self.main_window.state, 'terrain_data', None)
+        terrain_data = self.main_window.state.terrain_data
         if terrain_data:
             biome = terrain_data.get('biome', '')
             if biome:
@@ -462,7 +496,7 @@ class SceneHierarchy(QWidget):
 
     def _has_terrain(self):
         """Check if terrain data exists in the current scene."""
-        terrain_data = getattr(self.main_window.state, 'terrain_data', None)
+        terrain_data = self.main_window.state.terrain_data
         return terrain_data is not None
 
     def refresh_list(self):
@@ -474,7 +508,7 @@ class SceneHierarchy(QWidget):
         self._highlight_timer.stop()
         
         # Get selected objects list for multi-selection support
-        selected_objects = getattr(self.main_window.state, 'selected_objects', [])
+        selected_objects = self.main_window.state.selected_objects
         
         # Define font for headers
         header_font = QFont()
@@ -740,11 +774,10 @@ class SceneHierarchy(QWidget):
                 self.main_window.save_state()
                 self.main_window.state.terrain_data = None
                 # Remove the live terrain object so the 3D view stops rendering it
-                if hasattr(self.main_window, 'terrain'):
-                    self.main_window.terrain = None
-                panel = getattr(self.main_window, '_current_overlay', None)
+                self.main_window.terrain = None
+                panel = self.main_window._current_overlay
                 if panel is not None:
-                    if getattr(self.main_window, '_current_overlay', None) is panel:
+                    if self.main_window._current_overlay is panel:
                         self.main_window._close_current_overlay()
                     self.main_window.terrain_editor_window = None
                 self.main_window.set_selected_objects([])
@@ -775,6 +808,7 @@ class SceneHierarchy(QWidget):
             focus_action.triggered.connect(
                 lambda _checked=False, targets=list(focus_targets):
                 self.focus_on(targets))
+            self._add_visgroup_menu(menu, focus_targets)
             menu.addSeparator()
 
         # If multiple items of the same type selected, show bulk operations
@@ -943,10 +977,8 @@ class SceneHierarchy(QWidget):
                 action.triggered.connect(lambda checked, c=colour_name: self.set_thing_colour(thing_obj, c, checked))
 
             menu.addSeparator()
-            inspect_action = None
-            if hasattr(self.main_window, 'show_entity_inspector'):
-                inspect_action = menu.addAction("Inspect")
-                inspect_action.setToolTip("Open a live, read-only view of this entity")
+            inspect_action = menu.addAction("Inspect")
+            inspect_action.setToolTip("Open a live, read-only view of this entity")
             properties_action = menu.addAction("Properties")
             properties_action.setToolTip("Show this object in the Properties panel")
 

@@ -6,6 +6,10 @@ from .change_journal import touch
 from .constants import is_water_brush, brush_aabb_bounds
 from .spatial import CELL_SIZE, CellIndex, authored_hidden, cells_of_points
 
+
+#: Quake 2's sv_gravity, in units per second squared, pulling down.
+SV_GRAVITY = 800.0
+
 class _LosRows:
     """Line of sight's view of a populated grid; see SpatialGrid._build_los_rows."""
 
@@ -739,7 +743,7 @@ class SpatialGrid:
         tuples already resolved by :meth:`SpatialGrid._build_los_rows`.
         """
         # PERF: hoist the ray endpoints/direction to scalars once and inline the
-        # slab test below (bit-identical to LogicThread.intersect_ray_aabb).
+        # slab test below (bit-identical to the previous ray/AABB slab test).
         # This avoids two throwaway glm.vec3 constructions + a Python call per
         # brush along the ray -- the dominant cost of AI line-of-sight at tick
         # rate.
@@ -968,7 +972,10 @@ class PhysicsWorld:
     of memory.
     """
 
-    GRAVITY = np.float32(-900.0)
+    #: The one gravity in the game. The live world's ``gravity`` (the console's
+    #: ``phys_gravity`` changes it) is what bodies, the player, monsters and
+    #: dropped props all fall by; see :func:`world_gravity`.
+    GRAVITY = np.float32(-SV_GRAVITY)
     #: Active-body count from which the grouped floor query is worth its setup.
     #: Below it the NumPy assembly costs more than the scalar raycasts it saves
     #: -- measured crossover is around 56-64 bodies on this scene shape, so the
@@ -1826,3 +1833,14 @@ class PhysicsWorld:
 
             self._sync_entities(np.flatnonzero(moving))
 
+
+
+def world_gravity(world=None):
+    """Signed vertical gravity (negative is down) from the live PhysicsWorld.
+
+    *world* is the session's PhysicsWorld, or None outside a play session (or
+    when the caller has none), which gives the default, Quake 2's 800.
+    """
+    if world is not None:
+        return float(world.gravity)
+    return float(PhysicsWorld.GRAVITY)

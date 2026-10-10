@@ -37,12 +37,16 @@ class _RecordingAPI:
     def __init__(self):
         self.entities = []
         self.properties = {}
+        self.singletons = []
 
     def register_entity(self, cls, menu_label=""):
         self.entities.append((cls, menu_label))
 
     def register_properties(self, entity_type, specs):
         self.properties[entity_type] = list(specs)
+
+    def register_singleton_entity(self, entity_type):
+        self.singletons.append(entity_type)
 
 
 def _registered_schema():
@@ -79,14 +83,14 @@ def test_bigworld_settings_exposes_schema_fields_to_the_property_editor():
 
 def test_marker_and_io_plumbing_is_not_shown_in_the_property_panel(qt_app):
     from PyQt5.QtWidgets import QFormLayout, QLabel
-    from plugins.integration import _render_schema_rows
+    from editor.property_editor import _render_plugin_schema_rows
 
     class _Editor:
         def update_object_prop(self, *args):
             pass
 
     form = QFormLayout()
-    _render_schema_rows(_Editor(), form, BigWorldSettings(),
+    _render_plugin_schema_rows(_Editor(), form, BigWorldSettings(),
                         _registered_schema())
     labels = [form.itemAt(row, QFormLayout.LabelRole).widget().text()
               for row in range(form.rowCount())

@@ -1,21 +1,66 @@
 """Generic Prop gameplay must not depend on the Tidy plugin."""
 from pathlib import Path
-from types import SimpleNamespace
 
-from engine.physics import PhysicsWorld, SpatialGrid
-from engine.prop_runtime import PropSession
-from engine.prop_entity import Prop
+import glm
+import pytest
+
+pytest.importorskip("PyQt5", reason="Prop runtime tests exercise the real LogicThread")
+
+from editor.editor_state import EditorState                    # noqa: E402
+from editor.things import Light                                 # noqa: E402
+from engine.logic_thread import LogicThread                     # noqa: E402
+from engine.physics import PhysicsWorld, SpatialGrid            # noqa: E402
+from engine.player import Player                                 # noqa: E402
+from engine.prop_entity import Prop                              # noqa: E402
+from engine.prop_runtime import PropSession                      # noqa: E402
+from engine.threaded_game_state import ThreadedGameState          # noqa: E402
+
+pytestmark = pytest.mark.qt
 
 
-class IO:
-    def __init__(self):
-        self.events = []
+def _event_names(events):
+    return [name for _, name in events]
 
-    def fire_output(self, entity, name):
-        self.events.append((entity, name))
 
-    def names(self):
-        return [name for _, name in self.events]
+@pytest.fixture
+def real_logic():
+    logics = []
+
+    def make(things=(), brushes=(), grid=None, physics=None):
+        state = EditorState()
+        state.things = list(things)
+        state.brushes = list(brushes)
+
+        logic = LogicThread(ThreadedGameState(), state)
+        logics.append(logic)
+
+        player = Player(0.0, 0.0, angle=0.0)
+        player.pos = glm.vec3(0.0, 0.0, 0.0)
+        player.pitch = 0.0
+        logic.player_runtime.player = player
+        logic.session_runtime.spatial_grid = grid
+        logic.session_runtime.physics_world = physics
+
+        events = []
+        io = logic.io_manager
+        fire = io.fire_output
+
+        def recording_fire(source, output, value=None, activator_entity=None):
+            events.append((source, output))
+            return fire(source, output, value=value, activator_entity=activator_entity)
+
+        io.fire_output = recording_fire
+        session = logic.prop_runtime
+        session.start()
+        return logic, session, events
+
+    yield make
+
+    for logic in reversed(logics):
+        try:
+            logic.prop_runtime.stop()
+        finally:
+            logic.stop()
 
 
 def _floor_grid():
@@ -24,7 +69,7 @@ def _floor_grid():
     return grid
 
 
-def test_core_prop_carry_drop_rest_without_plugins():
+def test_core_prop_carry_drop_rest_without_plugins(real_logic):
     spin = 90.0  # degrees per second about X
     prop = Prop(pos=[0.0, 40.0, 30.0], properties={
         'carry_enabled': True,
@@ -32,7 +77,6 @@ def test_core_prop_carry_drop_rest_without_plugins():
         'no_collision': False,
         'drop_angular_velocity': [spin, 0.0, 0.0],
     })
-    io = IO()
     grid = _floor_grid()
     physics = PhysicsWorld(grid)
     # Origin at the prop's base; 32-unit box centred half a height above it.
@@ -43,35 +87,27 @@ def test_core_prop_carry_drop_rest_without_plugins():
         '_physics_entity': prop,
         '_collision_mode': 'aabb',
     }])
-    logic = SimpleNamespace(
-        things=[prop], io_manager=io,
-        _spatial_grid=grid, _physics_world=physics,
-        player=SimpleNamespace(pos=[0.0, 0.0, 0.0], angle=0.0, pitch=0.0,
-                               camera_height=40.0),
-        current_hud_message='',
-    )
-    session = PropSession(logic)
-    session.start()
+    logic, session, events = real_logic([prop], grid=grid, physics=physics)
 
     # Carry: the prop is directly ahead at eye height.
     session.tick(1 / 60, use_pressed=True)
     assert session.held is prop
     assert physics.get_body(prop).kinematic
-    assert io.names()[-1] == 'OnCarried'
+    assert _event_names(events)[-1] == 'OnCarried'
 
     # Carry: the prop follows the view; physics must not move it.
     session.tick(1 / 60, use_pressed=False)
     physics.step(1 / 60)
     carried = list(prop.pos)
     assert carried[2] > 30.0
-    assert logic.current_hud_message == '[E] Carry / Drop'
+    assert logic.interaction_runtime.current_hud_message == '[E] Carry / Drop'
 
     # Drop: physics takes over from the carried position, not the home one.
     session.tick(1 / 60, use_pressed=True)
     assert session.held is None
     body = physics.get_body(prop)
     assert not body.kinematic and body.awake
-    assert 'OnDropped' in io.names()
+    assert 'OnDropped' in _event_names(events)
 
     physics.step(1 / 60)
     assert abs(prop.properties['rotation'][0] - spin / 60) < 1e-3
@@ -80,7 +116,7 @@ def test_core_prop_carry_drop_rest_without_plugins():
     for _ in range(60):
         physics.step(1 / 60)
     assert abs(prop.pos[1]) < 1e-4
-    assert 'OnRest' in io.names()
+    assert 'OnRest' in _event_names(events)
     assert not body.awake
 
     # Stop restores the authored home position and releases callbacks.
@@ -89,22 +125,13 @@ def test_core_prop_carry_drop_rest_without_plugins():
     assert session.props == []
 
 
-def test_non_physics_prop_still_falls_to_ground_on_drop():
+def test_non_physics_prop_still_falls_to_ground_on_drop(real_logic):
     prop = Prop(pos=[0.0, 40.0, 55.0], properties={
         'carry_enabled': True,
         'carry_offset': [0.0, 70.0, 0.0],
     })
-    io = IO()
     grid = _floor_grid()
-    logic = SimpleNamespace(
-        things=[prop], io_manager=io,
-        _spatial_grid=grid, _physics_world=None,
-        player=SimpleNamespace(pos=[0.0, 0.0, 0.0], angle=0.0, pitch=0.0,
-                               camera_height=40.0),
-        current_hud_message='',
-    )
-    session = PropSession(logic)
-    session.start()
+    logic, session, events = real_logic([prop], grid=grid)
 
     # Pick the prop up, then release it. It has no authored physics at all.
     session.tick(1 / 60, use_pressed=True)
@@ -118,25 +145,15 @@ def test_non_physics_prop_still_falls_to_ground_on_drop():
 
     assert abs(prop.pos[1] - 16.0) < 1e-3
     assert id(prop) not in session._falling
-    assert 'OnRest' in io.names()
+    assert 'OnRest' in _event_names(events)
 
 
-def test_respawn_fades_in_over_two_seconds():
+def test_respawn_fades_in_over_two_seconds(real_logic):
     prop = Prop(pos=[0.0, 0.0, 0.0], properties={
         'collect_enabled': True,
         'collect_respawns': True,
     })
-    logic = SimpleNamespace(
-        things=[prop], io_manager=IO(),
-        _spatial_grid=None, _physics_world=None,
-        player=SimpleNamespace(
-            pos=[0.0, 0.0, 0.0], angle=0.0, pitch=0.0,
-            camera_height=40.0,
-        ),
-        current_hud_message='',
-    )
-    session = PropSession(logic)
-    session.start()
+    logic, session, events = real_logic([prop])
 
     assert prop._respawn_fade_alpha == 1.0
     assert session.collect_prop(prop) is True
@@ -153,19 +170,9 @@ def test_respawn_fades_in_over_two_seconds():
     assert id(prop) not in session.respawn_fades
 
 
-def test_respawn_fade_state_resets_when_session_restarts():
+def test_respawn_fade_state_resets_when_session_restarts(real_logic):
     prop = Prop(pos=[0.0, 0.0, 0.0])
-    logic = SimpleNamespace(
-        things=[prop], io_manager=IO(),
-        _spatial_grid=None, _physics_world=None,
-        player=SimpleNamespace(
-            pos=[0.0, 0.0, 0.0], angle=0.0, pitch=0.0,
-            camera_height=40.0,
-        ),
-        current_hud_message='',
-    )
-    session = PropSession(logic)
-    session.start()
+    logic, session, events = real_logic([prop])
 
     prop._respawn_fade_alpha = 0.0
     session.stop()
@@ -174,51 +181,40 @@ def test_respawn_fade_state_resets_when_session_restarts():
     assert prop._respawn_fade_alpha == 1.0
 
 
-def test_carried_billboard_keeps_its_facing_when_player_turns():
+def test_carried_billboard_keeps_its_facing_when_player_turns(real_logic):
     prop = Prop(pos=[0.0, 40.0, 55.0], properties={'carry_enabled': True})
-    logic = SimpleNamespace(
-        things=[prop], io_manager=IO(),
-        _spatial_grid=None, _physics_world=None,
-        player=SimpleNamespace(pos=[0.0, 0.0, 0.0], angle=0.0, pitch=0.0,
-                               camera_height=40.0),
-        current_hud_message='',
-    )
-    session = PropSession(logic)
-    session.start()
+    logic, session, events = real_logic([prop])
 
     session.tick(1 / 60, use_pressed=True)
     assert session.held is prop
     assert prop._carry_sprite_yaw == 0.0
 
-    logic.player.angle = 1.25
+    logic.player_runtime.player.angle = 1.25
     session.tick(1 / 60, use_pressed=False)
     assert prop._carry_sprite_yaw == 0.0
 
 
-def test_the_registry_is_derived_from_the_authoritative_thing_list():
+def test_the_registry_is_derived_from_the_authoritative_thing_list(real_logic):
     """PropSession is the Prop registry; the thing list is still the world."""
-    prop, light = Prop(pos=[0, 0, 0]), SimpleNamespace(properties={'type': 'light'})
-    logic = SimpleNamespace(things=[prop, light])
-    session = PropSession(logic)
-    session.start()
+    prop = Prop(pos=[0, 0, 0])
+    light = Light(pos=[0, 0, 0])
+    logic, session, events = real_logic([prop, light])
 
     assert session.props == [prop]
     assert session.by_id(id(prop)) is prop
     assert session.by_id(id(light)) is None
 
 
-def test_a_rebuild_adopts_a_new_prop_without_disturbing_the_others():
+def test_a_rebuild_adopts_a_new_prop_without_disturbing_the_others(real_logic):
     """A spawn elsewhere in the map must not reset a Prop already registered."""
     settled = Prop(pos=[0, 0, 0])
-    logic = SimpleNamespace(things=[settled])
-    session = PropSession(logic)
-    session.start()
+    logic, session, events = real_logic([settled])
 
     settled.pos = [10.0, 20.0, 30.0]          # it has moved since it was adopted
     home = list(settled.properties['_prop_home_pos'])
 
     spawned = Prop(pos=[100, 0, 0])
-    logic.things.append(spawned)
+    logic.editor_state.things.append(spawned)
     session.rebuild()
 
     assert session.props == [settled, spawned]
@@ -227,14 +223,12 @@ def test_a_rebuild_adopts_a_new_prop_without_disturbing_the_others():
     assert spawned.properties['_prop_home_pos'] == [100.0, 0.0, 0.0]
 
 
-def test_a_rebuild_releases_a_prop_that_left_the_world():
+def test_a_rebuild_releases_a_prop_that_left_the_world(real_logic):
     prop, other = Prop(pos=[0, 0, 0]), Prop(pos=[10, 0, 0])
-    logic = SimpleNamespace(things=[prop, other])
-    session = PropSession(logic)
-    session.start()
+    logic, session, events = real_logic([prop, other])
     session.held = other
 
-    logic.things.remove(other)
+    logic.editor_state.things.remove(other)
     session.rebuild()
 
     assert session.props == [prop]
@@ -244,11 +238,10 @@ def test_a_rebuild_releases_a_prop_that_left_the_world():
         "a released Prop kept the session's authored state")
 
 
-def test_an_empty_registry_is_a_valid_state():
+def test_an_empty_registry_is_a_valid_state(real_logic):
     """A map with no Props still has a session; it just has nothing in it."""
-    logic = SimpleNamespace(things=[SimpleNamespace(properties={'type': 'light'})])
-    session = PropSession(logic)
-    session.start()
+    light = Light(pos=[0, 0, 0])
+    logic, session, events = real_logic([light])
     assert session.props == []
     session.tick(1 / 60.0, use_pressed=True)      # must not raise
 
@@ -256,8 +249,8 @@ def test_an_empty_registry_is_a_valid_state():
 def test_is_prop_is_the_one_type_contract():
     """Every tier decides what a Prop is the same way: the serialised type."""
     assert PropSession.is_prop(Prop(pos=[0, 0, 0])) is True
-    assert PropSession.is_prop(SimpleNamespace(properties={'type': 'monster'})) is False
-    assert PropSession.is_prop(SimpleNamespace()) is False
+    assert PropSession.is_prop(Light(pos=[0, 0, 0])) is False
+    assert PropSession.is_prop(object()) is False
 
 
 def test_prop_has_a_default_billboard_and_2d_menu_entry():
@@ -276,39 +269,67 @@ def test_prop_exposes_mass_and_collision_shape_defaults():
     assert prop.properties['collision_shape'] == 'auto'
 
 
-def test_aabb_collision_shape_skips_mesh_collision():
-    from types import SimpleNamespace
-    from engine.logic_thread import LogicThread
-
-    class Builder:
-        model_collision_enabled = True
-
-        def __init__(self):
-            self.things = [
-                SimpleNamespace(
-                    pos=[10.0, 20.0, 30.0],
-                    properties={
-                        'type': 'prop',
-                        'model_path': 'Barrel7.obj',
-                        'scale': [2.0, 2.0, 2.0],
-                        'rotation': [0.0, 0.0, 0.0],
-                        'collision_shape': 'aabb',
-                        'collision_size': [0.0, 0.0, 0.0],
-                        'no_collision': False,
-                        'physics_enabled': False,
-                    },
-                )
-            ]
-
-        def _compute_model_bounds(self, model_path):
-            assert model_path == 'Barrel7.obj'
-            return ([-5.0, 0.0, -3.0], [5.0, 10.0, 3.0])
-
-        def _compute_model_collision_mesh(self, *args):
-            raise AssertionError("AABB mode must not build mesh collision")
-
-    brushes = LogicThread._build_model_collision_brushes(Builder())
+def test_aabb_collision_shape_skips_mesh_collision(real_logic):
+    prop = Prop(pos=[10.0, 20.0, 30.0], properties={
+        'model_path': '__missing_model_for_aabb_test__.obj',
+        'scale': [2.0, 2.0, 2.0],
+        'rotation': [0.0, 0.0, 0.0],
+        'collision_shape': 'aabb',
+        'collision_size': [0.0, 0.0, 0.0],
+        'no_collision': False,
+        'physics_enabled': False,
+    })
+    logic, session, events = real_logic([prop])
+    brushes = logic.collision_runtime.build_model_collision_brushes()
     assert len(brushes) == 1
     assert brushes[0]['_collision_mode'] == 'aabb'
-    assert brushes[0]['size'] == [20.0, 20.0, 12.0]
-    assert brushes[0]['pos'] == [10.0, 30.0, 30.0]
+    assert brushes[0]['size'] == [128.0, 128.0, 128.0]
+    assert brushes[0]['pos'] == [10.0, 20.0, 30.0]
+
+
+def _model_prop(**props):
+    props = {'carry_enabled': True, 'render_mode': 'model',
+             'model_path': 'assets/models/Oil_Drum_Grey.obj',
+             'rotation': [0.0, 30.0, 0.0], **props}
+    return Prop(pos=[0.0, 40.0, 55.0], properties=props)
+
+
+def test_a_carried_model_keeps_the_same_side_towards_the_player(real_logic):
+    """Turning while holding a model turns the model with you: the side that
+    faced you at pickup keeps facing you, rather than your view swinging
+    round a model that held its world facing."""
+    import math
+    prop = _model_prop()
+    logic, session, events = real_logic([prop])
+    player = logic.player_runtime.player
+
+    session.tick(1 / 60, use_pressed=True)
+    assert session.held is prop
+    for angle in (0.5, -1.0, 2.75):
+        player.angle = angle
+        session.tick(1 / 60, use_pressed=False)
+        yaw = prop.properties['rotation'][1]
+        assert yaw == pytest.approx(30.0 + math.degrees(angle))
+        # The model's facing relative to the direction it is carried in is
+        # the same whichever way the player looks.
+        direction = math.degrees(math.atan2(prop.pos[0] - player.pos.x,
+                                            prop.pos[2] - player.pos.z))
+        assert (yaw - direction) % 360.0 == pytest.approx(30.0)
+    assert prop.properties['rotation'][0] == 0.0 and prop.properties['rotation'][2] == 0.0
+
+    session.tick(1 / 60, use_pressed=True)                 # drop it
+    assert session.held is None
+    dropped = list(prop.properties['rotation'])
+    player.angle = 0.0
+    session.tick(1 / 60, use_pressed=False)
+    assert prop.properties['rotation'] == dropped          # keeps the facing it had
+
+
+def test_a_carried_billboard_is_not_given_a_model_rotation(real_logic):
+    prop = Prop(pos=[0.0, 40.0, 55.0], properties={'carry_enabled': True,
+                                                   'rotation': [0, 0, 0]})
+    logic, session, events = real_logic([prop])
+    session.tick(1 / 60, use_pressed=True)
+    logic.player_runtime.player.angle = 1.0
+    session.tick(1 / 60, use_pressed=False)
+    assert prop.properties['rotation'] == [0, 0, 0]

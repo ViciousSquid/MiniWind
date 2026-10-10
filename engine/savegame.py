@@ -17,10 +17,10 @@ never stores: the player transform and stats, the cheat flags, the collected-key
 set, and the door / mover / monster animation state.
 
 It is deliberately engine-native: no plugin, no bump to the plugin API
-(:data:`plugins.api.API_VERSION` stays ``1.3.0``). :class:`~engine.logic_thread.LogicThread`
-exposes :meth:`~engine.logic_thread.LogicThread.save_session` /
-:meth:`~engine.logic_thread.LogicThread.load_session`, and the editor console
-grows ``save`` / ``load`` / ``quicksave`` / ``quickload`` commands over them.
+(:data:`plugins.api.API_VERSION` stays ``1.3.0``). :class:`~engine.logic_session.LogicSession`
+owns the live-session ``save_session`` / ``load_session`` operations, and the
+editor console grows ``save`` / ``load`` / ``quicksave`` / ``quickload`` commands
+over that runtime surface.
 
 Snapshot shape::
 
@@ -37,8 +37,8 @@ Snapshot shape::
       "runtime": {
         "god_mode", "buddha_mode", "notarget",
         "camera_mode", "overhead_height", "overhead_tilt", "overhead_orientation",
-        "active_weapon", "gun2_obtained", "player_ammo", "current_hud_message",
-        "player_health", "player_max_health", "player_dead",
+        "active_weapon", "weapons", "player_ammo", "current_hud_message",
+        "player_health", "player_max_health", "player_armor", "player_dead",
         "player2_health", "player2_max_health", "player2_dead",
         "collected_keys": [ ... ],
         "door_states":   { "<index>": {"state", "progress"} },
@@ -89,8 +89,9 @@ from .spatial import PARKED_DISABLED_KEY, PARKED_HIDDEN_KEY
 #: Bump only when the snapshot layout changes incompatibly. This is the *save
 #: file* format version and is unrelated to the plugin API version. v2 adds the
 #: explicit ``save_mode`` metadata and delta/both support; v1 saves (no
-#: ``save_mode``) still load, treated as legacy ``full``.
-SAVE_VERSION = 2
+#: ``save_mode``) still load, treated as legacy ``full``. v3 saves the weapons
+#: the player has (``runtime.weapons``) in place of v2's ``gun2_obtained``.
+SAVE_VERSION = 3
 
 #: Marker key so a stray JSON file is never mistaken for a Fio save.
 _MAGIC = "fio_savegame"
@@ -201,24 +202,24 @@ def _capture_pending_events(logic) -> list:
     the restored world the same way it would have in the old one.
 
     Timers are not captured here; a timer's countdown is its own state (see
-    ``logic.timer_states``) and this is only the queue.
+    ``logic.timing_runtime.timer_states``) and this is only the queue.
     """
-    manager = getattr(logic, "io_manager", None)
+    manager = logic.io_manager
     if manager is None:
         return []
-    now = float(getattr(manager, "current_time", 0.0))
+    now = float(manager.current_time)
     events = []
-    for event in getattr(manager, "pending_events", []) or []:
+    for event in manager.pending_events:
         try:
             events.append({
                 "remaining": max(0.0, float(event.fire_time) - now),
                 "target_name": event.target_name,
-                "target_id": getattr(event, "target_id", "") or "",
+                "target_id": event.target_id or "",
                 "input": event.input_name,
                 "parameter": event.parameter,
                 "source_name": event.source_name,
-                "source_id": getattr(event, "source_id", "") or "",
-                "activator_id": getattr(event, "activator_id", "") or "",
+                "source_id": event.source_id or "",
+                "activator_id": event.activator_id or "",
             })
         except Exception:
             continue
@@ -227,14 +228,14 @@ def _capture_pending_events(logic) -> list:
 
 def _restore_pending_events(logic, events) -> None:
     """Put a saved I/O queue back, rebasing every delay on the live clock."""
-    manager = getattr(logic, "io_manager", None)
-    if manager is None or not events:
+    manager = logic.io_manager
+    if not events:
         return
     try:
         from editor.io_system import PendingEvent
     except Exception:       # pragma: no cover - editor-less player builds
         return
-    now = float(getattr(manager, "current_time", 0.0))
+    now = float(manager.current_time)
     restored = []
     for data in events:
         try:
@@ -274,6 +275,7 @@ def _capture_player(player) -> Optional[dict]:
         "on_ground": bool(getattr(player, "on_ground", False)),
         "in_water": bool(getattr(player, "in_water", False)),
         "swimming": bool(getattr(player, "swimming", False)),
+        "ducked": bool(getattr(player, "ducked", False)),
     }
 
 
@@ -288,6 +290,13 @@ def _apply_player(player, data: Optional[dict]) -> None:
         player.pitch = float(data["pitch"])
     if "camera_height" in data:
         player.camera_height = float(data["camera_height"])
+    if hasattr(player, "set_ducked"):
+        # The saved position is the centre of whichever hull was in use.
+        # A saved standing eye height becomes the one ducking scales from.
+        ducked = bool(data.get("ducked", False))
+        if not ducked and "camera_height" in data:
+            player.stand_camera_height = player.camera_height
+        player.set_ducked(ducked)
     if "physics_enabled" in data:
         player.physics_enabled = bool(data["physics_enabled"])
     if "on_ground" in data:
@@ -313,7 +322,7 @@ def _capture_moving_brushes(logic) -> dict:
     wherever it had got to.
     """
     out = {}
-    for brush in getattr(logic, "brushes", []) or []:
+    for brush in logic.editor_state.brushes:
         if not (brush.get("is_mover") or brush.get("is_door")):
             continue
         bid = brush.get("id")
@@ -333,7 +342,7 @@ def _restore_moving_brushes(logic, saved) -> None:
     render tables learn of a move made outside the tick."""
     if not saved:
         return
-    for brush in getattr(logic, "brushes", []) or []:
+    for brush in logic.editor_state.brushes:
         entry = saved.get(str(brush.get("id")))
         if not entry:
             continue
@@ -351,7 +360,7 @@ def _restore_moving_brushes(logic, saved) -> None:
 
 
 def _build_full_snapshot(logic, *, map_name: str = "") -> dict:
-    """Capture the live play session on *logic* (a ``LogicThread``) as a dict.
+    """Capture the live play session on *logic*, the active runtime host, as a dict.
 
     Call while a play session is active. The returned dict is JSON-serialisable
     and self-contained (it embeds the whole level), so it can be written to disk
@@ -365,8 +374,8 @@ def _build_full_snapshot(logic, *, map_name: str = "") -> dict:
 
     monster_states: Dict[str, Any] = {}
     try:
-        raw = getattr(logic.monster_ai, "monster_states", {}) or {}
-        by_obj_id = {id(t): t for t in getattr(logic, "_monster_things", [])}
+        raw = logic.monster_ai.monster_states or {}
+        by_obj_id = {id(t): t for t in logic.world_runtime.monster_things}
         for obj_id, state in raw.items():
             mon = by_obj_id.get(obj_id)
             sid = _thing_id(mon) if mon is not None else ""
@@ -381,34 +390,35 @@ def _build_full_snapshot(logic, *, map_name: str = "") -> dict:
         monster_states = {}
 
     runtime = {
-        "god_mode": bool(getattr(logic, "god_mode", False)),
-        "buddha_mode": bool(getattr(logic, "buddha_mode", False)),
-        "notarget": bool(getattr(logic, "notarget", False)),
-        "camera_mode": getattr(logic, "camera_mode", "First Person"),
-        "overhead_height": float(getattr(logic, "overhead_height", 800.0)),
-        "overhead_tilt": float(getattr(logic, "overhead_tilt", 0.0)),
-        "overhead_orientation": getattr(logic, "overhead_orientation", "north"),
-        "active_weapon": getattr(logic, "active_weapon", None),
-        "gun2_obtained": bool(getattr(logic, "gun2_obtained", False)),
-        "player_ammo": max(0, int(getattr(logic, "player_ammo", 0))),
-        "current_hud_message": getattr(logic, "current_hud_message", ""),
-        "player_health": getattr(logic, "player_health", 100),
-        "player_max_health": getattr(logic, "player_max_health", 100),
-        "player_dead": bool(getattr(logic, "player_dead", False)),
-        "player2_health": getattr(logic, "player2_health", 100),
-        "player2_max_health": getattr(logic, "player2_max_health", 100),
-        "player2_dead": bool(getattr(logic, "player2_dead", False)),
-        "collected_keys": sorted(str(k) for k in getattr(logic, "collected_keys", set())),
-        "door_states": {str(i): _public_state(s) for i, s in getattr(logic, "door_states", {}).items()},
-        "mover_states": {str(i): _public_state(s) for i, s in getattr(logic, "mover_states", {}).items()},
+        "god_mode": bool(logic.player_runtime.god_mode),
+        "buddha_mode": bool(logic.player_runtime.buddha_mode),
+        "notarget": bool(logic.player_runtime.notarget),
+        "camera_mode": logic.camera.camera_mode,
+        "overhead_height": float(logic.camera.overhead_height),
+        "overhead_tilt": float(logic.camera.overhead_tilt),
+        "overhead_orientation": logic.camera.overhead_orientation,
+        "active_weapon": logic.combat_runtime.active_weapon,
+        "weapons": sorted(logic.combat_runtime.weapons),
+        "player_ammo": max(0, int(logic.combat_runtime.player_ammo)),
+        "current_hud_message": logic.interaction_runtime.current_hud_message,
+        "player_health": logic.player_runtime.player_health,
+        "player_max_health": logic.player_runtime.player_max_health,
+        "player_armor": logic.player_runtime.player_armor,
+        "player_dead": bool(logic.player_runtime.player_dead),
+        "player2_health": logic.player_runtime.player2_health,
+        "player2_max_health": logic.player_runtime.player2_max_health,
+        "player2_dead": bool(logic.player_runtime.player2_dead),
+        "collected_keys": sorted(str(k) for k in logic.player_runtime.collected_keys),
+        "door_states": {str(i): _public_state(s) for i, s in logic.mover_runtime.door_states.items()},
+        "mover_states": {str(i): _public_state(s) for i, s in logic.mover_runtime.mover_states.items()},
         "monster_states": monster_states,
         "timer_states": {str(k): dict(s)
-                         for k, s in (getattr(logic, "timer_states", {}) or {}).items()},
+                         for k, s in logic.timing_runtime.timer_states.items()},
         "pending_io_events": _capture_pending_events(logic),
         "moving_brushes": _capture_moving_brushes(logic),
         "mover_path_states": {
             str(i): _jsonify(_public_state(s))
-            for i, s in (getattr(logic, "mover_path_states", {}) or {}).items()},
+            for i, s in (logic.mover_runtime.mover_path_states or {}).items()},
     }
 
     return {
@@ -418,8 +428,8 @@ def _build_full_snapshot(logic, *, map_name: str = "") -> dict:
         "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "map": map_name or "",
         "level": level,
-        "player": _capture_player(getattr(logic, "player", None)),
-        "player2": _capture_player(getattr(logic, "player2", None)),
+        "player": _capture_player(logic.player_runtime.player),
+        "player2": _capture_player(logic.player_runtime.player2),
         "runtime": runtime,
     }
 
@@ -669,14 +679,14 @@ def _overlay_entities(logic, level: dict, *, complete: bool = False) -> None:
 
     # -- things: restore pos + mutable properties by id --------------------
     live_things = {}
-    for t in getattr(logic, "things", []) or []:
+    for t in logic.editor_state.things:
         tid = _thing_id(t)
         if tid:
             live_things[tid] = t
     # A restore teleports entities, so the Prop domain's spatial index has to
     # be told about the Props among them.  Collected and handed over as a batch
     # rather than one call per Thing: a save restores the whole level at once.
-    prop_session = getattr(logic, "_props", None)
+    prop_session = logic.prop_runtime
     restored_props = []
     for t_data in level.get("things", []):
         props = t_data.get("properties", {}) or {}
@@ -712,7 +722,7 @@ def _overlay_entities(logic, level: dict, *, complete: bool = False) -> None:
     # Static geometry (pos/size/direction/…) comes from the freshly-loaded map
     # and must keep its runtime type; door/mover animation is restored via the
     # door_states/mover_states dicts, not from the brush record.
-    live_brushes = {b.get("id"): b for b in (getattr(logic, "brushes", []) or []) if b.get("id")}
+    live_brushes = {b.get("id"): b for b in logic.editor_state.brushes if b.get("id")}
     for b_data in level.get("brushes", []):
         live = live_brushes.get(b_data.get("id"))
         if live is None:
@@ -737,27 +747,56 @@ def _restore_runtime_and_players(logic, data: dict) -> None:
     runtime = data.get("runtime", {}) or {}
 
     # Player(s)
-    _apply_player(getattr(logic, "player", None), data.get("player"))
-    _apply_player(getattr(logic, "player2", None), data.get("player2"))
+    _apply_player(logic.player_runtime.player, data.get("player"))
+    _apply_player(logic.player_runtime.player2, data.get("player2"))
     # The player was put back, not walked back: no portal crossing.
-    teleported = getattr(logic, "note_player_teleported", None)
-    if teleported is not None and data.get("player"):
-        teleported()
+    if data.get("player"):
+        logic.portal_runtime.note_player_teleported()
 
-    # Player stats / cheat flags
+    # Player cheat flags belong to LogicPlayer.
+    player_runtime = logic.player_runtime
+    for attr in ("god_mode", "buddha_mode", "notarget"):
+        if attr in runtime:
+            setattr(player_runtime, attr, bool(runtime[attr]))
+
+    # Player runtime state belongs to LogicPlayer; preserve the save schema
+    # while restoring directly into that owner.
+    player_runtime = logic.player_runtime
     for attr in (
-        "god_mode", "buddha_mode", "notarget",
-        "camera_mode", "overhead_height", "overhead_tilt", "overhead_orientation",
-        "active_weapon", "gun2_obtained", "player_ammo", "current_hud_message",
-        "player_health", "player_max_health", "player_dead",
+        "player_health", "player_max_health", "player_armor", "player_dead",
         "player2_health", "player2_max_health", "player2_dead",
     ):
         if attr in runtime:
-            setattr(logic, attr, runtime[attr])
+            setattr(player_runtime, attr, runtime[attr])
+
+    interaction = logic.interaction_runtime
+    if "current_hud_message" in runtime:
+        interaction.current_hud_message = runtime["current_hud_message"]
+
+    combat = logic.combat_runtime
+    if "active_weapon" in runtime:
+        combat.active_weapon = runtime["active_weapon"]
+    if "weapons" in runtime:
+        combat.weapons = set(runtime["weapons"])
+    elif "active_weapon" in runtime:
+        # A v2 save: it recorded the weapon in hand and whether the shotgun had
+        # been picked up, which is what the player had.
+        combat.weapons = {w for w in (runtime["active_weapon"],) if w}
+        if runtime.get("gun2_obtained"):
+            combat.weapons.add("gun2")
+    if "player_ammo" in runtime:
+        combat.player_ammo = int(runtime["player_ammo"])
+
+    # Camera state belongs to LogicCamera.
+    if "camera_mode" in runtime:
+        logic.camera.set_camera_mode(runtime["camera_mode"])
+    for attr in ("overhead_height", "overhead_tilt", "overhead_orientation"):
+        if attr in runtime:
+            setattr(logic.camera, attr, runtime[attr])
 
     # Collected keys — rebuild the set from the saved list.
     try:
-        logic.collected_keys = set(runtime.get("collected_keys", []) or [])
+        logic.player_runtime.collected_keys = set(runtime.get("collected_keys", []) or [])
     except Exception:
         pass
 
@@ -768,7 +807,7 @@ def _restore_runtime_and_players(logic, data: dict) -> None:
         pass
     if "mover_path_states" in runtime:
         try:
-            logic.mover_path_states = {
+            logic.mover_runtime.mover_path_states = {
                 int(i): dict(s)
                 for i, s in (runtime.get("mover_path_states") or {}).items()}
         except Exception:
@@ -779,20 +818,20 @@ def _restore_runtime_and_players(logic, data: dict) -> None:
     # _direction_np NumPy cache) that an older save may still carry, so the
     # engine rebuilds them with the right type on the next tick.
     try:
-        logic.door_states = {int(i): _public_state(s) for i, s in runtime.get("door_states", {}).items()}
+        logic.mover_runtime.door_states = {int(i): _public_state(s) for i, s in runtime.get("door_states", {}).items()}
     except Exception:
         pass
     try:
-        logic.mover_states = {int(i): _public_state(s) for i, s in runtime.get("mover_states", {}).items()}
+        logic.mover_runtime.mover_states = {int(i): _public_state(s) for i, s in runtime.get("mover_states", {}).items()}
     except Exception:
         pass
 
     # Monster combat state, remapped from stable id back to the live object id.
     try:
         saved_ms = runtime.get("monster_states", {}) or {}
-        if saved_ms and getattr(logic, "monster_ai", None) is not None:
+        if saved_ms and logic.monster_ai is not None:
             by_sid = {}
-            for t in getattr(logic, "_monster_things", []) or []:
+            for t in logic.world_runtime.monster_things:
                 sid = _thing_id(t)
                 if sid:
                     by_sid[sid] = t
@@ -809,7 +848,10 @@ def _restore_runtime_and_players(logic, data: dict) -> None:
     # reload the way every other piece of entity state does.
     try:
         saved_timers = runtime.get("timer_states", {}) or {}
-        logic.timer_states = {str(k): dict(s) for k, s in saved_timers.items()}
+        logic.timing_runtime.timer_states.clear()
+        logic.timing_runtime.timer_states.update(
+            {str(k): dict(s) for k, s in saved_timers.items()}
+        )
     except Exception:
         pass
 
@@ -824,7 +866,7 @@ def _restore_runtime_and_players(logic, data: dict) -> None:
     # refresh the monster sprite cache so dead/alive billboards match the
     # restored health immediately.
     try:
-        logic._build_entity_caches()
+        logic.world_runtime.build_entity_caches()
     except Exception:
         pass
     try:
@@ -840,42 +882,13 @@ def _restore_runtime_and_players(logic, data: dict) -> None:
     # every restore path funnels through, and therefore *after* the state it
     # describes has actually moved: announcing up front would have a host
     # rebuild those caches from the pre-restore world.
-    _notify_authored_visibility_changed(logic)
-
-
-def _notify_authored_visibility_changed(logic) -> None:
-    """Tell the host that objects' authored hidden/disabled state has moved.
-
-    Two hooks, tried in order, because they are two different costs and a host
-    may implement either:
-
-    ``notify_authored_visibility_changed``
-        rebuild what is built to last (the collision grid). O(world), and only
-        an authored change — an edit, an I/O Show/Hide, a restore — ever needs
-        it. Streaming does not: parking stashes the authored value rather than
-        overwriting it, which is exactly why the grid can survive it.
-    ``notify_visibility_changed``
-        the cheap drawable-set bump a streaming layer uses. Accepted as a
-        fallback so an older host still lands the change on the next frame.
-
-    A host with neither is not an error: it has no cache to invalidate.
-    """
-    for hook in ("notify_authored_visibility_changed",
-                 "notify_visibility_changed"):
-        fn = getattr(logic, hook, None)
-        if fn is None:
-            continue
-        try:
-            fn()
-        except Exception:
-            pass
-        return
+    logic.world_runtime.notify_authored_visibility_changed()
 
 
 def restore_snapshot(logic, data: dict) -> None:
     """Apply a full snapshot from :func:`build_snapshot` onto a live session.
 
-    *logic* must be an active (play-mode) ``LogicThread`` whose loaded map
+    *logic* must be the active play-mode runtime host whose loaded map
     matches the save. Restore is an overlay — the scene is not rebuilt — so
     object identities, caches and the spatial grid stay valid.
     """
@@ -1079,9 +1092,13 @@ def _restore_bigworld(logic, data: dict, current_map_name: str = "") -> dict:
     # Disk-streaming session: the world isn't fully resident, so it can't be
     # overlaid wholesale — hand off to the session, which streams cells in and
     # re-applies each cell's delta as it loads.
-    session = getattr(logic, "_bigworld", None)
-    if session is not None and getattr(session, "is_disk_streaming", False):
-        return session.restore_saved(data, current_map_name=current_map_name)
+    restore_handler = (
+        logic.plugins.services.get("savegame.restore")
+        if logic.plugins is not None
+        else None
+    )
+    if restore_handler is not None:
+        return restore_handler(data, current_map_name=current_map_name)
 
     try:
         current_level = logic.editor_state.get_level_data()
@@ -1102,12 +1119,13 @@ def _restore_bigworld(logic, data: dict, current_map_name: str = "") -> dict:
     # Hand the registry to the live streaming session so a cell streamed in later
     # re-applies its saved changes (belt-and-braces for a disk-streamed future;
     # in the in-RAM model the overlay above already reached every resident cell).
-    session = getattr(logic, "_bigworld", None)
+    session = (
+        logic.plugins.services.get("bigworld")
+        if logic.plugins is not None
+        else None
+    )
     if session is not None:
-        try:
-            session.registry = cell_deltas
-        except Exception:
-            pass
+        session.registry = cell_deltas
 
     warning = ""
     if cls == BASE_RELATED:
@@ -1170,4 +1188,11 @@ def read(path: str) -> dict:
             f"save '{path}' is version {ver}, newer than this build supports "
             f"(v{SAVE_VERSION})"
         )
+    # A save is shareable input and restore writes it straight into the live
+    # world: refuse a malformed one here, before anything is touched.
+    from engine.level_validation import validate_snapshot
+    try:
+        validate_snapshot(data)
+    except ValueError as exc:
+        raise ValueError(f"'{os.path.basename(path)}' is not a valid save: {exc}") from None
     return data

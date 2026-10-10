@@ -23,7 +23,7 @@ FRAG_330_WITH_SAMPLERS = """#version 330 core
 precision mediump float;
 out vec4 FragColor;
 uniform sampler3D noiseTexture;
-uniform samplerCube shadowMaps[4];
+uniform samplerCube shadowMaps[8];
 uniform int active_lights;
 void main() {
     float n = texture(noiseTexture, vec3(0.0)).r;
@@ -131,6 +131,21 @@ class TestEngineIntegration(unittest.TestCase):
             self.skipTest("fog.frag not in set")
         self.assertIn("precision highp sampler3D;", fog)
 
+    def test_every_sampler_without_an_es_default_gets_a_precision(self):
+        """GLSL ES 3.00 predeclares precision only for sampler2D and
+        samplerCube. The terrain fragment shader's ``sampler2DArray`` paint
+        map had none, so terrain failed to compile on every GLES device."""
+        sampler = re.compile(
+            r"\buniform\s+(?:(lowp|mediump|highp)\s+)?((?:[iu])?sampler\w+)\s+\w+")
+        for name, src in self.shader_set.items():
+            for qualifier, gl_type in sampler.findall(src):
+                if gl_type in ("sampler2D", "samplerCube") or qualifier:
+                    continue
+                declared = re.search(
+                    rf"\bprecision\s+(?:lowp|mediump|highp)\s+{gl_type}\s*;", src)
+                self.assertTrue(
+                    declared, f"{name}: {gl_type} has no precision (fails ES compile)")
+
     def test_uniforms_shared_by_both_stages_have_one_precision(self):
         """GLSL ES links a program only if a uniform declared in both stages
         has the same precision. water.frag and glass.frag declared
@@ -169,3 +184,13 @@ class TestEngineIntegration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_every_registered_shader_has_both_stages():
+    """A SHADER_MAP entry whose sources do not exist is skipped with a warning
+    on every player start ('procedural' was registered but never written)."""
+    from engine.shaders import DEFAULT_SHADERS, SHADER_MAP
+
+    missing = {name: [f for f in files if f not in DEFAULT_SHADERS]
+               for name, files in SHADER_MAP.items()}
+    assert not {k: v for k, v in missing.items() if v}

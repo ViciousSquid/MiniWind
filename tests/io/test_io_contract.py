@@ -37,7 +37,8 @@ from editor.io_system import (ABSTRACT_IO, OutputConnection, IO_REGISTRY, IOMana
                               audit_io_coverage, get_input_names,
                               get_output_names)
 from editor.io_handlers import register_all_input_handlers  # noqa: E402
-from editor.things import ENTITY_TYPES, Thing                    # noqa: E402
+from editor.things import ENTITY_TYPES, PathNode, Thing           # noqa: E402
+from engine.threaded_game_state import ThreadedGameState           # noqa: E402
 from plugins.manager import get_manager                    # noqa: E402
 
 pytestmark = pytest.mark.qt
@@ -50,47 +51,18 @@ SOURCE_DIRS = ("editor", "engine", "plugins", "player")
 
 
 # ---------------------------------------------------------------------------
-# The host an input handler is written against
+# The real host an input handler is written against
 # ---------------------------------------------------------------------------
 
-class HostStub:
-    """The subset of ``LogicThread`` that input handlers reach for.
+@pytest.fixture
+def logic_thread():
+    """A complete production LogicThread with all runtime owners constructed."""
+    from editor.editor_state import EditorState
+    from engine.logic_thread import LogicThread
 
-    Deliberately *not* permissive: it does not invent attributes on demand,
-    because a stub that answers anything would let a handler reach for something
-    the real logic thread has never had and still pass. Every name here is
-    checked against the real class by
-    :func:`test_the_host_stub_only_promises_what_the_logic_thread_has`, so the
-    probe below cannot quietly drift into testing a fiction.
-    """
-
-    def __init__(self, io_manager):
-        self.io_manager = io_manager
-        self.brushes = []
-        self.things = []
-        self.gate_inputs = {}
-        self.timer_states = {}
-        self.door_states = {}
-        self.mover_states = {}
-        self.mover_path_states = {}
-        self.light_fade_states = {}
-        self.cinematic_state = {}
-        self.active_speakers = set()
-        self.collected_keys = set()
-        self.player = None
-        self.terrain = None
-        self._timer_things = []
-        self._monster_spawn_health = {}
-        self.editor_state = self
-
-    #: ``editor_state`` points back at the stub so ``logic.editor_state.things``
-    #: resolves; the real host holds a separate object there, so the name is a
-    #: promise about ``LogicThread`` but the target is not.
-    LOCAL_ONLY = frozenset()
-
-    def _find_path_node_by_name(self, name):
-        return None
-
+    thread = LogicThread(ThreadedGameState(), EditorState())
+    yield thread
+    thread.running = False
 
 BRUSH_TYPES = {"trigger": "is_trigger", "door": "is_door", "mover": "is_mover",
                "water": "is_water", "fog": "is_fog", "brush": None}
@@ -180,14 +152,10 @@ def probe_parameter(entity_type: str, io_def) -> str:
     return PROBE_BY_PARAM_TYPE.get(io_def.param_type, "")
 
 
-@pytest.fixture(scope="module")
-def manager():
-    """An ``IOManager`` with every handler on it — core and plugin alike."""
-    mgr = IOManager()
-    register_all_input_handlers(mgr)
-    get_manager().attach_runtime(HostStub(mgr))
-    return mgr
-
+@pytest.fixture
+def manager(logic_thread):
+    """The IOManager owned by a real LogicThread."""
+    return logic_thread.io_manager
 
 @pytest.fixture(scope="module")
 def registration_counts():
@@ -209,7 +177,6 @@ def registration_counts():
     try:
         mgr = IOManager()
         register_all_input_handlers(mgr)
-        get_manager().attach_runtime(HostStub(mgr))
     finally:
         IOManager.register_input_handler = real
     return counts
@@ -291,7 +258,7 @@ def test_the_abstract_allowlist_is_justified():
 # Demonstrable: every input, invoked for real
 # ===========================================================================
 
-def _probe_all_inputs(manager):
+def _probe_all_inputs(manager, host):
     """Call every declared input on a real instance. Returns what went wrong."""
     entities = {}
     manager.set_entity_finder(
@@ -300,7 +267,6 @@ def _probe_all_inputs(manager):
                             else e.properties.get("name")) == n), None))
     manager.set_entity_finder_by_id(lambda i: entities.get(i))
 
-    host = HostStub(manager)
     manager.set_logic_thread(host)
 
     raised, unreached, unbuildable = [], [], []
@@ -338,8 +304,8 @@ def _probe_all_inputs(manager):
             name = (entity.get("name") if isinstance(entity, dict)
                     else entity.properties.get("name"))
             entities[entity_id] = entity
-            host.brushes = [entity] if isinstance(entity, dict) else []
-            host.things = [] if isinstance(entity, dict) else [entity]
+            host.editor_state.brushes = [entity] if isinstance(entity, dict) else []
+            host.editor_state.things = [] if isinstance(entity, dict) else [entity]
             current["type"] = entity_type
 
             for io_def in IO_REGISTRY[entity_type]["inputs"]:
@@ -358,28 +324,19 @@ def _probe_all_inputs(manager):
     return raised, unreached, unbuildable
 
 
-def test_every_declared_input_reaches_an_implementation_when_invoked():
-    """The static audit proves a handler is *registered*; this proves the
-    dispatcher actually arrives at one for every declared input."""
-    mgr = IOManager()
-    register_all_input_handlers(mgr)
-    get_manager().attach_runtime(HostStub(mgr))
-    _raised, unreached, _unbuildable = _probe_all_inputs(mgr)
+def test_every_declared_input_reaches_an_implementation_when_invoked(logic_thread):
+    """Drive every declared input through the real LogicThread dispatcher."""
+    mgr = logic_thread.io_manager
+    _raised, unreached, _unbuildable = _probe_all_inputs(mgr, logic_thread)
     assert unreached == [], (
         "these inputs dispatched to nothing: %s" % (unreached,))
 
-
-def test_no_declared_input_raises_when_invoked():
-    """A handler that throws on a default instance is not an implementation —
-    ``_execute_input`` swallows the exception, so the input silently does
-    nothing in exactly the way an unimplemented one does."""
-    mgr = IOManager()
-    register_all_input_handlers(mgr)
-    get_manager().attach_runtime(HostStub(mgr))
-    raised, _unreached, _unbuildable = _probe_all_inputs(mgr)
+def test_no_declared_input_raises_when_invoked(logic_thread):
+    """A registered handler must execute without being swallowed as a failure."""
+    mgr = logic_thread.io_manager
+    raised, _unreached, _unbuildable = _probe_all_inputs(mgr, logic_thread)
     assert raised == [], "\n".join(
         "%s.%s raised: %s" % entry for entry in raised)
-
 
 def test_every_registered_type_has_an_instance_the_probe_can_build():
     """A type the probe cannot instantiate is a type it silently skips."""
@@ -391,26 +348,15 @@ def test_every_registered_type_has_an_instance_the_probe_can_build():
         "no instance could be built for: %s" % (missing,))
 
 
-def test_the_host_stub_only_promises_what_the_logic_thread_has():
-    """Keeps the probe honest.
+def test_the_probe_uses_the_real_logic_thread(logic_thread):
+    """The conformance probe must run against Fio's actual runtime owner."""
+    from engine.logic_thread import LogicThread
 
-    The stub stands in for ``LogicThread``. If it grew an attribute the real
-    host does not have, every handler reaching for that attribute would pass
-    here and fail in the game — the probe would be testing a fiction.
-    """
-    source = (ROOT / "engine" / "logic_thread.py").read_text(
-        encoding="utf-8", errors="replace")
-    stub = HostStub(IOManager())
-    promised = {name for name in vars(stub)
-                if name not in HostStub.LOCAL_ONLY}
-    promised |= {name for name in vars(HostStub)
-                 if not name.startswith("__") and callable(getattr(HostStub, name))
-                 and name not in {"LOCAL_ONLY"}}
-
-    missing = [name for name in sorted(promised)
-               if not re.search(r"(self\.%s\s*[:=]|def\s+%s\b)" % (name, name), source)]
-    assert missing == [], (
-        "the stub promises what LogicThread does not have: %s" % (missing,))
+    assert type(logic_thread) is LogicThread
+    assert logic_thread.io_manager is not None
+    assert logic_thread.session_runtime.logic is logic_thread
+    assert logic_thread.world_runtime.logic is logic_thread
+    assert logic_thread.combat_runtime.logic is logic_thread
 
 
 # ===========================================================================

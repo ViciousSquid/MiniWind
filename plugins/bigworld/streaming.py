@@ -175,8 +175,8 @@ class MemoryCellSource(CellSource):
         then clear the live scene and stream cells in/out, genuinely freeing the
         objects of unloaded cells (the only retained copy is here).
         """
-        return cls(list(getattr(logic, "brushes", None) or []),
-                   list(getattr(logic, "things", None) or []),
+        return cls(list(logic.editor_state.brushes),
+                   list(logic.editor_state.things),
                    cell_size=cell_size, persistent_types=persistent_types)
 
     # -- query ----------------------------------------------------------
@@ -335,8 +335,7 @@ class DiskStreamingSession:
     # ------------------------------------------------------------------
 
     def _sync_visual_horizon(self) -> bool:
-        view_distance = getattr(self.logic, "view_distance", None)
-        horizon = getattr(view_distance, "visual_horizon", None)
+        horizon = self.logic.render_runtime.view_distance.visual_horizon
         load_radius, evict_radius = effective_streaming_radii(
             self._authored_load_radius,
             self._authored_evict_radius,
@@ -359,11 +358,11 @@ class DiskStreamingSession:
         persistent = list(getattr(self.source, "persistent_things", []) or [])
         # The live scene now holds *only* globals; cells fill it as they stream.
         try:
-            self.logic.things[:] = list(persistent)
-            self.logic.brushes[:] = []
+            self.logic.editor_state.things[:] = list(persistent)
+            self.logic.editor_state.brushes[:] = []
         except Exception:
-            self.logic.things = list(persistent)
-            self.logic.brushes = []
+            self.logic.editor_state.things = list(persistent)
+            self.logic.editor_state.brushes = []
         # Fade the camera out where cells stop loading (see bound_view_horizon).
         if self._release_view_horizon is None:
             self._release_view_horizon = bound_view_horizon(
@@ -392,7 +391,7 @@ class DiskStreamingSession:
         be committed into the registry. Persistent globals are left resident.
         """
         for uuid, obj in list(self._live_by_id.items()):
-            target = self.logic.brushes if isinstance(obj, dict) else self.logic.things
+            target = self.logic.editor_state.brushes if isinstance(obj, dict) else self.logic.editor_state.things
             try:
                 target.remove(obj)
             except (ValueError, Exception):
@@ -484,7 +483,7 @@ class DiskStreamingSession:
             else:
                 self._live_by_id[uuid] = obj
                 self._load_ref[uuid] = 1
-                target = self.logic.brushes if kind == _BRUSH else self.logic.things
+                target = self.logic.editor_state.brushes if kind == _BRUSH else self.logic.editor_state.things
                 try:
                     target.append(obj)
                 except Exception:
@@ -511,7 +510,7 @@ class DiskStreamingSession:
                 obj = self._live_by_id.pop(uuid, None)
                 self._load_ref.pop(uuid, None)
                 if obj is not None:
-                    target = self.logic.brushes if kind == _BRUSH else self.logic.things
+                    target = self.logic.editor_state.brushes if kind == _BRUSH else self.logic.editor_state.things
                     try:
                         target.remove(obj)
                     except (ValueError, Exception):
@@ -546,9 +545,7 @@ class DiskStreamingSession:
         # call per object. Unknown Things are ignored on the far side, so this
         # does not have to know which of them are Props.
         if moved:
-            session = getattr(self.logic, "_props", None)
-            if session is not None:
-                session.refile(moved)
+            self.logic.prop_runtime.refile(moved)
 
     @staticmethod
     def _apply_thing_rec(thing, rec: dict) -> bool:
@@ -717,10 +714,10 @@ class DiskStreamingSession:
 
     # ------------------------------------------------------------------
     def _player_pos(self):
-        player = getattr(self.logic, "player", None)
+        player = self.logic.player_runtime.player
         if player is None:
             return None
-        return getattr(player, "pos", None)
+        return player.pos
 
     def player_cell(self):
         pos = self._player_pos()

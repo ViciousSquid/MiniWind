@@ -15,21 +15,48 @@ player walks up to a Prop and cannot carry it.
 
 import math
 import random
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
+pytest.importorskip("PyQt5", reason="PropSession ownership tests use the real LogicThread")
+
+from editor.editor_state import EditorState            # noqa: E402
+from editor.things import Light                         # noqa: E402
+from engine.logic_thread import LogicThread             # noqa: E402
+from engine.player import Player                        # noqa: E402
+from engine.threaded_game_state import ThreadedGameState # noqa: E402
 from engine.prop_entity import Prop                     # noqa: E402
 from engine.prop_runtime import PropSession             # noqa: E402
 from engine.spatial import CELL_SIZE, cell_of_point, cells_of_points  # noqa: E402
 
+pytestmark = pytest.mark.qt
+
+_ACTIVE_LOGICS = []
+
+
+@pytest.fixture(autouse=True)
+def _stop_real_logic_threads():
+    start = len(_ACTIVE_LOGICS)
+    yield
+    for logic in _ACTIVE_LOGICS[start:]:
+        logic.stop()
+    del _ACTIVE_LOGICS[start:]
+
 
 def make_session(props=(), physics=None):
-    logic = SimpleNamespace(things=list(props), player=None,
-                            current_hud_message="", io_manager=None,
-                            _physics_world=physics)
-    session = PropSession(logic)
+    state = EditorState()
+    state.things = list(props)
+    state.brushes = []
+
+    logic = LogicThread(ThreadedGameState(), state)
+    _ACTIVE_LOGICS.append(logic)
+    logic.player_runtime.player = Player(0.0, 0.0)
+    logic.player_runtime.player.camera_height = 40.0
+    logic.session_runtime.physics_world = physics
+    logic.session_runtime.spatial_grid = None
+
+    session = logic.prop_runtime
     session.start()
     return session
 
@@ -112,13 +139,10 @@ def test_the_query_examines_local_props_not_every_prop():
 
 def test_adopting_and_releasing_file_and_unfile():
     prop = prop_at(0, 0, 60)
-    logic = SimpleNamespace(things=[prop], player=None, current_hud_message="",
-                            io_manager=None, _physics_world=None)
-    session = PropSession(logic)
-    session.start()
+    session = make_session([prop])
     assert session.props_within(0.0, 0.0, 200.0) == [prop]
 
-    logic.things.remove(prop)
+    session.logic.editor_state.things.remove(prop)
     session.rebuild()
     assert session.props_within(0.0, 0.0, 200.0) == []
     assert session._filed == {}, "a released Prop left an entry in the index"
@@ -160,7 +184,7 @@ def test_moved_brings_a_stale_cell_back_into_line():
 def test_moved_ignores_a_thing_that_is_not_a_registered_prop():
     """Callers must not have to ask whether what they moved was a Prop."""
     session = make_session([prop_at(0, 0, 60)])
-    session.moved(SimpleNamespace(pos=[1.0, 2.0, 3.0], properties={}))   # no raise
+    session.moved(Light(pos=[1.0, 2.0, 3.0], properties={}))   # no raise
 
 
 def test_carrying_refiles_the_held_prop():
@@ -179,42 +203,52 @@ def test_carrying_refiles_the_held_prop():
 # The batch interface
 # ---------------------------------------------------------------------------
 
-class FakePhysics:
-    """Stands in for PhysicsWorld's batch interface."""
+def _real_physics_world(prop):
+    """Build the production PhysicsWorld around a real Prop entity."""
+    from engine.physics import PhysicsWorld, SpatialGrid
 
-    def __init__(self):
-        self.changed = []
-        self.calls = 0
-
-    def entities_that_changed_cell(self):
-        self.calls += 1
-        out, self.changed = self.changed, []
-        return out
-
-    def set_rest_callback(self, entity, cb):
-        pass
-
-    def set_kinematic(self, entity, value):
-        pass
+    grid = SpatialGrid()
+    grid.populate([])
+    world = PhysicsWorld(grid)
+    brush = {
+        "pos": list(prop.pos),
+        "size": [32.0, 32.0, 32.0],
+        "_physics_body": True,
+        "_physics_entity": prop,
+        "_collision_mode": "aabb",
+    }
+    world.rebuild([brush])
+    return world
 
 
 def test_physics_cell_transitions_are_taken_as_a_batch():
-    prop = prop_at(0, 0, 60)
-    physics = FakePhysics()
+    prop = prop_at(0, 0, 60, physics_enabled=True)
+    physics = _real_physics_world(prop)
     session = make_session([prop], physics=physics)
 
-    prop.pos = [CELL_SIZE * 3, 0.0, CELL_SIZE * 3]
-    physics.changed = [prop]
+    # Establish the real PhysicsWorld's baseline, then move the body through
+    # its production handle so entities_that_changed_cell() reports it.
+    assert physics.entities_that_changed_cell() == ()
+    body = physics.bodies[id(prop)]
+    body.wake([12000.0, 0.0, 0.0])
+    physics.step(0.05)
+
     session.sync_physics_positions()
 
+    assert physics.entities_that_changed_cell() == (), (
+        "the PropSession should have consumed the PhysicsWorld cell transition")
     assert session._filed[id(prop)] == cell_of_point(prop.pos[0], prop.pos[2])
-    assert physics.calls == 1, "the session asked more than once per sync"
+    assert prop.pos[0] >= CELL_SIZE, (
+        "the real physics step did not move the body across a spatial cell: %r"
+        % (prop.pos,))
 
 
 def test_a_quiet_frame_refiles_nothing():
-    prop = prop_at(0, 0, 60)
-    physics = FakePhysics()
+    prop = prop_at(0, 0, 60, physics_enabled=True)
+    physics = _real_physics_world(prop)
     session = make_session([prop], physics=physics)
+
+    assert physics.entities_that_changed_cell() == ()
     before = dict(session._filed)
     for _ in range(10):
         session.sync_physics_positions()
@@ -273,7 +307,7 @@ def test_a_savegame_restore_refiles_the_props_it_teleports():
     prop = prop_at(0, 0, 60, id="prop-1")
     session = make_session([prop])
     logic = session.logic
-    logic._props = session
+    logic.prop_runtime = session
 
     destination = [CELL_SIZE * 6, 0.0, CELL_SIZE * 6 + 60.0]
     _overlay_entities(logic, {"things": [
@@ -289,20 +323,21 @@ def test_a_savegame_restore_refiles_the_props_it_teleports():
 
 def test_a_streaming_delta_refiles_the_props_it_places():
     """Big World overlays a saved delta when a cell comes back."""
-    from plugins.bigworld.streaming import DiskStreamingSession, _THING
+    from plugins.bigworld.streaming import DiskStreamingSession, MemoryCellSource, _THING
 
     prop = prop_at(0, 0, 60, id="prop-1")
     session = make_session([prop])
     logic = session.logic
-    logic._props = session
+    logic.prop_runtime = session
 
-    host = DiskStreamingSession.__new__(DiskStreamingSession)
-    host.logic = logic
+    source = MemoryCellSource.from_logic(logic)
+    host = DiskStreamingSession(logic, source)
     host._live_by_id = {"prop-1": prop}
     destination = [CELL_SIZE * 7, 0.0, CELL_SIZE * 7]
     host._delta_by_uuid = {"prop-1": (None, {"pos": list(destination)})}
 
-    host._apply_saved_delta(SimpleNamespace(objs=[(_THING, "prop-1")]))
+    from types import SimpleNamespace
+    host._apply_saved_delta(SimpleNamespace(objs=[(_THING, "prop-1")]))  # a loaded cell
 
     assert list(prop.pos) == destination
     assert session._filed[id(prop)] == cell_of_point(destination[0], destination[2]), (
@@ -317,18 +352,10 @@ def test_tidy_reset_refiles_the_prop_it_moves():
     prop = prop_at(0, 0, 60, tidy_category="books")
     session = make_session([prop])
     logic = session.logic
-    logic._props = session
+    logic.prop_runtime = session
 
-    tidy = TidySession.__new__(TidySession)
-    tidy.logic = logic
-    tidy.objects = [prop]
-    tidy.tidied = 0
-    tidy._tidied_by_cat = {}
-    tidy._tidied_ids = set()
-    tidy._fill = {}
-    tidy._full_fired = set()
-    tidy._check_goals = lambda: None
-    tidy._category = lambda obj: "books"
+    tidy = TidySession(logic)
+    tidy.start()
 
     # Somebody put it on a shelf a long way from home; Reset brings it back.
     prop.pos = [CELL_SIZE * 9, 0.0, CELL_SIZE * 9]

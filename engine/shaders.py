@@ -125,14 +125,14 @@ def detect_low_power_arm():
 # dynamic indexing (which is only legal from GLSL 4.00 onwards).  Keeping the
 # indices constant makes the shaders portable across desktop GL 3.3 drivers.
 # ==============================================================================
-MAX_SHADOW_LIGHTS = 4
+MAX_SHADOW_LIGHTS = 8
 
 # ==============================================================================
 # DYNAMIC LIGHT CAPACITY
 # ------------------------------------------------------------------------------
 # How many point lights a lighting shader can hold. This is the *only* place the
 # number is written down: the shader sources below are built from it and
-# `BaseRenderer.MAX_LIGHTS` reads it, because the renderer's budget and the
+# `ForwardRenderer.MAX_LIGHTS` reads it, because the renderer's budget and the
 # shader's array have to be the same number.
 #
 # They used not to be. The renderer uploaded up to 32 lights and set
@@ -152,9 +152,11 @@ MAX_LIGHTS_ARM = 16
 
 # Water and terrain light themselves from a handful of the nearest lights rather
 # than the whole set; their shaders are sized for that on purpose and the
-# renderer clamps `active_lights` to match (see BaseRenderer._shader_light_cap).
+# renderer clamps `active_lights` to match (see ForwardRenderer._shader_light_cap).
 MAX_LIGHTS_WATER = 8
 MAX_LIGHTS_TERRAIN = 8
+MAX_TERRAIN_STAMPS = 32
+MAX_TERRAIN_STAMP_TEXTURES = 16
 
 # GL 3.3 UBO binding used by every lighting shader.  The binding is assigned
 # from Python with glUniformBlockBinding rather than using a GLSL 4.2-style
@@ -208,17 +210,21 @@ def light_ubo_source(source):
     return result
 
 SHADOW_GLSL = """
-#define MAX_SHADOW_LIGHTS 4
-uniform samplerCube shadowMaps[MAX_SHADOW_LIGHTS];
+#define MAX_SHADOW_LIGHTS """ + str(MAX_SHADOW_LIGHTS) + """
+uniform samplerCube shadowMaps[""" + str(MAX_SHADOW_LIGHTS) + """];
 
 highp float _sampleShadowCube(int idx, highp vec3 dir) {
     if (idx == 0) return texture(shadowMaps[0], dir).r;
     else if (idx == 1) return texture(shadowMaps[1], dir).r;
     else if (idx == 2) return texture(shadowMaps[2], dir).r;
-    return texture(shadowMaps[3], dir).r;
+    else if (idx == 3) return texture(shadowMaps[3], dir).r;
+    else if (idx == 4) return texture(shadowMaps[4], dir).r;
+    else if (idx == 5) return texture(shadowMaps[5], dir).r;
+    else if (idx == 6) return texture(shadowMaps[6], dir).r;
+    return texture(shadowMaps[7], dir).r;
 }
 
-// idx          : which cube-map (0..3), or <0 for a non-shadow-casting light
+// idx          : which cube-map (0..7), or <0 for a non-shadow-casting light
 // fragToLight  : lightPos - fragmentWorldPos (world space)
 // farPlane     : the light radius used when the cube-map was rendered
 // ndotl        : diffuse term, used to scale the slope bias
@@ -251,7 +257,6 @@ float calcPointShadow(int idx, highp vec3 fragToLight, highp float farPlane, flo
     return shadow / 20.0;
 }
 """
-
 # ==============================================================================
 # DISTANCE FOG + GLOBAL AMBIENT
 # ------------------------------------------------------------------------------
@@ -934,6 +939,17 @@ void main()
     vec2 r3 = texture(normalMap, wuv * 0.0310 + time * vec2( 0.016, -0.029)).xy - 0.5;
     vec2 ripple = r1 + r2 * 0.65 + r3 * 0.35;
 
+    // Broad world-space variation breaks up normal-map repetition on large water brushes.
+    highp vec2 broadNoise = vec2(
+        vnoise(FragPos.xz * 0.006 + vec2(time * 0.004, -time * 0.003)),
+        vnoise(FragPos.xz * 0.008 + vec2(-time * 0.003, time * 0.005))
+    ) - 0.5;
+    broadNoise += (vec2(
+        vnoise(FragPos.xz * 0.0037 + vec2(-time * 0.002, time * 0.001)),
+        vnoise(FragPos.xz * 0.0051 + vec2(time * 0.001, time * 0.002))
+    ) - 0.5) * 0.55;
+    ripple += broadNoise * 0.55;
+
     float detailFade = 1.0 / (1.0 + viewDist * 0.0009);
     float rippleStrength = (0.34 + WaveCrest * 0.18) * detailFade;
 
@@ -1445,6 +1461,7 @@ out vec3 FragPos;
 out mediump vec3 Normal;
 out mediump vec3 VertexColor;
 out vec2 TexCoords;
+out vec2 PaintCoords;
 out mediump vec3 SmoothNormal;
 
 uniform mat4 projection;
@@ -1544,6 +1561,7 @@ void main() {
     SmoothNormal = vec3(-gx, 1.0, -gz) / sqrt(gx * gx + 1.0 + gz * gz);
 
     TexCoords = p.xz / uTiling;
+    PaintCoords = vec2(float(me.x), float(me.y)) / float(max(res, 1));
     FragPos = p;
     gl_Position = projection * view * vec4(p, 1.0);
 }""",
@@ -1563,6 +1581,7 @@ out vec3 FragPos;
 out mediump vec3 Normal;
 out mediump vec3 VertexColor;
 out vec2 TexCoords;
+out vec2 PaintCoords;
 out mediump vec3 SmoothNormal;
 
 uniform mat4 projection;
@@ -1573,6 +1592,7 @@ void main() {
     Normal       = aNormal;
     VertexColor  = aColor;
     TexCoords    = aTexCoord;
+    PaintCoords  = aTexCoord;
     SmoothNormal = aSmoothNormal;
     gl_Position  = projection * view * vec4(aPos, 1.0);
 }""",
@@ -1585,6 +1605,7 @@ in highp vec3 FragPos;
 in vec3 Normal;
 in vec3 VertexColor;
 in highp vec2 TexCoords;
+in highp vec2 PaintCoords;
 in vec3 SmoothNormal;
 
 uniform sampler2D texGrass;
@@ -1592,6 +1613,13 @@ uniform sampler2D texRock;
 uniform sampler2D texSand;
 uniform sampler2D texSnow;
 uniform int use_textures;
+
+// Baked terrain material paint. The editor composites source images into a
+// persistent per-chunk RGBA8 terrain map, so this is one terrain lookup rather
+// than a per-fragment loop over independent stamp/decal records.
+uniform sampler2DArray terrainPaintMap;
+uniform int uPaintLayer;
+uniform int uPaintEnabled;
 
 // Height texture layers. uHeightRange is the terrain's world-space height
 // range; uLayerHeights are the sand->grass, grass->rock and rock->snow
@@ -1681,7 +1709,7 @@ vec3 paletteAt(float t) {
 // Index of the colour band / terrace a height belongs to. Terrace flats sit
 // exactly on multiples of the band height; the offset keeps each riser with
 // the level below it until just under the lip, where the contour line runs.
-highp float bandIndex(highp float y) {
+float bandIndex(highp float y) {
     return floor(y / max(uBandHeight, 1e-3) + 0.12);
 }
 
@@ -1745,7 +1773,15 @@ void main() {
         texColor = VertexColor * 1.1;
     }
 
-    // ---- Surface details ---------------------------------------------
+        // ---- Baked terrain material paint -------------------------------
+    if (uPaintEnabled == 1) {
+        vec4 paint = texture(
+            terrainPaintMap, vec3(clamp(PaintCoords.yx, 0.0, 1.0),
+                                  float(uPaintLayer)));
+        texColor = mix(texColor, paint.rgb * 1.1, paint.a);
+    }
+
+// ---- Surface details ---------------------------------------------
     highp vec2 cellCoord = (FragPos.xz - uGridOrigin) / max(uGridSize, 1e-3);
     if (uCellVariation > 0.0) {
         float jitter = hash(floor(cellCoord) + vec2(0.37, 0.71)) - 0.5;
@@ -2089,7 +2125,7 @@ void main() {
 
 }
 
-# ----- Low-power shaders (used by BaseRenderer when lowpower_mode is True) ----
+# ----- Low-power shaders (used by ForwardRenderer when lowpower_mode is True) ----
 DEFAULT_SHADERS['lit_arm.vert'] = """#version 330 core
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec3 aNormal;
@@ -2243,7 +2279,7 @@ void main() {
     FragColor = accumulatedColor;
 }"""
 
-# ----- Portal shaders (used by BaseRenderer for stencil portals) -----
+# ----- Portal shaders (used by ForwardRenderer for stencil portals) -----
 DEFAULT_SHADERS['portal_mask.vert'] = """#version 330 core
 layout(location = 0) in vec3 aPos;
 uniform mat4 projection;
@@ -2256,6 +2292,18 @@ DEFAULT_SHADERS['portal_mask.frag'] = """#version 330 core
 out vec4 FragColor;
 void main() {
     FragColor = vec4(0.0);
+}"""
+
+# A fading portal: what was behind the aperture, laid back over the portal's
+# view with alpha (1 - fade), so the view's opacity is the portal's fade.
+DEFAULT_SHADERS['portal_fade.frag'] = """#version 330 core
+out vec4 FragColor;
+uniform sampler2D behind;
+uniform vec4 viewport_rect;
+uniform float alpha;
+void main() {
+    vec2 uv = (gl_FragCoord.xy - viewport_rect.xy) / viewport_rect.zw;
+    FragColor = vec4(texture(behind, uv).rgb, alpha);
 }"""
 
 DEFAULT_SHADERS['portal_rim.vert'] = """#version 330 core
@@ -2285,6 +2333,4 @@ SHADER_MAP = {
     'water':         ('water.vert',          'water.frag'),
     'glass':         ('glass.vert',          'glass.frag'),
     'terrain':       ('terrain.vert',        'terrain.frag'),
-    # Procedural is available but not yet integrated into the main render loop
-    'procedural':    ('procedural_vert.glsl', 'procedural_frag.glsl'),
 }

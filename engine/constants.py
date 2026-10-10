@@ -26,9 +26,46 @@ RENDER_MODE_WIREFRAME = 2  # Wireframe lines
 RENDER_MODE_VERTEX = 3     # Points
 
 # --- Physics Constants ---
-GRAVITY = -500.0
-JUMP_STRENGTH = 180.0
-TERMINAL_VELOCITY = -500.0
+#
+# Gravity is not here: engine.physics.PhysicsWorld is the one authority for
+# it (Quake 2's sv_gravity, 800), and the player, monsters and dropped props
+# all read it from the live world.
+#
+# Player movement follows Quake 2's rules (qcommon/pmove.c, client/cl_input.c)
+# in the same Quake units Fio's maps are built in, applied by Fio's own player
+# controller and collision (engine.player).
+
+JUMP_STRENGTH = 270.0           # Quake 2's jump speed: ~46 units high
+TERMINAL_VELOCITY = -800.0
+
+# A key press asks for this much speed; +speed (Fio's sprint key) doubles the
+# request and the wish is then clamped to PM_MAXSPEED (or PM_DUCKSPEED).
+CL_FORWARDSPEED = 200.0
+CL_SIDESPEED = 200.0
+CL_RUN_SCALE = 2.0
+
+PM_STOPSPEED = 100.0
+PM_MAXSPEED = 300.0
+PM_DUCKSPEED = 100.0
+PM_ACCELERATE = 10.0
+PM_AIRACCELERATE = 1.0
+PM_FRICTION = 6.0
+PM_GROUND_NORMAL = 0.7          # a surface steeper than ~45 degrees is not ground
+
+# Landing faster than 200 u/s blocks jumping for 144 ms, faster than 400 u/s
+# for 200 ms (Quake 2's pm_time of 18 / 25 eight-millisecond units).
+PM_LAND_SPEED = -200.0
+PM_HARD_LAND_SPEED = -400.0
+PM_LAND_TIME = 18 * 0.008
+PM_HARD_LAND_TIME = 25 * 0.008
+
+# Ducking halves the hull (Quake 2: 56 -> 28 tall) and lowers the eye from 46
+# to 22 units above the feet, in proportion to Fio's hull.
+PM_DUCK_HEIGHT_FRACTION = 28.0 / 56.0
+PM_DUCK_EYE_FRACTION = 22.0 / 46.0
+
+# Fio's sprint key is Quake 2's +speed: 200 -> 300 straight ahead.
+PM_SPRINT_SCALE = PM_MAXSPEED / CL_FORWARDSPEED
 
 # --- Water Physics Constants ---
 WATER_SWIM_SPEED_MULT = 0.55    # Horizontal swim speed as a fraction of run speed
@@ -59,6 +96,20 @@ def is_water_brush(brush):
             if tex and 'water' in tex.lower():
                 return True
     return False
+
+
+def water_high_quality(brush):
+    """A water brush's "High quality" flag (``water_high_quality``, default on).
+
+    High-quality water copies the scene depth for depth-based colour,
+    shoreline foam, caustics and screen-space reflections; off, it is the
+    cheap look (waves, refraction, sky reflection). Authored per brush, so
+    hand-edited maps may hold strings like ``"false"`` or ``"0"``.
+    """
+    value = brush.get('water_high_quality', True)
+    if isinstance(value, str):
+        return value.strip().lower() not in ('0', 'false', 'no', 'off', '')
+    return bool(value)
 
 
 def is_solid_world_brush(brush):
@@ -142,8 +193,7 @@ def normalize_color(rgb, default=None):
 
     Lives here rather than in the renderer because the dense render projection
     resolves brush colours at edit time and must not import a module that pulls
-    in OpenGL.  ``engine.renderer_core`` re-exports it, so every existing
-    caller is unaffected and there is still one definition.
+    in OpenGL.
     """
     if default is None:
         default = [0.8, 0.8, 0.8]

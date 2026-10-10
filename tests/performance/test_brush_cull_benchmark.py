@@ -2,7 +2,7 @@
 
 Prints how many rows are visible and what the cull costs end to end: the
 shown mask, the frustum test over every row, and the slots that pass, exactly
-as ``LogicThread._prepare_render_state`` runs it. Reported, not asserted.
+as ``LogicRender`` runs it. Reported, not asserted.
 
 For the record, a grid-assisted broad phase (occupied 512-unit cells ->
 slots, cell boxes through the same test) was built and measured against this.
@@ -18,14 +18,15 @@ file.
 """
 
 import time
-
 import glm
 import numpy as np
 import pytest
 
 pytest.importorskip("PyQt5", reason="the logic thread pulls in editor.things")
 
-from engine.logic_thread import LogicThread              # noqa: E402
+from editor.editor_state import EditorState
+from engine.logic_thread import LogicThread                    # noqa: E402
+from engine.threaded_game_state import ThreadedGameState        # noqa: E402
 from engine.render_table import RenderTable              # noqa: E402
 from tests.helpers.worlds import box_brush               # noqa: E402
 
@@ -81,18 +82,22 @@ def test_report_the_brush_cull_cost():
     table = RenderTable()
     table.begin_frame(_rooms(), 1)
     keep, _ = table.shown()
-    thread = LogicThread.__new__(LogicThread)
+    logic = LogicThread(ThreadedGameState(), EditorState())
+    render = logic.render_runtime
     projection = glm.perspective(glm.radians(75.0), 16.0 / 9.0, 1.0, 10000.0)
 
-    print("\n  %d rows, median of %d\n" % (table.count, REPEATS))
-    print("  %-24s %8s %9s" % ("pose", "visible", "cull ms"))
-    for name, (eye, look) in POSES.items():
-        eye = glm.vec3(*eye)
-        planes = thread._extract_frustum_planes(projection * glm.lookAt(
-            eye, eye + glm.normalize(glm.vec3(*look)), glm.vec3(0, 1, 0)))
+    try:
+        print("\n  %d rows, median of %d\n" % (table.count, REPEATS))
+        print("  %-24s %8s %9s" % ("pose", "visible", "cull ms"))
+        for name, (eye, look) in POSES.items():
+            eye = glm.vec3(*eye)
+            planes = render.extract_frustum_planes(projection * glm.lookAt(
+                eye, eye + glm.normalize(glm.vec3(*look)), glm.vec3(0, 1, 0)))
 
-        def cull():
-            return np.flatnonzero(keep & thread._aabb_in_frustum_bounds(
-                planes, table.bounds[:table.count]))
+            def cull():
+                return np.flatnonzero(keep & render.aabb_in_frustum_bounds(
+                    planes, table.bounds[:table.count]))
 
-        print("  %-24s %8d %9.3f" % (name, len(cull()), _best_ms(cull)))
+            print("  %-24s %8d %9.3f" % (name, len(cull()), _best_ms(cull)))
+    finally:
+        logic.stop()

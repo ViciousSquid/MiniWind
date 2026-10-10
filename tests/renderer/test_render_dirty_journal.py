@@ -8,41 +8,44 @@ import pytest
 import threading
 from collections import deque
 
+pytestmark = pytest.mark.qt
+
 
 def _state():
-    """Build the minimum EditorState instance needed for journal tests."""
+    """A real EditorState whose journal a renderer has already drained.
+
+    A new EditorState starts with a whole-world invalidation pending (its
+    first frame draws everything). These tests start after that frame, so
+    epochs below are counted from ``state.world_epoch`` at that point.
+    """
     pytest.importorskip("PyQt5")
     from editor.editor_state import EditorState
-    state = EditorState.__new__(EditorState)
-    state.world_epoch = 0
-    state._render_dirty_objects = set()
-    state._render_dirty_epoch_by_id = {}
-    state._render_dirty_all = False
-    state._render_dirty_all_epoch = -1
-    state._render_dirty_lock = threading.RLock()
-    state._render_dirty_history = deque(maxlen=32)
+    state = EditorState()
+    state.clear_render_dirty(state.render_dirty_snapshot())
     return state
 
 
 def test_snapshot_preserves_later_object_edit():
     """An edit after capture remains pending for the next frame."""
     state = _state()
+    base = state.world_epoch
     first = object()
     second = object()
 
     state.mark_world_changed([first])
     snapshot = state.render_dirty_snapshot()
-    assert snapshot == (1, {id(first)})
+    assert snapshot == (base + 1, {id(first)})
 
     state.mark_world_changed([second])
     state.clear_render_dirty(snapshot)
 
-    assert state.render_dirty_snapshot() == (2, {id(second)})
+    assert state.render_dirty_snapshot() == (base + 2, {id(second)})
 
 
 def test_snapshot_preserves_same_object_edited_again():
     """Re-dirtying the same row after capture is not consumed early."""
     state = _state()
+    base = state.world_epoch
     brush = object()
 
     state.mark_world_changed([brush])
@@ -50,12 +53,13 @@ def test_snapshot_preserves_same_object_edited_again():
     state.mark_world_changed([brush])
     state.clear_render_dirty(snapshot)
 
-    assert state.render_dirty_snapshot() == (2, {id(brush)})
+    assert state.render_dirty_snapshot() == (base + 2, {id(brush)})
 
 
 def test_snapshot_preserves_global_invalidation_after_capture():
     """A later global invalidation survives the earlier frame boundary."""
     state = _state()
+    base = state.world_epoch
     first = object()
 
     state.mark_world_changed([first])
@@ -65,7 +69,7 @@ def test_snapshot_preserves_global_invalidation_after_capture():
     state.clear_render_dirty(snapshot)
 
     epoch, dirty = state.render_dirty_snapshot()
-    assert epoch == 2
+    assert epoch == base + 2
     assert dirty is None
 
 
@@ -114,6 +118,7 @@ def test_dirty_history_replays_for_a_second_render_buffer():
 
 def test_dirty_history_replays_global_invalidation():
     state = _state()
+    base = state.world_epoch
     brush = object()
 
     state.mark_world_changed([brush])
@@ -122,7 +127,7 @@ def test_dirty_history_replays_global_invalidation():
 
     state.mark_world_changed()
     snapshot = state.render_dirty_snapshot()
-    epoch, dirty = state.render_dirty_since(1, through_epoch=snapshot[0])
+    epoch, dirty = state.render_dirty_since(base + 1, through_epoch=snapshot[0])
 
-    assert epoch == 2
+    assert epoch == base + 2
     assert dirty is None

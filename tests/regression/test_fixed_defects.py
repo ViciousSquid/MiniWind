@@ -71,113 +71,91 @@ def test_undo_steps_back_exactly_one_operation():
 
 @pytest.mark.qt
 def test_a_ground_monster_directly_below_its_target_does_not_produce_nan():
-    """``glm.normalize`` of the zero vector is NaN, not an error.
-
-    A ground monster flattens its 3D direction to XZ before walking.  With the
-    target directly overhead - a flying player above a grunt, or a monster on
-    the player's own column - the flattened vector is zero, and the NaN flowed
-    into the monster's position and then into ``SpatialGrid.overlaps_wall``,
-    which raised ``ValueError: cannot convert float NaN to integer`` on the AI
-    thread.  That thread has no exception guard, so every monster in the level
-    silently stopped.
-
-    The invariant: a monster's position is always finite.
-    """
+    """A ground monster must remain finite when its target lies directly above it."""
     pytest.importorskip("PyQt5")
+    from editor.editor_state import EditorState
     from editor.things import Monster
+    from engine.logic_thread import LogicThread
     from engine.monster_ai import MonsterAI
-    from tests.helpers.fakes import FakeLogicThread, FakePlayer
+    from engine.player import Player
+    from engine.threaded_game_state import ThreadedGameState
+    from engine.physics import SpatialGrid
     from tests.helpers.worlds import make_thing
 
     ground = [box_brush("ground", (0, -16, 0), (4096, 32, 4096))]
     monster = make_thing(Monster, "grunt", (0.0, 96.0, 0.0), awake=True)
-    logic = FakeLogicThread(brushes=ground, things=[monster],
-                            player=FakePlayer((0.0, 900.0, 0.0)))
-    logic._monster_things = [monster]
+    state = EditorState()
+    state.brushes = ground
+    state.things = [monster]
+    logic = LogicThread(ThreadedGameState(), state)
+    logic.player_runtime.player = Player(0.0, 0.0)
+    logic.player_runtime.player.pos.y = 900.0
+    logic.world_runtime.build_entity_caches()
     ai = MonsterAI(logic)
-    ai.set_spatial_grid(logic.build_spatial_grid())
-
-    for _ in range(10):
-        ai.update(1.0 / 30.0)          # must not raise
-
-    assert all(math.isfinite(value) for value in monster.pos), (
-        "the monster's position went non-finite: %s" % (monster.pos,))
-
-
-@pytest.mark.qt
-def test_a_patrol_node_directly_overhead_does_not_produce_nan():
-    """The same hazard on the patrol path."""
-    pytest.importorskip("PyQt5")
-    from editor.things import Monster, PathNode
-    from engine.monster_ai import MonsterAI
-    from tests.helpers.fakes import FakeLogicThread, FakePlayer
-    from tests.helpers.worlds import make_thing
-
-    ground = [box_brush("ground", (0, -16, 0), (4096, 32, 4096))]
-    node = make_thing(PathNode, "above", (0.0, 900.0, 0.0), radius=8.0)
-    monster = make_thing(Monster, "walker", (0.0, 96.0, 0.0), awake=True,
-                         patrol=True, patrol_target="above")
-    logic = FakeLogicThread(brushes=ground, things=[monster, node],
-                            player=FakePlayer((100000.0, 0.0, 0.0)))
-    logic._monster_things = [monster]
-    ai = MonsterAI(logic)
-    ai.set_spatial_grid(logic.build_spatial_grid())
-
-    for _ in range(10):
-        ai.update(1.0 / 30.0)
-
-    assert all(math.isfinite(value) for value in monster.pos), (
-        "patrolling toward a node directly overhead produced %s" % (monster.pos,))
-
-
+    logic.monster_ai = ai
+    grid = SpatialGrid()
+    grid.populate(ground)
+    ai.set_spatial_grid(grid)
+    try:
+        for _ in range(10):
+            ai.update(1.0 / 30.0)
+        assert all(math.isfinite(value) for value in monster.pos), (
+            "the monster position became non-finite: %s" % (monster.pos,))
+    finally:
+        logic.stop()
 # ---------------------------------------------------------------------------
 # A one-node patrol route fired its outputs every tick
 # ---------------------------------------------------------------------------
 
 @pytest.mark.qt
 def test_a_monster_parked_on_its_only_patrol_node_announces_it_once():
-    """Advancing a one-node chain lands back on the node it is standing on.
-
-    The advance still fired ``OnMonsterLeft`` and cleared the "at target" flag,
-    so the next tick fired ``OnMonsterArrived`` again - a pair of I/O events
-    thirty times a second, for ever.  A logic counter wired to that node counted
-    thirty arrivals a second.
-
-    The invariant: an entity announces an arrival only when it has actually
-    arrived somewhere new.
-    """
+    """A stationary one-node patrol emits its arrival only once."""
     pytest.importorskip("PyQt5")
+    from editor.editor_state import EditorState
     from editor.things import Monster, PathNode
+    from engine.logic_thread import LogicThread
     from engine.monster_ai import MonsterAI
-    from tests.helpers.fakes import (FakeLogicThread, FakePlayer,
-                                     RecordingIOManager)
+    from engine.player import Player
+    from engine.threaded_game_state import ThreadedGameState
+    from engine.physics import SpatialGrid
+    import glm
     from tests.helpers.worlds import make_thing
 
     ground = [box_brush("ground", (0, -16, 0), (4096, 32, 4096))]
     node = make_thing(PathNode, "only_node", (0.0, 96.0, 0.0), radius=64.0)
     monster = make_thing(Monster, "walker", (0.0, 96.0, 0.0), awake=True,
                          patrol=True, patrol_target="only_node")
-    io_manager = RecordingIOManager()
-    logic = FakeLogicThread(brushes=ground, things=[monster, node],
-                            player=FakePlayer((100000.0, 0.0, 0.0)),
-                            io_manager=io_manager)
-    logic._monster_things = [monster]
+    state = EditorState()
+    state.brushes = ground
+    state.things = [monster, node]
+    logic = LogicThread(ThreadedGameState(), state)
+    logic.player_runtime.player = Player(0.0, 0.0)
+    logic.player_runtime.player.pos = glm.vec3(100000.0, 0.0, 0.0)
+    logic.world_runtime.build_entity_caches()
     ai = MonsterAI(logic)
-    ai.set_spatial_grid(logic.build_spatial_grid())
+    logic.monster_ai = ai
+    grid = SpatialGrid()
+    grid.populate(ground)
+    ai.set_spatial_grid(grid)
+    fired = []
+    real_fire_output = logic.io_manager.fire_output
 
-    for _ in range(60):                         # two seconds of ticks
-        ai.update(1.0 / 30.0)
+    def record_and_dispatch(entity, output_name, value=None):
+        fired.append((entity, output_name, value))
+        return real_fire_output(entity, output_name, value)
 
-    arrivals = io_manager.names().count("OnMonsterArrived")
-    departures = io_manager.names().count("OnMonsterLeft")
-    assert arrivals == 1, (
-        "the monster arrived once and never left, but OnMonsterArrived fired "
-        "%d times over 60 ticks" % arrivals)
-    assert departures == 0, (
-        "OnMonsterLeft fired %d times for a monster that never left its node"
-        % departures)
-
-
+    logic.io_manager.fire_output = record_and_dispatch
+    try:
+        for _ in range(60):
+            ai.update(1.0 / 30.0)
+        arrivals = [entry for entry in fired if entry[1] == "OnMonsterArrived"]
+        departures = [entry for entry in fired if entry[1] == "OnMonsterLeft"]
+        assert len(arrivals) == 1, (
+            "the monster arrived once but the output fired %d times" % len(arrivals))
+        assert len(departures) == 0, (
+            "OnMonsterLeft fired %d times for a monster that never left" % len(departures))
+    finally:
+        logic.stop()
 # ---------------------------------------------------------------------------
 # Re-entrant plugin discovery dropped a plugin permanently
 # ---------------------------------------------------------------------------

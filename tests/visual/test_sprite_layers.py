@@ -92,7 +92,7 @@ def _render(renderer, context, things, eye=glh.CAMERA_EYE,
     config = glh.render_config(all_brushes=[], all_things=things)
     context.bind()
     gl.glClearColor(0.0, 0.0, 0.0, 1.0)
-    renderer.render_scene(projection, view, eye_v, [], things, None, config,
+    renderer.render_scene(projection, view, eye_v, None, config,
                           brush_slots=np.empty(0, dtype=np.int32))
     gl.glFinish()
     return context.read_pixels()
@@ -100,11 +100,11 @@ def _render(renderer, context, things, eye=glh.CAMERA_EYE,
 
 def _count_sprite_draws(renderer):
     """Wrap the sprite pass and count the instanced draws issued inside it."""
-    import engine.renderer_core as rc
+    import OpenGL.GL as gl
 
     seen = {"draws": 0, "instances": 0}
     original_pass = renderer.draw_sprites_instanced
-    real_draw = rc.gl.glDrawArraysInstanced
+    real_draw = gl.glDrawArraysInstanced
 
     def counting_draw(mode, first, count, instances, *a, **k):
         seen["draws"] += 1
@@ -112,11 +112,11 @@ def _count_sprite_draws(renderer):
         return real_draw(mode, first, count, instances, *a, **k)
 
     def wrapped(*args, **kwargs):
-        rc.gl.glDrawArraysInstanced = counting_draw
+        gl.glDrawArraysInstanced = counting_draw
         try:
             return original_pass(*args, **kwargs)
         finally:
-            rc.gl.glDrawArraysInstanced = real_draw
+            gl.glDrawArraysInstanced = real_draw
 
     renderer.draw_sprites_instanced = wrapped
     return seen
@@ -267,33 +267,31 @@ def test_projectile_billboards_are_one_draw_and_reach_the_screen(renderer, conte
     """Monster projectiles: an (N, 3) array, one instanced draw, visible."""
     import OpenGL.GL as gl
 
-    import engine.renderer_core as rc
-
     red = _solid((255, 0, 0))
     projection, view, _ = glh.camera_matrices(aspect=1.0)
     positions = np.array([[-60.0, 60.0, 0.0], [0.0, 60.0, 0.0],
                           [60.0, 60.0, 0.0]], dtype=np.float32)
     draws = []
-    real = rc.gl.glDrawArraysInstanced
-    rc.gl.glDrawArraysInstanced = lambda mode, first, count, n, *a: (
+    real = gl.glDrawArraysInstanced
+    gl.glDrawArraysInstanced = lambda mode, first, count, n, *a: (
         draws.append(int(n)), real(mode, first, count, n, *a))[1]
     try:
         context.bind()
         gl.glClearColor(0.0, 0.0, 0.0, 1.0)
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
         gl.glDisable(gl.GL_DEPTH_TEST)
-        drawn = renderer.draw_billboards_instanced(
+        drawn = renderer.draw_billboards(
             projection, view, positions, (40.0, 40.0), red)
         gl.glFinish()
         pixels = context.read_pixels()
     finally:
-        rc.gl.glDrawArraysInstanced = real
+        gl.glDrawArraysInstanced = real
 
     assert drawn == 3 and draws == [3]
     reddish = (pixels[..., 0] > 128) & (pixels[..., 1] < 64)
     assert reddish.sum() > 100
     # Nothing to draw is no draw at all.
-    assert renderer.draw_billboards_instanced(
+    assert renderer.draw_billboards(
         projection, view, np.empty((0, 3), np.float32), (40.0, 40.0), red) == 0
 
 
@@ -303,7 +301,7 @@ def test_building_the_array_leaves_the_pixel_store_as_qt_expects(renderer, conte
     there, which sheared every small glyph of a ``message`` into stripes."""
     import OpenGL.GL as gl
 
-    from engine.renderer_core import restore_default_pixel_store
+    from engine.qt_game_view import restore_default_pixel_store
 
     red, blue = _solid((255, 0, 0)), _solid((0, 0, 255))
     things = [_billboard(renderer, "a", (0.0, 60.0, 0.0), red),
@@ -312,7 +310,7 @@ def test_building_the_array_leaves_the_pixel_store_as_qt_expects(renderer, conte
     projection, view, eye = glh.camera_matrices(aspect=1.0)
     context.bind()
     restore_default_pixel_store()
-    renderer.render_scene(projection, view, eye, [], things, None,
+    renderer.render_scene(projection, view, eye, None,
                           glh.render_config(all_brushes=[], all_things=things),
                           brush_slots=np.empty(0, dtype=np.int32))
     gl.glFinish()

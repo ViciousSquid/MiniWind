@@ -1,5 +1,6 @@
 # Fio Plugin API Reference
 
+> **Security / trust boundary:** the plugin API is an in-process Python extension API, **not a sandbox**. Code loaded from `plugins/<name>` runs with the same OS/process privileges as Fio and must therefore be treated as trusted software. Do not place untrusted Python packages in `plugins/`. `.fiopak` archives do not install plugin code; they can only declare dependencies on plugins already installed by the host.\n\n
 This is the complete reference for everything a Fio plugin can call. It documents
 the public surface exported from [`plugins/api.py`](api.py) and
 [`plugins/host.py`](host.py) — the classes, methods, helpers and lifecycle a
@@ -60,8 +61,8 @@ implements; `API_VERSION_INFO` is the same value as an `(int, int, int)` tuple.
 
 | Value | Introduced |
 |-------|------------|
-| `API_VERSION` | `"1.5.0"` |
-| `API_VERSION_INFO` | `(1, 5, 0)` |
+| `API_VERSION` | `"1.7.0"` |
+| `API_VERSION_INFO` | `(1, 7, 0)` |
 
 History:
 
@@ -72,8 +73,24 @@ History:
   entity, custom property tabs), and the `FIO_NO_PLUGINS` kill-switch.
 - **1.4.0** — optional editor Tools actions and console-command registration for developer plugins.
 - **1.5.0** — [editor content extensions](#editor-content-extensions-api-150): collapsible
-  property sections, LogicState preset keys and entity inspectors. Additive: every
-  1.4.0 plugin loads and behaves unchanged.
+  property sections, LogicState preset keys and entity inspectors; [world pause and
+  actor pick](#world-pause-and-actor-pick-api-150-play-mode). Additive: every 1.4.0
+  plugin loads and behaves unchanged.
+- **1.6.0** — **Fio 3.0. A major architectural shift from 1.5:** the renderer is
+  a plugin boundary. Renderer registration takes the `engine.renderer.Renderer`
+  protocol (see [`register_renderer`](#editor-ui-extensions-api-130)): a renderer
+  factory is called as `factory(config)`, and the active renderer can be replaced
+  live. What that means for existing plugins:
+  - **Plugins written for 1.3–1.5 that do not use the renderer contract load and
+    behave unchanged** — entities, I/O, runtime hooks, events, editor extensions.
+  - **Renderer implementations written for 1.3–1.5 are not compatible.** The old
+    factory (`cls(texture_loader, grid_size, world_size, config)`) and the old
+    forward-renderer interface (`renderer_core` / `Renderer_F` internals) are gone,
+    and there is no compatibility shim: port the renderer to the protocol and
+    declare `api_version = "1.6.0"`.
+- **1.7.0** — the [pause menu](#pause-menu-api-170-play-mode):
+  `register_pause_menu_item`, the `pause_menu_opened` / `pause_menu_closed`
+  events, and `main_window.open_pause_menu()` / `close_pause_menu()`. Additive.
 
 A plugin declares the minimum it needs with `FioPlugin.api_version`. If that is
 **newer** than the host's `API_VERSION`, the manager refuses to load the plugin
@@ -137,6 +154,15 @@ Connect to the live engine through the [`PluginHost`](#pluginhost--the-open-ende
 Called once, alongside `register_runtime`, for **every** loaded plugin (so a
 plugin enabled later is already wired in; its event hooks self-gate on
 `enabled`). Subscribe to events, publish services, reach any subsystem here.
+
+```python
+def map_uses_plugin(self, map_data: dict) -> bool
+```
+Optional. Return True when *map_data* needs this plugin active, for a plugin
+whose behaviour attaches to core entities rather than an entity type of its
+own (a plugin is already detected by its registered entity types). The manager
+asks it when a level loads (`auto_enable_for_map`) and switches a
+disabled-by-default plugin on; an exception is logged and treated as False.
 
 ```python
 def on_play_start(self, logic) -> None
@@ -321,24 +347,81 @@ only while the plugin is enabled.
 ```python
 def register_renderer(self, name: str, cls) -> bool
 ```
-Register a swappable renderer class under *name*. Fio's viewport selects its
-renderer from a class registry; this drops *cls* in so it appears as a render
-mode. *cls* must implement the renderer interface (`render_scene`,
-`draw_models_instanced`, `render_shadow_maps`, `cleanup`, a `lod_manager`, …).
+Register a renderer under *name* in Fio's renderer registry (`"Forward"` is
+the built-in one). This contract is API 1.6.0: a plugin that registers a
+renderer declares `api_version = "1.6.0"`. *cls* is a factory called as `cls(config)` with the
+viewport's GL context current — usually the renderer class itself — and what
+it returns must satisfy the `engine.renderer.Renderer` protocol:
 
-The production forward renderer's `render_shadow_maps` signature is:
+- **lifecycle:** `ready`, `cleanup()`
+- **the frame:** `render_scene(projection, view, camera_pos, primary_selection,
+  config, clear=True, brush_slots=None)`. `config` is the frame input
+  documented in `engine.renderer.FRAME_INPUT` (the dense `RenderTable` /
+  `EntityTable`, their slots, terrain and the view settings);
+  `primary_selection` is an `engine.renderer.SelectionOverlay` or `None`.
+- **settings:** `view_distance`, `shadows_enabled`, `water_quality`,
+  `set_grid(world_size, grid_size)`
+- **resources:** `load_texture`, `set_sprite_textures`, `get_loaded_model`
+- **diagnostics:** `render_stats` (an `engine.renderer.RenderStats`)
+- **optional:** `animate_textures(clock)` -- animated (GIF) textures. The host
+  calls it before each frame with the seconds of unpaused Play (0 outside
+  Play); show each animated texture's frame for that time, keeping its GL
+  name. `RendererCore` implements it; a renderer without it shows GIFs still.
+- **post-scene drawing the viewport asks for:** `draw_billboards`,
+  `draw_player_glasses`, `draw_bullet_marks`, `draw_connection_lines`,
+  `draw_face_highlight`, `draw_component_overlay`,
+  `draw_collision_visualization`
 
-```python
-def render_shadow_maps(self, shadow_lights, config, camera_pos=None)
-```
+The renderer owns its technique — shaders, passes, lighting model, shadowing,
+G-buffer — and consumes the dense tables rather than authored
+`Brush`/`Thing`/`Light` objects. **You do not need to understand or inherit the
+`ForwardRenderer` to implement another renderer**;
+`engine.renderer.core.RendererCore` is optional reusable infrastructure
+(texture/model resources, table lookups, culling, editor overlays). Returns
+`True` if registered, `False` in a headless/player context with no viewport.
+This is how a whole new renderer ships as a plugin.
 
-`shadow_lights` is the dense `(EntityTable, light_slots)` tuple published by
-the render state. Shadow casters are selected from `RenderTable` and
-`EntityTable` slots; the shadow pass does not accept or traverse authored
-`Brush`/`Thing`/`Light` collections. A custom renderer should preserve that
-dense execution boundary. Returns `True` if registered, `False` in a
-headless/player context with no viewport. This is how a whole new renderer
-ships as a plugin.
+**Choosing it, live.** `r_renderer` lists the registered renderers and
+`r_renderer <name>` swaps to one (`QtGameView.switch_renderer`), in the editor or
+in Play. The host creates the new renderer first; if its factory raises or it is
+not `ready`, the current one keeps running. Session settings (`shadows_enabled`,
+`water_quality`, the shared `view_distance`) carry over. Map logic cannot run
+`r_renderer`.
+
+**Resource lifetime is part of the contract.** *No GL resource ID survives the
+lifetime of the renderer that owns it.*
+
+- The renderer instance owns its GL resources: programs, buffers, vertex arrays,
+  framebuffers, and every texture and model it loads — including the names it
+  returns from `load_texture`.
+- The host discards renderer-produced GL handles before calling `cleanup()` (its
+  sprite table, the terrain's program and texture bindings), and `cleanup()` must
+  delete everything the renderer made, lazily created objects included.
+- A replacement renderer receives fresh resource tables: the host reloads its
+  sprites through the new renderer's `load_texture` and hands them over with
+  `set_sprite_textures`. Never assume a GL name from another renderer, or from an
+  earlier instance of your own, is still valid.
+
+**Display modes.** The frame input's `brush_display_mode` is the editor's
+Display box — `Textured`, `Solid Lit` (no textures), `Wireframe`, `Points`,
+`Overlay` (Textured with the wireframe drawn over it); `r_wireframe` selects
+Wireframe. The host publishes it every frame and the renderer decides how each
+looks. In Play the host publishes `Textured` unless Wireframe, Points or Overlay
+is selected.
+
+**Diagnostics.** [Debug Tables](https://github.com/ViciousSquid/Fio/wiki/Debug-Tables)
+(**Debug → Debug Tables**) works unchanged with any renderer: it labels the
+active one (**FORWARD**, **DEFERRED**, …), shows the dense tables and visible
+slots it is given, follows a selected object to its rows, and reports
+`render_stats` — `draw_calls` (scene draws), `shadow_draw_calls`, `batched_draws`,
+`visible_tris`, pass timings — plus any lines the renderer publishes in
+`render_stats.details` (`name -> text`, or a zero-argument callable).
+
+The contract step by step, GL state rules and a complete working
+`DeferredRenderer` are in the wiki's
+[Renderer Development Guide](https://github.com/ViciousSquid/Fio/wiki/Renderer-Development-Guide);
+the example itself is [`docs/examples/deferred_renderer/`](../docs/examples/deferred_renderer/)
+(copy it into `plugins/` and run `r_renderer Deferred`).
 
 ### Developer/editor tools (API 1.4.0)
 
@@ -402,22 +485,75 @@ first provider returning a non-empty document is shown; with none the panel list
 the entity's public properties. The panel refreshes about four times a second
 while visible. With *entity_type* the provider is only asked about that type.
 
-### World pause and actor pick (engine, Play Mode)
+### World pause and actor pick (API 1.5.0, Play Mode)
 
-Not part of the versioned `EditorAPI`; engine objects a plugin already receives.
+Called on the engine objects a plugin already receives (the logic thread in
+`on_tick`/console commands, the main window in Tools actions and console
+commands). Part of API 1.5.0: a plugin that uses them declares
+`api_version = "1.5.0"`.
 
 ```python
-logic.set_world_paused(owner, paused=True)   # hold/release a pause for *owner*
-logic.world_paused                           # True while any owner holds one
+logic.session_runtime.set_world_paused(owner, paused=True)  # hold/release a pause for *owner*
+logic.session_runtime.world_paused                          # True while any owner holds one
+logic.session_runtime.world_pause_owners()                  # frozenset of the owners holding one
 main_window.begin_actor_pick(on_pick=None)   # arm click-to-pick of an actor
+main_window.view_3d.actor_pick_active        # True while a pick is armed
 ```
 While any owner holds a world pause, a play tick advances nothing in the world
 (player, movers, doors, I/O timers, triggers, props, physics, projectiles, the
-monster AI thread) but plugins still tick, so a game's menus keep working. Each
-owner releases only its own request; entering or leaving Play Mode drops them
-all. `begin_actor_pick` pauses the world, frees the cursor and calls
-`on_pick(entity)` for the next actor clicked (default: open the Entity
-Inspector); Esc or a right-click cancels.
+monster AI thread) but plugins still tick, so a game's menus keep working. They
+tick exactly when an unpaused tick would reach them -- not during a cinematic, a
+death or the level-complete screen. Each owner releases only its own request;
+entering or leaving Play Mode drops them all. `begin_actor_pick` pauses the
+world, frees the cursor and calls `on_pick(entity)` for the next actor clicked
+(default: open the Entity Inspector); Esc or a right-click cancels. Solid
+brushes in front of an actor block the click (as drawn, rotation included);
+terrain does not.
+
+### Pause menu (API 1.7.0, Play Mode)
+
+Esc in Play Mode opens the pause menu (with the player dead, Esc still leaves
+Play). It holds the world pause owner `"pause_menu"` while it is open, so the
+world stops and plugins keep ticking, and it frees the cursor. Its first page
+is:
+
+| Item | What it does |
+|------|--------------|
+| Resume | Close the menu and play on (Esc does the same). |
+| Save Game | Three slots, `saves/slot1.fiosave` to `slot3.fiosave`, each labelled with when it was saved. |
+| Load Game | The same slots (an empty one cannot be chosen); loading closes the menu. |
+| Options | **Sound Volume** and **Music Volume** (0-100; music is whatever plays from `assets/music`, sound is everything else) and **Video** (Fullscreen, Borderless, Windowed). These are the settings of Settings > Play Modes (Audio, and Display Mode), so the two always agree. |
+| *plugin items* | Each enabled plugin's items, in registration order. |
+| Exit to Editor | Leave Play. In a played package it reads **Quit** and asks before quitting the game. |
+
+The menu is a floating window like SysMon's, titled with the current page: drag
+it by its title bar (it opens where it was left), and its [X] resumes. Behind
+it the frame the menu opened over is blurred; it fades in over a second, and out
+again over the resumed game (play resumes at once). Up/Down
+(or W/S) choose, Enter, Space or E activates, Left/Right (or A/D) move a slider,
+and Esc goes back a page. The cursor is free while it is open, and the mouse
+works too.
+
+```python
+api.register_pause_menu_item(label, callback, close_menu=True)  # in register(api)
+main_window.open_pause_menu()        # what Esc does; False outside Play
+main_window.close_pause_menu()       # resume; False when it was not open
+main_window.view_3d.pause_menu_active
+logic.session_runtime.pause_menu_open
+```
+`callback(main_window, logic)` runs on the UI thread, with the world paused,
+when the item is chosen; an exception in it is logged and play continues. With
+`close_menu=True` the menu then closes; pass `False` for an item that opens a
+screen of its own, then call `main_window.close_pause_menu()` when that is done.
+
+The logic thread emits `pause_menu_opened` and `pause_menu_closed` on the
+[event bus](#events) when the menu opens and closes:
+
+```python
+def connect(self, host):
+    host.on("pause_menu_opened", lambda ev: self.mute_radio())
+    host.on("pause_menu_closed", lambda ev: self.unmute_radio())
+```
 
 ### Global store & logging
 
@@ -494,7 +630,7 @@ def player_forward(self)  # -> (x, y, z) full look direction, includes pitch
 ```python
 def spawn(self, cls, pos=None, properties=None)
 ```
-Instantiate *cls*, append it to `logic.things`, emit an `entity_spawned` event,
+Instantiate *cls*, append it to `logic.editor_state.things`, emit an `entity_spawned` event,
 and return the entity (or `None` if construction fails).
 
 ```python
@@ -545,7 +681,7 @@ Show a contextual HUD line this tick, respecting priority. Returns `False`
 (does nothing) if the core already claimed the line (`interaction_consumed`)
 and *priority* isn't above it, or if another plugin already set a
 higher-priority prompt this tick. This replaces the manual "don't clobber the
-HUD" dance and poking `logic.current_hud_message` directly.
+HUD" dance and poking the engine-owned HUD storage directly.
 
 ```python
 def toast(self, text: str, seconds: float = 2.0) -> None
@@ -573,13 +709,13 @@ isn't present on this host, rather than raising:
 | Accessor | Returns |
 |----------|---------|
 | `host.logic` / `host.engine` | the play session's logic object |
-| `host.scene` | the live `things` list (the *actual* list — mutating it affects the scene) |
-| `host.player` | the player object |
+| `host.scene` | the live `editor_state.things` list (the *actual* list — mutating it affects the scene) |
+| `host.logic.player_runtime.player` | the live player actor |
 | `host.io` | the `IOManager` |
 | `host.globals` | the [`GlobalStore`](#globalstore--cross-level-storage) |
 | `host.game_state` | the game-state object |
 | `host.monster_ai` | the monster AI subsystem |
-| `host.terrain` | the terrain object |
+| `host.logic.world_runtime.terrain` | the live world terrain object |
 | `host.editor` | the editor main window if running in the editor, else `None` |
 
 For anything without a named accessor — including subsystems added later:
@@ -675,7 +811,8 @@ def clear(self) -> None
 single int compare.
 
 Common event names include `play_start`, `tick`, `player_damage`,
-`portal_transit`, `prop_collected`, `entity_spawned`, and the render hooks
+`portal_transit`, `prop_collected`, `entity_spawned`, `pause_menu_opened` /
+`pause_menu_closed`, and the render hooks
 `render.overlay` / `render.*`. Prefer subscribing through `host.on(...)` (which
 gates on `enabled`) over the raw bus.
 
@@ -868,15 +1005,18 @@ and plugin versions; a save newer than the build understands is rejected by
 
 ### The native surface
 
-`engine.logic_thread.LogicThread` exposes two methods, each returning
-`(ok: bool, message: str)` and requiring an active play session:
+`engine.logic_session.LogicSession` exposes the play-session save/load methods
+through `logic.session_runtime`. Each returns `(ok: bool, message: str)` and
+requires an active play session:
 
 ```python
 # capture the live session → path (save_mode: "full" | "delta" | "both";
 # delta/both also want base_level, the normalized original map to diff against)
-logic.save_session(path, map_name="", save_mode="full", base_level=None)
+logic.session_runtime.save_session(
+    path, map_name="", save_mode="full", base_level=None
+)
 # auto-detect the save's mode and overlay it onto the running session
-logic.load_session(path, map_name="")
+logic.session_runtime.load_session(path, map_name="")
 ```
 
 Lower level, in [`engine/savegame.py`](../engine/savegame.py):
@@ -906,6 +1046,9 @@ Driven from the editor's debug console (see
 | `quickload` / `ql` | Load the quicksave slot. |
 | `saves` | List available save files. |
 
+The pause menu's Save Game and Load Game use the same saves, under the names
+`slot1` to `slot3` (`load slot2` from the console loads the menu's Slot 2).
+
 ### Reaching it from a plugin
 
 The `PluginHost` exposes the live logic object, so a plugin can save or load
@@ -917,7 +1060,7 @@ def connect(self, host):
 
 def on_tick(self, logic, ctx):
     if ctx.key_down("f"):
-        ok, msg = self._host.logic.save_session("saves/plugin_quick.fiosave")
+        ok, msg = self._host.logic.session_runtime.save_session("saves/plugin_quick.fiosave")
         ctx.toast(msg)
 ```
 
@@ -953,5 +1096,8 @@ def on_tick(self, logic, ctx):
 - [`plugins/api.py`](api.py) — the annotated source these docs mirror.
 - [`plugins/host.py`](host.py) — the `PluginHost` / `EventBus` source.
 - [`plugins/tidy/`](tidy/) — a complete worked gameplay plugin.
+- [`docs/examples/deferred_renderer/`](../docs/examples/deferred_renderer/) — a complete
+  worked renderer plugin, and the wiki's
+  [Renderer Development Guide](https://github.com/ViciousSquid/Fio/wiki/Renderer-Development-Guide).
 - [`plugins/bigworld/README.md`](bigworld/README.md) — a runtime-scalability
   plugin that uses the event bus, services and host wrapping.

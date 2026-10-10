@@ -9,50 +9,33 @@ dead or hidden.
 
 import math
 import random
-import threading
-import types
 
+import numpy as np
 import pytest
 
-from engine.logic_thread import LogicThread
+from engine.logic_combat import ProjectileStore
 from tests.helpers.worlds import make_thing
 
 pytest.importorskip("PyQt5", reason="editor.things needs PyQt5")
-from editor.things import Monster, LogicRelay  # noqa: E402
+from editor.things import Monster, LogicRelay, Thing  # noqa: E402
 
 pytestmark = pytest.mark.qt
 
 
-class _Host:
-    """The attributes ``_update_monster_projectiles`` reads, and nothing else."""
+def _logic(things, projectiles):
+    from editor.editor_state import EditorState
+    from engine.logic_thread import LogicThread
+    from engine.threaded_game_state import ThreadedGameState
 
-    PROJECTILE_MONSTER_LIFT = LogicThread.PROJECTILE_MONSTER_LIFT
-    PROJECTILE_MONSTER_RADIUS = LogicThread.PROJECTILE_MONSTER_RADIUS
-    PROJECTILE_PLAYER_RADIUS = LogicThread.PROJECTILE_PLAYER_RADIUS
-    _update_monster_projectiles = LogicThread._update_monster_projectiles
-    _projectile_monster_candidates = LogicThread._projectile_monster_candidates
-    _projectile_wall_candidates = LogicThread._projectile_wall_candidates
-
-    def __init__(self, things, projectiles):
-        self.things = things
-        self._monster_projectiles = projectiles
-        self._collision_brushes_cache = []
-        self._spatial_grid = None
-        self._monster_lock = threading.RLock()
-        self.player = None
-        self.god_mode = True
-        self.player_dead = False
-        self.hits = []
-        host = self
-        self.monster_ai = types.SimpleNamespace(
-            monster_debug_active=False,
-            _apply_monster_damage=lambda m, dmg, attacker=None:
-                host.hits.append(m.properties['name']))
-        self._write = types.SimpleNamespace(projectiles=None)
-        self.game_state = types.SimpleNamespace(get_write_state=lambda: self._write)
-
-    def _transit_projectile_through_portals(self, proj, prev):
-        return None
+    state = EditorState()
+    state.brushes = []
+    state.things = list(things)
+    logic = LogicThread(ThreadedGameState(), state)
+    logic.world_runtime.build_entity_caches()
+    for position, owner in projectiles:
+        logic.combat_runtime._monster_projectiles.add(
+            position, (0.0, 0.0, 0.0), id(owner), 5, 5.0)
+    return logic
 
 
 def _reference_hit(things, pos, owner_id):
@@ -73,10 +56,63 @@ def _reference_hit(things, pos, owner_id):
     return None
 
 
-def _projectile(pos, owner):
-    return {'pos': list(pos), 'vel': [0.0, 0.0, 0.0], 'damage': 5,
-            'owner_id': id(owner), 'distance_travelled': 0.0,
-            'lifetime': 5.0}
+
+
+
+def test_published_projectile_snapshot_does_not_alias_simulation_store():
+    owner = make_thing(Monster, "owner", (0, 0, 0), team="red")
+    logic = _logic([owner], [((10, 20, 30), owner)])
+
+    snapshot = logic.combat_runtime._publish_projectile_render_snapshot()
+    assert snapshot.shape == (1, 3)
+    assert snapshot.dtype == np.float32
+    assert not np.shares_memory(snapshot, logic.combat_runtime._monster_projectiles.pos)
+
+    expected = snapshot.copy()
+    logic.combat_runtime._monster_projectiles.pos[0] = (100.0, 200.0, 300.0)
+
+    np.testing.assert_array_equal(snapshot, expected)
+
+
+def test_projectile_store_is_numeric_and_dense():
+    store = ProjectileStore()
+    store.add((1.0, 2.0, 3.0), (4.0, 5.0, 6.0), 7, 8, 9)
+    assert len(store) == 1
+    assert store.pos.dtype == np.float32
+    assert store.vel.dtype == np.float32
+    assert store.owner_id.dtype == np.int64
+    assert store.damage[0] == 8
+    assert store.lifetime[0] == 9
+
+
+def test_small_projectile_set_uses_scalar_path_but_matches_dense():
+    owner = make_thing(Monster, "owner", (0, 0, 0), team="red")
+    target = make_thing(Monster, "target", (10, 0, 0), team="blue")
+    things = [owner, target]
+    projectile = ((0, 64, 0), owner)
+    scalar_things = [Thing.from_dict(thing.to_dict()) for thing in things]
+    dense_things = [Thing.from_dict(thing.to_dict()) for thing in things]
+    scalar_owner = scalar_things[0]
+    dense_owner = dense_things[0]
+
+    dense = _logic(dense_things, [(projectile[0], dense_owner)])
+    scalar = _logic(scalar_things, [(projectile[0], scalar_owner)])
+    dense.combat_runtime.PROJECTILE_DENSE_THRESHOLD = 0
+    scalar.combat_runtime.PROJECTILE_DENSE_THRESHOLD = 100
+
+    dense_before = {m.properties["name"]: m.properties.get("health", 100)
+                    for m in dense.world_runtime.monster_things}
+    scalar_before = {m.properties["name"]: m.properties.get("health", 100)
+                     for m in scalar.world_runtime.monster_things}
+    dense.combat_runtime._update_monster_projectiles(0.0)
+    scalar.combat_runtime._update_monster_projectiles(0.0)
+
+    dense_after = {m.properties["name"]: m.properties.get("health", 100) for m in dense.world_runtime.monster_things}
+    scalar_after = {m.properties["name"]: m.properties.get("health", 100) for m in scalar.world_runtime.monster_things}
+    assert dense_after == scalar_after
+    assert dense_after["target"] == dense_before["target"] - 5
+    assert scalar_after["target"] == scalar_before["target"] - 5
+    assert len(dense.combat_runtime._monster_projectiles) == len(scalar.combat_runtime._monster_projectiles) == 0
 
 
 def test_the_first_eligible_monster_in_order_is_hit():
@@ -91,10 +127,14 @@ def test_the_first_eligible_monster_in_order_is_hit():
         make_thing(Monster, "second", (0, 0, 10), team="blue"),
         make_thing(Monster, "far", (500, 0, 0), team="blue"),
     ]
-    host = _Host(things, [_projectile((0, 64, 0), owner)])
-    host._update_monster_projectiles(0.0)
-    assert host.hits == ["target"]
-    assert host._monster_projectiles == []          # consumed
+    logic = _logic(things, [((0, 64, 0), owner)])
+    before = {m.properties["name"]: m.properties.get("health", 100) for m in logic.world_runtime.monster_things}
+    logic.combat_runtime._update_monster_projectiles(0.0)
+    after = {m.properties["name"]: m.properties.get("health", 100) for m in logic.world_runtime.monster_things}
+    changed = [name for name in after if after[name] != before[name]]
+    assert changed == ["target"]
+    assert after["target"] == before["target"] - 5
+    assert len(logic.combat_runtime._monster_projectiles) == 0
 
 
 def test_batch_matches_the_walk_over_random_crowds():
@@ -110,9 +150,12 @@ def test_batch_matches_the_walk_over_random_crowds():
         owner = rng.choice(things)
         pos = (rng.uniform(-150, 150), rng.uniform(0, 100), rng.uniform(-150, 150))
         expected = _reference_hit(things, pos, id(owner))
-        host = _Host(things, [_projectile(pos, owner)])
-        host._update_monster_projectiles(0.0)
-        assert host.hits == ([expected] if expected else []), trial
+        logic = _logic(things, [(pos, owner)])
+        before = {m.properties["name"]: m.properties.get("health", 100) for m in logic.world_runtime.monster_things}
+        logic.combat_runtime._update_monster_projectiles(0.0)
+        changed = [name for name in before
+                   if logic.world_runtime.find_entity_by_name(name).properties.get("health", 100) != before[name]]
+        assert changed == ([expected] if expected else []), trial
 
 
 def test_a_monster_killed_by_one_projectile_is_not_hit_by_the_next():
@@ -120,13 +163,10 @@ def test_a_monster_killed_by_one_projectile_is_not_hit_by_the_next():
     first = make_thing(Monster, "first", (0, 0, 20), team="blue")
     second = make_thing(Monster, "second", (0, 0, 40), team="blue")
     things = [owner, first, second]
-    host = _Host(things, [_projectile((0, 64, 30), owner),
-                          _projectile((0, 64, 30), owner)])
-
-    def kill(monster, damage, attacker=None):
-        host.hits.append(monster.properties['name'])
-        monster.properties['dead'] = True
-
-    host.monster_ai._apply_monster_damage = kill
-    host._update_monster_projectiles(0.0)
-    assert host.hits == ["first", "second"]
+    first.properties["health"] = 5
+    logic = _logic(things, [((0, 64, 30), owner),
+                            ((0, 64, 30), owner)])
+    logic.combat_runtime._update_monster_projectiles(0.0)
+    assert first.properties["dead"] is True
+    assert second.properties["health"] == 95
+    assert len(logic.combat_runtime._monster_projectiles) == 0

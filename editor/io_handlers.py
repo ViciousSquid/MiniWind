@@ -13,7 +13,7 @@ import glm
 import os
 import time
 
-from engine.effect_entity import EFFECT_FIRE_TEXTURES, EFFECT_ORB_TEXTURES
+from engine.effect_entity import EFFECT_FIRE_TEXTURES, EFFECT_ORB_TEXTURES, EFFECT_TYPES
 
 # Import debug logger - with fallback to print if not available
 try:
@@ -126,27 +126,9 @@ def register_all_input_handlers(io_manager: IOManager):
         return float(nominal)
 
     def _start_light_fade(entity, logic, target, duration, end_off):
-        if not hasattr(logic, 'light_fade_states'):
-            logic.light_fade_states = {}
-        try:
-            duration = max(0.0, _finite(duration))
-        except (ValueError, TypeError):
-            duration = 1.0
-        start = float(entity.properties.get('intensity', 0.0))
-        if duration <= 0.0:
-            # Instant: apply immediately, no per-frame state needed.
-            entity.properties['intensity'] = target
-            entity.properties['state'] = 'off' if end_off else 'on'
-            logic.light_fade_states.pop(id(entity), None)
-            return
-        logic.light_fade_states[id(entity)] = {
-            'entity':   entity,
-            'from':     start,
-            'to':       target,
-            'elapsed':  0.0,
-            'duration': duration,
-            'end_off':  end_off,
-        }
+        logic.timing_runtime.start_light_fade(
+            entity, target, duration, end_off
+        )
 
     def light_fade_in(entity, param, logic):
         """Fade the light up to its nominal intensity over `param` seconds."""
@@ -196,17 +178,24 @@ def register_all_input_handlers(io_manager: IOManager):
             return None
         return textures[int(value) - 1]
 
-    # Every Effect input writes the Effect itself -- its authored properties
-    # and, for SetType and Explode, its playback runtime -- and nothing else.
-    # The I/O dispatcher journals the target afterwards, and each render buffer
-    # re-resolves the row from the entity. Writing a render table from here
-    # would reach only the one buffer the logic thread happened to be holding.
+    # Effect inputs update authored state on the Effect. SetType and Explode
+    # also update the EffectStore execution state. No render
+    # table is written directly, so both render buffers consume the same
+    # execution state.
 
     def effect_set_type(entity, param, logic):
         """Set the Effect TYPE by name and notify connected outputs."""
         effect_type = str(param or "").strip().upper()
-        if not entity.set_effect_type(effect_type):
+        if effect_type not in EFFECT_TYPES:
             return
+        if entity.properties.get("effect_type") == effect_type:
+            return
+        entity.properties["effect_type"] = effect_type
+        entity.properties["preview"] = False
+        if effect_type == "ORB":
+            entity.properties["width"] = 32.0
+            entity.properties["height"] = 32.0
+        logic.session_runtime.effect_store.set_type(entity, effect_type)
         logic.io_manager.fire_output(
             entity, 'OnChanged', value=entity.properties['effect_type']
         )
@@ -243,16 +232,13 @@ def register_all_input_handlers(io_manager: IOManager):
 
     def effect_explode(entity, param, logic):
         """Switch an Effect to EXPLOSION permanently and play it once."""
-        if not entity.trigger_explosion(time.perf_counter()):
-            return
+        now = time.perf_counter()
+        entity.properties["effect_type"] = "EXPLOSION"
+        entity.properties["preview"] = False
+        logic.session_runtime.effect_store.trigger_explosion(entity, now)
 
-        game_state = getattr(logic, 'game_state', None)
-        if game_state is None and hasattr(logic, 'io_manager'):
-            game_state = logic.io_manager.get_game_state()
-        if (
-            game_state is not None
-            and not bool(entity.properties.get('silent', False))
-        ):
+        game_state = logic.game_state
+        if not bool(entity.properties.get('silent', False)):
             try:
                 source_position = [
                     float(entity.pos.x),
@@ -289,16 +275,16 @@ def register_all_input_handlers(io_manager: IOManager):
         if idx < 0:
             return
         
-        if idx not in logic.door_states:
+        if idx not in logic.mover_runtime.door_states:
             if 'original_pos' not in entity:
                 entity['original_pos'] = list(entity['pos'])
-            logic.door_states[idx] = {
+            logic.mover_runtime.door_states[idx] = {
                 'progress': 0.0,
                 'state': 'closed',
                 'open_timer': 0.0
             }
         
-        state = logic.door_states[idx]
+        state = logic.mover_runtime.door_states[idx]
         # A door that is closing or has been stopped part-way is not open, and
         # Open should send it back up rather than do nothing — the old check
         # accepted only 'closed', so a door caught mid-close ignored the input
@@ -310,10 +296,10 @@ def register_all_input_handlers(io_manager: IOManager):
     def door_close(entity, param, logic):
         """Close a door brush."""
         idx = _get_brush_index(entity, logic)
-        if idx < 0 or idx not in logic.door_states:
+        if idx < 0 or idx not in logic.mover_runtime.door_states:
             return
         
-        state = logic.door_states[idx]
+        state = logic.mover_runtime.door_states[idx]
         if state['state'] in ('open', 'opening', 'stopped'):
             state['state'] = 'closing'
             logic.io_manager.fire_output(entity, 'OnClose')
@@ -326,9 +312,9 @@ def register_all_input_handlers(io_manager: IOManager):
         sends it on its way again.  A door that is not moving is left alone.
         """
         idx = _get_brush_index(entity, logic)
-        if idx < 0 or idx not in logic.door_states:
+        if idx < 0 or idx not in logic.mover_runtime.door_states:
             return
-        state = logic.door_states[idx]
+        state = logic.mover_runtime.door_states[idx]
         if state['state'] in ('opening', 'closing'):
             state['state'] = 'stopped'
 
@@ -340,9 +326,9 @@ def register_all_input_handlers(io_manager: IOManager):
         for a door halted in the middle.
         """
         idx = _get_brush_index(entity, logic)
-        if idx < 0 or idx not in logic.door_states:
+        if idx < 0 or idx not in logic.mover_runtime.door_states:
             return
-        state = logic.door_states[idx]
+        state = logic.mover_runtime.door_states[idx]
         current = state['state']
         if current == 'opening':
             door_close(entity, param, logic)
@@ -362,8 +348,8 @@ def register_all_input_handlers(io_manager: IOManager):
         if idx < 0:
             return
         
-        if idx in logic.door_states:
-            state = logic.door_states[idx]
+        if idx in logic.mover_runtime.door_states:
+            state = logic.mover_runtime.door_states[idx]
             if state['state'] == 'closed':
                 door_open(entity, param, logic)
             elif state['state'] == 'open':
@@ -399,14 +385,14 @@ def register_all_input_handlers(io_manager: IOManager):
     def mover_open(entity, param, logic):
         entity['start_on'] = True
         idx = _get_brush_index(entity, logic)
-        if idx >= 0 and idx in logic.mover_states:
-            logic.mover_states[idx]['forward'] = True
+        if idx >= 0 and idx in logic.mover_runtime.mover_states:
+            logic.mover_runtime.mover_states[idx]['forward'] = True
     
     def mover_close(entity, param, logic):
         entity['start_on'] = True
         idx = _get_brush_index(entity, logic)
-        if idx >= 0 and idx in logic.mover_states:
-            logic.mover_states[idx]['forward'] = False
+        if idx >= 0 and idx in logic.mover_runtime.mover_states:
+            logic.mover_runtime.mover_states[idx]['forward'] = False
     
     def mover_toggle(entity, param, logic):
         entity['start_on'] = not entity.get('start_on', False)
@@ -417,8 +403,8 @@ def register_all_input_handlers(io_manager: IOManager):
             return
         try:
             value = max(0.0, min(1.0, _finite(param)))
-            if idx in logic.mover_states:
-                logic.mover_states[idx]['progress'] = value
+            if idx in logic.mover_runtime.mover_states:
+                logic.mover_runtime.mover_states[idx]['progress'] = value
         except (TypeError, ValueError):
             pass
     
@@ -446,8 +432,8 @@ def register_all_input_handlers(io_manager: IOManager):
         it retraces from there.
         """
         idx = _get_brush_index(entity, logic)
-        if idx >= 0 and idx in logic.mover_states:
-            state = logic.mover_states[idx]
+        if idx >= 0 and idx in logic.mover_runtime.mover_states:
+            state = logic.mover_runtime.mover_states[idx]
             state['forward'] = not state.get('forward', True)
 
     io_manager.register_input_handler('mover', 'open', mover_open)
@@ -474,29 +460,25 @@ def register_all_input_handlers(io_manager: IOManager):
             return
 
         # ✅ Guard: ensure the state dictionary exists
-        if not hasattr(logic, 'mover_path_states'):
-            logic.mover_path_states = {}
 
         entity['path_target'] = target
         entity['start_on'] = True
-        if idx not in logic.mover_path_states:
-            logic.mover_path_states[idx] = {
+        if idx not in logic.mover_runtime.mover_path_states:
+            logic.mover_runtime.mover_path_states[idx] = {
                 'current_node': target,
                 'lerp_t':       0.0,
                 'origin':       list(entity['pos']),
                 'waiting':      False,
                 'wait_remaining': 0.0,
             }
-        logic.mover_states.pop(idx, None)
+        logic.mover_runtime.mover_states.pop(idx, None)
 
     def mover_stop_path(entity, param, logic):
         """Stop PathNode following and hold position."""
         idx = _get_brush_index(entity, logic)
         if idx >= 0:
             # ✅ Guard: use getattr with default empty dict, then pop safely
-            states = getattr(logic, 'mover_path_states', None)
-            if states is not None:
-                states.pop(idx, None)
+            logic.mover_runtime.mover_path_states.pop(idx, None)
 
     def mover_set_path_target(entity, param, logic):
         """Change the target PathNode name for this mover."""
@@ -512,18 +494,18 @@ def register_all_input_handlers(io_manager: IOManager):
     # ==========================================================================
     
     def trigger_enable(entity, param, logic):
-        entity['disabled'] = False
+        set_authored_flag(entity, 'disabled', False)
         debug_log('Trigger', f"Enabled trigger '{entity.get('name', 'unnamed')}'")
     
     def trigger_disable(entity, param, logic):
-        entity['disabled'] = True
+        set_authored_flag(entity, 'disabled', True)
         debug_log('Trigger', f"Disabled trigger '{entity.get('name', 'unnamed')}'")
     
     def trigger_toggle(entity, param, logic):
-        entity['disabled'] = not entity.get('disabled', False)
+        set_authored_flag(entity, 'disabled', not authored_flag(entity, 'disabled'))
     
     def trigger_touch_test(entity, param, logic):
-        if not logic.player:
+        if not logic.player_runtime.player:
             return
         
         pos = glm.vec3(entity['pos'])
@@ -532,7 +514,7 @@ def register_all_input_handlers(io_manager: IOManager):
         min_b = pos - half_size
         max_b = pos + half_size
         
-        player_pos = logic.player.pos
+        player_pos = logic.player_runtime.player.pos
         if (min_b.x <= player_pos.x <= max_b.x and
             min_b.y <= player_pos.y <= max_b.y and
             min_b.z <= player_pos.z <= max_b.z):
@@ -550,16 +532,14 @@ def register_all_input_handlers(io_manager: IOManager):
     def trigger_teleport(entity, param, logic):
         """Teleport the player to the named PathNode."""
         target_name = param or entity.get('target_node', '')
-        node = logic._find_path_node_by_name(target_name)
-        if not node or not logic.player:
+        node = logic.world_runtime.find_path_node_by_name(target_name)
+        if not node or not logic.player_runtime.player:
             return
         dest = glm.vec3(node.pos[0], node.pos[1], node.pos[2])
-        logic.player.pos = dest
+        logic.player_runtime.player.pos = dest
         # Zero velocity to prevent carry-over momentum
-        logic.player.velocity = glm.vec3(0, 0, 0)
-        teleported = getattr(logic, 'note_player_teleported', None)
-        if teleported is not None:
-            teleported()
+        logic.player_runtime.player.velocity = glm.vec3(0, 0, 0)
+        logic.portal_runtime.note_player_teleported()
         if logic.io_manager:
             logic.io_manager.fire_output(entity, 'OnTeleport')
         debug_log("IO", f"Trigger teleported player → '{target_name}' ({dest.x:.0f}, {dest.y:.0f}, {dest.z:.0f})")
@@ -576,20 +556,6 @@ def register_all_input_handlers(io_manager: IOManager):
     # SPEAKER INPUTS
     # ==========================================================================
     
-    def _speaker_game_state(logic):
-        """Resolve the game_state a speaker request must be queued on.
-
-        Tries the logic thread directly, then the I/O manager, mirroring the
-        original two-path lookup. Returns None when neither is available.
-        """
-        if getattr(logic, 'game_state', None) is not None:
-            return logic.game_state
-        if hasattr(logic, 'io_manager'):
-            gs = logic.io_manager.get_game_state()
-            if gs is not None:
-                return gs
-        return None
-
     def speaker_play(entity, param, logic):
         """Start playing sound - queues to main thread via game_state."""
         entity_name = entity.properties.get('name', 'unnamed')
@@ -600,19 +566,23 @@ def register_all_input_handlers(io_manager: IOManager):
         debug_log('Speaker', f"PlaySound called on '{entity_name}'")
         debug_log('Speaker', f"  sound_file='{sound_file}', volume={volume}, looping={looping}")
 
-        entity.properties['state'] = 'on'
-        speaker_id = id(entity)
-        logic.active_speakers.add(speaker_id)
-
         if not sound_file:
+            entity.properties['state'] = 'on'
             debug_log('Error', f"No sound file configured for speaker '{entity_name}'!")
             return
-
-        game_state = _speaker_game_state(logic)
-
-        if game_state is None:
-            debug_log('Error', f"Could not find game_state for speaker '{entity_name}'!")
+        # Speakers play only from assets/sounds and assets/music.
+        from engine.speaker_audio import speaker_sound_path
+        sound_file = speaker_sound_path(sound_file)
+        if sound_file is None:
+            debug_log('Error', f"Speaker '{entity_name}': "
+                      f"'{entity.properties.get('sound_file')}' is not in "
+                      f"assets/sounds or assets/music; not played.")
             return
+
+        entity.properties['state'] = 'on'
+        speaker_id = id(entity)
+
+        game_state = logic.game_state
 
         # Speaker position/radius are consumed on the render thread so audio
         # attenuation follows the authored radius in the editor. Global
@@ -650,12 +620,9 @@ def register_all_input_handlers(io_manager: IOManager):
     def speaker_stop(entity, param, logic):
         entity.properties['state'] = 'off'
         speaker_id = id(entity)
-        logic.active_speakers.discard(speaker_id)
         # Actually silence the channel on the audio thread -- a looping sound
         # would otherwise play forever (StopSound could not reach the mixer).
-        game_state = _speaker_game_state(logic)
-        if game_state is not None:
-            game_state.queue_sound({'action': 'stop', 'entity_id': speaker_id})
+        logic.game_state.queue_sound({'action': 'stop', 'entity_id': speaker_id})
         debug_log('Speaker', f"Stopped speaker '{entity.properties.get('name', 'unnamed')}'")
         logic.io_manager.fire_output(entity, 'OnSoundFinished')
     
@@ -682,18 +649,18 @@ def register_all_input_handlers(io_manager: IOManager):
     # ==========================================================================
 
     def prop_enable(entity, param, logic):
-        entity.properties['disabled'] = False
+        set_authored_flag(entity, 'disabled', False)
 
     def prop_disable(entity, param, logic):
-        entity.properties['disabled'] = True
+        set_authored_flag(entity, 'disabled', True)
 
     def prop_collect(entity, param, logic):
-        session = getattr(logic, '_props', None)
+        session = logic.prop_runtime
         if session is not None:
             session.collect_prop(entity)
 
     def prop_respawn(entity, param, logic):
-        session = getattr(logic, '_props', None)
+        session = logic.prop_runtime
         if session is not None:
             session.respawn_prop(entity)
 
@@ -809,7 +776,7 @@ def register_all_input_handlers(io_manager: IOManager):
         except ImportError:                              # pragma: no cover
             from editor.io_system import count_incoming_connections
         return count_incoming_connections(
-            logic.brushes, logic.things,
+            logic.editor_state.brushes, logic.editor_state.things,
             target_name=entity.properties.get('name', ''),
             target_id=entity.properties.get('id', ''),
             input_name='Trigger')
@@ -822,7 +789,7 @@ def register_all_input_handlers(io_manager: IOManager):
         when asked to.
         """
         gate_key = _gate_key(entity)
-        active = len(logic.gate_inputs.get(gate_key, ()))
+        active = len(logic.io_manager.gate_inputs.get(gate_key, ()))
         expected = max(1, _gate_expected_inputs(entity, logic))
         logic_type = str(entity.properties.get('logic_type', 'AND')).upper()
 
@@ -857,7 +824,7 @@ def register_all_input_handlers(io_manager: IOManager):
         if authored_flag(entity, 'disabled'):
             return
         gate_key = _gate_key(entity)
-        signals = logic.gate_inputs.setdefault(gate_key, set())
+        signals = logic.io_manager.gate_inputs.setdefault(gate_key, set())
         source = param.strip() if param else ''
         if not source:
             # An unnamed signal is identified by whoever fired it, so two
@@ -894,7 +861,7 @@ def register_all_input_handlers(io_manager: IOManager):
 
     def gate_reset(entity, param, logic):
         """De-assert every input signal."""
-        logic.gate_inputs.pop(_gate_key(entity), None)
+        logic.io_manager.gate_inputs.pop(_gate_key(entity), None)
 
     io_manager.register_input_handler('logic_gate', 'trigger', gate_trigger)
     io_manager.register_input_handler('logic_gate', 'clearinput', gate_clear_input)
@@ -920,15 +887,8 @@ def register_all_input_handlers(io_manager: IOManager):
         return entity.properties.get('id') or entity.properties.get('name', '')
 
     def _timer_arm(entity, logic):
-        """Start (or restart) the countdown from the full interval."""
-        try:
-            interval = max(0.01, float(entity.properties.get('interval', 1.0)))
-        except (TypeError, ValueError):
-            interval = 1.0
-        logic.timer_states[_timer_key(entity)] = {
-            'remaining': interval,
-            'interval': interval,
-        }
+        """Start (or restart) the countdown through the timing runtime."""
+        logic.timing_runtime.arm_timer(entity)
 
     def timer_enable(entity, param, logic):
         entity.properties['timer_enabled'] = True
@@ -973,7 +933,7 @@ def register_all_input_handlers(io_manager: IOManager):
     # ==========================================================================
 
     def path_node_toggle(entity, param, logic):
-        entity.properties['disabled'] = not entity.properties.get('disabled', False)
+        set_authored_flag(entity, 'disabled', not authored_flag(entity, 'disabled'))
 
     io_manager.register_input_handler('path_node', 'toggle', path_node_toggle)
     
@@ -1021,7 +981,7 @@ def register_all_input_handlers(io_manager: IOManager):
         """Revive a dead monster at its spawn health.
 
         The health to come back with is the value the map authored, recorded
-        once when play started (see LogicThread._reset_all_monsters) because
+        once when play started (see LogicSession.reset_all_monsters) because
         the live property is mutated by damage.  A parameter overrides it, and
         if neither is available the monster keeps whatever health it has —
         inventing a number here would be inventing behaviour.
@@ -1034,9 +994,7 @@ def register_all_input_handlers(io_manager: IOManager):
             except (TypeError, ValueError):
                 health = None
         if health is None:
-            spawn = getattr(logic, '_monster_spawn_health', None)
-            if isinstance(spawn, dict):
-                health = spawn.get(props.get('id'))
+            health = logic.world_runtime.monster_spawn_health.get(props.get('id'))
         if health is not None:
             props['health'] = health
 
@@ -1068,19 +1026,22 @@ def register_all_input_handlers(io_manager: IOManager):
 
     def brush_hide(entity, param, logic):
         """Hide a brush (set hidden flag — renderer skips it)."""
-        entity['hidden'] = True
+        set_authored_flag(entity, 'hidden', True)
+        logic.collision_runtime.mark_dirty()
         name = entity.get('name', 'unnamed')
         debug_log('IO', f"Brush '{name}' hidden")
 
     def brush_show(entity, param, logic):
         """Show a brush (clear hidden flag)."""
-        entity['hidden'] = False
+        set_authored_flag(entity, 'hidden', False)
+        logic.collision_runtime.mark_dirty()
         name = entity.get('name', 'unnamed')
         debug_log('IO', f"Brush '{name}' shown")
 
     def brush_toggle_vis(entity, param, logic):
         """Toggle brush visibility."""
-        entity['hidden'] = not entity.get('hidden', False)
+        set_authored_flag(entity, 'hidden', not authored_flag(entity, 'hidden'))
+        logic.collision_runtime.mark_dirty()
         name = entity.get('name', 'unnamed')
         state = "hidden" if entity.get('hidden') else "visible"
         debug_log('IO', f"Brush '{name}' toggled → {state}")
@@ -1107,9 +1068,9 @@ def register_all_input_handlers(io_manager: IOManager):
 
     def brush_toggle_solid(entity, param, logic):
         """Toggle a generic brush's solidity (Enable/Disable ↔ 'disabled')."""
-        entity['disabled'] = not entity.get('disabled', False)
+        set_authored_flag(entity, 'disabled', not authored_flag(entity, 'disabled'))
         name = entity.get('name', 'unnamed')
-        state = "non-solid" if entity.get('disabled') else "solid"
+        state = "non-solid" if authored_flag(entity, 'disabled') else "solid"
         debug_log('IO', f"Brush '{name}' toggled → {state}")
 
     # Register for every brush-based type
@@ -1131,19 +1092,19 @@ def register_all_input_handlers(io_manager: IOManager):
 
     def thing_hide(entity, param, logic):
         """Hide a thing entity."""
-        entity.properties['hidden'] = True
+        set_authored_flag(entity, 'hidden', True)
         name = entity.properties.get('name', 'unnamed')
         debug_log('IO', f"Entity '{name}' hidden")
 
     def thing_show(entity, param, logic):
         """Show a thing entity."""
-        entity.properties['hidden'] = False
+        set_authored_flag(entity, 'hidden', False)
         name = entity.properties.get('name', 'unnamed')
         debug_log('IO', f"Entity '{name}' shown")
 
     def thing_toggle_vis(entity, param, logic):
         """Toggle thing visibility."""
-        entity.properties['hidden'] = not entity.properties.get('hidden', False)
+        set_authored_flag(entity, 'hidden', not authored_flag(entity, 'hidden'))
         name = entity.properties.get('name', 'unnamed')
         state = "hidden" if entity.properties.get('hidden') else "visible"
         debug_log('IO', f"Entity '{name}' toggled → {state}")
@@ -1171,16 +1132,75 @@ def register_all_input_handlers(io_manager: IOManager):
     # ==========================================================================
 
     def camera_start(entity, param, logic):
-        """Begin the cinematic camera sequence along a PathNode chain."""
+        """Begin a LogicCamera cutscene or its legacy PathNode sequence."""
+        # Starting any camera must cleanly replace an active JSON cutscene.
+        # Otherwise its temporary actors and restored runtime state would leak.
+        previous = logic.cutscene_runtime.state
+        if previous is not None and previous.get('json_cutscene'):
+            logic.cutscene_runtime._finish_json_cutscene(previous, fire_finished=False)
+        cutscene_file = str(entity.properties.get('cutscene_file', '') or '').strip()
+        if cutscene_file:
+            data = logic.cutscene_runtime._load_cutscene_file(cutscene_file)
+            if data is None or not logic.cutscene_runtime._start_json_cutscene(entity, cutscene_file, data):
+                return
+            if logic.io_manager:
+                logic.io_manager.fire_output(entity, 'OnStart')
+            logic.cutscene_runtime._fire_cinematic_io_events()
+            return
+
         target = entity.properties.get('path_target', '')
-        node = logic._find_path_node_by_name(target)
+        node = logic.world_runtime.find_path_node_by_name(target)
         if not node:
             debug_log("IO", f"LogicCamera '{entity.name}': path_target "
                       f"'{target}' not found — aborting start.")
             return
         speed = float(entity.properties.get('speed', 200.0))
         fov   = float(entity.properties.get('fov_override', 0.0))
-        logic.cinematic_state = {
+        io_events = []
+        for event in entity.properties.get('cutscene_io_events', []) or []:
+            if not isinstance(event, dict) or event.get('type') != 'io':
+                continue
+            try:
+                event_time = max(0.0, float(event.get('time', 0.0)))
+            except (TypeError, ValueError):
+                continue
+            # Cutscene events have two valid schemas:
+            # - direct input: target_id/target_name + input
+            # - legacy output: source_id/source_name + output
+            # Preserve either shape so switching a LogicCamera from a JSON
+            # cutscene back to a PathNode does not silently discard its events.
+            target_id = str(event.get('target_id', '') or '')
+            target_name = str(event.get('target_name', '') or '')
+            input_name = str(event.get('input', '') or '').strip()
+            source_id = str(event.get('source_id', '') or '')
+            source_name = str(event.get('source_name', '') or '')
+            output = str(event.get('output', '') or '').strip()
+
+            is_direct_input = bool((target_id or target_name) and input_name)
+            is_legacy_output = bool((source_id or source_name) and output)
+            if not (is_direct_input or is_legacy_output):
+                continue
+
+            io_event = {
+                'time': event_time,
+                'parameter': event.get('parameter'),
+            }
+            if is_direct_input:
+                io_event.update({
+                    'target_id': target_id,
+                    'target_name': target_name,
+                    'input': input_name,
+                })
+            else:
+                io_event.update({
+                    'source_id': source_id,
+                    'source_name': source_name,
+                    'output': output,
+                })
+            io_events.append(io_event)
+        io_events.sort(key=lambda event: event['time'])
+
+        logic.cutscene_runtime.state = {
             'active':       True,
             'paused':       False,
             'entity':       entity,
@@ -1190,29 +1210,37 @@ def register_all_input_handlers(io_manager: IOManager):
             'speed':        speed,
             'fov':          fov if fov > 0 else None,
             'look_ahead':   entity.properties.get('look_ahead', True),
+            'elapsed':      0.0,
+            'io_events':    io_events,
+            'next_io_event': 0,
         }
         if logic.io_manager:
             logic.io_manager.fire_output(entity, 'OnStart')
+        logic.cutscene_runtime._fire_cinematic_io_events()
 
     def camera_stop(entity, param, logic):
         """Abort and return camera to the player."""
-        logic.cinematic_state = None
+        cs = logic.cutscene_runtime.state
+        if cs and cs.get('json_cutscene'):
+            logic.cutscene_runtime._finish_json_cutscene(cs, fire_finished=False)
+        else:
+            logic.cutscene_runtime.state = None
 
     def camera_pause(entity, param, logic):
         """Freeze camera at current chain position."""
-        if logic.cinematic_state:
-            logic.cinematic_state['paused'] = True
+        if logic.cutscene_runtime.state:
+            logic.cutscene_runtime.state['paused'] = True
 
     def camera_resume(entity, param, logic):
         """Continue a paused sequence."""
-        if logic.cinematic_state:
-            logic.cinematic_state['paused'] = False
+        if logic.cutscene_runtime.state:
+            logic.cutscene_runtime.state['paused'] = False
 
     def camera_set_speed(entity, param, logic):
         """Override travel speed."""
-        if logic.cinematic_state:
+        if logic.cutscene_runtime.state:
             try:
-                logic.cinematic_state['speed'] = max(1.0, _finite(param))
+                logic.cutscene_runtime.state['speed'] = max(1.0, _finite(param))
             except (TypeError, ValueError):
                 pass
 
@@ -1235,7 +1263,7 @@ def register_all_input_handlers(io_manager: IOManager):
         normal path-facing target resumes. Zero keeps the explicit focus
         indefinitely.
         """
-        cs = logic.cinematic_state
+        cs = logic.cutscene_runtime.state
         if not cs or cs.get('entity') is not entity:
             debug_log(
                 "IO",
@@ -1248,11 +1276,9 @@ def register_all_input_handlers(io_manager: IOManager):
             debug_log("IO", f"LogicCamera '{entity.name}': LookAt requires a target name or UUID.")
             return
 
-        target = None
-        if hasattr(logic, '_find_entity_by_id'):
-            target = logic._find_entity_by_id(target_ref)
-        if target is None and hasattr(logic, '_find_entity_by_name'):
-            target = logic._find_entity_by_name(target_ref)
+        target = logic.world_runtime.find_entity_by_id(target_ref)
+        if target is None:
+            target = logic.world_runtime.find_entity_by_name(target_ref)
 
         target_pos = _camera_target_position(target)
         if target is None or target_pos is None:
@@ -1304,14 +1330,10 @@ def register_all_input_handlers(io_manager: IOManager):
         if not cmd:
             debug_log("IO", f"LogicCommand '{entity.name}': no command to run.")
             return
-        gs = getattr(logic, 'game_state', None)
-        if gs is not None and hasattr(gs, 'queue_console_command'):
-            gs.queue_console_command(cmd)
-            debug_log("IO", f"LogicCommand '{entity.name}': queued '{cmd}'")
-            if logic.io_manager:
-                logic.io_manager.fire_output(entity, 'OnCommand', cmd)
-        else:
-            debug_log("Error", f"LogicCommand '{entity.name}': no console queue available.")
+        logic.game_state.queue_console_command(cmd)
+        debug_log("IO", f"LogicCommand '{entity.name}': queued '{cmd}'")
+        if logic.io_manager:
+            logic.io_manager.fire_output(entity, 'OnCommand', cmd)
 
     def command_set(entity, param, logic):
         """Set the default command string this entity will run."""
@@ -1336,7 +1358,7 @@ def register_all_input_handlers(io_manager: IOManager):
         target_name = entity.properties.get('target_node', '')
         node = None
         if target_name:
-            node = logic._find_path_node_by_name(target_name)
+            node = logic.world_runtime.find_path_node_by_name(target_name)
             if not node:
                 debug_log("IO", f"LogicSpawner '{entity.name}': target_node '{target_name}' not found. Falling back to spawner position.")
         else:
@@ -1393,8 +1415,7 @@ def register_all_input_handlers(io_manager: IOManager):
         entity.properties['_spawn_count'] = spawn_count + 1
 
         # ---- rebuild caches so the new entity can be found by name/id ----
-        if hasattr(logic, '_build_entity_caches'):
-            logic._build_entity_caches()
+        logic.world_runtime.build_entity_caches()
 
         # ---- fire outputs ----
         if logic.io_manager:
@@ -1403,10 +1424,10 @@ def register_all_input_handlers(io_manager: IOManager):
         debug_log("IO", f"LogicSpawner '{entity.name}' spawned '{spawn_type}' at {spawn_pos}")
 
     def spawner_enable(entity, param, logic):
-        entity.properties['disabled'] = False
+        set_authored_flag(entity, 'disabled', False)
 
     def spawner_disable(entity, param, logic):
-        entity.properties['disabled'] = True
+        set_authored_flag(entity, 'disabled', True)
 
     def spawner_set_target(entity, param, logic):
         """Change spawn location to a different PathNode."""
@@ -1755,9 +1776,7 @@ def register_all_input_handlers(io_manager: IOManager):
         """Change the paired portal target by name."""
         if param:
             entity.properties['portal_target'] = param.strip()
-            relink = getattr(logic, '_rebuild_portal_links', None)
-            if relink is not None:
-                relink()
+            logic.portal_runtime.rebuild_links()
             name = entity.properties.get('name', 'unnamed')
             debug_log('IO', f"Portal '{name}' target set to '{param.strip()}'")
 
@@ -1826,19 +1845,14 @@ def _get_brush_index(brush: dict, logic) -> int:
     brush dict with every brush before it (about a millisecond per input at
     40k brushes). The table's answer is used only if the list confirms it.
     """
-    brushes = logic.brushes
-    table_of = getattr(logic, '_movers', None)
-    if table_of is not None:
-        try:
-            table = table_of()
-            for group in (table.movers, table.doors):
-                row = group.row_of_obj.get(id(brush))
-                if row is not None:
-                    index = group.index[row]
-                    if 0 <= index < len(brushes) and brushes[index] is brush:
-                        return index
-        except Exception:
-            pass
+    brushes = logic.editor_state.brushes
+    table = logic.mover_runtime._movers()
+    for group in (table.movers, table.doors):
+        row = group.row_of_obj.get(id(brush))
+        if row is not None:
+            index = group.index[row]
+            if 0 <= index < len(brushes) and brushes[index] is brush:
+                return index
     try:
         return brushes.index(brush)
     except ValueError:

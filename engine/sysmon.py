@@ -65,10 +65,6 @@ class SysMon:
         self.drag_offset = QPoint(0, 0)
         self.active = False
         self.window_rect = QRect(20, 20, 400, 200)
-        # Benchmark mode owns SysMon for the duration of a measurement.
-        # The close and collapse controls are hidden and input cannot disable
-        # the overlay until the benchmark releases it.
-        self._benchmark_locked = False
 
         # Frame time ring buffer (pre-allocated numpy array)
         self._ft_buffer = np.zeros(self.GRAPH_POINTS, dtype=np.float32)
@@ -129,25 +125,11 @@ class SysMon:
     # ------------------------------------------------------------------
 
     def toggle(self):
-        if self._benchmark_locked:
-            return self.active
         self.active = not self.active
         return self.active
 
     def set_active(self, active):
-        if self._benchmark_locked:
-            self.active = True
-            return
         self.active = active
-
-    def set_benchmark_locked(self, locked):
-        """Lock SysMon visible and non-closable for a benchmark run."""
-        self._benchmark_locked = bool(locked)
-        if self._benchmark_locked:
-            self.active = True
-
-    def is_benchmark_locked(self):
-        return self._benchmark_locked
 
     def is_active(self):
         return self.active
@@ -223,9 +205,9 @@ class SysMon:
             p95_frame_ms = 0.0
 
         vram_used_mb, vram_total_mb = self._get_vram_info()
-        logic_thread = getattr(self.parent, "logic_thread", None)
-        renderer = getattr(self.parent, "renderer", None)
-        editor = getattr(self.parent, "editor", None)
+        logic_thread = self.parent.logic_thread
+        renderer = self.parent.renderer
+        editor = self.parent.editor
 
         visible_tris = int(self.stats.get("visible_tris", 0))
         culled_tris = int(self.stats.get("culled_tris", 0))
@@ -240,10 +222,10 @@ class SysMon:
                 )
 
         if editor is not None:
-            state = getattr(editor, "state", None)
-            brushes = getattr(state, "brushes", []) if state is not None else []
+            state = editor.state
+            brushes = state.brushes
             total_tris = len(brushes) * 12
-            terrain = getattr(editor, "terrain", None)
+            terrain = editor.terrain
             if terrain is not None:
                 try:
                     total_tris += int(terrain.get_tri_count())
@@ -271,9 +253,9 @@ class SysMon:
             "culled_tris": culled_tris,
             "visible_surfaces": visible_surfaces,
             "culled_surfaces": culled_surfaces,
-            "tps": float(getattr(logic_thread, "actual_tps", 0.0) or 0.0),
+            "tps": float(logic_thread.actual_tps or 0.0),
             "things": int(
-                len(getattr(getattr(editor, "state", None), "things", []) or [])
+                len(editor.state.things)
             ),
             "draw_calls": int(
                 getattr(
@@ -292,9 +274,8 @@ class SysMon:
         if not self.window_rect.contains(event.pos()):
             return False
 
-        # Close button. Benchmark mode deliberately removes this control.
-        if (not self._benchmark_locked
-                and event.x() > self.window_rect.right() - 25
+        # Close button.
+        if (event.x() > self.window_rect.right() - 25
                 and event.y() < self.window_rect.y() + 25):
             self.active = False
             return True
@@ -303,9 +284,8 @@ class SysMon:
         title_bar = QRect(self.window_rect.x(), self.window_rect.y(),
                           self.window_rect.width(), 25)
         if title_bar.contains(event.pos()):
-            # Benchmark mode removes the collapse/minimize arrow.
-            if (not self._benchmark_locked
-                    and event.x() > self.window_rect.right() - 50):
+            # Collapse/expand arrow.
+            if event.x() > self.window_rect.right() - 50:
                 self.expanded = not self.expanded
                 return True
             self.dragging = True
@@ -359,7 +339,7 @@ class SysMon:
         cache['total_brushes'] = self.stats.get('total_brushes', 0)
         cache['visible_brushes'] = self.stats.get('visible_brushes', 0)
         cache['culled_brushes'] = self.stats.get('culled_brushes', 0)
-        cache['tps'] = getattr(logic_thread, 'actual_tps', 0.0)
+        cache['tps'] = logic_thread.actual_tps
 
         cache['brush_text'] = f"Brushes:  {cache['total_brushes']} "
         cache['tri_text'] = f"Tris:     {total_tris} "
@@ -452,11 +432,10 @@ class SysMon:
         painter.setPen(self._white)
         painter.drawText(header_rect.adjusted(10, 0, 0, 0),
                          Qt.AlignVCenter | Qt.AlignLeft, "SysMon [F3]")
-        if not self._benchmark_locked:
-            painter.drawText(QRect(rect.right() - 50, rect.y(), 25, 25),
-                             Qt.AlignCenter, "▼" if self.expanded else "▶")
-            painter.drawText(QRect(rect.right() - 25, rect.y(), 25, 25),
-                             Qt.AlignCenter, "[X]")
+        painter.drawText(QRect(rect.right() - 50, rect.y(), 25, 25),
+                         Qt.AlignCenter, "▼" if self.expanded else "▶")
+        painter.drawText(QRect(rect.right() - 25, rect.y(), 25, 25),
+                         Qt.AlignCenter, "[X]")
 
         if not self.expanded:
             return

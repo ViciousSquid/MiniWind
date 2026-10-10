@@ -49,7 +49,7 @@ def session():
     yield _build
 
     for thread in made:
-        thread.set_play_mode(False)
+        thread.session_runtime.apply_play_mode(False)
         thread.stop()
 
 
@@ -71,7 +71,7 @@ def test_create_select_component_edit_texture_io_save_undo_redo(session):
     assert len(state.brushes) == 2
 
     # --- select ---------------------------------------------------------
-    state.set_selected_object(brush)
+    state.selected_objects = [brush]
     assert state.selected_objects == [brush]
 
     # --- component edit (drag one corner up) -----------------------------
@@ -157,8 +157,8 @@ def test_load_map_enter_play_dispatch_io_update_world_stop(session):
     state, thread = session(brushes=brushes + [switchable, button],
                             things=[make_thing(PlayerStart, "spawn", (0, 64, 0))])
 
-    thread.set_play_mode(True)
-    thread.player = Player(0.0, 0.0)
+    thread.session_runtime.apply_play_mode(True)
+    thread.player_runtime.player = Player(0.0, 0.0)
 
     assert switchable.get("hidden") in (None, False)
     thread.io_manager.fire_output(button, "OnTrigger")
@@ -167,14 +167,17 @@ def test_load_map_enter_play_dispatch_io_update_world_stop(session):
 
     for _ in range(10):
         thread._tick(TICK)
-    thread._prepare_render_state()
+    thread.render_runtime.prepare_render_state()
     published = thread.game_state.get_write_state()
-    assert "switchable" not in {b.get("name") for b in published.all_brushes}, (
+    assert "switchable" not in {
+        published.render_refs[int(slot)]["name"]
+        for slot in published.all_brush_slots
+    }, (
         "the hidden brush was still submitted to the renderer")
 
-    thread.set_play_mode(False)
-    assert thread._spatial_grid is None
-    assert thread.monster_ai_thread is None
+    thread.session_runtime.apply_play_mode(False)
+    assert thread.session_runtime.spatial_grid is None
+    assert thread.session_runtime.monster_ai_thread is None
 
 
 def test_a_delayed_connection_fires_on_the_logic_threads_own_clock(session):
@@ -185,8 +188,8 @@ def test_a_delayed_connection_fires_on_the_logic_threads_own_clock(session):
         target_id=switchable["id"], delay=0.5))
     state, thread = session(brushes=room() + [switchable, button])
 
-    thread.set_play_mode(True)
-    thread.player = Player(0.0, 0.0)
+    thread.session_runtime.apply_play_mode(True)
+    thread.player_runtime.player = Player(0.0, 0.0)
     thread.io_manager.fire_output(button, "OnTrigger")
 
     for _ in range(10):                      # ~0.17s
@@ -207,8 +210,8 @@ def test_monsters_run_against_the_live_world_during_a_play_session(session):
                             things=[make_thing(PlayerStart, "spawn", (0, 64, 0)),
                                     monster])
 
-    thread.set_play_mode(True)
-    thread.player = Player(0.0, 0.0)
+    thread.session_runtime.apply_play_mode(True)
+    thread.player_runtime.player = Player(0.0, 0.0)
     start_x = monster.pos[0]
 
     for _ in range(30):
@@ -217,7 +220,7 @@ def test_monsters_run_against_the_live_world_during_a_play_session(session):
     assert monster.pos[0] < start_x, (
         "the monster did not close on the player over a second of AI ticks "
         "(x %.1f -> %.1f)" % (start_x, monster.pos[0]))
-    assert thread.monster_ai._grid is thread._spatial_grid, (
+    assert thread.monster_ai._grid is thread.session_runtime.spatial_grid, (
         "the AI is querying a grid other than the session's")
 
 
@@ -228,11 +231,11 @@ def test_stopping_play_mode_restores_the_authored_world(session):
     state, thread = session(brushes=room(), things=[monster, lamp])
     authored = json.dumps(state.get_level_data(), sort_keys=True)
 
-    thread.set_play_mode(True)
-    thread.player = Player(0.0, 0.0)
+    thread.session_runtime.apply_play_mode(True)
+    thread.player_runtime.player = Player(0.0, 0.0)
     for _ in range(20):
         thread._tick(TICK)
-    thread.set_play_mode(False)
+    thread.session_runtime.apply_play_mode(False)
 
     after = json.dumps(state.get_level_data(), sort_keys=True)
     assert after == authored, (
@@ -243,12 +246,12 @@ def test_stopping_play_mode_restores_the_authored_world(session):
 def test_the_same_world_objects_serve_the_editor_and_the_runtime(session):
     """Fio's premise, asserted: one representation, no copy in between."""
     state, thread = session()
-    assert thread.brushes is state.brushes
-    assert thread.things is state.things
+    assert thread.editor_state.brushes is state.brushes
+    assert thread.editor_state.things is state.things
 
-    thread.set_play_mode(True)
-    thread.player = Player(0.0, 0.0)
-    grid_brushes = {id(b) for bucket in thread._spatial_grid.cells.values()
+    thread.session_runtime.apply_play_mode(True)
+    thread.player_runtime.player = Player(0.0, 0.0)
+    grid_brushes = {id(b) for bucket in thread.session_runtime.spatial_grid.cells.values()
                     for b in bucket}
     assert grid_brushes <= {id(b) for b in state.brushes}, (
         "the collision grid holds objects that are not in the editor's scene")
@@ -256,14 +259,18 @@ def test_the_same_world_objects_serve_the_editor_and_the_runtime(session):
 
 def test_an_edit_made_while_play_mode_is_running_reaches_the_runtime(session):
     state, thread = session()
-    thread.set_play_mode(True)
-    thread.player = Player(0.0, 0.0)
-    thread.culling_enabled = False
+    thread.session_runtime.apply_play_mode(True)
+    thread.player_runtime.player = Player(0.0, 0.0)
+    thread.render_runtime.culling_enabled = False
 
     state.brushes.append(box_brush("late_addition", (0, 64, -300)))
-    thread._prepare_render_state()
+    thread.render_runtime.prepare_render_state()
 
-    names = {b.get("name") for b in thread.game_state.get_write_state().all_brushes}
+    write_state = thread.game_state.get_write_state()
+    names = {
+        write_state.render_refs[int(slot)]["name"]
+        for slot in write_state.all_brush_slots
+    }
     assert "late_addition" in names, (
         "a brush added during play did not reach the renderer; the frame holds "
         "%s" % (sorted(names),))
@@ -352,11 +359,11 @@ def test_load_world_build_render_state_modify_world_rebuild(session):
     rebuild render state."""
     state, thread = session(brushes=room(size=2048.0),
                             things=[make_thing(Light, "lamp", (0, 200, 0))])
-    thread.culling_enabled = False
+    thread.render_runtime.culling_enabled = False
 
-    thread._prepare_render_state()
+    thread.render_runtime.prepare_render_state()
     first = thread.game_state.get_write_state()
-    first_count = len(first.all_brushes)
+    first_count = len(first.all_brush_slots)
     assert first_count == 6, "the room is six brushes, the frame has %d" % first_count
     assert first.entity_table.count == 1
 
@@ -364,25 +371,25 @@ def test_load_world_build_render_state_modify_world_rebuild(session):
     state.brushes.append(box_brush("new_pillar", (0, 64, 0), (64, 128, 64)))
     state.things.append(make_thing(Light, "lamp2", (100, 200, 0)))
 
-    thread._prepare_render_state()
+    thread.render_runtime.prepare_render_state()
     second = thread.game_state.get_write_state()
-    assert len(second.all_brushes) == first_count + 1, (
+    assert len(second.all_brush_slots) == first_count + 1, (
         "the rebuilt frame holds %d brushes, expected %d"
-        % (len(second.all_brushes), first_count + 1))
+        % (len(second.all_brush_slots), first_count + 1))
     assert second.entity_table.count == 2
 
 
 def test_a_geometry_edit_reaches_the_renderers_derived_mesh(session):
     state, thread = session(brushes=[box_brush("wall", (0, 64, -300),
                                                (128, 128, 128))])
-    thread.culling_enabled = False
+    thread.render_runtime.culling_enabled = False
     brush = state.brushes[0]
 
-    thread._prepare_render_state()
+    thread.render_runtime.prepare_render_state()
     before = bg.get_shape(brush).bounds[1][1]
 
     state.clip_brush(brush, (0.0, 1.0, 0.0), 64.0)
-    thread._prepare_render_state()
+    thread.render_runtime.prepare_render_state()
     after = bg.get_convex(state.brushes[0]).bounds[1][1]
 
     assert after < before, (
@@ -398,13 +405,13 @@ def test_an_ordinary_map_starts_no_bigworld_session(session):
     """The gate: a map with no BigWorldSettings entity pays nothing."""
     state, thread = session(things=[make_thing(PlayerStart, "spawn")])
 
-    thread.set_play_mode(True)
+    thread.session_runtime.apply_play_mode(True)
     try:
-        assert getattr(thread, "_bigworld", None) is None, (
+        assert thread.plugins.services.get("bigworld") is None, (
             "an ordinary map started a Big World session: %r"
-            % getattr(thread, "_bigworld", None))
+            % thread.plugins.services.get("bigworld"))
     finally:
-        thread.set_play_mode(False)
+        thread.session_runtime.apply_play_mode(False)
 
 
 def test_a_bigworld_map_activates_cells_around_the_player_and_restores_on_stop(
@@ -430,10 +437,10 @@ def test_a_bigworld_map_activates_cells_around_the_player_and_restores_on_stop(
     # The session activates cells around the player, so the player has to exist
     # before play mode starts - as it does in the editor, which spawns at the
     # PlayerStart before handing the session over.
-    thread.player = Player(0.0, 0.0)
-    thread.set_play_mode(True)
+    thread.player_runtime.player = Player(0.0, 0.0)
+    thread.session_runtime.apply_play_mode(True)
     try:
-        assert getattr(thread, "_bigworld", None) is not None, (
+        assert thread.plugins.services.get("bigworld") is not None, (
             "a map carrying a BigWorldSettings entity did not start a session")
         assert far.get("hidden") is True, (
             "the brush 20000 units away is outside the activation radius and "
@@ -441,9 +448,9 @@ def test_a_bigworld_map_activates_cells_around_the_player_and_restores_on_stop(
         assert near.get("hidden") in (None, False), (
             "the brush at the player's feet was parked")
     finally:
-        thread.set_play_mode(False)
+        thread.session_runtime.apply_play_mode(False)
 
-    assert getattr(thread, "_bigworld", None) is None, \
+    assert thread.plugins.services.get("bigworld") is None, \
         "the streaming session outlived play mode"
 
     # No object may still carry the session's activation marker.
@@ -461,3 +468,124 @@ def test_a_bigworld_map_activates_cells_around_the_player_and_restores_on_stop(
     assert normalize_streaming_state(state.get_level_data()) == \
         normalize_streaming_state(json.loads(authored)), (
         "a streaming session changed the authored map")
+
+
+
+def test_editor_action_journal_save_and_reload_is_one_real_world(main_window, tmp_path):
+    """Editor action -> EditorState journal -> disk -> real editor reload.
+
+    This deliberately uses the real MainWindow persistence path rather than
+    serialising EditorState directly.  The edited object must survive the
+    undo checkpoint, the actual atomic save, and the actual level loader.
+    """
+    brush = box_brush("journal-wall", (0, 64, 0), (128, 128, 32))
+    main_window.state.brushes = [brush]
+    main_window.state.selected_objects = [brush]
+
+    before = json.loads(json.dumps(main_window.state.get_level_data()))
+
+    moved = main_window.apply_rotation_to_selection(
+        90.0, (0.0, 1.0, 0.0), undoable=True)
+    assert moved == 1
+    assert len(main_window.state.undo_stack) >= 1
+
+    edited = json.loads(json.dumps(main_window.state.get_level_data()))
+    assert edited != before
+
+    # The journal must actually contain the pre-action world.
+    assert main_window.state.undo() is True
+    assert json.dumps(main_window.state.get_level_data(), sort_keys=True) ==         json.dumps(before, sort_keys=True)
+
+    # Redo restores the editor action before persistence.
+    assert main_window.state.redo() is True
+    assert json.dumps(main_window.state.get_level_data(), sort_keys=True) ==         json.dumps(edited, sort_keys=True)
+
+    path = tmp_path / "e2e-editor-action.json"
+    main_window.file_path = str(path)
+    main_window.unsaved_changes = True
+    main_window.save_level()
+
+    assert path.exists()
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["brushes"] == edited["brushes"]
+
+    # Destroy the in-memory mutation, then force the real loader to reconstruct
+    # the authored world from the file that was actually written.
+    main_window.state.clear_scene()
+    assert main_window.load_level_file(str(path)) is True
+
+    reloaded = main_window.state.get_level_data()
+    assert reloaded["brushes"] == edited["brushes"]
+    assert not main_window.unsaved_changes
+
+
+def test_game_input_ai_and_io_reach_one_published_render_state(session):
+    """GameState -> LogicThread -> player/AI/IO -> published render state.
+
+    No fake runtime owner is involved.  Input is consumed by the real play
+    tick, the real I/O dispatcher changes a live brush, real MonsterAI updates
+    a live Monster, and LogicRender publishes all resulting state into the
+    double-buffered render snapshot.
+    """
+    from editor.things import Monster, PlayerStart
+    from engine.logic_player import KEY_W
+    from engine.player import Player
+
+    switchable = box_brush("runtime-door", (0, 64, -300),
+                           (64, 128, 64))
+    button = box_brush("runtime-button", (200, 64, 0),
+                       (32, 64, 32), is_trigger=True)
+    io.add_connection(button, OutputConnection(
+        output_name="OnTrigger", target_name="runtime-door",
+        input_name="Hide", target_id=switchable["id"]))
+
+    monster = make_thing(
+        Monster, "runtime-grunt", (300, 96, 0),
+        awake=True, damage=5)
+    state, thread = session(
+        brushes=room(size=2048.0) + [switchable, button],
+        things=[
+            make_thing(PlayerStart, "spawn", (0, 64, 0)),
+            monster,
+        ])
+
+    thread.session_runtime.apply_play_mode(True)
+    thread.player_runtime.player = Player(0.0, 0.0)
+    try:
+        start_player_z = float(thread.player_runtime.player.pos.z)
+        start_monster_x = float(monster.pos[0])
+
+        # IO is the real runtime dispatcher and mutates the live authored
+        # object before publication.
+        thread.io_manager.fire_output(button, "OnTrigger")
+        assert switchable["hidden"] is True
+
+        # Game input is consumed by LogicThread's real play tick.
+        thread.game_state.set_keys({KEY_W})
+        for _ in range(20):
+            thread._step_frame(TICK)
+
+        # AI is the real MonsterAI machinery operating on the same live world.
+        for _ in range(30):
+            thread.monster_ai.update(1.0 / 30.0)
+
+        assert float(thread.player_runtime.player.pos.z) < start_player_z
+        assert float(monster.pos[0]) < start_monster_x
+
+        # Publication is the real LogicRender -> ThreadedGameState boundary.
+        thread.render_runtime.prepare_render_state()
+        assert thread._publish_frame() is True
+        published = thread.game_state.get_render_state()
+        try:
+            assert published.player_pos[2] < start_player_z
+            assert published.entity_table.count >= 1
+            assert "runtime-door" not in {
+                published.render_refs[int(slot)]["name"]
+                for slot in published.all_brush_slots
+            }
+            monster_ids = set(published.entity_table.ids)
+            assert monster.properties["id"] in monster_ids
+        finally:
+            thread.game_state.release_render_state(published)
+    finally:
+        thread.session_runtime.apply_play_mode(False)

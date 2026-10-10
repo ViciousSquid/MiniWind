@@ -19,7 +19,7 @@ pytest.importorskip("PyQt5", reason="Qt is not available in this environment")
 from PyQt5.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from editor import face_texture as ft  # noqa: E402
-from editor.editor_state import EditorState  # noqa: E402
+from editor.main_window import MainWindow  # noqa: E402
 from editor.surface_inspector import SurfaceInspector  # noqa: E402
 from engine import brush_geometry as bg  # noqa: E402
 
@@ -27,52 +27,6 @@ from engine import brush_geometry as bg  # noqa: E402
 # against the offscreen platform plugin.
 pytestmark = pytest.mark.qt
 
-
-
-@pytest.fixture(scope="session")
-def qt_app():
-    # Only when there is no display: the offscreen plugin cannot create an
-    # OpenGL context, and forcing it here would disable the visual tier for
-    # the whole session when the suite is run under Xvfb.
-    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    app = QApplication.instance() or QApplication([])
-    yield app
-
-
-class _StubBrowser:
-    def __init__(self, path=None):
-        self.path = path
-
-    def get_selected_filepath(self):
-        return self.path
-
-
-class FakeHost:
-    """The slice of MainWindow the inspector talks to."""
-
-    root_dir = os.getcwd()
-
-    def __init__(self):
-        self.state = EditorState()
-        self.state.selected_objects = []
-        self.saves = 0
-        self.view_updates = 0
-        self.toasts = []
-        self.unsaved_changes = False
-        self.asset_browser = _StubBrowser()
-
-    def save_state(self):
-        self.saves += 1
-
-    def update_views(self):
-        self.view_updates += 1
-
-    def show_toast(self, message, is_error=False, duration=None):
-        self.toasts.append(message)
-
-    def _selected_brushes(self):
-        return [b for b in self.state.selected_objects if isinstance(b, dict)]
 
 
 def make_box(pos=(0, 0, 0), size=(512, 128, 64)):
@@ -83,14 +37,36 @@ def make_box(pos=(0, 0, 0), size=(512, 128, 64)):
     }
 
 
+def _record_toasts(host):
+    """Keep the text of every toast the real window shows, on ``host.toasts``."""
+    host.toasts = []
+    real = host.show_toast
+
+    def show_toast(message, *args, **kwargs):
+        host.toasts.append(str(message))
+        return real(message, *args, **kwargs)
+
+    host.show_toast = show_toast
+    return host
+
+
+def _select_shipped_texture(host):
+    """Select a texture that ships in assets/textures; return its file name."""
+    tab = host.asset_browser.tab_textures
+    host.asset_browser.tabs.setCurrentWidget(tab)
+    item = next(i for i in tab.items if i.file_path.lower().endswith('.png'))
+    tab.select_item(item)
+    return os.path.basename(item.file_path)
+
+
 @pytest.fixture
-def inspector(qt_app):
-    host = FakeHost()
-    panel = SurfaceInspector(host)
+def inspector(main_window):
+    host = _record_toasts(main_window)
     brush = make_box()
     host.state.brushes.append(brush)
-    host.state.selected_objects = [brush]
-    panel.set_target(brush, 'north')
+    host.set_selected_objects([brush])
+    host.show_surface_inspector(brush, 'north')
+    panel = host.surface_inspector
     return host, panel, brush
 
 
@@ -106,9 +82,10 @@ def test_it_shows_the_bound_face(inspector):
     assert panel.size_label.text() == '512 x 128'
 
 
-def test_it_labels_a_cut_face_as_one(qt_app):
-    host = FakeHost()
-    panel = SurfaceInspector(host)
+def test_it_labels_a_cut_face_as_one(main_window):
+    host = main_window
+    host.show_surface_inspector()
+    panel = host.surface_inspector
     brush = make_box(size=(128, 128, 128))
     assert bg.clip_brush(brush, [1.0, 1.0, 0.0], 0.0)
     key = next(k for k in ft.face_keys(brush) if k.startswith('#'))
@@ -347,14 +324,16 @@ def test_match_grid_snaps_the_rotation_to_its_own_step(inspector):
 
 def test_applying_the_browser_texture(inspector):
     host, panel, brush = inspector
-    host.asset_browser.path = os.path.join('assets', 'textures', 'brick.png')
+    name = _select_shipped_texture(host)
     panel._apply_selected_texture()
-    assert ft.get_transform(brush, 'north')['texture'] == 'brick.png'
+    assert ft.get_transform(brush, 'north')['texture'] == name
 
 
 def test_applying_with_no_texture_selected_says_so(inspector):
     host, panel, brush = inspector
-    host.asset_browser.path = None
+    for tab in (host.asset_browser.tab_textures,):
+        tab.selected_item = None
+    host.asset_browser.tabs.setCurrentWidget(host.asset_browser.tab_textures)
     panel._apply_selected_texture()
     assert any('texture' in t.lower() for t in host.toasts)
     assert ft.get_transform(brush, 'north')['texture'] == 'tex_north.png'
@@ -366,35 +345,38 @@ def test_applying_with_no_texture_selected_says_so(inspector):
 
 def test_a_run_of_edits_is_one_undo_step(inspector):
     host, panel, _ = inspector
-    assert host.saves == 0
+    before = len(host.state.undo_stack)
     for value in (0.125, 0.25, 0.375, 0.5):
         panel.hshift.setValue(value)
     panel.rotate.setValue(45.0)
     panel._apply_fit()
-    assert host.saves == 1
+    assert len(host.state.undo_stack) == before + 1
 
 
 def test_a_new_run_after_a_pause_is_a_fresh_undo_step(inspector):
     host, panel, _ = inspector
+    before = len(host.state.undo_stack)
     panel.hshift.setValue(0.25)
-    assert host.saves == 1
+    assert len(host.state.undo_stack) == before + 1
     panel._close_undo_burst()          # what the idle timer does
     panel.hshift.setValue(0.5)
-    assert host.saves == 2
+    assert len(host.state.undo_stack) == before + 2
 
 
 def test_editing_marks_the_map_dirty_and_repaints(inspector):
-    host, panel, _ = inspector
+    host, panel, brush = inspector
+    before = host.state.world_epoch
     panel.hshift.setValue(0.25)
     assert host.unsaved_changes
-    assert host.view_updates > 0
+    assert host.state.world_epoch > before
+    assert brush in host.state.brushes
 
 
 def test_loading_the_panel_does_not_count_as_an_edit(inspector):
     host, panel, brush = inspector
-    before = host.saves
+    before = len(host.state.undo_stack)
     panel.set_target(brush, 'east')    # repopulates every spin box
-    assert host.saves == before
+    assert len(host.state.undo_stack) == before
 
 
 # ---------------------------------------------------------------------------
@@ -564,15 +546,25 @@ def test_escape_is_accepted_so_the_dialog_never_sees_it(inspector):
     assert event.isAccepted()
 
 
-def test_escape_survives_a_host_without_the_hook(inspector):
-    """An older host, or a panel built against a stand-in, must not crash."""
-    host, panel, brush = inspector
-    assert not hasattr(host, 'handle_escape')
+def test_escape_is_handled_by_the_editor_host(main_window):
+    """Escape is routed through the real MainWindow cancellation machinery."""
+    from editor.main_window import MainWindow
+
+    host = main_window
+    brush = make_box()
+    host.state.brushes.append(brush)
+    host.set_selected_objects([brush])
+    host.show_surface_inspector(brush, 'north')
+    panel = host.surface_inspector
+    panel.set_target(brush, 'north')
     panel.show()
-
-    _escape(panel)
-
-    assert panel.isVisible()
+    try:
+        assert host.primary_selection() is brush
+        _escape(panel)
+        assert host.primary_selection() is None
+        assert panel.isVisible()
+    finally:
+        panel.hide()
 
 
 def test_other_keys_still_reach_the_dialog(inspector):
@@ -615,7 +607,7 @@ def test_picking_a_face_rebinds_the_controls(inspector):
 def test_picking_a_face_makes_it_the_editor_s_current_one(inspector):
     """Page Up/Down and a reopened panel should follow the picker."""
     host, panel, brush = inspector
-    assert not hasattr(host, 'face_texture_target')
+    assert host.face_texture_target is None
 
     panel.face_combo.setCurrentIndex(panel.face_combo.findData('top'))
 
@@ -626,11 +618,11 @@ def test_picking_a_face_edits_nothing(inspector):
     """Switching faces is navigation, so it must not push an undo state."""
     host, panel, brush = inspector
     before = dict(brush)
-    saves = host.saves
+    saves = len(host.state.undo_stack)
 
     panel.face_combo.setCurrentIndex(panel.face_combo.findData('west'))
 
-    assert host.saves == saves
+    assert len(host.state.undo_stack) == saves
     assert brush == before
 
 
@@ -642,10 +634,11 @@ def test_the_picker_follows_a_target_set_from_the_3d_view(inspector):
     assert panel.face_combo.currentData() == 'down'
 
 
-def test_the_picker_relists_when_the_brush_changes(qt_app):
+def test_the_picker_relists_when_the_brush_changes(main_window):
     """A clipped brush grows a cut face; the picker has to pick it up."""
-    host = FakeHost()
-    panel = SurfaceInspector(host)
+    host = main_window
+    host.show_surface_inspector()
+    panel = host.surface_inspector
     brush = make_box(size=(128, 128, 128))
     panel.set_target(brush, 'north')
     before = panel.face_combo.count()
@@ -660,10 +653,11 @@ def test_the_picker_relists_when_the_brush_changes(qt_app):
     assert panel.face_combo.count() != before or listed == list(ft.face_keys(brush))
 
 
-def test_a_face_the_brush_no_longer_has_is_still_shown(qt_app):
+def test_a_face_the_brush_no_longer_has_is_still_shown(main_window):
     """Never silently retarget: an orphaned face stays selected, and visible."""
-    host = FakeHost()
-    panel = SurfaceInspector(host)
+    host = main_window
+    host.show_surface_inspector()
+    panel = host.surface_inspector
     brush = make_box()
     panel.set_target(brush, '#99')          # a cut face this brush lacks
 
@@ -749,11 +743,11 @@ def test_apply_is_short_and_green(inspector):
 def test_the_apply_button_still_applies(inspector):
     """Renaming it must not have cost it its job."""
     host, panel, brush = inspector
-    host.asset_browser.path = os.path.join('assets', 'textures', 'brick.png')
+    name = _select_shipped_texture(host)
 
     panel.apply_tex_btn.click()
 
-    assert ft.get_transform(brush, 'north')['texture'] == 'brick.png'
+    assert ft.get_transform(brush, 'north')['texture'] == name
 
 
 def test_the_panel_carries_no_shortcut_blurb(inspector):
@@ -858,10 +852,11 @@ def test_the_rotate_field_wraps(inspector):
 # Opening with nothing selected
 # ────────────────────────────
 
-def test_it_opens_with_no_target_at_all(qt_app):
+def test_it_opens_with_no_target_at_all(main_window):
     """A tool should open when it is asked for, selection or not."""
-    host = FakeHost()
-    panel = SurfaceInspector(host)
+    host = main_window
+    host.show_surface_inspector()
+    panel = host.surface_inspector
 
     panel.set_target(None, None)
 
@@ -869,9 +864,10 @@ def test_it_opens_with_no_target_at_all(qt_app):
     assert panel.target is None
 
 
-def test_an_untargeted_panel_greys_out_what_needs_a_face(qt_app):
-    host = FakeHost()
-    panel = SurfaceInspector(host)
+def test_an_untargeted_panel_greys_out_what_needs_a_face(main_window):
+    host = main_window
+    host.show_surface_inspector()
+    panel = host.surface_inspector
 
     panel.set_target(None, None)
 
@@ -882,10 +878,11 @@ def test_an_untargeted_panel_greys_out_what_needs_a_face(qt_app):
         assert not widget.isEnabled()
 
 
-def test_face_mode_stays_available_with_no_target(qt_app):
+def test_face_mode_stays_available_with_no_target(main_window):
     """Turning Face Mode on is how you go and pick a face to edit."""
-    host = FakeHost()
-    panel = SurfaceInspector(host)
+    host = main_window
+    host.show_surface_inspector()
+    panel = host.surface_inspector
 
     panel.set_target(None, None)
 
@@ -912,7 +909,7 @@ def test_the_controls_do_nothing_with_no_target(inspector):
     host, panel, brush = inspector
     panel.set_target(None, None)
     before = copy.deepcopy(brush)
-    saves = host.saves
+    saves = len(host.state.undo_stack)
 
     panel._apply_fit()
     panel._apply_axial()
@@ -923,7 +920,7 @@ def test_the_controls_do_nothing_with_no_target(inspector):
     panel._on_value_changed('scale')
 
     assert brush == before
-    assert host.saves == saves
+    assert len(host.state.undo_stack) == saves
 
 
 def test_binding_a_face_enables_the_controls_again(inspector):
@@ -960,45 +957,18 @@ def test_the_surface_inspector_action_uses_window_shortcut_scope(qt_app):
 # The editor opening and re-binding it
 # ────────────────────────────
 
-class FakeEditorWindow(QWidget):
-    """The slice of MainWindow the two Surface Inspector entry points use."""
+def test_surface_inspector_shortcut_is_ignored_during_play_mode(main_window):
+    host = main_window
+    host.view_3d.play_mode = True
 
-    from editor.main_window import MainWindow
-    show_surface_inspector = MainWindow.show_surface_inspector
-    toggle_surface_inspector = MainWindow.toggle_surface_inspector
-    sync_surface_inspector = MainWindow.sync_surface_inspector
-    del MainWindow
+    host.toggle_surface_inspector()
 
-    def __init__(self):
-        super().__init__()
-        self.state = EditorState()
-        self.state.selected_objects = []
-        self.surface_inspector = None
-        self.view_3d = _StubView()
-        self.toasts = []
-        self.asset_browser = _StubBrowser()
-        self.root_dir = os.getcwd()
-
-    def save_state(self):
-        pass
-
-    def update_views(self):
-        pass
-
-    def show_toast(self, message, is_error=False, duration=None):
-        self.toasts.append((message, is_error))
-
-    def _selected_brushes(self):
-        return [b for b in self.state.selected_objects if isinstance(b, dict)]
+    assert host.surface_inspector is None
 
 
-class _StubView:
-    hovered_face_info = None
-
-
-def test_the_shortcut_opens_the_panel_with_nothing_selected(qt_app):
+def test_the_shortcut_opens_the_panel_with_nothing_selected(main_window):
     """It used to refuse with "Select a brush or a face first"."""
-    host = FakeEditorWindow()
+    host = _record_toasts(main_window)
 
     host.toggle_surface_inspector()
 
@@ -1007,16 +977,16 @@ def test_the_shortcut_opens_the_panel_with_nothing_selected(qt_app):
     assert host.toasts == []
 
 
-def test_opening_it_empty_binds_nothing(qt_app):
-    host = FakeEditorWindow()
+def test_opening_it_empty_binds_nothing(main_window):
+    host = main_window
 
     host.toggle_surface_inspector()
 
     assert host.surface_inspector.target is None
 
 
-def test_the_shortcut_still_closes_it(qt_app):
-    host = FakeEditorWindow()
+def test_the_shortcut_still_closes_it(main_window):
+    host = main_window
     host.toggle_surface_inspector()
 
     host.toggle_surface_inspector()
@@ -1024,9 +994,9 @@ def test_the_shortcut_still_closes_it(qt_app):
     assert not host.surface_inspector.isVisible()
 
 
-def test_an_open_empty_panel_binds_when_a_brush_is_selected(qt_app):
+def test_an_open_empty_panel_binds_when_a_brush_is_selected(main_window):
     """Otherwise opening it first would leave it useless."""
-    host = FakeEditorWindow()
+    host = main_window
     host.toggle_surface_inspector()
     brush = make_box()
 
@@ -1036,9 +1006,9 @@ def test_an_open_empty_panel_binds_when_a_brush_is_selected(qt_app):
     assert host.surface_inspector.target[0] is brush
 
 
-def test_a_panel_already_in_the_selection_is_left_alone(qt_app):
+def test_a_panel_already_in_the_selection_is_left_alone(main_window):
     """Re-binding on every click would undo a face picked from the dropdown."""
-    host = FakeEditorWindow()
+    host = main_window
     brush = make_box()
     host.state.selected_objects = [brush]
     host.toggle_surface_inspector()
@@ -1049,8 +1019,8 @@ def test_a_panel_already_in_the_selection_is_left_alone(qt_app):
     assert host.surface_inspector.target == (brush, 'east')
 
 
-def test_it_follows_the_selection_to_another_brush(qt_app):
-    host = FakeEditorWindow()
+def test_it_follows_the_selection_to_another_brush(main_window):
+    host = main_window
     one, two = make_box(), make_box(pos=(256, 0, 0))
     host.state.selected_objects = [one]
     host.toggle_surface_inspector()
@@ -1062,8 +1032,8 @@ def test_it_follows_the_selection_to_another_brush(qt_app):
     assert host.surface_inspector.target[0] is two
 
 
-def test_deselecting_does_not_blank_a_panel_being_worked_in(qt_app):
-    host = FakeEditorWindow()
+def test_deselecting_does_not_blank_a_panel_being_worked_in(main_window):
+    host = main_window
     brush = make_box()
     host.state.selected_objects = [brush]
     host.toggle_surface_inspector()
@@ -1074,8 +1044,8 @@ def test_deselecting_does_not_blank_a_panel_being_worked_in(qt_app):
     assert host.surface_inspector.target[0] is brush
 
 
-def test_a_closed_panel_is_not_woken_by_a_selection(qt_app):
-    host = FakeEditorWindow()
+def test_a_closed_panel_is_not_woken_by_a_selection(main_window):
+    host = main_window
 
     host.state.selected_objects = [make_box()]
     host.sync_surface_inspector()

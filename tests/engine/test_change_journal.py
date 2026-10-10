@@ -43,6 +43,25 @@ class _Subscriber:
 # The journal
 # ---------------------------------------------------------------------------
 
+
+
+def test_moved_position_payload_survives_each_subscriber_drain():
+    from engine.change_journal import ChangeJournal, MOVED
+
+    class _Sub:
+        pass
+
+    journal = ChangeJournal()
+    a, b = _Sub(), _Sub()
+    journal.subscribe(a)
+    journal.subscribe(b)
+    thing = object()
+    journal.record(thing, MOVED, (1.25, 2.5, 3.75))
+
+    assert journal.drain(a) == {id(thing): MOVED}
+    assert journal.drain_positions(a) == {id(thing): (1.25, 2.5, 3.75)}
+    assert journal.drain(b) == {id(thing): MOVED}
+    assert journal.drain_positions(b) == {id(thing): (1.25, 2.5, 3.75)}
 def test_each_subscriber_sees_every_change_once():
     journal = ChangeJournal()
     a, b = _Subscriber(), _Subscriber()
@@ -144,16 +163,15 @@ def test_an_io_tint_reaches_the_brush_table():
     assert before.tolist() != [1.0, 0.0, 0.0]
 
 
-def test_the_console_tint_reaches_the_brush_table():
-    from types import SimpleNamespace
+def test_the_console_tint_reaches_the_brush_table(main_window):
     from editor.console_commands import ConsoleCommandHandler
 
     wall = box_brush("wall")
     tables = _two_buffers([wall], RenderTable)
-    console = ConsoleCommandHandler.__new__(ConsoleCommandHandler)
-    console.editor_state = SimpleNamespace(find_entity_by_name=lambda name: wall)
+    handler = ConsoleCommandHandler(main_window)
+    main_window.state.brushes[:] = [wall]
 
-    console.cmd_tint("wall 0 255 0")
+    handler.cmd_tint("wall 0 255 0")
     for table in tables:
         table.begin_frame([wall], 1)
 
@@ -163,13 +181,11 @@ def test_the_console_tint_reaches_the_brush_table():
 
 @pytest.mark.parametrize("change", ["park", "unpark"])
 def test_big_world_parking_reaches_the_tables(change):
-    from plugins.bigworld.runtime import BigWorldSession
+    from plugins.bigworld.runtime import BigWorldSession, StreamingHost
 
     wall = box_brush("wall")
     lamp = make_thing(Light, "lamp")
-    runtime = BigWorldSession.__new__(BigWorldSession)
-    runtime._parked_brushes = {}
-    runtime._parked_lights = {}
+    runtime = BigWorldSession(StreamingHost())
     if change == "unpark":
         runtime._set_brush_active(wall, False)
         runtime._set_light_active(lamp, False)
@@ -187,22 +203,23 @@ def test_big_world_parking_reaches_the_tables(change):
 
 
 def test_a_light_fading_at_runtime_is_re_resolved_each_step():
-    from engine.logic_thread import LogicThread
+    from engine.logic_timing import LogicTiming
 
     lamp = make_thing(Light, "lamp", intensity=2.0)
     table = EntityTable()
     table.begin_frame([lamp], 1)
-    logic = LogicThread.__new__(LogicThread)
+    logic = type("TimingHost", (), {})()
     logic.io_manager = None
-    logic.light_fade_states = {id(lamp): {
+    timing = LogicTiming(logic)
+    timing.light_fade_states = {id(lamp): {
         "entity": lamp, "from": 2.0, "to": 0.0,
         "elapsed": 0.0, "duration": 1.0, "end_off": True}}
 
-    logic._update_light_fades(0.5)
+    timing.update_light_fades(0.5)
     table.begin_frame([lamp], 1)
     assert table.light_params[0, 0] == pytest.approx(1.0)
 
-    logic._update_light_fades(0.5)
+    timing.update_light_fades(0.5)
     table.begin_frame([lamp], 1)
     assert table.light_params[0, 0] == pytest.approx(0.0)
     assert not table.light_enabled[0]
@@ -252,7 +269,7 @@ def _edit_entity(thing, rng):
         thing._respawn_fade_alpha = rng.random()
         thing._carry_sprite_yaw = rng.choice([None, rng.uniform(-3, 3)])
     elif kind == 5 and isinstance(thing, Effect):
-        thing.trigger_explosion(123.0)
+        thing.properties["effect_type"] = "EXPLOSION"
         touch(thing)
 
 
@@ -302,7 +319,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 #: The player, the camera and ``self`` inside the player keep their own glm
 #: positions; they are not table rows.
 # ``table`` is a dense table (MonsterTable.pos is a NumPy column, not an entity).
-_NOT_ENTITIES = {"player", "player2", "camera", "self", "table"}
+# ``projectiles`` is also a dense structure-of-arrays store; writes to its
+# numeric columns are simulation state, not object-entity movement.
+_NOT_ENTITIES = {"player", "player2", "camera", "self", "table", "projectiles", "effect_store"}
 
 
 def _in_place_position_writes(tree):

@@ -120,12 +120,25 @@ def install_excepthook():
     return _report
 
 
+#: Commands run from any console, oldest first, shared by every command input
+#: so Up repeats the last command wherever it was typed.
+COMMAND_HISTORY = []
+
+
 class CommandInput(QLineEdit):
-    """Custom line edit that keeps command history (Quake style)."""
-    def __init__(self, parent=None):
+    """Command line with Quake-style history: Up recalls the last command.
+
+    All command inputs share :data:`COMMAND_HISTORY` unless given their own
+    list; each keeps its own place while browsing it.
+    """
+    def __init__(self, parent=None, history=None):
         super().__init__(parent)
-        self.history = []
-        self.history_idx = 0
+        self.history = COMMAND_HISTORY if history is None else history
+        self.history_idx = len(self.history)
+
+    def reset_history_position(self):
+        """Start browsing from the newest command again (on open/clear)."""
+        self.history_idx = len(self.history)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Up:
@@ -216,6 +229,7 @@ class DebugConsole(QWidget):
         'MonsterAI': '#FF7043', # Deep orange — monster combat / sight / attack
         'Pathfinding': '#26A69A', # Teal — monster patrol / navigation
         'Plugins': '#42A5F5',   # Blue — plugin debug / init (default; loads/errors recoloured per-message)
+        'Cutscene': '#66BB6A',  # Cutscene loads/errors are recoloured per-message
     }
 
     # Per-message colours for the 'Plugins' category. All plugin messages share
@@ -224,6 +238,8 @@ class DebugConsole(QWidget):
     PLUGIN_LOAD_COLOR  = '#66BB6A'  # Green — loaded / enabled / bundled
     PLUGIN_ERROR_COLOR = '#EF5350'  # Red — failures / errors
     PLUGIN_DEBUG_COLOR = '#42A5F5'  # Blue — debug / init messages
+    CUTSCENE_LOAD_COLOR = '#66BB6A'  # Green — successful cutscene load
+    CUTSCENE_ERROR_COLOR = '#EF5350'  # Red — missing/invalid/failed cutscene
 
     # Substrings that mark a plugin message as an error (red) or a load (green).
     # Checked case-insensitively; errors take precedence over loads.
@@ -547,6 +563,12 @@ class DebugConsole(QWidget):
         self.hide_pathfinding_cb.toggled.connect(self._refresh_console)
         fp_layout.addWidget(self.hide_pathfinding_cb)
 
+        self.hide_cutscenes_cb = QCheckBox("Cutscenes")
+        self.hide_cutscenes_cb.setToolTip("Hide cutscene load / error messages")
+        self.hide_cutscenes_cb.setStyleSheet(cb_style)
+        self.hide_cutscenes_cb.toggled.connect(self._refresh_console)
+        fp_layout.addWidget(self.hide_cutscenes_cb)
+
         self.hide_plugins_cb = QCheckBox("Plugins")
         self.hide_plugins_cb.setToolTip("Hide plugin load / error / debug messages")
         self.hide_plugins_cb.setStyleSheet(cb_style)
@@ -673,6 +695,10 @@ class DebugConsole(QWidget):
         queued and inserted together when it closes, and a flush that finds
         more queued keeps the window open for as long as the burst lasts.
         """
+        if sip.isdeleted(self._flush_timer):
+            # The console is being torn down: its timer (a child) is gone
+            # before the logger connection is, and there is nowhere to write.
+            return
         if self._flush_timer.isActive():
             self._pending.append((category, message))
             return
@@ -850,6 +876,9 @@ class DebugConsole(QWidget):
             return
 
         # 2d. Filter Plugins messages when "Plugins" checkbox is checked
+        if self.hide_cutscenes_cb.isChecked() and category == 'Cutscene':
+            return
+
         if self.hide_plugins_cb.isChecked() and category == 'Plugins':
             return
 
@@ -867,6 +896,12 @@ class DebugConsole(QWidget):
         # loads read green, errors red, and debug/init stay blue.
         if filter_category == 'Plugins':
             color = self._plugin_message_color(message)
+        elif filter_category == 'Cutscene':
+            color = (
+                self.CUTSCENE_ERROR_COLOR
+                if message.upper().startswith('[CUTSCENE] FAILED:')
+                else self.CUTSCENE_LOAD_COLOR
+            )
 
         # --- HIGHLIGHTING LOGIC ---
 
@@ -907,7 +942,7 @@ class DebugConsole(QWidget):
         def get_external_link_html(url):
             return (
                 f'<a href="{url}" '
-                f'style="color: #2b6132; text-decoration: underline;" '
+                f'style="color: #26A69A; text-decoration: underline;" '
                 f'title="Open Fio on GitHub">{url}</a>'
             )
 

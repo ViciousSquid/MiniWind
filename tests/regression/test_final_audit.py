@@ -7,7 +7,7 @@ instrument's prepare/tick/AI timings on large maps and long sessions.
 """
 
 import json
-import threading
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -180,17 +180,17 @@ def test_a_logic_frame_after_undo_rebuilds_the_tables_once(monkeypatch):
     thread = LogicThread(ThreadedGameState(), state)
     try:
         for _ in range(2):                                  # settle both buffers
-            thread._prepare_render_state()
+            thread.render_runtime.prepare_render_state()
             thread.game_state.request_swap()
         snapshot = state.snapshot()
 
         reconciles = _count_reconciles(monkeypatch, RenderTable)
         state.restore_state(snapshot)                       # e.g. Stop/undo
-        thread._prepare_render_state()
+        thread.render_runtime.prepare_render_state()
         thread.game_state.request_swap()
         state.mark_world_changed([state.brushes[0]])        # e.g. a selection edit
         for _ in range(2):
-            thread._prepare_render_state()
+            thread.render_runtime.prepare_render_state()
             thread.game_state.request_swap()
         assert len(reconciles) == 1, reconciles
         for buffer in (thread.game_state._read_state, thread.game_state._write_state):
@@ -203,23 +203,21 @@ def test_a_logic_frame_after_undo_rebuilds_the_tables_once(monkeypatch):
 # Console: monster_revive / monster_revive_all
 # ---------------------------------------------------------------------------
 
-class _State:
-    def __init__(self, things):
-        self.things = things
-
-    def find_entity_by_name(self, name):
-        return next((t for t in self.things if t.properties.get("name") == name), None)
-
-
 def _console(things, states):
     from editor.console_commands import ConsoleCommandHandler
+    from editor.main_window import MainWindow
+    from engine.logic_thread import LogicThread
+    from engine.threaded_game_state import ThreadedGameState
 
-    logic = SimpleNamespace(monster_ai=SimpleNamespace(monster_states=states),
-                            _monster_lock=threading.RLock())
-    window = SimpleNamespace(state=_State(things),
-                             view_3d=SimpleNamespace(logic_thread=logic),
-                             update_all_ui=lambda: None)
-    return ConsoleCommandHandler(window)
+    window = MainWindow(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+    window.state.things = list(things)
+    game_state = ThreadedGameState()
+    logic = LogicThread(game_state, window.state)
+    logic.world_runtime.monster_things = list(things)
+    logic.monster_ai.monster_states = states
+    window.view_3d.logic_thread = logic
+    window.view_3d.play_mode = True
+    return ConsoleCommandHandler(window), window, logic
 
 
 def test_monster_revive_drops_the_ai_state_of_that_monster():
@@ -230,7 +228,14 @@ def test_monster_revive_drops_the_ai_state_of_that_monster():
                     properties={"name": "grunt", "dead": True, "health": 0})
     other = Monster(pos=[64.0, 0.0, 0.0], properties={"name": "other"})
     states = {id(grunt): {"shoot_timer": 0.01}, id(other): {"shoot_timer": 0.5}}
-    _console([grunt, other], states).cmd_monster_revive("grunt")
+    handler, window, logic = _console([grunt, other], states)
+    try:
+        handler.cmd_monster_revive("grunt")
+    finally:
+        logic.stop()
+        window.unsaved_changes = False
+        window.close()
+        window.deleteLater()
 
     assert id(grunt) not in states
     assert id(other) in states
@@ -242,7 +247,14 @@ def test_monster_revive_all_clears_the_ai_state():
                         properties={"name": "m%d" % i, "dead": True})
                 for i in range(3)]
     states = {id(m): {"shoot_timer": 0.0} for m in monsters}
-    _console(monsters, states).cmd_monster_revive_all("")
+    handler, window, logic = _console(monsters, states)
+    try:
+        handler.cmd_monster_revive_all("")
+    finally:
+        logic.stop()
+        window.unsaved_changes = False
+        window.close()
+        window.deleteLater()
     assert states == {}
 
 
@@ -254,7 +266,14 @@ def test_monster_revive_keeps_a_parked_monster_parked():
     grunt = Monster(pos=[0.0, 0.0, 0.0],
                     properties={"name": "grunt", "dead": True, "hidden": True,
                                 PARKED_HIDDEN_KEY: True})
-    _console([grunt], {}).cmd_monster_revive("grunt")
+    handler, window, logic = _console([grunt], {})
+    try:
+        handler.cmd_monster_revive("grunt")
+    finally:
+        logic.stop()
+        window.unsaved_changes = False
+        window.close()
+        window.deleteLater()
 
     assert grunt.properties["hidden"] is True          # still parked
     assert authored_hidden(grunt) is False             # but authored visible
@@ -282,19 +301,19 @@ def test_leaving_play_releases_the_sessions_monsters():
                     for i in range(4)]
     thread = LogicThread(ThreadedGameState(), state)
     try:
-        thread._build_entity_caches()
+        thread.world_runtime.build_entity_caches()
         ai = thread.monster_ai
         ai.update(1.0 / 30.0)                 # no player: nothing gathered yet
-        ai.table.gather(thread._monster_things)
-        ai._enemy_monsters = tuple(thread._monster_things)
-        ai.monster_states = {id(m): {} for m in thread._monster_things}
+        ai.table.gather(thread.world_runtime.monster_things)
+        ai._enemy_monsters = tuple(thread.world_runtime.monster_things)
+        ai.monster_states = {id(m): {} for m in thread.world_runtime.monster_things}
         refs = [weakref.ref(m) for m in state.things]
 
-        thread._apply_play_mode(False)                     # Stop
+        thread.session_runtime.apply_play_mode(False)                     # Stop
         assert ai.table.count == 0 and ai.table.monsters == []
         assert ai.monster_states == {} and ai._enemy_monsters == ()
 
-        thread._monster_things = []
+        thread.world_runtime.monster_things = []
         state.things = []
         gc.collect()
         assert all(ref() is None for ref in refs)
@@ -327,13 +346,13 @@ def test_editor_io_reaches_the_live_entity():
         assert state.things[0].properties["state"] == "off"
 
         # A session's caches, then the world replaced (restore / map load).
-        thread._build_entity_caches()
+        thread.world_runtime.build_entity_caches()
         ghost = state.things[0]
         state.things = [lamp()]
         thread.io_manager._execute_input("lamp", "TurnOff", "", "console",
                                          target_id="lamp-id")
         assert state.things[0].properties["state"] == "off"
-        assert thread._find_entity_by_name("lamp") is not ghost
+        assert thread.world_runtime.find_entity_by_name("lamp") is not ghost
     finally:
         thread.stop()
 
@@ -354,7 +373,8 @@ def _session_world(state):
 
 def _play(state, ticks=240):
     """A real headless session: walk, turn, shoot and use, with the AI."""
-    from engine.logic_thread import Key_D, Key_W, LogicThread
+    from engine.logic_player import KEY_D, KEY_W
+    from engine.logic_thread import LogicThread
     from engine.player import Player
     from engine.threaded_game_state import ThreadedGameState
     from editor.things import PlayerStart
@@ -363,14 +383,14 @@ def _play(state, ticks=240):
     logic = LogicThread(game_state, state)
     start = next((t for t in state.things if isinstance(t, PlayerStart)), None)
     pos = start.pos if start is not None else [0.0, 64.0, 0.0]
-    logic.player = Player(pos[0], pos[2])
-    logic.player.pos.y = pos[1]
-    logic.set_play_mode(True)
-    logic._stop_monster_ai()                   # this test drives the AI itself
-    logic.god_mode = True                      # play start resets it
+    logic.player_runtime.player = Player(pos[0], pos[2])
+    logic.player_runtime.player.pos.y = pos[1]
+    logic.session_runtime.apply_play_mode(True)
+    logic.session_runtime.stop_monster_ai()                   # this test drives the AI itself
+    logic.player_runtime.god_mode = True                      # play start resets it
     seen = {}
     for tick in range(ticks):
-        game_state.set_keys([{Key_W}, {Key_W, Key_D}, set(), {Key_D}][(tick // 40) % 4])
+        game_state.set_keys([{KEY_W}, {KEY_W, KEY_D}, set(), {KEY_D}][(tick // 40) % 4])
         game_state.set_mouse_delta(15.0, 0.0)
         if tick % 15 == 0:
             game_state.queue_shot()
@@ -378,9 +398,9 @@ def _play(state, ticks=240):
             game_state.set_use_key_pressed()
         with logic._tick_lock:
             logic._tick(logic.TICK_DURATION)
-        with logic._monster_lock:
+        with logic.session_runtime.monster_lock:
             logic.monster_ai.update(logic.TICK_DURATION)
-        logic._prepare_render_state()
+        logic.render_runtime.prepare_render_state()
         game_state.request_swap()
         if tick % 40 == 0:
             seen.update(_session_world(state))       # includes the spawned/killed
@@ -420,29 +440,29 @@ def test_no_runtime_cache_outlives_its_session_or_map(map_name, restore):
         ids = [obj.properties["id"] for obj in session.values()
                if isinstance(obj, Thing) and obj.properties.get("id")]
 
-        logic.set_play_mode(False)                              # Stop
+        logic.session_runtime.apply_play_mode(False)                              # Stop
         if restore:
             state.restore_state(before_play)
         for _ in range(2):
-            logic._prepare_render_state()
+            logic.render_runtime.prepare_render_state()
             game_state.request_swap()
         roots = {"logic": logic, "monster_ai": logic.monster_ai}
         # Without a restore the session's objects *are* the editor's world,
         # which the render projection rightly shows.
         exclude = [state, state.brushes, state.things]
         if not restore:
-            exclude += [game_state, logic._render_table, logic._entity_table]
+            exclude += [game_state, game_state.get_write_state().render_table, game_state.get_write_state().entity_table]
         leaks = paths_to(roots, session, exclude)
         assert leaks == [], "after Stop:\n  " + "\n  ".join(leaks[:20])
 
         state.load_from_data({"brushes": [], "things": []}, save_undo=False)
         for _ in range(2):
-            logic._prepare_render_state()
+            logic.render_runtime.prepare_render_state()
             game_state.request_swap()
         leaks = paths_to(roots, session, [state, state.brushes, state.things])
         assert leaks == [], "after a map load:\n  " + "\n  ".join(leaks[:20])
-        assert [n for n in names if logic._find_entity_by_name(n)] == []
-        assert [i for i in ids if logic._find_entity_by_id(i)] == []
+        assert [n for n in names if logic.world_runtime.find_entity_by_name(n)] == []
+        assert [i for i in ids if logic.world_runtime.find_entity_by_id(i)] == []
     finally:
         logic.stop()
 
@@ -460,9 +480,9 @@ def _playing(things=(), brushes=()):
     state.brushes = list(brushes) or [box_brush("ground", (0, -16, 0), (4096, 32, 4096))]
     state.things = list(things)
     logic = LogicThread(ThreadedGameState(), state)
-    logic.player = Player(0.0, 0.0)
-    logic.set_play_mode(True)
-    logic._stop_monster_ai()                   # deterministic: no AI thread
+    logic.player_runtime.player = Player(0.0, 0.0)
+    logic.session_runtime.apply_play_mode(True)
+    logic.session_runtime.stop_monster_ai()                   # deterministic: no AI thread
     return state, logic
 
 
@@ -475,42 +495,56 @@ def test_plugin_despawn_and_spawn_update_the_sessions_entity_index():
     grunt = Monster(pos=[300.0, 64.0, 0.0], properties={"name": "grunt"})
     state, logic = _playing([grunt])
     try:
-        api = RuntimeAPI(SimpleNamespace(emit=lambda *a, **k: None, _log=print),
-                         logic, SimpleNamespace(name="test"))
+        from plugins.manager import get_manager, load_plugins
+        load_plugins()
+        manager = get_manager()
+        plugin = manager.find_plugin("tidy")
+        if plugin is None:
+            pytest.skip("Tidy plugin is not present in this build")
+        api = RuntimeAPI(manager, logic, plugin)
         logic.monster_ai.monster_states[id(grunt)] = {"shoot_timer": 0.0}
 
         assert api.despawn(grunt) is True
-        assert grunt not in logic._monster_things
-        assert logic._find_entity_by_name("grunt") is None
+        assert grunt not in logic.world_runtime.monster_things
+        assert logic.world_runtime.find_entity_by_name("grunt") is None
         assert id(grunt) not in logic.monster_ai.monster_states
 
         spawned = api.spawn(Monster, (100.0, 64.0, 0.0), {"name": "fresh"})
-        assert spawned in logic._monster_things
-        assert logic._find_entity_by_name("fresh") is spawned
+        assert spawned in logic.world_runtime.monster_things
+        assert logic.world_runtime.find_entity_by_name("fresh") is spawned
     finally:
         logic.stop()
 
 
-def test_console_delete_during_play_removes_the_entity_from_the_session():
+def test_console_delete_during_play_removes_the_entity_from_the_session(main_window):
     from editor.console_commands import ConsoleCommandHandler
+    from engine.logic_thread import LogicThread
+    from engine.player import Player
+    from engine.threaded_game_state import ThreadedGameState
 
     grunt = Monster(pos=[300.0, 64.0, 0.0], properties={"name": "grunt"})
     wall = box_brush("wall", (200, 64, 0), (32, 128, 256))
     ground = box_brush("ground", (0, -16, 0), (4096, 32, 4096))
-    state, logic = _playing([grunt], [ground, wall])
+    main_window.state.brushes = [ground, wall]
+    main_window.state.things = [grunt]
+
+    logic = LogicThread(ThreadedGameState(), main_window.state)
+    main_window.view_3d.logic_thread = logic
+    main_window.view_3d.play_mode = True
+    logic.player_runtime.player = Player(0.0, 0.0)
+    logic.session_runtime.apply_play_mode(True)
+    logic.session_runtime.stop_monster_ai()
+    console = ConsoleCommandHandler(main_window)
     try:
-        window = SimpleNamespace(state=state,
-                                 view_3d=SimpleNamespace(logic_thread=logic,
-                                                         play_mode=True),
-                                 update_all_ui=lambda: None)
-        console = ConsoleCommandHandler(window)
         console.cmd_delete("grunt")
-        assert grunt not in logic._monster_things
-        assert logic._find_entity_by_name("grunt") is None
+        assert grunt not in logic.world_runtime.monster_things
+        assert logic.world_runtime.find_entity_by_name("grunt") is None
 
         console.cmd_delete("wall")
-        logic._tick(logic.TICK_DURATION)          # collision rebuilds at tick end
-        assert all(b is not wall for b in logic._collision_brushes_cache)
+        logic._tick(logic.TICK_DURATION)
+        assert all(
+            b is not wall for b in logic.collision_runtime._collision_brushes_cache
+        )
     finally:
         logic.stop()
 
@@ -529,14 +563,14 @@ def test_objects_added_or_removed_in_the_editor_during_play_join_the_session():
         state.things.append(added)
         state.brushes.append(wall)
         logic._tick(logic.TICK_DURATION)
-        assert added in logic._monster_things
-        assert logic._find_entity_by_name("added") is added
-        assert any(b is wall for b in logic._collision_brushes_cache)
+        assert added in logic.world_runtime.monster_things
+        assert logic.world_runtime.find_entity_by_name("added") is added
+        assert any(b is wall for b in logic.collision_runtime._collision_brushes_cache)
 
         state.save_state()
         state.things.remove(grunt)
         logic._tick(logic.TICK_DURATION)
-        assert grunt not in logic._monster_things
+        assert grunt not in logic.world_runtime.monster_things
     finally:
         logic.stop()
 
@@ -562,10 +596,10 @@ def test_loading_a_save_puts_doors_and_movers_back_where_they_were(tmp_path):
     try:
         saved_door, saved_lift = list(door["pos"]), list(lift["pos"])
         path = str(tmp_path / "s.fiosave")
-        assert logic.save_session(path)[0]
+        assert logic.session_runtime.save_session(path)[0]
 
         door_idx = state.brushes.index(door)
-        logic._trigger_door_open(door_idx, door)
+        logic.mover_runtime._trigger_door_open(door_idx, door)
         lift["start_on"] = True
         from engine.change_journal import moved
         moved(lift)                                 # I/O Start
@@ -576,12 +610,12 @@ def test_loading_a_save_puts_doors_and_movers_back_where_they_were(tmp_path):
         logic._tick(logic.TICK_DURATION)
         assert door["pos"] != saved_door and lift["pos"] != saved_lift
 
-        assert logic.load_session(path)[0]
+        assert logic.session_runtime.load_session(path)[0]
         for _ in range(30):                         # and it stays there
             logic._tick(logic.TICK_DURATION)
         assert door["pos"] == pytest.approx(saved_door)
         assert lift["pos"] == pytest.approx(saved_lift)
-        assert logic.door_states[door_idx]["state"] == "closed"
+        assert logic.mover_runtime.door_states[door_idx]["state"] == "closed"
         assert lift["start_on"] is False
     finally:
         logic.stop()
@@ -596,10 +630,10 @@ def _kill_after_save_then_load(tmp_path, save_mode):
     try:
         base = savegame.normalize_base_level(state.get_level_data())
         path = str(tmp_path / "s.fiosave")
-        assert logic.save_session(path, save_mode=save_mode, base_level=base)[0]
+        assert logic.session_runtime.save_session(path, save_mode=save_mode, base_level=base)[0]
 
         alive.properties.update(dead=True, health=0, _aggro_target=123)
-        ok, msg = logic.load_session(path, base_level=base)
+        ok, msg = logic.session_runtime.load_session(path, base_level=base)
         assert ok, msg
         return alive
     finally:
@@ -635,7 +669,7 @@ def test_deleting_a_brush_in_play_keeps_io_aimed_at_the_right_door():
     try:
         for _ in range(20):
             logic._tick(logic.TICK_DURATION)
-        lift_progress = logic.mover_states[state.brushes.index(lift)]["progress"]
+        lift_progress = logic.mover_runtime.mover_states[state.brushes.index(lift)]["progress"]
         assert lift_progress > 0
 
         state.save_state()
@@ -650,7 +684,7 @@ def test_deleting_a_brush_in_play_keeps_io_aimed_at_the_right_door():
         assert door_a["pos"] == closed_a, "the wrong door opened"
         assert door_b["pos"][1] > 64.0 + 100.0, "the aimed door did not open"
         # The mover carried its progress across the re-index.
-        assert logic.mover_states[state.brushes.index(lift)]["progress"] >= lift_progress
+        assert logic.mover_runtime.mover_states[state.brushes.index(lift)]["progress"] >= lift_progress
     finally:
         logic.stop()
 

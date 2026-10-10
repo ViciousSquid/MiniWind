@@ -1,5 +1,5 @@
-# Use Ubuntu 22.04 as the base [cite: 1]
-FROM ubuntu:22.04
+# Use Ubuntu 26.04, whose system Python is the CPython 3.14 baseline.
+FROM ubuntu:26.04
 
 # Prevent interactive prompts during package installation [cite: 1]
 ENV DEBIAN_FRONTEND=noninteractive
@@ -8,9 +8,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
+    python3-venv \
     python3-setuptools \
     python3-wheel \
-    libgl1-mesa-glx \
+    libgl1 \
     libgl1-mesa-dri \
     libglu1-mesa \
     mesa-utils \
@@ -31,6 +32,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* 
 
+# Run the editor as an unprivileged account. The container is deliberately not
+# root-only: Fio executes Python plugins in-process, so container-root would
+# unnecessarily widen the impact of a plugin or other Python-level compromise.
+RUN groupadd --system fio \
+    && useradd --system --gid fio --create-home --shell /usr/sbin/nologin fio
+
 # Make python3 the default python 
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 1
 
@@ -40,11 +47,15 @@ WORKDIR /app
 # Copy requirements first to leverage Docker cache 
 COPY requirements.txt .
 
-# Install Python packages [cite: 3]
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Install Python packages into an isolated Python 3.14 environment.
+RUN python3 -m venv /opt/fio-venv     && /opt/fio-venv/bin/pip install --upgrade pip     && /opt/fio-venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the project [cite: 3]
+ENV PATH="/opt/fio-venv/bin:$PATH"
+
+# Copy the rest of the project.
 COPY . .
+RUN chown -R fio:fio /app
 
-# Default command: launch the editor [cite: 4]
-CMD ["python3", "main.py"]
+# Default command: launch the editor.
+USER fio
+CMD ["python", "main.py"]

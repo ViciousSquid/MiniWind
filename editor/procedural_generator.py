@@ -1,12 +1,15 @@
 import random
 import heapq
 import math
+import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QPushButton,
     QGroupBox, QFormLayout, QTextEdit, QCheckBox, QScrollArea, QFrame,
     QComboBox
 )
 from PyQt5.QtCore import pyqtSignal, QTimer
+
+from engine.items import DEFAULT_DEFINITIONS
 
 # ----------------------------------------------------------------------
 # Constants
@@ -29,6 +32,112 @@ STEP_TREAD = 32                  # depth of each step along the run direction
 UPPER_FLOOR_HEIGHT = 128         # default height of an upper floor above the lower one
 MEZZANINE_THICK = 16             # thickness of an upper-floor platform slab
 UPPER_FLOOR_HEADROOM = 224       # clearance kept above an upper floor
+
+RANDOM_WALL_TEXTURES = [
+    "sci_fi_metal_panel01.jpg",
+    "sci_fi_mtlwall.jpg",
+    "sci_fi_texture_275.jpg",
+    "scifi_light_blu.png",
+    "concrete02.png",
+    "Stone_09-512x512.png",
+    "sci_fi_metal_wall_panel.jpg",
+]
+RANDOM_FLOOR_TEXTURES = [
+    "cobblestone.jpg",
+    "concrete02.png",
+    "Metal_08-512x512.png",
+    "Tile_03-512x512.png",
+]
+TEXTURE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "textures")
+
+
+# The generator's settings, their defaults and the ranges the generator panel
+# offers. A generated map's exit LevelChanger carries its settings so the next
+# level is made the same way; those come back from map data (a shared map or a
+# package), so they are always passed through sanitize_params.
+WORLD_SIZES = (1024, 2048, 4096)
+PARAM_LIMITS = {
+    'room_count': (8, 24),
+    'min_room': (192, 320),
+    'max_room': (256, 512),
+    'monster_count': (1, 64),
+    'health_count': (1, 64),
+    'floor_room_count': (0, 16),
+    'floor_height': (STEP_RISE, 512),
+}
+DEFAULT_PARAMS = {
+    'room_count': 14,
+    'min_room': 256,
+    'max_room': 384,
+    'wall_tex': 'default.png',
+    'floor_tex': 'default.png',
+    'random_wall_texture': False,
+    'random_floor_texture': False,
+    'spawn_monsters': True,
+    'monster_count': 4,
+    'world_width': 2048,
+    'world_height': 2048,
+    'spawn_health': True,
+    'health_count': 6,
+    'enable_floors': False,
+    'floor_room_count': 2,
+    'floor_height': UPPER_FLOOR_HEIGHT,
+}
+
+
+def _texture_name(value, default):
+    """A texture name inside the textures folder, else *default*."""
+    name = str(value or '').strip().replace('\\', '/')
+    parts = name.split('/')
+    if not name or name.startswith('/') or ':' in name or '..' in parts:
+        return default
+    return name
+
+
+def sanitize_params(params):
+    """Generator settings from untrusted data, defaulted and held in range.
+
+    Unknown keys are dropped, numbers are clamped to the generator panel's
+    ranges, the world is one of the panel's three sizes, and texture names
+    must stay inside ``assets/textures``.
+    """
+    src = params if isinstance(params, dict) else {}
+    out = dict(DEFAULT_PARAMS)
+    for key, (lo, hi) in PARAM_LIMITS.items():
+        try:
+            value = int(src.get(key, out[key]))
+        except (TypeError, ValueError, OverflowError):
+            value = out[key]
+        out[key] = max(lo, min(hi, value))
+    if out['max_room'] < out['min_room']:
+        out['max_room'] = min(PARAM_LIMITS['max_room'][1], out['min_room'])
+    for key in ('world_width', 'world_height'):
+        try:
+            value = float(src.get(key, out[key]))
+        except (TypeError, ValueError, OverflowError):
+            value = out[key]
+        if value != value:          # NaN
+            value = out[key]
+        out[key] = min(WORLD_SIZES, key=lambda size: abs(size - value))
+    for key in ('random_wall_texture', 'random_floor_texture', 'spawn_monsters',
+                'spawn_health', 'enable_floors'):
+        out[key] = bool(src.get(key, out[key]))
+    for key in ('wall_tex', 'floor_tex'):
+        out[key] = _texture_name(src.get(key, out[key]), DEFAULT_PARAMS[key])
+    return out
+
+
+def _resolve_texture(texture_name):
+    """Return an existing texture filename, falling back to default.png."""
+    name = str(texture_name or "").strip()
+    if name and os.path.isfile(os.path.join(TEXTURE_DIR, name)):
+        return name
+    return "default.png"
+
+
+def _choose_random_texture(choices):
+    """Choose from the requested texture set, resolving missing assets safely."""
+    return _resolve_texture(random.choice(choices))
 
 # ----------------------------------------------------------------------
 # Grid and map generation
@@ -247,9 +356,9 @@ def generate_brushes_from_grid(grid_map, wall_tex, floor_tex, yield_hook=None):
     ground_center_x = (min_wx + max_wx) / 2
     ground_center_z = (min_wz + max_wz) / 2
 
-    ground_tex = {}
-    for f in ["north","south","east","west","top","down"]:
-        ground_tex[f] = floor_tex if f == "top" else "nodraw.jpg"
+    ground_tex = {f: floor_tex for f in ["north","south","east","west","top","down"]}
+    for f in ["north","south","east","west","down"]:
+        ground_tex[f] = "nodraw.jpg"
     brushes.append({
         "pos": [ground_center_x, GROUND_Y, ground_center_z],
         "size": [ground_width, FLOOR_THICK, ground_depth],
@@ -259,9 +368,9 @@ def generate_brushes_from_grid(grid_map, wall_tex, floor_tex, yield_hook=None):
         "id": "ground_plane"
     })
 
-    ceil_tex = {}
-    for f in ["north","south","east","west","top","down"]:
-        ceil_tex[f] = floor_tex if f == "down" else "nodraw.jpg"
+    ceil_tex = {f: floor_tex for f in ["north","south","east","west","top","down"]}
+    for f in ["north","south","east","west","top"]:
+        ceil_tex[f] = "nodraw.jpg"
     brushes.append({
         "pos": [ground_center_x, FLOOR_SURFACE + 600, ground_center_z],
         "size": [ground_width, 64, ground_depth],
@@ -289,7 +398,7 @@ def generate_brushes_from_grid(grid_map, wall_tex, floor_tex, yield_hook=None):
                     nx, ny = x+dx, y+dy
                     if 0 <= nx < grid_map.w and 0 <= ny < grid_map.h:
                         if grid_map.solid[nx][ny]:
-                            tex = {f: "nodraw.jpg" for f in ["north","south","east","west","top","down"]}
+                            tex = {f: wall_tex for f in ["north","south","east","west","top","down"]}
                             if face == 'north':
                                 tex['south'] = wall_tex
                                 pos = [world_x, FLOOR_SURFACE + ceil_h/2, world_z + CELL_SIZE/2]
@@ -306,6 +415,13 @@ def generate_brushes_from_grid(grid_map, wall_tex, floor_tex, yield_hook=None):
                                 tex['east'] = wall_tex
                                 pos = [world_x - CELL_SIZE/2, FLOOR_SURFACE + ceil_h/2, world_z]
                                 size = [64, ceil_h, CELL_SIZE]
+                            visible_face = {
+                                "north": "south", "south": "north",
+                                "east": "west", "west": "east",
+                            }[face]
+                            for hidden_face in ["north","south","east","west","top","down"]:
+                                if hidden_face != visible_face:
+                                    tex[hidden_face] = "nodraw.jpg"
                             brushes.append({
                                 "pos": pos,
                                 "size": size,
@@ -315,7 +431,7 @@ def generate_brushes_from_grid(grid_map, wall_tex, floor_tex, yield_hook=None):
                                 "id": f"wall_{x}_{y}_{face}"
                             })
                     else:
-                        tex = {f: "nodraw.jpg" for f in ["north","south","east","west","top","down"]}
+                        tex = {f: wall_tex for f in ["north","south","east","west","top","down"]}
                         if face == 'north':
                             tex['south'] = wall_tex
                             pos = [world_x, FLOOR_SURFACE + ceil_h/2, world_z + CELL_SIZE/2]
@@ -332,6 +448,13 @@ def generate_brushes_from_grid(grid_map, wall_tex, floor_tex, yield_hook=None):
                             tex['east'] = wall_tex
                             pos = [world_x - CELL_SIZE/2, FLOOR_SURFACE + ceil_h/2, world_z]
                             size = [64, ceil_h, CELL_SIZE]
+                        visible_face = {
+                            "north": "south", "south": "north",
+                            "east": "west", "west": "east",
+                        }[face]
+                        for hidden_face in ["north","south","east","west","top","down"]:
+                            if hidden_face != visible_face:
+                                tex[hidden_face] = "nodraw.jpg"
                         brushes.append({
                             "pos": pos,
                             "size": size,
@@ -347,8 +470,10 @@ def generate_brushes_from_grid(grid_map, wall_tex, floor_tex, yield_hook=None):
         w = room.world_w
         h = room.world_h
         ceil_h = room.ceiling_height
-        tex = {f: "nodraw.jpg" for f in ["north","south","east","west","top","down"]}
+        tex = {f: wall_tex for f in ["north","south","east","west","top","down"]}
         tex['down'] = floor_tex
+        for hidden_face in ["north","south","east","west","top"]:
+            tex[hidden_face] = "nodraw.jpg"
         brushes.append({
             "pos": [cx + w/2, FLOOR_SURFACE + ceil_h, cz + h/2],
             "size": [w, 64, h],
@@ -400,7 +525,7 @@ def generate_brushes_from_grid(grid_map, wall_tex, floor_tex, yield_hook=None):
                     heights.append(r.ceiling_height if r else WALL_DEFAULT_HEIGHT)
             h = max(heights) if heights else WALL_DEFAULT_HEIGHT
 
-            tex = {f: "nodraw.jpg" for f in ["north", "south", "east", "west", "top", "down"]}
+            tex = {f: wall_tex for f in ["north", "south", "east", "west", "top", "down"]}
             if o_sw or o_nw:
                 tex['west'] = wall_tex
             if o_se or o_ne:
@@ -410,6 +535,18 @@ def generate_brushes_from_grid(grid_map, wall_tex, floor_tex, yield_hook=None):
             if o_nw or o_ne:
                 tex['north'] = wall_tex
 
+            visible_faces = set()
+            if o_sw or o_nw:
+                visible_faces.add("west")
+            if o_se or o_ne:
+                visible_faces.add("east")
+            if o_sw or o_se:
+                visible_faces.add("south")
+            if o_nw or o_ne:
+                visible_faces.add("north")
+            for hidden_face in ["north", "south", "east", "west", "top", "down"]:
+                if hidden_face not in visible_faces:
+                    tex[hidden_face] = "nodraw.jpg"
             brushes.append({
                 "pos":       [vx * CELL_SIZE, FLOOR_SURFACE + h / 2, vz * CELL_SIZE],
                 "size":      [64, h, 64],
@@ -457,7 +594,7 @@ def generate_step_brushes(start_u, v_center, run_axis, width, base_y, total_rise
         # faces. The bottom (sunk into the lower floor) and the inner edge —
         # the face pointing up the run, fully covered by the next taller step —
         # stay nodraw because they are never seen.
-        tex = {f: "nodraw.jpg" for f in ["north", "south", "east", "west", "top", "down"]}
+        tex = {f: wall_tex for f in ["north", "south", "east", "west", "top", "down"]}
         tex["top"] = floor_tex
         if run_axis == 'x':
             pos = [u_center, center_y, v_center]
@@ -473,6 +610,14 @@ def generate_step_brushes(start_u, v_center, run_axis, width, base_y, total_rise
             tex["east"] = wall_tex          # exposed side of the staircase
             tex["west"] = wall_tex          # exposed side of the staircase
             # tex["north"] stays nodraw — inside edge buried by the next step
+        visible_faces = {"top"}
+        if run_axis == 'x':
+            visible_faces.update({"west", "north", "south"})
+        else:
+            visible_faces.update({"south", "east", "west"})
+        for hidden_face in ["north", "south", "east", "west", "top", "down"]:
+            if hidden_face not in visible_faces:
+                tex[hidden_face] = "nodraw.jpg"
         brushes.append({
             "pos": pos,
             "size": size,
@@ -526,9 +671,11 @@ def generate_mezzanine_for_room(room, floor_height, wall_tex, floor_tex, room_in
     plat_u_center = start_u + run_len + plat_len / 2.0
     plat_top = base_y + floor_height
     plat_center_y = plat_top - MEZZANINE_THICK / 2.0
-    tex = {f: "nodraw.jpg" for f in ["north", "south", "east", "west", "top", "down"]}
+    tex = {f: wall_tex for f in ["north", "south", "east", "west", "top", "down"]}
     tex["top"] = floor_tex          # walking surface of the upper floor
     tex["down"] = floor_tex         # underside seen from the lower floor
+    for hidden_face in ["north", "south", "east", "west"]:
+        tex[hidden_face] = "nodraw.jpg"
     if run_axis == 'x':
         pos = [plat_u_center, plat_center_y, v_center]
         size = [plat_len, MEZZANINE_THICK, width]
@@ -613,7 +760,14 @@ def create_map_data(params, yield_hook=None):
                                       floor_height + UPPER_FLOOR_HEADROOM)
             mezzanine_rooms.append(idx)
 
-    brushes = generate_brushes_from_grid(grid, params['wall_tex'], params['floor_tex'], yield_hook=yield_hook)
+    wall_tex = _resolve_texture(params.get('wall_tex', 'default.png'))
+    floor_tex = _resolve_texture(params.get('floor_tex', 'default.png'))
+    if params.get('random_wall_texture', False):
+        wall_tex = _choose_random_texture(RANDOM_WALL_TEXTURES)
+    if params.get('random_floor_texture', False):
+        floor_tex = _choose_random_texture(RANDOM_FLOOR_TEXTURES)
+
+    brushes = generate_brushes_from_grid(grid, wall_tex, floor_tex, yield_hook=yield_hook)
 
     # Add the staircases and upper-floor platforms for the chosen rooms.
     upper_floor_infos = []
@@ -629,11 +783,13 @@ def create_map_data(params, yield_hook=None):
     player_z = start_room.world_y + start_room.world_h / 2
     player_y = FLOOR_SURFACE + PLAYER_SPAWN_Y_OFFSET
 
-    gun_x = player_x + CELL_SIZE//2
+    # The starting weapon is deliberately weighted: gun1 is 60%, gun2 is 40%.
+    # It occupies exactly the PlayerStart coordinates so the player collects it
+    # immediately on spawn.
+    starting_gun = "gun1" if random.random() < 0.60 else "gun2"
+    gun_x = player_x
+    gun_y = player_y
     gun_z = player_z
-    gun_y = FLOOR_SURFACE + ENTITY_Y_OFFSET
-     # Random starting weapon
-    starting_gun = random.choice(["gun1", "gun2"])
 
     exit_room = grid.rooms[-2] if len(grid.rooms) > 2 else grid.rooms[0]
     exit_x = exit_room.world_x + exit_room.world_w / 2
@@ -670,6 +826,8 @@ def create_map_data(params, yield_hook=None):
                 "type": "playerstart",
                 "name": "PlayerStart_1",
                 "angle": 0.0,
+                "primary": True,
+                "creation_index": 0,
                 "id": "player_start"
             },
             "io_connections": []
@@ -682,27 +840,32 @@ def create_map_data(params, yield_hook=None):
                 "name": f"Prop_{starting_gun.capitalize()}",
                 "collect_respawns": False,
                 "collect_respawn_time": 20.0,
-                "collect_type": "weapon",
-                "collect_weapon": starting_gun,
+                "collect_type": "item",
+                "collect_item": starting_gun,
                 "collect_enabled": True,
                 "carry_enabled": False,
                 "collect_value": 25,
                 "collect_activation": "walk_over",
                 "collect_collected": False,
                 "collect_key_name": "",
-                "collect_custom_sprite": f"assets/sprites/{starting_gun}.png",
-                "sprite_path": f"assets/sprites/{starting_gun}.png",
+                "collect_custom_sprite": "",
+                "sprite_path": DEFAULT_DEFINITIONS[starting_gun]["world_sprite"],
                 "id": "gun_start"
             },
             "io_connections": []
         },
         {
+            # Used with E, the exit generates the next level with these same
+            # settings (and a new seed) and sends the player there.
             "type": "levelchanger",
             "pos": [exit_x, exit_y, exit_z],
             "properties": {
                 "type": "levelchanger",
                 "name": "LevelChanger_Exit",
-                "target_map": "Simple_Map_Test.json",
+                "target_map": "",
+                "generate_level": True,
+                "generator_params": sanitize_params(params),
+                "usable": True,
                 "delay": 0.0,
                 "fade_time": 0.5,
                 "show_radius": False,
@@ -846,6 +1009,79 @@ def create_map_data(params, yield_hook=None):
                 if not placed:
                     print(f"Warning: Could not place collectible Prop #{i} after {MAX_ATTEMPTS} attempts. Skipping.")
 
+    # ------------------- AMMO COLLECTIBLE SPAWNING -------------------
+    if starting_gun == "gun2":
+        ammo_count = params.get('ammo_count', 4)
+        # Keep ammo out of monster rooms when possible, matching health pickup
+        # placement so the generated combat spaces remain intentional.
+        allowed_rooms = [
+            room for idx, room in enumerate(grid.rooms)
+            if idx not in monster_rooms
+        ]
+        if not allowed_rooms:
+            allowed_rooms = [
+                room for room in grid.rooms
+                if room != start_room
+                and grid.rooms.index(room) not in monster_rooms
+            ]
+
+        if allowed_rooms:
+            MIN_DIST_TO_MONSTER = 128.0
+            MIN_DIST_BETWEEN_AMMO = 64.0
+            MAX_ATTEMPTS = 50
+
+            ammo_positions = []
+            for i in range(ammo_count):
+                placed = False
+                for _ in range(MAX_ATTEMPTS):
+                    room = random.choice(allowed_rooms)
+                    wx, wz = random_point_in_room(room, min_dist_from_wall=32)
+
+                    too_close = False
+                    for mx, mz in monster_positions:
+                        if math.hypot(wx - mx, wz - mz) < MIN_DIST_TO_MONSTER:
+                            too_close = True
+                            break
+                    if not too_close:
+                        for ax, az in ammo_positions:
+                            if math.hypot(wx - ax, wz - az) < MIN_DIST_BETWEEN_AMMO:
+                                too_close = True
+                                break
+                    if too_close:
+                        continue
+
+                    wy = FLOOR_SURFACE + ENTITY_Y_OFFSET
+                    things.append({
+                        "type": "prop",
+                        "pos": [wx, wy, wz],
+                        "properties": {
+                            "type": "prop",
+                            "name": f"AmmoProp_{i}",
+                            "collect_enabled": True,
+                            "carry_enabled": False,
+                            "collect_type": "ammo",
+                            "collect_value": 8,
+                            "collect_activation": "walk_over",
+                            "collect_respawns": False,
+                            "collect_respawn_time": 20.0,
+                            "collect_collected": False,
+                            "collect_key_name": "",
+                            "collect_custom_sprite": "",
+                            "sprite_path": "assets/sprites/ammo.png",
+                            "id": f"ammo_prop_{i}"
+                        },
+                        "io_connections": []
+                    })
+                    ammo_positions.append((wx, wz))
+                    placed = True
+                    break
+
+                if not placed:
+                    print(
+                        f"Warning: Could not place ammo pickup #{i} "
+                        f"after {MAX_ATTEMPTS} attempts. Skipping."
+                    )
+
     # ------------------- UPPER FLOOR REWARDS -------------------
     # Reward the climb: drop a collectible Prop on top of each generated upper floor.
     if params.get('spawn_health', False):
@@ -965,17 +1201,17 @@ class ProceduralMapWidget(QWidget):
         form.addRow("Map Size:", self.map_size_combo)
 
         self.room_count = QSpinBox()
-        self.room_count.setRange(8, 24)
+        self.room_count.setRange(*PARAM_LIMITS['room_count'])
         self.room_count.setValue(14)
         form.addRow("Target Rooms:", self.room_count)
 
         self.min_room = QSpinBox()
-        self.min_room.setRange(192, 320)
+        self.min_room.setRange(*PARAM_LIMITS['min_room'])
         self.min_room.setValue(256)
         form.addRow("Min Room Size (world units):", self.min_room)
 
         self.max_room = QSpinBox()
-        self.max_room.setRange(256, 512)
+        self.max_room.setRange(*PARAM_LIMITS['max_room'])
         self.max_room.setValue(384)
         form.addRow("Max Room Size (world units):", self.max_room)
 
@@ -984,10 +1220,18 @@ class ProceduralMapWidget(QWidget):
         self.wall_tex.setMaximumHeight(50)
         form.addRow("Wall Texture:", self.wall_tex)
 
+        self.random_wall_texture = QCheckBox("Random Wall Texture")
+        self.random_wall_texture.setChecked(False)
+        form.addRow(self.random_wall_texture)
+
+        self.random_floor_texture = QCheckBox("Random Floor Texture")
+        self.random_floor_texture.setChecked(False)
+        form.addRow(self.random_floor_texture)
+
         self.spawn_monsters = QCheckBox("Spawn Monsters")
         self.spawn_monsters.setChecked(True)
         self.monster_amount = QSpinBox()
-        self.monster_amount.setRange(1, 64)
+        self.monster_amount.setRange(*PARAM_LIMITS['monster_count'])
         self.monster_amount.setValue(4)
         form.addRow(self.spawn_monsters, self.monster_amount)
 
@@ -995,20 +1239,20 @@ class ProceduralMapWidget(QWidget):
         self.spawn_health = QCheckBox("Spawn Health")
         self.spawn_health.setChecked(True)
         self.health_amount = QSpinBox()
-        self.health_amount.setRange(1, 64)
+        self.health_amount.setRange(*PARAM_LIMITS['health_count'])
         self.health_amount.setValue(6)
         form.addRow(self.spawn_health, self.health_amount)
 
         # Upper floors (steps + raised platforms)
         self.enable_floors = QCheckBox("Steps")
-        self.enable_floors.setChecked(True)
+        self.enable_floors.setChecked(False)
         self.floor_amount = QSpinBox()
-        self.floor_amount.setRange(0, 16)
+        self.floor_amount.setRange(*PARAM_LIMITS['floor_room_count'])
         self.floor_amount.setValue(2)
         form.addRow(self.enable_floors, self.floor_amount)
 
         self.floor_height = QSpinBox()
-        self.floor_height.setRange(STEP_RISE, 512)
+        self.floor_height.setRange(*PARAM_LIMITS['floor_height'])
         self.floor_height.setSingleStep(STEP_RISE)
         self.floor_height.setValue(UPPER_FLOOR_HEIGHT)
         self.floor_height.setEnabled(False)
@@ -1052,11 +1296,13 @@ class ProceduralMapWidget(QWidget):
             'max_room': self.max_room.value(),
             'wall_tex': self.wall_tex.toPlainText().strip(),
             'floor_tex': "default.png",
+            'random_wall_texture': self.random_wall_texture.isChecked(),
+            'random_floor_texture': self.random_floor_texture.isChecked(),
             'spawn_monsters': self.spawn_monsters.isChecked(),
             'monster_count': self.monster_amount.value(),
             'world_width': world_width,
             'world_height': world_height,
-            # --- NEW ---
+            # --- Collectibles ---
             'spawn_health': self.spawn_health.isChecked(),
             'health_count': self.health_amount.value(),
             # --- Upper / lower floors ---

@@ -84,18 +84,6 @@ FIELDS: List[Field] = [
           "World units of terrain kept resident around the player. 0 derives "
           "it from the activation radius.",
           min=0.0, max=65536.0),
-    Field("terrain_stream", "bool", "Stream terrain within its bounds", False,
-          "Keep only the terrain chunks within the terrain stream radius (or, "
-          "at 0, the activation radius plus one chunk) resident around the "
-          "camera, without changing the terrain's authored bounds. For a large "
-          "authored terrain that 'Fill world with terrain' would re-bound."),
-    Field("fit_overhead_camera", "bool", "Fit to the overhead camera", False,
-          "While the camera is overhead, size residency and simulation tiers "
-          "from what is on screen instead of the authored radii: cells are "
-          "resident just past the screen's corners, entities on screen are "
-          "NEAR (full simulation) and resident ones off screen are ACTIVE, "
-          "for hosts that simulate those at a reduced rate. Refreshed as the "
-          "player moves rather than per cell crossing."),
     Field("disk_streaming", "bool", "Disk streaming (free unloaded cells)", False,
           "Experimental: instead of only hiding inactive cells, remove an "
           "unloaded cell's objects from memory and re-stream them from a "
@@ -199,11 +187,9 @@ def bound_view_horizon(logic, radius: float):
     requested view distance already inside the radius is left alone.
 
     Returns a zero-argument callable that restores the previous limit.  A host
-    with no view-distance object (a head-less test, a benchmark) gets a no-op.
+    The render runtime owns the camera view-distance object.
     """
-    view_distance = getattr(logic, "view_distance", None)
-    if view_distance is None or not hasattr(view_distance, "limit"):
-        return lambda: None
+    view_distance = logic.render_runtime.view_distance
     previous = view_distance.limit
     try:
         radius = float(radius)

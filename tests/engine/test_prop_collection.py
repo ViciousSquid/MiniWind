@@ -5,6 +5,7 @@ import pytest
 pytest.importorskip("PyQt5", reason="Prop is an editor-tier Thing")
 
 from editor.things import Prop
+from engine.logic_combat import LogicCombat
 from engine.prop_runtime import PropSession
 
 
@@ -14,22 +15,23 @@ pytestmark = pytest.mark.qt
 def test_prop_collection_defaults_are_independent_of_carry():
     prop = Prop()
     assert prop.properties["collect_enabled"] is False
-    assert prop.properties["collect_type"] == "health"
-    assert prop.properties["collect_weapon"] == "gun1"
+    assert prop.properties["collect_type"] == "item"
+    assert prop.properties["collect_item"] == "gun1"
     assert prop.properties["carry_enabled"] is False
 
 
-def test_weapon_prop_serializes_explicit_collection_data():
+def test_item_prop_serializes_explicit_collection_data():
     prop = Prop(properties={
         "collect_enabled": True,
-        "collect_type": "weapon",
-        "collect_weapon": "cig",
+        "collect_type": "item",
+        "collect_item": "custom1",
     })
     data = prop.to_dict()
 
     assert data["type"] == "prop"
-    assert data["properties"]["collect_type"] == "weapon"
-    assert data["properties"]["collect_weapon"] == "cig"
+    assert data["properties"]["collect_type"] == "item"
+    assert data["properties"]["collect_item"] == "custom1"
+    assert "collect_weapon" not in data["properties"]
 
 
 def test_ammo_collectible_uses_stock_sprite_and_defaults_to_eight():
@@ -48,104 +50,115 @@ def test_collect_ammo_awards_eight():
         "collect_type": "ammo",
     })
     logic = _logic_for(prop)
-    logic.player_ammo = 2
+    logic.combat_runtime.player_ammo = 2
     session = PropSession(logic)
     session.start()
 
     assert session.collect_prop(prop) is True
-    assert logic.player_ammo == 10
+    assert logic.combat_runtime.player_ammo == 10
 
 
 def test_first_gun2_collection_gives_eight_ammo():
     prop = Prop(properties={
         "collect_enabled": True,
-        "collect_type": "weapon",
-        "collect_weapon": "gun2",
+        "collect_type": "item",
+        "collect_item": "gun2",
     })
     logic = _logic_for(prop)
-    logic.player_ammo = 0
+    logic.combat_runtime.player_ammo = 0
     session = PropSession(logic)
     session.start()
 
     assert session.collect_prop(prop) is True
-    assert logic.active_weapon == "gun2"
-    assert logic.player_ammo == 8
-    assert logic.gun2_obtained is True
+    assert logic.combat_runtime.active_weapon == "gun2"
+    assert logic.combat_runtime.player_ammo == 8
+    assert logic.combat_runtime.weapons == {"gun2"}
 
 
 def test_later_gun2_collection_does_not_reset_existing_ammo():
     prop = Prop(properties={
         "collect_enabled": True,
-        "collect_type": "weapon",
-        "collect_weapon": "gun2",
+        "collect_type": "item",
+        "collect_item": "gun2",
     })
     logic = _logic_for(prop)
-    logic.player_ammo = 3
-    logic.gun2_obtained = True
+    logic.combat_runtime.player_ammo = 3
+    logic.combat_runtime.weapons = {"gun2"}
     session = PropSession(logic)
     session.start()
 
     assert session.collect_prop(prop) is True
-    assert logic.active_weapon == "gun2"
-    assert logic.player_ammo == 3
+    assert logic.combat_runtime.active_weapon == "gun2"
+    assert logic.combat_runtime.player_ammo == 3
 
 
 def _logic_for(prop):
-    return type(
+    logic = type(
         "CollectionLogic",
         (),
         {
-            "things": [prop],
-            "player_health": 100,
-            "player_max_health": 100,
-            "player_ammo": 0,
-            "active_weapon": "gun1",
-            "gun2_obtained": False,
-            "collected_keys": set(),
-            "current_hud_message": "",
-            "current_hud_key_name": None,
+            "editor_state": type("EditorState", (), {"things": [prop], "brushes": []})(),
+            "player_runtime": type("PlayerRuntime", (), {
+                "collected_keys": set(),
+                "player_health": 100,
+                "player_max_health": 100,
+                "player_dead": False,
+                "player2_health": 100,
+                "player2_max_health": 100,
+                "player2_dead": False,
+            })(),
+            "interaction_runtime": type("InteractionRuntime", (), {
+                "current_hud_message": "",
+                "current_hud_key_name": None,
+            })(),
             "io_manager": None,
-            "_physics_world": None,
+            "session_runtime": type("SessionRuntime", (), {
+                "physics_world": None,
+                "spatial_grid": None,
+            })(),
             "_plugin_emit": lambda self, *args, **kwargs: None,
         },
     )()
+    logic.combat_runtime = LogicCombat(logic)
+    return logic
 
 
 def test_collect_prop_equips_explicit_weapon():
     prop = Prop(properties={
         "collect_enabled": True,
-        "collect_type": "weapon",
-        "collect_weapon": "gun2",
+        "collect_type": "item",
+        "collect_item": "gun2",
     })
     logic = _logic_for(prop)
     session = PropSession(logic)
     session.start()
 
     assert session.collect_prop(prop) is True
-    assert logic.active_weapon == "gun2"
+    assert logic.combat_runtime.active_weapon == "gun2"
     assert prop.properties["collect_collected"] is True
     assert id(prop) in session.collected_ids
 
 
-def test_collect_prop_equips_cig_weapon():
+def test_collect_prop_equips_custom1_weapon():
     prop = Prop(properties={
         "collect_enabled": True,
-        "collect_type": "weapon",
-        "collect_weapon": "cig",
+        "collect_type": "item",
+        "collect_item": "custom1",
     })
     logic = _logic_for(prop)
     session = PropSession(logic)
     session.start()
 
     session.collect_prop(prop)
-    assert logic.active_weapon == "cig"
+    assert logic.combat_runtime.active_weapon == "custom1"
 
 
-def test_cigarette_is_a_non_firing_weapon():
-    from engine.monster_constants import NON_FIRING_WEAPONS
+def test_default_custom_weapons_are_non_firing():
+    from engine.items import DEFAULT_REGISTRY
 
-    assert "cig" in NON_FIRING_WEAPONS
-    assert "sword" not in NON_FIRING_WEAPONS
+    assert DEFAULT_REGISTRY.resolve("custom1").weapon.fires is False
+    assert DEFAULT_REGISTRY.resolve("custom2").weapon.fires is False
+    assert DEFAULT_REGISTRY.resolve("gun1").weapon.fires is True
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +166,7 @@ def test_cigarette_is_a_non_firing_weapon():
 # ---------------------------------------------------------------------------
 
 def test_there_is_no_custom_collection_type():
-    assert Prop.COLLECT_TYPES == ("health", "ammo", "weapon", "key")
+    assert Prop.COLLECT_TYPES == ("health", "ammo", "item", "key")
 
 
 def test_the_showcase_shotgun_is_a_gun_again():
@@ -163,7 +176,7 @@ def test_the_showcase_shotgun_is_a_gun_again():
     over the gun."""
     prop = Prop(properties={
         "name": "Pickup_1", "collect_enabled": True, "collect_type": "custom",
-        "collect_weapon": "gun2", "collect_activation": "walk_over",
+        "collect_item": "gun2", "collect_activation": "walk_over",
         "sprite_path": "assets/sprites/gun2.png", "collect_custom_sprite": "",
     })
     logic = _logic_for(prop)
@@ -171,14 +184,15 @@ def test_the_showcase_shotgun_is_a_gun_again():
     session.start()
 
     assert session.collect_prop(prop) is True
-    assert logic.active_weapon == "gun2"
-    assert logic.gun2_obtained is True
-    assert logic.player_ammo >= 8
+    assert logic.combat_runtime.active_weapon == "gun2"
+    assert "gun2" in logic.combat_runtime.weapons
+    assert logic.combat_runtime.player_ammo >= 8
 
 
 @pytest.mark.parametrize("sprite, kind, field, value", [
-    ("assets/sprites/gun1.png", "weapon", "collect_weapon", "gun1"),
-    ("assets/sprites/cig.png", "weapon", "collect_weapon", "cig"),
+    ("assets/sprites/gun1.png", "item", "collect_item", "gun1"),
+    ("assets/sprites/custom1.png", "item", "collect_item", "custom1"),
+    ("assets/sprites/custom2.png", "item", "collect_item", "custom2"),
     ("assets/sprites/redkey.png", "key", "collect_key_name", "red_key"),
     ("assets/sprites/ammo.png", "ammo", None, None),
     ("assets/sprites/pickup.png", "health", None, None),
@@ -216,3 +230,14 @@ def test_no_shipped_map_has_a_custom_pickup():
             if props.get("collect_type", "health") not in Prop.COLLECT_TYPES:
                 offenders.append("%s: %s" % (path.name, props.get("name")))
     assert not offenders, offenders
+
+
+@pytest.mark.parametrize("item_id", ["gun1", "gun2", "custom1", "custom2"])
+def test_a_weapon_prop_from_before_items_were_data_keeps_its_weapon(item_id):
+    """``collect_weapon`` is the item id; the collect_item default filled in
+    beside it must not win."""
+    prop = Prop(properties={"collect_enabled": True, "collect_type": "weapon",
+                            "collect_weapon": item_id})
+    assert prop.properties["collect_type"] == "item"
+    assert prop.properties["collect_item"] == item_id
+    assert "collect_weapon" not in prop.properties

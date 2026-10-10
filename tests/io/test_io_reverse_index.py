@@ -155,24 +155,31 @@ def test_the_index_is_rebuilt_when_connections_change(scene):
     assert io.target_index(brushes, things) is not first
 
 
+@pytest.mark.qt
 def test_renaming_bumps_the_revision_so_dependent_panels_rebuild(scene):
     """A target's panel quotes its sources' names but cannot see them change."""
     brushes, things = scene
     before = io.io_revision()
 
     pytest.importorskip("PyQt5", reason="the property editor is a Qt widget")
-    from PyQt5.QtWidgets import QApplication
-    from editor.property_editor import PropertyEditor
-    app = QApplication.instance() or QApplication([])
-    editor = PropertyEditor(object())
-    editor.current_object = brushes[0]
-    editor._populating = True          # suppress the widget work
-    PropertyEditor.update_object_prop(editor, 'name', 'renamed')
+    from editor.main_window import MainWindow
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    editor = MainWindow(root)
+    editor.state.brushes = brushes
+    editor.property_editor.current_object = brushes[0]
+    editor.property_editor._populating = True
+    try:
+        editor.property_editor.update_object_prop('name', 'renamed')
+        assert brushes[0]['name'] == 'renamed'
+        assert io.io_revision() != before
+    finally:
+        editor.unsaved_changes = False
+        editor.close()
+        editor.deleteLater()
+        editor.statusBar().deleteLater()
 
-    assert brushes[0]['name'] == 'renamed'
-    assert io.io_revision() != before
 
-
+@pytest.mark.qt
 def test_a_deleted_source_does_not_outlive_a_delete_then_place():
     """Delete one entity, place another: counts and list identity are restored.
 

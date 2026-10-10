@@ -34,7 +34,7 @@ def _synced(brushes, epoch=1):
 def test_a_frame_reads_the_live_brush_list_exactly_once():
     """The row set is frozen by one C-level copy; the live list is never indexed.
 
-    The editor and the benchmark append to the live list from another thread,
+    Brushes can be appended to the live list from another thread,
     so everything a frame does has to agree on one row set: an append lands
     in the next frame, whole.
     """
@@ -80,6 +80,13 @@ def test_a_frame_reads_the_live_brush_list_exactly_once():
 def test_class_bit_is_set_for_its_brush_kind(kw, bit):
     t = _synced([_brush(id='b', **kw)])
     assert t.class_bits[0] & bit
+
+
+def test_water_defaults_to_stronger_reflection():
+    """New water brushes should hide large-scale surface tiling behind reflection."""
+    b = _brush(id='water', shader='Water')
+    t = _synced([b])
+    assert t.water_params[0, 1] == pytest.approx(0.65)
 
 
 def test_plain_brush_carries_no_non_opaque_bit():

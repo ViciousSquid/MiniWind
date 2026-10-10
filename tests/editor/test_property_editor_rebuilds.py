@@ -52,61 +52,6 @@ def qt_app():
     yield app
 
 
-class _FakeView:
-    """Stands in for a viewport; only ever asked to repaint."""
-
-    def __init__(self):
-        self.updates = 0
-
-    def update(self):
-        self.updates += 1
-
-
-class FakeHost(QWidget):
-    """The slice of MainWindow the property editor talks to."""
-
-    def __init__(self):
-        super().__init__()
-        self.state = EditorState()
-        self.state.selected_objects = []
-        initial_dirty = self.state.render_dirty_snapshot()
-        self.state.clear_render_dirty(initial_dirty)
-        self.config = configparser.ConfigParser()
-        self.grid_size = 16
-        self.saves = 0
-        # update_object_prop() repaints the viewports after a value changes.
-        # PyQt aborts the process on an unhandled exception inside a slot, so
-        # a missing view here is a hard crash rather than a failed assert.
-        self.view_3d = _FakeView()
-
-    def save_state(self):
-        self.saves += 1
-
-    def update_views(self):
-        pass
-
-    def update_all_ui(self):
-        pass
-
-    # on_trigger_changed() refreshes the hierarchy after retyping a brush.
-    # Part of the slice the panel talks to, so the fake carries it.
-    class _FakeHierarchy:
-        def __init__(self):
-            self.refreshes = 0
-
-        def refresh_list(self):
-            self.refreshes += 1
-
-    @property
-    def scene_hierarchy(self):
-        if not hasattr(self, "_scene_hierarchy"):
-            self._scene_hierarchy = FakeHost._FakeHierarchy()
-        return self._scene_hierarchy
-
-    def show_toast(self, message, is_error=False, duration=None):
-        pass
-
-
 class _TopLevelShowSpy(QObject):
     def __init__(self, app, baseline):
         super().__init__(app)
@@ -211,9 +156,16 @@ def make_brush(name='wall', **extra):
 
 @pytest.fixture
 def panel(qt_app):
-    host = FakeHost()
+    from editor.main_window import MainWindow
+
+    host = MainWindow(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
     editor = PropertyEditor(host)
-    return host, editor
+    yield host, editor
+    editor.deleteLater()
+    host.unsaved_changes = False
+    host.close()
+    host.deleteLater()
+    qt_app.processEvents()
 
 
 def page_of(editor):
@@ -294,6 +246,8 @@ def test_property_edit_marks_the_dense_render_row_dirty(panel):
         shader='Glass',
     )
     host.state.brushes.append(brush)
+    baseline = host.state.render_dirty_snapshot()
+    host.state.clear_render_dirty(baseline)
 
     editor.set_object(brush)
     before_epoch = host.state.world_epoch

@@ -1,9 +1,8 @@
 """Interaction tests for component editing in a 2D view.
 
-These drive the real ``View2D`` mouse handlers and the real ``MainWindow``
-selection logic against a lightweight host that stands in for the widgets a
-full editor window would own.  The 3D viewport is the only part replaced by a
-stub: it needs a GL context, which a test runner has no business creating.
+These drive the real ``View2D`` mouse handlers against the real MainWindow
+and its actual selection/component machinery.  The tests use the editor's
+existing viewport objects rather than a replacement host.
 
 What is under test here is the interaction contract rather than the geometry:
 which gesture starts which drag, and that one continuous drag produces exactly
@@ -12,7 +11,6 @@ one undo step.
 
 import os
 import sys
-import types
 
 import pytest
 
@@ -20,15 +18,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 pytest.importorskip("PyQt5", reason="Qt is not available in this environment")
 
-import configparser  # noqa: E402
 
 from PyQt5.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
 from PyQt5.QtGui import QMouseEvent  # noqa: E402
 from PyQt5.QtWidgets import QApplication, QWidget, QInputDialog  # noqa: E402
 
 from editor import component_edit as ce  # noqa: E402
-from editor.editor_state import EditorState  # noqa: E402
-from editor.main_window import MainWindow  # noqa: E402
 from editor.view_2d import View2D  # noqa: E402
 from editor.things import Portal  # noqa: E402
 from engine import brush_geometry as bg  # noqa: E402
@@ -37,156 +32,6 @@ from engine import brush_geometry as bg  # noqa: E402
 # against the offscreen platform plugin.
 pytestmark = pytest.mark.qt
 
-
-
-@pytest.fixture(scope="session")
-def qt_app():
-    # Only when there is no display: the offscreen plugin cannot create an
-    # OpenGL context, and forcing it here would disable the visual tier for
-    # the whole session when the suite is run under Xvfb.
-    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    app = QApplication.instance() or QApplication([])
-    yield app
-
-
-class _Stub3DView:
-    """Stands in for the GL viewport, which cannot exist in a test runner."""
-
-    play_mode = False
-    selected_object = None
-    face_mode_active = False
-    grid_size = 16
-
-    def __init__(self):
-        # Read by View2D's 60 Hz camera-tracking timer, which starts with the
-        # view: a host that lacks it raises from that timer once the view is
-        # shown, inside a Qt slot, aborting the run.
-        import glm
-        self.camera = types.SimpleNamespace(pos=glm.vec3(0.0, 0.0, 0.0),
-                                            yaw=0.0, pitch=0.0)
-
-    def update(self):
-        pass
-
-
-class _StubTabs:
-    """Stands in for the 2D-view tab widget the clone offset is read from."""
-
-    def __init__(self, view):
-        self._view = view
-
-    def currentWidget(self):
-        return self._view
-
-
-class _StubSpin:
-    def __init__(self, value):
-        self._value = value
-
-    def value(self):
-        return self._value
-
-
-class _StubPropertyEditor:
-    def __init__(self):
-        self.target = None
-
-    def set_object(self, obj):
-        self.target = obj
-
-
-class FakeEditorWindow(QWidget):
-    """A host with just enough of MainWindow for the 2D view to talk to.
-
-    The selection and component logic are the *real* MainWindow methods, bound
-    onto this object, so the tests exercise shipping code rather than a
-    reimplementation of it.
-    """
-
-    # Real implementations, bound to this stand-in host.
-    _selected_brushes = MainWindow._selected_brushes
-    component_drag_targets = MainWindow.component_drag_targets
-    _selection_skips_locked = MainWindow._selection_skips_locked
-    _marker_brush = MainWindow._marker_brush
-    _area_selection_objects = MainWindow._area_selection_objects
-    _apply_area_selection = MainWindow._apply_area_selection
-    select_touching = MainWindow.select_touching
-    select_inside = MainWindow.select_inside
-    select_partial_tall = MainWindow.select_partial_tall
-    select_complete_tall = MainWindow.select_complete_tall
-    set_component_mode = MainWindow.set_component_mode
-    cycle_component_mode = MainWindow.cycle_component_mode
-    _sync_component_buttons = MainWindow._sync_component_buttons
-    _sync_tool_group_buttons = MainWindow._sync_tool_group_buttons
-    clone_placement_active = MainWindow.clone_placement_active
-    move_clone_placement = MainWindow.move_clone_placement
-    finish_clone_placement = MainWindow.finish_clone_placement
-    cancel_clone_placement = MainWindow.cancel_clone_placement
-    _translate_object = staticmethod(MainWindow._translate_object)
-    _copy_name = staticmethod(MainWindow._copy_name)
-    selection_centre = MainWindow.selection_centre
-    selected_objects_list = MainWindow.selected_objects_list
-    apply_rotation_to_selection = MainWindow.apply_rotation_to_selection
-    apply_clip_to_selection = MainWindow.apply_clip_to_selection
-    perform_subtraction = MainWindow.perform_subtraction
-    hollow_selected_brush = MainWindow.hollow_selected_brush
-    # Cloning arms a 500 ms timer that calls this; without it the timer fires
-    # in whichever later test next processes events, raises, and -- with no
-    # Qt exception hook under pytest -- aborts the whole run.
-    _clear_flash = MainWindow._clear_flash
-
-    def __init__(self):
-        super().__init__()
-        self.config = configparser.ConfigParser()
-        self.config.add_section('Controls')
-        self.config.add_section('Display')
-        self.state = EditorState()
-        self.state.selected_objects = []
-        self.components = ce.ComponentController()
-        self.clone_placement = None
-        self.tool_mode = 'select'
-        self.clip_mode = False
-        self.rotate_mode = False
-        self.grid_visible = True
-        self.unsaved_changes = False
-        self.view_3d = _Stub3DView()
-        self.property_editor = _StubPropertyEditor()
-        self.toasts = []
-
-    # -- the widget-bound bits the real window would provide ---------------
-    def save_state(self):
-        self.state.save_state()
-        self.components.invalidate()
-
-    def show_toast(self, message, is_error=False, duration=None):
-        self.toasts.append(message)
-
-    def refresh_views(self):
-        pass
-
-    def update_all_ui(self):
-        self.property_editor.set_object(self.state.selected_object)
-
-    def update_views(self):
-        pass
-
-    def set_selected_object(self, obj):
-        self.components.clear()
-        self.components.invalidate()
-        self.state.selected_objects = [] if obj is None else [obj]
-        self.state.selected_object = obj
-        self.update_all_ui()
-
-    def set_selected_objects(self, objects):
-        self.components.clear()
-        self.components.invalidate()
-        self.state.selected_objects = list(objects or [])
-        self.state.selected_object = objects[0] if objects else None
-        self.update_all_ui()
-
-    def _active_2d_view(self):
-        return self.view_top
 
 
 def make_box(pos=(0, 0, 0), size=(64, 64, 64), **extra):
@@ -200,17 +45,17 @@ def make_box(pos=(0, 0, 0), size=(64, 64, 64), **extra):
 
 
 @pytest.fixture
-def editor(qt_app):
-    host = FakeEditorWindow()
-    view = View2D(host, host, 'top')
+def editor(main_window):
+    host = main_window
+    # Direct side stretching and the marquee belong to the Select tool; a new
+    # window starts on the Brush tool.
+    host.set_tool_mode('select')
+    view = host.view_top
     view.resize(800, 600)
     view.zoom_factor = 1.0
     view.pan_offset = QPointF(0.0, 0.0)
     view.grid_size = 16
     view.snap_to_grid_enabled = True
-    host.view_top = view
-    host.view_side = view
-    host.view_front = view
     return host, view
 
 
@@ -268,7 +113,7 @@ def test_pressing_a_side_stretches_it_without_a_handle(editor):
     host, view = editor
     brush = make_box()
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
 
     # Along the east side, clear of the corner/midpoint resize handles.
     press(view, (32, 20))
@@ -284,7 +129,7 @@ def test_a_side_stretch_is_one_undo_step(editor):
     host, view = editor
     brush = make_box()
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
     before = undo_depth(host)
 
     press(view, (32, 20))
@@ -299,7 +144,7 @@ def test_a_stretch_that_never_moves_leaves_no_undo_step(editor):
     host, view = editor
     brush = make_box()
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
     before = undo_depth(host)
 
     press(view, (32, 20))
@@ -313,7 +158,7 @@ def test_pressing_the_middle_of_a_brush_still_moves_it(editor):
     host, view = editor
     brush = make_box()
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
 
     press(view, (0, 0))
     assert host.components.drag is None      # not a stretch
@@ -324,7 +169,7 @@ def test_pressing_empty_space_still_starts_a_marquee(editor):
     host, view = editor
     brush = make_box()
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
 
     press(view, (400, 400))
     assert host.components.drag is None
@@ -335,7 +180,7 @@ def test_side_stretch_is_not_offered_for_an_unselected_brush(editor):
     host, view = editor
     brush = make_box()
     host.state.brushes.append(brush)
-    host.set_selected_object(None)
+    host.set_selected_objects([])
 
     press(view, (32, 20))
     assert host.components.drag is None
@@ -350,7 +195,7 @@ def test_the_existing_resize_handles_still_win_where_they_sit(editor):
     host, view = editor
     brush = make_box()
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
 
     press(view, (32, 32))                  # right on the corner handle
     assert host.components.drag is None
@@ -364,7 +209,7 @@ def test_escape_cancels_a_stretch_and_restores_the_brush(editor):
     host, view = editor
     brush = make_box()
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
     before = undo_depth(host)
 
     press(view, (32, 20))
@@ -383,7 +228,7 @@ def test_escape_cancels_a_stretch_and_restores_the_brush(editor):
 def select_box(host, **kwargs):
     brush = make_box(**kwargs)
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
     return brush
 
 
@@ -477,7 +322,7 @@ def test_a_press_that_misses_every_component_falls_through_to_selection(editor):
 
     press(view, (300, 0))                  # inside the other brush, no handle
     assert host.components.drag is None
-    assert host.state.selected_object is second
+    assert host.state.selected_objects == [second]
     assert first is not second
 
 
@@ -505,13 +350,35 @@ def test_leaving_component_mode_clears_the_handles(editor):
     assert host.components.selection == []
 
 
-def test_cycling_walks_the_component_modes(editor):
+def _lit(host):
+    """The base-tool group button that is lit."""
+    names = ('select_tool_btn', 'brush_tool_btn', 'vertex_mode_btn',
+             'edge_mode_btn', 'face_mode_btn')
+    lit = [n for n in names if getattr(host, n).isChecked()]
+    assert len(lit) == 1, lit
+    return lit[0]
+
+
+def test_q_walks_the_whole_tool_group_select_included(editor):
+    """Q stepped object/vertex/edge/face only, and object mode lit whichever
+    base tool was active (Brush in a new editor), so Select was never reached."""
     host, _ = editor
+    assert _lit(host) == 'select_tool_btn'
     order = []
+    for _ in range(5):
+        host.cycle_component_mode()
+        order.append(_lit(host))
+    assert order == ['brush_tool_btn', 'vertex_mode_btn', 'edge_mode_btn',
+                     'face_mode_btn', 'select_tool_btn']
+    assert host.tool_mode == 'select' and host.components.mode == ce.MODE_OBJECT
+
+
+def test_q_from_a_new_editor_reaches_select(main_window):
+    host = main_window
+    assert host.tool_mode == 'brush'
     for _ in range(4):
         host.cycle_component_mode()
-        order.append(host.components.mode)
-    assert order == [ce.MODE_VERTEX, ce.MODE_EDGE, ce.MODE_FACE, ce.MODE_OBJECT]
+    assert host.tool_mode == 'select' and host.select_tool_btn.isChecked()
 
 
 def test_an_invalid_drag_keeps_the_brush_usable(editor):
@@ -585,7 +452,7 @@ def area_scene(host):
     overlapping = make_box(pos=(80, 0, 0), size=(64, 64, 64))
     above = make_box(pos=(0, 400, 0), size=(32, 32, 32))
     host.state.brushes.extend([region, inside, overlapping, above])
-    host.set_selected_object(region)
+    host.set_selected_objects([region])
     return region, inside, overlapping, above
 
 
@@ -632,7 +499,7 @@ def test_area_selection_needs_exactly_one_brush(editor):
     host.set_selected_objects([a, b])
     host.select_inside()
     assert a in host.state.brushes and b in host.state.brushes
-    assert any('exactly one' in t for t in host.toasts)
+    assert 'EXACTLY ONE' in host.ui.notification_label.text()
 
 
 def test_area_selection_skips_hidden_geometry(editor):
@@ -650,11 +517,10 @@ def test_area_selection_skips_hidden_geometry(editor):
 
 def test_subtract_is_one_undo_step(editor):
     host, _ = editor
-    host.perform_subtraction = types.MethodType(MainWindow.perform_subtraction, host)
     target = make_box(pos=(0, 0, 0), size=(256, 64, 256))
     cutter = make_box(pos=(0, 0, 0), size=(64, 64, 64))
     host.state.brushes.extend([target, cutter])
-    host.set_selected_object(cutter)
+    host.set_selected_objects([cutter])
     before = undo_depth(host)
 
     host.perform_subtraction()
@@ -667,11 +533,10 @@ def test_subtract_is_one_undo_step(editor):
 def test_subtract_can_fold_into_a_caller_s_undo_step(editor):
     """Hollow opens one checkpoint and runs a subtract inside it."""
     host, _ = editor
-    host.perform_subtraction = types.MethodType(MainWindow.perform_subtraction, host)
     target = make_box(pos=(0, 0, 0), size=(256, 64, 256))
     cutter = make_box(pos=(0, 0, 0), size=(64, 64, 64))
     host.state.brushes.extend([target, cutter])
-    host.set_selected_object(cutter)
+    host.set_selected_objects([cutter])
 
     host.save_state()                                # the caller's checkpoint
     before = undo_depth(host)
@@ -686,7 +551,7 @@ def test_hollow_preserves_geometry_inside_outer_box(editor, monkeypatch):
     outer = make_box(pos=(0, 0, 0), size=(256, 256, 256), name="Outer")
     enclosed = make_box(pos=(0, 0, 0), size=(64, 96, 80), name="ManySidedShape")
     host.state.brushes.extend([outer, enclosed])
-    host.set_selected_object(outer)
+    host.set_selected_objects([outer])
 
     monkeypatch.setattr(
         QInputDialog,
@@ -723,7 +588,7 @@ def test_a_component_edit_only_invalidates_the_edited_brush(editor):
     edited = make_box(pos=(0, 0, 0))
     untouched = make_box(pos=(400, 0, 0))
     host.state.brushes.extend([edited, untouched])
-    host.set_selected_object(edited)
+    host.set_selected_objects([edited])
     bg.box_to_geometry(untouched)
     other_cache = bg.get_convex(untouched)
 
@@ -740,7 +605,7 @@ def test_hovering_does_not_rebuild_any_geometry(editor):
     host, view = editor
     brush = make_box()
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
     host.set_component_mode(ce.MODE_VERTEX)
 
     shape = bg.get_shape(brush)
@@ -754,7 +619,7 @@ def test_component_picking_ignores_unselected_brushes(editor):
     selected = make_box(pos=(0, 0, 0))
     ignored = make_box(pos=(0, 0, 0), size=(16, 16, 16))
     host.state.brushes.extend([selected, ignored])
-    host.set_selected_object(selected)
+    host.set_selected_objects([selected])
     host.set_component_mode(ce.MODE_VERTEX)
 
     move(view, (8, 8), buttons=Qt.NoButton)          # on `ignored`'s corner
@@ -939,12 +804,12 @@ def test_escape_cancels_a_rotate_and_puts_the_angle_back(editor):
 
 def test_rotate_with_nothing_selected_says_so(editor):
     host, view = editor
-    host.set_selected_object(None)
+    host.set_selected_objects([])
     enter_rotate(host, view)
 
     press(view, (64, 0))
     assert not view.rotate_dragging
-    assert any('select something' in t.lower() for t in host.toasts)
+    assert 'SELECT SOMETHING' in host.ui.notification_label.text()
 
 
 # ---------------------------------------------------------------------------
@@ -1006,10 +871,6 @@ def test_a_cloned_entity_has_its_own_position(editor):
 def test_shift_space_clones_entities_as_well_as_brushes(editor):
     host, _ = editor
     from editor.things import Light
-    host.clone_selected_object = types.MethodType(
-        MainWindow.clone_selected_object, host)
-    host.right_tabs = _StubTabs(host.view_top)
-    host.grid_size_spinbox = _StubSpin(16)
 
     light = Light(pos=[0, 0, 0])
     light.properties['name'] = 'lamp'
@@ -1033,16 +894,12 @@ def test_shift_space_clones_entities_as_well_as_brushes(editor):
 
 def test_cloning_a_named_brush_gives_the_copy_its_own_name(editor):
     host, _ = editor
-    host.clone_selected_object = types.MethodType(
-        MainWindow.clone_selected_object, host)
-    host.right_tabs = _StubTabs(host.view_top)
-    host.grid_size_spinbox = _StubSpin(16)
 
     brush = make_box()
     brush['name'] = 'pillar'
     brush['id'] = 'original-id'
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
 
     host.clone_selected_object()
 
@@ -1053,14 +910,9 @@ def test_cloning_a_named_brush_gives_the_copy_its_own_name(editor):
 
 def test_cloning_an_unnamed_brush_does_not_invent_a_name(editor):
     host, _ = editor
-    host.clone_selected_object = types.MethodType(
-        MainWindow.clone_selected_object, host)
-    host.right_tabs = _StubTabs(host.view_top)
-    host.grid_size_spinbox = _StubSpin(16)
-
     brush = make_box()
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
 
     host.clone_selected_object()
     assert 'name' not in host.state.brushes[1]
@@ -1086,7 +938,7 @@ def test_plain_enter_keeps_one_side(editor):
     host, view = editor
     brush = make_box(size=(128, 64, 128))
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
     host.clip_mode = True
 
     place_cut(view, (0, -128), (0, 128))
@@ -1100,7 +952,7 @@ def test_shift_enter_keeps_both_sides(editor):
     host, view = editor
     brush = make_box(size=(128, 64, 128))
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
     host.clip_mode = True
 
     place_cut(view, (0, -128), (0, 128))
@@ -1117,7 +969,7 @@ def test_a_split_keeps_both_halves_selected(editor):
     host, view = editor
     brush = make_box(size=(128, 64, 128))
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
     host.clip_mode = True
 
     place_cut(view, (0, -128), (0, 128))
@@ -1130,7 +982,7 @@ def test_a_split_is_one_undo_step(editor):
     host, view = editor
     brush = make_box(size=(128, 64, 128))
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
     host.clip_mode = True
     before = undo_depth(host)
 
@@ -1146,7 +998,7 @@ def test_the_new_half_gets_its_own_identity(editor):
     brush['name'] = 'pillar'
     brush['id'] = 'original-id'
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
 
     host.apply_clip_to_selection([1.0, 0.0, 0.0], 0.0, False, split=True)
 
@@ -1162,7 +1014,7 @@ def test_a_split_carries_the_brush_properties_to_both_halves(editor):
     brush['is_trigger'] = True
     brush['colour'] = [0.2, 0.4, 0.6]
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
 
     host.apply_clip_to_selection([1.0, 0.0, 0.0], 0.0, False, split=True)
 
@@ -1175,7 +1027,7 @@ def test_a_plane_that_misses_the_brush_makes_no_second_half(editor):
     host, _ = editor
     brush = make_box(size=(128, 64, 128))
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
 
     host.apply_clip_to_selection([1.0, 0.0, 0.0], 5000.0, False, split=True)
 
@@ -1200,7 +1052,7 @@ def test_the_new_half_sits_next_to_its_original_in_the_scene(editor):
     a = make_box(pos=(0, 0, 0), size=(128, 64, 128))
     tail = make_box(pos=(0, 0, 900))
     host.state.brushes.extend([a, tail])
-    host.set_selected_object(a)
+    host.set_selected_objects([a])
 
     host.apply_clip_to_selection([1.0, 0.0, 0.0], 0.0, False, split=True)
 
@@ -1214,7 +1066,7 @@ def test_split_works_on_an_already_angled_brush(editor):
     brush = make_box(size=(128, 128, 128))
     assert bg.clip_brush(brush, [0.0, 1.0, 1.0], 0.0)     # make it a wedge
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
 
     count = host.apply_clip_to_selection([1.0, 0.0, 0.0], 0.0, False, split=True)
 
@@ -1227,7 +1079,7 @@ def test_split_works_on_an_already_angled_brush(editor):
 
 def test_nothing_selected_leaves_the_undo_history_alone(editor):
     host, _ = editor
-    host.set_selected_object(None)
+    host.set_selected_objects([])
     before = undo_depth(host)
     assert host.apply_clip_to_selection([1.0, 0.0, 0.0], 0.0, False,
                                         split=True) == 0
@@ -1304,7 +1156,7 @@ def test_nudging_carries_an_angled_brush_geometry_along(editor):
     brush = make_box(pos=(0, 0, 0))
     assert bg.clip_brush(brush, [1.0, 1.0, 0.0], 0.0)
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
     before = bg.get_convex(brush).center().copy()
 
     arrow(view, Qt.Key_Right)
@@ -1318,7 +1170,7 @@ def test_nudging_only_moves_along_the_view_axes(editor):
     host, view = editor
     brush = make_box(pos=(0, 5, 3))         # off-grid on both other axes
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
 
     arrow(view, Qt.Key_Right)               # top view: x and z are on screen
 
@@ -1365,7 +1217,7 @@ def test_every_nudge_of_a_sprite_reaches_the_3d_entity_table(editor):
     sprite = Prop(pos=[0.0, 0.0, 0.0], properties={
         'sprite_path': 'assets/sprites/health.png'})
     host.state.things.append(sprite)
-    host.set_selected_object(sprite)
+    host.set_selected_objects([sprite])
 
     table = EntityTable()
     for expected_x in (16.0, 32.0, 48.0):
@@ -1395,7 +1247,7 @@ def test_a_side_stretch_still_works_after_an_undo(editor):
     host, view = editor
     brush = make_box()
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
     host.state.save_state()      # the scene before the gesture, to undo back to
 
     press(view, (32, 20))
@@ -1423,7 +1275,7 @@ def test_a_vertex_drag_still_works_after_undo_then_redo(editor):
     host, view = editor
     brush = make_box()
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
     host.state.save_state()      # the scene before the gesture, to undo back to
     host.set_component_mode(ce.MODE_VERTEX)
 
@@ -1454,7 +1306,7 @@ def test_changing_the_selection_after_a_history_step_edits_the_new_brush(editor)
     first = make_box(pos=(0, 0, 0))
     second = make_box(pos=(256, 0, 0))
     host.state.brushes.extend([first, second])
-    host.set_selected_object(first)
+    host.set_selected_objects([first])
     host.state.save_state()      # the scene before the gesture, to undo back to
 
     press(view, (32, 20))
@@ -1464,7 +1316,7 @@ def test_changing_the_selection_after_a_history_step_edits_the_new_brush(editor)
     assert host.state.undo()
     _resync(host)
 
-    host.set_selected_object(host.state.brushes[1])
+    host.set_selected_objects([host.state.brushes[1]])
     press(view, (288, 20))
     move(view, (320, 20))
     release(view, (320, 20))
@@ -1477,7 +1329,7 @@ def test_a_cancelled_drag_does_not_throw_away_the_redo_branch(editor):
     host, view = editor
     brush = make_box()
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
     host.state.save_state()      # the scene before the gesture, to undo back to
 
     press(view, (32, 20))
@@ -1501,7 +1353,7 @@ def test_component_mode_survives_a_history_step_without_stale_handles(editor):
     host, view = editor
     brush = make_box()
     host.state.brushes.append(brush)
-    host.set_selected_object(brush)
+    host.set_selected_objects([brush])
     host.state.save_state()      # the scene before the gesture, to undo back to
     host.set_component_mode(ce.MODE_VERTEX)
 
@@ -1532,6 +1384,8 @@ def test_the_host_serves_every_timer_callback_of_a_shown_view(editor):
         view._check_camera_changed()
         view._update_connection_animations()
         view._end_nudge_burst()
-        assert view._last_camera_pos == (0.0, 0.0, 0.0)
+        camera = host.view_3d.camera
+        assert view._last_camera_pos == (
+            float(camera.pos.x), float(camera.pos.y), float(camera.pos.z))
     finally:
         view.window().hide()

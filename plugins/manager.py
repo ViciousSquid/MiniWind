@@ -24,6 +24,7 @@ from __future__ import annotations
 import importlib
 import os
 import pkgutil
+import sys
 import traceback
 from typing import List, Optional, Tuple
 
@@ -123,7 +124,7 @@ class PluginManager:
         self._tick_work = False
         self._tick_work_gen = -1
         self._tick_work_sub_gen = -1
-        # Editor-UI extensions plugins register (consumed by integration.py):
+        # Editor-UI extensions plugins register; native editor owners consume these:
         # extra property fields appended to an entity's panel, and whole custom
         # property tabs. Both keyed/filtered by normalised entity type.
         self._extra_fields: dict = {}       # type -> list[PropertySpec]
@@ -136,6 +137,7 @@ class PluginManager:
         self._tools_actions: list = []
         self._menu_actions: list = []
         self._console_commands: dict = {}
+        self._pause_menu_items: list = []   # [(plugin, label, callback, close_menu)]
         # Disabled plugin names (by directory or plugin.name). Populated from
         # the FIO_DISABLED_PLUGINS env var, comma-separated.
         self._disabled = {
@@ -212,6 +214,18 @@ class PluginManager:
         elif found == 0:
             self._debug("No plugins found.")
 
+    @staticmethod
+    def _package_is_initialising(mod_name: str) -> bool:
+        """Whether ``plugins.<mod_name>`` or any of its submodules is mid-import."""
+        package = f"plugins.{mod_name}"
+        prefix = package + "."
+        for name, module in list(sys.modules.items()):
+            if name != package and not name.startswith(prefix):
+                continue
+            if getattr(getattr(module, "__spec__", None), "_initializing", False):
+                return True
+        return False
+
     def _load_one(self, mod_name: str):
         try:
             module = importlib.import_module(f"plugins.{mod_name}")
@@ -225,7 +239,12 @@ class PluginManager:
         # back the partially-initialised module, which has no PLUGIN yet.
         # Skipping it quietly would drop that plugin for the life of the
         # process, so it is recorded and retried by the outer call instead.
-        if getattr(getattr(module, "__spec__", None), "_initializing", False):
+        # The same holds for any *submodule* of the package: importing
+        # ``plugins.bigworld.entities`` first runs the finished package, then
+        # entities reaches ``editor`` and discovery starts while entities is
+        # still half-built -- and register() importing from it fails.
+        if (getattr(getattr(module, "__spec__", None), "_initializing", False)
+                or self._package_is_initialising(mod_name)):
             self._deferred.add(mod_name)
             self._debug(f"Plugin '{mod_name}' is still importing; will retry")
             return
@@ -331,6 +350,23 @@ class PluginManager:
 
     def menu_actions(self):
         return list(self._menu_actions)
+
+    def _record_pause_menu_item(self, plugin, label: str, callback, close_menu: bool = True) -> None:
+        if callable(callback) and str(label).strip():
+            self._pause_menu_items.append((plugin, str(label), callback, bool(close_menu)))
+
+    def pause_menu_items(self):
+        """``[(label, callback, close_menu)]`` from enabled plugins, in order."""
+        return [(label, callback, close_menu)
+                for plugin, label, callback, close_menu in self._pause_menu_items
+                if self.is_enabled(plugin)]
+
+    def run_pause_menu_item(self, callback, main_window=None, logic=None) -> None:
+        """Call a plugin's pause-menu callback, fully guarded."""
+        try:
+            callback(main_window, logic)
+        except Exception:
+            self._log(f"pause menu item failed:\n{traceback.format_exc()}")
 
     def _register_console_command(self, plugin, name: str, callback, help_text: str = "") -> None:
         key = str(name).strip().lower()
@@ -808,7 +844,7 @@ class PluginManager:
             self._tick_work_sub_gen = self.events.gen
         return self._tick_work
 
-    # -- editor-UI extensions (consumed by plugins.integration) -------------
+    # -- editor-UI extensions ------------------------------------------------
     def register_extra_fields(self, entity_type: str, specs):
         """Append extra editable fields to *entity_type*'s property panel.
 
@@ -831,7 +867,7 @@ class PluginManager:
 
         *factory(thing)* returns a widget; *label* names the tab. If
         *entity_type* is given the tab shows only for that type, else for every
-        entity. Consumed by the editor integration when it builds a panel.
+        entity. Consumed by PropertyEditor when it builds a panel.
         """
         self._property_tabs.append(
             (label, factory,
@@ -902,12 +938,6 @@ class PluginManager:
             self._entity_inspectors.append(
                 (plugin, provider,
                  self._normalise_type(entity_type) if entity_type else None))
-
-    def has_entity_inspector(self, entity_type=None) -> bool:
-        """Whether an enabled provider would be asked about *entity_type*."""
-        norm = self._normalise_type(entity_type) if entity_type else None
-        return any(self.is_enabled(plugin) and (t is None or t == norm)
-                   for plugin, _provider, t in self._entity_inspectors)
 
     def inspect_entity(self, entity, logic=None):
         """The first non-empty inspection document a provider returns for

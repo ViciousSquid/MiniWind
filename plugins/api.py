@@ -66,8 +66,18 @@ from typing import Any, Callable, List, Optional, Tuple
 #: * 1.4.0 — optional editor Tools actions and console-command registration.
 #: * 1.5.0 — collapsible property sections, LogicState key suggestions and
 #:   entity inspectors.
-API_VERSION = "1.5.0"
-API_VERSION_INFO = (1, 5, 0)
+#: * 1.6.0 — Fio 3.0, a major architectural shift from 1.5: renderer
+#:   registration takes the :class:`engine.renderer.Renderer` protocol (a
+#:   factory is called as ``factory(config)``) and renderers swap live.
+#:   Plugins written for 1.3–1.5 that do not use the renderer contract load and
+#:   behave unchanged; renderer implementations written for 1.3–1.5
+#:   (``cls(texture_loader, grid, world, config)`` and the old forward-renderer
+#:   interface) are not compatible, and there is no shim.
+#: * 1.7.0 — the pause menu: :meth:`EditorAPI.register_pause_menu_item`, the
+#:   ``pause_menu_opened`` / ``pause_menu_closed`` events, and
+#:   ``main_window.open_pause_menu()`` / ``close_pause_menu()``.
+API_VERSION = "1.7.0"
+API_VERSION_INFO = (1, 7, 0)
 
 
 def version_tuple(value: str) -> tuple:
@@ -580,29 +590,37 @@ class EditorAPI:
         self._manager.register_entity_wizard(entity_type, factory)
 
     def register_renderer(self, name: str, cls) -> bool:
-        """Register a swappable renderer class under *name*.
+        """Register a renderer under *name* in Fio's renderer registry (API 1.6.0).
 
-        Fio's viewport already selects its renderer from a class registry; this
-        drops *cls* in so it appears as a render mode and can be activated. *cls*
-        must implement the renderer interface (``render_scene``,
-        ``draw_models_instanced``, ``render_shadow_maps``, ``cleanup``,
-        a ``lod_manager``, …).
+        *cls* is a factory called as ``cls(config)`` with the viewport's GL
+        context current -- usually the renderer class itself. What it returns
+        must satisfy :class:`engine.renderer.Renderer`: lifecycle, the frame
+        (``render_scene`` over the dense ``RenderTable``/``EntityTable`` frame
+        input), resources, diagnostics and the host's post-scene drawing
+        operations. How it draws -- shaders, passes, lighting, shadows, a
+        G-buffer -- is entirely its own; it need not inherit anything from
+        Fio, though :class:`engine.renderer.core.RendererCore` offers reusable
+        infrastructure.
 
-        The production shadow seam is
-        ``render_shadow_maps(shadow_lights, config, camera_pos=None)`` where
-        ``shadow_lights`` is the dense ``(EntityTable, light_slots)`` tuple.
-        Shadow caster selection and transforms come from ``RenderTable`` and
-        ``EntityTable`` slots; authored Brush/Thing/Light collections are not
-        part of the shadow API.
+        A plugin that registers a renderer declares ``api_version = "1.6.0"``:
+        1.3–1.5 hosts construct renderers differently, and renderers written
+        for them are not compatible with this contract.
+
+        The renderer owns its GL resources: no GL resource id survives the
+        lifetime of the renderer that owns it. The host discards every handle
+        it was given before calling ``cleanup()``, and a replacement renderer
+        receives fresh resource tables. See the wiki's Renderer Development
+        Guide and ``docs/examples/deferred_renderer``.
 
         Returns True if registered (False in a headless/player context with no
         viewport). This is how a whole new renderer — e.g. a deferred one —
         ships as a plugin.
         """
         try:
-            from engine.qt_game_view import register_renderer
+            from engine.qt_game_view import QtGameView  # noqa: F401 -- the viewport that uses renderers
         except Exception:
             return False
+        from engine.renderer import register_renderer
         return register_renderer(name, cls)
 
     def register_tools_action(self, label: str, callback: Callable, tooltip: str = "") -> None:
@@ -616,6 +634,20 @@ class EditorAPI:
     def register_console_command(self, name: str, callback: Callable, help_text: str = "") -> None:
         """Register a plugin-owned debug console command."""
         self._manager._register_console_command(self._plugin, name, callback, help_text)
+
+    def register_pause_menu_item(self, label: str, callback: Callable,
+                                 close_menu: bool = True) -> None:
+        """Add an item to the Play Mode pause menu (API 1.7.0).
+
+        Esc in Play opens the pause menu: Resume, Save Game, Load Game and
+        Options, then every enabled plugin's items in registration order, then
+        Exit to Editor (Quit in a played package). Choosing this item calls
+        ``callback(main_window, logic)`` on the UI thread with the world
+        paused; with *close_menu* the menu then closes and play resumes,
+        otherwise it stays open (for an item that opens a screen of its own;
+        call ``main_window.close_pause_menu()`` when done).
+        """
+        self._manager._record_pause_menu_item(self._plugin, label, callback, close_menu)
 
     # -- global store -------------------------------------------------------
     @property
@@ -657,7 +689,7 @@ class RuntimeAPI:
         self._manager = manager
         self._plugin = plugin
         self.logic = logic
-        self.io_manager = getattr(logic, "io_manager", None)
+        self.io_manager = logic.io_manager
 
     # -- I/O ----------------------------------------------------------------
     def register_input_handler(self, entity_type: str, input_name: str, handler: Callable):
@@ -687,7 +719,7 @@ class RuntimeAPI:
 
     # -- scene queries ------------------------------------------------------
     def _things(self):
-        return getattr(self.logic, "things", None) or []
+        return self.logic.editor_state.things
 
     def entities_of_type(self, type_name: str) -> List:
         """All scene entities whose ``type`` matches *type_name*."""
@@ -713,11 +745,11 @@ class RuntimeAPI:
 
     def player_eye(self):
         """The player's eye position as an ``(x, y, z)`` tuple."""
-        return _player_eye(getattr(self.logic, "player", None))
+        return _player_eye(self.logic.player_runtime.player)
 
     def player_forward(self):
         """The player's full look direction (with pitch) as a unit-ish tuple."""
-        return _player_forward(getattr(self.logic, "player", None))
+        return _player_forward(self.logic.player_runtime.player)
 
     def raycast_from_crosshair(self, reach: float = 160.0, aim_dot: float = 0.86,
                                type_name: Optional[str] = None,
@@ -730,7 +762,7 @@ class RuntimeAPI:
         This is the query most interaction plugins need — it replaces the
         hand-rolled "what am I looking at" loop.
         """
-        player = getattr(self.logic, "player", None)
+        player = self.logic.player_runtime.player
         if player is None:
             return None
         eye = _player_eye(player)
@@ -761,8 +793,8 @@ class RuntimeAPI:
     def spawn(self, cls, pos=None, properties: Optional[dict] = None):
         """Instantiate *cls* and add it to the live scene; returns the entity.
 
-        The new entity is appended to ``logic.things`` so gameplay queries and
-        (once the host draws dynamic entities) rendering pick it up. Returns
+        The new entity is appended to ``logic.editor_state.things`` so gameplay queries
+        and rendering consume the same authoritative world. Returns
         ``None`` if construction fails.
         """
         try:
@@ -771,14 +803,8 @@ class RuntimeAPI:
         except Exception:
             self._manager._log(f"spawn() failed for '{self._plugin.name}'")
             return None
-        things = getattr(self.logic, "things", None)
-        if things is not None:
-            try:
-                things.append(ent)
-            except Exception:
-                pass
-            else:
-                self._entities_changed()
+        self.logic.editor_state.things.append(ent)
+        self._entities_changed()
         try:
             self._manager.emit("entity_spawned", logic=self.logic, entity=ent,
                                by=self._plugin.name)
@@ -788,11 +814,8 @@ class RuntimeAPI:
 
     def despawn(self, entity) -> bool:
         """Remove *entity* from the live scene. Returns True if it was present."""
-        things = getattr(self.logic, "things", None)
-        if things is None:
-            return False
         try:
-            things.remove(entity)
+            self.logic.editor_state.things.remove(entity)
         except ValueError:
             return False
         self._entities_changed()
@@ -807,15 +830,15 @@ class RuntimeAPI:
         the stale index. Outside play there is no index to rebuild.
         """
         logic = self.logic
-        build = getattr(logic, "_build_entity_caches", None)
-        if build is None or not getattr(logic, "play_mode", False):
+        runtime = logic.world_runtime
+        if runtime is None or not logic.session_runtime.play_mode:
             return
-        lock = getattr(logic, "_tick_lock", None)
+        lock = logic._tick_lock
         if lock is None:
-            build()
+            runtime.build_entity_caches()
         else:
             with lock:
-                build()
+                runtime.build_entity_caches()
 
     # -- global store -------------------------------------------------------
     @property
@@ -871,7 +894,7 @@ class TickContext:
     value as a single press. ``keys`` is the raw held-key set (Qt key codes on
     the engine host); prefer :meth:`key_down` to test it by name.
 
-    HUD helpers replace poking ``logic.current_hud_message`` directly:
+    HUD helpers replace poking ``logic.interaction_runtime.current_hud_message`` directly:
     :meth:`set_prompt` writes a contextual line only if nothing higher-priority
     (including the core's own prompt) already claimed it this tick, and
     :meth:`toast` shows a timed message for a few seconds.
@@ -912,7 +935,7 @@ class TickContext:
         if priority < self._prompt_priority:
             return False
         try:
-            self.logic.current_hud_message = str(text)
+            self.logic.interaction_runtime.current_hud_message = str(text)
         except Exception:
             return False
         self._prompt_priority = priority
@@ -945,8 +968,8 @@ class TickContext:
             st.toast_text = ""
             return
         try:
-            if not getattr(self.logic, "current_hud_message", ""):
-                self.logic.current_hud_message = st.toast_text
+            if not self.logic.interaction_runtime.current_hud_message:
+                self.logic.interaction_runtime.current_hud_message = st.toast_text
         except Exception:
             pass
 

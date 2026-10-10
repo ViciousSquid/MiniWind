@@ -7,30 +7,32 @@ than a Prop set to 'model' with an empty ``model_path`` and nothing on screen.
 """
 
 import os
-import types
 
 import pytest
 
 pytest.importorskip("PyQt5", reason="the property panel is editor-tier")
 
+from editor.main_window import MainWindow               # noqa: E402
 from editor.property_editor import PropertyEditor      # noqa: E402
 from engine.prop_entity import PROP_DEFAULTS, Prop     # noqa: E402
 
 pytestmark = pytest.mark.qt
 
 
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
 @pytest.fixture
 def panel(qt_app):
-    from PyQt5.QtWidgets import QWidget
-
-    # update_object_prop repaints the viewports after a write, so view_3d has
-    # to be something with update(); the rest it probes with hasattr.
-    editor = types.SimpleNamespace(
-        state=types.SimpleNamespace(things=[], brushes=[]),
-        view_3d=QWidget())
+    editor = MainWindow(ROOT)
     widget = PropertyEditor(editor)
     yield widget
     widget.deleteLater()
+    editor.unsaved_changes = False
+    editor.unsaved_changes = False
+    editor.close()
+    editor.deleteLater()
+    qt_app.processEvents()
 
 
 def representation_combo(panel, thing):
@@ -126,13 +128,14 @@ def test_the_model_path_field_shows_the_default(panel):
 def _collision_brushes_for(things):
     from editor.editor_state import EditorState
     from engine.logic_thread import LogicThread
+    from engine.logic_collision import LogicCollision
     from engine.threaded_game_state import ThreadedGameState
 
     state = EditorState()
     state.brushes = []
     state.things = list(things)
     thread = LogicThread(ThreadedGameState(), state)
-    return thread._build_model_collision_brushes()
+    return LogicCollision(thread).build_model_collision_brushes()
 
 
 def test_a_default_sprite_prop_has_no_collision():

@@ -46,7 +46,7 @@ reaches through `editor.things` is here, and so is the logic thread, because it
 pulls in the editor's entity classes.
 
 **`gl` — the visual tier.** Needs a real OpenGL context. These drive the actual
-`Renderer_F` against an offscreen framebuffer: shaders compile, geometry is
+`ForwardRenderer` against an offscreen framebuffer: shaders compile, geometry is
 submitted, shadow maps are generated, the frame is read back and checked. They
 skip with an explicit reason (not a mysterious error) when no context can be
 created — the offscreen Qt platform plugin cannot make one, so they need a
@@ -114,7 +114,8 @@ self-contained packages; `pytest.ini` includes them in every run.
 ## Adding a test
 
 Put it in the area it belongs to, mark it if it needs more than Python and
-NumPy, and prefer the factories in `tests/helpers/worlds.py` over hand-built
+NumPy (a module that calls `pytest.importorskip("PyQt5")` needs the `qt`
+mark, or no tier runs it), and prefer the factories in `tests/helpers/worlds.py` over hand-built
 dicts so the fixture reads as a world rather than as JSON. If a test needs a
 plugin, add one to `tests/plugins/fixtures/` rather than reaching for a mock —
 they are real plugins, and the point is that the host treats them as such.

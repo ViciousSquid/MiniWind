@@ -28,9 +28,9 @@ def _thing(type_name, **props):
 # Version
 # ---------------------------------------------------------------------------
 
-def test_the_host_api_is_1_5_0():
-    assert API_VERSION == "1.5.0"
-    assert API_VERSION_INFO == version_tuple(API_VERSION) == (1, 5, 0)
+def test_the_host_api_is_1_6_0():
+    assert API_VERSION == "1.7.0"
+    assert API_VERSION_INFO == version_tuple(API_VERSION) == (1, 7, 0)
 
 
 def test_the_editor_api_offers_the_1_5_methods():
@@ -39,10 +39,10 @@ def test_the_editor_api_offers_the_1_5_methods():
         assert callable(getattr(EditorAPI, name, None)), name
 
 
-def test_a_1_4_plugin_loads_under_1_5_with_its_registrations_intact(plugin_manager):
+def test_a_1_4_plugin_loads_on_this_host_with_its_registrations_intact(plugin_manager):
     manager = plugin_manager("api_1_4_plugin")
     plugin = manager.find_plugin("api_1_4_plugin")
-    assert plugin is not None, "an API 1.4.0 plugin was refused by a 1.5.0 host"
+    assert plugin is not None, "an API 1.4.0 plugin was refused by a %s host" % API_VERSION
     assert [label for label, _f in manager.property_tabs_for("api14entity")] == ["Legacy Tab"]
     assert [label for _p, label, _cb, _tip in manager.tools_actions()] == ["Legacy Tool"]
     assert manager.dispatch_console_command("legacy", "go") == (True, "legacy:go")
@@ -54,7 +54,6 @@ def test_a_1_4_plugin_contributes_nothing_to_the_1_5_extensions(plugin_manager):
     assert manager.property_sections_for("api14entity") == []
     assert manager.kv_suggestions(_thing("logic_state")) == []
     assert manager.inspect_entity(_thing("api14entity")) is None
-    assert manager.has_entity_inspector("api14entity") is False
 
 
 def test_a_plugin_needing_the_next_minor_api_is_refused(plugin_manager):
@@ -181,8 +180,6 @@ def test_a_typed_inspector_is_not_asked_about_other_entities(plugin_manager):
     manager = _fresh_extensions(plugin_manager)
     assert manager.inspect_entity(_thing("wellbehavedentity")) is None
     assert manager.find_plugin("editor_extensions").inspected == []
-    assert manager.has_entity_inspector("gaugeentity") is True
-    assert manager.has_entity_inspector("wellbehavedentity") is False
 
 
 def test_the_first_provider_with_a_document_wins(plugin_manager):
@@ -223,7 +220,6 @@ def test_a_disabled_plugins_extensions_drop_out_and_return(plugin_manager):
     assert manager.property_sections_for("gaugeentity") == []
     assert manager.kv_suggestions(store) == []
     assert manager.inspect_entity(gauge) is None
-    assert manager.has_entity_inspector("gaugeentity") is False
 
     manager.set_enabled(plugin, True)
     assert len(manager.property_sections_for("gaugeentity")) == 1

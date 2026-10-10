@@ -33,6 +33,21 @@ def _synced(things, epoch=1):
     return table
 
 
+@pytest.fixture
+def renderer():
+    pytest.importorskip("OpenGL", reason="renderer entity-slot tests require OpenGL")
+    from tests.helpers import gl as glh
+
+    glh.reset_texture_cache()
+    with glh.GLTestContext(64, 64):
+        value = glh.make_renderer()
+        try:
+            yield value
+        finally:
+            value.cleanup()
+            glh.reset_texture_cache()
+
+
 # ---------------------------------------------------------------------------
 # Classification
 # ---------------------------------------------------------------------------
@@ -206,7 +221,7 @@ def test_light_render_state_stays_dense_and_tracks_motion_and_io():
 def test_rendered_portal_aperture_is_inset_without_changing_physical_size():
     """The render aperture is smaller, while authored portal dimensions stay intact."""
     pytest.importorskip("OpenGL")
-    from engine.renderer_core import BaseRenderer
+    from engine.renderer.forward import ForwardRenderer
 
     portal = make_thing(
         Portal, 'portal', (10.0, 20.0, 30.0),
@@ -214,9 +229,9 @@ def test_rendered_portal_aperture_is_inset_without_changing_physical_size():
     )
     table = _synced([portal])
 
-    authored = BaseRenderer._portal_slot_corners(table, 0)
-    rendered = BaseRenderer._portal_slot_corners(
-        table, 0, BaseRenderer.PORTAL_APERTURE_INSET)
+    authored = ForwardRenderer._portal_slot_corners(table, 0)
+    rendered = ForwardRenderer._portal_slot_corners(
+        table, 0, ForwardRenderer.PORTAL_APERTURE_INSET)
 
     authored_width = np.linalg.norm(
         np.asarray(authored[1]) - np.asarray(authored[0]))
@@ -234,17 +249,13 @@ def test_rendered_portal_aperture_is_inset_without_changing_physical_size():
     assert np.isclose(table.portal_width_height[0, 0], 128.0)
     assert np.isclose(table.portal_width_height[0, 1], 256.0)
 
-def test_renderer_consumes_active_lights_as_entity_slots():
+@pytest.mark.gl
+def test_renderer_consumes_active_lights_as_entity_slots(renderer):
     pytest.importorskip("OpenGL")
-    from engine.renderer_F import Renderer_F
-
     on = make_thing(Light, 'on', state='on')
     off = make_thing(Light, 'off', state='off')
     table = _synced([on, off])
-    renderer = Renderer_F.__new__(Renderer_F)
-
     packet = renderer._get_active_lights(
-        [on, off],
         {'entity_table': table, 'all_lights': []},
     )
 
@@ -297,6 +308,24 @@ def test_prop_respawn_alpha_is_a_dense_render_column():
     table = _synced([prop])
 
     assert table.render_alpha[0] == 0.25
+
+
+def test_moved_position_uses_journal_payload_without_reading_the_thing(monkeypatch):
+    light = make_thing(Light, 'moved', (1.0, 2.0, 3.0))
+    table = _synced([light])
+
+    light.pos = [101.0, 202.0, 303.0]
+    monkeypatch.setattr(
+        et, '_pos_of',
+        lambda _thing: (_ for _ in ()).throw(
+            AssertionError('MOVED path re-read the Thing position')
+        ),
+    )
+
+    table.begin_frame([light], epoch=1)
+
+    assert np.allclose(table.pos[0], [101.0, 202.0, 303.0])
+    assert table.rows_read == 1
 
 
 def test_positions_refresh_every_frame_without_reconciling():
@@ -573,7 +602,40 @@ def test_portal_authored_state_is_dense_and_geometry_is_shared():
     assert int(table.portal_direction[0]) == et.PORTAL_DIRECTION_REVERSE
     assert np.allclose(table.portal_color[0], [64/255.0, 128/255.0, 1.0])
     assert bool(table.portal_show_rim[0]) is False
+    assert bool(table.portal_glasses[0]) is True       # "Glasses" defaults on
     assert np.allclose(table.portal_basis[0], np.asarray(portal.get_basis()))
+
+
+def test_portal_glasses_property_is_per_portal():
+    on = make_thing(Portal, 'On')
+    off = make_thing(Portal, 'Off', glasses=False)
+    table = _synced([on, off])
+    assert table.portal_glasses[:2].tolist() == [True, False]
+
+
+
+
+@pytest.mark.gl
+def test_portal_candidate_keeps_a_disabled_portal_during_fade_out(renderer):
+    """Disabling gameplay must not remove the portal before its visual fade finishes."""
+    a = make_thing(Portal, 'A', portal_target='B')
+    b = make_thing(Portal, 'B', portal_target='A')
+    a.properties['active'] = False
+    a._fade_alpha = 0.5
+
+    table = _synced([a, b])
+    pytest.importorskip("OpenGL")
+    slots = np.arange(2, dtype=np.int32)
+
+    candidates = renderer._portal_candidate_slots(table, slots, None)
+    assert 0 in candidates.tolist()
+    assert 1 in candidates.tolist()
+
+    a._fade_alpha = 0.0
+    table.begin_frame([a, b], epoch=1)
+    candidates = renderer._portal_candidate_slots(table, slots, None)
+    assert 0 not in candidates.tolist()
+    assert 1 in candidates.tolist()
 
 
 def test_portal_live_state_refreshes_without_reconciling():

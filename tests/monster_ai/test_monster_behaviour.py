@@ -113,7 +113,7 @@ def test_a_triggered_ambush_monster_ignores_sight(monster_factory, ai_world,
     ai.update(TICK)
     assert monster.properties["awake"] is False, (
         "a scripted ambush waits for its I/O trigger; it woke to sight from "
-        "%.0f units" % _distance(monster.pos, logic.player.pos))
+        "%.0f units" % _distance(monster.pos, logic.player_runtime.player.pos))
     assert _state(ai, monster) is None, \
         "a sleeping monster must not accumulate AI state"
 
@@ -128,7 +128,7 @@ def test_a_hearing_monster_wakes_to_a_noise_out_of_sight(monster_factory, ai_wor
     ai.update(TICK)
     assert monster.properties["awake"] is False
 
-    logic.emit_noise((far - 100, 96, 0), source="gunfire", loudness=1.0)
+    logic.combat_runtime._emit_noise_event((far - 100, 96, 0), source="gunfire", loudness=1.0)
     ai.update(TICK)
     assert monster.properties["awake"] is True, (
         "'%s' can hear and a gunshot went off 100 units away" % monster.name)
@@ -138,7 +138,7 @@ def test_a_deaf_monster_ignores_noise(monster_factory, ai_world, flat_ground):
     far = MONSTER_SIGHT_RANGE + 500
     monster = monster_factory("deaf", (far, 96, 0), awake=False, can_hear=False)
     ai, logic = ai_world(brushes=flat_ground, things=[monster])
-    logic.emit_noise((far, 96, 0), source="gunfire", loudness=1.0)
+    logic.combat_runtime._emit_noise_event((far, 96, 0), source="gunfire", loudness=1.0)
     ai.update(TICK)
     assert monster.properties["awake"] is False
 
@@ -151,14 +151,14 @@ def test_a_quiet_noise_carries_less_far_than_a_loud_one(monster_factory, ai_worl
                             can_hear=True, sight=1000.0)
     ai, logic = ai_world(brushes=flat_ground, things=[quiet],
                          player_pos=(5000.0, 0.0, 0.0))
-    logic.emit_noise((0, 96, 0), source="splash", loudness=0.25)   # reach 250
+    logic.combat_runtime._emit_noise_event((0, 96, 0), source="splash", loudness=0.25)   # reach 250
     ai.update(TICK)
     assert quiet.properties["awake"] is False, (
         "a loudness-0.25 noise reaches 250 units; the monster is %.0f away"
         % distance)
 
-    logic._noise_events.clear()
-    logic.emit_noise((0, 96, 0), source="gunfire", loudness=1.0)   # reach 1000
+    logic.combat_runtime._gunfire_events.clear()
+    logic.combat_runtime._emit_noise_event((0, 96, 0), source="gunfire", loudness=1.0)   # reach 1000
     ai.update(TICK)
     assert quiet.properties["awake"] is True
 
@@ -208,7 +208,7 @@ def test_a_named_target_override_takes_priority_over_the_player(
     monster = monster_factory("seeker", (0, 96, 0), target_name="waypoint")
     ai, logic = ai_world(brushes=flat_ground, things=[monster, marker],
                          player_pos=(-400.0, 0.0, 0.0))
-    logic.rebuild_name_cache()
+    logic.world_runtime.build_entity_caches()
 
     start_x = monster.pos[0]
     for _ in range(10):
@@ -236,7 +236,7 @@ def test_notarget_stops_the_chase_without_stopping_gravity(
         monster_factory, ai_world, flat_ground):
     monster = monster_factory("chaser", (400, 500, 0))
     ai, logic = ai_world(brushes=flat_ground, things=[monster])
-    logic.notarget = True
+    logic.player_runtime.notarget = True
 
     before_x = monster.pos[0]
     for _ in range(10):
@@ -497,9 +497,13 @@ def test_firing_queues_the_type_specific_shoot_sound(monster_factory, ai_world,
     ai, logic = ai_world(brushes=flat_ground, things=[monster])
     for _ in range(int(MONSTER_SHOOT_INTERVAL / TICK) + 2):
         ai.update(TICK)
-    assert len(logic.game_state.sounds) == 1, (
-        "one shot should queue one sound, got %s" % (logic.game_state.sounds,))
-    assert logic.game_state.sounds[0]["entity_id"] == id(monster)
+    shots = [
+        sound for sound in logic.game_state.sound_queue
+        if sound.get("entity_id") == id(monster)
+    ]
+    assert len(shots) == 1, (
+        "one shot should queue one shoot sound, got %s" % (list(logic.game_state.sound_queue),))
+    assert shots[0]["file"] == "shoot.wav"
 
 
 def test_firing_fires_the_onattack_output(monster_factory, ai_world, flat_ground,
@@ -526,18 +530,18 @@ def test_a_distant_flying_monster_spawns_a_projectile(monster_factory, ai_world)
     for _ in range(int(MONSTER_SHOOT_INTERVAL / TICK) + 2):
         ai.update(TICK)
 
-    assert len(logic._monster_projectiles) == 1, (
+    assert len(logic.combat_runtime._monster_projectiles) == 1, (
         "a flying monster %.0f units away should fire a projectile, not a "
         "hitscan; projectiles=%d damage=%s"
-        % (_distance(monster.pos, logic.player.pos),
-           len(logic._monster_projectiles), logic.damage_applied))
-    projectile = logic._monster_projectiles[0]
-    assert projectile["damage"] == 9
-    assert projectile["owner_id"] == id(monster)
+        % (_distance(monster.pos, logic.player_runtime.player.pos),
+           len(logic.combat_runtime._monster_projectiles), logic.damage_applied))
+    projectile = logic.combat_runtime._monster_projectiles
+    assert projectile.damage[0] == 9
+    assert projectile.owner_id[0] == id(monster)
     # It must be aimed at the player, i.e. travelling in -X.
-    assert projectile["vel"][0] < 0, (
+    assert projectile.vel[0, 0] < 0, (
         "projectile velocity %s does not point back toward the player at the "
-        "origin" % (projectile["vel"],))
+        "origin" % (projectile.vel[0],))
 
 
 def test_a_flying_monster_in_biting_range_bites_instead(monster_factory, ai_world):
@@ -549,7 +553,7 @@ def test_a_flying_monster_in_biting_range_bites_instead(monster_factory, ai_worl
     for _ in range(int(MONSTER_SHOOT_INTERVAL / TICK) + 2):
         ai.update(TICK)
 
-    assert logic._monster_projectiles == [], \
+    assert len(logic.combat_runtime._monster_projectiles) == 0, \
         "a biting flier should not also spawn a projectile"
     assert logic.damage_applied == [int(10 * MONSTER_BITE_DAMAGE_MULT)], (
         "a bite does %sx damage; expected %d, got %s"
@@ -621,9 +625,9 @@ def test_the_player_dying_is_reported_once(monster_factory, ai_world, flat_groun
     for _ in range(int(MONSTER_SHOOT_INTERVAL / TICK) * 3):
         ai.update(TICK)
 
-    assert logic.player_dead is True, (
+    assert logic.player_runtime.player_dead is True, (
         "player health is %d after taking %s damage but player_dead is False"
-        % (logic.player_health, logic.damage_applied))
+        % (logic.player_runtime.player_health, logic.damage_applied))
     assert len(logic.damage_applied) == 1, (
         "the AI kept attacking a dead player: %s" % (logic.damage_applied,))
 
@@ -673,8 +677,8 @@ def test_a_monster_removed_from_the_world_leaves_its_state_behind_harmlessly(
     ai, logic = ai_world(brushes=flat_ground, things=[a, b])
     ai.update(TICK)
 
-    logic.things.remove(b)
-    logic._monster_things = [a]
+    logic.editor_state.things.remove(b)
+    logic.world_runtime.monster_things = [a]
     for _ in range(int(MONSTER_SHOOT_INTERVAL / TICK) + 2):
         ai.update(TICK)
 

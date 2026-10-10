@@ -178,6 +178,10 @@ class Thing:
         if '_io_connections' not in self.properties:
             self.properties['_io_connections'] = []
 
+    def editor_label_lines(self):
+        """Text the 2D views write under this entity's sprite, top line first."""
+        return ()
+
     @property
     def name(self):
         """Gets the name from the properties dictionary."""
@@ -429,7 +433,13 @@ class Thing:
 # =============================================================================
 
 class PlayerStart(Thing):
-    """Defines where the player spawns."""
+    """Defines where the player spawns.
+
+    ``name`` is what a LevelChanger's ``destination_spawn`` refers to;
+    ``primary`` marks the level's default start, at most one per level (see
+    :mod:`engine.player_starts`, and ``EditorState.settle_player_starts``,
+    which gives a level's first-created start the flag and keeps it unique).
+    """
     pixmap_path = "assets/sprites/player.png"
     EDITOR_PRIMARY_PROPERTIES = ('angle',)
     
@@ -437,9 +447,20 @@ class PlayerStart(Thing):
         super().__init__(pos, properties)
         self.properties.setdefault('type', 'playerstart')
         self.properties.setdefault('angle', 0.0)
+        self.properties.setdefault('primary', False)
 
     def get_angle(self):
         return float(self.properties.get('angle', 0.0))
+
+    @property
+    def primary(self):
+        return self.properties.get('primary') is True
+
+    def editor_label_lines(self):
+        lines = [self.properties['name']] if self.properties.get('name') else []
+        if self.primary:
+            lines.append("Primary")
+        return tuple(lines)
 
 
 class UnresolvedThing(Thing):
@@ -597,6 +618,10 @@ class Monster(Thing):
     # Cache the project_root lookup once per class; it never changes at runtime.
     _cached_project_root = None
 
+    def editor_label_lines(self):
+        name = self.properties.get('name')
+        return (name,) if name else ()
+
     def __init__(self, pos=None, properties=None):
         super().__init__(pos, properties)
         self.properties.setdefault('type', 'monster')
@@ -719,47 +744,6 @@ class Monster(Thing):
                 return custom_path
             print(f"[Monster] Custom sprite not found, using default: {custom_path}")
         return default_path
-
-    def get_render_snapshot(self):
-        """Return the actor state consumed by threaded rendering.
-
-        The render thread must not reach back into the live Thing. Keep the
-        resolved sprite, facing, and the weapon actually in hand in the snapshot.
-        """
-        idle = str(self.properties.get('custom_idle', '')).replace('\\', '/')
-        base = idle.rsplit('/', 1)[-1]
-        ttype = str(self.properties.get('type', '')).lower()
-        if 'is_head' in self.properties:
-            is_head = bool(self.properties['is_head'])
-        else:
-            is_head = (
-                ttype in ('npc', 'creature', 'monster')
-                and ('/heads/' in idle or idle.startswith('heads/'))
-                and base.startswith('head')
-            )
-        return {
-            'id': id(self),
-            'pos': list(self.pos),
-            'dead': self.properties.get('dead', False),
-            'is_shooting': self.properties.get('is_shooting', False),
-            'monster_type': self.properties.get('monster_type', 'human'),
-            'variant': self.properties.get('variant', '<None>'),
-            'sprite_width': self.properties.get('sprite_width', 128),
-            'sprite_height': self.properties.get('sprite_height', 128),
-            'custom_idle': self.properties.get('custom_idle', ''),
-            'custom_shoot': self.properties.get('custom_shoot', ''),
-            'hit_flash': self.properties.get('_hit_flash', 0.0),
-            'angle': float(self.properties.get('_facing', 0.0) or 0.0),
-            'sprite_path': self.get_sprite_path(),
-            'weapon_id': self.properties.get('_active_weapon') or self.properties.get(
-                'equipped_weapon',
-                (self.properties.get('equipment') or {}).get('weapon', '')
-                if isinstance(self.properties.get('equipment'), dict) else ''),
-            'is_head': is_head,
-            'gibbed': bool(self.properties.get('gibbed')),
-            'gib_sprite': self.properties.get('gib_sprite', ''),
-            'opacity': float(self.properties.get('_opacity', 1.0) or 0.0),
-        }
 
     def get_sprite_path(self) -> str:
         """
@@ -1023,6 +1007,7 @@ class LevelChanger(Thing):
         'show_radius',
         'radius',
         'usable',
+        'generate_level',
     )
 
     def __init__(self, pos=None, properties=None):
@@ -1034,7 +1019,13 @@ class LevelChanger(Thing):
         self.properties.setdefault('show_radius', False)
         self.properties.setdefault('radius', 128.0)
         self.properties.setdefault('usable', False)
-        
+        # The PlayerStart (by name) to spawn at in the target map; empty for
+        # its primary start.
+        self.properties.setdefault('destination_spawn', '')
+        # Instead of target_map, generate a new random level (with the
+        # procedural generator's ``generator_params``) and go there.
+        self.properties.setdefault('generate_level', False)
+
         # An explicit window to signal (tests set one). Otherwise it is found
         # when the level change fires: an entity holding the MainWindow could
         # not be cloned or copied (deepcopy reached the window), and kept the
@@ -1054,45 +1045,93 @@ class LevelChanger(Thing):
         debug_log("Warning", f"LevelChanger '{entity_name}': unknown input '{input_name}'")
         return False
 
+    @staticmethod
+    def map_path(target):
+        """The ``maps/...json`` path a target map names, or None if it is outside.
+
+        A bare name gets ``.json`` and the ``maps/`` folder; a target that
+        climbs back out of the folder is refused.  target_map is authored map
+        data (packages included), and the loaded map becomes the editor's save
+        target.
+        """
+        target = (target or '').strip().replace('\\', '/')
+        if not target:
+            return None
+        if not target.lower().endswith('.json'):
+            target += '.json'
+        if not target.startswith('maps/'):
+            target = f"maps/{target}"
+        target = posixpath.normpath(target)
+        return target if target.startswith('maps/') else None
+
+    def destination(self, parameter: str = ""):
+        """``(map path, destination spawn)`` this LevelChanger sends the player to.
+
+        *parameter* (a ChangeLevel input's) names another map instead; the
+        authored ``destination_spawn`` belongs to ``target_map``, so another
+        map is entered at its primary start. The map path is None if it is
+        missing or outside the maps folder.
+        """
+        authored = self.map_path(self.properties.get('target_map', ''))
+        target = self.map_path(parameter) if parameter and parameter.strip() else authored
+        spawn = ''
+        if target is not None and target == authored:
+            spawn = str(self.properties.get('destination_spawn') or '')
+        return target, spawn
+
+    def generates_level(self, parameter: str = ""):
+        """True when this sends the player to a newly generated level.
+
+        A ChangeLevel input that names a map goes to that map instead.
+        """
+        return (bool(self.properties.get('generate_level'))
+                and not (parameter or '').strip())
+
+    def generator_params(self):
+        """The procedural generator settings for the level this generates."""
+        params = self.properties.get('generator_params')
+        return dict(params) if isinstance(params, dict) else {}
+
+    def _find_main_window(self):
+        main_window = getattr(self, '_main_window', None)
+        if main_window:
+            return main_window
+        try:
+            from PyQt5.QtWidgets import QApplication
+            for w in QApplication.topLevelWidgets():
+                if w.__class__.__name__ == 'MainWindow':
+                    return w
+        except Exception as e:
+            debug_log("Error", f"LevelChanger QApplication lookup failed: {e}")
+        return None
+
     def change_level(self, parameter: str = ""):
         """Load a new map when triggered."""
 
-        target_map = parameter.strip() if parameter else self.properties.get('target_map', '').strip()
+        if self.generates_level(parameter):
+            main_window = self._find_main_window()
+            if not main_window or not hasattr(main_window, 'generate_level_signal'):
+                debug_log("Error", "LevelChanger could not find MainWindow!")
+                return False
+            # Queued to the UI thread, as load_level_signal is.
+            main_window.generate_level_signal.emit(self.generator_params())
+            debug_log("IO", f"LevelChanger '{self.properties.get('name', 'LevelChanger')}' "
+                            "requested a generated level")
+            return True
 
-        if not target_map:
-            debug_log("Error", "LevelChanger has no target_map and no parameter was provided!")
+        target_map, destination_spawn = self.destination(parameter)
+        if target_map is None:
+            requested = (parameter or '').strip() or self.properties.get('target_map', '')
+            if not str(requested).strip():
+                debug_log("Error", "LevelChanger has no target_map and no parameter was provided!")
+            else:
+                debug_log("Error", f"LevelChanger target '{requested}' is outside the maps folder")
             return False
 
-        if not target_map.lower().endswith('.json'):
-            target_map += '.json'
+        debug_log("IO", f"LevelChanger target resolved → '{target_map}'"
+                        + (f", spawn '{destination_spawn}'" if destination_spawn else ""))
 
-        # ENFORCE MAPS FOLDER: Prepend maps/ if not already present, and
-        # refuse a target that climbs back out of it.  target_map is authored
-        # map data (packages included), and the loaded map becomes the
-        # editor's save target.
-        target_map = target_map.replace('\\', '/')
-        if not target_map.startswith('maps/'):
-            target_map = f"maps/{target_map}"
-        target_map = posixpath.normpath(target_map)
-        if not target_map.startswith('maps/'):
-            debug_log("Error", f"LevelChanger target '{target_map}' is outside the maps folder")
-            return False
-
-        debug_log("IO", f"LevelChanger target resolved → '{target_map}'")
-
-        # Get MainWindow reference
-        main_window = getattr(self, '_main_window', None)
-
-        if not main_window:
-            try:
-                from PyQt5.QtWidgets import QApplication
-                for w in QApplication.topLevelWidgets():
-                    if w.__class__.__name__ == 'MainWindow':
-                        main_window = w
-                        break
-            except Exception as e:
-                debug_log("Error", f"LevelChanger QApplication lookup failed: {e}")
-
+        main_window = self._find_main_window()
         if not main_window:
             debug_log("Error", "LevelChanger could not find MainWindow!")
             return False
@@ -1100,7 +1139,7 @@ class LevelChanger(Thing):
         # Use signal instead of direct call
         if hasattr(main_window, 'load_level_signal'):
             try:
-                main_window.load_level_signal.emit(target_map)
+                main_window.load_level_signal.emit(target_map, destination_spawn)
                 debug_log("IO", f"LevelChanger emitted load_level_signal('{target_map}')")
                 return True
             except Exception as e:
@@ -1142,8 +1181,8 @@ class PathNode(Thing):
       - wait_time (float, seconds): how long a monster pauses at this node
         before moving to next_node. 0 = no wait (pass through immediately).
       - speed (float, multiplier): speed factor applied while an entity is
-        heading toward this node.  1.0 = normal speed, 0.5 = half speed,
-        2.0 = double, etc.  (Renamed from legacy 'patrol_speed'.)
+        heading toward this node. 1.0 = normal speed, 0.5 = half speed,
+        2.0 = double, etc.
 
     PathNodes are invisible at runtime — they are editor-only aids that the
     monster AI consults during _update_monsters in the logic thread.
@@ -1163,12 +1202,6 @@ class PathNode(Thing):
         self.properties.setdefault('next_node', '')
         self.properties.setdefault('wait_time', 0.0)
         self.properties.setdefault('speed', 1.0)
-
-        # Migrate legacy key transparently on load
-        if 'patrol_speed' in self.properties and 'speed' not in self.properties:
-            self.properties['speed'] = self.properties.pop('patrol_speed')
-        elif 'patrol_speed' in self.properties:
-            self.properties.pop('patrol_speed', None)
 
     def get_radius(self) -> float:
         """Radius in world units — read by the 2D preview and the monster AI."""
@@ -1194,15 +1227,10 @@ class PathNode(Thing):
     def get_speed(self) -> float:
         """Speed multiplier for entities approaching this node."""
         try:
-            # Accept legacy 'patrol_speed' key transparently
-            raw = self.properties.get('speed',
-                    self.properties.get('patrol_speed', 1.0))
-            return max(0.01, float(raw))
+            return max(0.01, float(self.properties.get('speed', 1.0)))
         except (TypeError, ValueError):
             return 1.0
 
-    # Keep old name as alias so MonsterAI still works without changes
-    get_patrol_speed = get_speed
 
     def get_next_node_name(self) -> str:
         """Return the name of the next node in the chain, or ''."""
@@ -1230,7 +1258,9 @@ class LogicCamera(Thing):
     def __init__(self, pos=None, properties=None):
         super().__init__(pos, properties)
         self.properties['type'] = 'logic_camera'
-        # Name of the first PathNode in the chain
+        # Optional authored cutscene JSON. When set, this takes precedence over PathNode playback.
+        self.properties.setdefault('cutscene_file', '')
+        # Name of the first PathNode in the chain (legacy camera mode)
         self.properties.setdefault('path_target', '')
         # World-units per second along the chain
         self.properties.setdefault('speed', 200.0)
@@ -1294,6 +1324,8 @@ class Portal(Thing):
                            Toggle at runtime via Enable/Disable/Toggle inputs.
     color          (list)  [r, g, b] 0-255 rim/glow tint.  Default white.
     show_rim       (bool)  Draw outline.
+    glasses        (bool)  Looking into this portal shows your own glasses
+                           reflected back at you, like a mirror.  Default on.
 
     I/O outputs
     -----------
@@ -1321,7 +1353,9 @@ class Portal(Thing):
       appears scaled when viewed through the smaller end.
     """
 
-    pixmap_path = "assets/sprites/portal.png"
+    #: Portals have no editor sprite: the aperture wireframe is how the
+    #: editor shows them.
+    pixmap_path = None
     EDITOR_PRIMARY_PROPERTIES = (
     'portal_target',
     'width',
@@ -1331,6 +1365,7 @@ class Portal(Thing):
     'portal_direction',
     'color',
     'show_rim',
+    'glasses',
     )
 
     DEFAULT_WIDTH  = 128.0
@@ -1344,7 +1379,7 @@ class Portal(Thing):
     #: projection re-reads it only while it is actually changing.
     _fade_alpha = TrackedAttribute(1.0)
 
-    FADE_DURATION = 0.35
+    FADE_DURATION = 1.0
 
     # Minimum projectile exit clearance along the destination normal. Player
     # transit uses a near-zero plane epsilon so crossing remains visually continuous.
@@ -1377,6 +1412,9 @@ class Portal(Thing):
         # Visual rim
         self.properties.setdefault('color',    [255, 255, 255])
         self.properties.setdefault('show_rim', True)
+
+        # Reflect the viewer's own glasses when they look into this portal.
+        self.properties.setdefault('glasses', True)
 
         # Parenting: attach this portal to a mover brush by name.
         # When parent_mover is non-empty the logic thread moves this
@@ -2040,16 +2078,6 @@ def _load_core_entity_types():
 
 
 def __getattr__(name):
-    if name == 'Model':
-        # There is no Model entity any more: a model is a Prop with
-        # render_mode='model'. Plugins written against the old base still
-        # import; they get the plain Thing base, which is what a non-Prop
-        # entity carrying a model_path always needed.
-        import warnings
-        warnings.warn("editor.things.Model is gone: subclass Thing (or use a "
-                      "Prop) and set model_path", DeprecationWarning,
-                      stacklevel=2)
-        return Thing
     module_name = _CORE_ENTITY_MODULES.get(name)
     if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

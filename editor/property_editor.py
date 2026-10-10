@@ -1,21 +1,201 @@
+import json
 import os
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QLineEdit, QSpinBox,
                              QFormLayout, QCheckBox, QComboBox, QPushButton,
                              QHBoxLayout, QColorDialog, QFileDialog, QGridLayout,
                              QToolButton, QSlider, QTabWidget, QGroupBox, QScrollArea,
                              QFrame, QDoubleSpinBox, QSizePolicy,
-                             QTableWidget, QTableWidgetItem)
+                             QTableWidget, QTableWidgetItem, QMessageBox)
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor
 from PyQt5 import sip
+from engine.items import ITEM_IDS
 from engine.prop_entity import normalise_collect_type
 from editor.things import (Thing, Light, Effect, Prop, Monster, Speaker,
                            LogicGate, PathNode, LogicCamera, LogicSpawner, Portal,
-                           LogicState)
+                           LogicState, PlayerStart, LevelChanger)
+from engine import player_starts as start_rules
 from editor import state_values as _sv
 from engine.brush_geometry import GEO_RUNTIME_KEYS
 from engine.monster_constants import MONSTER_VARIANTS
+from engine.constants import water_high_quality
 from editor.tooltips import set_tooltips_enabled
+
+def item_choices(definitions):
+    """``[(label, item id)]`` for every item slot, by its user-facing name.
+
+    Shared by the Prop panel's builder and its refresh so the two cannot drift
+    apart. Two items given the same name are told apart by their id.
+    """
+    names = [(definitions.name(item_id), item_id) for item_id in ITEM_IDS]
+    counts = {}
+    for name, _ in names:
+        counts[name] = counts.get(name, 0) + 1
+    return [(f"{name} ({item_id})" if counts[name] > 1 else name, item_id)
+            for name, item_id in names]
+
+
+def _plugin_to_float(text):
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _plugin_section_header(text):
+    lbl = QLabel(text.upper())
+    font = lbl.font()
+    font.setBold(True)
+    font.setLetterSpacing(font.PercentageSpacing, 108)
+    lbl.setFont(font)
+    lbl.setStyleSheet(
+        "color:#F08000; border:none; border-bottom:1px solid #555;"
+        "margin-top:8px; padding:3px 0 2px 0;")
+    return lbl
+
+
+def _plugin_widget_for_spec(editor_self, spec, value):
+    t = (getattr(spec, "type", "string") or "string").lower()
+    name = spec.name
+
+    if t == "enum" and spec.choices:
+        choices = [str(choice) for choice in spec.choices]
+        default = spec.default if spec.default is not None else choices[0]
+        current = str(value if value is not None else default)
+        if current not in choices:
+            choices = [current] + choices
+        return _make_combo(
+            choices,
+            current,
+            lambda text, key=name: editor_self.update_object_prop(key, text),
+        )
+
+    if t == "bool":
+        checked = (
+            value if isinstance(value, bool)
+            else str(value).strip().lower() in ("1", "true", "yes", "on")
+        )
+        return _make_checkbox(
+            "",
+            checked,
+            lambda checked, key=name:
+            editor_self.update_object_prop(key, checked),
+        )
+
+    if t == "int":
+        lo = int(spec.min) if spec.min is not None else -99999
+        hi = int(spec.max) if spec.max is not None else 99999
+        try:
+            current = int(float(value))
+        except (TypeError, ValueError):
+            current = int(spec.default) if isinstance(spec.default, (int, float)) else 0
+        spin = _make_spin(current, lo, hi)
+        spin.editingFinished.connect(
+            lambda widget=spin, key=name:
+            editor_self.update_object_prop(key, widget.value()))
+        return spin
+
+    if t == "float":
+        edit = QLineEdit("" if value is None else str(value))
+        edit.editingFinished.connect(
+            lambda widget=edit, key=name:
+            editor_self.update_object_prop(key, _plugin_to_float(widget.text())))
+        return edit
+
+    edit = QLineEdit("" if value is None else str(value))
+    edit.editingFinished.connect(
+        lambda widget=edit, key=name:
+        editor_self.update_object_prop(key, widget.text()))
+    return edit
+
+
+def _render_plugin_schema_rows(editor_self, form, thing, specs):
+    hidden = {"name", "id", "type", "_io_connections"}
+    hidden.update(getattr(thing, "EDITOR_HIDDEN_PROPERTIES", ()) or ())
+    covered = set()
+    current_group = None
+
+    for spec in specs:
+        if spec.name in hidden:
+            continue
+        covered.add(spec.name)
+        group = getattr(spec, "group", "") or ""
+        if group and group != current_group:
+            current_group = group
+            form.addRow(_plugin_section_header(group))
+        value = thing.properties.get(spec.name, spec.default)
+        label = (spec.label or spec.name.replace("_", " ").title()) + ":"
+        widget = _plugin_widget_for_spec(editor_self, spec, value)
+        if getattr(spec, "help", ""):
+            widget.setToolTip(spec.help)
+        form.addRow(label, widget)
+
+    uncovered = [
+        (key, value)
+        for key, value in sorted(thing.properties.items())
+        if key not in hidden and key not in covered
+    ]
+    if uncovered and current_group is not None:
+        form.addRow(_plugin_section_header("Other"))
+
+    for key, value in uncovered:
+        label = key.replace("_", " ").title() + ":"
+        if isinstance(value, bool):
+            widget = _make_checkbox(
+                "",
+                value,
+                lambda checked, field=key:
+                editor_self.update_object_prop(field, checked),
+            )
+        elif isinstance(value, int):
+            widget = _make_spin(value, -99999, 99999)
+            widget.editingFinished.connect(
+                lambda spin=widget, field=key:
+                editor_self.update_object_prop(field, spin.value()))
+        elif isinstance(value, float):
+            widget = QLineEdit(str(value))
+            widget.editingFinished.connect(
+                lambda edit=widget, field=key:
+                editor_self.update_object_prop(field, _plugin_to_float(edit.text())))
+        else:
+            widget = QLineEdit("" if value is None else str(value))
+            widget.editingFinished.connect(
+                lambda edit=widget, field=key:
+                editor_self.update_object_prop(field, edit.text()))
+        form.addRow(label, widget)
+
+
+def _append_plugin_extra_fields(editor_self, form, thing, specs):
+    for spec in specs:
+        if spec.name in ("name", "id", "type", "_io_connections"):
+            continue
+        value = thing.properties.get(spec.name, spec.default)
+        label = (spec.label or spec.name.replace("_", " ").title()) + ":"
+        widget = _plugin_widget_for_spec(editor_self, spec, value)
+        if getattr(spec, "help", ""):
+            widget.setToolTip(spec.help)
+        form.addRow(label, widget)
+
+
+def _wire_plugin_lazy_section(section, factory, thing, label):
+    state = {"built": False}
+
+    def build(*_args):
+        if state["built"]:
+            return
+        state["built"] = True
+        try:
+            inner = factory(thing)
+        except Exception as exc:
+            debug_log("Plugins", f"property section '{label}' failed ({exc})")
+            return
+        if inner is not None:
+            section.addWidget(inner)
+
+    section.toggle.toggled.connect(lambda checked: checked and build())
+    if section.toggle.isChecked():
+        build()
+
 
 def _project_root() -> str:
     """Return Fio's project root independently of the process working directory."""
@@ -510,8 +690,8 @@ class PropertyEditor(QWidget):
             '_prop_collectible_cb',
             '_prop_collect_type_combo',
             '_prop_collect_type_values',
-            '_prop_weapon_combo',
-            '_prop_weapon_values',
+            '_prop_item_combo',
+            '_prop_item_values',
             '_prop_key_combo',
             '_prop_key_values',
             '_prop_activation_combo',
@@ -641,8 +821,8 @@ class PropertyEditor(QWidget):
                 saved_scroll_pos = self._page.verticalScrollBar().value()
 
         if obj is None and self.current_object is not None:
-            if hasattr(self.editor, 'properties_tab_widget'):
-                prev = getattr(self.editor, '_previous_tab_index', None)
+            if self.editor.properties_tab_widget:
+                prev = self.editor._previous_tab_index
                 if prev is not None and self.editor.properties_tab_widget.currentIndex() == 0:
                     self.editor.properties_tab_widget.setCurrentIndex(prev)
 
@@ -804,6 +984,7 @@ class PropertyEditor(QWidget):
             self.io_tab_index = self.tab_widget.addTab(self.io_tab, "⚡ I/O")
 
         layout.addWidget(self.tab_widget)
+
         layout.addStretch()
         scroll.setWidget(content)
         self.main_layout.addWidget(scroll)
@@ -957,10 +1138,8 @@ class PropertyEditor(QWidget):
         inputs.set_io_enabled(enabled)
 
     def _on_io_connections_changed(self):
-        if hasattr(self.editor.state, 'save_state'):
-            self.editor.state.save_state()
-        if hasattr(self.editor, 'mark_dirty'):
-            self.editor.mark_dirty()
+        self.editor.state.save_state()
+        self.editor.mark_as_modified()
         if not self._populating:
             self.editor.update_all_ui()
 
@@ -1051,20 +1230,16 @@ class PropertyEditor(QWidget):
         self._widgets['trigger_type_combo'] = type_combo
 
         # Activation mode: touch fires on entry; use requires E press.
-        # `trigger_activation` is the key the engine and the maps use; older
-        # builds of this tab wrote `trigger_collect_activation`, which nothing
-        # read, so it is only a fallback for showing what was chosen.
         collect_activation_combo = _make_combo(
             ['touch', 'use'],
-            brush.get('trigger_activation',
-                      brush.get('trigger_collect_activation', 'touch')),
+            brush.get('trigger_activation', 'touch'),
             tooltip=(
                 "touch — fires when player walks inside\n"
                 "use — fires when player presses E while inside"
             )
         )
         form.addRow("Activation:", collect_activation_combo)
-        self._widgets['trigger_collect_activation_combo'] = collect_activation_combo
+        self._widgets['trigger_activation_combo'] = collect_activation_combo
 
         poll_interval_values = {
             '1.0 s': 1.0,
@@ -1103,9 +1278,7 @@ class PropertyEditor(QWidget):
             )
         )
 
-        is_use_mode = brush.get(
-            'trigger_activation',
-            brush.get('trigger_collect_activation', 'touch')) == 'use'
+        is_use_mode = brush.get('trigger_activation', 'touch') == 'use'
         use_label_lbl.setVisible(is_use_mode)
         use_label_input.setVisible(is_use_mode)
 
@@ -1568,19 +1741,16 @@ class PropertyEditor(QWidget):
         layout = QVBoxLayout(group)
         layout.setSpacing(8)
 
-        # Water quality is a renderer setting shared by every water brush
-        # (also in Settings > Renderer Performance and the console's
-        # r_waterquality); it is surfaced here where water is edited.
         quality_cb = _make_checkbox(
-            "Expensive water",
-            self._water_quality() == 'expensive',
-            self._set_expensive_water,
+            "High quality",
+            water_high_quality(brush),
+            lambda c: self.update_object_prop('water_high_quality', c),
             _Style.CHECKBOX)
         quality_cb.setToolTip(
-            "Applies to all water in the level (the Water Quality setting).\n"
+            "This water brush only.\n"
             "On: depth-based colour, shoreline foam, caustics and reflections\n"
             "of the scene. Off: cheap water - waves, refraction and sky\n"
-            "reflection only.")
+            "reflection only (faster).")
         self._widgets['water_quality_cb'] = quality_cb
 
         plane_cb = _make_checkbox(
@@ -1673,43 +1843,6 @@ class PropertyEditor(QWidget):
         layout.addWidget(wave_group)
 
         return group
-
-    def _view_renderer(self):
-        view = getattr(self.editor, 'view_3d', None)
-        return getattr(view, 'renderer', None) if view is not None else None
-
-    def _water_quality(self):
-        """The water quality in use: the live renderer's, else settings.ini's."""
-        renderer = self._view_renderer()
-        if renderer is not None and hasattr(renderer, 'water_quality'):
-            return renderer.water_quality
-        config = getattr(self.editor, 'config', None)
-        if config is not None:
-            try:
-                return config.get('Renderer', 'water_quality', fallback='expensive')
-            except Exception:
-                pass
-        return 'expensive'
-
-    def _set_expensive_water(self, checked):
-        """Switch every water surface between expensive and cheap, and save it."""
-        quality = 'expensive' if checked else 'cheap'
-        renderer = self._view_renderer()
-        if renderer is not None:
-            renderer.water_quality = quality
-            view = getattr(self.editor, 'view_3d', None)
-            if hasattr(view, 'update'):
-                view.update()
-        config = getattr(self.editor, 'config', None)
-        if config is not None:
-            try:
-                if not config.has_section('Renderer'):
-                    config.add_section('Renderer')
-                config.set('Renderer', 'water_quality', quality)
-                if hasattr(self.editor, 'save_config'):
-                    self.editor.save_config()
-            except Exception:
-                pass
 
     def _create_fog_properties(self, brush):
         group = QGroupBox("Fog Properties")
@@ -1827,6 +1960,37 @@ class PropertyEditor(QWidget):
                 self._defer_io_tab(lambda t=thing: self._create_io_tab_for_thing(t))
 
         layout.addWidget(self.tab_widget)
+
+        entity_type = thing.properties.get('type')
+        if entity_type:
+            from plugins.manager import get_manager
+            plugin_tabs = get_manager().property_tabs_for(entity_type)
+            if plugin_tabs:
+                pending = {}
+                for label, factory in plugin_tabs:
+                    placeholder = QWidget()
+                    placeholder_layout = QVBoxLayout(placeholder)
+                    placeholder_layout.setContentsMargins(0, 0, 0, 0)
+                    index = self.tab_widget.addTab(placeholder, label)
+                    pending[index] = (placeholder, factory)
+                self.tab_widget._fio_pending_tabs = pending
+
+                def build_plugin_tab(index, widget=self.tab_widget, entity=thing):
+                    pending_tabs = widget._fio_pending_tabs
+                    if index not in pending_tabs:
+                        return
+                    placeholder, factory = pending_tabs.pop(index)
+                    try:
+                        inner = factory(entity)
+                    except Exception as exc:
+                        debug_log("Plugins", f"custom tab build failed ({exc})")
+                        return
+                    if inner is not None:
+                        placeholder.layout().addWidget(inner)
+
+                self.tab_widget.currentChanged.connect(build_plugin_tab)
+                build_plugin_tab(self.tab_widget.currentIndex())
+
         layout.addStretch()
         scroll.setWidget(content)
         self.main_layout.addWidget(scroll)
@@ -2040,6 +2204,12 @@ class PropertyEditor(QWidget):
                 property_keys=primary_properties,
             )
 
+        if isinstance(thing, PlayerStart):
+            self._build_player_start_primary(form, thing)
+
+        if isinstance(thing, LevelChanger):
+            self._build_destination_spawn(form, thing)
+
         # Type-specific grouped editors (already visually grouped).
         if isinstance(thing, PathNode):
             self._build_pathnode_group(tab_layout, thing)
@@ -2055,6 +2225,18 @@ class PropertyEditor(QWidget):
 
         if isinstance(thing, Monster):
             self._build_monster_groups(tab_layout, thing)
+
+        entity_type = thing.properties.get('type')
+        if entity_type:
+            from plugins.manager import get_manager
+            plugin_sections = get_manager().property_sections_for(entity_type)
+            for label, factory, expanded in plugin_sections:
+                section = CollapsibleSection(label, expanded=expanded)
+                section.setObjectName(f"fio_property_section:{label}")
+                _wire_plugin_lazy_section(section, factory, thing, label)
+                tab_layout.insertWidget(
+                    max(0, tab_layout.count() - 1),
+                    section)
 
         tab_layout.addStretch()
         return w
@@ -2661,11 +2843,8 @@ class PropertyEditor(QWidget):
             tname = thing.properties.get('portal_target', '')
             for t in self.editor.state.things:
                 if isinstance(t, Portal) and t.properties.get('name') == tname:
-                    if hasattr(self.editor, 'select_object'):
-                        self.editor.select_object(t)
-                    else:
-                        self.editor.state.selected_object = t
-                        self.editor.update_all_ui()
+                    self.editor.set_selected_objects([t])
+                    self.editor.update_all_ui()
                     break
 
         sel_btn.clicked.connect(on_select)
@@ -2717,7 +2896,7 @@ class PropertyEditor(QWidget):
         type_values = (
             ('Health', 'health'),
             ('Ammo', 'ammo'),
-            ('Weapon', 'weapon'),
+            ('Item', 'item'),
             ('Key', 'key'),
         )
         type_labels = [label for label, _ in type_values]
@@ -2734,22 +2913,17 @@ class PropertyEditor(QWidget):
         type_row = form.rowCount()
         form.addRow("Collect as:", type_combo)
 
-        weapon_values = tuple(Prop.GUN_NAMES)
-        weapon_labels = {
-            'gun1': 'Gun 1',
-            'gun2': 'Gun 2',
-            'cig': 'Cigarette',
-        }
-        weapon_combo = _make_combo(
-            [weapon_labels.get(v, v.title()) for v in weapon_values],
-            weapon_labels.get(
-                thing.properties.get('collect_weapon', 'gun1'),
-                'Gun 1',
-            ),
-            self._on_prop_weapon_changed,
+        choices = item_choices(self.editor.state.item_definitions)
+        item_label = dict((v, k) for k, v in choices)
+        item_combo = _make_combo(
+            [label for label, _ in choices],
+            item_label.get(thing.properties.get('collect_item', 'gun1'), choices[0][0]),
+            self._on_prop_item_changed,
         )
-        weapon_row = form.rowCount()
-        form.addRow("Weapon:", weapon_combo)
+        item_combo.setToolTip(
+            "The item this Prop gives. Redefine the custom items in Tools > Custom Items.")
+        item_row = form.rowCount()
+        form.addRow("Item:", item_combo)
 
         key_values = tuple(Prop.KEY_NAMES)
         key_labels = {
@@ -2852,10 +3026,8 @@ class PropertyEditor(QWidget):
         self._prop_collectible_cb = collectible_cb
         self._prop_collect_type_combo = type_combo
         self._prop_collect_type_values = value_for_label
-        self._prop_weapon_combo = weapon_combo
-        self._prop_weapon_values = {
-            label: value for value, label in weapon_labels.items()
-        }
+        self._prop_item_combo = item_combo
+        self._prop_item_values = dict(choices)
         self._prop_key_combo = key_combo
         self._prop_key_values = {
             label: value for value, label in key_labels.items()
@@ -2871,7 +3043,7 @@ class PropertyEditor(QWidget):
         self._prop_respawn_spin = respawn_spin
         self._prop_collection_rows = {
             'type': type_row,
-            'weapon': weapon_row,
+            'item': item_row,
             'key': key_row,
             'activation': activation_row,
             'value': value_row,
@@ -2933,12 +3105,13 @@ class PropertyEditor(QWidget):
         # The Collect as row is useful whenever collection is enabled. Type
         # specific controls then narrow down from there.
         self._set_form_row_visible(form, rows['type'], enabled)
-        self._set_form_row_visible(form, rows['weapon'], enabled and kind == 'weapon')
+        self._set_form_row_visible(form, rows['item'], enabled and kind == 'item')
         self._set_form_row_visible(form, rows['key'], enabled and kind == 'key')
         self._set_form_row_visible(
             form,
             rows['activation'],
-            enabled and kind not in ('health', 'ammo', 'weapon'),
+            # An item says for itself how it is collected.
+            enabled and kind not in ('health', 'ammo', 'item'),
         )
         self._set_form_row_visible(
             form,
@@ -2965,15 +3138,11 @@ class PropertyEditor(QWidget):
         )
         self._prop_respawn_cb.blockSignals(False)
 
-        weapon = thing.properties.get('collect_weapon', 'gun1')
-        weapon_label = {
-            'gun1': 'Gun 1',
-            'gun2': 'Gun 2',
-            'cig': 'Cigarette',
-        }.get(weapon, 'Gun 1')
-        self._prop_weapon_combo.blockSignals(True)
-        self._prop_weapon_combo.setCurrentText(weapon_label)
-        self._prop_weapon_combo.blockSignals(False)
+        item_id = thing.properties.get('collect_item', 'gun1')
+        labels = {value: label for label, value in self._prop_item_values.items()}
+        self._prop_item_combo.blockSignals(True)
+        self._prop_item_combo.setCurrentText(labels.get(item_id, item_id))
+        self._prop_item_combo.blockSignals(False)
 
         key = thing.properties.get('collect_key_name', Prop.DEFAULT_KEY_NAME)
         key_label = {
@@ -3034,7 +3203,7 @@ class PropertyEditor(QWidget):
         kind = str(thing.properties.get('collect_type', 'health')).lower()
         derived = (
             bool(thing.properties.get('collect_enabled'))
-            and kind in ('health', 'ammo', 'weapon', 'key')
+            and kind in ('health', 'ammo', 'item', 'key')
         )
         self._set_form_row_visible(
             form,
@@ -3051,9 +3220,9 @@ class PropertyEditor(QWidget):
             kind = str(
                 self.current_object.properties.get('collect_type', 'health') or 'health'
             ).lower()
-            if kind == 'weapon':
-                self._set_prop_weapon_sprite(
-                    self.current_object.properties.get('collect_weapon', 'gun1')
+            if kind == 'item':
+                self._set_prop_item_sprite(
+                    self.current_object.properties.get('collect_item', 'gun1')
                 )
             elif kind == 'key':
                 self._set_prop_key_sprite(
@@ -3087,9 +3256,10 @@ class PropertyEditor(QWidget):
             'walk_over' if str(label) == 'Walk over' else 'use',
         )
 
-    def _on_prop_weapon_changed(self, label):
-        weapon = getattr(self, '_prop_weapon_values', {}).get(label, 'gun1')
-        self.on_collect_weapon_changed(weapon)
+    def _on_prop_item_changed(self, label):
+        item_id = self._prop_item_values.get(label)
+        if item_id is not None:
+            self.on_collect_item_changed(item_id)
 
     def _on_prop_key_changed(self, label):
         key = getattr(self, '_prop_key_values', {}).get(
@@ -3097,6 +3267,88 @@ class PropertyEditor(QWidget):
             Prop.DEFAULT_KEY_NAME,
         )
         self.on_collect_key_name_changed(key)
+
+    # -- PlayerStart / LevelChanger ------------------------------------------
+
+    def _build_player_start_primary(self, form, thing):
+        """The Primary flag: Play starts at the level's primary PlayerStart.
+
+        Checking it makes this start primary and the previous one not; there
+        is always exactly one while the level has starts, so the primary's own
+        box cannot be cleared -- mark another start primary instead.
+        """
+        primary_cb = QCheckBox("Primary")
+        primary_cb.setChecked(thing.primary)
+        primary_cb.setEnabled(not thing.primary)
+        primary_cb.setToolTip(
+            "Play starts at the primary PlayerStart, as does a LevelChanger "
+            "whose Destination Spawn is <Primary>. To move it, make another "
+            "PlayerStart primary.")
+        primary_cb.toggled.connect(
+            lambda on: self._make_primary_start(thing) if on else None)
+        form.addRow("Start:", primary_cb)
+        self._widgets['player_start_primary'] = primary_cb
+
+    def _make_primary_start(self, thing):
+        if self._populating or thing.primary:
+            return
+        self.editor.save_state()
+        self.editor.state.set_primary_player_start(thing)
+        self.editor.mark_as_modified()
+        self.editor.update_all_ui()
+
+    @staticmethod
+    def destination_spawn_choices(target_map, current=''):
+        """``[(label, value)]`` for a LevelChanger's Destination Spawn.
+
+        ``<Primary>`` (stored as '') and the named PlayerStarts of *target_map*,
+        read from the map file. A stored name the map does not have is kept,
+        marked missing, so the panel never rewrites it.
+        """
+        choices = [("<Primary>", "")]
+        path = LevelChanger.map_path(target_map)
+        names = []
+        if path is not None:
+            try:
+                with open(os.path.join(_project_root(), *path.split('/')),
+                          encoding='utf-8') as handle:
+                    names = start_rules.start_names(json.load(handle))
+            except (OSError, ValueError):
+                names = []
+        choices += [(name, name) for name in names]
+        if current and current not in names:
+            choices.append((f"{current} (missing)", current))
+        return choices
+
+    def _build_destination_spawn(self, form, thing):
+        combo = QComboBox()
+        combo.setToolTip(
+            "The PlayerStart the player arrives at in the target map: its "
+            "primary start, or one by name.")
+        self._widgets['destination_spawn'] = combo
+        self._fill_destination_spawn(thing)
+        combo.currentIndexChanged.connect(
+            lambda _index: self._on_destination_spawn_changed(combo))
+        form.addRow("Destination Spawn:", combo)
+
+    def _fill_destination_spawn(self, thing):
+        combo = self._widgets.get('destination_spawn')
+        if combo is None:
+            return
+        current = str(thing.properties.get('destination_spawn') or '')
+        combo.blockSignals(True)
+        combo.clear()
+        for label, value in self.destination_spawn_choices(
+                thing.properties.get('target_map', ''), current):
+            combo.addItem(label, value)
+        combo.setCurrentIndex(max(0, combo.findData(current)))
+        combo.blockSignals(False)
+
+    def _on_destination_spawn_changed(self, combo):
+        if self._populating or not isinstance(self.current_object, LevelChanger):
+            return
+        self.update_object_prop('destination_spawn', combo.currentData() or '')
+        self.editor.mark_as_modified()
 
     def _iterate_thing_properties(self, form, thing, property_keys=None):
         """Add generic Thing properties to a form.
@@ -3106,6 +3358,24 @@ class PropertyEditor(QWidget):
         preserved for entities that have not yet been migrated to explicit
         editor property classification.
         """
+
+        from plugins.manager import get_manager
+        manager = get_manager()
+        entity_type = thing.properties.get('type')
+        plugin_schema = (
+            manager.property_schema_for(entity_type)
+            if entity_type else None
+        )
+        plugin_owner = (
+            manager.plugin_for_type(entity_type)
+            if entity_type else None
+        )
+        if plugin_schema and plugin_owner is not None:
+            _render_plugin_schema_rows(self, form, thing, plugin_schema)
+            extra = manager.extra_fields_for(entity_type)
+            if extra:
+                _append_plugin_extra_fields(self, form, thing, extra)
+            return
         _MONSTER_ONLY = {
             'awake',
             'damage',
@@ -3400,6 +3670,12 @@ class PropertyEditor(QWidget):
                 edit,
             )
 
+
+        if entity_type:
+            extra = manager.extra_fields_for(entity_type)
+            if extra:
+                _append_plugin_extra_fields(self, form, thing, extra)
+
     def _build_monster_type_row(self, form, thing):
         from engine.monster_constants import MONSTER_TYPES
         combo = _make_combo(MONSTER_TYPES, thing.properties.get('monster_type', 'human'))
@@ -3430,8 +3706,7 @@ class PropertyEditor(QWidget):
                 Monster.clear_sprite_cache()
             except Exception:
                 pass
-            if hasattr(self.editor, 'mark_dirty'):
-                self.editor.mark_dirty()
+            self.editor.mark_as_modified()
             try:
                 self.editor.view_3d.update()
             except Exception:
@@ -3547,6 +3822,42 @@ class PropertyEditor(QWidget):
         form = QFormLayout(group)
         form.setSpacing(6)
         form.setContentsMargins(8, 8, 8, 8)
+
+        # Cutscene file. This is the explicit JSON playback selector.
+        cutscene = ClickableComboBox()
+        cutscene.setEditable(True)
+        cutscene.addItem("(none)")
+        cutscene_files = []
+        try:
+            import glob
+            cutscene_files = sorted(
+                os.path.basename(path)
+                for path in glob.glob(
+                    os.path.join(self.editor.root_dir, "cutscenes", "*.json")
+                )
+            )
+        except (AttributeError, TypeError, OSError):
+            cutscene_files = []
+        for filename in cutscene_files:
+            cutscene.addItem(f"cutscenes/{filename}")
+
+        current_cutscene = str(thing.properties.get('cutscene_file', '') or '').replace("\\", "/")
+        if current_cutscene:
+            idx = cutscene.findText(current_cutscene)
+            if idx >= 0:
+                cutscene.setCurrentIndex(idx)
+            else:
+                cutscene.setEditText(current_cutscene)
+
+        def _on_cutscene(text):
+            clean = text.strip()
+            self.update_object_prop('cutscene_file', '' if clean == '(none)' else clean)
+
+        cutscene.currentTextChanged.connect(_on_cutscene)
+        cutscene.setToolTip(
+            "Play this authored cutscene JSON. When set, it takes precedence over Path Target."
+        )
+        form.addRow("Cutscene File:", cutscene)
 
         # Path target
         combo = ClickableComboBox()
@@ -3719,8 +4030,7 @@ class PropertyEditor(QWidget):
                 for k in ('monster_type', 'variant', 'random'):
                     spawn_props.pop(k, None)
             thing.properties['spawn_properties'] = spawn_props
-            if hasattr(self.editor, 'mark_dirty'):
-                self.editor.mark_dirty()
+            self.editor.mark_as_modified()
 
         spawn_combo.currentTextChanged.connect(lambda _: update_visibility())
         update_visibility()
@@ -4122,14 +4432,12 @@ class PropertyEditor(QWidget):
                 rel = os.path.relpath(fp, os.getcwd()).replace('\\', '/')
                 thing.properties['projectile_sprite'] = rel
                 proj_path.setText(rel)
-                if hasattr(self.editor, 'mark_dirty'):
-                    self.editor.mark_dirty()
+                self.editor.mark_as_modified()
 
         def clear_proj():
             thing.properties.pop('projectile_sprite', None)
             proj_path.setText('')
-            if hasattr(self.editor, 'mark_dirty'):
-                self.editor.mark_dirty()
+            self.editor.mark_as_modified()
 
         proj_btn = QPushButton("...")
         proj_btn.setFixedWidth(30)
@@ -4193,16 +4501,14 @@ class PropertyEditor(QWidget):
             if not checked:
                 thing.properties['patrol_target'] = ''
                 patrol_combo.setCurrentIndex(0)
-            if hasattr(self.editor, 'mark_dirty'):
-                self.editor.mark_dirty()
+            self.editor.mark_as_modified()
 
         def _on_patrol_target(text):
             clean = (text or '').replace("  (missing)", "")
             if "  (wants " in clean:
                 clean = clean.split("  (wants ")[0]
             thing.properties['patrol_target'] = '' if clean == '(none)' else clean
-            if hasattr(self.editor, 'mark_dirty'):
-                self.editor.mark_dirty()
+            self.editor.mark_as_modified()
 
         patrol_cb.toggled.connect(_on_patrol)
         patrol_combo.currentTextChanged.connect(_on_patrol_target)
@@ -4216,8 +4522,7 @@ class PropertyEditor(QWidget):
 
         def _on_mode(text):
             thing.properties['patrol_mode'] = text
-            if hasattr(self.editor, 'mark_dirty'):
-                self.editor.mark_dirty()
+            self.editor.mark_as_modified()
 
         mode_combo.currentTextChanged.connect(_on_mode)
 
@@ -4403,7 +4708,7 @@ class PropertyEditor(QWidget):
             shader_keys = ('glass_color', 'glass_opacity', 'glass_distortion', 'glass_refraction',
                            'glass_roughness', 'glass_fresnel', 'glow_color', 'glow_intensity',
                            'water_tint', 'water_opacity', 'water_reflectivity', 'water_wave_enabled',
-                           'water_wave_height', 'water_plane', 'water_reflections',
+                           'water_wave_height', 'water_plane', 'water_high_quality', 'water_reflections',
                            'water_distortion', 'water_refraction', 'water_roughness', 'water_fresnel',
                            'fog_color', 'fog_density')
             for key in shader_keys:
@@ -4431,7 +4736,7 @@ class PropertyEditor(QWidget):
             if 'water_opacity' not in self.current_object:
                 self.current_object['water_opacity'] = 0.5
             if 'water_reflectivity' not in self.current_object:
-                self.current_object['water_reflectivity'] = 0.5
+                self.current_object['water_reflectivity'] = 0.65
             if 'water_tint' not in self.current_object:
                 self.current_object['water_tint'] = [0.0, 0.4, 0.6]
             if 'water_wave_enabled' not in self.current_object:
@@ -4445,7 +4750,7 @@ class PropertyEditor(QWidget):
             if 'water_roughness' not in self.current_object:
                 self.current_object['water_roughness'] = 0.0
             if 'water_fresnel' not in self.current_object:
-                self.current_object['water_fresnel'] = self.current_object.get('water_reflectivity', 0.5)
+                self.current_object['water_fresnel'] = self.current_object.get('water_reflectivity', 0.65)
         elif shader_type == 'Fog':
             self.current_object['is_fog'] = True
             if 'fog_density' not in self.current_object:
@@ -4459,8 +4764,7 @@ class PropertyEditor(QWidget):
         # Shader selection changes dense render classification/material state
         # (fog, water, glass, glow, trigger exclusion). Journal this exact
         # brush so the write-side RenderTable cold row is refreshed immediately.
-        if hasattr(self.editor, 'state') and hasattr(self.editor.state, 'mark_world_changed'):
-            self.editor.state.mark_world_changed([self.current_object])
+        self.editor.state.mark_world_changed([self.current_object])
 
         # Defer refresh to avoid interrupting shader combo's own update cycle
         QTimer.singleShot(0, self._deferred_shader_refresh)
@@ -4493,8 +4797,7 @@ class PropertyEditor(QWidget):
         self._update_io_tab_presence()
 
         # Trigger state changes the render classification and face textures.
-        if hasattr(self.editor, 'state') and hasattr(self.editor.state, 'mark_world_changed'):
-            self.editor.state.mark_world_changed([self.current_object])
+        self.editor.state.mark_world_changed([self.current_object])
 
         self.editor.update_views()
         self.editor.scene_hierarchy.refresh_list()
@@ -4512,8 +4815,7 @@ class PropertyEditor(QWidget):
             if hasattr(self, 'door_tab_index'):
                 self.tab_widget.setTabVisible(self.door_tab_index, False)
         self.current_object['is_mover'] = is_mover
-        if hasattr(self.editor, 'state') and hasattr(self.editor.state, 'mark_world_changed'):
-            self.editor.state.mark_world_changed([self.current_object])
+        self.editor.state.mark_world_changed([self.current_object])
         if is_mover:
             self.current_object.setdefault('speed', 64.0)
             self.current_object.setdefault('distance', 128.0)
@@ -4539,8 +4841,7 @@ class PropertyEditor(QWidget):
             if hasattr(self, 'mover_tab_index'):
                 self.tab_widget.setTabVisible(self.mover_tab_index, False)
         self.current_object['is_door'] = is_door
-        if hasattr(self.editor, 'state') and hasattr(self.editor.state, 'mark_world_changed'):
-            self.editor.state.mark_world_changed([self.current_object])
+        self.editor.state.mark_world_changed([self.current_object])
         if is_door:
             self.current_object.setdefault('door_direction', 'up')
             self.current_object.setdefault('door_distance', 128.0)
@@ -4643,13 +4944,11 @@ class PropertyEditor(QWidget):
             if checked:
                 if btn:
                     btn.setText("■ Stop Preview")
-                if hasattr(self.editor, 'start_mover_preview'):
-                    self.editor.start_mover_preview(self.current_object)
+                self.editor.start_mover_preview(self.current_object)
             else:
                 if btn:
                     btn.setText("▶ Preview Door")
-                if hasattr(self.editor, 'stop_mover_preview'):
-                    self.editor.stop_mover_preview()
+                self.editor.stop_mover_preview()
 
     def on_respawn_toggled(self, state):
         collect_respawns = bool(state)
@@ -4667,10 +4966,8 @@ class PropertyEditor(QWidget):
         self._set_prop_key_sprite(collect_key_name)
         self._refresh_prop_collection_ui(self.current_object)
         self._refresh_prop_collection_appearance(self.current_object)
-        if hasattr(self.editor, 'view_3d'):
-            self.editor.view_3d.update()
-        if hasattr(self.editor, 'mark_dirty'):
-            self.editor.mark_dirty()
+        self.editor.view_3d.update()
+        self.editor.mark_as_modified()
 
     def _set_prop_key_sprite(self, collect_key_name):
         self.update_object_prop(
@@ -4702,10 +4999,9 @@ class PropertyEditor(QWidget):
                 Prop.clear_sprite_cache()
             self._refresh_prop_collection_ui(self.current_object)
             self._refresh_prop_collection_appearance(self.current_object)
-            if hasattr(self.editor, 'view_3d'):
+            if self.editor.view_3d:
                 self.editor.view_3d.update()
-            if hasattr(self.editor, 'mark_dirty'):
-                self.editor.mark_dirty()
+            self.editor.mark_as_modified()
 
     def on_collect_sprite_clear(self):
         if self.current_object is None or not isinstance(self.current_object, Prop):
@@ -4713,9 +5009,9 @@ class PropertyEditor(QWidget):
         thing = self.current_object
         self.update_object_prop('collect_custom_sprite', '')
         kind = normalise_collect_type(thing.properties)
-        if kind == 'weapon':
-            self._set_prop_weapon_sprite(
-                thing.properties.get('collect_weapon', 'gun1')
+        if kind == 'item':
+            self._set_prop_item_sprite(
+                thing.properties.get('collect_item', 'gun1')
             )
         elif kind == 'key':
             self._set_prop_key_sprite(
@@ -4736,32 +5032,31 @@ class PropertyEditor(QWidget):
             Prop.clear_sprite_cache()
         self._refresh_prop_collection_ui(thing)
         self._refresh_prop_collection_appearance(thing)
-        if hasattr(self.editor, 'view_3d'):
+        if self.editor.view_3d:
             self.editor.view_3d.update()
-        if hasattr(self.editor, 'mark_dirty'):
-            self.editor.mark_dirty()
+        self.editor.mark_as_modified()
 
-    def on_collect_weapon_changed(self, weapon):
+    def on_collect_item_changed(self, item_id):
         if self.current_object is None or not isinstance(self.current_object, Prop):
             return
-        self.update_object_prop('collect_weapon', weapon)
+        self.update_object_prop('collect_item', item_id)
         self.update_object_prop('collect_custom_sprite', '')
-        self._set_prop_weapon_sprite(weapon)
+        self._set_prop_item_sprite(item_id)
         self._refresh_prop_collection_ui(self.current_object)
         self._refresh_prop_collection_appearance(self.current_object)
         if hasattr(Prop, 'clear_sprite_cache'):
             Prop.clear_sprite_cache()
-        if hasattr(self.editor, 'view_3d'):
+        if self.editor.view_3d:
             self.editor.view_3d.update()
-        if hasattr(self.editor, 'mark_dirty'):
-            self.editor.mark_dirty()
+        self.editor.mark_as_modified()
 
-    def _set_prop_weapon_sprite(self, weapon):
-        sprite = Prop.GUN_SPRITES.get(
-            weapon,
-            Prop.GUN_SPRITES['gun1'],
-        )
-        self.update_object_prop('sprite_path', sprite)
+    def _set_prop_item_sprite(self, item_id):
+        """Show the Prop as the item it gives: that item's world sprite."""
+        if item_id not in ITEM_IDS:
+            return
+        sprite = self.editor.state.item_definitions.definition(item_id).get('world_sprite')
+        if sprite:
+            self.update_object_prop('sprite_path', sprite)
 
     def on_collect_type_changed(self, collect_type):
         if self.current_object is None or not isinstance(self.current_object, Prop):
@@ -4778,11 +5073,11 @@ class PropertyEditor(QWidget):
             self.update_object_prop('collect_custom_sprite', '')
             self.update_object_prop('collect_activation', 'walk_over')
             self.update_object_prop('sprite_path', 'assets/sprites/health.png')
-        elif collect_type == 'weapon':
+        elif collect_type == 'item':
             self.update_object_prop('collect_custom_sprite', '')
             self.update_object_prop('collect_activation', 'walk_over')
-            self._set_prop_weapon_sprite(
-                self.current_object.properties.get('collect_weapon', 'gun1')
+            self._set_prop_item_sprite(
+                self.current_object.properties.get('collect_item', 'gun1')
             )
         elif collect_type == 'key':
             self.update_object_prop('collect_custom_sprite', '')
@@ -4802,10 +5097,9 @@ class PropertyEditor(QWidget):
         self._refresh_prop_collection_appearance(self.current_object)
         if hasattr(Prop, 'clear_sprite_cache'):
             Prop.clear_sprite_cache()
-        if hasattr(self.editor, 'view_3d'):
+        if self.editor.view_3d:
             self.editor.view_3d.update()
-        if hasattr(self.editor, 'mark_dirty'):
-            self.editor.mark_dirty()
+        self.editor.mark_as_modified()
 
     def _on_collision_size_changed(self, value, thing):
         """Handle collision size vector update."""
@@ -4814,8 +5108,7 @@ class PropertyEditor(QWidget):
             thing.properties.pop('collision_size', None)
         else:
             thing.properties['collision_size'] = list(value)
-        if hasattr(self.editor, 'mark_dirty'):
-            self.editor.mark_dirty()
+        self.editor.mark_as_modified()
 
     def add_model_path_widget(self, layout, thing):
         widget = QWidget()
@@ -4878,10 +5171,12 @@ class PropertyEditor(QWidget):
         line_edit = QLineEdit(str(value))
         line_edit.setReadOnly(True)
         button = QPushButton("Browse...")
-        button.setToolTip("Choose a sound file from the Fio project.")
+        button.setToolTip("Choose a sound from assets/sounds or assets/music\n"
+                          "(or double-click one in the Asset Browser's Audio tab).")
         button.setFixedWidth(80)
 
         def open_dialog():
+            from engine.speaker_audio import speaker_sound_path
             start = os.path.join(_project_root(), 'assets', 'sounds')
             os.makedirs(start, exist_ok=True)
             fp, _ = QFileDialog.getOpenFileName(
@@ -4892,9 +5187,15 @@ class PropertyEditor(QWidget):
             )
             if fp:
                 rel = _normalise_project_asset_path(fp)
-                if rel:
-                    self.update_object_prop(key, rel)
-                    line_edit.setText(rel)
+                # Speakers play only from assets/sounds and assets/music.
+                if speaker_sound_path(rel) != rel:
+                    QMessageBox.warning(
+                        self, "Sound File",
+                        "Speakers play sounds from assets/sounds or assets/music only.\n"
+                        "Move the file into one of those folders first.")
+                    return
+                self.update_object_prop(key, rel)
+                line_edit.setText(rel)
 
         button.clicked.connect(open_dialog)
         h.addWidget(line_edit, 1)
@@ -4955,8 +5256,7 @@ class PropertyEditor(QWidget):
         # Property edits are live scene mutations, not merely UI state.  The
         # dense render/entity projections cache their cold columns behind the
         # editor's world epoch, so journal this exact object immediately.
-        if hasattr(self.editor, 'state') and hasattr(self.editor.state, 'mark_world_changed'):
-            self.editor.state.mark_world_changed([self.current_object])
+        self.editor.state.mark_world_changed([self.current_object])
 
         if key == 'name' and _io_system is not None:
             # A name is read by every *other* entity's panel — the "Targeted by"
@@ -4966,6 +5266,10 @@ class PropertyEditor(QWidget):
             # is the shared "something addressable moved" signal they already
             # fold into their cache key.
             _io_system.bump_io_revision()
+
+        if isinstance(self.current_object, LevelChanger) and key == 'target_map':
+            # The destination choices are the new map's PlayerStarts.
+            self._fill_destination_spawn(self.current_object)
 
         if isinstance(self.current_object, Portal) and key == 'angle':
             rot = self.current_object.properties.get('rotation', [0.0, 0.0, 0.0])
@@ -4988,13 +5292,13 @@ class PropertyEditor(QWidget):
             if key in ('terrain_fill', 'terrain_infinite', 'enabled',
                        'terrain_stream_radius', 'collect_activation_radius') \
                     and getattr(self.current_object, 'TYPE', None) == 'bigworldsettings' \
-                    and hasattr(self.editor, 'sync_bigworld_terrain'):
+                    and self.editor.sync_bigworld_terrain:
                 self.editor.sync_bigworld_terrain(allow_create=True)
                 # When fill (or infinite) is switched on, surface the Terrain
                 # Editor so the generated ground can be sculpted / re-biomed.
                 if key in ('terrain_fill', 'terrain_infinite') and bool(value) \
-                        and getattr(self.editor, 'terrain', None) is not None \
-                        and hasattr(self.editor, '_show_terrain_editor_panel'):
+                        and self.editor.terrain is not None \
+                        and self.editor._show_terrain_editor_panel:
                     self.editor._show_terrain_editor_panel()
 
             # Only repaint viewports — do NOT call update_all_ui() here.
@@ -5011,5 +5315,4 @@ class PropertyEditor(QWidget):
             if key == 'name' and hasattr(self.editor, 'scene_hierarchy'):
                 self.editor.scene_hierarchy.refresh_list()
             # Mark the scene dirty so Ctrl+S knows there are unsaved changes.
-            if hasattr(self.editor, 'mark_dirty'):
-                self.editor.mark_dirty()
+            self.editor.mark_as_modified()

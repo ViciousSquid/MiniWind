@@ -5,10 +5,13 @@ an undefined _split_asset_path global. They intentionally avoid Qt and GL:
 the failure occurs in the pure data projection before rendering.
 """
 
+import numpy as np
 import pytest
 
 from engine import entity_table
-from engine.change_journal import touch
+from engine.change_journal import MOVED, touch
+from engine.effect_entity import Effect
+from engine.effect_table import EffectStore
 
 
 @pytest.mark.parametrize(
@@ -47,6 +50,7 @@ def test_sprite_candidates_resolves_nested_sprite_path_without_name_error():
     assert candidates[-1] == ("Barrel", "frame_01.png", "sprites/animated/door", True)
 
 
+@pytest.mark.qt
 def test_a_dead_monster_row_interns_a_distinct_dead_sprite_recipe():
     pytest.importorskip("PyQt5", reason="Monster lives in editor.things")
     from editor.things import Monster
@@ -66,12 +70,24 @@ def test_a_dead_monster_row_interns_a_distinct_dead_sprite_recipe():
     assert any(candidate[1] == "dead.png" for candidate in table.sprite_recipes()[dead_id])
 
 
-@pytest.mark.gl
-def test_sprite_gl_cache_resolves_recipes_added_after_capacity_growth():
-    from engine.renderer_core import BaseRenderer
-    import numpy as np
 
-    renderer = BaseRenderer.__new__(BaseRenderer)
+@pytest.fixture
+def renderer():
+    pytest.importorskip("PyQt5", reason="renderer construction requires Qt")
+    pytest.importorskip("OpenGL", reason="sprite cache test requires OpenGL")
+    from tests.helpers.gl import GLTestContext, make_renderer, reset_texture_cache
+
+    reset_texture_cache()
+    with GLTestContext(64, 64):
+        value = make_renderer()
+        try:
+            yield value
+        finally:
+            value.cleanup()
+            reset_texture_cache()
+
+@pytest.mark.gl
+def test_sprite_gl_cache_resolves_recipes_added_after_capacity_growth(renderer):
     renderer._sprite_recipes_seen = None
     renderer._sprite_gl_by_id = np.zeros(0, dtype=np.int32)
     renderer._sprite_gl_resolved = 0
@@ -92,14 +108,10 @@ def test_sprite_gl_cache_resolves_recipes_added_after_capacity_growth():
 
 
 @pytest.mark.gl
-def test_sprite_gl_cache_survives_the_render_buffers_alternating():
+def test_sprite_gl_cache_survives_the_render_buffers_alternating(renderer):
     """Each render buffer's EntityTable interns its own recipe list and the
     renderer sees them alternately; resolving must happen once per list, not
     once per frame."""
-    from engine.renderer_core import BaseRenderer
-    import numpy as np
-
-    renderer = BaseRenderer.__new__(BaseRenderer)
     renderer._sprite_recipes_seen = None
     renderer._sprite_gl_by_id = np.zeros(0, dtype=np.int32)
     renderer._sprite_gl_resolved = 0
@@ -116,3 +128,50 @@ def test_sprite_gl_cache_survives_the_render_buffers_alternating():
         assert renderer._sprite_gl_ids(back)[0] == 7
     assert len(resolved) == 2, (
         "%d resolutions for two recipe lists over ten frames" % len(resolved))
+
+
+def test_moved_effect_rows_sync_to_effect_store_with_one_masked_write(monkeypatch):
+    store = EffectStore()
+    table = entity_table.EntityTable()
+    first = object()
+    second = object()
+    things = [first, second]
+
+    # Configure the dense metadata that _apply_changes normally receives from
+    # the cold entity resolve. This keeps the test focused on the MOVED path.
+    table._slot_of_obj = {id(first): 0, id(second): 1}
+    table.class_bits = np.asarray(
+        [entity_table.ENT_EFFECT, entity_table.ENT_EFFECT],
+        dtype=table.class_bits.dtype,
+    )
+    table.effect_store_index = np.asarray([0, 1], dtype=np.int32)
+    table.pos = np.asarray(
+        [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
+        dtype=np.float64,
+    )
+    store.pos[:2] = table.pos
+
+    new_positions = {
+        id(first): (100.0, 1.0, 2.0),
+        id(second): (200.0, 3.0, 4.0),
+    }
+
+    def fail_set_position(*args, **kwargs):
+        raise AssertionError("per-effect set_position loop was used")
+
+    monkeypatch.setattr(EffectStore, "set_position", fail_set_position)
+
+    table._apply_changes(
+        things,
+        {id(first): MOVED, id(second): MOVED},
+        new_positions,
+        effect_store=store,
+    )
+
+    np.testing.assert_array_equal(
+        store.pos[:2],
+        np.asarray(
+            [new_positions[id(first)], new_positions[id(second)]],
+            dtype=np.float32,
+        ),
+    )

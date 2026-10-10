@@ -13,33 +13,41 @@ from engine.effect_entity import (
     EFFECT_ORB_TEXTURES,
 )
 from engine.entity_table import ENT_EFFECT, EntityTable
+from engine.effect_table import EffectStore
+from engine.threaded_game_state import ThreadedGameState
 from editor.io_system import IOManager, get_input_names, get_output_names
 from editor.io_handlers import register_all_input_handlers
-from types import SimpleNamespace
 
 import numpy as np
 
 
 def _io_for(effect, events=None):
-    """Deliver inputs to *effect* the way the logic thread does.
+    """Drive the Effect I/O path through the production LogicThread."""
+    from editor.editor_state import EditorState
+    from engine.logic_thread import LogicThread
 
-    Through ``IOManager._execute_input``: the handler writes the Effect, and
-    the dispatcher journals it, so the next frame's table resolves the row.
-    """
-    io = IOManager()
-    register_all_input_handlers(io)
-    io.set_entity_finder(lambda name: effect)
-    if events is None:
-        logic = SimpleNamespace(io_manager=io, game_state=None)
-    else:
-        logic = SimpleNamespace(io_manager=SimpleNamespace(
-            fire_output=lambda entity, name, value=None: events.append((name, value)),
-            get_game_state=lambda: None), game_state=None)
-    io.set_logic_thread(logic)
+    state = EditorState()
+    state.things = [effect]
+    state.brushes = []
+    logic = LogicThread(ThreadedGameState(), state)
+    logic.world_runtime.build_entity_caches()
+    logic.session_runtime.effect_store.begin_session([effect])
+
+    if events is not None:
+        real_fire_output = logic.io_manager.fire_output
+
+        def record_and_dispatch(entity, name, value=None):
+            events.append((name, value))
+            return real_fire_output(entity, name, value)
+
+        logic.io_manager.fire_output = record_and_dispatch
 
     def send(input_name, param=""):
-        io._execute_input(effect.properties.get("name", ""), input_name,
-                          param, "test")
+        logic.io_manager._execute_input(effect.properties.get("name", ""),
+                                        input_name, param, "test")
+
+    send.effect_store = logic.session_runtime.effect_store
+    send.logic = logic
     return send
 
 def test_effect_defaults_to_fire_with_intrinsic_light():
@@ -84,63 +92,37 @@ def test_orb_defaults_to_blue_square_animation():
 
 
 def test_explosion_trigger_queues_centered_sound():
+    from editor.io_handlers import register_all_input_handlers
+
     effect = Effect(
         pos=(10.0, 20.0, 30.0),
-        properties={
-            "effect_type": EFFECT_FIRE,
-            "silent": False,
-        },
+        properties={"effect_type": EFFECT_FIRE, "silent": False},
     )
-    table = EntityTable()
-    table.begin_frame([effect], epoch=1, effect_runtime=True)
+    send = _io_for(effect)
+    logic = send.logic
+    register_all_input_handlers(logic.io_manager)
+    logic.io_manager._input_handlers[("effect", "explode")](effect, "", logic)
 
-    queued = []
-    game_state = SimpleNamespace(queue_sound=lambda request: queued.append(dict(request)))
-    logic = SimpleNamespace(
-        _entity_table=table,
-        game_state=game_state,
-        io_manager=SimpleNamespace(fire_output=lambda *args, **kwargs: None),
-    )
-    io_manager = IOManager()
-    register_all_input_handlers(io_manager)
-    explode = io_manager._input_handlers[("effect", "explode")]
-
-    explode(effect, "", logic)
-
-    assert queued == [{
+    assert list(logic.game_state.sound_queue) == [{
         "action": "play",
         "file": "assets/sounds/explode.mp3",
         "volume": 1.0,
         "position": [10.0, 20.0, 30.0],
     }]
 
-
 def test_silent_explosion_does_not_queue_sound():
+    from editor.io_handlers import register_all_input_handlers
+
     effect = Effect(
         pos=(1.0, 2.0, 3.0),
-        properties={
-            "effect_type": EFFECT_FIRE,
-            "silent": True,
-        },
+        properties={"effect_type": EFFECT_FIRE, "silent": True},
     )
-    table = EntityTable()
-    table.begin_frame([effect], epoch=1, effect_runtime=True)
+    send = _io_for(effect)
+    logic = send.logic
+    register_all_input_handlers(logic.io_manager)
+    logic.io_manager._input_handlers[("effect", "explode")](effect, "", logic)
 
-    queued = []
-    game_state = SimpleNamespace(queue_sound=lambda request: queued.append(dict(request)))
-    logic = SimpleNamespace(
-        _entity_table=table,
-        game_state=game_state,
-        io_manager=SimpleNamespace(fire_output=lambda *args, **kwargs: None),
-    )
-    io_manager = IOManager()
-    register_all_input_handlers(io_manager)
-    explode = io_manager._input_handlers[("effect", "explode")]
-
-    explode(effect, "", logic)
-
-    assert queued == []
-
+    assert list(logic.game_state.sound_queue) == []
 
 def test_animation_origin_is_shared_across_render_buffers():
     """Alternating RenderState buffers must not reset an animated GIF's phase.
@@ -158,8 +140,6 @@ def test_animation_origin_is_shared_across_render_buffers():
     assert float(first.effect_spawn_time[0]) > 0.0
     assert first.effect_spawn_time[0] == second.effect_spawn_time[0]
     assert first.effect_phase[0] == second.effect_phase[0]
-    assert float(effect._effect_spawn_time) == 0.0, (
-        "the projection wrote runtime state back onto the entity")
 
 
 def test_both_buffers_agree_after_an_explode():
@@ -173,9 +153,12 @@ def test_both_buffers_agree_after_an_explode():
     for table in tables:
         table.begin_frame([effect], epoch=1, effect_runtime=True)
 
-    _io_for(effect)("Explode")
+    send = _io_for(effect)
+    send("Explode")
     for table in tables:
-        table.begin_frame([effect], epoch=1, effect_runtime=True)
+        table.begin_frame(
+            [effect], epoch=1, effect_runtime=True, effect_store=send.effect_store
+        )
 
     for table in tables:
         assert table.effect_type[0] == 1
@@ -186,13 +169,15 @@ def test_both_buffers_agree_after_an_explode():
 def test_explosion_origin_is_shared_across_render_buffers():
     """Triggered one-shot Effects keep one timestamp in both dense tables."""
     effect = Effect(properties={"effect_type": "EXPLOSION"})
-    effect.trigger_explosion(123.456)
+    store = EffectStore()
+    store.begin_session([effect])
+    store.trigger_explosion(effect, 123.456)
 
     first = EntityTable()
     second = EntityTable()
 
-    first.begin_frame([effect], epoch=1, effect_runtime=True)
-    second.begin_frame([effect], epoch=1, effect_runtime=True)
+    first.begin_frame([effect], epoch=1, effect_runtime=True, effect_store=store)
+    second.begin_frame([effect], epoch=1, effect_runtime=True, effect_store=store)
 
     assert float(first.effect_spawn_time[0]) == 123.456
     assert float(second.effect_spawn_time[0]) == 123.456
@@ -421,7 +406,9 @@ def test_effect_set_type_input_changes_type_and_fires_onchanged():
 
     def set_type(entity, value, _logic):
         send("SetType", value)
-        table.begin_frame([effect], epoch=1, effect_runtime=True)
+        table.begin_frame(
+            [effect], epoch=1, effect_runtime=True, effect_store=send.effect_store
+        )
 
     logic = None
 
@@ -485,7 +472,9 @@ def test_effect_texture_and_custom_inputs_update_dense_projection():
 
     def deliver(input_name, param):
         send(input_name, param)
-        table.begin_frame([effect], epoch=1, effect_runtime=True)
+        table.begin_frame(
+            [effect], epoch=1, effect_runtime=True, effect_store=send.effect_store
+        )
 
     deliver("SetFireTexture", "3")
     assert effect.properties["fire_texture"] == EFFECT_FIRE_TEXTURES[2]
@@ -519,13 +508,10 @@ def test_effect_texture_inputs_ignore_invalid_variants():
     effect = Effect(properties={"id": "invalid-effect-input"})
     table = EntityTable()
     table.begin_frame([effect], epoch=1, effect_runtime=True)
-    io_manager = IOManager()
-    register_all_input_handlers(io_manager)
-    logic = SimpleNamespace(
-        _entity_table=table,
-        things=[effect],
-        io_manager=SimpleNamespace(fire_output=lambda *args, **kwargs: None),
-    )
+    send = _io_for(effect)
+    logic = send.logic
+    register_all_input_handlers(logic.io_manager)
+    io_manager = logic.io_manager
 
     io_manager._input_handlers[("effect", "setfiretexture")](effect, "6", logic)
     io_manager._input_handlers[("effect", "setfiretexture")](effect, "fire01", logic)
@@ -552,7 +538,9 @@ def test_explode_input_forces_fire_to_explosion_and_never_reverts():
 
     def explode():
         send("Explode")
-        table.begin_frame([effect], epoch=1, effect_runtime=True)
+        table.begin_frame(
+            [effect], epoch=1, effect_runtime=True, effect_store=send.effect_store
+        )
 
     explode()
 
@@ -597,7 +585,9 @@ def test_effect_explode_io_plays_once_and_can_be_retriggered():
 
     def explode():
         send("Explode")
-        table.begin_frame([explosion], epoch=1, effect_runtime=True)
+        table.begin_frame(
+            [explosion], epoch=1, effect_runtime=True, effect_store=send.effect_store
+        )
 
     explode()
     assert bool(table.effect_active[0])
@@ -613,3 +603,26 @@ def test_effect_explode_io_plays_once_and_can_be_retriggered():
     assert bool(table.effect_active[0])
     assert bool(table.effect_alive[0])
     assert float(table.effect_elapsed[0]) < 0.1
+
+
+def test_a_looping_fire_in_play_runs_on_the_origin_it_publishes():
+    """A FIRE with no playback start animates on the shared clock origin, the
+    value its effect_spawn_time column carries -- not on perf_counter's own
+    epoch, which as a float32 elapsed loses precision with the machine's
+    uptime (and is far slower to take sin() of)."""
+    import time
+    from engine.entity_table import _CLOCK_ORIGIN
+
+    effect = Effect(properties={"effect_type": EFFECT_FIRE})
+    store = EffectStore()
+    store.begin_session([effect])
+    assert float(store.spawn_time[0]) == 0.0
+
+    table = EntityTable()
+    before = time.perf_counter()
+    table.begin_frame([effect], epoch=1, effect_runtime=True, effect_store=store)
+    after = time.perf_counter()
+
+    assert float(table.effect_spawn_time[0]) == _CLOCK_ORIGIN
+    elapsed = float(table.effect_elapsed[0])
+    assert before - _CLOCK_ORIGIN - 1e-3 <= elapsed <= after - _CLOCK_ORIGIN + 1e-3

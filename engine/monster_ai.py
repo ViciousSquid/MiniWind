@@ -23,15 +23,15 @@ except ImportError:  # pragma: no cover - exercised by the head-less player
         print(f"[{category}] {message}")
 from .change_journal import JOURNAL, STATE, set_positions, touch
 from . import monster_table
-from .spatial import TIER_ACTIVE, TIER_DORMANT, tier_of
+from .spatial import TIER_DORMANT, tier_of
 from .constants import is_solid_world_brush
+from .physics import world_gravity
 from .monster_constants import (
     MONSTER_SIGHT_RANGE,
     MONSTER_SHOOT_INTERVAL,
     MONSTER_SHOOT_ANIM_TIME,
     MONSTER_MOVE_SPEED,
     MONSTER_STOP_DISTANCE,
-    MONSTER_GRAVITY,
     MONSTER_TERMINAL_VEL,
     MONSTER_WALL_MARGIN,
     MONSTER_STUCK_THRESHOLD,
@@ -49,21 +49,20 @@ except ImportError:
     MonsterThing = None
 
 
+_NEAREST_ENEMY_MONOLITHIC_SMALL_COUNT = 64
+_NEAREST_ENEMY_MONOLITHIC_MIN_TEAMS = 8
+_NEAREST_ENEMY_MONOLITHIC_TEAM_RATIO = 0.25
+_NEAREST_ENEMY_MONOLITHIC_MAX_COUNT = 1024
+
+
 def _flatten_to_ground(direction):
-    """A unit *horizontal* direction from a 3D one, or ``None`` when there is none.
+    """Return a unit horizontal direction in the XZ plane, or ``None``.
 
-    Ground monsters walk in XZ only, so their movement direction is the 3D
-    direction with Y dropped and renormalised.  When the target is directly
-    above or below - a flying player over a grunt's head, a monster standing on
-    the player's own column - that leaves the zero vector, and ``glm.normalize``
-    of the zero vector is NaN, not an error.  The NaN then flows into the
-    monster's position and out into ``SpatialGrid.overlaps_wall``, which raises
-    ``ValueError: cannot convert float NaN to integer`` on the AI thread and
-    stops every monster in the level.
-
-    Returning ``None`` for that case lets the caller simply not move this tick,
-    which is the right answer: there is no horizontal direction to move in.
-    """
+Ground monsters ignore Y when moving.  A target directly above or below the
+monster produces a zero horizontal vector; normalising that vector would
+produce NaNs that can poison the spatial collision queries.  ``None`` makes
+the caller leave the monster in place for that tick.
+"""
     flat = glm.vec3(direction.x, 0.0, direction.z)
     length = glm.length(flat)
     if length < 1e-6:
@@ -105,15 +104,18 @@ class MonsterAI:
         self._enemy_rows = {}          # id(monster) -> row
         self._enemy_answered = np.zeros(0, dtype=bool)  # rows the batch answered
         self._enemy_monsters = ()      # row -> monster
-        self._enemy_teams = ()         # row -> its team string
+        self._enemy_team_codes = {}    # team string -> MonsterTable team code
         self._enemy_nearest = None     # row -> nearest enemy row, or -1
         self._enemy_range = None       # the range the batch was built for
         self._enemy_ready = False      # has this tick's batch been attempted
+        self._enemy_signature = None   # direct-helper validity signature
         self._enemy_pos = np.empty((0, 3), dtype=np.float64)
-
-        #: Game-supplied hostility (engine/hostility.HostilityModel), or None
-        #: for the old rule: different teams fight, everyone hunts the player.
-        self.hostility = None
+        # Camera-fitted Big World only (see _view_rect): this tick's resident
+        # monsters, the off-screen cadence, and the time each monster sitting
+        # a tick out is owed (id(monster) -> (monster, seconds)).
+        self._tick_monsters = None
+        self._offscreen_accum = 0.0
+        self._owed = {}
 
     def set_spatial_grid(self, grid):
         """Called by LogicThread after populating the grid."""
@@ -134,168 +136,137 @@ class MonsterAI:
         self.table.rays_cast = self.table.python_rows = 0
         self._enemy_rows = {}
         self._enemy_monsters = ()
-        self._enemy_teams = ()
+        self._enemy_team_codes = {}
         self._enemy_nearest = None
         self._enemy_ready = False
+        self._enemy_signature = None
+        self._tick_monsters = None
+        self._offscreen_accum = 0.0
+        self._owed = {}
         self._debug_rays.clear()
-        # A session's game hooks end with it: the next session installs its
-        # own, and one that installs none runs on the engine's defaults.
-        self.clear_game_hooks()
-
-    # -------------------------------------------------------------------------
-    # Game hooks: installed per play session, cleared with it
-    # -------------------------------------------------------------------------
-
-    def set_hostility(self, model):
-        """Install a :class:`engine.hostility.HostilityModel` (None clears it)."""
-        self.hostility = model
-        self._enemy_ready = False
-
-    @classmethod
-    def install_attack_style_hook(cls, hook):
-        """Install the game's attack-style chooser (see _attack_style_for)."""
-        cls._attack_style_hook = hook
-
-    @classmethod
-    def clear_attack_style_hook(cls, hook=None):
-        """Remove the attack-style hook; with *hook*, only if it is that one."""
-        if hook is None or cls._attack_style_hook is hook:
-            cls._attack_style_hook = None
-
-    def clear_game_hooks(self):
-        """Drop every per-session game hook: hostility and attack style."""
-        self.hostility = None
-        MonsterAI.clear_attack_style_hook()
-
-    def _hostile(self, team_a, team_b) -> bool:
-        """Does *team_a* attack *team_b*? The scalar form of the model."""
-        model = self.hostility
-        if model is None:
-            return bool(team_a) and bool(team_b) and team_a != team_b
-        return model.is_hostile(team_a, team_b)
-
-    def _hunts_player(self, thing) -> bool:
-        model = self.hostility
-        return True if model is None else model.hunts(thing.properties)
 
     # -------------------------------------------------------------------------
     # Main update entry point
     # -------------------------------------------------------------------------
 
-    # Optional application hook. Fio remains standalone: with no hook installed
-    # an actor keeps its authored attack style and no MiniWind/game package is
-    # imported from the engine.
-    _attack_style_hook = None
-
-    @staticmethod
-    def _attack_style_for(thing, state, in_melee: bool) -> str:
-        """Choose the actor's current combat style via an optional game hook.
-
-        The engine owns the cheap range-band transition; an installed game layer
-        owns inventory/item/style knowledge. With no hook, the authored style is
-        preserved exactly.
-        """
-        hook = MonsterAI._attack_style_hook
-        if hook is not None:
-            return hook(thing, state, in_melee)
-        return state.get('attack_style') or str(
-            thing.properties.get('attack_style', '') or '').lower()
-
     def update(self, delta: float):
         """Called every tick from LogicThread._tick_play_mode."""
-        if not self.lt.player or not MonsterThing:
+        if not self.lt.player_runtime.player or not MonsterThing:
             return
 
-        if self.lt.player_dead:
+        if self.lt.player_runtime.player_dead:
             return
 
-        player_pos = self.lt.player.pos
+        player_pos = self.lt.player_runtime.player.pos
         self._debug_rays.clear()
         # The batch describes one tick. Dropping it here rather than building
         # it means a map with no teams never pays for one.
         self._enemy_ready = False
         self._enemy_nearest = None
+        self._enemy_signature = None
 
         # PERF: iterate the precomputed monster list instead of isinstance-
         # scanning every brush/thing in the level every tick.
-        monster_things = getattr(self.lt, '_monster_things', None)
-        if monster_things is None:
-            monster_things = [t for t in self.lt.things if isinstance(t, MonsterThing)]
-        # Monsters a streamer has parked (DORMANT) are hidden and disabled:
-        # they neither act nor can be anybody's target, so they are left out
-        # of the pass altogether rather than gathered and skipped every tick.
-        # The enemy batch measures the same list, so its rows still line up
-        # with the table's.
-        if getattr(self.lt, '_bigworld', None) is not None:
-            monster_things = [m for m in monster_things
-                              if tier_of(m) != TIER_DORMANT]
-        self._tick_monsters = monster_things
+        monster_things = self.lt.world_runtime.monster_things
+        # Fitted to an overhead camera, the pass and the enemy searches use
+        # the resident monsters only: a parked (DORMANT) monster is hidden and
+        # disabled, neither acts nor can be a target, so it is left out rather
+        # than gathered and skipped every tick. Otherwise nothing new is kept
+        # and they read the logic thread's list exactly as before.
+        rect = self._view_rect()
+        if rect is not None:
+            monster_things = self._tick_monsters = [
+                m for m in monster_things if tier_of(m) != TIER_DORMANT]
+        else:
+            self._tick_monsters = None
 
         path = self._fallback_reason()
         self.table.path = path
-        offscreen, off_delta = self._offscreen_rows(monster_things, delta)
+        row_delta, sit_out = self._offscreen_rows(monster_things, delta, player_pos, rect)
         if path == 'dense':
-            if offscreen is None:
-                self._update_dense(monster_things, delta, player_pos)
-            else:
-                self._update_dense(monster_things,
-                                   np.where(offscreen, off_delta, delta), player_pos)
+            self._update_dense(monster_things, delta if row_delta is None else row_delta,
+                               player_pos, sit_out)
         else:
             # The table describes the dense pass; say it did not run.
             self.table.rows_read = 0
             for i, thing in enumerate(monster_things):
-                if offscreen is not None and offscreen[i]:
-                    if off_delta > 0.0:
-                        self._update_monster(thing, off_delta, player_pos)
-                    continue
-                self._update_monster(thing, delta, player_pos)
+                if row_delta is None:
+                    self._update_monster(thing, delta, player_pos)
+                elif not sit_out[i]:
+                    self._update_monster(thing, float(row_delta[i]), player_pos)
 
         # ---- Player death check (after all monsters processed) ----
-        if self.lt.player_health <= 0 and not self.lt.player_dead:
-            self.lt.player_dead = True
-            if self.lt.io_manager:
-                try:
-                    from editor.things import PlayerStart
-                    for thing in self.lt.things:
-                        if isinstance(thing, PlayerStart):
-                            self.lt.io_manager.fire_output(thing, 'OnPlayerDeath')
-                            break
-                except ImportError:
-                    pass
+        if self.lt.player_runtime.player_health <= 0 and not self.lt.player_runtime.player_dead:
+            self.lt.player_runtime.player_dead = True
+            start = self.lt.session_runtime.spawn_start
+            if self.lt.io_manager and start is not None:
+                # The start this session began at reports the death.
+                self.lt.io_manager.fire_output(start, 'OnPlayerDeath')
             debug_log("MonsterAI", "Player has died.")
 
     #: Set False to run every monster through the per-monster path (the
     #: reference the dense pass is tested against).
     DENSE_UPDATE = True
 
+    def _view_rect(self):
+        """Return the overhead simulation rectangle ``(hx, hz)`` or ``None``.
+
+The Big World session exposes ``tiers.near_rect`` only for the fitted overhead camera.
+First-person sessions return ``None``, preserving the normal all-monster
+tick path.
+"""
+        plugins = self.lt.plugins
+        if plugins is None:
+            return None
+        session = plugins.services.get("bigworld")
+        if session is None:
+            return None
+        rect = session.tiers.near_rect
+        return rect if rect else None
+
     #: Seconds between AI passes for monsters off screen (see
     #: :meth:`_offscreen_rows`).
     OFFSCREEN_INTERVAL = 0.2
 
-    def _offscreen_rows(self, monsters, delta):
-        """``(mask, delta)`` for the monsters off screen this tick, or
-        ``(None, 0)`` when every monster runs at full rate.
+    def _offscreen_rows(self, monsters, delta, player_pos, rect):
+        """Return per-row elapsed time and the rows to skip this tick.
 
-        Only when Big World says its tiers are fitted to the camera's view
-        (``sim_tiers_fit_view``): then ``NEAR`` is exactly what is on screen
-        and anything else resident is off it. Those monsters think and move in
-        one pass every :attr:`OFFSCREEN_INTERVAL` carrying the whole interval
-        (a 0 delta in between skips them), so they cover the same ground at a
-        fraction of the cost and nobody can see the coarser steps.
-        """
-        if not getattr(self.lt, 'sim_tiers_fit_view', False) or not monsters:
+This throttling is active only for a fitted overhead view.  Off-screen
+monsters accumulate elapsed time and run every ``OFFSCREEN_INTERVAL``;
+visible monsters continue at the normal tick rate.  A delayed row receives
+all accumulated time when it runs, so simulation time is not lost.
+"""
+        if rect is None or not monsters:
             self._offscreen_accum = 0.0
-            return None, 0.0
-        mask = np.fromiter((tier_of(m) >= TIER_ACTIVE for m in monsters),
-                           dtype=bool, count=len(monsters))
-        if not mask.any():
-            return None, 0.0
-        accum = getattr(self, '_offscreen_accum', 0.0) + delta
-        if accum >= self.OFFSCREEN_INTERVAL:
+            self._owed = {}
+            return None, None
+        n = len(monsters)
+        xz = np.array([(m.pos[0], m.pos[2]) for m in monsters], dtype=np.float64)
+        off = ((np.abs(xz[:, 0] - float(player_pos[0])) > float(rect[0]))
+               | (np.abs(xz[:, 1] - float(player_pos[2])) > float(rect[1])))
+        prev = self._owed               # id(monster) -> (monster, seconds)
+
+        def _owed(m):
+            entry = prev.get(id(m))
+            return entry[1] if entry is not None and entry[0] is m else 0.0
+        owed = (np.fromiter(map(_owed, monsters), dtype=np.float64, count=n)
+                if prev else np.zeros(n))
+        # The epsilon keeps a whole number of fixed ticks on the interval: six
+        # 1/30 s ticks sum to just under 0.2 in floating point.
+        self._offscreen_accum += delta
+        due = self._offscreen_accum >= self.OFFSCREEN_INTERVAL - 1e-9
+        if due:
             self._offscreen_accum = 0.0
-            return mask, accum
-        self._offscreen_accum = accum
-        return mask, 0.0
+        sit_out = off & (not due)
+        if not sit_out.any() and not owed.any():
+            self._owed = {}
+            return None, None
+        row_delta = owed + delta
+        # The entry holds the monster itself, so its id cannot be reused by
+        # another object while the time is owed.
+        self._owed = {id(monsters[i]): (monsters[i], float(row_delta[i]))
+                      for i in np.flatnonzero(sit_out).tolist()}
+        return row_delta, sit_out
 
     def _fallback_reason(self):
         """``'dense'``, or why this tick runs the per-monster path (Debug Tables).
@@ -309,13 +280,13 @@ class MonsterAI:
             return 'per-monster (DENSE_UPDATE off)'
         if self._grid is None:
             return 'per-monster (no spatial grid)'
-        if self.lt.notarget:
+        if self.lt.player_runtime.notarget:
             return 'per-monster (notarget)'
         if self.monster_debug_active:
             return 'per-monster (F7 debug view)'
         return 'dense'
 
-    def _update_dense(self, monsters, delta: float, player_pos):
+    def _update_dense(self, monsters, delta: float, player_pos, sit_out=None):
         """Every monster's tick as columns: gather, batch, scatter, then events.
 
         The same decisions :meth:`_update_monster` makes, made for all rows at
@@ -350,13 +321,20 @@ class MonsterAI:
         props = t.props
         states = self.monster_states
         self._sight_changed = np.zeros(n, dtype=bool)
-        # *delta* may be one number or one per row (see _offscreen_rows); a
-        # row given 0 sits this tick out entirely.
+        # *delta* may be one number or one per row, and *sit_out* marks rows
+        # that skip this tick altogether (see _offscreen_rows). A plain number
+        # with no mask is the ordinary tick for every row, exactly as before.
         dt = np.asarray(delta, dtype=np.float64)
-        dt = np.full(n, float(dt)) if dt.ndim == 0 else dt[:n]
+        dt = dt[:n] if dt.ndim > 0 else np.full(n, float(dt))
 
         hidden = t.hidden[:n]
-        skip = hidden | t.disabled[:n] | (dt <= 0.0)
+        skip = hidden | t.disabled[:n]
+        if sit_out is not None:
+            # A row sitting the tick out is not touched at all, exactly as the
+            # per-monster path does not call _update_monster for it.
+            sitting = np.asarray(sit_out, dtype=bool)[:n]
+            skip = skip | sitting
+            hidden = hidden & ~sitting
         dead = ~skip & t.dead[:n]
         mode = t.mode[:n]
         mode[dead] = monster_table.MODE_DEAD
@@ -383,12 +361,6 @@ class MonsterAI:
         nearest = None
         scalar = np.zeros(n, dtype=bool)
 
-        # Who goes for the player: everyone, unless a game's hostility model
-        # says otherwise (one gather over team codes, plus its override).
-        model = self.hostility
-        hunts = (None if model is None
-                 else model.row_hunts(props, t.team[:n], t.team_names))
-
         # ---- Sleeping monsters: does anything wake them? -------------------
         waiting = asleep & t.triggered[:n]
         mode[waiting] = monster_table.MODE_WAITING
@@ -397,12 +369,10 @@ class MonsterAI:
         if len(watching):
             d = player32 - pos32[watching]
             seen = (d[:, 0] * d[:, 0] + d[:, 1] * d[:, 1] + d[:, 2] * d[:, 2]) <= sight_sq
-            if hunts is not None:
-                seen &= hunts[watching]          # the player wakes only hunters
             woke = seen.copy()
             teamed = ~seen & (t.team[:n][watching] >= 0)
             if teamed.any():
-                nearest = self._enemy_batch(MONSTER_SIGHT_RANGE)
+                nearest = self._enemy_batch(MONSTER_SIGHT_RANGE, t)
                 for i in np.flatnonzero(teamed):
                     row = int(watching[i])
                     if nearest is not None:
@@ -412,7 +382,7 @@ class MonsterAI:
                             monsters[row], props[row].get('team', ''),
                             player_pos, MONSTER_SIGHT_RANGE) is not None
             listening = ~woke & t.can_hear[:n][watching]
-            if listening.any() and self.lt.get_recent_noise_events(max_age=2.0):
+            if listening.any() and self.lt.combat_runtime.get_recent_noise_events(max_age=2.0):
                 for i in np.flatnonzero(listening):
                     woke[i] = self._hears_noise(monsters[int(watching[i])]) is not None
             scalar[watching[woke]] = True
@@ -443,7 +413,7 @@ class MonsterAI:
         phase['classify'] = clock()
         if len(rows):
             self._chase(t, rows, aggro_row, pos32, player32, player_pos,
-                        nearest, dt[rows], hunts)
+                        nearest, dt[rows])
         phase['chase'] = clock()
 
         # ---- Irregular rows, events, search: Python, in row order ----------
@@ -477,7 +447,7 @@ class MonsterAI:
                 if aggro_monster is not None:
                     target_eye = glm.vec3(target_pos.x, target_pos.y + 64.0, target_pos.z)
                 else:
-                    target_eye = glm.vec3(px, py + self.lt.player.camera_height, pz)
+                    target_eye = glm.vec3(px, py + self.lt.player_runtime.player.camera_height, pz)
                 self._monster_attack(thing, props[row].get('monster_type', 'human'),
                                      target_pos, aggro_monster,
                                      float(t.dist_sq[row]), eye, target_eye,
@@ -496,6 +466,11 @@ class MonsterAI:
             last = phase[name]
         t.phase_ms = phase_ms
 
+    def _gravity(self):
+        """Gravity from the live PhysicsWorld, the one authority for it."""
+        session = getattr(self.lt, 'session_runtime', None)
+        return world_gravity(getattr(session, 'physics_world', None))
+
     def _fall_dead(self, t, rows, delta):
         """Dead monsters drop to the ground: the per-monster rule, batched."""
         props = t.props
@@ -509,7 +484,7 @@ class MonsterAI:
         settle = has_ground & ~falling & (np.abs(pos[:, 1] - target_y) > 1.0)
         new_vel = np.where(has_ground & falling, vel, 0.0)
         dl = np.broadcast_to(np.asarray(delta, dtype=np.float64), (len(rows),))[falling]
-        fv = vel[falling] + MONSTER_GRAVITY * dl
+        fv = vel[falling] + self._gravity() * dl
         fv = np.maximum(fv, MONSTER_TERMINAL_VEL)
         new_y = pos[falling, 1] + fv * dl
         landed = new_y <= target_y[falling]
@@ -531,14 +506,8 @@ class MonsterAI:
             self.table.pos[which] = out           # the column, not an entity
             set_positions([monsters[r] for r in which], out)
 
-    def _chase(self, t, rows, aggro_row, pos32, player32, player_pos, nearest, delta,
-               hunts=None):
-        """Awake monsters with a regular tick: gravity, target, step, shot timers.
-
-        *hunts* (per table row, or None for everyone) says who falls back on
-        the player when it has no enemy; the rest have no target and keep
-        to themselves (out of sight: patrol, investigate).
-        """
+    def _chase(self, t, rows, aggro_row, pos32, player32, player_pos, nearest, delta):
+        """Awake monsters with a regular tick: gravity, target, step, shot timers."""
         monsters = t.monsters
         props = t.props
         states = self.monster_states
@@ -578,7 +547,7 @@ class MonsterAI:
             foot = y - half
             falling = has_ground & (foot > ground + 1.0)
             dg = delta[g][falling]
-            fv = np.maximum(v[falling] + MONSTER_GRAVITY * dg, MONSTER_TERMINAL_VEL)
+            fv = np.maximum(v[falling] + self._gravity() * dg, MONSTER_TERMINAL_VEL)
             new_foot = foot[falling] + fv * dg
             landed = new_foot <= ground[falling]
             new_foot[landed] = ground[falling][landed]
@@ -607,23 +576,25 @@ class MonsterAI:
         teamed = ~has_aggro & (t.team[rows] >= 0)
         if teamed.any():
             if nearest is None:
-                nearest = self._enemy_batch(MONSTER_SIGHT_RANGE)
-            for i in np.flatnonzero(teamed):
-                row = rows[i]
-                if nearest is not None:
-                    enemy = int(nearest[row])
-                else:
+                nearest = self._enemy_batch(MONSTER_SIGHT_RANGE, t)
+            teamed_idx = np.flatnonzero(teamed)
+            if nearest is not None:
+                query_rows = rows[teamed_idx]
+                enemy_rows = nearest[query_rows]
+                valid = enemy_rows >= 0
+                target[teamed_idx[valid]] = enemy_rows[valid]
+            else:
+                # Only the exceptional no-table path retains the scalar
+                # reference implementation. Normal dense ticks already
+                # have their MonsterTable gathered.
+                for i in teamed_idx:
+                    row = rows[i]
                     found = self._find_closest_enemy_team_monster(
                         monsters[row], props[row].get('team', ''), player_pos,
                         MONSTER_SIGHT_RANGE)
                     enemy = t.row_of[id(found)] if found is not None else -1
-                if enemy >= 0:
-                    target[i] = enemy
-        idle = np.zeros(len(rows), dtype=bool)
-        if hunts is not None:
-            idle = (target == monster_table.TARGET_PLAYER) & ~hunts[rows]
-            target[idle] = monster_table.TARGET_NONE
-            target_pos[idle] = p32[idle]
+                    if enemy >= 0:
+                        target[i] = enemy
         monster_target = target >= 0
         target_pos[monster_target] = t.pos[target[monster_target]].astype(np.float32)
         t.target[rows] = target
@@ -632,7 +603,6 @@ class MonsterAI:
         # ---- Distance and sight, in the float32 the glm path used ---------
         d = p32 - target_pos
         dist_sq = d[:, 0] * d[:, 0] + d[:, 1] * d[:, 1] + d[:, 2] * d[:, 2]
-        dist_sq[idle] = np.float32(np.inf)      # nobody to see: out of sight
         t.dist_sq[rows] = dist_sq
         in_sight = dist_sq <= MONSTER_SIGHT_RANGE * MONSTER_SIGHT_RANGE
         was = t.in_sight[rows].copy()
@@ -697,7 +667,7 @@ class MonsterAI:
         due = np.flatnonzero(in_sight & (shoot <= 0.0))
         fired = np.zeros(len(rows), dtype=bool)
         if len(due):
-            camera_height = self.lt.player.camera_height
+            camera_height = self.lt.player_runtime.player.camera_height
             for i in due:
                 row = rows[i]
                 eye = glm.vec3(float(p32[i, 0]), float(p32[i, 1]) + 64.0, float(p32[i, 2]))
@@ -782,7 +752,7 @@ class MonsterAI:
                 sprite_h = thing.properties.get('sprite_height', 128)
                 target_y = ground_y + sprite_h / 2.0
                 if pos[1] > target_y + 1.0:
-                    vel_y += MONSTER_GRAVITY * delta
+                    vel_y += self._gravity() * delta
                     if vel_y < MONSTER_TERMINAL_VEL:
                         vel_y = MONSTER_TERMINAL_VEL
                     new_y = pos[1] + vel_y * delta
@@ -819,8 +789,7 @@ class MonsterAI:
                 # Sight of the player (squared distance — threshold-only compare)
                 diff_to_player = player_pos - glm.vec3(thing.pos)
                 dist_to_player_sq = glm.dot(diff_to_player, diff_to_player)
-                if (dist_to_player_sq <= MONSTER_SIGHT_RANGE * MONSTER_SIGHT_RANGE
-                        and self._hunts_player(thing)):
+                if dist_to_player_sq <= MONSTER_SIGHT_RANGE * MONSTER_SIGHT_RANGE:
                     woke_reason = 'sight'
                 else:
                     # Sight of an enemy-team monster
@@ -887,7 +856,7 @@ class MonsterAI:
             if ground_y is not None:
                 foot_y = thing_pos.y - half_height
                 if foot_y > ground_y + 1.0:
-                    vel_y += MONSTER_GRAVITY * delta
+                    vel_y += self._gravity() * delta
                     if vel_y < MONSTER_TERMINAL_VEL:
                         vel_y = MONSTER_TERMINAL_VEL
                     new_foot_y = foot_y + vel_y * delta
@@ -910,7 +879,7 @@ class MonsterAI:
 
         # ---- Notarget: skip all player-targeting when cheat is active ----
         #      Monsters still gravity-fall and patrol, just don't chase/attack.
-        if self.lt.notarget:
+        if self.lt.player_runtime.notarget:
             _set_render_flag(thing, 'is_shooting', False)
             if mid in self.monster_states:
                 self.monster_states[mid]['anim_timer'] = 0.0
@@ -929,7 +898,7 @@ class MonsterAI:
                 # Empty string: clear override and fall back to normal logic
                 thing.properties.pop('target_name', None)
             else:
-                target_entity = self.lt._find_entity_by_name(target_name)
+                target_entity = self.lt.world_runtime.find_entity_by_name(target_name)
                 if target_entity is not None and hasattr(target_entity, 'pos'):
                     # Valid named target found — use its position
                     override_target_pos = glm.vec3(target_entity.pos)
@@ -974,19 +943,13 @@ class MonsterAI:
                 else:
                     target_pos = player_pos
 
-        # Nobody to go for: no enemy, no override, and the player is not its
-        # concern (a game's hostility model). It keeps to itself, as if
-        # whatever it might chase were out of sight.
-        no_target = (override_target_pos is None and aggro_monster is None
-                     and not self._hunts_player(thing))
-
         # ---- Line of sight check ----
         monster_eye = glm.vec3(thing_pos.x, thing_pos.y + 64.0, thing_pos.z)
         if aggro_monster is not None:
             target_eye = glm.vec3(target_pos.x, target_pos.y + 64.0, target_pos.z)
         else:
-            target_eye = glm.vec3(player_pos.x, player_pos.y + self.lt.player.camera_height, player_pos.z)
-        has_los = False if no_target else self._has_line_of_sight(monster_eye, target_eye)
+            target_eye = glm.vec3(player_pos.x, player_pos.y + self.lt.player_runtime.player.camera_height, player_pos.z)
+        has_los = self._has_line_of_sight(monster_eye, target_eye)
 
         if self.monster_debug_active:
             self._debug_rays.append({
@@ -997,7 +960,7 @@ class MonsterAI:
 
         # PERF: squared distance — every use below is a threshold compare.
         _dist_diff = thing_pos - target_pos
-        distance_sq = float('inf') if no_target else glm.dot(_dist_diff, _dist_diff)
+        distance_sq = glm.dot(_dist_diff, _dist_diff)
 
         if distance_sq <= MONSTER_SIGHT_RANGE * MONSTER_SIGHT_RANGE:
             # ---- Entered sight range ----
@@ -1108,7 +1071,7 @@ class MonsterAI:
             if distance_sq <= MONSTER_BITE_DISTANCE * MONSTER_BITE_DISTANCE and aggro_monster is None:
                 # Bite attack: instant hitscan, double damage
                 bite_damage = int(damage * MONSTER_BITE_DAMAGE_MULT)
-                self.lt._apply_player_damage(bite_damage)
+                self.lt.trigger_runtime._apply_player_damage(bite_damage)
                 name = thing.properties.get('name', '?')
                 debug_log("MonsterAI", f"{name} used bite attack for 2x damage!")
             else:
@@ -1137,7 +1100,7 @@ class MonsterAI:
                         debug_log("MonsterAI",
                                   f"CROSSFIRE: {a_name} hit {v_name} — infighting!")
                 else:
-                    self.lt._apply_player_damage(damage)
+                    self.lt.trigger_runtime._apply_player_damage(damage)
 
         # ---- Use per-type shoot sound ----
         sound_file = MONSTER_SHOOT_SOUNDS.get(mtype, MONSTER_SHOOT_SOUND_DEFAULT)
@@ -1173,13 +1136,8 @@ class MonsterAI:
 
     def _find_monster_by_id(self, monster_id: int):
         """Return a living Monster thing by Python id, or None."""
-        monster_by_id = getattr(self.lt, '_monster_by_id', None)
-        if monster_by_id is not None:
-            return monster_by_id.get(monster_id)
-        for t in self.lt.things:
-            if isinstance(t, MonsterThing) and id(t) == monster_id:
-                return t
-        return None
+        monster_by_id = self.lt.world_runtime.monster_by_id
+        return monster_by_id.get(monster_id)
 
     #: Below this many monsters the batch costs more to assemble than the walk
     #: it replaces, because only a fraction of monsters query in a given tick
@@ -1193,180 +1151,191 @@ class MonsterAI:
     #:       240          29          2.677 -> 1.428 ms   1.87x
     #:       480          68         12.770 -> 5.096 ms   2.51x
     #:
-    #: The same idiom as ``FLOOR_BATCH_MIN_BODIES`` and
-    #: ``render_cull.min_numpy_count``, and for the same reason: blanket
-    #: vectorisation would make the common small scene slower.
-    ENEMY_BATCH_MIN_MONSTERS = 64
-
     def _find_closest_enemy_team_monster(self, thing, my_team: str, player_pos: glm.vec3, max_range: float):
-        """Find the closest living monster on a DIFFERENT team within range.
-        Returns the monster or None.  Team-based enemies are targeted first
-        before the player.
+        """Find the closest living monster on a different team within ``max_range``.
 
-        Answered from the tick's dense batch when there is one, which is the
-        same question asked for every monster at once rather than once per
-        monster; :meth:`_enemy_batch` builds it. The walk below is what runs
-        for a small monster set, for a caller asking about a range the batch
-        was not built for, and wherever the batch cannot be assembled.
-        """
+The dense tick path answers this for all monsters at once.  This helper is
+the scalar fallback for callers that do not have the dense table.
+"""
         if not my_team or MonsterThing is None:
             return None
 
         if self._enemy_batch(max_range) is not None:
             row = self._enemy_rows.get(id(thing))
             # The team is re-checked because it is the caller's argument, not
-            # necessarily the property the batch read.
-            if (row is not None and self._enemy_teams[row] == my_team
+            team_code = self._enemy_team_codes.get(my_team, -1)
+            if (row is not None and self.table.team[row] == team_code
                     and self._enemy_answered[row]):
                 nearest = int(self._enemy_nearest[row])
                 return self._enemy_monsters[nearest] if nearest >= 0 else None
 
         return self._find_closest_enemy_scalar(thing, my_team, max_range)
 
-    def _enemy_batch(self, max_range: float):
+    def _enemy_batch(self, max_range: float, table=None):
         """This tick's nearest enemy for every monster, as one dense pass.
 
-        The shape the scalar search always had was ``for A: for B: distance``,
-        which is the same arithmetic N times over rather than once over N --
-        22 ms per tick at 240 monsters, and quadratic beyond that. Written as
-        arrays it is one squared-distance matrix, three masks and an
-        ``argmin``: 0.74 ms at the same count, and the answer agrees.
+        MonsterTable already contains the gathered positions, team codes,
+        and alive/hidden flags for this tick. The kernel consumes those
+        columns directly in vectorized team blocks: squared distances, a
+        team mask, and an argmin per block. There is no per-monster
+        candidate walk.
 
-        Built at most once per tick, on the first query, so a map whose
-        monsters have no teams never builds one. Returns the nearest-enemy row
-        array, or ``None`` when the caller should walk instead.
-
-        **Positions are read live here, not from the projection's column.**
-        ``EntityTable.pos`` is refreshed by the logic thread in its render
-        pass, and the AI runs on its own thread at its own rate: measured, that
-        leaves the column up to 2.5 units behind a settled monster and 11
-        behind a falling one, and in a context where no render pass runs at all
-        -- a head-less test, the standalone player -- it would never be
-        refreshed. The projection still supplies what it is good for, which is
-        the row set and its order: ``monster_slots`` is the same monsters in
-        the same order as ``_monster_things``, and that order is what makes
-        ``argmin`` break ties exactly as ``<`` did.
-
-        The distance is ``|a|^2 + |b|^2 - 2ab`` in float64, where the scalar
-        path subtracts two ``glm.vec3`` in float32. That is not bit-identical
-        and is deliberately the more precise of the two: a pair whose ordering
-        the two disagree about is a pair the float32 path was resolving with
-        its own rounding error. Checked against the scalar answer over random
-        scenes and over constructed exact ties.
+        Direct helper calls may occur outside the dense tick in compatibility
+        tests and tools. Those calls keep the batch while the queried monster
+        set is unchanged, and invalidate it if a position/team/dead/hidden
+        value changed.
         """
+        refresh_table = False
         if self._enemy_ready:
-            return self._enemy_nearest if self._enemy_range == max_range else None
+            if self._enemy_range != max_range:
+                return None
+            if table is not None:
+                return self._enemy_nearest
+            if self._enemy_runtime_signature() == self._enemy_signature:
+                return self._enemy_nearest
+            self._enemy_ready = False
+            refresh_table = True
+
         self._enemy_ready = True
         self._enemy_nearest = None
         self._enemy_range = max_range
 
-        monsters = getattr(self, '_tick_monsters', None)
-        if monsters is None:
-            monsters = getattr(self.lt, '_monster_things', None)
-        if not monsters or len(monsters) < self.ENEMY_BATCH_MIN_MONSTERS:
+        if table is None:
+            monsters = getattr(self, '_tick_monsters', None)
+            if monsters is None:
+                monsters = self.lt.world_runtime.monster_things
+            if not monsters:
+                return None
+
+            table = self.table
+            same_rows = (
+                table.count == len(monsters)
+                and all(a is b for a, b in zip(table.monsters, monsters))
+            )
+            if self._enemy_signature is not None:
+                live_signature = self._enemy_runtime_signature()
+                if live_signature != self._enemy_signature:
+                    refresh_table = True
+            if refresh_table or not same_rows:
+                table.gather(monsters)
+        count = table.count
+        if not count:
             return None
 
-        count = len(monsters)
-        if len(self._enemy_pos) < count:
-            self._enemy_pos = np.empty((max(count, 32), 3), dtype=np.float64)
-        pos = self._enemy_pos[:count]
+        team_id = table.team[:count]
+        alive = ~(table.dead[:count] | table.hidden[:count])
 
-        teams = []
-        codes = {}
-        code_names = []
-        team_id = np.empty(count, dtype=np.int32)
-        alive = np.empty(count, dtype=bool)
-        rows = {}
-        try:
-            pos[:] = [m.pos for m in monsters]
-        except (ValueError, TypeError):
-            # A monster whose pos is not a 3-vector: leave it to the walk.
-            return None
-        for row, monster in enumerate(monsters):
-            props = monster.properties
-            team = props.get('team', '')
-            teams.append(team)
-            if team:
-                code = codes.get(team)
-                if code is None:
-                    code = codes[team] = len(codes)
-                    code_names.append(team)
-                team_id[row] = code
-            else:
-                team_id[row] = -1
-            alive[row] = not (props.get('dead', False)
-                              or props.get('hidden', False))
-            rows[id(monster)] = row
-
-        self._enemy_rows = rows
+        self._enemy_rows = table.row_of
+        self._enemy_monsters = table.monsters
+        self._enemy_team_codes = {
+            name: code for code, name in enumerate(table.team_names)
+        }
         self._enemy_answered = alive & (team_id >= 0)
-        self._enemy_monsters = monsters
-        self._enemy_teams = teams
-        hostile = (None if self.hostility is None
-                   else self.hostility.for_names(code_names)[0])
         self._enemy_nearest = self._nearest_enemy_rows(
-            pos, team_id, alive, max_range, hostile)
+            table.pos[:count], team_id, alive, max_range)
+        if table is not None:
+            self._enemy_signature = self._enemy_runtime_signature()
         return self._enemy_nearest
 
+    def _enemy_runtime_signature(self):
+        """Return the small compatibility signature used by direct queries."""
+        monsters = self._tick_monsters
+        if monsters is None:
+            monsters = self.lt.world_runtime.monster_things
+        return tuple(
+            (
+                id(monster),
+                bool(monster.properties.get("dead", False)),
+                bool(monster.properties.get("hidden", False)),
+                monster.properties.get("team", ""),
+                tuple(float(value) for value in monster.pos),
+            )
+            for monster in monsters
+        )
+
     @staticmethod
-    def _nearest_enemy_rows(pos, team_id, alive, max_range, hostile=None):
-        """``row -> nearest enemy row``, or -1. The whole kernel.
+    def _nearest_enemy_rows(pos, team_id, alive, max_range):
+        """Return each row's nearest living enemy row, or -1, in dense batches.
 
-        *hostile*, when given, is the ``(teams, teams)`` matrix of a game's
-        hostility model in *team_id*'s code order: a team's candidate columns
-        are the rows of the teams its matrix row marks, one boolean gather;
-        without it, every other team (the old rule).
-
-        The arithmetic is float32 component-wise, because that is what the walk
-        does: ``glm.vec3(a) - glm.vec3(b)`` is float32, and ``glm.dot`` is
-        ``x*x + y*y + z*z`` in float32. Two enemies the walk cannot tell apart
-        are an exact tie it resolves by order, and ``argmin`` resolves the same
-        way -- but only if they are still exactly equal here.
-
-        Getting that wrong is not theoretical: a float64 batch separated a pair
-        the walk tied (22509.0000000000 against 22508.9988555908) and picked
-        the other monster. Nor is rounding the float64 *result* to float32
-        enough -- it lands on 22508.998, where the float32 computation lands on
-        22509.0. The precision has to be in the inputs and the intermediates,
-        not just the answer.
-
-        One block per team rather than one ``(M, M)`` matrix: a monster's
-        candidates are only the living, teamed monsters of *other* teams, so
-        each team's rows are measured against exactly those columns. With two
-        teams that is half the matrix and none of the mask planes -- and it is
-        the number of large NumPy operations that matters here, not just their
-        size: each one releases the GIL, and in a live session every release
-        can wait out a switch interval to get it back (15.8 ms standalone was
-        80 ms in the running game at 1000 monsters). Columns keep their
-        ascending order, so ``argmin`` still breaks exact ties by row order.
-        A teamless row is answered too, against every teamed monster, exactly
-        as the single matrix answered it (its caller ignores it).
+        The usual path works team-by-team so a very large monster population
+        never requires one monolithic N x N allocation.  For small populations,
+        or for a population split into many tiny teams, one monolithic active
+        matrix is cheaper than launching many tiny block kernels.  The
+        crossover is deliberately bounded so a large many-team battle still
+        avoids an oversized dense matrix.
         """
         count = len(pos)
-        p = np.asarray(pos, dtype=np.float32)
         nearest = np.full(count, -1, dtype=np.int32)
         if not count:
             return nearest
-        limit = np.float32(max_range) * np.float32(max_range)
-        targets = alive & (team_id >= 0)       # who can be anybody's enemy
-        # Only the living teamed rows are answered: nobody asks about a dead
-        # or teamless monster, and at 1000 monsters in a long fight that is
-        # a large share of the matrix. (The object-level query falls back to
-        # the walk for a row the batch did not answer.)
-        for code in np.unique(team_id[targets]):
-            rows = np.flatnonzero(targets & (team_id == code))
-            if hostile is None:
-                cols = np.flatnonzero(targets & (team_id != code))
-            else:
-                enemy_team = hostile[code]
-                cols = np.flatnonzero(targets & enemy_team[np.maximum(team_id, 0)])
+
+        p = np.asarray(pos, dtype=np.float32)
+        team = np.asarray(team_id[:count], dtype=np.int32)
+        active = np.asarray(alive[:count], dtype=bool) & (team >= 0)
+        if not active.any():
+            return nearest
+
+        active_rows = np.flatnonzero(active)
+        team_count = len(np.unique(team[active]))
+        if (
+            count <= _NEAREST_ENEMY_MONOLITHIC_MAX_COUNT
+            and (
+                count <= _NEAREST_ENEMY_MONOLITHIC_SMALL_COUNT
+                or (
+                    team_count >= _NEAREST_ENEMY_MONOLITHIC_MIN_TEAMS
+                    and team_count / float(len(active_rows))
+                    >= _NEAREST_ENEMY_MONOLITHIC_TEAM_RATIO
+                )
+            )
+        ):
+            return MonsterAI._nearest_enemy_rows_monolithic(
+                p, team, active_rows, np.float32(max_range) * np.float32(max_range)
+            )
+
+        return MonsterAI._nearest_enemy_rows_by_team(
+            p,
+            team,
+            active,
+            np.float32(max_range) * np.float32(max_range),
+        )
+
+    @staticmethod
+    def _nearest_enemy_rows_monolithic(p, team, active_rows, limit):
+        """Dense N x N nearest-enemy kernel for the small/tiny-team crossover."""
+        a = p[active_rows]
+        distance = np.subtract.outer(a[:, 0], a[:, 0])
+        np.multiply(distance, distance, out=distance)
+        term = np.subtract.outer(a[:, 1], a[:, 1])
+        np.multiply(term, term, out=term)
+        distance += term
+        np.subtract.outer(a[:, 2], a[:, 2], out=term)
+        np.multiply(term, term, out=term)
+        distance += term
+
+        same_team = np.equal.outer(team[active_rows], team[active_rows])
+        distance[same_team] = np.float32(np.inf)
+        best = np.argmin(distance, axis=1)
+        found = distance[np.arange(len(active_rows)), best] <= limit
+
+        nearest = np.full(len(p), -1, dtype=np.int32)
+        nearest[active_rows] = np.where(
+            found, active_rows[best], -1
+        )
+        return nearest
+
+    @staticmethod
+    def _nearest_enemy_rows_by_team(p, team, active, limit):
+        """Team-block kernel for larger populations."""
+        count = len(p)
+        nearest = np.full(count, -1, dtype=np.int32)
+        for code in np.unique(team[active]):
+            rows = np.flatnonzero(active & (team == code))
+            cols = np.flatnonzero(active & (team != code))
             if not len(cols):
                 continue
+
             a = p[rows]
             b = p[cols]
-            # x*x + y*y + z*z, in float32, in that order, in place: nine
-            # (rows, cols) operations and two buffers where the plain
-            # expression made fifteen passes and eight temporaries.
             distance = np.subtract.outer(a[:, 0], b[:, 0])
             np.multiply(distance, distance, out=distance)
             term = np.subtract.outer(a[:, 1], b[:, 1])
@@ -1375,12 +1344,11 @@ class MonsterAI:
             np.subtract.outer(a[:, 2], b[:, 2], out=term)
             np.multiply(term, term, out=term)
             distance += term
-            # The first minimum, then the range: the same answer as masking
-            # out-of-range entries first, since an in-range minimum is the
-            # overall minimum -- without a pass to build and apply the mask.
+
             best = np.argmin(distance, axis=1)
             found = distance[np.arange(len(rows)), best] <= limit
             nearest[rows] = np.where(found, cols[best], -1)
+
         return nearest
 
     def _find_closest_enemy_scalar(self, thing, my_team: str, max_range: float):
@@ -1391,15 +1359,11 @@ class MonsterAI:
         max_range_sq = max_range * max_range
         # This tick's resident monsters when the AI is running (parked ones
         # are hidden and never a candidate), else the logic thread's list.
-        monster_things = (getattr(self, '_tick_monsters', None)
-                          or getattr(self.lt, '_monster_things', None) or self.lt.things)
-        # Hoisted: this used to be re-evaluated per candidate, and `things` is
-        # a property, so a 240-monster tick called it 57,600 times.
-        needs_type_check = monster_things is self.lt.things
+        monster_things = getattr(self, '_tick_monsters', None)
+        if monster_things is None:
+            monster_things = self.lt.world_runtime.monster_things
 
         for t in monster_things:
-            if needs_type_check and not isinstance(t, MonsterThing):
-                continue
             if t is thing:
                 continue
             if t.properties.get('dead', False) or t.properties.get('hidden', False):
@@ -1407,8 +1371,8 @@ class MonsterAI:
             other_team = t.properties.get('team', '')
             if not other_team:
                 continue
-            if not self._hostile(my_team, other_team):
-                continue  # an ally, or nobody this team fights
+            if other_team == my_team:
+                continue  # Same team = ally, not enemy
 
             # PERF: compare squared distances — only used for a threshold
             # and closest-of check, so the sqrt in glm.distance is wasted.
@@ -1442,12 +1406,11 @@ class MonsterAI:
         shooter_team = shooter.properties.get('team', '')
         # This tick's resident monsters when the AI is running (parked ones
         # are hidden and never a candidate), else the logic thread's list.
-        monster_things = (getattr(self, '_tick_monsters', None)
-                          or getattr(self.lt, '_monster_things', None) or self.lt.things)
+        monster_things = getattr(self, '_tick_monsters', None)
+        if monster_things is None:
+            monster_things = self.lt.world_runtime.monster_things
 
         for t in monster_things:
-            if monster_things is self.lt.things and not isinstance(t, MonsterThing):
-                continue
             if t is shooter:
                 continue
             if t.properties.get('dead', False) or t.properties.get('hidden', False):
@@ -1533,8 +1496,6 @@ class MonsterAI:
         from .monster_constants import (
             MONSTER_PROJECTILE_SPEED,
             MONSTER_PROJECTILE_MAX_DIST,
-            MONSTER_PROJECTILE_SPRITE_SIZE,
-            MONSTER_PROJECTILE_SPRITE,
         )
 
         start_pos = glm.vec3(thing.pos[0], thing.pos[1] + 64.0, thing.pos[2])
@@ -1545,29 +1506,16 @@ class MonsterAI:
             dir_len = 1.0
         direction = direction / dir_len
 
-        # Get custom projectile sprite or default
-        sprite = thing.properties.get('projectile_sprite', MONSTER_PROJECTILE_SPRITE)
-        size = thing.properties.get('projectile_size', MONSTER_PROJECTILE_SPRITE_SIZE)
-        if not isinstance(size, (list, tuple)) or len(size) != 2:
-            size = MONSTER_PROJECTILE_SPRITE_SIZE
-
-        projectile = {
-            'pos': [start_pos.x, start_pos.y, start_pos.z],
-            'vel': [direction.x * MONSTER_PROJECTILE_SPEED,
-                    direction.y * MONSTER_PROJECTILE_SPEED,
-                    direction.z * MONSTER_PROJECTILE_SPEED],
-            'owner_id': owner_id,
-            'sprite': sprite,
-            'lifetime': MONSTER_PROJECTILE_MAX_DIST / MONSTER_PROJECTILE_SPEED,
-            'damage': damage,
-            'size': tuple(size),
-            'distance_travelled': 0.0,
-        }
-
-        # Add to logic thread's projectile list for update
-        if not hasattr(self.lt, '_monster_projectiles'):
-            self.lt._monster_projectiles = []
-        self.lt._monster_projectiles.append(projectile)
+        lifetime = MONSTER_PROJECTILE_MAX_DIST / MONSTER_PROJECTILE_SPEED
+        self.lt.combat_runtime._add_monster_projectile(
+            (start_pos.x, start_pos.y, start_pos.z),
+            (direction.x * MONSTER_PROJECTILE_SPEED,
+             direction.y * MONSTER_PROJECTILE_SPEED,
+             direction.z * MONSTER_PROJECTILE_SPEED),
+            owner_id,
+            damage,
+            lifetime,
+        )
 
         if self.monster_debug_active:
             name = thing.properties.get('name', '?')
@@ -1607,7 +1555,7 @@ class MonsterAI:
         _investigate_sounds once the monster is awake."""
         if not monster.properties.get('can_hear', False):
             return None
-        events = self.lt.get_recent_noise_events(max_age=2.0)
+        events = self.lt.combat_runtime.get_recent_noise_events(max_age=2.0)
         if not events:
             return None
         hearing_range = float(monster.properties.get('sight', MONSTER_SIGHT_RANGE))
@@ -1619,7 +1567,7 @@ class MonsterAI:
             return False
 
         # Check for recent player-noise events (gunfire, water splashes, …)
-        noise_events = self.lt.get_recent_noise_events(max_age=3.0)
+        noise_events = self.lt.combat_runtime.get_recent_noise_events(max_age=3.0)
         if not noise_events:
             # Clear any expired investigation
             if state.get('investigating_sound') is not None:
@@ -1874,9 +1822,9 @@ class MonsterAI:
                     return
                 to_node = d_vec
                 dist_to_node = d_dist
-                speed_mult = detour_node.get_patrol_speed()
+                speed_mult = detour_node.get_speed()
         else:
-            speed_mult = node.get_patrol_speed()
+            speed_mult = node.get_speed()
 
         # ---- Movement toward node ----
         dir_len = glm.length(to_node)
@@ -1997,11 +1945,11 @@ class MonsterAI:
 
     def _find_path_node_by_name(self, name: str):
         """Return PathNode thing with given name, or None.
-        Uses LogicThread's name cache for O(1) lookup."""
+        Uses LogicWorld's live name cache for O(1) lookup."""
         if not name or PathNode is None:
             return None
         # Use the O(1) name cache on the parent LogicThread
-        entity = self.lt._name_cache.get(name)
+        entity = self.lt.world_runtime.find_entity_by_name(name)
         if entity is not None and isinstance(entity, PathNode):
             return entity
         return None
@@ -2014,7 +1962,7 @@ class MonsterAI:
         best_name = ''
         best_dist = MONSTER_DETOUR_RANGE + 1.0
 
-        for t in self.lt.things:
+        for t in self.lt.editor_state.things:
             if not isinstance(t, PathNode):
                 continue
             node_name = t.properties.get('name', '')
@@ -2064,14 +2012,14 @@ class MonsterAI:
             return True
         ray_dir = ray_dir / ray_len
 
-        for brush in self.lt.brushes:
+        for brush in self.lt.editor_state.brushes:
             if not is_solid_world_brush(brush):
                 continue
             pos = glm.vec3(brush['pos'])
             size = glm.vec3(brush['size'])
             b_min = pos - size * 0.5
             b_max = pos + size * 0.5
-            hit, dist = self.lt.intersect_ray_aabb(start, ray_dir, b_min, b_max)
+            hit, dist = self.lt.combat_runtime.intersect_ray_aabb(start, ray_dir, b_min, b_max)
             if hit and dist < ray_len - 0.1:
                 return False
         return True
@@ -2083,7 +2031,7 @@ class MonsterAI:
 
         # Fallback
         best_y = None
-        for brush in self.lt.brushes:
+        for brush in self.lt.editor_state.brushes:
             if not is_solid_world_brush(brush):
                 continue
             pos = brush['pos']
@@ -2106,7 +2054,7 @@ class MonsterAI:
             return self._grid.overlaps_wall(mx, my, mz, margin)
 
         # Fallback
-        for brush in self.lt.brushes:
+        for brush in self.lt.editor_state.brushes:
             if not is_solid_world_brush(brush):
                 continue
             pos = brush['pos']
@@ -2169,10 +2117,10 @@ class MonsterAIThread(threading.Thread):
 
             accumulator += frame_time
 
-            # The world is paused (LogicThread.set_world_paused): monsters hold
+            # The world is paused through LogicSession's pause ownership:
             # still, and the paused time is dropped rather than caught up on
             # resume, which would fast-forward every monster at once.
-            if getattr(self.lt, 'world_paused', False):
+            if self.lt.session_runtime.world_paused:
                 accumulator = 0.0
 
             while accumulator >= self.tick_duration and self.running:

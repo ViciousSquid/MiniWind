@@ -44,9 +44,8 @@ def _published(thread, name):
 # Publication: per-tick state must survive frames that run no tick
 # ---------------------------------------------------------------------------
 
-def _projectile(pos=(0.0, 100.0, 0.0), vel=(0.0, 0.0, 10.0)):
-    return {'pos': list(pos), 'vel': list(vel), 'owner_id': 0,
-            'damage': 5, 'lifetime': 10.0, 'distance_travelled': 0.0}
+def _add_projectile(thread, pos=(0.0, 100.0, 0.0), vel=(0.0, 0.0, 10.0)):
+    thread.combat_runtime._monster_projectiles.add(pos, vel, 0, 5, 10.0)
 
 
 def test_projectiles_are_published_on_frames_that_run_no_tick(logic):
@@ -54,9 +53,9 @@ def test_projectiles_are_published_on_frames_that_run_no_tick(logic):
     tick at all. Its buffer was reset by the previous swap; projectiles written
     only by the tick then vanished for that frame (visible flicker)."""
     thread = logic()
-    thread.play_mode = True
-    thread._monster_projectiles = [_projectile()]
-    thread._update_monster_projectiles(thread.TICK_DURATION)
+    thread.session_runtime.play_mode = True
+    _add_projectile(thread)
+    thread.combat_runtime._update_monster_projectiles(thread.TICK_DURATION)
 
     for frame in range(4):
         # No whole tick in the accumulator: only the projection runs.
@@ -70,10 +69,10 @@ def test_projectiles_are_published_on_frames_that_run_no_tick(logic):
 
 def test_leaving_play_publishes_no_projectiles(logic):
     thread = logic()
-    thread.play_mode = True
-    thread._monster_projectiles = [_projectile()]
-    thread._update_monster_projectiles(thread.TICK_DURATION)
-    thread.play_mode = False
+    thread.session_runtime.play_mode = True
+    _add_projectile(thread)
+    thread.combat_runtime._update_monster_projectiles(thread.TICK_DURATION)
+    thread.session_runtime.play_mode = False
     thread._step_frame(0.0)
     thread._publish_frame()
     assert len(_published(thread, 'projectiles')) == 0
@@ -178,29 +177,41 @@ def test_monster_table_follows_a_replaced_list_at_a_recycled_address():
 # Resources
 # ---------------------------------------------------------------------------
 
+@pytest.mark.gl
 def test_a_missing_model_is_not_reloaded_every_frame(monkeypatch, capsys):
     """Every draw, cull and shadow pass asks for a Prop's model; a missing one
     was probed on disk and logged each time (1194 lines in a short soak)."""
     pytest.importorskip("OpenGL")
-    from engine import renderer_core
-    from engine.renderer_core import BaseRenderer
+    from engine.renderer.core import resources as renderer_resources
+    from tests.helpers.gl import GLTestContext, make_renderer, reset_texture_cache
 
-    renderer = BaseRenderer.__new__(BaseRenderer)
-    renderer.loaded_models = {}
-    probes = []
-    real_exists = renderer_core.os.path.exists
-    monkeypatch.setattr(renderer_core.os.path, "exists",
-                        lambda p: probes.append(p) or real_exists(p))
-    for _ in range(50):
-        assert renderer.load_model("no_such_model.glb") is None
-    assert len(probes) <= 3, "%d filesystem probes for 50 frames" % len(probes)
-    assert capsys.readouterr().out.count("Failed to load model") == 1
+    reset_texture_cache()
+    with GLTestContext(64, 64):
+        renderer = make_renderer()
+        try:
+            renderer.loaded_models = {}
+            probes = []
+            real_exists = renderer_resources.os.path.exists
+            monkeypatch.setattr(
+                renderer_resources.os.path,
+                "exists",
+                lambda p: probes.append(p) or real_exists(p),
+            )
+            for _ in range(50):
+                assert renderer.load_model("no_such_model.glb") is None
+            assert len(probes) <= 3, (
+                "%d filesystem probes for 50 frames" % len(probes)
+            )
+            assert capsys.readouterr().out.count("Failed to load model") == 1
 
-    # ...but it is retried later, so a model added mid-session appears.
-    monkeypatch.setattr(renderer_core, "_MODEL_RETRY_S", 0.0)
-    probes.clear()
-    renderer.load_model("no_such_model.glb")
-    assert probes, "a failed model must be retried after the back-off"
+            # ...but it is retried later, so a model added mid-session appears.
+            monkeypatch.setattr(renderer_resources, "_MODEL_RETRY_S", 0.0)
+            probes.clear()
+            renderer.load_model("no_such_model.glb")
+            assert probes, "a failed model must be retried after the back-off"
+        finally:
+            renderer.cleanup()
+            reset_texture_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -250,18 +261,19 @@ def test_a_visibility_only_change_reaches_both_tables_without_a_cold_resolve(mon
 # I/O across threads
 # ---------------------------------------------------------------------------
 
-def test_outputs_fired_off_the_tick_thread_run_on_the_next_tick():
+def test_outputs_fired_off_the_tick_thread_run_on_the_next_tick(logic):
     """The monster AI thread fires OnDeath/OnSeePlayer/OnAttack while the
     logic thread runs IOManager.update(), which rebuilds pending_events: a
     delayed event appended meanwhile was lost, and the source/activator
     context was shared between two chains. They are now delivered, in order,
     on the tick's thread at its next update()."""
+    logic = logic()
     import threading
-    from types import SimpleNamespace
     from tests.logic.test_io_dispatch import Network
 
     net = Network()
-    net.manager.set_logic_thread(SimpleNamespace(play_mode=True))
+    logic.session_runtime.play_mode = True
+    net.manager.set_logic_thread(logic)
     net.add("monster")
     net.add("now")
     net.add("later")
@@ -285,13 +297,15 @@ def test_outputs_fired_off_the_tick_thread_run_on_the_next_tick():
     assert set(ran_on) == {threading.get_ident()}
 
 
-def test_outputs_fired_in_the_editor_still_run_immediately():
+def test_outputs_fired_in_the_editor_still_run_immediately(logic):
+    logic = logic()
     import threading
     from types import SimpleNamespace
     from tests.logic.test_io_dispatch import Network
 
     net = Network()
-    net.manager.set_logic_thread(SimpleNamespace(play_mode=False))
+    logic.session_runtime.play_mode = False
+    net.manager.set_logic_thread(logic)
     net.add("a")
     net.add("b")
     net.handler()
@@ -316,11 +330,11 @@ def test_resetting_monsters_for_play_journals_their_sprite_state(logic):
     monster.properties['dead'] = True
     thread = logic(things=[monster])
     table = EntityTable()
-    table.begin_frame(thread.things, 1)
+    table.begin_frame(thread.editor_state.things, 1)
     dead_sprite = table.sprite_recipes()[table.sprite_key_id[0]]
 
-    thread._reset_all_monsters(clear_dead=True)
-    table.begin_frame(thread.things, 1)
+    thread.session_runtime.reset_all_monsters(clear_dead=True)
+    table.begin_frame(thread.editor_state.things, 1)
     sprite = table.sprite_recipes()[table.sprite_key_id[0]]
     assert sprite != dead_sprite
     assert any(c[1] == 'idle.png' for c in sprite), sprite
@@ -344,9 +358,9 @@ def test_play_start_and_stop_keep_an_angled_brushs_geometry_epoch(logic):
     thread = logic(brushes=[solid, water])
     before = [bg.geometry_signature(b) for b in (solid, water)]
 
-    thread._prepare_angled_brush_collision()     # play start
+    thread.collision_runtime.prepare_angled_brush_collision()     # play start
     assert solid.get('_collision_mode') == 'mesh'
-    thread._clear_angled_brush_collision()       # play stop
+    thread.collision_runtime.clear_angled_brush_collision()       # play stop
 
     assert '_collision_mode' not in solid
     assert [bg.geometry_signature(b) for b in (solid, water)] == before

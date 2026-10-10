@@ -15,7 +15,7 @@ exact depth order.  In render-key terms: the texture no longer "cannot vary
 within one draw", so it leaves the key, and the key of the sprite pass is empty.
 
 What goes into a layer is the sprite's existing 2D texture, found exactly as
-before (:meth:`BaseRenderer._sprite_gl_ids` resolves recipes to GL ids, with
+before (:meth:`RendererCore._sprite_gl_ids` resolves recipes to GL ids, with
 every override and fallback it had).  Layers are keyed by that GL id, so there
 is no second loader and no second naming scheme.
 
@@ -26,8 +26,8 @@ uploaded with ``glTexSubImage3D`` -- every mip level included.  The array is
 never a render target: no framebuffer blit, no ``glGenerateMipmap``.  That is a
 measured choice, not a stylistic one.  Filled by blit, the array was a texture
 the driver had rendered into, and Mesa's llvmpipe then made the draw that
-sampled it wait for the whole frame's pending rendering -- 5 ms per frame in
-the live benchmark, against 0.14 ms once that wait was paid elsewhere.  Uploads
+sampled it wait for the whole frame's pending rendering -- 5 ms per frame
+measured live, against 0.14 ms once that wait was paid elsewhere.  Uploads
 carry no such hazard on any driver, and the cost moves to the one moment a
 sprite image is first seen.
 

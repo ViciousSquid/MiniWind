@@ -6,20 +6,23 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QScrollArea, QFrame,
                              QMainWindow, QPushButton, QTreeView,
                              QFileSystemModel, QTabWidget,
                              QSizePolicy, QListWidget, QListWidgetItem)
-from PyQt5.QtCore import Qt, QDir, QRect, QPointF, QTimer
-from PyQt5.QtGui import QPixmap, QColor, QPainter, QFont, QPen, QPolygonF, QIcon
+from PyQt5.QtCore import Qt, QDir, QRect, QPointF, QTimer, QFileSystemWatcher
+from PyQt5.QtGui import QPixmap, QColor, QPainter, QFont, QPen, QPolygonF, QIcon, QImage, QImageReader
 from engine.glb_loader import render_glb_thumbnail
 # The Surface Inspector's FACE toggle sets this colour; the INSPECTOR button
 # that opens that panel borrows it so the two read as a pair.
 from editor.surface_inspector import FACE_BUTTON_STYLE as INSPECTOR_BUTTON_STYLE
+from engine.speaker_audio import AUDIO_EXTENSIONS, SPEAKER_AUDIO_FOLDERS, speaker_sound_path
 
 
 def render_obj_thumbnail(filepath, width, height):
     """
     Simple software renderer to generate a wireframe thumbnail from an OBJ file.
     """
+    from engine.obj_loader import detect_up_axis, up_axis_tag, z_up_to_y_up
     vertices = []
     faces = []
+    up_tag = None
     
     try:
         # Limit processing to avoid freezing on huge files
@@ -31,7 +34,9 @@ def render_obj_thumbnail(filepath, width, height):
                 line_count += 1
                 if line_count > max_lines: break
                 
-                if line.startswith('v '):
+                if line.startswith('#'):
+                    up_tag = up_axis_tag(line) or up_tag
+                elif line.startswith('v '):
                     parts = line.split()
                     vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
                 elif line.startswith('f '):
@@ -46,6 +51,10 @@ def render_obj_thumbnail(filepath, width, height):
 
     if not vertices:
         return None
+    # Drawn the way the editor will place it (engine.obj_loader turns a Z-up
+    # model Y-up).
+    if detect_up_axis(vertices, up_tag) == 'z':
+        vertices = [list(z_up_to_y_up(v)) for v in vertices]
 
     # Normalize vertices to -1..1 range
     min_v = [float('inf')] * 3
@@ -126,17 +135,59 @@ def render_obj_thumbnail(filepath, width, height):
     painter.end()
     return pixmap
 
+def texture_info(path, animated=False):
+    """``"PNG 512x512"``: a texture's type and pixel size, for its tooltip.
+
+    Read from the file's header, not by decoding it. An animated GIF adds
+    "animated"; a file whose size cannot be read gives its type alone.
+    """
+    ext = os.path.splitext(path)[1].lstrip('.').upper()
+    kind = {'JPEG': 'JPG'}.get(ext, ext) or 'Image'
+    width = height = 0
+    size = QImageReader(path).size()
+    if size.isValid():
+        width, height = size.width(), size.height()
+    else:
+        try:
+            from PIL import Image
+            with Image.open(path) as image:
+                width, height = image.size
+        except Exception:
+            pass
+    text = f"{kind} {width}x{height}" if width > 0 and height > 0 else kind
+    return f"{text}, animated" if animated else text
+
+
+def audio_thumbnail(path, size):
+    """A note on a tile, the file type under it: sounds teal, music violet."""
+    parts = os.path.abspath(path).replace('\\', '/').split('/')
+    is_music = 'assets' in parts and parts[parts.index('assets') + 1:][:1] == ['music']
+    pixmap = QPixmap(size, size)
+    pixmap.fill(QColor(70, 50, 95) if is_music else QColor(40, 80, 85))
+    painter = QPainter(pixmap)
+    painter.setPen(QColor(230, 230, 230))
+    painter.setFont(QFont("Arial", size // 3, QFont.Bold))
+    painter.drawText(QRect(0, 0, size, size * 3 // 4), Qt.AlignCenter, "\u266b" if is_music else "\u266a")
+    painter.setFont(QFont("Arial", max(7, size // 9), QFont.Bold))
+    painter.setPen(QColor(240, 128, 0))
+    ext = os.path.splitext(path)[1].lstrip('.').upper()
+    painter.drawText(QRect(0, size * 2 // 3, size, size // 3), Qt.AlignCenter, ext)
+    painter.end()
+    return pixmap
+
+
 class AssetItem(QWidget):
     """
     A widget representing a single asset (file) in the grid view.
     Selection is shown by a 3px orange border around the entire item.
     """
-    def __init__(self, name, path, browser, is_model=False):
+    def __init__(self, name, path, browser, is_model=False, is_audio=False):
         super().__init__()
         self.name_text = name
         self.file_path = path
         self.browser = browser
         self.is_model = is_model
+        self.is_audio = is_audio
         
         self.setFixedSize(100, 120)
         # Reduce layout margins so the border has room
@@ -178,9 +229,106 @@ class AssetItem(QWidget):
         self.selected = False
         self._update_border()
 
+        # An animated GIF shows its first frame; the orange arrow plays it
+        # on the thumbnail (and stops it again).
+        self.preview_btn = None
+        self._preview_frames = None
+        self._preview_index = 0
+        self._preview_timer = None
+        # A copy: QLabel.pixmap() is the label's own, replaced by a preview.
+        current = self.thumb_label.pixmap()
+        self._static_thumb = QPixmap(current) if current is not None else None
+        animated = False
+        if not is_model and not is_audio and path.lower().endswith('.gif'):
+            from engine.animated_texture import is_animated_gif
+            animated = is_animated_gif(path)
+            if animated:
+                self._add_preview_button()
+        if not is_model and not is_audio:
+            self.setToolTip(texture_info(path, animated))
+
+    def _add_preview_button(self):
+        btn = QPushButton("\u25b6", self.thumb_label)
+        btn.setFixedSize(20, 20)
+        btn.move(self.thumb_label.width() - 22, self.thumb_label.height() - 22)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setToolTip("Preview the animation")
+        btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(0, 0, 0, 150);
+                color: #F08000;
+                border: 1px solid #F08000;
+                border-radius: 10px;
+                font-size: 10px;
+                font-weight: bold;
+                padding: 0px;
+            }
+            QPushButton:hover { background-color: rgba(240, 128, 0, 60); }
+        """)
+        btn.clicked.connect(self.toggle_preview)
+        btn.show()
+        self.preview_btn = btn
+
+    @property
+    def previewing(self):
+        return self._preview_timer is not None and self._preview_timer.isActive()
+
+    def toggle_preview(self):
+        """Play the GIF on the thumbnail, or stop it on its first frame."""
+        if self.previewing:
+            self.stop_preview()
+            return
+        if self._preview_frames is None:
+            from engine.animated_texture import decode_gif_frames
+            try:
+                images, seconds = decode_gif_frames(self.file_path)
+            except Exception as exc:
+                print(f"[AssetBrowser] Could not preview '{self.name_text}': {exc}")
+                return
+            frames = []
+            for image in images:
+                qimage = QImage(image.tobytes(), image.width, image.height,
+                                image.width * 4, QImage.Format_RGBA8888).copy()
+                frames.append(QPixmap.fromImage(qimage).scaled(
+                    90, 90, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self._preview_frames = list(zip(frames, seconds))
+        if not self._preview_frames:
+            return
+        self._preview_index = 0
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.timeout.connect(self._next_preview_frame)
+        self.preview_btn.setText("\u25a0")
+        self.preview_btn.setToolTip("Stop the preview")
+        self._show_preview_frame()
+
+    def _show_preview_frame(self):
+        pixmap, seconds = self._preview_frames[self._preview_index]
+        self.thumb_label.setPixmap(pixmap)
+        self._preview_timer.start(max(20, int(seconds * 1000)))
+
+    def _next_preview_frame(self):
+        if self._preview_timer is None:
+            return
+        self._preview_index = (self._preview_index + 1) % len(self._preview_frames)
+        self._show_preview_frame()
+
+    def stop_preview(self):
+        if self._preview_timer is not None:
+            self._preview_timer.stop()
+            self._preview_timer = None
+        if self._static_thumb is not None:
+            self.thumb_label.setPixmap(self._static_thumb)
+        if self.preview_btn is not None:
+            self.preview_btn.setText("\u25b6")
+            self.preview_btn.setToolTip("Preview the animation")
+
     def _load_thumbnail(self):
         pixmap = QPixmap()
 
+        if self.is_audio:
+            self.thumb_label.setPixmap(audio_thumbnail(self.file_path, 90))
+            return
         if self.is_model:
             # 1. Look for .png sidecar
             base_path = os.path.splitext(self.file_path)[0]
@@ -214,6 +362,18 @@ class AssetItem(QWidget):
         else:
             # Assume image
             pixmap.load(self.file_path)
+            if pixmap.isNull():
+                # No Qt image plugin for it (a GIF without qgif): Pillow
+                # reads it, first frame only for an animation.
+                try:
+                    from PIL import Image
+                    with Image.open(self.file_path) as source:
+                        image = source.convert("RGBA")
+                    qimage = QImage(image.tobytes(), image.width, image.height,
+                                    image.width * 4, QImage.Format_RGBA8888).copy()
+                    pixmap = QPixmap.fromImage(qimage)
+                except Exception:
+                    pixmap = QPixmap()
 
         if not pixmap.isNull():
             if self.is_model and not os.path.exists(os.path.splitext(self.file_path)[0] + ".png"):
@@ -238,6 +398,10 @@ class AssetItem(QWidget):
         if event.button() == Qt.LeftButton:
             self.browser.select_item(self)
 
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton and hasattr(self.browser, 'activate_item'):
+            self.browser.activate_item(self)
+
     def set_selected(self, selected):
         if self.selected == selected:
             return
@@ -249,8 +413,16 @@ class AssetBrowserTab(QWidget):
     """
     A single tab content for the Asset Browser (e.g., Textures or Models).
     """
-    def __init__(self, root_path, file_extensions, editor=None, is_model_tab=False, parent_browser=None):
+    def __init__(self, root_path, file_extensions, editor=None, is_model_tab=False,
+                 parent_browser=None, audio_folders=None):
         super().__init__()
+        #: The Audio tab: ``{'sounds': path, 'music': path}``, toggled by the
+        #: header link as the Maps tab toggles Maps and Packages.
+        self.audio_folders = audio_folders
+        self.is_audio_tab = audio_folders is not None
+        self.audio_mode = 'sounds'
+        self.assign_btn = None
+        self.audio_header = None
         self.root_path = root_path
         self.current_asset_folder = root_path
         self.extensions = file_extensions
@@ -259,7 +431,14 @@ class AssetBrowserTab(QWidget):
         self.parent_browser = parent_browser
         self.selected_item = None
         self.items = []
-        
+
+        # Filesystem events drive asset refreshes.  There is deliberately no
+        # polling timer: adding/removing an asset emits directoryChanged and
+        # the browser reloads the visible folder immediately.
+        self.asset_watcher = QFileSystemWatcher(self)
+        self.asset_watcher.directoryChanged.connect(self._on_asset_directory_changed)
+        self._watched_asset_dirs = set()
+
         # For debounced resizing and column tracking
         self.current_cols = 0
         self.resize_timer = QTimer()
@@ -340,7 +519,26 @@ class AssetBrowserTab(QWidget):
         button_layout.setContentsMargins(0, 0, 0, 0)
         button_layout.setSpacing(12)
 
-        if self.is_model_tab:
+        if self.is_audio_tab:
+            # Sounds | Music, toggled like the Maps tab's Maps | Packages.
+            self.audio_header = QLabel()
+            self.audio_header.setTextFormat(Qt.RichText)
+            self.audio_header.setOpenExternalLinks(False)
+            self.audio_header.linkActivated.connect(self.toggle_audio_folder)
+            self.audio_header.setStyleSheet("color: #ddd; font-size: 10pt;")
+            button_layout.addWidget(self.audio_header)
+            button_layout.addStretch()
+            self.assign_btn = QPushButton("Give to Speaker")
+            self.assign_btn.setEnabled(False)
+            self.assign_btn.setStyleSheet(button_style)
+            self.assign_btn.setToolTip(
+                "Set the selected sound as the sound file of every selected Speaker\n"
+                "(double-click a sound does the same). Speakers play only from\n"
+                "assets/sounds and assets/music.")
+            self.assign_btn.clicked.connect(self.assign_to_speakers)
+            button_layout.addWidget(self.assign_btn)
+            self._update_audio_header()
+        elif self.is_model_tab:
             self.add_btn = QPushButton("Add to Scene")
             self.add_btn.setEnabled(False)
             self.add_btn.setStyleSheet(button_style)
@@ -519,8 +717,29 @@ class AssetBrowserTab(QWidget):
         path = self.dir_model.filePath(index)
         self.load_directory(path)
 
+    def _watch_asset_directory(self, path):
+        """Watch *path* for real filesystem changes; never poll it."""
+        path = os.path.abspath(path)
+        if not os.path.isdir(path):
+            return
+        if path not in self._watched_asset_dirs:
+            if self.asset_watcher.addPath(path):
+                self._watched_asset_dirs.add(path)
+
+    def _on_asset_directory_changed(self, path):
+        """Refresh the visible folder after an OS filesystem event."""
+        path = os.path.abspath(path)
+        # QFileSystemWatcher removes a watched directory when it disappears.
+        self._watched_asset_dirs.discard(path)
+        self._watch_asset_directory(path)
+
+        if os.path.abspath(self.current_asset_folder) == path:
+            self.load_directory(path)
+
     def load_directory(self, path):
         self.current_asset_folder = path
+        self._watch_asset_directory(self.root_path)
+        self._watch_asset_directory(path)
         # Clear existing items
         for i in reversed(range(self.grid_layout.count())): 
             self.grid_layout.itemAt(i).widget().setParent(None)
@@ -542,7 +761,8 @@ class AssetBrowserTab(QWidget):
                     # image) must not abort loading the rest of the folder. The
                     # skipped file is named so the failure stays diagnosable.
                     try:
-                        item = AssetItem(f, full_path, self, is_model=self.is_model_tab)
+                        item = AssetItem(f, full_path, self, is_model=self.is_model_tab,
+                                         is_audio=self.is_audio_tab)
                         self.items.append(item)
                     except Exception as e:
                         print(f"[AssetBrowser] Skipped '{f}': {e}")
@@ -559,10 +779,71 @@ class AssetBrowserTab(QWidget):
         self.update_buttons_enabled()
 
     def update_buttons_enabled(self):
-        # Only the model tab has a button that needs a selection.  The
-        # Inspector button opens a panel and so is always available.
+        # Only the model and audio tabs have a button that needs a selection.
+        # The Inspector button opens a panel and so is always available.
         if self.is_model_tab and self.add_btn:
             self.add_btn.setEnabled(self.selected_item is not None)
+        if self.assign_btn is not None:
+            self.assign_btn.setEnabled(self.selected_item is not None)
+
+    # -- Audio tab ---------------------------------------------------------
+
+    def _update_audio_header(self):
+        label = "Sounds" if self.audio_mode == 'sounds' else "Music"
+        self.audio_header.setText(
+            f'Showing: <a href="switch" style="color: #F08000; text-decoration: none;">{label}</a>')
+
+    def toggle_audio_folder(self, _link=None):
+        """Switch the Audio tab between assets/sounds and assets/music."""
+        self.set_audio_folder('music' if self.audio_mode == 'sounds' else 'sounds')
+
+    def set_audio_folder(self, mode):
+        if not self.is_audio_tab or mode not in self.audio_folders:
+            return
+        self.audio_mode = mode
+        self.root_path = self.audio_folders[mode]
+        os.makedirs(self.root_path, exist_ok=True)
+        self.dir_model.setRootPath(self.root_path)
+        self.tree_view.setRootIndex(self.dir_model.index(self.root_path))
+        self.home_btn.setText(f"🏠 {mode.capitalize()}")
+        self.home_btn.setToolTip(f"Go to root {mode} folder")
+        self._update_audio_header()
+        self.load_directory(self.root_path)
+
+    def selected_speaker_sound(self):
+        """The selected file as a Speaker's sound_file, or None."""
+        if self.selected_item is None or self.editor is None:
+            return None
+        rel = os.path.relpath(self.selected_item.file_path, self.editor.root_dir)
+        rel = rel.replace('\\', '/')
+        return rel if speaker_sound_path(rel) == rel else None
+
+    def activate_item(self, item):
+        if self.is_audio_tab:
+            self.select_item(item)
+            self.assign_to_speakers()
+
+    def assign_to_speakers(self):
+        """Give every selected Speaker the selected sound (one undo step)."""
+        editor = self.editor
+        if editor is None:
+            return 0
+        sound = self.selected_speaker_sound()
+        if sound is None:
+            return 0
+        from editor.things import Speaker
+        speakers = [o for o in (editor.state.selected_objects or [])
+                    if isinstance(o, Speaker)]
+        if not speakers:
+            editor.show_toast("Select a Speaker to give it this sound")
+            return 0
+        editor.save_state()
+        for speaker in speakers:
+            speaker.properties['sound_file'] = sound
+        editor.state.mark_world_changed(speakers)
+        editor.update_all_ui()
+        editor.show_toast(f"Speaker sound: {os.path.basename(sound)}")
+        return len(speakers)
 
     def add_current_model(self):
         if self.editor and self.selected_item:
@@ -573,15 +854,11 @@ class AssetBrowserTab(QWidget):
 
     def on_inspector_clicked(self):
         """Open (or close) the Surface Inspector."""
-        toggle = getattr(self.editor, 'toggle_surface_inspector', None)
-        if toggle is not None:
-            toggle()
+        self.editor.toggle_surface_inspector()
 
     def on_tint_clicked(self):
         """Tint the selected brush."""
-        tint = getattr(self.editor, 'tint_selected_brush', None)
-        if tint is not None:
-            tint()
+        self.editor.tint_selected_brush()
 
 
 class MapsBrowserTab(QWidget):
@@ -717,23 +994,17 @@ class MapsBrowserTab(QWidget):
 
         if self.current_mode == 'maps':
             # Check unsaved changes before loading map
-            if hasattr(self.editor, 'check_unsaved_changes') and not self.editor.check_unsaved_changes():
+            if not self.editor.check_unsaved_changes():
                 return
             # Load the map using the editor's method
-            if hasattr(self.editor, 'load_level_file'):
-                self.editor.load_level_file(file_path)
+            self.editor.load_level_file(file_path)
         else:  # packages
             # Launch/play the package exactly like "File > Play Game Package"
-            if hasattr(self.editor, 'play_package_from_path'):
-                self.editor.play_package_from_path(file_path)
-            else:
-                print("Editor does not support play_package_from_path. Add that method to MainWindow.")
-                if hasattr(self.editor, 'show_toast'):
-                    self.editor.show_toast("Cannot launch package: method missing in editor", is_error=True)
+            self.editor.play_package_from_path(file_path)
 
     def showEvent(self, event):
         self.refresh_list()
-        if self.editor and hasattr(self.editor, 'show_toast'):
+        if self.editor:
             self.editor.show_toast("Double-click to open map or package", duration=2000)
         super().showEvent(event)
 
@@ -756,7 +1027,7 @@ class AssetBrowser(QWidget):
         self.models_path = os.path.join(self.assets_root, "models")
 
         # Determine maps and packages folders based on editor's root_dir if available
-        if self.editor and hasattr(self.editor, 'root_dir'):
+        if self.editor:
             root = self.editor.root_dir
             self.maps_folder = os.path.join(root, 'maps')
             self.packages_folder = os.path.join(root, 'packages')
@@ -786,7 +1057,7 @@ class AssetBrowser(QWidget):
         """)
 
         # Create tabs, passing editor reference
-        self.tab_textures = AssetBrowserTab(self.textures_path, ['.png', '.jpg', '.jpeg', '.tga', '.bmp'], editor, is_model_tab=False, parent_browser=self)
+        self.tab_textures = AssetBrowserTab(self.textures_path, ['.png', '.jpg', '.jpeg', '.tga', '.bmp', '.gif'], editor, is_model_tab=False, parent_browser=self)
         self.tabs.addTab(self.tab_textures, "Textures")
         
         self.tab_models = AssetBrowserTab(self.models_path, ['.obj', '.glb'], editor, is_model_tab=True, parent_browser=self)
@@ -795,10 +1066,19 @@ class AssetBrowser(QWidget):
         self.tab_maps = MapsBrowserTab(self.maps_folder, self.packages_folder, editor, parent_browser=self)
         self.tabs.addTab(self.tab_maps, "Maps")
 
+        # Speakers play only from these folders (engine.speaker_audio).
+        audio_folders = {name: os.path.join(self.assets_root, name)
+                         for name in SPEAKER_AUDIO_FOLDERS}
+        self.tab_audio = AssetBrowserTab(audio_folders['sounds'], list(AUDIO_EXTENSIONS),
+                                         editor, parent_browser=self,
+                                         audio_folders=audio_folders)
+        self.tabs.addTab(self.tab_audio, "Audio")
+
     def get_selected_filepath(self):
         """Return the file path of the currently selected asset, or None."""
         w = self.tabs.currentWidget()
-        if isinstance(w, MapsBrowserTab):
+        # Maps and sounds are not textures: the texture tools read this.
+        if isinstance(w, MapsBrowserTab) or getattr(w, 'is_audio_tab', False):
             return None
         if w and w.selected_item:
             return w.selected_item.file_path

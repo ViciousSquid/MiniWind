@@ -1,28 +1,32 @@
 """Fixtures shared by the MonsterAI suite.
 
-MonsterAI reaches into ``editor.things`` for the ``Monster`` and ``PathNode``
-classes, which are PyQt-backed, so the whole area is marked ``qt`` — it runs
-head-less against the offscreen platform plugin, but PyQt5 has to be installed.
-Nothing here needs a display, a GL context or a running thread.
+MonsterAI reaches into editor.things for the Monster and PathNode classes,
+which are PyQt-backed, so the whole area is marked qt. The behavioural
+fixtures use the production LogicThread, player, spatial grid and IOManager.
 """
 
+import glm
 import pytest
 
 pytest.importorskip("PyQt5", reason="editor.things (Monster/PathNode) needs PyQt5")
 
-from editor.things import Monster, PathNode  # noqa: E402
-
-from engine.monster_ai import MonsterAI  # noqa: E402
-from tests.helpers.fakes import (FakeLogicThread, FakePlayer,  # noqa: E402
-                                 RecordingIOManager)
-from tests.helpers.worlds import make_thing, room  # noqa: E402
+from editor.editor_state import EditorState
+from editor.io_system import IOManager
+from editor.things import Monster, PathNode
+from editor.io_handlers import register_all_input_handlers
+from engine.logic_thread import LogicThread
+from engine.monster_ai import MonsterAI
+from engine.physics import SpatialGrid
+from engine.player import Player
+from engine.threaded_game_state import ThreadedGameState
+from tests.helpers.worlds import make_thing
 
 pytestmark = pytest.mark.qt
 
 
 @pytest.fixture
 def monster_factory():
-    """Builds a ``Monster`` with a fixed name, id and known properties."""
+    """Build a Monster with a fixed name and known gameplay properties."""
     counter = {"n": 0}
 
     def _make(name=None, pos=(0, 0, 0), **props):
@@ -46,27 +50,59 @@ def path_node_factory():
 
 
 @pytest.fixture
-def ai_world():
-    """``(ai, logic)`` over an empty world with a player at the origin.
+def ai_world(request):
+    """Build MonsterAI against a complete production LogicThread."""
+    created = []
 
-    The spatial grid is real (``engine.physics.SpatialGrid``), not a stub: the
-    AI's sight, ground and wall queries all go through it, and a fake that
-    always answered "clear" would make every behavioural test vacuous.
-    """
     def _build(brushes=(), things=(), player_pos=(0.0, 0.0, 0.0)):
-        logic = FakeLogicThread(brushes=brushes, things=things,
-                                player=FakePlayer(player_pos))
-        logic._monster_things = [t for t in logic.things if isinstance(t, Monster)]
+        state = EditorState()
+        state.brushes = list(brushes)
+        state.things = list(things)
+        logic = LogicThread(ThreadedGameState(), state)
+        logic.player_runtime.player = Player(0.0, 0.0)
+        logic.player_runtime.player.pos = glm.vec3(*player_pos)
+        logic.player_runtime.player_health = 100
+        logic.player_runtime.player_max_health = 100
+        logic.world_runtime.build_entity_caches()
         ai = MonsterAI(logic)
-        ai.set_spatial_grid(logic.build_spatial_grid())
+        logic.monster_ai = ai
+        logic.damage_applied = []
+        real_apply_damage = logic.trigger_runtime._apply_player_damage
+
+        def record_damage(amount, *args, **kwargs):
+            logic.damage_applied.append(int(amount))
+            return real_apply_damage(amount, *args, **kwargs)
+
+        logic.trigger_runtime._apply_player_damage = record_damage
+        grid = SpatialGrid()
+        grid.populate(state.brushes)
+        ai.set_spatial_grid(grid)
+        created.append(logic)
         return ai, logic
+
+    def cleanup():
+        for logic in created:
+            logic.stop()
+
+    request.addfinalizer(cleanup)
     return _build
 
 
 @pytest.fixture
 def io_manager():
-    """A recording stand-in for the I/O manager the AI fires outputs into."""
-    return RecordingIOManager()
+    """A real IOManager with a recording wrapper around its real dispatcher."""
+    manager = IOManager()
+    register_all_input_handlers(manager)
+    manager.fired = []
+    real_fire_output = manager.fire_output
+
+    def record_and_dispatch(entity, output_name, value=None):
+        manager.fired.append((entity, output_name, value))
+        return real_fire_output(entity, output_name, value)
+
+    manager.fire_output = record_and_dispatch
+    manager.names = lambda: [name for _entity, name, _value in manager.fired]
+    return manager
 
 
 @pytest.fixture

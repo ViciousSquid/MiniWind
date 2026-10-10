@@ -172,19 +172,8 @@ class PluginHost:
 
     @property
     def scene(self):
-        """The live list of scene entities (``things``).
-
-        Returns the *actual* list (so mutating it affects the scene), or ``[]``
-        only when the host exposes no ``things`` at all — never a throwaway copy
-        of a merely-empty scene.
-        """
-        things = getattr(self._target, "things", None)
-        return things if things is not None else []
-
-    @property
-    def player(self):
-        return getattr(self._target, "player", None)
-
+        """The live list of scene entities owned by editor_state."""
+        return self._target.editor_state.things
     @property
     def io(self):
         """The play session's ``IOManager`` (fire outputs / register inputs)."""
@@ -202,10 +191,6 @@ class PluginHost:
     @property
     def monster_ai(self):
         return getattr(self._target, "monster_ai", None)
-
-    @property
-    def terrain(self):
-        return getattr(self._target, "terrain", None)
 
     @property
     def editor(self):
@@ -320,9 +305,10 @@ class PluginHost:
         Returns True if registered, False in a host with no viewport (player).
         """
         try:
-            from engine.qt_game_view import register_renderer
+            from engine.qt_game_view import QtGameView  # noqa: F401 -- the viewport that uses renderers
         except Exception:
             return False
+        from engine.renderer import register_renderer
         return register_renderer(name, cls)
 
     def log(self, message: str) -> None:

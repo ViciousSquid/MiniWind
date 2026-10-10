@@ -1,13 +1,17 @@
 from PyQt5.QtWidgets import (
     QDialog, QCheckBox, QVBoxLayout, QDialogButtonBox, QGroupBox, QHBoxLayout,
     QLabel, QSpinBox, QPushButton, QTabWidget, QWidget, QFormLayout, QSlider,
-    QMessageBox, QComboBox
+    QMessageBox, QComboBox, QGridLayout, QToolButton, QButtonGroup
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtGui import QIcon, QPixmap
 import sys
 import os
 
 from engine import shaders
+from engine.glasses import (
+    DEFAULT_GLASSES, GLASSES_STYLES, glasses_path, normalize_glasses,
+)
 
 class SettingsWindow(QDialog):
     """
@@ -29,6 +33,7 @@ class SettingsWindow(QDialog):
         self._create_play_modes_tab()
         self._create_controls_tab()
         self._create_split_screen_tab()   # new tab
+        self._create_appearance_tab()
         
         button_layout = QHBoxLayout()
         
@@ -85,16 +90,6 @@ class SettingsWindow(QDialog):
         
         autosave_group.setLayout(autosave_layout)
         layout.addWidget(autosave_group)
-
-        maps_group = QGroupBox("Maps")
-        maps_layout = QVBoxLayout()
-        self.allow_fio_maps_checkbox = QCheckBox("Allow Fio maps")
-        self.allow_fio_maps_checkbox.setToolTip(
-            "Open plain Fio maps (maps without game settings) in the editor.\n"
-            "Off: only game maps open; a plain Fio map is refused with a message.")
-        maps_layout.addWidget(self.allow_fio_maps_checkbox)
-        maps_group.setLayout(maps_layout)
-        layout.addWidget(maps_group)
 
         view_3d_group = QGroupBox("3D View")
         view_3d_layout = QVBoxLayout()
@@ -243,21 +238,6 @@ class SettingsWindow(QDialog):
         )
         renderer_layout.addWidget(self.shadows_enabled_checkbox)
 
-        water_row = QHBoxLayout()
-        water_row.addWidget(QLabel("Water Quality:"))
-        self.water_quality_combo = QComboBox()
-        self.water_quality_combo.addItem("Cheap", 'cheap')
-        self.water_quality_combo.addItem("Expensive", 'expensive')
-        self.water_quality_combo.setToolTip(
-            "Cheap: waves, refraction, sky reflection and edge foam.\n"
-            "Expensive: also copies the depth buffer once per frame for\n"
-            "depth-based colour, shoreline foam, caustics and reflections\n"
-            "of the scene. Applies the next time Fio starts."
-        )
-        water_row.addWidget(self.water_quality_combo)
-        water_row.addStretch()
-        renderer_layout.addLayout(water_row)
-        
         auto_detect_btn = QPushButton("Auto-Detect Best Settings")
         auto_detect_btn.clicked.connect(self._auto_detect_renderer_settings)
         renderer_layout.addWidget(auto_detect_btn)
@@ -293,36 +273,27 @@ class SettingsWindow(QDialog):
         if is_low_power:
             self.lowpower_mode_checkbox.setChecked(True)
             self.shadows_enabled_checkbox.setChecked(False)
-            self._set_water_quality('cheap')
             QMessageBox.information(
                 self,
                 "Auto-Detect Complete",
                 f"Detected: {reason}\n\n"
                 "Applied low-power settings:\n"
                 "• Low-power Mode: ON\n"
-                "• Dynamic Shadows: OFF\n"
-                "• Water Quality: Cheap\n\n"
+                "• Dynamic Shadows: OFF\n\n"
                 "These settings improve performance on low-power hardware."
             )
         else:
             self.lowpower_mode_checkbox.setChecked(False)
             self.shadows_enabled_checkbox.setChecked(True)
-            self._set_water_quality('expensive')
             QMessageBox.information(
                 self,
                 "Auto-Detect Complete", 
                 f"Detected: {reason}\n\n"
                 "Applied standard settings:\n"
                 "• Low-power Mode: OFF (full light budget)\n"
-                "• Dynamic Shadows: ON\n"
-                "• Water Quality: Expensive\n\n"
+                "• Dynamic Shadows: ON\n\n"
                 "Full quality rendering enabled."
             )
-
-    def _set_water_quality(self, quality):
-        index = self.water_quality_combo.findData(quality)
-        if index >= 0:
-            self.water_quality_combo.setCurrentIndex(index)
 
     def _create_play_modes_tab(self):
         widget = QWidget()
@@ -381,6 +352,18 @@ class SettingsWindow(QDialog):
         save_group.setLayout(save_form)
         layout.addWidget(save_group)
         
+        # Also the pause menu's Options > Sound Volume and Music Volume.
+        # Music is what plays from assets/music; everything else is sound.
+        audio_group = QGroupBox("Audio")
+        audio_layout = QFormLayout()
+        self.sound_volume_slider, sound_row = self._volume_slider()
+        self.music_volume_slider, music_row = self._volume_slider()
+        audio_layout.addRow("Sound volume:", sound_row)
+        audio_layout.addRow("Music volume:", music_row)
+        audio_group.setLayout(audio_layout)
+        layout.addWidget(audio_group)
+
+        # Also the pause menu's Options > Video.
         mode_group = QGroupBox("Window Mode (Fullscreen Mode F12)")
         mode_layout = QFormLayout()
         self.kiosk_mode_combo = QComboBox()
@@ -422,6 +405,20 @@ class SettingsWindow(QDialog):
     def _update_save_mode_desc(self):
         mode = self.save_mode_combo.currentData() or "full"
         self.save_mode_desc.setText(self._SAVE_MODE_DESCS.get(mode, ""))
+
+    @staticmethod
+    def _volume_slider():
+        """A 0-100 slider with its percentage beside it, and their row."""
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(0, 100)
+        slider.setSingleStep(5)
+        label = QLabel()
+        slider.valueChanged.connect(lambda v: label.setText(f"{v}%"))
+        row = QHBoxLayout()
+        row.addWidget(slider)
+        row.addWidget(label)
+        slider.label = label
+        return slider, row
 
     def _toggle_resolution_visibility(self):
         mode = self.kiosk_mode_combo.currentText()
@@ -473,6 +470,68 @@ class SettingsWindow(QDialog):
         p2_group.setLayout(p2_layout)
         layout.addWidget(p2_group)
         layout.addStretch()
+
+    def _create_appearance_tab(self):
+        """Appearance tab: the glasses that represent player 1 in the world."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        self.tabs.addTab(widget, "Appearance")
+
+        group = QGroupBox("Glasses (Player 1)")
+        group_layout = QVBoxLayout()
+        note = QLabel(
+            "Choose the glasses other players see you as - in split-screen\n"
+            "and reflected in portals. Player 2 always wears the classic pair."
+        )
+        note.setStyleSheet("color: #9fb7b5;")
+        group_layout.addWidget(note)
+
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        self.glasses_buttons = QButtonGroup(self)
+        self.glasses_buttons.setExclusive(True)
+        self._glasses_button_for = {}
+        columns = 3
+        for index, (style, label, _fname) in enumerate(GLASSES_STYLES):
+            button = QToolButton()
+            button.setCheckable(True)
+            button.setToolTip(label)
+            button.setIcon(QIcon(QPixmap(glasses_path(style))))
+            button.setIconSize(QSize(150, 64))
+            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            button.setMinimumSize(170, 84)
+            button.setProperty('glasses_style', style)
+            button.setStyleSheet("""
+                QToolButton {
+                    background-color: #d8e2e1;
+                    color: #1e2b2a;
+                    border: 2px solid #555;
+                    border-radius: 6px;
+                    padding: 6px;
+                }
+                QToolButton:hover { border: 2px solid #4A6B73; }
+                QToolButton:checked { border: 3px solid #F08000; }
+            """)
+            self.glasses_buttons.addButton(button, index)
+            self._glasses_button_for[style] = button
+            grid.addWidget(button, index // columns, index % columns)
+        group_layout.addLayout(grid)
+        group.setLayout(group_layout)
+        layout.addWidget(group)
+
+        layout.addStretch()
+
+    def _set_glasses(self, style):
+        button = self._glasses_button_for.get(normalize_glasses(style))
+        if button is not None:
+            button.setChecked(True)
+
+    def selected_glasses(self):
+        """The glasses style currently picked on the Appearance tab."""
+        button = self.glasses_buttons.checkedButton()
+        if button is None:
+            return DEFAULT_GLASSES
+        return normalize_glasses(button.property('glasses_style'))
 
     def _apply_stylesheet(self):
         self.setStyleSheet("""
@@ -531,8 +590,6 @@ class SettingsWindow(QDialog):
             self.config.getboolean('Editor', 'property_editor_tooltips', fallback=True))
         self.toolbar_tooltips_checkbox.setChecked(
             self.config.getboolean('Editor', 'toolbar_tooltips', fallback=True))
-        self.allow_fio_maps_checkbox.setChecked(
-            self.config.getboolean('Editor', 'allow_fio_maps', fallback=False))
 
         self.show_fps_checkbox.setChecked(self.config.getboolean('Display', 'show_fps', fallback=True))
         self.always_show_sysmon_checkbox.setChecked(self.config.getboolean('Display', 'always_show_sysmon', fallback=False))
@@ -549,15 +606,8 @@ class SettingsWindow(QDialog):
         # every machine, which put desktops on the low-power shaders.
         default_lowpower_mode = is_low_power
         default_shadows = not is_low_power
-        # `arm_mode` is the setting's old name; read it as the fallback so an
-        # existing settings.ini keeps the choice its owner made.
-        default_lowpower_mode = self.config.getboolean(
-            'Renderer', 'arm_mode', fallback=default_lowpower_mode)
         self.lowpower_mode_checkbox.setChecked(self.config.getboolean('Renderer', 'lowpower_mode', fallback=default_lowpower_mode))
         self.shadows_enabled_checkbox.setChecked(self.config.getboolean('Renderer', 'shadows_enabled', fallback=default_shadows))
-        self._set_water_quality(self.config.get(
-            'Renderer', 'water_quality',
-            fallback='cheap' if is_low_power else 'expensive'))
 
         self.physics_checkbox.setChecked(self.config.getboolean('Settings', 'physics', fallback=True))
         self.restore_world_checkbox.setChecked(
@@ -566,6 +616,8 @@ class SettingsWindow(QDialog):
         self.show_glasses_checkbox.setChecked(
             self.config.getboolean('Display', 'show_glasses', fallback=True)
         )
+        self._set_glasses(self.config.get(
+            'Appearance', 'glasses', fallback=DEFAULT_GLASSES))
 
         save_mode = str(self.config.get('Settings', 'save_mode', fallback='full')).strip().lower()
         idx = self.save_mode_combo.findData(save_mode)
@@ -583,6 +635,15 @@ class SettingsWindow(QDialog):
             self.config.getint('Controls', 'p2_turn_sensitivity', fallback=10)
         )
         
+        for key, slider in (('sound_volume', self.sound_volume_slider),
+                            ('music_volume', self.music_volume_slider)):
+            try:
+                volume = self.config.getint('Audio', key, fallback=100)
+            except ValueError:
+                volume = 100
+            slider.setValue(max(0, min(100, volume)))
+            slider.label.setText(f"{slider.value()}%")
+
         k_mode = self.config.get('Kiosk', 'window_mode', fallback='Fullscreen')
         idx = self.kiosk_mode_combo.findText(k_mode)
         if idx >= 0:
@@ -668,18 +729,20 @@ class SettingsWindow(QDialog):
                         str(self.property_editor_tooltips_checkbox.isChecked()))
         self.config.set('Editor', 'toolbar_tooltips',
                         str(self.toolbar_tooltips_checkbox.isChecked()))
-        self.config.set('Editor', 'allow_fio_maps',
-                        str(self.allow_fio_maps_checkbox.isChecked()))
 
         if not self.config.has_section('Renderer'): 
             self.config.add_section('Renderer')
         self.config.set('Renderer', 'lowpower_mode', str(self.lowpower_mode_checkbox.isChecked()))
         self.config.set('Renderer', 'shadows_enabled', str(self.shadows_enabled_checkbox.isChecked()))
-        self.config.set('Renderer', 'water_quality',
-                        self.water_quality_combo.currentData() or 'expensive')
+        # Water quality is per water brush now; drop the old global key.
+        self.config.remove_option('Renderer', 'water_quality')
         
         self.config.set('Display', 'show_hud', str(self.show_hud_checkbox.isChecked()))
         self.config.set('Display', 'show_glasses', str(self.show_glasses_checkbox.isChecked()))
+
+        if not self.config.has_section('Appearance'):
+            self.config.add_section('Appearance')
+        self.config.set('Appearance', 'glasses', self.selected_glasses())
         
         if not self.config.has_section('Settings'):
             self.config.add_section('Settings')
@@ -695,6 +758,11 @@ class SettingsWindow(QDialog):
         self.config.set('Controls', 'middle_click_drag', str(self.middle_click_drag_checkbox.isChecked()))
         self.config.set('Controls', 'p2_turn_sensitivity', str(self.p2_turn_sensitivity_spin.value()))
         
+        if not self.config.has_section('Audio'):
+            self.config.add_section('Audio')
+        self.config.set('Audio', 'sound_volume', str(self.sound_volume_slider.value()))
+        self.config.set('Audio', 'music_volume', str(self.music_volume_slider.value()))
+
         if not self.config.has_section('Kiosk'):
             self.config.add_section('Kiosk')
         self.config.set('Kiosk', 'window_mode', self.kiosk_mode_combo.currentText())

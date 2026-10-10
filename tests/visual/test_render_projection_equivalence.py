@@ -1,6 +1,6 @@
 """The numeric path must draw exactly what the object path drew.
 
-``Renderer_F.render_scene`` feeds all brush passes from the dense render
+``ForwardRenderer.render_scene`` feeds all brush passes from the dense render
 projection. The portal virtual views also consume those slots, applying their
 own virtual frustum as a numeric mask; entity sprites come from EntityTable
 slots in the same pass.
@@ -72,7 +72,7 @@ def _patterned_texture(index):
 @pytest.fixture
 def renderer(context):
     """A renderer whose textures carry a pattern, unlike the shared harness."""
-    from engine.renderer_F import Renderer_F
+    from engine.renderer.forward import ForwardRenderer
 
     made_textures = {}
 
@@ -83,8 +83,8 @@ def renderer(context):
             made_textures[name] = tex
         return tex
 
-    made = Renderer_F(loader, 64, 4096, None)
-    made.update_grid_buffers(4096, 64)
+    made = ForwardRenderer(None, texture_loader=loader)
+    made.set_grid(4096, 64)
     made.set_sprite_textures({})
     _ENTITY_TABLES.clear()
     yield made
@@ -161,7 +161,7 @@ def _render(renderer, context, brushes, things, numeric, live_things=None,
         config["thing_hidden"] = ehidden
     context.bind()
     gl.glClearColor(0.0, 0.0, 0.0, 1.0)
-    renderer.render_scene(projection, view, eye, brushes, things, None, config,
+    renderer.render_scene(projection, view, eye, None, config,
                           brush_slots=brush_slots)
     gl.glFinish()
     return context.read_pixels().astype(np.int16)
@@ -325,16 +325,16 @@ def test_portal_renderer_has_no_legacy_object_path():
     from pathlib import Path
 
     root = Path(__file__).parents[2]
-    forward = (root / 'engine' / 'renderer_F.py').read_text(encoding='utf-8')
-    core = (root / 'engine' / 'renderer_core.py').read_text(encoding='utf-8')
+    visibility = (root / 'engine' / 'renderer' / 'core' / 'visibility.py').read_text(encoding='utf-8')
+    debug = (root / 'engine' / 'renderer' / 'core' / 'overlays.py').read_text(encoding='utf-8')
 
-    portal_scene = forward[
-        forward.index("def _portal_numeric_scene_inputs"):
-        forward.index("def render_scene", forward.index("def _portal_numeric_scene_inputs"))
+    portal_scene = visibility[
+        visibility.index("def _portal_numeric_scene_inputs"):
+        len(visibility)
     ]
-    portal_wire = core[
-        core.index("def draw_portal_wireframes"):
-        core.index("def draw_connection_lines", core.index("def draw_portal_wireframes"))
+    portal_wire = debug[
+        debug.index("def draw_portal_wireframes"):
+        debug.index("def draw_connection_lines", debug.index("def draw_portal_wireframes"))
     ]
 
     assert "Portal)" not in portal_scene
@@ -345,31 +345,31 @@ def test_portal_renderer_has_no_legacy_object_path():
 
 def test_sprite_renderer_has_no_legacy_object_path(renderer):
     """There is exactly one sprite renderer: dense EntityTable instancing."""
-    import engine.renderer_core as rc
-    assert not hasattr(rc.BaseRenderer, "draw_sprites")
+    from engine.renderer.forward import ForwardRenderer
+    assert not hasattr(ForwardRenderer, "draw_sprites")
     assert not hasattr(renderer, "draw_sprites")
 
 
 def test_numeric_sprite_render_submits_instanced_quads(renderer, context):
     """A populated EntityTable reaches GL through the instanced sprite pass."""
-    import engine.renderer_core as rc
+    import OpenGL.GL as gl
 
     brushes, things = _entity_scene()
     published = list(things)
     calls = {"draws": 0, "instances": 0}
-    real = rc.gl.glDrawArraysInstanced
+    real = gl.glDrawArraysInstanced
 
     def draw_instanced(mode, first, count, instances, *args, **kwargs):
         calls["draws"] += 1
         calls["instances"] += int(instances)
         return real(mode, first, count, instances, *args, **kwargs)
 
-    rc.gl.glDrawArraysInstanced = draw_instanced
+    gl.glDrawArraysInstanced = draw_instanced
     try:
         _render(renderer, context, brushes, published, numeric=True,
                 live_things=things)
     finally:
-        rc.gl.glDrawArraysInstanced = real
+        gl.glDrawArraysInstanced = real
 
     assert calls["draws"] >= 1
     assert calls["instances"] >= 3, (
@@ -429,7 +429,7 @@ def test_a_hidden_brush_is_absent_from_both(renderer, context):
                                all_brush_slots=kept)
     context.bind()
     gl.glClearColor(0.0, 0.0, 0.0, 1.0)
-    renderer.render_scene(projection, view, eye, brushes, things, None, config,
+    renderer.render_scene(projection, view, eye, None, config,
                           brush_slots=kept)
     gl.glFinish()
     hidden_img = context.read_pixels().astype(np.int16)
@@ -598,9 +598,9 @@ def _override_scene():
     return brushes, [light]
 
 
-@pytest.mark.parametrize('selected_index', [None, 2, 3])
+@pytest.mark.parametrize('selection_index', [None, 2, 3])
 def test_the_colour_overrides_keep_their_priority(renderer, context,
-                                                  selected_index):
+                                                  selection_index):
     """trigger over selection over subtract over the brush's own colour.
 
     The per-brush chain was an if/elif; the instanced path writes masks over a
@@ -610,9 +610,11 @@ def test_the_colour_overrides_keep_their_priority(renderer, context,
     0.3 alpha both reach the image.
     """
     import OpenGL.GL as gl
+    from editor.selection_overlay import describe_selection
 
     brushes, things = _override_scene()
-    selected = None if selected_index is None else brushes[selected_index]
+    primary_selection = describe_selection(
+        None if selection_index is None else brushes[selection_index])
 
     def draw():
         table, refs, slots = _projection_for(brushes)
@@ -620,11 +622,11 @@ def test_the_colour_overrides_keep_their_priority(renderer, context,
         config = glh.render_config(all_brushes=brushes, all_things=things,
                                    render_table=table, render_refs=refs,
                                    all_brush_slots=slots,
-                                   selected_object=selected,
+                                   primary_selection=primary_selection,
                                    show_triggers_as_solid=True)
         context.bind()
         gl.glClearColor(0.0, 0.0, 0.0, 1.0)
-        renderer.render_scene(projection, view, eye, brushes, things, selected,
+        renderer.render_scene(projection, view, eye, primary_selection,
                               config, brush_slots=slots)
         gl.glFinish()
         return context.read_pixels().astype(np.int16)
@@ -637,7 +639,7 @@ def test_the_colour_overrides_keep_their_priority(renderer, context,
         renderer.shaders['lit_brush_instanced'] = saved
 
     _assert_same_picture(instanced, fallback,
-                         'selection=%s' % (selected_index,))
+                         'selection=%s' % (selection_index,))
 
 
 # ---------------------------------------------------------------------------

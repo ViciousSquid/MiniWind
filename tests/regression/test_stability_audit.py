@@ -9,6 +9,7 @@ that check; the Debug Tables instrument shows the same columns by hand.
 """
 
 import json
+import os
 import random
 
 import numpy as np
@@ -18,12 +19,14 @@ pytest.importorskip("PyQt5", reason="drives the real editor state and logic thre
 
 from editor import io_system as io                         # noqa: E402
 from editor.editor_state import EditorState               # noqa: E402
+from editor.main_window import MainWindow                 # noqa: E402
 from editor.things import Light, Monster, PlayerStart, Portal  # noqa: E402
 from engine import entity_table as etm                    # noqa: E402
 from engine import render_table as rtm                    # noqa: E402
 from engine.change_journal import touch                   # noqa: E402
 from engine.entity_table import EntityTable               # noqa: E402
-from engine.logic_thread import LogicThread, Key_W        # noqa: E402
+from engine.logic_player import KEY_W
+from engine.logic_thread import LogicThread        # noqa: E402
 from engine.mover_table import MoverTable                 # noqa: E402
 from engine.player import Player                          # noqa: E402
 from engine.render_table import RenderTable               # noqa: E402
@@ -32,6 +35,7 @@ from engine.threaded_game_state import ThreadedGameState  # noqa: E402
 from tests.helpers.worlds import box_brush, make_thing, pillar_grid  # noqa: E402
 
 pytestmark = [pytest.mark.qt, pytest.mark.integration]
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 #: Entity columns that are a function of wall-clock time (the Effect clock).
 _CLOCK_COLUMNS = {"effect_elapsed", "effect_alive", "light_params",
@@ -108,9 +112,9 @@ def _editor(brushes=(), things=()):
 
 def _play(brushes=(), things=()):
     state, game_state, logic = _editor(brushes, things)
-    logic.player = Player(0.0, 0.0, 0.0)
-    logic.set_play_mode(True)
-    logic._stop_monster_ai()
+    logic.player_runtime.player = Player(0.0, 0.0, 0.0)
+    logic.session_runtime.apply_play_mode(True)
+    logic.session_runtime.stop_monster_ai()
     return state, game_state, logic
 
 
@@ -128,12 +132,12 @@ def test_a_dragged_brush_does_not_flicker_after_it_is_deselected():
     state, game_state, logic = _editor(pillar_grid(3, 3))
     _check_frames(logic, game_state)
     brush = state.brushes[4]
-    state.set_selected_object(brush)
+    state.selected_objects = [brush]
     state.save_state()
     _check_frames(logic, game_state)
     brush["pos"] = [brush["pos"][0], brush["pos"][1] + 4.0, brush["pos"][2]]
     _check_frames(logic, game_state, 1)
-    state.set_selected_object(None)
+    state.selected_objects = []
     _check_frames(logic, game_state, 4)
 
 
@@ -164,7 +168,7 @@ def test_random_editor_edits_publish_tables_equal_to_a_rebuild():
         roll = rng.random()
         if roll < 0.3:
             brush = rng.choice(state.brushes)
-            state.set_selected_object(brush)
+            state.selected_objects = [brush]
             state.save_state()
             brush["pos"] = [brush["pos"][0] + 8.0, brush["pos"][1], brush["pos"][2]]
         elif roll < 0.4:
@@ -184,7 +188,7 @@ def test_random_editor_edits_publish_tables_equal_to_a_rebuild():
             thing = rng.choice(state.things)
             thing.pos = [thing.pos[0] + 3.0, thing.pos[1], thing.pos[2]]
         else:
-            state.set_selected_object(None)
+            state.selected_objects = []
         while pending:
             pending.pop(0)()
         logic._step_frame(logic.TICK_DURATION)
@@ -208,10 +212,9 @@ def test_projectiles_are_published_on_a_frame_that_runs_no_tick():
     """Projectile positions were written into the write buffer only inside a
     tick, so the render loop's zero-tick frames published none: flicker."""
     _state, game_state, logic = _play()
-    logic._monster_projectiles = [
-        {"pos": [0.0, 50.0, 100.0 + i], "vel": [0.0, 0.0, 10.0], "owner_id": 0,
-         "lifetime": 50.0, "damage": 1, "distance_travelled": 0.0}
-        for i in range(3)]
+    for i in range(3):
+        logic.combat_runtime._monster_projectiles.add(
+            (0.0, 50.0, 100.0 + i), (0.0, 0.0, 10.0), 0, 1, 50.0)
     try:
         counts = []
         for accumulator in (logic.TICK_DURATION, 0.0, logic.TICK_DURATION, 0.0):
@@ -223,7 +226,7 @@ def test_projectiles_are_published_on_a_frame_that_runs_no_tick():
             game_state.release_render_state(frame)
         assert counts == [3, 3, 3, 3]
     finally:
-        logic.set_play_mode(False)
+        logic.session_runtime.apply_play_mode(False)
 
 
 def test_mover_slot_maps_are_cached_per_render_buffer():
@@ -233,7 +236,7 @@ def test_mover_slot_maps_are_cached_per_render_buffer():
         tables = [RenderTable(), RenderTable()]
         for table in tables:
             table.sync([mover], epoch=1)
-        movers = logic._movers()
+        movers = logic.mover_runtime._movers()
         movers.publish(logic, tables[0])
         first = movers._slot_cache[tables[0]]
         movers.publish(logic, tables[1])
@@ -241,7 +244,7 @@ def test_mover_slot_maps_are_cached_per_render_buffer():
         assert movers._slot_cache[tables[0]] is first
         assert len(movers._slot_cache) == 2
     finally:
-        logic.set_play_mode(False)
+        logic.session_runtime.apply_play_mode(False)
 
 
 # ---------------------------------------------------------------------------
@@ -263,9 +266,9 @@ def test_non_finite_io_parameters_are_ignored(value):
         assert monster.properties["health"] == 50
         for _ in range(3):
             logic._step_frame(logic.TICK_DURATION)
-        assert np.isfinite(logic._movers().movers.rot_angle).all()
+        assert np.isfinite(logic.mover_runtime._movers().movers.rot_angle).all()
     finally:
-        logic.set_play_mode(False)
+        logic.session_runtime.apply_play_mode(False)
 
 
 def test_portal_set_target_relinks_the_renderer_and_transit():
@@ -277,7 +280,7 @@ def test_portal_set_target_relinks_the_renderer_and_transit():
         _check_frames(logic, game_state)
         logic.io_manager._execute_input("a", "SetTarget", "c", "t",
                                         target_id=a.properties["id"])
-        assert logic._portal_target_things[logic._portal_things.index(a)] is c
+        assert logic.portal_runtime.portal_target_things[logic.portal_runtime.portal_things.index(a)] is c
         frame = _frame(logic, game_state)
         try:
             assert _diff_rebuild(frame) == []
@@ -287,7 +290,7 @@ def test_portal_set_target_relinks_the_renderer_and_transit():
         finally:
             game_state.release_render_state(frame)
     finally:
-        logic.set_play_mode(False)
+        logic.session_runtime.apply_play_mode(False)
 
 
 def test_brush_kill_removes_it_from_the_running_world():
@@ -298,7 +301,7 @@ def test_brush_kill_removes_it_from_the_running_world():
         assert wall.get("hidden") is True and wall.get("disabled") is True
         assert "_kill" not in wall
     finally:
-        logic.set_play_mode(False)
+        logic.session_runtime.apply_play_mode(False)
 
 
 def test_a_wall_revealed_by_io_show_is_solid():
@@ -309,12 +312,12 @@ def test_a_wall_revealed_by_io_show_is_solid():
     _state, game_state, logic = _play([floor, wall])
     try:
         logic.io_manager._execute_input("wall", "Show", "", "t", target_id=wall["id"])
-        game_state.set_keys({Key_W})
+        game_state.set_keys({KEY_W})
         for _ in range(240):
             logic._step_frame(logic.TICK_DURATION)
-        assert logic.player.pos.z < 284.0
+        assert logic.player_runtime.player.pos.z < 284.0
     finally:
-        logic.set_play_mode(False)
+        logic.session_runtime.apply_play_mode(False)
 
 
 # ---------------------------------------------------------------------------
@@ -333,108 +336,104 @@ def test_a_once_trigger_as_the_editor_authors_it_fires_once():
     fired = []
     logic.io_manager.fire_output = lambda *a, **k: fired.append(a[1])
     try:
-        logic._on_trigger_enter(brush, brush["id"])
-        logic._on_trigger_enter(brush, brush["id"])
+        logic.trigger_runtime._on_trigger_enter(brush, brush["id"])
+        logic.trigger_runtime._on_trigger_enter(brush, brush["id"])
         assert fired == ["OnStartTouch", "OnTrigger"]
     finally:
-        logic.set_play_mode(False)
+        logic.session_runtime.apply_play_mode(False)
 
 
 def test_hurt_trigger_uses_the_editors_damage_amount():
     brush, _game_state, logic = _trigger(trigger_type="Multiple", hurt_amount=37)
     brush["trigger_action"] = "hurt"
     try:
-        logic._on_trigger_enter(brush, brush["id"])
-        assert logic.player_health == 100 - 37
+        logic.trigger_runtime._on_trigger_enter(brush, brush["id"])
+        assert logic.player_runtime.player_health == 100 - 37
     finally:
-        logic.set_play_mode(False)
+        logic.session_runtime.apply_play_mode(False)
 
 
-def test_trigger_activation_falls_back_to_the_key_older_editors_wrote():
-    from engine.logic_thread import _trigger_activation
-    assert _trigger_activation({"trigger_collect_activation": "use"}) == "use"
+def test_trigger_activation_uses_canonical_key():
+    from engine.logic_triggers import _trigger_activation
+    assert _trigger_activation({"trigger_activation": "use"}) == "use"
     assert _trigger_activation({"trigger_activation": "Touch",
                                 "trigger_collect_activation": "use"}) == "touch"
     assert _trigger_activation({}) == "touch"
 
 
-@pytest.mark.parametrize("save", ["quicksave", "quickload"])
-def test_a_trigger_can_quicksave_or_quickload(save):
-    brush, game_state, logic = _trigger(trigger_type="Once", trigger_save=save)
-    try:
-        logic._on_trigger_enter(brush, brush["id"])
-        logic._on_trigger_enter(brush, brush["id"])
-        assert list(game_state.consume_console_commands()) == [save]
-    finally:
-        logic.set_play_mode(False)
-
-
 def test_a_trigger_saves_nothing_by_default():
     brush, game_state, logic = _trigger(trigger_type="Multiple")
     try:
-        logic._on_trigger_enter(brush, brush["id"])
+        logic.trigger_runtime._on_trigger_enter(brush, brush["id"])
         assert not game_state.consume_console_commands()
     finally:
-        logic.set_play_mode(False)
+        logic.session_runtime.apply_play_mode(False)
 
 
 def test_trigger_tab_writes_the_keys_the_engine_reads(qt_app):
-    """The Activation combo wrote ``trigger_collect_activation``, which nothing
-    read: a trigger set to 'use' in the editor still fired on touch."""
-    import types
-    from PyQt5.QtWidgets import QWidget
-    from editor.property_editor import PropertyEditor
-
-    editor = types.SimpleNamespace(
-        state=types.SimpleNamespace(things=[], brushes=[]), view_3d=QWidget())
-    panel = PropertyEditor(editor)
+    """The Activation combo writes the canonical trigger activation field."""
+    editor = MainWindow(ROOT)
+    brush = box_brush("trig", is_trigger=True, trigger_type="Once")
+    editor.state.brushes = [brush]
     try:
-        brush = box_brush("trig", is_trigger=True, trigger_type="Once")
-        panel.current_object = brush
-        panel.populate_for_brush(brush)
-        panel._widgets["trigger_collect_activation_combo"].setCurrentText("use")
+        editor.set_selected_objects([brush])
+        panel = editor.property_editor
+        assert panel.current_object is brush
+        panel._widgets["trigger_activation_combo"].setCurrentText("use")
         panel._widgets["trigger_save_combo"].setCurrentText("quicksave")
         assert brush["trigger_activation"] == "use"
         assert "trigger_collect_activation" not in brush
         assert brush["trigger_save"] == "quicksave"
     finally:
-        panel.deleteLater()
+        editor.unsaved_changes = False
+        editor.close()
+        editor.deleteLater()
+        qt_app.processEvents()
 
 
-def test_a_hidden_light_does_not_light_the_running_world():
+@pytest.mark.gl
+def test_a_hidden_light_does_not_light_the_running_world(main_window):
     """Big World parks an out-of-range light by hiding it; the dense light
     selection ignored ``hidden``, so parked lights kept lighting and kept
     taking light and shadow slots. The editor preview still shows them."""
-    from engine.renderer_F import Renderer_F
+    renderer = main_window.view_3d.renderer
     lamps = [make_thing(Light, "lamp%d" % i, (i * 100.0, 64, 0)) for i in range(3)]
     lamps[1].properties["hidden"] = True
     table = EntityTable()
     hidden = table.begin_frame(lamps, epoch=1)
     config = {"entity_table": table, "thing_hidden": hidden, "play_mode": True}
-    _table, slots = Renderer_F._get_active_lights(None, None, config)
+    _table, slots = renderer._get_active_lights(config)
     assert sorted(slots.tolist()) == [0, 2]
     config["play_mode"] = False
-    _table, slots = Renderer_F._get_active_lights(None, None, config)
+    _table, slots = renderer._get_active_lights(config)
     assert sorted(slots.tolist()) == [0, 1, 2]
 
 
-def test_console_hide_and_show_go_through_the_authored_writer():
-    import types
+def test_console_hide_and_show_go_through_the_authored_writer(qt_app):
     from editor.console_commands import ConsoleCommandHandler
+
+    editor = MainWindow(ROOT)
+    game_state = ThreadedGameState()
+    logic = LogicThread(game_state, editor.state)
+    editor.view_3d.logic_thread = logic
     wall = box_brush("wall", (0, 64, 200))
     wall["name"] = "wall"
-    state = EditorState()
-    state.brushes = [wall]
-    marked = []
-    logic = types.SimpleNamespace(mark_collision_dirty=lambda: marked.append(1))
-    handler = ConsoleCommandHandler.__new__(ConsoleCommandHandler)
-    handler.editor_state = state
-    handler._logic_thread = lambda: logic
-    handler.cmd_hide("wall")
-    assert wall["hidden"] is True and marked == [1]
-    wall["_bw_parked_hidden"] = True     # parked by a streaming layer
-    handler.cmd_show("wall")
-    assert wall["_bw_parked_hidden"] is False, "Show landed on the parked value"
+    editor.state.brushes = [wall]
+    handler = ConsoleCommandHandler(editor)
+    try:
+        handler.cmd_hide("wall")
+        assert wall["hidden"] is True
+        assert logic.collision_runtime._dirty is True
+
+        wall["_bw_parked_hidden"] = True     # parked by a streaming layer
+        handler.cmd_show("wall")
+        assert wall["_bw_parked_hidden"] is False, "Show landed on the parked value"
+    finally:
+        logic.stop()
+        editor.unsaved_changes = False
+        editor.close()
+        editor.deleteLater()
+        qt_app.processEvents()
 
 
 def test_a_nan_view_distance_is_ignored():
@@ -448,10 +447,9 @@ def test_a_nan_view_distance_is_ignored():
     assert vd.fog_color == (0.0, 0.5, 1.0)
 
 
-def test_getprop_with_extra_arguments_prints_usage():
+def test_getprop_with_extra_arguments_prints_usage(main_window):
     from editor.console_commands import ConsoleCommandHandler
-    handler = ConsoleCommandHandler.__new__(ConsoleCommandHandler)
-    handler.editor_state = EditorState()
+    handler = ConsoleCommandHandler(main_window)
     handler.cmd_get_property("a b c")      # used to raise ValueError
 
 

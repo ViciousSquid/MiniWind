@@ -1,6 +1,6 @@
 """The dense render projection of Fio's world -- T3.
 
-Fio already pays to describe its world numerically: :meth:`LogicThread._build_cull_cache`
+Fio already pays to describe its world numerically: the render-table cull projection
 keeps AABB centres and half-extents in NumPy so the frustum test can run as two
 matmuls instead of a per-brush Python loop.  What it does not keep is anything
 about *what* a brush is -- its shader class, whether it is water, which texture
@@ -69,7 +69,7 @@ import math
 
 import numpy as np
 
-from engine.constants import is_water_brush, normalize_color
+from engine.constants import is_water_brush, normalize_color, water_high_quality
 from engine.spatial import authored_hidden
 from engine import brush_geometry
 from engine.change_journal import JOURNAL, OVERFLOW, STATE
@@ -127,7 +127,7 @@ CLASS_NON_OPAQUE = (CLASS_WATER | CLASS_FOG | CLASS_GLASS |
                     CLASS_GLOW | CLASS_TRIGGER)
 
 #: Face order of the shared cube VAO -- index *i* is the face whose six vertices
-#: start at ``i * 6``.  Mirrors ``renderer_F._CUBE_FACE_KEYS``; the two must
+#: start at ``i * 6``.  Mirrors ``engine.renderer.core.geometry._CUBE_FACE_KEYS``; the two must
 #: agree, because ``tex_name_id[:, i]`` is what selects that run's texture.
 CUBE_FACE_KEYS = ('south', 'north', 'west', 'east', 'down', 'top')
 
@@ -256,6 +256,9 @@ _COLUMNS = (
     #: refraction IOR, roughness
     ('water_params', (7,), np.float32, 0.0),
     ('water_plane', (), bool, False),
+    #: The brush's "High quality" flag: depth-based colour, shoreline foam,
+    #: caustics and screen-space reflections (see engine.renderer.WATER_QUALITIES).
+    ('water_high_quality', (), bool, False),
     ('glass_color', (3,), np.float32, 0.0),
     #: opacity, distortion, refraction, roughness, fresnel
     ('glass_params', (5,), np.float32, 0.0),
@@ -323,9 +326,9 @@ class RenderTable:
         #: Dense geometry records keyed directly by geometry_id. AABB
         #: brushes have no record; their geometry_id stays -1.
         self.geometry_records: list = []
-        #: slot -> the brush dict, as an object array, for publishing rows as
-        #: objects on demand (``PublishedBrushes``). Rebuilt only when the rows
-        #: change.
+        #: slot -> the brush dict, retained only for cache-boundary resolution
+        #: and resource/object lookup. Frame rendering consumes the dense
+        #: numeric columns; this reference array is rebuilt only when rows change.
         self.refs = np.empty(0, dtype=object)
         #: ``~hidden`` and its slots, cached until a ``hidden`` value changes.
         self._shown_mask = np.empty(0, dtype=bool)
@@ -544,7 +547,7 @@ class RenderTable:
     #: The special-shader columns, and the fill a row of no special class
     #: holds (nothing reads them for such a row, but a rebuild gives it too).
     _SPECIAL_COLUMNS = ('water_tint', 'water_params', 'water_plane',
-                        'glass_color', 'glass_params', 'fog_color', 'fog_params')
+                        'water_high_quality', 'glass_color', 'glass_params', 'fog_color', 'fog_params')
 
     def _resolve_special_rows(self, idx, special):
         """Water, glass and fog shader state -- only for rows of those classes.
@@ -560,7 +563,7 @@ class RenderTable:
                     brush.get('water_tint', [0.0, 0.4, 0.6]))
                 self.water_params[slot] = (
                     _num(brush.get('water_opacity'), 0.5),
-                    _num(brush.get('water_fresnel', brush.get('water_reflectivity', 0.5)), 0.5),
+                    _num(brush.get('water_fresnel', brush.get('water_reflectivity', 0.65)), 0.65),
                     _num(brush.get('water_wave_height'), 0.5),
                     1.0 if brush.get('water_wave_enabled', True) else 0.0,
                     _num(brush.get('water_distortion'), 0.5),
@@ -568,6 +571,7 @@ class RenderTable:
                     _num(brush.get('water_roughness'), 0.0),
                 )
                 self.water_plane[slot] = bool(brush.get('water_plane', False))
+                self.water_high_quality[slot] = water_high_quality(brush)
             if b & CLASS_GLASS:
                 self.glass_color[slot] = normalize_color(
                     brush.get('glass_color', [0.7, 0.85, 0.95]))
@@ -823,7 +827,7 @@ class RenderTable:
         self.slot_of_id = {bid: slot for slot, bid in enumerate(new_ids)
                            if bid is not None}
         # Publish exactly the row set reconciled above. The live list may grow
-        # concurrently during benchmark/editor stress insertion; the next
+        # concurrently (insertion from another thread); the next
         # frame will reconcile any newly appended rows.
         self.brushes = list(brushes[:n])
         self._row_tuple = tuple(self.brushes)
@@ -974,39 +978,53 @@ def model_matrices(table, slots, out_model=None, out_normal=None):
     normals[:, 8] = inv_size[:, 2]
 
     # --- and the rotated rows on top ---------------------------------------
-    rot = table.rot[slots]
-    rotated = np.flatnonzero(rot[:, 3] != 0.0)
+    rotated, r = rotation_matrices(table.rot[slots])
     if len(rotated):
-        axis = rot[rotated, :3].astype(np.float64)
-        length = np.linalg.norm(axis, axis=1)
-        # A degenerate axis means no rotation, exactly as the scalar path's
-        # `if glm.length(axis) > 0.001` guard decided.
-        usable = length > 0.001
-        rotated = rotated[usable]
-        if len(rotated):
-            axis = axis[usable] / length[usable, None]
-            angle = np.radians(rot[rotated, 3].astype(np.float64))
-            cos_a = np.cos(angle)[:, None]
-            sin_a = np.sin(angle)[:, None]
-            one_c = 1.0 - cos_a
-            ux, uy, uz = axis[:, 0:1], axis[:, 1:2], axis[:, 2:3]
-            # Rodrigues, as (rows, cols) of the 3x3 rotation.
-            r = np.empty((len(rotated), 3, 3), dtype=np.float64)
-            r[:, 0, 0] = (cos_a + ux * ux * one_c)[:, 0]
-            r[:, 0, 1] = (ux * uy * one_c - uz * sin_a)[:, 0]
-            r[:, 0, 2] = (ux * uz * one_c + uy * sin_a)[:, 0]
-            r[:, 1, 0] = (uy * ux * one_c + uz * sin_a)[:, 0]
-            r[:, 1, 1] = (cos_a + uy * uy * one_c)[:, 0]
-            r[:, 1, 2] = (uy * uz * one_c - ux * sin_a)[:, 0]
-            r[:, 2, 0] = (uz * ux * one_c - uy * sin_a)[:, 0]
-            r[:, 2, 1] = (uz * uy * one_c + ux * sin_a)[:, 0]
-            r[:, 2, 2] = (cos_a + uz * uz * one_c)[:, 0]
-
-            rs = size[rotated]
-            ri = inv_size[rotated]
-            for col in range(3):
-                for row in range(3):
-                    models[rotated, col * 4 + row] = r[:, row, col] * rs[:, col]
-                    normals[rotated, col * 3 + row] = r[:, row, col] * ri[:, col]
+        rs = size[rotated]
+        ri = inv_size[rotated]
+        for col in range(3):
+            for row in range(3):
+                models[rotated, col * 4 + row] = r[:, row, col] * rs[:, col]
+                normals[rotated, col * 3 + row] = r[:, row, col] * ri[:, col]
 
     return models, normals
+
+
+def rotation_matrices(rot):
+    """The rows of a ``rot`` column block that rotate, and their 3x3 matrices.
+
+    *rot* is ``(n, 4)``: axis xyz and an angle in degrees, about the row's
+    centre. Returns ``(rows, R)`` with ``R`` shaped ``(len(rows), 3, 3)`` as
+    (row, col). A zero angle or a degenerate axis means no rotation, exactly
+    as the scalar path's ``if glm.length(axis) > 0.001`` guard decided, and
+    such rows are left out. Shared by the draw's model matrices and anything
+    else that must see a brush where the renderer drew it.
+    """
+    rot = np.asarray(rot)
+    rotated = np.flatnonzero(rot[:, 3] != 0.0)
+    if not len(rotated):
+        return rotated, np.empty((0, 3, 3), dtype=np.float64)
+    axis = rot[rotated, :3].astype(np.float64)
+    length = np.linalg.norm(axis, axis=1)
+    usable = length > 0.001
+    rotated = rotated[usable]
+    if not len(rotated):
+        return rotated, np.empty((0, 3, 3), dtype=np.float64)
+    axis = axis[usable] / length[usable, None]
+    angle = np.radians(rot[rotated, 3].astype(np.float64))
+    cos_a = np.cos(angle)[:, None]
+    sin_a = np.sin(angle)[:, None]
+    one_c = 1.0 - cos_a
+    ux, uy, uz = axis[:, 0:1], axis[:, 1:2], axis[:, 2:3]
+    # Rodrigues, as (rows, cols) of the 3x3 rotation.
+    r = np.empty((len(rotated), 3, 3), dtype=np.float64)
+    r[:, 0, 0] = (cos_a + ux * ux * one_c)[:, 0]
+    r[:, 0, 1] = (ux * uy * one_c - uz * sin_a)[:, 0]
+    r[:, 0, 2] = (ux * uz * one_c + uy * sin_a)[:, 0]
+    r[:, 1, 0] = (uy * ux * one_c + uz * sin_a)[:, 0]
+    r[:, 1, 1] = (cos_a + uy * uy * one_c)[:, 0]
+    r[:, 1, 2] = (uy * uz * one_c - ux * sin_a)[:, 0]
+    r[:, 2, 0] = (uz * ux * one_c - uy * sin_a)[:, 0]
+    r[:, 2, 1] = (uz * uy * one_c + ux * sin_a)[:, 0]
+    r[:, 2, 2] = (cos_a + uz * uz * one_c)[:, 0]
+    return rotated, r

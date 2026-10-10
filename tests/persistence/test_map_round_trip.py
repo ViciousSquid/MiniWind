@@ -47,6 +47,8 @@ def scene():
         make_thing(Monster, "grunt", (300, 96, 0), monster_type="human"),
         make_thing(LogicRelay, "relay"),
     ]
+    # As the editor does after the operation that created the start.
+    state.settle_player_starts()
     return state
 
 
@@ -61,6 +63,19 @@ def _round_trip(state):
 # ---------------------------------------------------------------------------
 # What must survive
 # ---------------------------------------------------------------------------
+
+def test_temporary_cutscene_actors_are_not_saved(scene):
+    """Modeless cutscene authoring actors never become map entities."""
+    temporary = make_thing(Monster, "cutscene-temp", (100, 20, 100))
+    temporary.properties["_cutscene_temporary"] = True
+    scene.things.append(temporary)
+
+    data = scene.get_level_data()
+    names = [thing["properties"].get("name") for thing in data["things"]]
+
+    assert "cutscene-temp" not in names
+    assert "grunt" in names
+
 
 def test_a_saved_world_is_json_serialisable(scene):
     text = json.dumps(scene.get_level_data())

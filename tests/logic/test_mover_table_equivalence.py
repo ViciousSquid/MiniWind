@@ -4,9 +4,12 @@
 pass. The pass has to reproduce that loop exactly, down to the last bit:
 positions, spins, state, which I/O fires and in what order, and how far the
 player is carried. The loop itself is kept below, verbatim, as
-:class:`ReferenceLogic`, with the state dicts it always had. Both are driven
-through the same worlds, the same I/O wiring and the same scripted inputs, and
-compared after every tick.
+:class:`ReferenceLogic`, with the state dicts it always had. The real I/O
+dispatcher and output graph are shared with the live implementation; only the
+input handlers that mutate the retired reference state are registered
+separately so the production API is not kept alive just for this oracle. Both
+are driven through the same worlds and scripted inputs, and compared after
+every tick.
 
 The worlds are built to reach the awkward cases:
 
@@ -34,11 +37,16 @@ import pytest
 
 pytest.importorskip("PyQt5", reason="the logic thread pulls in editor.things")
 
-from editor.io_handlers import register_all_input_handlers   # noqa: E402
-from editor.io_system import IOManager, OutputConnection      # noqa: E402
-from editor.things import PathNode                             # noqa: E402
-from engine.logic_thread import DOOR_DIRECTION_MAP, LogicThread  # noqa: E402
-from engine.savegame import _public_state                      # noqa: E402
+from editor.debug_console import debug_log                         # noqa: E402
+from editor.editor_state import EditorState                       # noqa: E402
+from editor.io_handlers import register_all_input_handlers       # noqa: E402
+from editor.io_system import IOManager, OutputConnection          # noqa: E402
+from editor.things import PathNode                                 # noqa: E402
+from engine.logic_movers import DOOR_DIRECTION_MAP, LogicMovers   # noqa: E402
+from engine.logic_thread import LogicThread                        # noqa: E402
+from engine.player import Player                                    # noqa: E402
+from engine.savegame import _public_state                           # noqa: E402
+from engine.threaded_game_state import ThreadedGameState            # noqa: E402
 
 pytestmark = pytest.mark.qt
 
@@ -50,7 +58,7 @@ class ReferenceLogic:
         self.brushes = brushes
         self.things = things
         self.io_manager = io_manager
-        self.player = player
+        self.player_runtime = SimpleNamespace(player=player)
         self.movers = []
         self.doors = []
         self.mover_states = {}
@@ -212,8 +220,8 @@ class ReferenceLogic:
             ny = original[1] + (direction[1] * distance) * eased
             nz = original[2] + (direction[2] * distance) * eased
             brush['pos'] = [nx, ny, nz]
-            if self.player and self.player.ground_object == brush:
-                self.player.pos += glm.vec3(nx - cur[0], ny - cur[1], nz - cur[2])
+            if self.player_runtime.player and self.player_runtime.player.ground_object == brush:
+                self.player_runtime.player.pos += glm.vec3(nx - cur[0], ny - cur[1], nz - cur[2])
 
     def _update_mover_path(self, idx: int, brush: dict, delta: float):
         state = self.mover_path_states[idx]
@@ -260,8 +268,8 @@ class ReferenceLogic:
             move_delta = new_pos - np.array(brush['pos'])
             brush['pos'] = new_pos.tolist()
 
-            if self.player and self.player.ground_object == brush:
-                self.player.pos += glm.vec3(float(move_delta[0]), float(move_delta[1]), float(move_delta[2]))
+            if self.player_runtime.player and self.player_runtime.player.ground_object == brush:
+                self.player_runtime.player.pos += glm.vec3(float(move_delta[0]), float(move_delta[1]), float(move_delta[2]))
 
             if self.io_manager:
                 # Per-node arrival event (fires at every PathNode in the chain),
@@ -290,8 +298,8 @@ class ReferenceLogic:
             move_delta = new_pos - np.array(brush['pos'])
             brush['pos'] = new_pos.tolist()
 
-            if self.player and self.player.ground_object == brush:
-                self.player.pos += glm.vec3(float(move_delta[0]), float(move_delta[1]), float(move_delta[2]))
+            if self.player_runtime.player and self.player_runtime.player.ground_object == brush:
+                self.player_runtime.player.pos += glm.vec3(float(move_delta[0]), float(move_delta[1]), float(move_delta[2]))
 
     def _update_doors(self, delta: float):
         for i, brush in self.doors:
@@ -346,8 +354,8 @@ class ReferenceLogic:
             ny = original[1] + (direction[1] * distance) * progress
             nz = original[2] + (direction[2] * distance) * progress
             brush['pos'] = [nx, ny, nz]
-            if self.player and self.player.ground_object == brush:
-                self.player.pos += glm.vec3(nx - cur[0], ny - cur[1], nz - cur[2])
+            if self.player_runtime.player and self.player_runtime.player.ground_object == brush:
+                self.player_runtime.player.pos += glm.vec3(nx - cur[0], ny - cur[1], nz - cur[2])
 
 
 # ---------------------------------------------------------------------------
@@ -429,6 +437,192 @@ def _world(seed, count=70):
     return brushes, things
 
 
+
+# ---------------------------------------------------------------------------
+# Reference-side I/O
+# ---------------------------------------------------------------------------
+
+def register_reference_input_handlers(io_manager):
+    """Register the pre-table mover/door input semantics for ReferenceLogic.
+
+    The live handlers now correctly target LogicThread.mover_runtime. The
+    reference implementation deliberately does not expose that retired host
+    field, so this test keeps the old loop's input semantics here instead of
+    adding a production compatibility shim.
+    """
+    def brush_index(entity, logic):
+        for index, brush in enumerate(logic.brushes):
+            if brush is entity:
+                return index
+        return -1
+
+    def finite_value(param, default):
+        if not param:
+            return default
+        try:
+            value = float(param)
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+
+    def door_open(entity, param, logic):
+        idx = brush_index(entity, logic)
+        if idx < 0:
+            return
+        if idx not in logic.door_states:
+            if "original_pos" not in entity:
+                entity["original_pos"] = list(entity["pos"])
+            logic.door_states[idx] = {
+                "progress": 0.0,
+                "state": "closed",
+                "open_timer": 0.0,
+            }
+        state = logic.door_states[idx]
+        if state["state"] in ("closed", "closing", "stopped"):
+            state["state"] = "opening"
+            logic.io_manager.fire_output(entity, "OnOpen")
+
+    def door_close(entity, param, logic):
+        idx = brush_index(entity, logic)
+        if idx < 0 or idx not in logic.door_states:
+            return
+        state = logic.door_states[idx]
+        if state["state"] in ("open", "opening", "stopped"):
+            state["state"] = "closing"
+            logic.io_manager.fire_output(entity, "OnClose")
+
+    def door_stop(entity, param, logic):
+        idx = brush_index(entity, logic)
+        if idx < 0 or idx not in logic.door_states:
+            return
+        state = logic.door_states[idx]
+        if state["state"] in ("opening", "closing"):
+            state["state"] = "stopped"
+
+    def door_reverse(entity, param, logic):
+        idx = brush_index(entity, logic)
+        if idx < 0 or idx not in logic.door_states:
+            return
+        state = logic.door_states[idx]
+        current = state["state"]
+        if current == "opening":
+            door_close(entity, param, logic)
+        elif current == "closing":
+            door_open(entity, param, logic)
+        elif current == "stopped":
+            if state.get("progress", 0.0) >= 0.5:
+                door_close(entity, param, logic)
+            else:
+                door_open(entity, param, logic)
+        else:
+            door_toggle(entity, param, logic)
+
+    def door_toggle(entity, param, logic):
+        idx = brush_index(entity, logic)
+        if idx < 0:
+            return
+        if idx in logic.door_states:
+            state = logic.door_states[idx]
+            if state["state"] == "closed":
+                door_open(entity, param, logic)
+            elif state["state"] == "open":
+                door_close(entity, param, logic)
+        else:
+            door_open(entity, param, logic)
+
+    def door_set_speed(entity, param, logic):
+        value = finite_value(param, 128.0)
+        if value is not None:
+            entity["speed"] = value
+
+    def mover_open(entity, param, logic):
+        entity["start_on"] = True
+        idx = brush_index(entity, logic)
+        if idx >= 0 and idx in logic.mover_states:
+            logic.mover_states[idx]["forward"] = True
+
+    def mover_close(entity, param, logic):
+        entity["start_on"] = True
+        idx = brush_index(entity, logic)
+        if idx >= 0 and idx in logic.mover_states:
+            logic.mover_states[idx]["forward"] = False
+
+    def mover_toggle(entity, param, logic):
+        entity["start_on"] = not entity.get("start_on", False)
+
+    def mover_set_position(entity, param, logic):
+        idx = brush_index(entity, logic)
+        if idx < 0:
+            return
+        value = finite_value(param, None)
+        if value is None:
+            return
+        if idx in logic.mover_states:
+            logic.mover_states[idx]["progress"] = max(0.0, min(1.0, value))
+
+    def mover_enable(entity, param, logic):
+        entity["start_on"] = True
+
+    def mover_disable(entity, param, logic):
+        entity["start_on"] = False
+
+    def mover_set_speed(entity, param, logic):
+        value = finite_value(param, 64.0)
+        if value is not None:
+            entity["speed"] = max(0.0, value)
+
+    def mover_stop(entity, param, logic):
+        entity["start_on"] = False
+
+    def mover_reverse(entity, param, logic):
+        idx = brush_index(entity, logic)
+        if idx >= 0 and idx in logic.mover_states:
+            state = logic.mover_states[idx]
+            state["forward"] = not state.get("forward", True)
+
+    def mover_follow_path(entity, param, logic):
+        idx = brush_index(entity, logic)
+        if idx < 0:
+            return
+        target = param or entity.get("path_target", "")
+        if not target:
+            return
+        entity["path_target"] = target
+        entity["start_on"] = True
+        if idx not in logic.mover_path_states:
+            logic.mover_path_states[idx] = {
+                "current_node": target,
+                "lerp_t": 0.0,
+                "origin": list(entity["pos"]),
+                "waiting": False,
+                "wait_remaining": 0.0,
+            }
+        logic.mover_states.pop(idx, None)
+
+    def mover_stop_path(entity, param, logic):
+        idx = brush_index(entity, logic)
+        if idx >= 0:
+            logic.mover_path_states.pop(idx, None)
+
+    io_manager.register_input_handler("door", "open", door_open)
+    io_manager.register_input_handler("door", "close", door_close)
+    io_manager.register_input_handler("door", "toggle", door_toggle)
+    io_manager.register_input_handler("door", "stop", door_stop)
+    io_manager.register_input_handler("door", "reverse", door_reverse)
+    io_manager.register_input_handler("door", "setspeed", door_set_speed)
+
+    io_manager.register_input_handler("mover", "open", mover_open)
+    io_manager.register_input_handler("mover", "close", mover_close)
+    io_manager.register_input_handler("mover", "toggle", mover_toggle)
+    io_manager.register_input_handler("mover", "setposition", mover_set_position)
+    io_manager.register_input_handler("mover", "enable", mover_enable)
+    io_manager.register_input_handler("mover", "disable", mover_disable)
+    io_manager.register_input_handler("mover", "stop", mover_stop)
+    io_manager.register_input_handler("mover", "reverse", mover_reverse)
+    io_manager.register_input_handler("mover", "setspeed", mover_set_speed)
+    io_manager.register_input_handler("mover", "followpath", mover_follow_path)
+    io_manager.register_input_handler("mover", "stoppath", mover_stop_path)
+
 # ---------------------------------------------------------------------------
 # Running both
 # ---------------------------------------------------------------------------
@@ -440,24 +634,43 @@ class _Side:
         self.brushes = copy.deepcopy(brushes)
         self.things = copy.deepcopy(things)
         self.events = []
-        io = IOManager()
-        register_all_input_handlers(io)
-        entities = self.brushes + self.things
+        ground = self.brushes[ride_index] if ride_index is not None else None
+        player = Player(1.0, 3.0)
+        player.pos = glm.vec3(1.0, 2.0, 3.0)
+        player.ground_object = ground
 
-        def by_name(name):
-            for entity in entities:
-                if io._get_entity_name(entity) == name:
-                    return entity
-            return None
+        self.reference = reference
+        if reference:
+            io = IOManager()
+            register_reference_input_handlers(io)
+            entities = self.brushes + self.things
 
-        def by_id(eid):
-            for entity in entities:
-                if io._get_entity_id(entity) == eid:
-                    return entity
-            return None
+            def by_name(name):
+                for entity in entities:
+                    if io._get_entity_name(entity) == name:
+                        return entity
+                return None
 
-        io.set_entity_finder(by_name)
-        io.set_entity_finder_by_id(by_id)
+            def by_id(eid):
+                for entity in entities:
+                    if io._get_entity_id(entity) == eid:
+                        return entity
+                return None
+
+            io.set_entity_finder(by_name)
+            io.set_entity_finder_by_id(by_id)
+            logic = ReferenceLogic(self.brushes, self.things, io, player)
+            io.set_logic_thread(logic)
+        else:
+            state = EditorState()
+            state.brushes = self.brushes
+            state.things = self.things
+            logic = LogicThread(ThreadedGameState(), state)
+            logic.player_runtime.player = player
+            logic.session_runtime.play_mode = True
+            logic.world_runtime.build_entity_caches()
+            io = logic.io_manager
+
         fire = io.fire_output
 
         def recording_fire(source, output, value=None, activator_entity=None):
@@ -465,29 +678,22 @@ class _Side:
             return fire(source, output, value=value, activator_entity=activator_entity)
 
         io.fire_output = recording_fire
-        ground = self.brushes[ride_index] if ride_index is not None else None
-        player = SimpleNamespace(pos=glm.vec3(1.0, 2.0, 3.0), ground_object=ground)
-        if reference:
-            logic = ReferenceLogic(self.brushes, self.things, io, player)
-        else:
-            logic = LogicThread.__new__(LogicThread)
-            logic.editor_state = SimpleNamespace(brushes=self.brushes,
-                                                 things=self.things)
-            logic._name_cache = {}
-            logic.io_manager = io
-            logic.player = player
-            logic.movers = []
-            logic.doors = []
-            logic.mover_path_states = {}
-        io.set_logic_thread(logic)
         self.io = io
         self.logic = logic
-        logic._init_movers()
-        logic._init_doors()
+        if reference:
+            logic._init_movers()
+            logic._init_doors()
+        else:
+            logic.mover_runtime._init_movers()
+            logic.mover_runtime._init_doors()
 
     def tick(self, delta):
-        self.logic._update_movers(delta)
-        self.logic._update_doors(delta)
+        if self.reference:
+            self.logic._update_movers(delta)
+            self.logic._update_doors(delta)
+        else:
+            self.logic.mover_runtime._update_movers(delta)
+            self.logic.mover_runtime._update_doors(delta)
         self.io.update(delta)
 
     def poke(self, index, input_name, param):
@@ -502,19 +708,24 @@ class _Side:
                                                "start_on", "original_pos", "speed",
                                                "path_target")}
                         for b in self.brushes],
-            "player": tuple(logic.player.pos),
+            "player": tuple(logic.player_runtime.player.pos),
         }
         if not states:
             return moving
+        mover_states = logic.mover_states if self.reference else logic.mover_runtime.mover_states
+        door_states = logic.door_states if self.reference else logic.mover_runtime.door_states
         return dict(moving, **{
             # Sorted by index: the loop's dicts iterate in insertion order (a
             # popped-and-recreated state moves to the end), the views in row
             # order. Only a saved game's JSON key order could see that.
-            "movers": {i: _numbers_as_float(s) for i, s in sorted(logic.mover_states.items())},
-            "doors": {i: _numbers_as_float(s) for i, s in sorted(logic.door_states.items())},
-            "mover_keys": {i: list(s) for i, s in sorted(logic.mover_states.items())},
-            "door_keys": {i: list(s) for i, s in sorted(logic.door_states.items())},
-            "paths": copy.deepcopy(logic.mover_path_states),
+            "movers": {i: _numbers_as_float(s) for i, s in sorted(mover_states.items())},
+            "doors": {i: _numbers_as_float(s) for i, s in sorted(door_states.items())},
+            "mover_keys": {i: list(s) for i, s in sorted(mover_states.items())},
+            "door_keys": {i: list(s) for i, s in sorted(door_states.items())},
+            "paths": copy.deepcopy(
+                logic.mover_path_states
+                if self.reference else logic.mover_runtime.mover_path_states
+            ),
         })
 
 
@@ -607,7 +818,12 @@ def test_without_io_every_transition_takes_the_vectorised_path(seed):
     def open_doors(tick, ref, new, rng):
         if tick % 40 == 0:            # no I/O to open them, so open them here
             for side in (ref, new):
-                for state in side.logic.door_states.values():
+                door_states = (
+                    side.logic.door_states
+                    if side.reference
+                    else side.logic.mover_runtime.door_states
+                )
+                for state in door_states.values():
                     if state["state"] == "closed":
                         state["state"] = "opening"
     _run(seed, ticks=500, script=open_doors, io=False)
@@ -620,10 +836,20 @@ def test_saved_state_restored_mid_run_matches():
             return
         for side in (ref, new):
             logic = side.logic
-            doors = {i: _public_state(s) for i, s in logic.door_states.items()}
-            movers = {i: _public_state(s) for i, s in logic.mover_states.items()}
-            logic.door_states = copy.deepcopy(doors)
-            logic.mover_states = copy.deepcopy(movers)
+            if side.reference:
+                door_states = logic.door_states
+                mover_states = logic.mover_states
+            else:
+                door_states = logic.mover_runtime.door_states
+                mover_states = logic.mover_runtime.mover_states
+            doors = {i: _public_state(s) for i, s in door_states.items()}
+            movers = {i: _public_state(s) for i, s in mover_states.items()}
+            if side.reference:
+                logic.door_states = copy.deepcopy(doors)
+                logic.mover_states = copy.deepcopy(movers)
+            else:
+                logic.mover_runtime.door_states = copy.deepcopy(doors)
+                logic.mover_runtime.mover_states = copy.deepcopy(movers)
     _run(101, ticks=600, script=restore)
 
 
@@ -632,31 +858,31 @@ def test_a_door_opened_outside_play_keeps_its_plain_state():
     brushes, things = _world(5)
     new = _Side(False, brushes, things, None)
     stray = {"progress": 0.0, "state": "closed", "open_timer": 0.0}
-    new.logic.door_states[10_000] = stray
-    assert new.logic.door_states[10_000] is stray
-    assert 10_000 in new.logic.door_states
-    del new.logic.door_states[10_000]
-    assert 10_000 not in new.logic.door_states
+    new.logic.mover_runtime.door_states[10_000] = stray
+    assert new.logic.mover_runtime.door_states[10_000] is stray
+    assert 10_000 in new.logic.mover_runtime.door_states
+    del new.logic.mover_runtime.door_states[10_000]
+    assert 10_000 not in new.logic.mover_runtime.door_states
 
 
 def test_state_views_read_and_write_like_dicts():
     brushes, things = _world(6)
     new = _Side(False, brushes, things, None)
-    index = next(i for i in new.logic.door_states)
-    state = new.logic.door_states[index]
+    index = next(i for i in new.logic.mover_runtime.door_states)
+    state = new.logic.mover_runtime.door_states[index]
     assert list(state) == ["progress", "state", "open_timer", "speed",
                            "distance", "direction", "_direction_np"]
     state["state"] = "opening"
-    assert new.logic.door_states[index]["state"] == "opening"
+    assert new.logic.mover_runtime.door_states[index]["state"] == "opening"
     state["state"] = "wobbling"                       # kept as given
-    assert new.logic.door_states[index]["state"] == "wobbling"
+    assert new.logic.mover_runtime.door_states[index]["state"] == "wobbling"
     state["custom"] = [1, 2]
     assert state["custom"] == [1, 2] and "custom" in dict(state)
     del state["speed"]
     assert "speed" not in state and state.get("speed", 128.0) == 128.0
     import json
-    json.dumps({str(i): _public_state(s) for i, s in new.logic.door_states.items()})
-    json.dumps({str(i): _public_state(s) for i, s in new.logic.mover_states.items()})
+    json.dumps({str(i): _public_state(s) for i, s in new.logic.mover_runtime.door_states.items()})
+    json.dumps({str(i): _public_state(s) for i, s in new.logic.mover_runtime.mover_states.items()})
 
 
 def test_positions_are_plain_floats():
@@ -686,3 +912,68 @@ def test_the_spin_matches_the_scalar_arithmetic_bit_for_bit():
     want = [(a + s * delta) % 360.0 for a, s in zip(angles, speeds)]
     for g, w in zip(got.tolist(), want):
         assert g == w and math.copysign(1, g) == math.copysign(1, w)
+
+
+@pytest.mark.perf
+def test_a_sequence_point_that_changes_no_later_row_does_not_replan_the_pass():
+    """Re-planning the rest of the pass after every sequence point cost ~0.3 ms
+    a tick on the showcase map without ever changing a plan. Mover 0 reaches
+    its end every tick (a sequence point) and its output only touches itself,
+    so the later movers' plan stands. The loop must still agree throughout."""
+    brushes = [{"id": "b%d" % k, "name": "b%d" % k, "pos": [k * 200.0, 0.0, 0.0],
+                "size": [64.0, 64.0, 64.0], "is_mover": True, "start_on": True,
+                "speed": 64.0, "distance": 128.0, "direction": [1, 0, 0]}
+               for k in range(3)]
+    brushes[0].update(speed=6000.0, distance=1.0)
+    brushes[0]["_io_connections"] = [OutputConnection(
+        output_name="OnFullyOpen", target_name="b0", input_name="SetSpeed",
+        parameter="6000", delay=0.0, target_id="b0")]
+    ref = _Side(True, brushes, [], None)
+    new = _Side(False, brushes, [], None)
+
+    group = new.logic.mover_runtime._mover_table.movers
+    plans = []
+    real_plan = group._plan
+    group._plan = lambda *a: (plans.append(a[1]), real_plan(*a))[1]
+    for tick in range(20):
+        ref.tick(1 / 60)
+        new.tick(1 / 60)
+        assert repr(ref.snapshot(True)) == repr(new.snapshot(True)), tick
+        assert repr(ref.events) == repr(new.events), tick
+    assert any(name == "b0" for name, *_ in new.events), "no sequence point ran"
+    assert plans and all(start == 0 for start in plans), plans
+
+
+@pytest.mark.parametrize("with_movers", [True, False])
+def test_a_group_with_no_rows_plans_nothing(with_movers):
+    """Most maps have no doors, or no movers at all; an empty group's pass
+    commits nothing, so it must not build a plan every tick. The movers that
+    do exist still agree with the reference loop."""
+    brushes = [{"id": "b%d" % k, "name": "b%d" % k, "pos": [k * 200.0, 0.0, 0.0],
+                "size": [64.0, 64.0, 64.0], "is_mover": with_movers,
+                "start_on": True, "speed": 64.0, "distance": 128.0,
+                "direction": [1, 0, 0]}
+               for k in range(2)]
+    ref = _Side(True, brushes, [], None)
+    new = _Side(False, brushes, [], None)
+
+    table = new.logic.mover_runtime._mover_table
+    plans = {"movers": 0, "doors": 0}
+    for name in plans:
+        group = getattr(table, name)
+        real_plan = group._plan
+
+        def counting(*args, _name=name, _real=real_plan):
+            plans[_name] += 1
+            return _real(*args)
+        group._plan = counting
+    for tick in range(10):
+        ref.tick(1 / 60)
+        new.tick(1 / 60)
+        assert repr(ref.snapshot(True)) == repr(new.snapshot(True)), tick
+    assert len(table.doors.index) == 0
+    assert plans["doors"] == 0, plans
+    if with_movers:
+        assert len(table.movers.index) == 2 and plans["movers"] == 10, plans
+    else:
+        assert len(table.movers.index) == 0 and plans["movers"] == 0, plans

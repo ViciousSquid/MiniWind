@@ -28,8 +28,8 @@ def _read(rel):
 # ---------------------------------------------------------------------------
 
 def _render_scene_source():
-    """The body of Renderer_F.render_scene, as source text."""
-    src = _read("engine/renderer_F.py")
+    """The body of ForwardRenderer.render_scene, as source text."""
+    src = _read("engine/renderer/forward/renderer.py")
     tree = ast.parse(src)
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
@@ -118,7 +118,7 @@ def test_camera_cull_exempts_lights_and_portals_and_tracks_positions():
     import numpy as np
     from editor.things import Light, Monster, Portal, Thing
     from engine.entity_table import EntityTable
-    from engine.renderer_core import BaseRenderer
+    from engine.renderer.forward import ForwardRenderer
 
     far = [50000.0, 0.0, 0.0]
     things = [Thing(pos=list(far)), Light(pos=list(far)), Portal(pos=list(far)),
@@ -126,7 +126,7 @@ def test_camera_cull_exempts_lights_and_portals_and_tracks_positions():
     table = EntityTable()
     hidden = table.begin_frame(things, epoch=1)
     slots = np.arange(table.count, dtype=np.int32)
-    kept = BaseRenderer._distance_cull_thing_slots(
+    kept = ForwardRenderer._distance_cull_thing_slots(
         table, slots, 0.0, 0.0, 1000.0 * 1000.0)
     assert [int(i) for i in kept] == [1, 2, 4]
     assert not hidden[0]
@@ -145,7 +145,7 @@ def test_the_slot_cull_exempts_the_same_lights_and_portals():
     import numpy as np
     from editor.things import Light, Monster, Portal, Thing
     from engine import entity_table as et
-    from engine.renderer_core import BaseRenderer
+    from engine.renderer.forward import ForwardRenderer
 
     far = [50000.0, 0.0, 0.0]
     things = [Thing(pos=list(far)), Light(pos=list(far)), Portal(pos=list(far)),
@@ -154,7 +154,7 @@ def test_the_slot_cull_exempts_the_same_lights_and_portals():
     table.begin_frame(things, epoch=1)
     slots = np.arange(table.count, dtype=np.int32)
 
-    kept = BaseRenderer._distance_cull_thing_slots(
+    kept = ForwardRenderer._distance_cull_thing_slots(
         table, slots, 0.0, 0.0, 1000.0 * 1000.0)
 
     assert [int(i) for i in kept] == [1, 2, 4], (
@@ -175,10 +175,10 @@ def test_shadow_lights_use_entity_slots_on_numeric_path():
 
 def test_legacy_per_object_sprite_renderer_is_gone():
     """Sprite rendering has one execution boundary: EntityTable -> instancing."""
-    core = _read("engine/renderer_core.py")
-    forward = _read("engine/renderer_F.py")
-    assert "def draw_sprites(" not in core
-    assert ".draw_sprites(" not in forward
+    renderer = "".join(
+        p.read_text(encoding="utf-8") for p in sorted((ROOT / "engine" / "renderer").rglob("*.py")))
+    assert "def draw_sprites(" not in renderer
+    assert ".draw_sprites(" not in renderer
     assert "self.draw_sprites_instanced(" in _render_scene_source()
     assert "entity_projection.classify_slots(" in _render_scene_source()
 
@@ -214,12 +214,12 @@ def test_property_spec_positional_order_unchanged():
 
 def test_ungrouped_specs_render_no_section_header():
     """A schema with no groups must produce the pre-existing flat layout."""
-    src = _read("plugins/integration.py")
+    src = _read("editor/property_editor.py")
     # The header is emitted only when a non-empty group is present.
     assert 'group = getattr(spec, "group", "") or ""' in src
     assert "if group and group != current_group:" in src
     # The trailing "Other" header only appears if a group was already emitted.
-    assert "if _uncovered and current_group is not None:" in src
+    assert "if uncovered and current_group is not None:" in src
 
 
 def test_manager_registries_start_empty():
@@ -387,61 +387,62 @@ def test_property_editor_has_no_hard_debug_console_dependency():
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Logic-thread exception isolation
 # ---------------------------------------------------------------------------
 
-def test_tick_exception_is_logged_not_swallowed():
+def test_tick_exception_enters_a_controlled_fault_state():
     src = _read("engine/logic_thread.py")
-    i = src.index("while accumulator >= self.TICK_DURATION:")
-    block = src[i:i + 900]
+    tree = ast.parse(src)
+    fn = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_step_frame"
+    )
+    block = ast.get_source_segment(src, fn)
     assert "try:" in block and "self._tick(self.TICK_DURATION)" in block
     assert "except Exception:" in block
     assert "traceback.format_exc()" in block, "traceback must be reported"
+    assert "self.session_runtime.apply_play_mode(False)" in block
+    assert "accumulator = 0.0" in block
+    assert "break" in block
     assert "debug_log(" in block, "the failure must reach the console"
-    # It must never be a bare pass.
-    assert re.search(r"except Exception:\s*\n\s*pass", block) is None
 
-
-def test_tick_loop_still_advances_the_accumulator_after_a_failure():
-    """A failing tick must not spin the accumulator forever."""
-    src = _read("engine/logic_thread.py")
-    i = src.index("while accumulator >= self.TICK_DURATION:")
-    block = src[i:i + 900]
-    tick_pos = block.index("self._tick(self.TICK_DURATION)")
-    acc_pos = block.index("accumulator -= self.TICK_DURATION")
-    except_pos = block.index("except Exception:")
-    # The decrement must sit outside (after) the except handler.
-    assert acc_pos > except_pos > tick_pos
-
-
-def test_exception_isolation_simulation():
-    """The guard shape must keep looping and record every failure."""
+def test_exception_isolation_simulation_enters_controlled_fault_state():
     logged = []
+    stopped = []
 
     def debug_log(cat, msg):
         logged.append((cat, msg))
+
+    def _apply_play_mode(enabled):
+        stopped.append(enabled)
 
     ticks = []
 
     def _tick(d):
         ticks.append(d)
-        if len(ticks) == 2:
-            raise RuntimeError("bad handler")
+        raise RuntimeError("bad handler")
 
     accumulator, TICK = 0.5, 0.1
+    faulted = False
     while accumulator >= TICK:
         try:
             _tick(TICK)
         except Exception:
             import traceback
-            debug_log("LogicThread", "Unhandled exception in _tick:\n"
+            faulted = True
+            debug_log("LogicThread", "Fatal simulation tick failure; ending play session:\n"
                       + traceback.format_exc())
+            _apply_play_mode(False)
+            accumulator = 0.0
+            break
         accumulator -= TICK
 
-    assert len(ticks) == 5, "the loop must survive the failure and finish"
+    assert faulted is True
+    assert len(ticks) == 1
+    assert stopped == [False]
     assert len(logged) == 1
-    assert "bad handler" in logged[0][1], "the traceback must name the cause"
-
+    assert "bad handler" in logged[0][1]
 
 # ---------------------------------------------------------------------------
 # Persistence: a moved brush must save clean
@@ -494,7 +495,7 @@ def test_water_shader_controls_match_dense_projection():
 
 def test_special_brush_passes_do_not_materialise_dense_slots():
     """Water, glass and fog must stay in RenderTable through render submission."""
-    src = _read("engine/renderer_F.py")
+    src = _read("engine/renderer/forward/renderer.py")
     assert "water_brushes = groups['water']" in src
     assert "glass_brushes = groups['glass']" in src
     assert "fog_volumes = groups['fog']" in src
@@ -502,9 +503,11 @@ def test_special_brush_passes_do_not_materialise_dense_slots():
     assert "glass_brushes = _objs('glass')" not in src
     assert "fog_volumes = _objs('fog')" not in src
 
-    core = _read("engine/renderer_core.py")
+    core = _read("engine/renderer/forward/passes.py")
     assert "table.water_params[brushes]" in core
-    assert "water_reflections" not in core
+    renderer = "".join(
+        p.read_text(encoding="utf-8") for p in sorted((ROOT / "engine" / "renderer").rglob("*.py")))
+    assert "water_reflections" not in renderer
     assert "table.glass_params[brushes]" in core
     assert "table.fog_params[brushes]" in core
     assert "brush.get('water_opacity'" not in core

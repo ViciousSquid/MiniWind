@@ -12,49 +12,6 @@ from .entity_table import EntityTable
 # common empty path avoids allocating a throwaway list on every rendered frame.
 _EMPTY_DRAIN: tuple = ()
 
-class PublishedObjects:
-    """Lazy object view over a dense slot selection."""
-
-    __slots__ = ('_refs', '_slots', '_list', '_label')
-
-    def __init__(self, refs, slots, label="PublishedObjects"):
-        self._refs = refs
-        self._slots = slots
-        self._list = None
-        self._label = label
-
-    def materialise(self):
-        if self._list is None:
-            self._list = self._refs[self._slots].tolist() if len(self._slots) else []
-        return self._list
-
-    def __len__(self):
-        return len(self._slots)
-
-    def __bool__(self):
-        return len(self._slots) > 0
-
-    def __iter__(self):
-        return iter(self.materialise())
-
-    def __getitem__(self, index):
-        return self.materialise()[index]
-
-    def __repr__(self):
-        return '<%s %d%s>' % (self._label, len(self._slots), '' if self._list is None else ' materialised')
-
-
-class PublishedBrushes(PublishedObjects):
-    __slots__ = ()
-    def __init__(self, refs, slots):
-        super().__init__(refs, slots, "PublishedBrushes")
-
-
-class PublishedEntities(PublishedObjects):
-    __slots__ = ()
-    def __init__(self, refs, slots):
-        super().__init__(refs, slots, "PublishedEntities")
-
 class RenderState:
     """
     A snapshot of the game state specifically for the renderer.
@@ -79,7 +36,11 @@ class RenderState:
         self.player_max_health = 100
         self.player_dead = False
         self.active_weapon = None
+        #: Bumped each time the player takes another weapon in hand by slot
+        #: key; the HUD shows the weapon briefly when it changes.
+        self.weapon_switch_serial = 0
         self.player_ammo = 0
+        self.player_armor = 0
         self.shot_ready = False
         self.player_underwater = False
         self.underwater_tint = [0.0, 0.4, 0.6]
@@ -94,14 +55,11 @@ class RenderState:
         self.player2_dead = False
         self.player2_underwater = False
         self.splitscreen_active = False
+        #: The level-complete screen's settings while it is up, else None.
+        #: Read by every play paint, so it must exist before the first publish.
+        self.level_complete_ui = None
         
         # Scene Data
-        self.visible_brushes = []
-        self.all_brushes = []
-        self.visible_things = []
-        # Authoritative Light objects for renderer lighting; avoids scanning
-        # the full Thing set every render frame.
-        self.all_lights = []
         # The entity half of the dense projection (engine.entity_table), with
         # the slots the frame published and the live hidden mask it read.  The
         # renderer classifies entities into passes from these rather than
@@ -184,7 +142,11 @@ class RenderState:
         self.player_max_health = 100
         self.player_dead = False
         self.active_weapon = None
+        #: Bumped each time the player takes another weapon in hand by slot
+        #: key; the HUD shows the weapon briefly when it changes.
+        self.weapon_switch_serial = 0
         self.player_ammo = 0
+        self.player_armor = 0
         self.shot_ready = False
         self.player_underwater = False
         self.underwater_tint = [0.0, 0.4, 0.6]
@@ -197,10 +159,7 @@ class RenderState:
         self.player2_dead = False
         self.player2_underwater = False
         self.splitscreen_active = False
-        self.visible_brushes = []
-        self.all_brushes = []
-        self.visible_things = []
-        self.all_lights = []
+        self.level_complete_ui = None
         # Keep the dense projection objects across buffer recycling.  Their
         # published slot vectors below are emptied, so an interstitial frame
         # cannot draw stale rows, while the next LogicThread publish reuses the
@@ -314,20 +273,14 @@ class ThreadedGameState:
         # Shot Queue — deque for O(1) popleft
         self._shot_lock = threading.Lock()
         self._shot_queue = deque()
-        self._secondary_shot_queue = deque()
-        # Pointer aiming: where the on-screen pointer aims, published by the
-        # view each frame and read by the logic thread and a game layer.
-        # ``_aim_direction`` is a unit world vector from the player's eye toward
-        # the pointer, ``_aim_yaw`` the heading the player should face
-        # (overhead, where the pointer maps onto the ground). Both None while
-        # pointer aiming is off.
-        self._aim_lock = threading.Lock()
-        self._aim_direction = None
-        self._aim_yaw = None
 
         # Use key — protected by its own lock
         self._use_key_lock = threading.Lock()
         self._use_key_pressed = False
+
+        # Weapon slot keys (1-4), in the order pressed
+        self._slot_lock = threading.Lock()
+        self._slot_queue = deque()
 
         # Player 2 input (gamepad / arrow keys)
         self._p2_lock = threading.Lock()
@@ -503,23 +456,6 @@ class ThreadedGameState:
             self._mouse_delta = (0.0, 0.0)
             return delta
 
-    def set_aim(self, direction=None, yaw=None):
-        """Publish where the pointer aims, or clear it with no arguments."""
-        with self._aim_lock:
-            self._aim_direction = (tuple(float(c) for c in direction)
-                                   if direction is not None else None)
-            self._aim_yaw = float(yaw) if yaw is not None else None
-
-    def get_aim_direction(self):
-        """Unit aim vector toward the pointer, or None when pointer aiming is off."""
-        with self._aim_lock:
-            return self._aim_direction
-
-    def get_aim_yaw(self):
-        """Heading the player should face, or None to leave yaw to mouse look."""
-        with self._aim_lock:
-            return self._aim_yaw
-
     def set_use_key(self, pressed: bool):
         """Sets the state of the use key explicitly (True/False)."""
         with self._use_key_lock:
@@ -537,6 +473,22 @@ class ThreadedGameState:
                 return True
             return False
 
+    # --- Weapon slots ---
+
+    def queue_weapon_slot(self, slot: int):
+        """The player pressed weapon slot key *slot* (1-4)."""
+        with self._slot_lock:
+            self._slot_queue.append(int(slot))
+
+    def consume_weapon_slots(self) -> list:
+        """The slot keys pressed since the last call, oldest first."""
+        if not self._slot_queue:
+            return []
+        with self._slot_lock:
+            slots = list(self._slot_queue)
+            self._slot_queue.clear()
+            return slots
+
     # --- Shooting Handling ---
 
     def queue_shot(self):
@@ -553,21 +505,6 @@ class ThreadedGameState:
         with self._shot_lock:
             if self._shot_queue:
                 self._shot_queue.popleft()
-                return True
-            return False
-
-    # --- Secondary fire: a second button, queued like the primary shot. ---
-
-    def queue_secondary_shot(self):
-        with self._shot_lock:
-            self._secondary_shot_queue.append(True)
-
-    def consume_secondary_shot(self):
-        if not self._secondary_shot_queue:
-            return False
-        with self._shot_lock:
-            if self._secondary_shot_queue:
-                self._secondary_shot_queue.popleft()
                 return True
             return False
 

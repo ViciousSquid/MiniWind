@@ -26,6 +26,8 @@ _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+pytestmark = pytest.mark.qt
+
 # NB: this module deliberately does *not* set QT_QPA_PLATFORM for the whole
 # session - that would pick the platform plugin for every other test too,
 # and the offscreen plugin cannot create an OpenGL context, which silently
@@ -80,18 +82,18 @@ def test_a_map_with_no_bigworld_entity_never_starts_a_session():
     out = run_isolated("""
         import sys
         from plugins.manager import load_plugins, get_manager
+        from editor.editor_state import EditorState
+        from engine.logic_thread import LogicThread
+        from engine.threaded_game_state import ThreadedGameState
         load_plugins()
         plugin = next(p for p in get_manager().plugins if p.name == 'bigworld')
-
-        class Logic:
-            things = []
-            brushes = []
-
-        logic = Logic()
+        logic = LogicThread(ThreadedGameState(), EditorState())
+        manager = get_manager()
+        manager.bind_host(logic)
         plugin.on_play_start(logic)
         plugin.on_tick(logic, None)
         plugin.on_play_stop(logic)
-        report(repr(getattr(logic, '_bigworld', 'missing')),
+        report(repr(plugin._sessions.get(logic)),
                sorted(m for m in sys.modules if m.startswith('plugins.bigworld')))
     """)
     session_repr, loaded = out.split(' ', 1)
@@ -122,22 +124,23 @@ def test_a_map_with_a_bigworld_entity_activates_streaming():
     out = run_isolated("""
         import sys
         from plugins.manager import load_plugins, get_manager
+        from plugins.bigworld.entities import BigWorldSettings
+        from editor.editor_state import EditorState
+        from engine.logic_thread import LogicThread
+        from engine.threaded_game_state import ThreadedGameState
         load_plugins()
         manager = get_manager()
         plugin = next(p for p in manager.plugins if p.name == 'bigworld')
-
-        from plugins.bigworld.entities import BigWorldSettings
-        settings = BigWorldSettings(pos=[0, 0, 0])
-
-        class Logic:
-            things = [settings]
-            brushes = [{'id': 'a', 'pos': [0, 0, 0], 'size': [64, 64, 64]},
-                       {'id': 'b', 'pos': [20000, 0, 0], 'size': [64, 64, 64]}]
-            player = None
-
-        logic = Logic()
+        state = EditorState()
+        state.things = [BigWorldSettings(pos=[0, 0, 0])]
+        state.brushes = [
+            {'id': 'a', 'pos': [0, 0, 0], 'size': [64, 64, 64]},
+            {'id': 'b', 'pos': [20000, 0, 0], 'size': [64, 64, 64]},
+        ]
+        logic = LogicThread(ThreadedGameState(), state)
+        manager.bind_host(logic)
         plugin.on_play_start(logic)
-        session = logic._bigworld
+        session = plugin._sessions.get(logic)
         report(session is not None,
                session.manager.stats()['total_brushes'],
                'plugins.bigworld.runtime' in sys.modules)
@@ -150,17 +153,18 @@ def test_a_map_with_a_bigworld_entity_activates_streaming():
 
 
 def test_stopping_a_session_leaves_the_world_exactly_as_it_was():
+    from editor.editor_state import EditorState
+    from engine.logic_thread import LogicThread
+    from engine.threaded_game_state import ThreadedGameState
     from plugins.bigworld.runtime import BigWorldSession
 
     far = {'id': 'far', 'pos': [30000, 0, 0], 'size': [64, 64, 64]}
     near = {'id': 'near', 'pos': [0, 0, 0], 'size': [64, 64, 64], 'hidden': True}
 
-    class Logic:
-        things = []
-        player = None
-
-    logic = Logic()
-    logic.brushes = [near, far]
+    state = EditorState()
+    state.brushes = [near, far]
+    state.things = []
+    logic = LogicThread(ThreadedGameState(), state)
     session = BigWorldSession(logic, activation_radius=1024.0,
                               deactivation_radius=1200.0)
     session.start(player_pos=(0.0, 0.0, 0.0))

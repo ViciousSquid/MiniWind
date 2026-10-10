@@ -4,6 +4,76 @@ import numpy as np
 import OpenGL.GL as gl
 
 
+# Models arrive inside shared maps and .fiopak packages; an OBJ or MTL beyond
+# this is refused rather than read whole into memory.
+MAX_OBJ_FILE_BYTES = 256 * 1024 * 1024
+
+
+def _read_text(path: str) -> Optional[str]:
+    """A regular file's UTF-8 text, or None if missing, special or too large.
+
+    Requiring a regular file keeps a crafted ``mtllib /dev/zero`` from being
+    read forever.
+    """
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > MAX_OBJ_FILE_BYTES:
+            return None
+        with open(path, 'r', encoding='utf-8') as f:
+            text = f.read(MAX_OBJ_FILE_BYTES + 1)
+    except (OSError, UnicodeDecodeError):
+        return None
+    return text if len(text) <= MAX_OBJ_FILE_BYTES else None
+
+
+# ---------------------------------------------------------------------------
+# Up axis
+# ---------------------------------------------------------------------------
+# Fio is Y-up. An OBJ file does not say which way is up, and some exporters
+# write Z-up (the model then appears on its side). A model is taken as Z-up
+# when it stands on the z = 0 plane, has real depth along Z, and hangs well
+# below y = 0 -- a Y-up model standing on y = 0, or one centred on both, is
+# left as it is. A comment in the file settles it either way:
+#     # fio:up=z      or      # fio:up=y
+
+UP_AXIS_TAG = 'fio:up='
+_BASE_TOLERANCE = 0.01          # of the model's extent along that axis
+
+
+def up_axis_tag(comment):
+    """'y' or 'z' from a ``# fio:up=...`` comment line, else None."""
+    text = comment.lstrip('#').strip().lower().replace(' ', '')
+    if text.startswith(UP_AXIS_TAG):
+        value = text[len(UP_AXIS_TAG):][:1]
+        if value in ('y', 'z'):
+            return value
+    return None
+
+
+def detect_up_axis(vertices, tag=None):
+    """'z' for a model authored Z-up, else 'y' (see above)."""
+    if tag in ('y', 'z'):
+        return tag
+    if not vertices:
+        return 'y'
+    ys = [v[1] for v in vertices]
+    zs = [v[2] for v in vertices]
+    y_min, y_size = min(ys), max(ys) - min(ys)
+    z_min, z_size = min(zs), max(zs) - min(zs)
+    if z_size <= 0.0 or y_size <= 0.0:
+        return 'y'
+    stands_on_z = abs(z_min) <= _BASE_TOLERANCE * z_size
+    stands_on_y = abs(y_min) <= _BASE_TOLERANCE * y_size
+    hangs_below_y = y_min < -_BASE_TOLERANCE * y_size
+    deep_along_z = z_size >= 0.5 * y_size
+    return 'z' if stands_on_z and not stands_on_y and hangs_below_y and deep_along_z else 'y'
+
+
+def z_up_to_y_up(v):
+    """A Z-up point or normal in Fio's Y-up: -90 degrees about X (a rotation,
+    so faces keep their winding)."""
+    return (v[0], v[2], -v[1])
+
+
 class OBJLoader:
     """
     Wavefront OBJ/MTL loader, reading straight from the filesystem like the
@@ -16,6 +86,8 @@ class OBJLoader:
         self.normals: List[Tuple[float, float, float]] = []
         self.faces: List[dict] = []
         self.materials: dict = {}
+        #: The up axis the file was authored in; a 'z' file was turned Y-up.
+        self.up_axis = 'y'
     
     @staticmethod
     def _resolve_index(value: str, length: int) -> int:
@@ -37,15 +109,13 @@ class OBJLoader:
         return index if 0 <= index < length else -1
 
     def load(self, filepath: str) -> bool:
-        """Load model from filesystem path."""
-        text = None
-        if os.path.exists(filepath):
-            try:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    text = f.read()
-            except (IOError, UnicodeDecodeError):
-                pass
+        """Load model from filesystem path.
 
+        A coordinate that does not parse loads as zeros, so one bad line costs
+        one vertex rather than the whole model, and later face indices still
+        point where the file meant.
+        """
+        text = _read_text(filepath)
         if text is None:
             print(f"[OBJLoader] Failed to load: {filepath}")
             return False
@@ -53,10 +123,14 @@ class OBJLoader:
         lines = text.splitlines()
         current_material = None
         mtl_lib_name = None
+        up_tag = None
         
         for line in lines:
             line = line.strip()
-            if not line or line.startswith('#'):
+            if not line:
+                continue
+            if line.startswith('#'):
+                up_tag = up_axis_tag(line) or up_tag
                 continue
             
             parts = line.split()
@@ -66,11 +140,20 @@ class OBJLoader:
             keyword = parts[0]
             
             if keyword == 'v' and len(parts) >= 4:
-                self.vertices.append((float(parts[1]), float(parts[2]), float(parts[3])))
+                try:
+                    self.vertices.append((float(parts[1]), float(parts[2]), float(parts[3])))
+                except ValueError:
+                    self.vertices.append((0.0, 0.0, 0.0))
             elif keyword == 'vt' and len(parts) >= 3:
-                self.texcoords.append((float(parts[1]), float(parts[2])))
+                try:
+                    self.texcoords.append((float(parts[1]), float(parts[2])))
+                except ValueError:
+                    self.texcoords.append((0.0, 0.0))
             elif keyword == 'vn' and len(parts) >= 4:
-                self.normals.append((float(parts[1]), float(parts[2]), float(parts[3])))
+                try:
+                    self.normals.append((float(parts[1]), float(parts[2]), float(parts[3])))
+                except ValueError:
+                    self.normals.append((0.0, 0.0, 0.0))
             elif keyword == 'f' and len(parts) >= 4:
                 face = {'vertices': [], 'material': current_material}
                 for fp in parts[1:]:
@@ -94,6 +177,12 @@ class OBJLoader:
             elif keyword == 'mtllib' and len(parts) > 1:
                 mtl_lib_name = ' '.join(parts[1:])
         
+        self.up_axis = detect_up_axis(self.vertices, up_tag)
+        if self.up_axis == 'z':
+            self.vertices = [z_up_to_y_up(v) for v in self.vertices]
+            self.normals = [z_up_to_y_up(n) for n in self.normals]
+            print(f"[OBJLoader] {os.path.basename(filepath)} is Z-up; turned to Fio's Y-up")
+
         if mtl_lib_name:
             self._load_mtl(filepath, mtl_lib_name)
         
@@ -106,14 +195,7 @@ class OBJLoader:
         mtl_path = os.path.normpath(os.path.join(obj_dir, normalized_name))
         mtl_dir = os.path.dirname(mtl_path)
         
-        mtl_text = None
-        if os.path.exists(mtl_path):
-            try:
-                with open(mtl_path, 'r', encoding='utf-8') as f:
-                    mtl_text = f.read()
-            except (IOError, UnicodeDecodeError):
-                pass
-
+        mtl_text = _read_text(mtl_path)
         if mtl_text is None:
             print(f"[OBJLoader] MTL not found: {mtl_path}")
             self._discover_base_color_texture(obj_path)
@@ -144,23 +226,24 @@ class OBJLoader:
                 loaded_materials += 1
             elif current_mtl:
                 mtl = self.materials[current_mtl]
-                if keyword == 'Kd' and len(parts) >= 4:
-                    mtl['diffuse'] = (float(parts[1]), float(parts[2]), float(parts[3]))
-                    mtl['color'] = mtl['diffuse']
-                elif keyword == 'Ka' and len(parts) >= 4:
-                    mtl['ambient'] = (float(parts[1]), float(parts[2]), float(parts[3]))
-                elif keyword == 'Ks' and len(parts) >= 4:
-                    mtl['specular'] = (float(parts[1]), float(parts[2]), float(parts[3]))
+                if keyword in ('Kd', 'Ka', 'Ks') and len(parts) >= 4:
+                    try:
+                        colour = (float(parts[1]), float(parts[2]), float(parts[3]))
+                    except ValueError:
+                        continue
+                    if keyword == 'Kd':
+                        mtl['diffuse'] = colour
+                        mtl['color'] = colour
+                    elif keyword == 'Ka':
+                        mtl['ambient'] = colour
+                    else:
+                        mtl['specular'] = colour
                 elif keyword in ('map_Kd', 'map_Ka') and len(parts) > 1:
                     texture = self._parse_texture_map(parts[1:])
                     if texture:
                         mtl['texture'] = texture
                         mtl['mtl_dir'] = mtl_dir
 
-        print(
-            f"[OBJLoader] Loaded MTL: {mtl_path} "
-            f"({loaded_materials} material{'s' if loaded_materials != 1 else ''})"
-        )
 
     @staticmethod
     def _parse_texture_map(parts: List[str]) -> Optional[str]:
@@ -255,7 +338,6 @@ class OBJLoader:
         else:
             self.materials['default'] = material
 
-        print(f"[OBJLoader] Using discovered base-color texture: {texture_path}")
 
 
 class OBJ:
@@ -287,32 +369,7 @@ class OBJ:
         self.materials = loader.materials
         self._build_gl_buffers(loader)
 
-        if self.source_bounds is not None:
-            source_min, source_max = self.source_bounds
-            print(
-                f"[OBJ] Source bounds: min={source_min.tolist()} "
-                f"max={source_max.tolist()}"
-            )
-        if self.centered_for_import:
-            print(
-                f"[OBJ] Recentered mesh by offset="
-                f"{self.origin_offset.tolist()}"
-            )
-
-        if self.cpu_vertices is not None and len(self.cpu_vertices):
-            mins = self.cpu_vertices.min(axis=0)
-            maxs = self.cpu_vertices.max(axis=0)
-            centre = (mins + maxs) * 0.5
-            size = maxs - mins
-            print(
-                f"[OBJ] Bounds: min={mins.tolist()} "
-                f"max={maxs.tolist()} "
-                f"size={size.tolist()} "
-                f"centre={centre.tolist()}"
-            )
-
         self.is_loaded = True
-        print(f"[OBJ] Loaded {self.vertex_count} vertices from {filepath}")
     
     def _repair_import_origin(self, loader: OBJLoader):
         """Repair obviously broken imported pivots while preserving normal pivots.
@@ -351,66 +408,70 @@ class OBJ:
         """Build OpenGL VAO/VBO from parsed OBJ data."""
         import ctypes
         
-        vertices = []
-        cpu_verts = []
-        material_groups = {}
-        current_group_start = 0
-        
+        # Fan-triangulate every face into corner index triples, noting each
+        # triangle's material (in order of first appearance).
+        corners = []
+        tri_material = []
+        material_rank = {}
         for face in loader.faces:
             mat_name = face.get('material', None)
-            if mat_name not in material_groups:
-                material_groups[mat_name] = {
-                    'start': current_group_start,
-                    'count': 0,
-                    'material': mat_name
-                }
-            
+            rank = material_rank.setdefault(mat_name, len(material_rank))
             face_verts = face['vertices']
+            first = face_verts[0]
             for i in range(1, len(face_verts) - 1):
-                triangle_start = len(cpu_verts)
-                for idx in [0, i, i + 1]:
-                    v_idx, vt_idx, vn_idx = face_verts[idx]
-                    
-                    if 0 <= v_idx < len(loader.vertices):
-                        vx, vy, vz = loader.vertices[v_idx]
-                    else:
-                        vx, vy, vz = 0.0, 0.0, 0.0
-                    
-                    if 0 <= vn_idx < len(loader.normals):
-                        nx, ny, nz = loader.normals[vn_idx]
-                    else:
-                        nx, ny, nz = 0.0, 1.0, 0.0
-                    
-                    if 0 <= vt_idx < len(loader.texcoords):
-                        u, v = loader.texcoords[vt_idx]
-                    else:
-                        u, v = 0.0, 0.0
-                    
-                    vertices.extend([vx, vy, vz, nx, ny, nz, u, v])
-                    cpu_verts.append((vx, vy, vz))
-                self.cpu_triangles.append((triangle_start, triangle_start + 1, triangle_start + 2))
-                material_groups[mat_name]['count'] += 3
-                current_group_start += 3
-        
-        self.vertex_count = len(cpu_verts)
-        
+                corners.append(first)
+                corners.append(face_verts[i])
+                corners.append(face_verts[i + 1])
+                tri_material.append(rank)
+
+        # Lay triangles out material by material, so each group is one
+        # contiguous range even when the file switches back to a material it
+        # used earlier (a stable sort keeps the file order within a group).
+        corner_idx = np.asarray(corners, dtype=np.int64).reshape(-1, 3)
+        tri_material = np.asarray(tri_material, dtype=np.int64)
+        order = np.argsort(tri_material, kind='stable')
+        corner_idx = corner_idx.reshape(-1, 3, 3)[order].reshape(-1, 3)
+
+        n = len(corner_idx)
+        vertex_data = np.zeros((n, 8), dtype=np.float32)
+        vertex_data[:, 4] = 1.0  # default normal (0, 1, 0)
+        # (corner slot, source table, first column, width); a corner whose
+        # index is missing keeps the default above.
+        for slot, source, column, width in ((0, loader.vertices, 0, 3),
+                                            (2, loader.normals, 3, 3),
+                                            (1, loader.texcoords, 6, 2)):
+            if n == 0 or not source:
+                continue
+            table = np.asarray(source, dtype=np.float32).reshape(-1, width)
+            idx = corner_idx[:, slot]
+            valid = (idx >= 0) & (idx < len(table))
+            vertex_data[valid, column:column + width] = table[idx[valid]]
+
+        self.vertex_count = n
+        self.cpu_triangles = [(i, i + 1, i + 2) for i in range(0, n, 3)]
+
         self.groups = []
-        for mat_name, group_info in material_groups.items():
-            if group_info['count'] > 0:
+        counts = np.bincount(tri_material, minlength=len(material_rank)) * 3
+        start = 0
+        for mat_name, rank in material_rank.items():
+            count = int(counts[rank])
+            if count > 0:
                 self.groups.append({
                     'material': mat_name or 'default',
-                    'start': group_info['start'],
-                    'count': group_info['count']
+                    'start': start,
+                    'count': count
                 })
-        
-        self.cpu_vertices = np.array(cpu_verts, dtype=np.float32)
-        
-        if not vertices:
+            start += count
+
+        self.cpu_vertices = (np.ascontiguousarray(vertex_data[:, 0:3]) if n
+                             else np.array([], dtype=np.float32))
+
+        if not n:
             print(f"[OBJ] No vertices generated for {self.filepath}")
             return
         
-        vertex_data = np.array(vertices, dtype=np.float32)
-        
+        vertex_data = vertex_data.reshape(-1)
+
         self.vao = gl.glGenVertexArrays(1)
         self.vbo = gl.glGenBuffers(1)
         

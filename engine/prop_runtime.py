@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import math
 
+from .physics import world_gravity
+from .change_journal import touch
 from .spatial import CellIndex, cell_of_point
 
 
@@ -40,7 +42,6 @@ class PropSession:
     DEFAULT_CARRY_REACH = 110.0
     DEFAULT_COLLECT_USE_REACH = 80.0
     DEFAULT_COLLECT_WALK_REACH = 32.0
-    DROP_GRAVITY = 900.0
     DROP_TERMINAL_VELOCITY = 2400.0
     SPRITE_CAMERA_FACING = -10000.0
     RESPAWN_FADE_DURATION = 2.0
@@ -51,11 +52,14 @@ class PropSession:
         self.held = None
         self.collected_ids = set()
         self.respawn_timers = {}
+        #: Props already reported as giving an item that does not resolve.
+        self._reported_items = set()
         self.respawn_fades = {}
         self._by_id = {}
         self._cells = CellIndex()
         self._filed = {}
         self._max_reach = self.DEFAULT_CARRY_REACH
+        self.drop_interceptor = None
         self._falling = {}
 
     @staticmethod
@@ -64,14 +68,14 @@ class PropSession:
 
     @property
     def physics(self):
-        return getattr(self.logic, "_physics_world", None)
+        return self.logic.session_runtime.physics_world
 
     # -- registry ---------------------------------------------------------
 
     def rebuild(self, things=None):
         """Re-derive the Prop registry from the authoritative Thing list."""
         if things is None:
-            things = self.logic.things
+            things = self.logic.editor_state.things
         current = [t for t in things if self.is_prop(t)]
         current_ids = {id(t) for t in current}
 
@@ -219,7 +223,7 @@ class PropSession:
     # -- I/O --------------------------------------------------------------
 
     def _fire(self, prop, output):
-        io = getattr(self.logic, "io_manager", None)
+        io = self.logic.io_manager
         if io is not None:
             io.fire_output(prop, output)
 
@@ -229,7 +233,7 @@ class PropSession:
     # -- interaction ------------------------------------------------------
 
     def tick(self, delta, use_pressed):
-        player = getattr(self.logic, "player", None)
+        player = self.logic.player_runtime.player
         if player is None:
             return
 
@@ -293,9 +297,15 @@ class PropSession:
             # position still follows the player's view, but the sprite itself
             # no longer rotates with the camera.
             try:
-                best._carry_sprite_yaw = float(getattr(getattr(self.logic, "player", None), "angle", 0.0))
+                best._carry_sprite_yaw = float(self.logic.player_runtime.player.angle)
             except (TypeError, ValueError):
                 best._carry_sprite_yaw = 0.0
+            # A model turns with the player instead, so the side facing the
+            # player stays facing them: without it the player's view swung
+            # round a model that kept its world facing.
+            if self._is_model(best):
+                best._carry_turn = (best._carry_sprite_yaw,
+                                    list(best.properties.get('rotation') or (0.0, 0.0, 0.0)))
             self._falling.pop(id(best), None)
             if self.physics is not None:
                 self.physics.set_kinematic(best, True)
@@ -309,8 +319,25 @@ class PropSession:
             and not p.get("disabled", False)
         )
 
+    def _item(self, prop):
+        """The compiled item an ``item`` pickup gives, or None."""
+        return self.logic.combat_runtime.items.resolve(
+            prop.properties.get("collect_item"))
+
+    def _activation(self, prop):
+        """How *prop* is collected: walked over, or used.
+
+        An item says for itself: a pickup item by its definition, a weapon by
+        walking over it. Health, ammo and keys use the Prop's own setting.
+        """
+        p = prop.properties
+        if p.get("collect_type") == "item":
+            item = self._item(prop)
+            return item.pickup.activation if item is not None and item.pickup else "walk_over"
+        return p.get("collect_activation", "walk_over")
+
     def _collect_walk_over(self):
-        player = getattr(self.logic, "player", None)
+        player = self.logic.player_runtime.player
         if player is None:
             return False
 
@@ -319,17 +346,16 @@ class PropSession:
             player_pos[0], player_pos[2],
             self.DEFAULT_COLLECT_WALK_REACH,
         ):
-            p = prop.properties
             if not self._collectable(prop):
                 continue
-            if p.get("collect_activation", "walk_over") != "walk_over":
+            if self._activation(prop) != "walk_over":
                 continue
 
             dx = float(prop.pos[0]) - player_pos[0]
             dy = float(prop.pos[1]) - player_pos[1]
             dz = float(prop.pos[2]) - player_pos[2]
-            if _length((dx, dy, dz)) <= self.DEFAULT_COLLECT_WALK_REACH:
-                self._collect(prop)
+            if (_length((dx, dy, dz)) <= self.DEFAULT_COLLECT_WALK_REACH
+                    and self._collect(prop)):
                 return True
         return False
 
@@ -340,10 +366,9 @@ class PropSession:
         best_distance = None
 
         for prop in candidates:
-            p = prop.properties
             if not self._collectable(prop):
                 continue
-            if p.get("collect_activation", "walk_over") != "use":
+            if self._activation(prop) != "use":
                 continue
 
             dx = float(prop.pos[0]) - eye[0]
@@ -362,14 +387,64 @@ class PropSession:
         if best is None:
             return False
 
-        collect_label = str(
-            best.properties.get("collect_type", "health")
-        ).replace("_", " ").title()
-        self.logic.current_hud_message = f"[E] Collect {collect_label}"
-        self._collect(best)
+        if best.properties.get("collect_type") == "item":
+            item = self._item(best)
+            collect_label = item.name if item is not None else "Item"
+        else:
+            collect_label = str(
+                best.properties.get("collect_type", "health")
+            ).replace("_", " ").title()
+        self.logic.interaction_runtime.current_hud_message = f"[E] Collect {collect_label}"
+        return self._collect(best)
+
+    # -- what collecting gives ----------------------------------------------
+
+    def _give_health(self, amount):
+        player_runtime = self.logic.player_runtime
+        player_runtime.player_health = min(
+            player_runtime.player_max_health,
+            player_runtime.player_health + amount,
+        )
+
+    def _give_ammo(self, amount):
+        try:
+            current_ammo = max(0, int(self.logic.combat_runtime.player_ammo))
+        except (AttributeError, TypeError, ValueError):
+            current_ammo = 0
+        self.logic.combat_runtime.player_ammo = current_ammo + max(0, amount)
+
+    def _give_key(self, key_name):
+        if key_name:
+            self.logic.player_runtime.collected_keys.add(key_name)
+            self.logic.interaction_runtime.current_hud_key_name = key_name
+
+    def _give_item(self, item):
+        """Apply what *item* -- a compiled weapon or pickup -- gives.
+
+        Returns False when there is nothing to give (a pickup naming a weapon
+        item that does not resolve), so the Prop stays where it is.
+        """
+        if item.kind == "weapon":
+            self.logic.combat_runtime.give_weapon(item)
+            return True
+        pickup = item.pickup
+        if pickup.effect == "health":
+            self._give_health(pickup.amount)
+        elif pickup.effect == "ammo":
+            self._give_ammo(pickup.amount)
+        elif pickup.effect == "armor":
+            self.logic.player_runtime.give_armor(pickup.amount)
+        elif pickup.effect == "key":
+            self._give_key(pickup.key_name)
+        elif pickup.effect == "weapon":
+            weapon = self.logic.combat_runtime.items.resolve(pickup.item_id)
+            if weapon is None or weapon.kind != "weapon":
+                return False
+            self.logic.combat_runtime.give_weapon(weapon)
         return True
 
     def _collect(self, prop):
+        """Collect *prop*; False (and nothing happens) if it gives nothing."""
         p = prop.properties
         collect_type = p.get("collect_type", "health")
         value = p.get("collect_value", 25)
@@ -379,39 +454,21 @@ class PropSession:
         except (TypeError, ValueError):
             value_num = 25
 
+        item = None
         if collect_type == "health":
-            try:
-                self.logic.player_health = min(
-                    self.logic.player_max_health,
-                    self.logic.player_health + value_num,
-                )
-            except (AttributeError, TypeError):
-                pass
+            self._give_health(value_num)
         elif collect_type == "key":
-            key_name = p.get("collect_key_name", "")
-            if key_name:
-                self.logic.collected_keys.add(key_name)
-                self.logic.current_hud_key_name = key_name
+            self._give_key(p.get("collect_key_name", ""))
         elif collect_type == "ammo":
-            try:
-                current_ammo = max(0, int(
-                    getattr(self.logic, "player_ammo", 0)))
-            except (AttributeError, TypeError, ValueError):
-                current_ammo = 0
-            self.logic.player_ammo = current_ammo + max(0, value_num)
-        elif collect_type == "weapon":
-            weapon = p.get("collect_weapon", "gun1")
-            self.logic.active_weapon = weapon
-            if weapon == "gun2" and not getattr(
-                    self.logic, "gun2_obtained", False):
-                self.logic.gun2_obtained = True
-                try:
-                    current_ammo = max(
-                        0, int(getattr(self.logic, "player_ammo", 0)))
-                except (AttributeError, TypeError, ValueError):
-                    current_ammo = 0
-                self.logic.player_ammo = max(current_ammo, 8)
-            self.logic.current_hud_message = f"Collected {str(weapon).upper()}"
+            self._give_ammo(value_num)
+        elif collect_type == "item":
+            item = self._item(prop)
+            if item is None or not self._give_item(item):
+                # An unknown item, or one whose definition does not compile,
+                # gives nothing -- and never stands in as another item.
+                self._report_unknown_item(prop)
+                return False
+            self.logic.interaction_runtime.current_hud_message = f"Collected {item.name}"
 
         p["collect_collected"] = True
         self.collected_ids.add(id(prop))
@@ -420,7 +477,7 @@ class PropSession:
 
         self._fire(prop, "OnCollected")
 
-        emit = getattr(self.logic, "_plugin_emit", None)
+        emit = self.logic._plugin_emit
         if emit is not None:
             emit(
                 "prop_collected",
@@ -429,16 +486,33 @@ class PropSession:
                 value=value_num,
             )
 
-        if p.get("collect_respawns", False):
+        if item is not None and item.pickup is not None:
+            # A pickup item's definition says whether it comes back.
+            respawns, respawn_time = item.pickup.respawns, item.pickup.respawn_time
+        else:
+            respawns = p.get("collect_respawns", False)
             try:
-                respawn_time = float(
-                    p.get("collect_respawn_time", 20.0))
+                respawn_time = float(p.get("collect_respawn_time", 20.0))
             except (TypeError, ValueError):
                 respawn_time = 20.0
+        if respawns:
             self.respawn_timers[id(prop)] = {
                 "remaining": max(0.0, respawn_time),
                 "entity": prop,
             }
+        return True
+
+    def _report_unknown_item(self, prop):
+        """Say once per Prop why it cannot be collected."""
+        key = id(prop)
+        if key in self._reported_items:
+            return
+        self._reported_items.add(key)
+        item_id = prop.properties.get("collect_item")
+        error = self.logic.combat_runtime.items.errors.get(item_id)
+        reason = f"its definition is invalid: {error}" if error else "there is no such item"
+        print(f"[Props] {prop.properties.get('name', 'Prop')} gives item "
+              f"{item_id!r}, but {reason}")
 
     def collect_prop(self, prop):
         """Collect *prop* through the same path as player collection."""
@@ -446,8 +520,7 @@ class PropSession:
             return False
         if not self._collectable(prop):
             return False
-        self._collect(prop)
-        return True
+        return self._collect(prop)
 
     def respawn_prop(self, prop):
         """Force a collected Prop back into its authored live state."""
@@ -529,13 +602,15 @@ class PropSession:
 
         physics = self.physics
         raycast_down = getattr(
-            getattr(self.logic, "_spatial_grid", None),
+            self.logic.session_runtime.spatial_grid,
             "raycast_down",
             None,
         )
         if raycast_down is None and physics is not None:
             raycast_down = getattr(physics, "raycast_down", None)
 
+        # Dropped props fall by the live PhysicsWorld's gravity, as bodies do.
+        drop_gravity = -world_gravity(physics)
         finished = []
         for pid, state in tuple(self._falling.items()):
             prop = state.get("entity")
@@ -545,7 +620,7 @@ class PropSession:
 
             velocity = min(
                 self.DROP_TERMINAL_VELOCITY,
-                float(state.get("velocity", 0.0)) + self.DROP_GRAVITY * delta,
+                float(state.get("velocity", 0.0)) + drop_gravity * delta,
             )
             old_y = float(prop.pos[1])
             new_y = old_y - velocity * delta
@@ -575,7 +650,7 @@ class PropSession:
                 prop.pos = [prop.pos[0], float(floor_y) + half_height, prop.pos[2]]
                 self.moved(prop)
                 finished.append(pid)
-                io = getattr(self.logic, "io_manager", None)
+                io = self.logic.io_manager
                 if io is not None:
                     io.fire_output(prop, "OnRest")
                 continue
@@ -586,6 +661,28 @@ class PropSession:
 
         for pid in finished:
             self._falling.pop(pid, None)
+
+    @staticmethod
+    def _is_model(prop):
+        p = prop.properties
+        return p.get("render_mode") == "model" and bool(p.get("model_path"))
+
+    def _turn_with_player(self, prop):
+        """Keep a carried model's facing relative to the player: its yaw
+        follows how far the player has turned since picking it up."""
+        turn = getattr(prop, "_carry_turn", None)
+        if turn is None:
+            return
+        yaw0, rotation0 = turn
+        try:
+            delta = math.degrees(float(self.logic.player_runtime.player.angle) - yaw0)
+        except (TypeError, ValueError, AttributeError):
+            return
+        rotation = list(rotation0) + [0.0] * (3 - len(rotation0))
+        rotation[1] = float(rotation0[1]) + delta
+        if rotation != prop.properties.get("rotation"):
+            prop.properties["rotation"] = rotation
+            touch(prop)
 
     def _carry(self, eye, forward, use_pressed):
         prop = self.held
@@ -599,12 +696,13 @@ class PropSession:
             eye[2] + forward[2] * distance + float(offset[2]),
         ]
         self.moved(prop)
+        self._turn_with_player(prop)
 
         if not (use_pressed or p.pop("_drop_requested", False)):
-            self.logic.current_hud_message = "[E] Carry / Drop"
+            self.logic.interaction_runtime.current_hud_message = "[E] Carry / Drop"
             return
 
-        interceptor = getattr(self.logic, "_prop_drop_interceptor", None)
+        interceptor = self.drop_interceptor
         if interceptor is not None:
             try:
                 if interceptor(prop):
@@ -640,4 +738,5 @@ class PropSession:
                 "velocity": float(p.get("drop_velocity", 0.0)),
             }
         prop._carry_sprite_yaw = None
+        prop._carry_turn = None              # it keeps the facing it was carried at
         self._fire(prop, "OnDropped")

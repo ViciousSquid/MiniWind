@@ -4,15 +4,14 @@ Effect is a core world primitive: one authored object that describes both a
 procedural visual effect and its emitted dynamic light. FIRE, ORB, EXPLOSION and CUSTOM are behaviours of this same primitive; there is no second explosion
 system.
 
-The class contains authored data only. Rendering/runtime state is projected
-into engine.entity_table and consumed numerically by the renderer.
+The class contains authored data plus non-journaled compatibility mirrors.
+Live simulation runtime is owned by EffectStore; EntityTable projects that dense
+execution state and the renderer consumes it numerically.
 """
 
 from __future__ import annotations
 
 import random
-
-from engine.change_journal import TrackedAttribute
 
 try:
     from editor.things import Thing as _ThingBase
@@ -78,11 +77,12 @@ class Effect(_ThingBase):
     EDITOR_PRIMARY_PROPERTIES = ()
     EDITOR_ADVANCED_PROPERTIES = ()
 
-    #: Playback runtime the render projection derives the animation from.
-    #: Owned here, not by a render table, so both render buffers agree.
-    _effect_spawn_time = TrackedAttribute(0.0)
-    _effect_animation_phase = TrackedAttribute(0.0)
-    _effect_active = TrackedAttribute(False)
+    # Legacy non-journaled mirrors kept for standalone/editor callers that
+    # inspect Effect runtime state directly. The live simulation owns runtime
+    # state in EffectStore; LogicThread render projection reads the store.
+    _effect_spawn_time = 0.0
+    _effect_animation_phase = 0.0
+    _effect_active = False
 
     def __init__(self, pos=None, properties=None):
         super().__init__(pos, properties)
@@ -163,45 +163,6 @@ class Effect(_ThingBase):
     @property
     def is_explosion(self) -> bool:
         return self.effect_type == EFFECT_EXPLOSION
-
-    def set_effect_type(self, value: object) -> bool:
-        """Set the authored Effect TYPE and reset its transient behaviour.
-        
-        Returns True only when the type actually changes. The accepted names
-        come from EFFECT_TYPES, so adding a new type extends SetType without
-        changing the input handler.
-        """
-        effect_type = str(value or "").strip().upper()
-        if effect_type not in EFFECT_TYPES:
-            return False
-        if effect_type == self.effect_type:
-            return False
-
-        self.properties["effect_type"] = effect_type
-        self.properties["preview"] = False
-        if effect_type == EFFECT_ORB:
-            self.properties["width"] = 32.0
-            self.properties["height"] = 32.0
-            self.properties["light_colour"] = list(EFFECT_ORB_LIGHT_COLOUR)
-        self._effect_spawn_time = 0.0
-        self._effect_animation_phase = random.random()
-        self._effect_active = effect_type in EFFECT_ANIMATED_TYPES
-        return True
-
-    def reset_runtime(self) -> None:
-        """Reset transient runtime state without changing authored data."""
-        self._effect_spawn_time = 0.0
-        self._effect_animation_phase = random.random()
-        self._effect_active = self.effect_type in EFFECT_ANIMATED_TYPES
-
-    def trigger_explosion(self, now: float) -> bool:
-        """Permanently switch to EXPLOSION and start/restart its playback."""
-        self.properties["effect_type"] = EFFECT_EXPLOSION
-        self.properties["preview"] = False
-        self._effect_spawn_time = float(now)
-        self._effect_animation_phase = 0.0
-        self._effect_active = True
-        return True
 
 
 if EDITOR_TIER:

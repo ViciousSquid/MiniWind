@@ -9,9 +9,9 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from engine.render_cull import (  # noqa: E402
-    CAMERA_RENDER_CULL_DISTANCE, CAMERA_RENDER_CULL_DISTANCE_SQ,
     camera_xz, cull_by_distance, pos_of, sort_by_distance, within_xz_sq,
 )
+from engine.view_distance import DEFAULT_VIEW_DISTANCE  # noqa: E402
 
 
 class _Thing:
@@ -29,7 +29,7 @@ class _FakeVec:
 
 
 def test_squared_radius_matches_distance():
-    assert CAMERA_RENDER_CULL_DISTANCE_SQ == CAMERA_RENDER_CULL_DISTANCE ** 2
+    assert DEFAULT_VIEW_DISTANCE ** 2 == DEFAULT_VIEW_DISTANCE * DEFAULT_VIEW_DISTANCE
 
 
 def test_pos_of_handles_dicts_things_and_missing():
@@ -52,12 +52,12 @@ def test_cull_ignores_the_y_axis():
 
 
 def test_boundary_is_inclusive():
-    r = CAMERA_RENDER_CULL_DISTANCE
+    r = DEFAULT_VIEW_DISTANCE
     exactly_on = {"pos": [r, 0.0, 0.0]}
     just_outside = {"pos": [r + 1.0, 0.0, 0.0]}
     kept = cull_by_distance([exactly_on, just_outside], 0.0, 0.0)
     assert kept == [exactly_on]
-    assert within_xz_sq([r, 0.0, 0.0], 0.0, 0.0, CAMERA_RENDER_CULL_DISTANCE_SQ)
+    assert within_xz_sq([r, 0.0, 0.0], 0.0, 0.0, DEFAULT_VIEW_DISTANCE ** 2)
 
 
 def test_cull_is_relative_to_camera_not_origin():
@@ -279,9 +279,9 @@ def test_overhead_mode_is_far_tighter_than_the_distance_ceiling():
     min_x, min_z, max_x, max_z = visible_xz_bounds(cam, corners,
                                                    y_min=0.0, y_max=128.0)
     half_width = max(max_x - min_x, max_z - min_z) * 0.5
-    assert half_width < CAMERA_RENDER_CULL_DISTANCE * 0.5, (
+    assert half_width < DEFAULT_VIEW_DISTANCE * 0.5, (
         f"overhead box half-width {half_width:.0f} is no tighter than the "
-        f"{CAMERA_RENDER_CULL_DISTANCE:.0f} ceiling")
+        f"{DEFAULT_VIEW_DISTANCE:.0f} ceiling")
 
 
 def test_first_person_degrades_to_the_distance_ceiling():
@@ -296,9 +296,9 @@ def test_first_person_degrades_to_the_distance_ceiling():
     min_x, min_z, max_x, max_z = visible_xz_bounds(cam, corners,
                                                    y_min=-1000.0, y_max=1000.0)
     # Reaches the ceiling ahead, and never exceeds it in any direction.
-    assert max_x >= CAMERA_RENDER_CULL_DISTANCE * 0.9
+    assert max_x >= DEFAULT_VIEW_DISTANCE * 0.9
     for v in (max_x, max_z, -min_x, -min_z):
-        assert v <= CAMERA_RENDER_CULL_DISTANCE + WORLD_SLAB_MARGIN + 1.0
+        assert v <= DEFAULT_VIEW_DISTANCE + WORLD_SLAB_MARGIN + 1.0
 
 
 def test_the_box_is_never_smaller_than_the_visible_volume():

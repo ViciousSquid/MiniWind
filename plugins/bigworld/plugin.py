@@ -28,6 +28,8 @@ nothing and behave exactly as before (§19/§20).
 
 from __future__ import annotations
 
+import weakref
+
 from plugins.api import FioPlugin, TickContext, prop
 
 # NOTE: nothing below the plugin's own declaration is imported here.
@@ -58,6 +60,7 @@ class BigWorldPlugin(FioPlugin):
     # The manager auto-enables the plugin when such a map loads (auto_enable_for_map),
     # so streaming maps just work while ordinary maps never pay for it.
     enabled = False
+    _sessions = weakref.WeakKeyDictionary()
 
     #: Normalised ``type`` of the entity whose presence opts a map in. Kept here
     #: as a bare string rather than read off ``.entities`` so asking "does this
@@ -69,6 +72,9 @@ class BigWorldPlugin(FioPlugin):
         from .config import FIELDS
         from .entities import BigWorldSettings  # lazy: pulls in editor.things
         api.register_entity(BigWorldSettings, menu_label="Big World Settings")
+        # One per map: a second would leave the session's config ambiguous
+        # (only the first is ever read). Placement, clone and paste refuse it.
+        api.register_singleton_entity(self.SETTINGS_TYPE)
         # The schema is derived, not written out again: the entity's defaults
         # and the runtime's coercion read the same table, so a field can't be
         # editable here and invisible to the session (see .config).
@@ -108,23 +114,33 @@ class BigWorldPlugin(FioPlugin):
 
     # -- play lifecycle -----------------------------------------------------
     def on_play_start(self, logic):
-        logic._bigworld = None
-        things = getattr(logic, "things", None) or []
+        things = logic.editor_state.things
         if not self.map_uses_bigworld(things):
-            # No opt-in: behave as ordinary Fio, and in particular leave the
-            # streaming runtime unimported. Checking this *before* the import
-            # below is the whole point — see the note at the top of the module.
+            # PluginManager.services is shared across logic instances, so an
+            # ordinary map must clear a Big World service published by the
+            # previous play session before returning to the normal path.
+            self._host.provide("bigworld", None)
+            self._host.provide("savegame.restore", None)
             return
+
+        # Big World owns the camera ceiling only while a BigWorld session is
+        # actually active. Ordinary maps never need to expose a camera object.
+        logic.camera.overhead_height_limit = None
         from .persistence import config_from_settings, find_settings_thing
         from .runtime import BigWorldSession
 
         settings = find_settings_thing(things)
         if settings is None:
-            return  # map didn't opt in; behave as ordinary Fio
+            self._host.provide("bigworld", None)
+            self._host.provide("savegame.restore", None)
+            return
         cfg = config_from_settings(settings)
         if not cfg["enabled"]:
+            self._host.provide("bigworld", None)
+            self._host.provide("savegame.restore", None)
             return
         session = None
+        restore_handler = None
         if cfg.get("disk_streaming"):
             # Experimental disk-streaming path: genuinely free unloaded cells,
             # re-streaming them from a pristine in-memory partition of the map.
@@ -138,6 +154,7 @@ class BigWorldPlugin(FioPlugin):
                     evict_radius=cfg["deactivation_radius"],
                 )
                 session.start()
+                restore_handler = session.restore_saved
             except Exception:
                 # Undo whatever a half-started session already claimed (the
                 # camera-horizon limit, above all) before falling back.
@@ -156,34 +173,24 @@ class BigWorldPlugin(FioPlugin):
                 terrain_infinite=cfg["terrain_infinite"],
                 terrain_stream_radius=cfg["terrain_stream_radius"],
                 sim_near_radius=cfg["sim_near_radius"],
-                terrain_stream=cfg["terrain_stream"],
-                fit_overhead_camera=cfg["fit_overhead_camera"],
             )
             session.start()
         session._show_debug = cfg["show_cell_debug"]
-        logic._bigworld = session
+        self._sessions[logic] = session
         # Expose the live session as a service (renderer/other plugins/tools).
-        try:
-            host = getattr(self, "_host", None)
-            if host is not None:
-                host.provide("bigworld", session)
-        except Exception:
-            pass
+        self._host.provide("bigworld", session)
+        self._host.provide("savegame.restore", restore_handler)
 
     def on_play_stop(self, logic):
-        session = getattr(logic, "_bigworld", None)
+        session = self._sessions.get(logic)
         if session is not None:
             session.stop()
-            logic._bigworld = None
-        try:
-            host = getattr(self, "_host", None)
-            if host is not None:
-                host.provide("bigworld", None)
-        except Exception:
-            pass
+            self._sessions.pop(logic, None)
+        self._host.provide("bigworld", None)
+        self._host.provide("savegame.restore", None)
 
     def on_tick(self, logic, ctx: TickContext):
-        session = getattr(logic, "_bigworld", None)
+        session = self._sessions.get(logic)
         if session is not None:
             session.tick()
 
@@ -196,9 +203,9 @@ class BigWorldPlugin(FioPlugin):
         """
         if not ev.get("play_mode"):
             return
-        host = getattr(self, "_host", None)
-        logic = host.logic if host is not None else None
-        session = getattr(logic, "_bigworld", None)
+        host = self._host
+        logic = host.logic
+        session = self._sessions.get(logic)
         if session is None or not getattr(session, "_show_debug", True):
             return
         painter = ev.get("painter")
