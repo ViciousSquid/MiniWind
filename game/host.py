@@ -28,6 +28,7 @@ from PyQt5 import QtWidgets
 # the plugin lifecycle: MiniWind uses them the way any native game layer would.
 from plugins.api import TickContext, io_def, prop, key_code
 
+from . import fio
 from .runtime import MiniwindSession, TALK_RADIUS, DICE_DISPLAY_DURATION
 
 # key vocabulary we translate raw Qt codes back into (for menu/dialogue nav)
@@ -206,10 +207,6 @@ def _miniwind_inspection(entity, logic):
             "sections": sections}
 
 
-#: See on_play_start: the actor count from which the AI's batched enemy search
-#: is used instead of its per-actor walk.
-ENEMY_BATCH_MIN_ACTORS = 16
-
 
 class MiniwindGame:
     """The native MiniWind game layer.
@@ -246,7 +243,7 @@ class MiniwindGame:
     def register(self, api):
         from .entities import (NPC, Creature, GameSettings, MiniwindSettings,
                                Marker, MARKER_KINDS, ItemPickup, CreatureSpawn,
-                               MiniwindTrigger, MiniwindCutscene, Spellbook,
+                               MiniwindTrigger, Spellbook,
                                SPELLBOOK_COVERS, Container, CONTAINER_KINDS)
         from .rpg import bestiary
         from .rpg import items as rpg_items
@@ -256,7 +253,6 @@ class MiniwindGame:
         api.register_entity(ItemPickup, menu_label="Item")
         api.register_entity(Spellbook, menu_label="Spellbook")
         api.register_entity(MiniwindTrigger, menu_label="Trigger")
-        api.register_entity(MiniwindCutscene, menu_label="Cutscene")
         api.register_entity(CreatureSpawn, menu_label="Spawn Point")
         api.register_entity(Marker, menu_label="Path / Schedule Marker")
         api.register_entity(Container, menu_label="Container (chest / barrel)")
@@ -335,34 +331,6 @@ class MiniwindGame:
                  help="A quest id to start when the player enters."),
             prop("hidden_in_game", "bool", "Hidden during play", default=True,
                  group="TRIGGER"),
-        ])
-        api.register_io("miniwindcutscene",
-            inputs=[
-                io_def("Start", "Start this cutscene"),
-                io_def("Stop", "Stop this cutscene"),
-            ],
-            outputs=[
-                io_def("OnStarted", "Fired when the cutscene begins"),
-                io_def("OnFinished", "Fired when the cutscene ends"),
-            ],
-        )
-
-        api.register_properties("miniwindcutscene", [
-            prop("cutscene_file", "string", "Cutscene JSON", default="", group="CUTSCENE",
-                 help="Filename in the project's cutscenes/ folder. Authored by Tools > Cutscene Wizard."),
-            prop("trigger_mode", "enum", "Trigger", default="manual",
-                 choices=["proximity", "play_start", "manual"], group="TRIGGER",
-                 help="Proximity starts when the player enters the radius; "
-                      "play_start starts with Play Mode; manual uses the Start input."),
-            prop("trigger_radius", "float", "Trigger radius", default=180.0,
-                 min=1.0, max=100000.0, group="TRIGGER"),
-            prop("once", "bool", "Play once", default=True, group="TRIGGER"),
-            prop("restore_actors", "bool", "Restore actors", default=True, group="ACTORS",
-                 help="Restore actor position/health/death state after playback."),
-            prop("stop_on_escape", "bool", "Escape stops cutscene", default=True,
-                 group="CONTROL"),
-            prop("hidden_in_game", "bool", "Hidden during play", default=True,
-                 group="CONTROL"),
         ])
         api.register_properties("marker", [
             prop("marker_kind", "enum", "Marker kind", default="idle",
@@ -652,19 +620,9 @@ class MiniwindGame:
     def register_runtime(self, api):
         from .rpg import inventory as inv
 
-        def _start_cutscene(entity, param, logic):
-            session = getattr(logic, "_miniwind", None)
-            if session is not None:
-                return session.cutscenes.start(entity)
-
-        def _stop_cutscene(entity, param, logic):
-            session = getattr(logic, "_miniwind", None)
-            if session is not None:
-                session.cutscenes.stop()
-
         def _start_dialogue(entity, param, logic):
             session = getattr(logic, "_miniwind", None)
-            player = getattr(logic, "player", None)
+            player = fio.player(logic)
             if session is not None and player is not None:
                 if session.start_dialogue(entity, player):
                     api.fire_output(entity, "OnTalked")
@@ -730,8 +688,6 @@ class MiniwindGame:
             entity.properties["triggered"] = False
             entity.properties["awake"] = True
 
-        api.register_input_handler("miniwindcutscene", "start", _start_cutscene)
-        api.register_input_handler("miniwindcutscene", "stop", _stop_cutscene)
 
         for etype in ("npc", "creature"):
             api.register_input_handler(etype, "startdialogue", _start_dialogue)
@@ -755,16 +711,7 @@ class MiniwindGame:
         cfg = dict(settings.properties) if settings is not None else {}
         host = getattr(self, "_host", None)
         globals_store = host.globals if host is not None else None
-        set_camera = getattr(logic, "set_camera_mode", None)
-        if set_camera is not None:
-            set_camera(PLAY_CAMERA)
-        # Nearly every MiniWind actor carries a team and asks for its nearest
-        # enemy every AI tick, so the batched search beats the per-actor walk
-        # at far smaller counts than Fio's default break-even assumes (that
-        # was measured with a few queries a tick; a village asks dozens).
-        ai = getattr(logic, "monster_ai", None)
-        if ai is not None:
-            ai.ENEMY_BATCH_MIN_MONSTERS = ENEMY_BATCH_MIN_ACTORS
+        fio.set_camera_mode(logic, PLAY_CAMERA)
         session = MiniwindSession(logic, cfg=cfg, globals_store=globals_store)
         session.restore()
         session.install()
@@ -772,11 +719,9 @@ class MiniwindGame:
             session.open_screen = "charcreate"
             # Freeze the world from frame zero so no combat/sound runs behind the
             # character-creation screen before the first plugin tick.
-            logic.set_world_paused(SCREEN_PAUSE, True)
+            fio.set_world_paused(logic, SCREEN_PAUSE, True)
         logic._miniwind = session
         logic.game_session = session
-        if not session.needs_char_creation:
-            session.cutscenes.trigger_at_play_start()
         self._prev_keys = frozenset()
         from . import music
         if music.PLAYER.configured:
@@ -794,7 +739,6 @@ class MiniwindGame:
         music.PLAYER.stop()
         session = getattr(logic, "_miniwind", None)
         if session is not None:
-            session.cutscenes.stop(reason="cancelled")
             session.persist(force=True)
             session.uninstall()
             logic._miniwind = None
@@ -820,9 +764,6 @@ class MiniwindGame:
 
         just = self._just_pressed(ctx)
 
-        if not session.needs_char_creation and not session.cutscenes.active:
-            session.cutscenes.trigger_at_play_start()
-
         # While a modal screen (character creation, inventory, journal…) or a
         # conversation is open, the *world* is frozen: hold MiniWind's own
         # world-pause request so the engine idles the monsters/physics, advance
@@ -830,10 +771,10 @@ class MiniwindGame:
         # combat resume on close. Other owners (the actor picker behind
         # 'inspect', the Escape menu) hold their own requests, so the game's
         # own freeze below follows the engine's verdict over all of them.
-        logic.set_world_paused(SCREEN_PAUSE, bool(
+        fio.set_world_paused(logic, SCREEN_PAUSE, bool(
             session.needs_char_creation or session.open_screen is not None
-            or session.dialogue is not None or session.cutscenes.active))
-        world_paused = logic.world_paused
+            or session.dialogue is not None))
+        world_paused = fio.world_paused(logic)
 
         # The interact key (E) both opens a container/conversation and, inside
         # a screen, closes it. The engine latches its use-key edge the instant E
@@ -847,15 +788,6 @@ class MiniwindGame:
             self._suppress_interact = False
 
         if world_paused:
-            if session.cutscenes.active:
-                session.cutscenes.tick(ctx.delta)
-                scene = session.cutscenes.scene
-                if (K_ESCAPE in just and scene is not None
-                        and scene.properties.get("stop_on_escape", True)):
-                    session.cutscenes.stop()
-                ctx.set_prompt("", priority=100)
-                session.persist()
-                return
             session.tick_ui(ctx.delta)   # ages toasts/floaters only, no world sim
             # Clicks on the open menu, queued by the UI thread (game/ui/hits).
             from .ui import hits
@@ -873,16 +805,6 @@ class MiniwindGame:
 
         # Normal play: simulate the world, then handle combat/interaction input.
         session.tick(ctx.delta)
-        if session.cutscenes.active:
-            logic.set_world_paused(SCREEN_PAUSE, True)
-            scene = session.cutscenes.scene
-            if (K_ESCAPE in just and scene is not None
-                    and scene.properties.get("stop_on_escape", True)):
-                session.cutscenes.stop(reason="cancelled")
-                logic.set_world_paused(SCREEN_PAUSE, False)
-            ctx.set_prompt("", priority=100)
-            session.persist()
-            return
         self._handle_gameplay_input(session, just, ctx)
         self._handle_interaction(logic, ctx, session, just)
         session.persist()
@@ -962,7 +884,7 @@ class MiniwindGame:
 
     def _handle_interaction(self, logic, ctx, session, just=frozenset()):
         session.interact_prompt = ""
-        player = getattr(logic, "player", None)
+        player = fio.player(logic)
         if player is None or session.game.character.is_dead:
             return
         arrest_guard = session.nearest_arrest_guard(player.pos, TALK_RADIUS)
@@ -1062,22 +984,19 @@ class MiniwindGame:
                 pass
         w, h = ev.get("width", 0), ev.get("height", 0)
         try:
-            from .ui import hud, dialogue_ui, cutscene_ui, screens
-            # Present cutscenes, dialogue and menu screens as draggable,
+            from .ui import hud, dialogue_ui, screens
+            # Present dialogue and menu screens as draggable,
             # collapsible, closable floating windows.
             # floating windows through the viewport's WindowManager (same chrome
             # as SysMon and the NPC inspector). Falls back to the legacy
             # full-screen draw where no window manager exists (e.g. headless).
             windowed = self._sync_overlay_windows(session, viewport, w, h)
-            if session is not None and session.cutscenes.active:
+            # One of Fio's cutscenes owns the view: no game HUD and no
+            # loadout popup over it (Fio hides its own HUD likewise).
+            if fio.cutscene_active(session.logic):
                 session.show_loadout = False
                 self._sync_loadout_window(session, viewport, w, h)
-                cutscene_ui.draw_message_lines(
-                    painter, session.cutscenes, ev.get("width", 0), ev.get("height", 0))
-                if not windowed:
-                    cutscene_ui.draw(
-                        painter, session.cutscenes, ev.get("width", 0), ev.get("height", 0))
-                hud.draw_fade(painter, session, ev.get("width", 0), ev.get("height", 0))
+                hud.draw_fade(painter, session, w, h)
                 return
             # The non-modal loadout popup (weapons + spells) lives alongside the
             # modal popups; it stays open while the player fights.
@@ -1215,12 +1134,12 @@ class MiniwindGame:
             return False
         try:
             from engine.floating_windows import CallbackWindow
-            from .ui import dialogue_ui, cutscene_ui, screens
+            from .ui import dialogue_ui, screens
         except Exception:
             return False
 
-        if session.cutscenes.active:
-            key = "cutscene"
+        if fio.cutscene_active(session.logic):
+            key = None
         elif session.dialogue is not None:
             key = "dialogue"
         elif session.open_screen is not None:
@@ -1248,13 +1167,7 @@ class MiniwindGame:
         if cur is None:
             click_cb = None
             wants_cursor = False
-            if key == "cutscene":
-                title = "Cutscene"
-                bw, bh = cutscene_ui.window_body_size(session.cutscenes)
-                draw_fn = (lambda p, x, y, ww, hh, s=session:
-                           cutscene_ui.draw_in_rect(p, s.cutscenes, x, y, ww, hh))
-                on_close = session.cutscenes.stop
-            elif key == "dialogue":
+            if key == "dialogue":
                 # The window chrome is a generic "Conversation"; the speaker's
                 # name is drawn inside the body (dialogue_ui), so titling the
                 # window with the name too would show it twice.
@@ -1285,9 +1198,6 @@ class MiniwindGame:
             wm.add(win)
             session._overlay_win = win
             session._overlay_key = key
-        elif key == "cutscene":
-            bw, bh = cutscene_ui.window_body_size(session.cutscenes)
-            cur.set_body_size(bw, bh)
         elif key == "dialogue":
             # The conversation box grows/shrinks with the number of responses.
             bw, bh = dialogue_ui.window_body_size(session)
@@ -1304,7 +1214,7 @@ class MiniwindGame:
     # --------------------------------------------------------------- helpers
     @staticmethod
     def _find_settings(logic):
-        for t in getattr(logic, "things", None) or []:
+        for t in fio.things(logic):
             if str(t.properties.get("type", "")).replace("_", "").lower() == "miniwindsettings":
                 return t
         return None

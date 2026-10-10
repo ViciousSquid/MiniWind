@@ -175,10 +175,9 @@ class PauseMenu:
         actor picker, which hold theirs, can neither thaw the world behind
         the menu nor be thawed by it closing.
         """
-        lt = getattr(self.view, 'logic_thread', None)
-        set_paused = getattr(lt, 'set_world_paused', None)
-        if set_paused is not None:
-            set_paused(PAUSE_OWNER, bool(paused))
+        from .. import fio
+        fio.set_world_paused(getattr(self.view, 'logic_thread', None),
+                             PAUSE_OWNER, bool(paused))
 
     def _grab_blurred_frame(self):
         """A cheap blur of the current frame: shrink it hard, then grow it back.

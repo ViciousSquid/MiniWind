@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from .. import factions, schedule, inventory, gametime
 from ..dialogue import DialogueRunner, DictStore
+from .fio_logic import FioLogic
 
 
 # --- factions --------------------------------------------------------------
@@ -173,7 +174,7 @@ class _FakePlayer:
         self.properties = {}
 
 
-class _FakeLogic:
+class _FakeLogic(FioLogic):
     def __init__(self, things, player):
         self.things = things
         self.player = player

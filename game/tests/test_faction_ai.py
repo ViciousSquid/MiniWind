@@ -13,6 +13,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from .. import combat_loadout, faction_ai      # noqa: E402
+from .fio_logic import FioLogic
 
 
 def test_the_model_follows_the_faction_table():
@@ -41,7 +42,7 @@ class _AI:
         self.hostility = model
 
 
-class _Logic:
+class _Logic(FioLogic):
     def __init__(self):
         self.monster_ai = _AI()
 

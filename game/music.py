@@ -3,9 +3,10 @@ MiniWind's background music.
 
 Every ``.mp3`` in ``assets/music`` is the game's soundtrack: while a play
 session runs they play one after another, shuffled, everywhere in the world
-(not from a speaker), at the volume set in the pause menu's options; 0% is
-off. The volume is kept in ``settings.ini`` (``[GAME] music_volume``, with
-``[GAME] music`` off when it is 0), so it holds for the next game too.
+(not from a speaker), at Fio's music volume (``[Audio] music_volume``, 0-100:
+the pause menu's options and Settings > Play Modes > Audio set the same one);
+0% is off, and so is ``[GAME] music``, the pause menu's switch. Both are kept
+in ``settings.ini``, so they hold for the next game too.
 Leaving play for the editor stops the music.
 
 Playback streams through ``pygame.mixer.music``, the one music channel of the
@@ -25,9 +26,9 @@ import time
 #: Where the soundtrack lives, relative to the working directory (the repo root).
 MUSIC_DIR = os.path.join("assets", "music")
 
-#: settings.ini switch for the music, and its volume (0..1).
+#: settings.ini switch for the music, and Fio's music volume (percent).
 SETTING = ("GAME", "music")
-VOLUME_SETTING = ("GAME", "music_volume")
+VOLUME_SETTING = ("Audio", "music_volume")
 DEFAULT_VOLUME = 0.5
 
 #: How often, at most, :meth:`MusicPlayer.poll` looks for the end of a track.
@@ -85,11 +86,21 @@ class MusicPlayer:
             self.enabled = config.getboolean(*SETTING, fallback=True)
         except Exception:
             self.enabled = True
+        volume = self._configured_volume()
+        self.volume = DEFAULT_VOLUME if volume is None else volume
+        self._seen_volume = volume
+
+    def _configured_volume(self):
+        """Fio's music volume from the config, 0..1, or None if unreadable."""
+        config = self._config
+        if config is None:
+            return None
         try:
-            volume = config.getfloat(*VOLUME_SETTING, fallback=DEFAULT_VOLUME)
-            self.volume = max(0.0, min(1.0, float(volume)))
+            percent = config.getfloat(*VOLUME_SETTING,
+                                      fallback=DEFAULT_VOLUME * 100.0)
+            return max(0.0, min(1.0, float(percent) / 100.0))
         except Exception:
-            self.volume = DEFAULT_VOLUME
+            return None
 
     def _persist(self) -> None:
         config = self._config
@@ -100,7 +111,12 @@ class MusicPlayer:
             if not config.has_section(section):
                 config.add_section(section)
             config.set(section, key, str(bool(self.enabled)))
-            config.set(*VOLUME_SETTING, f"{self.volume:.2f}")
+            vsection, vkey = VOLUME_SETTING
+            if not config.has_section(vsection):
+                config.add_section(vsection)
+            percent = int(round(self.volume * 100.0)) if self.enabled else 0
+            config.set(vsection, vkey, str(percent))
+            self._seen_volume = percent / 100.0
             if self._save is not None:
                 self._save()
         except Exception as exc:
@@ -240,6 +256,18 @@ class MusicPlayer:
             return
         self._last_poll = now
         with self._lock:
+            # Settings > Play Modes > Audio sets the same volume: follow it.
+            volume = self._configured_volume()
+            if volume is not None and volume != getattr(self, "_seen_volume", None):
+                self._seen_volume = volume
+                if volume > 0.0:
+                    self.volume = volume
+                music = self._music()
+                if self.playing and music is not None:
+                    try:
+                        music.set_volume(self.volume if volume > 0.0 else 0.0)
+                    except Exception:
+                        pass
             if not (self.session_active and self.enabled and self.playing):
                 return
             music = self._music()

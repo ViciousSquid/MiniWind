@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from .. import runtime
 from ..runtime import MiniwindSession
+from .fio_logic import FioLogic
 
 
 class _Thing:
@@ -55,7 +56,7 @@ class _Player:
         self.pos = list(pos)
 
 
-class _Logic:
+class _Logic(FioLogic):
     def __init__(self, things, player_pos):
         self.things = list(things)
         self.player = _Player(player_pos)

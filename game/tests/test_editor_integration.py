@@ -142,8 +142,9 @@ def test_miniwind_registers_generic_editor_extension_providers():
 
 def test_the_mental_state_inspector_is_only_for_actors():
     m = _mgr()
+    registered = {t for _plugin, _provider, t in m._entity_inspectors}
     for etype in ("npc", "creature", "monster"):
-        assert m.has_entity_inspector(etype), etype
+        assert m._normalise_type(etype) in registered, etype
 
     class _Light:
         properties = {"type": "light", "name": "lamp"}

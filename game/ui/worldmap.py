@@ -26,6 +26,8 @@ import time
 
 import numpy as np
 
+from .. import fio
+
 #: Samples along the world's longer side.
 RESOLUTION = 1024
 #: World units the minimap shows across.
@@ -248,7 +250,7 @@ WORLD = WorldMap()
 
 def ensure_for(logic, view=None):
     """Make sure the world being played is (being) painted."""
-    terrain = getattr(logic, "terrain", None)
+    terrain = fio.terrain(logic)
     state = getattr(logic, "editor_state", None)
     editor = getattr(view, "editor", None) if view is not None else None
     map_path = getattr(editor, "file_path", None)
@@ -315,7 +317,7 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
 
     world = world or WORLD
     logic = getattr(session, "logic", None)
-    player = getattr(logic, "player", None)
+    player = fio.player(logic)
     if player is None:
         return
     x0, y0, size = minimap_rect(width, height)
@@ -420,7 +422,7 @@ def map_features(session):
     """
     out = {"player": None, "places": [], "quests": []}
     logic = getattr(session, "logic", None)
-    player = getattr(logic, "player", None)
+    player = fio.player(logic)
     if player is not None and getattr(player, "pos", None) is not None:
         out["player"] = (float(player.pos[0]), float(player.pos[2]),
                          float(getattr(player, "angle", 0.0)))

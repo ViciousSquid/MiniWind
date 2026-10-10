@@ -29,6 +29,7 @@ QtWidgets = pytest.importorskip("PyQt5.QtWidgets")
 
 from ..ui import pause_menu
 from ..ui.pause_menu import SLOT_COUNT, PauseMenu, slot_name
+from .fio_logic import FioLogic
 
 
 @pytest.fixture(scope="module")
@@ -38,7 +39,7 @@ def app(qt_app):
     yield qt_app
 
 
-class _Logic:
+class _Logic(FioLogic):
     """The logic thread's per-owner world pause (LogicThread.set_world_paused)."""
 
     def __init__(self):

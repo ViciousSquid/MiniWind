@@ -1,9 +1,9 @@
-# MiniWind Cutscenes
+# Cutscenes
 
-Cutscenes are standalone JSON assets.
+MiniWind uses Fio's cutscenes. Author them with **Tools → Cutscenes…** (or the
+Cutscenes toolbar button): camera keyframes, temporary actors, timed I/O events
+and a preview, saved as JSON files in this folder and played in game by a
+LogicCamera.
 
-The map only stores a `miniwindcutscene` trigger containing a `cutscene_file` reference. The JSON owns the timeline: actors, camera keyframes, movement, fights, dialogue, messages and blood/effect keyframes.
-
-Use **Tools → Cutscene Wizard** to author them.
-
-Cutscene files are ordinary JSON so they can be diffed, copied between maps and edited without opening the editor.
+While a cutscene plays, Fio holds the player's input and the game's tick, and
+MiniWind hides its HUD and loadout window.

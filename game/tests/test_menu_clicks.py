@@ -23,6 +23,7 @@ QtCore = pytest.importorskip("PyQt5.QtCore")
 QtGui = pytest.importorskip("PyQt5.QtGui")
 
 from ..ui import hits, screens, dialogue_ui    # noqa: E402
+from .fio_logic import FioLogic
 
 W, H = 1280, 800
 
@@ -33,7 +34,7 @@ class _Player:
         self.properties = {}
 
 
-class _Logic:
+class _Logic(FioLogic):
     def __init__(self):
         self.things = []
         self.player = _Player()

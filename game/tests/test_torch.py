@@ -22,6 +22,7 @@ from ..rpg import items
 from ..rpg import equipment as eq
 from ..rpg import schedule as sched
 from ..rpg.character import Character
+from .fio_logic import FioLogic
 
 
 # --- item + equipment ------------------------------------------------------
@@ -64,7 +65,7 @@ class _FakePlayer:
         self.properties = {}
 
 
-class _FakeLogic:
+class _FakeLogic(FioLogic):
     def __init__(self, things, player):
         self.things = things
         self.player = player

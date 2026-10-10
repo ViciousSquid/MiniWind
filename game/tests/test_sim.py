@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from ..sim import appraisal, crime, knowledge, ownership, perception, production
 from ..sim.director import Director, PLAYER_KEY, actor_key
 from ..sim.events import EventBus, WorldEvent
+from .fio_logic import FioLogic
 
 
 # --------------------------------------------------------------- fixtures --
@@ -542,7 +543,7 @@ class _MapThing:
         self.properties = dict(properties)
 
 
-class _FakeLogic:
+class _FakeLogic(FioLogic):
     def __init__(self, things, player):
         self.things = things
         self.player = player

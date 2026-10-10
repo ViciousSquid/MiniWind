@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from ..rpg import daily
 from ..rpg import disposition as disp
 from ..rpg.dialogue import DictStore
+from .fio_logic import FioLogic
 
 
 # --- baseline & the once-per-day guard -------------------------------------
@@ -138,7 +139,7 @@ class _FakePlayer:
         self.properties = {}
 
 
-class _FakeLogic:
+class _FakeLogic(FioLogic):
     def __init__(self, things, player):
         self.things = things
         self.player = player

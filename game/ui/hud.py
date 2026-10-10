@@ -14,6 +14,7 @@ from PyQt5.QtCore import QRect, QRectF, Qt
 from PyQt5.QtGui import QColor, QPixmap, QPolygon, QPen, QConicalGradient
 from PyQt5.QtCore import QPoint, QPointF
 
+from .. import fio
 from . import theme as T
 from ..rpg import equipment as eq
 from ..rpg import items as rpg_items
@@ -124,7 +125,7 @@ def draw_bubbles(painter, session, viewport, width, height):
     except Exception:
         return
     logic = getattr(session, "logic", None)
-    player = getattr(logic, "player", None) if logic is not None else None
+    player = fio.player(logic) if logic is not None else None
     if player is None:
         return
     ppos = [float(player.pos[0]), float(player.pos[1]), float(player.pos[2])]
@@ -503,19 +504,20 @@ def _draw_quest_arrow(painter, session, width, height):
     if not targets:
         return
     logic = getattr(session, "logic", None)
-    player = getattr(logic, "player", None)
+    player = fio.player(logic)
     ppos = getattr(player, "pos", None)
     if ppos is None:
         return
 
     overhead = False
     try:
-        overhead = bool(logic.is_overhead())
+        overhead = bool(fio.is_overhead(logic))
     except Exception:
         overhead = False
     hx = hz = 0.0
     if overhead:
-        orientation = str(getattr(logic, "overhead_orientation", "north")).strip().lower()
+        orientation = str(getattr(fio.camera(logic), "overhead_orientation",
+                                  "north")).strip().lower()
         if orientation == "player":
             a = getattr(player, "angle", 0.0)
             hx, hz = math.sin(a), math.cos(a)
@@ -589,7 +591,7 @@ def _draw_one_quest_arrow(painter, cx, cy, rel, orbit, color, dist, width, heigh
 
 def _draw_compass(painter, session, width, height):
     """A small heading strip centred at the top (N/E/S/W)."""
-    player = getattr(session.logic, "player", None)
+    player = fio.player(session.logic)
     if player is None:
         return
     angle = getattr(player, "angle", 0.0)

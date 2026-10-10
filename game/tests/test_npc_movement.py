@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from .. import runtime
 from ..runtime import MiniwindSession
+from .fio_logic import FioLogic
 
 
 class _NPC:
@@ -50,7 +51,7 @@ class _AI:
         return False
 
 
-class _Logic:
+class _Logic(FioLogic):
     def __init__(self, walls=()):
         self.monster_ai = _AI(walls)
 

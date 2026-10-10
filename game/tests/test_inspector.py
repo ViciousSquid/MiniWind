@@ -20,6 +20,7 @@ QtGui = pytest.importorskip("PyQt5.QtGui")
 
 from engine.floating_windows import WindowManager   # noqa: E402
 from ..ui import inspector                          # noqa: E402
+from .fio_logic import FioLogic
 
 
 class _Thing:
@@ -52,7 +53,7 @@ class _Session:
         return None
 
 
-class _Logic:
+class _Logic(FioLogic):
     def __init__(self, things, session):
         self.things = things
         self._miniwind = session

@@ -24,6 +24,7 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from ..runtime import MiniwindSession
+from .fio_logic import FioLogic
 
 
 class _GameState:
@@ -36,7 +37,7 @@ class _GameState:
         return self.aim
 
 
-class _Logic:
+class _Logic(FioLogic):
     def __init__(self, aim=None, angle=0.0):
         self.game_state = _GameState(aim)
         self.player = type("P", (), {"pos": [0.0, 0.0, 0.0], "angle": angle})()

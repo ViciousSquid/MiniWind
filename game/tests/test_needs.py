@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from ..rpg import needs
 from ..rpg import schedule as sched
+from .fio_logic import FioLogic
 
 
 # --- the pure need model ---------------------------------------------------
@@ -109,7 +110,7 @@ class _FakePlayer:
         self.properties = {}
 
 
-class _FakeLogic:
+class _FakeLogic(FioLogic):
     def __init__(self, things, player):
         self.things = things
         self.player = player

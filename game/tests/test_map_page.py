@@ -10,6 +10,7 @@ from ..ui import worldmap
 from ..ui.map_page import MIN_SPAN
 from .test_pause_menu import _Editor, _View, _choose, _draw, _key
 from ..ui.pause_menu import PauseMenu
+from .fio_logic import FioLogic
 
 
 @pytest.fixture(scope="module")
@@ -121,7 +122,7 @@ def test_features_read_discovered_places_and_quest_objectives():
         pos = [1.0, 0.0, 2.0]
         angle = 0.5
 
-    class _Logic:
+    class _Logic(FioLogic):
         player = _Player()
 
     class _Session:

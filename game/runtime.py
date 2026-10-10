@@ -25,6 +25,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+from . import fio
 from .facing import face_heading
 from engine.change_journal import touch as _journal
 from engine.spatial import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
@@ -50,7 +51,6 @@ from .sim import knowledge as sim_knowledge
 from .sim import ownership as sim_own
 from .sim import production as sim_prod
 from .sim.director import Director, PLAYER_KEY, actor_key
-from .cutscene import CutsceneManager
 from .rpg.dialogue import DialogueRunner
 from .rpg import inventory as inv
 from .rpg.game_state import GameState
@@ -404,9 +404,6 @@ class MiniwindSession:
         self._decision_phase = 0
         self._offscreen_tick = 0
         self._proximity_accum = 0.0
-        # One active cinematic owns the camera/input while it runs.  The
-        # cutscene data remains part of the world, not a separate script.
-        self.cutscenes = CutsceneManager(self)
         #: Guards currently running the player down (see _start_arrest_pursuit).
         self._arrest_pursuers = []
         #: NPCs given a mark above their head by set_head_mark: id -> npc.
@@ -517,7 +514,7 @@ class MiniwindSession:
         self._sim_hours = 0.0
         if self.logic is not None:
             try:
-                self.logic.set_world_paused("miniwind.screen", True)
+                fio.set_world_paused(self.logic, "miniwind.screen", True)
             except Exception:
                 pass
 
@@ -567,7 +564,7 @@ class MiniwindSession:
 
     def _mitigate_incoming(self, raw_damage, damage_kind="physical") -> float:
         c = self.game.character
-        if getattr(self.logic, "god_mode", False):
+        if getattr(fio.player_runtime(self.logic), "god_mode", False):
             return 0.0
         res = rpg_combat.resolve_incoming(c, float(raw_damage) * self.incoming_mult,
                                           damage_kind=damage_kind,
@@ -588,12 +585,12 @@ class MiniwindSession:
     def _sync_engine_health(self, full=False) -> None:
         c = self.game.character
         try:
-            self.logic.player_max_health = int(round(c.max_health))
+            fio.player_runtime(self.logic).player_max_health = int(round(c.max_health))
             if full:
-                self.logic.player_health = int(round(c.health))
+                fio.player_runtime(self.logic).player_health = int(round(c.health))
             else:
                 # character is authoritative; mirror into the engine pool
-                self.logic.player_health = int(round(max(0.0, c.health)))
+                fio.player_runtime(self.logic).player_health = int(round(max(0.0, c.health)))
         except Exception:
             pass
 
@@ -642,7 +639,7 @@ class MiniwindSession:
         """
         from .rpg import heads
         player_head = str(getattr(self.game.character, "head", "") or "")
-        things = getattr(self.logic, "things", None) or []
+        things = fio.things(self.logic)
         changed = False
         for t in things:
             p = getattr(t, "properties", None)
@@ -684,7 +681,7 @@ class MiniwindSession:
         left handedness is deliberately rare (see LEFT_HANDED_CHANCE). Stored on
         ``properties`` so it round-trips through save/load and the overhead
         renderer can draw the weapon on the correct side."""
-        for t in getattr(self.logic, "things", None) or []:
+        for t in fio.things(self.logic):
             p = getattr(t, "properties", None)
             if not isinstance(p, dict):
                 continue
@@ -724,13 +721,6 @@ class MiniwindSession:
         self._wi_live = True
 
     def tick(self, delta: float) -> None:
-        # A cutscene is a first-class world pause.  Advance only its deterministic
-        # camera/dialogue timeline; do not run clocks, combat, schedules or AI
-        # decisions underneath it.
-        if self.cutscenes.active:
-            self.cutscenes.tick(delta)
-            return
-
         # Rebuild the actor index once, then resolve it once here rather than
         # through an attribute chain at each of the tens of thousands of asks a
         # settlement tick makes.
@@ -781,7 +771,7 @@ class MiniwindSession:
         npc_tiers = [tier_of(n) for n in npcs]
         # Fitted to the camera, ACTIVE is off screen, and nobody can see an
         # off-screen NPC think or step less often.
-        offscreen = bool(getattr(self.logic, "sim_tiers_fit_view", False))
+        offscreen = bool(fio.sim_tiers_fit_view(self.logic))
         stride = OFFSCREEN_STRIDE if offscreen else 1
         self._offscreen_tick = (self._offscreen_tick + 1) % OFFSCREEN_STRIDE
         self._decision_accum += delta
@@ -849,8 +839,6 @@ class MiniwindSession:
             self._tick_pickups()
             self._tick_spellbooks()
             self._tick_triggers()
-            if self.cutscenes.trigger_proximity():
-                return
             self._tick_locations()
             self._tick_quests()
 
@@ -917,7 +905,7 @@ class MiniwindSession:
                           "_wisp": True,
                       })
         try:
-            self.logic.things.append(light)
+            fio.things(self.logic).append(light)
             self._rebuild_entity_caches()
         except Exception:
             return
@@ -973,7 +961,7 @@ class MiniwindSession:
             return
         light = w.get("light")
         try:
-            things = getattr(self.logic, "things", None)
+            things = fio.things(self.logic)
             if things is not None and light in things:
                 things.remove(light)
                 self._rebuild_entity_caches()
@@ -997,7 +985,7 @@ class MiniwindSession:
         reaper = self._make_reaper(body)
         if reaper is None:
             return
-        things = getattr(self.logic, "things", None)
+        things = fio.things(self.logic)
         if things is None:
             return
         try:
@@ -1181,7 +1169,7 @@ class MiniwindSession:
     def _despawn_reaper(self, visit) -> None:
         """Take one reaper out of the scene."""
         reaper = visit.get("thing")
-        things = getattr(self.logic, "things", None)
+        things = fio.things(self.logic)
         if reaper is None or things is None:
             return
         try:
@@ -1310,7 +1298,7 @@ class MiniwindSession:
                 if light is None:
                     continue
                 try:
-                    self.logic.things.append(light)
+                    fio.things(self.logic).append(light)
                 except Exception:
                     continue
                 self._torch_lights[key] = light
@@ -1331,7 +1319,7 @@ class MiniwindSession:
         if light is None:
             return
         try:
-            things = getattr(self.logic, "things", None)
+            things = fio.things(self.logic)
             if things is not None and light in things:
                 things.remove(light)
         except Exception:
@@ -1343,12 +1331,10 @@ class MiniwindSession:
         self._rebuild_entity_caches()
 
     def _rebuild_entity_caches(self) -> None:
-        rebuild = getattr(self.logic, "_build_entity_caches", None)
-        if callable(rebuild):
-            try:
-                rebuild()
-            except Exception:
-                pass
+        try:
+            fio.rebuild_entity_caches(self.logic)
+        except Exception:
+            pass
         # Force the type index to rebuild on next use — the scene membership
         # just changed (spawn/despawn). The (id,len) token catches this too,
         # but invalidating here keeps it correct even for a same-length swap.
@@ -1371,7 +1357,7 @@ class MiniwindSession:
     def _type_buckets(self) -> Dict[str, list]:
         """Return the current normalised-type index, rebuilding it only when the
         things list has changed (see the token comment in __init__)."""
-        things = getattr(self.logic, "things", None) or ()
+        things = fio.things(self.logic)
         if (id(things), len(things)) != self._type_index_token:
             self._rebuild_type_index(things)
         return self._type_index
@@ -1421,18 +1407,16 @@ class MiniwindSession:
                     # corpse never empties the rest of the group.
                     props["inventory"] = [dict(it) for it in inventory]
                 try:
-                    self.logic.things.append(cls(pos=pos, properties=props))
+                    fio.things(self.logic).append(cls(pos=pos, properties=props))
                     made += 1
                 except Exception:
                     pass
             p["_spawned"] = True
         if made:
-            rebuild = getattr(self.logic, "_build_entity_caches", None)
-            if callable(rebuild):
-                try:
-                    rebuild()
-                except Exception:
-                    pass
+            try:
+                fio.rebuild_entity_caches(self.logic)
+            except Exception:
+                pass
         return made
 
     @staticmethod
@@ -1839,7 +1823,7 @@ class MiniwindSession:
             return None
         ppos = self._player_pos()
         best, best_pos = None, None
-        for t in getattr(self.logic, "things", None) or []:
+        for t in fio.things(self.logic):
             p = getattr(t, "properties", {}) or {}
             if p.get("dead"):
                 continue
@@ -1995,7 +1979,7 @@ class MiniwindSession:
     def _objective_target_name(self, kind, tslug, raw):
         """Best display name for an objective target (NPC/marker/foe/item)."""
         if kind in (_quests.COND_TALK, _quests.COND_KILL):
-            for t in getattr(self.logic, "things", None) or []:
+            for t in fio.things(self.logic):
                 p = getattr(t, "properties", {}) or {}
                 if tslug in (self._slug(p.get("name", "")),
                              self._slug(p.get("display_name", "")),
@@ -2039,7 +2023,7 @@ class MiniwindSession:
         """Nearest alive actor whose type/role/name matches *target_slug*."""
         ppos = self._player_pos()
         best, best_pos = None, None
-        for t in getattr(self.logic, "things", None) or []:
+        for t in fio.things(self.logic):
             p = t.properties
             if p.get("dead"):
                 continue
@@ -2386,7 +2370,7 @@ class MiniwindSession:
                 guard.properties.pop("_dest", None)
                 self.notify("The guard stops you: you are wanted for a crime.", 4.0)
                 self.play_ui_sound(self.rng.choice(ARREST_SOUNDS))
-                player = getattr(self.logic, "player", None)
+                player = fio.player(self.logic)
                 if player is not None:
                     self.start_dialogue(guard, player)
             return
@@ -2584,7 +2568,7 @@ class MiniwindSession:
 
     def _complete_escort(self, prison_pos) -> None:
         """Deliver a player who stayed with the guard to the prison marker."""
-        player = getattr(self.logic, "player", None)
+        player = fio.player(self.logic)
         if player is not None:
             try:
                 player.pos.x = float(prison_pos[0])
@@ -2788,7 +2772,7 @@ class MiniwindSession:
             })
             sim_own.set_owner(item.properties, yielded.owner, yielded.owner_name,
                               yielded.owner_faction)
-            self.logic.things.append(item)
+            fio.things(self.logic).append(item)
             self._type_index_token = None      # force the type index to rebuild
         except Exception:
             return
@@ -3355,7 +3339,7 @@ class MiniwindSession:
         """
         best, best_d = None, float("inf")
         npos = npc.pos
-        for t in getattr(self.logic, "things", None) or []:
+        for t in fio.things(self.logic):
             if t is npc:
                 continue
             try:
@@ -3391,7 +3375,7 @@ class MiniwindSession:
         return list(home) if isinstance(home, (list, tuple)) and len(home) == 3 else list(npc.pos)
 
     def _find_named(self, name: str):
-        for t in getattr(self.logic, "things", None) or []:
+        for t in fio.things(self.logic):
             if str(t.properties.get("name", "")) == name:
                 return t
         return None
@@ -3651,7 +3635,7 @@ class MiniwindSession:
         best, best_d = None, radius * radius
         # Prefer the cached actor list; fall back to a full scan if a caller runs
         # outside the decision pass (e.g. a unit test poking a single tick).
-        pool = self._actors or (getattr(self.logic, "things", None) or [])
+        pool = self._actors or (fio.things(self.logic))
         for t in pool:
             if t is npc:
                 continue
@@ -3680,7 +3664,7 @@ class MiniwindSession:
                              exclude_row=wi.row_of(npc))
             return wi.actors[row] if row >= 0 else None
         best, best_d = None, radius * radius
-        pool = self._actors or (getattr(self.logic, "things", None) or [])
+        pool = self._actors or (fio.things(self.logic))
         for t in pool:
             if t is npc:
                 continue
@@ -3868,13 +3852,13 @@ class MiniwindSession:
 
     # ========================================================= player combat
     def _player_pos(self):
-        p = getattr(self.logic, "player", None)
+        p = fio.player(self.logic)
         if p is None:
             return None
         return [float(p.pos[0]), float(p.pos[1]), float(p.pos[2])]
 
     def _player_forward(self):
-        p = getattr(self.logic, "player", None)
+        p = fio.player(self.logic)
         if p is None:
             return (0.0, 0.0, 1.0)
         a = getattr(p, "angle", 0.0)
@@ -3955,7 +3939,7 @@ class MiniwindSession:
             return None
         fwd = self._player_forward()
         best, best_d = None, reach
-        for t in getattr(self.logic, "things", None) or []:
+        for t in fio.things(self.logic):
             if not self._attackable(t):
                 continue
             dx = t.pos[0] - ppos[0]
@@ -4057,11 +4041,7 @@ class MiniwindSession:
         ppos = self._player_pos()
         if lt is None or ppos is None:
             return
-        try:
-            from engine.monster_constants import (
-                ARROW_SPEED, ARROW_MAX_DIST, ARROW_SPRITE_SIZE)
-        except Exception:
-            ARROW_SPEED, ARROW_MAX_DIST, ARROW_SPRITE_SIZE = 1600.0, 3000.0, (40.0, 40.0)
+        ARROW_SPEED, ARROW_MAX_DIST = 1600.0, 3000.0
 
         start = [ppos[0], ppos[1] + 48.0, ppos[2]]
         aim = self._projectile_aim_point(start, target)
@@ -4084,25 +4064,11 @@ class MiniwindSession:
             else:
                 self.add_floater("miss", kind="miss")
 
-        proj = {
-            "pos": list(start),
-            "vel": vel,
-            "owner_id": id(getattr(lt, "player", None)),
-            "owner_is_player": True,
-            "sprite": "assets/sprites/monsters/arrow.png",
-            "lifetime": ARROW_MAX_DIST / ARROW_SPEED,
-            "damage": 0,   # unused for player arrows — on_hit resolves real damage
-            "size": ARROW_SPRITE_SIZE,
-            "color": [214, 175, 105],   # warm wood/fletching tint
-            "distance_travelled": 0.0,
-            "max_dist": ARROW_MAX_DIST,
-            "kind": "arrow",
-            "embeds": True,
-            "on_hit": _on_hit,
-        }
-        if not hasattr(lt, "_monster_projectiles"):
-            lt._monster_projectiles = []
-        lt._monster_projectiles.append(proj)
+        # A player-owned arrow: it flies past the archer, stops at its own
+        # range, and resolves its RPG damage at the moment it actually hits.
+        fio.spawn_projectile(lt, start, vel,
+                             lifetime=ARROW_MAX_DIST / ARROW_SPEED,
+                             max_dist=ARROW_MAX_DIST, on_hit=_on_hit)
 
     def _staff_attack(self, w) -> bool:
         """Channel a staff's bound spell (called from do_attack for KIND_STAFF)."""
@@ -4194,7 +4160,7 @@ class MiniwindSession:
         if ppos is None:
             return None
         best, best_d = None, reach
-        for t in getattr(self.logic, "things", None) or []:
+        for t in fio.things(self.logic):
             tp = t.properties
             if not tp.get("dead"):
                 continue
@@ -4281,13 +4247,8 @@ class MiniwindSession:
         ppos = self._player_pos()
         if lt is None or ppos is None:
             return
-        try:
-            from engine.monster_constants import (
-                MONSTER_PROJECTILE_SPEED, MONSTER_PROJECTILE_MAX_DIST,
-                MONSTER_PROJECTILE_SPRITE_SIZE)
-        except Exception:
-            MONSTER_PROJECTILE_SPEED, MONSTER_PROJECTILE_MAX_DIST = 900.0, 4000.0
-            MONSTER_PROJECTILE_SPRITE_SIZE = (48, 48)
+        from engine.monster_constants import (
+            MONSTER_PROJECTILE_SPEED, MONSTER_PROJECTILE_MAX_DIST)
 
         start = [ppos[0], ppos[1] + 48.0, ppos[2]]
         aim = self._projectile_aim_point(start, self._acquire_target(BOW_REACH))
@@ -4296,23 +4257,12 @@ class MiniwindSession:
         dlen = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
         speed = float(getattr(spell, "projectile_speed", 0) or MONSTER_PROJECTILE_SPEED)
         vel = [dx / dlen * speed, dy / dlen * speed, dz / dlen * speed]
-        color = list(spell.color) if getattr(spell, "color", None) else None
 
-        proj = {
-            "pos": list(start),
-            "vel": vel,
-            "owner_id": id(getattr(lt, "player", None)),
-            "owner_is_player": True,
-            "sprite": "assets/sprites/miniwind/magicbolt.png",
-            "lifetime": MONSTER_PROJECTILE_MAX_DIST / speed,
-            "damage": int(getattr(spell, "damage", 0) or 0),
-            "size": MONSTER_PROJECTILE_SPRITE_SIZE,
-            "color": color,
-            "distance_travelled": 0.0,
-        }
-        if not hasattr(lt, "_monster_projectiles"):
-            lt._monster_projectiles = []
-        lt._monster_projectiles.append(proj)
+        # A player-owned bolt: it flies past the caster and strikes creatures
+        # with the spell's damage.
+        fio.spawn_projectile(lt, start, vel,
+                             lifetime=MONSTER_PROJECTILE_MAX_DIST / speed,
+                             damage=int(getattr(spell, "damage", 0) or 0))
 
     def overhead_player_weapon(self):
         """``(weapon_id, handed)`` for the viewport's overhead weapon overlay."""
@@ -4357,7 +4307,7 @@ class MiniwindSession:
         every frame to offset the weapon sprite forward from the head.
         """
         # Player
-        player = getattr(self.logic, "player", None)
+        player = fio.player(self.logic)
         if actor is player:
             t = getattr(self, "_attack_anim_time", 0.0)
             if t > 0:

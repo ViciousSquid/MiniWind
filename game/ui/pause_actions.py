@@ -212,6 +212,14 @@ class PauseActions:
 
     def pause_menu_set_music_volume(self, volume):
         self.music.set_volume(volume)
+        # The same volume is Fio's music volume: the window applies it to
+        # the view's music channels (speakers playing from assets/music).
+        apply = getattr(self.window, "_apply_audio_volumes", None)
+        if apply is not None:
+            try:
+                apply()
+            except Exception:
+                pass
 
     # ---------------------------------------------------------------- options
     def pause_menu_display_settings(self):
@@ -234,7 +242,7 @@ class PauseActions:
         """Show a changed window mode / resolution now, in a kiosk game."""
         window = self.window
         if getattr(window, "is_kiosk_mode", False):
-            apply = getattr(window, "apply_kiosk_display_mode", None)
+            apply = getattr(window, "_apply_kiosk_window_mode", None)
             if apply is not None:
                 apply()
 

@@ -14,6 +14,7 @@ import os
 from ..rpg import inventory as inv
 from ..rpg import items as rpg_items
 from ..rpg import quests
+from .fio_logic import FioLogic
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MAP = os.path.join(ROOT, "maps", "village_walled_source.json")
@@ -31,7 +32,7 @@ class _FakePlayer:
         self.properties = {}
 
 
-class _FakeLogic:
+class _FakeLogic(FioLogic):
     def __init__(self, things, player):
         self.things = things
         self.player = player

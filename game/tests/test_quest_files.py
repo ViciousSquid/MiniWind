@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from .. import entities
 from ..rpg import quest_files
 from ..rpg import quests
+from .fio_logic import FioLogic
 
 
 # --- .quest file storage ---------------------------------------------------
@@ -115,7 +116,7 @@ def test_offer_dialogue_branch_preserves_existing_dialogue():
 
 
 # --- runtime auto-wiring of givers ----------------------------------------
-class _FakeLogic:
+class _FakeLogic(FioLogic):
     def __init__(self, things):
         self.things = things
         self.player = None

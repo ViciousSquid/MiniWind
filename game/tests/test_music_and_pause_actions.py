@@ -28,6 +28,7 @@ pytest.importorskip("PyQt5.QtCore")
 from ..music import MusicPlayer, SETTING      # noqa: E402
 from ..ui import pause_actions                # noqa: E402
 from ..ui.pause_actions import PauseActions   # noqa: E402
+from .fio_logic import FioLogic
 
 
 class _Mixer:
@@ -154,7 +155,7 @@ class _Session:
         self.persisted += 1
 
 
-class _Logic:
+class _Logic(FioLogic):
     def __init__(self):
         self._miniwind = _Session()
 
@@ -268,11 +269,24 @@ def test_setting_the_volume_is_live_and_remembered(music_dir):
     player.start()
     player.set_volume(0.3)
     assert mixer.volume == pytest.approx(0.3) and mixer.busy
-    assert config.get("GAME", "music_volume") == "0.30"
+    assert config.get("Audio", "music_volume") == "30"     # Fio's music volume
     player.set_volume(0.0)
     assert not mixer.busy and config.getboolean("GAME", "music") is False
     player.set_volume(0.6)                          # back on: a track starts
     assert mixer.busy and player.effective_volume == pytest.approx(0.6)
+
+
+def test_the_volume_follows_fios_settings(music_dir):
+    # Settings > Play Modes > Audio writes the same [Audio] music_volume.
+    mixer = _Mixer()
+    config = configparser.ConfigParser()
+    player = _player(music_dir, mixer)
+    player.configure(config)
+    player.start()
+    config.read_dict({"Audio": {"music_volume": "20"}})
+    player.poll(now=1.0e6)
+    assert mixer.volume == pytest.approx(0.2)
+    assert player.effective_volume == pytest.approx(0.2)
 
 
 # ------------------------------------------------------------------- fonts

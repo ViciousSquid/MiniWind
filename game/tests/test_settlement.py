@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from .. import data
 from ..rpg import bestiary
 from ..tools import make_settlement
+from .fio_logic import FioLogic
 
 
 class _FakeThing:
@@ -36,7 +37,7 @@ class _FakePlayer:
         self.properties = {}
 
 
-class _FakeLogic:
+class _FakeLogic(FioLogic):
     def __init__(self, things, player):
         self.things = things
         self.player = player

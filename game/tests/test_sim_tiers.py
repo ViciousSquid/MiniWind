@@ -25,6 +25,7 @@ from engine.spatial import TIER_ACTIVE, TIER_DISTANT, TIER_NEAR
 from .. import runtime
 from ..rpg import schedule as sched
 from ..runtime import MiniwindSession
+from .fio_logic import FioLogic
 
 
 class _Clock:
@@ -73,7 +74,7 @@ class _Session:
         self.perception_calls = 0
 
     # scene plumbing
-    class _Logic:
+    class _Logic(FioLogic):
         def __init__(self, things):
             self.things = things
     @property

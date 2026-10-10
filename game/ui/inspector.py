@@ -37,6 +37,8 @@ from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPen
 
 from engine.floating_windows import FloatingWindow
 
+from .. import fio
+
 #: Colours given to inspector windows in turn (title stripe, line, rings).
 COLOURS = (QColor(80, 200, 255), QColor(255, 170, 60), QColor(160, 255, 120),
            QColor(255, 110, 200), QColor(250, 240, 110), QColor(170, 140, 255))
@@ -90,7 +92,7 @@ def _monster_state(logic, thing) -> dict:
 
 
 def _actor_by_id(logic, actor_id):
-    for t in getattr(logic, "things", None) or ():
+    for t in fio.things(logic):
         if id(t) == actor_id:
             return t
     return None
@@ -116,8 +118,8 @@ def destination(session, logic, thing):
         if target is not None:
             return list(target.pos), f"fighting {_name(target)}"
     mstate = _monster_state(logic, thing)
-    if mstate.get("in_sight") and getattr(logic, "player", None) is not None:
-        p = logic.player.pos
+    if mstate.get("in_sight") and fio.player(logic) is not None:
+        p = fio.player(logic).pos
         return [float(p[0]), float(p[1]), float(p[2])], "hunting the player"
     sound = mstate.get("investigating_sound")
     if sound:
@@ -177,7 +179,7 @@ def focused_place(logic=None):
     """
     global _focus
     if _focus is not None and logic is not None:
-        held = getattr(logic, "camera_focus", None)
+        held = getattr(fio.camera(logic), "camera_focus", None)
         pos = _focus["pos"]
         if held is None or any(abs(float(a) - float(b)) > 1e-3
                                for a, b in zip(held, pos)):
@@ -189,7 +191,8 @@ def show_place(window, key, pos, label, entity=None):
     """Swing the camera to *pos* and mark it; the same place again goes back."""
     global _focus
     logic = window._logic()
-    if logic is None or not hasattr(logic, "set_camera_focus"):
+    camera = fio.camera(logic)
+    if camera is None:
         return
     current = focused_place(logic)
     if current is not None and current["window"] is window and current["key"] == key:
@@ -198,15 +201,16 @@ def show_place(window, key, pos, label, entity=None):
     _focus = {"pos": [float(pos[0]), float(pos[1]), float(pos[2])], "label": label,
               "entity": entity, "window": window, "key": key,
               "since": time.monotonic()}
-    logic.set_camera_focus(_focus["pos"])
+    camera.set_camera_focus(_focus["pos"])
 
 
 def clear_focus(logic=None, glide=True):
     """Bring the camera back to the player (gliding, or at once)."""
     global _focus
     _focus = None
-    if logic is not None and hasattr(logic, "set_camera_focus"):
-        logic.set_camera_focus(None, glide=glide)
+    camera = fio.camera(logic)
+    if camera is not None:
+        camera.set_camera_focus(None, glide=glide)
 
 
 def cancel_focus_on_move(logic, ctx):

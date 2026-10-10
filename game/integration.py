@@ -154,7 +154,7 @@ def _patch_map_loading():
         return
     _orig_load = MainWindow.load_level_file
 
-    def load_level_file(self, filePath):
+    def load_level_file(self, filePath, *args, **kwargs):
         if not fio_maps_allowed(getattr(self, "config", None)) and not is_game_map(filePath):
             name = os.path.basename(str(filePath))
             message = (f"{name} is a plain Fio map. Turn on Settings > Editor > "
@@ -164,7 +164,7 @@ def _patch_map_loading():
             if toast is not None:
                 toast(message, is_error=True)
             return False
-        return _orig_load(self, filePath)
+        return _orig_load(self, filePath, *args, **kwargs)
 
     MainWindow.load_level_file = load_level_file
     MainWindow._miniwind_maps_gated = True

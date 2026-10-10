@@ -24,9 +24,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from .. import runtime
 from ..runtime import MiniwindSession
 from ..rpg import items as rpg_items
+from .fio_logic import FioLogic
 
 
-class _Logic:
+class _Logic(FioLogic):
     def __init__(self):
         self.things = []
         self.rebuilds = 0

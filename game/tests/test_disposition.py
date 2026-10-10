@@ -22,6 +22,7 @@ from ..rpg import disposition as disp
 from ..rpg import guilds
 from ..rpg.character import Character
 from ..rpg.dialogue import DictStore
+from .fio_logic import FioLogic
 
 
 # --- pure memory model -----------------------------------------------------
@@ -130,7 +131,7 @@ class _FakePlayer:
         self.properties = {}
 
 
-class _FakeLogic:
+class _FakeLogic(FioLogic):
     def __init__(self, things, player):
         self.things = things
         self.player = player
