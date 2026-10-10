@@ -105,6 +105,8 @@ class LogicSession:
         # Likewise a camera ceiling: a session that sets one (Big World) sets
         # it again from its play-start hook, which runs after this.
         logic.camera.overhead_height_limit = None
+        # And a camera focus: every session starts following the player.
+        logic.camera.reset_camera_focus()
 
         if enabled:
             # A new Play session clears any previous fault marker.

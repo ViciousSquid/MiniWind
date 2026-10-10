@@ -117,6 +117,10 @@ class MonsterAI:
         self._offscreen_accum = 0.0
         self._owed = {}
 
+        #: Game-supplied hostility (engine/hostility.HostilityModel), or None
+        #: for the stock rule: different teams fight, everyone hunts the player.
+        self.hostility = None
+
     def set_spatial_grid(self, grid):
         """Called by LogicThread after populating the grid."""
         self._grid = grid
@@ -144,6 +148,64 @@ class MonsterAI:
         self._offscreen_accum = 0.0
         self._owed = {}
         self._debug_rays.clear()
+        # A session's game hooks end with it: the next session installs its
+        # own, and one that installs none runs on the engine's defaults.
+        self.clear_game_hooks()
+
+    # -------------------------------------------------------------------------
+    # Game hooks: installed per play session, cleared with it
+    # -------------------------------------------------------------------------
+
+    def set_hostility(self, model):
+        """Install a :class:`engine.hostility.HostilityModel` (None clears it)."""
+        self.hostility = model
+        self._enemy_ready = False
+        self._enemy_signature = None
+
+    #: Optional application hook choosing an actor's attack style. Fio stays
+    #: standalone: with none installed an actor keeps its authored style.
+    _attack_style_hook = None
+
+    @classmethod
+    def install_attack_style_hook(cls, hook):
+        """Install the game's attack-style chooser (see _attack_style_for)."""
+        cls._attack_style_hook = hook
+
+    @classmethod
+    def clear_attack_style_hook(cls, hook=None):
+        """Remove the attack-style hook; with *hook*, only if it is that one."""
+        if hook is None or cls._attack_style_hook is hook:
+            cls._attack_style_hook = None
+
+    @staticmethod
+    def _attack_style_for(thing, state, in_melee: bool) -> str:
+        """Choose the actor's current combat style via an optional game hook.
+
+        The engine owns the cheap range-band transition; an installed game
+        layer owns inventory/item/style knowledge. With no hook, the authored
+        style is preserved exactly.
+        """
+        hook = MonsterAI._attack_style_hook
+        if hook is not None:
+            return hook(thing, state, in_melee)
+        return state.get('attack_style') or str(
+            thing.properties.get('attack_style', '') or '').lower()
+
+    def clear_game_hooks(self):
+        """Drop every per-session game hook: hostility and attack style."""
+        self.hostility = None
+        MonsterAI.clear_attack_style_hook()
+
+    def _hostile(self, team_a, team_b) -> bool:
+        """Does *team_a* attack *team_b*? The scalar form of the model."""
+        model = self.hostility
+        if model is None:
+            return bool(team_a) and bool(team_b) and team_a != team_b
+        return model.is_hostile(team_a, team_b)
+
+    def _hunts_player(self, thing) -> bool:
+        model = self.hostility
+        return True if model is None else model.hunts(thing.properties)
 
     # -------------------------------------------------------------------------
     # Main update entry point
@@ -361,6 +423,12 @@ all accumulated time when it runs, so simulation time is not lost.
         nearest = None
         scalar = np.zeros(n, dtype=bool)
 
+        # Who goes for the player: everyone, unless a game's hostility model
+        # says otherwise (one gather over team codes, plus its override).
+        model = self.hostility
+        hunts = (None if model is None
+                 else model.row_hunts(props, t.team[:n], t.team_names))
+
         # ---- Sleeping monsters: does anything wake them? -------------------
         waiting = asleep & t.triggered[:n]
         mode[waiting] = monster_table.MODE_WAITING
@@ -369,6 +437,8 @@ all accumulated time when it runs, so simulation time is not lost.
         if len(watching):
             d = player32 - pos32[watching]
             seen = (d[:, 0] * d[:, 0] + d[:, 1] * d[:, 1] + d[:, 2] * d[:, 2]) <= sight_sq
+            if hunts is not None:
+                seen &= hunts[watching]          # the player wakes only hunters
             woke = seen.copy()
             teamed = ~seen & (t.team[:n][watching] >= 0)
             if teamed.any():
@@ -413,7 +483,7 @@ all accumulated time when it runs, so simulation time is not lost.
         phase['classify'] = clock()
         if len(rows):
             self._chase(t, rows, aggro_row, pos32, player32, player_pos,
-                        nearest, dt[rows])
+                        nearest, dt[rows], hunts)
         phase['chase'] = clock()
 
         # ---- Irregular rows, events, search: Python, in row order ----------
@@ -506,7 +576,8 @@ all accumulated time when it runs, so simulation time is not lost.
             self.table.pos[which] = out           # the column, not an entity
             set_positions([monsters[r] for r in which], out)
 
-    def _chase(self, t, rows, aggro_row, pos32, player32, player_pos, nearest, delta):
+    def _chase(self, t, rows, aggro_row, pos32, player32, player_pos, nearest, delta,
+               hunts=None):
         """Awake monsters with a regular tick: gravity, target, step, shot timers."""
         monsters = t.monsters
         props = t.props
@@ -595,6 +666,14 @@ all accumulated time when it runs, so simulation time is not lost.
                     enemy = t.row_of[id(found)] if found is not None else -1
                     if enemy >= 0:
                         target[i] = enemy
+        # *hunts* (per table row, or None for everyone) says who falls back on
+        # the player when it has no enemy; the rest have no target and keep
+        # to themselves (out of sight: patrol, investigate).
+        idle = np.zeros(len(rows), dtype=bool)
+        if hunts is not None:
+            idle = (target == monster_table.TARGET_PLAYER) & ~hunts[rows]
+            target[idle] = monster_table.TARGET_NONE
+            target_pos[idle] = p32[idle]
         monster_target = target >= 0
         target_pos[monster_target] = t.pos[target[monster_target]].astype(np.float32)
         t.target[rows] = target
@@ -603,6 +682,7 @@ all accumulated time when it runs, so simulation time is not lost.
         # ---- Distance and sight, in the float32 the glm path used ---------
         d = p32 - target_pos
         dist_sq = d[:, 0] * d[:, 0] + d[:, 1] * d[:, 1] + d[:, 2] * d[:, 2]
+        dist_sq[idle] = np.float32(np.inf)      # nobody to see: out of sight
         t.dist_sq[rows] = dist_sq
         in_sight = dist_sq <= MONSTER_SIGHT_RANGE * MONSTER_SIGHT_RANGE
         was = t.in_sight[rows].copy()
@@ -789,7 +869,8 @@ all accumulated time when it runs, so simulation time is not lost.
                 # Sight of the player (squared distance — threshold-only compare)
                 diff_to_player = player_pos - glm.vec3(thing.pos)
                 dist_to_player_sq = glm.dot(diff_to_player, diff_to_player)
-                if dist_to_player_sq <= MONSTER_SIGHT_RANGE * MONSTER_SIGHT_RANGE:
+                if (dist_to_player_sq <= MONSTER_SIGHT_RANGE * MONSTER_SIGHT_RANGE
+                        and self._hunts_player(thing)):
                     woke_reason = 'sight'
                 else:
                     # Sight of an enemy-team monster
@@ -943,13 +1024,19 @@ all accumulated time when it runs, so simulation time is not lost.
                 else:
                     target_pos = player_pos
 
+        # Nobody to go for: no enemy, no override, and the player is not its
+        # concern (a game's hostility model). It keeps to itself, as if
+        # whatever it might chase were out of sight.
+        no_target = (override_target_pos is None and aggro_monster is None
+                     and not self._hunts_player(thing))
+
         # ---- Line of sight check ----
         monster_eye = glm.vec3(thing_pos.x, thing_pos.y + 64.0, thing_pos.z)
         if aggro_monster is not None:
             target_eye = glm.vec3(target_pos.x, target_pos.y + 64.0, target_pos.z)
         else:
             target_eye = glm.vec3(player_pos.x, player_pos.y + self.lt.player_runtime.player.camera_height, player_pos.z)
-        has_los = self._has_line_of_sight(monster_eye, target_eye)
+        has_los = False if no_target else self._has_line_of_sight(monster_eye, target_eye)
 
         if self.monster_debug_active:
             self._debug_rays.append({
@@ -960,7 +1047,7 @@ all accumulated time when it runs, so simulation time is not lost.
 
         # PERF: squared distance — every use below is a threshold compare.
         _dist_diff = thing_pos - target_pos
-        distance_sq = glm.dot(_dist_diff, _dist_diff)
+        distance_sq = float('inf') if no_target else glm.dot(_dist_diff, _dist_diff)
 
         if distance_sq <= MONSTER_SIGHT_RANGE * MONSTER_SIGHT_RANGE:
             # ---- Entered sight range ----
@@ -1231,8 +1318,10 @@ the scalar fallback for callers that do not have the dense table.
             name: code for code, name in enumerate(table.team_names)
         }
         self._enemy_answered = alive & (team_id >= 0)
+        hostile = (None if self.hostility is None
+                   else self.hostility.for_names(table.team_names)[0])
         self._enemy_nearest = self._nearest_enemy_rows(
-            table.pos[:count], team_id, alive, max_range)
+            table.pos[:count], team_id, alive, max_range, hostile)
         if table is not None:
             self._enemy_signature = self._enemy_runtime_signature()
         return self._enemy_nearest
@@ -1254,8 +1343,13 @@ the scalar fallback for callers that do not have the dense table.
         )
 
     @staticmethod
-    def _nearest_enemy_rows(pos, team_id, alive, max_range):
+    def _nearest_enemy_rows(pos, team_id, alive, max_range, hostile=None):
         """Return each row's nearest living enemy row, or -1, in dense batches.
+
+        *hostile*, when given, is the ``(teams, teams)`` matrix of a game's
+        hostility model in *team_id*'s code order: a team's enemies are the
+        teams its matrix row marks. Without it, every other team (the stock
+        rule).
 
         The usual path works team-by-team so a very large monster population
         never requires one monolithic N x N allocation.  For small populations,
@@ -1289,7 +1383,8 @@ the scalar fallback for callers that do not have the dense table.
             )
         ):
             return MonsterAI._nearest_enemy_rows_monolithic(
-                p, team, active_rows, np.float32(max_range) * np.float32(max_range)
+                p, team, active_rows, np.float32(max_range) * np.float32(max_range),
+                hostile
             )
 
         return MonsterAI._nearest_enemy_rows_by_team(
@@ -1297,10 +1392,11 @@ the scalar fallback for callers that do not have the dense table.
             team,
             active,
             np.float32(max_range) * np.float32(max_range),
+            hostile,
         )
 
     @staticmethod
-    def _nearest_enemy_rows_monolithic(p, team, active_rows, limit):
+    def _nearest_enemy_rows_monolithic(p, team, active_rows, limit, hostile=None):
         """Dense N x N nearest-enemy kernel for the small/tiny-team crossover."""
         a = p[active_rows]
         distance = np.subtract.outer(a[:, 0], a[:, 0])
@@ -1312,8 +1408,13 @@ the scalar fallback for callers that do not have the dense table.
         np.multiply(term, term, out=term)
         distance += term
 
-        same_team = np.equal.outer(team[active_rows], team[active_rows])
-        distance[same_team] = np.float32(np.inf)
+        codes = team[active_rows]
+        if hostile is None:
+            friendly = np.equal.outer(codes, codes)
+        else:
+            friendly = ~hostile[np.ix_(codes, codes)]
+            np.fill_diagonal(friendly, True)    # a self-hostile team never picks itself
+        distance[friendly] = np.float32(np.inf)
         best = np.argmin(distance, axis=1)
         found = distance[np.arange(len(active_rows)), best] <= limit
 
@@ -1324,13 +1425,16 @@ the scalar fallback for callers that do not have the dense table.
         return nearest
 
     @staticmethod
-    def _nearest_enemy_rows_by_team(p, team, active, limit):
+    def _nearest_enemy_rows_by_team(p, team, active, limit, hostile=None):
         """Team-block kernel for larger populations."""
         count = len(p)
         nearest = np.full(count, -1, dtype=np.int32)
         for code in np.unique(team[active]):
             rows = np.flatnonzero(active & (team == code))
-            cols = np.flatnonzero(active & (team != code))
+            if hostile is None:
+                cols = np.flatnonzero(active & (team != code))
+            else:
+                cols = np.flatnonzero(active & hostile[code][np.maximum(team, 0)])
             if not len(cols):
                 continue
 
@@ -1344,6 +1448,8 @@ the scalar fallback for callers that do not have the dense table.
             np.subtract.outer(a[:, 2], b[:, 2], out=term)
             np.multiply(term, term, out=term)
             distance += term
+            if hostile is not None and hostile[code][code]:
+                distance[np.equal.outer(rows, cols)] = np.float32(np.inf)
 
             best = np.argmin(distance, axis=1)
             found = distance[np.arange(len(rows)), best] <= limit
@@ -1371,8 +1477,8 @@ the scalar fallback for callers that do not have the dense table.
             other_team = t.properties.get('team', '')
             if not other_team:
                 continue
-            if other_team == my_team:
-                continue  # Same team = ally, not enemy
+            if not self._hostile(my_team, other_team):
+                continue  # an ally, or nobody this team fights
 
             # PERF: compare squared distances — only used for a threshold
             # and closest-of check, so the sqrt in glm.distance is wasted.

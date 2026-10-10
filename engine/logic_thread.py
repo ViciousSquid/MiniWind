@@ -217,6 +217,22 @@ class LogicThread(threading.Thread):
             path_node_type=PathNode,
         )
         self.prop_runtime = PropSession(self)
+
+        # ---- Game-layer hooks --------------------------------------------
+        # Generic hooks a built-in game installs; none names a game concept,
+        # and with none installed Fio behaves as shipped. The runtimes read
+        # them through their ``logic``.
+        #: The running game layer's session, for engine code that duck-types
+        #: against it (overhead pose/weapon, modal screens). None when no game
+        #: is running.
+        self.game_session = None
+        #: ``handler(logic, mode) -> bool`` owning what the fire buttons do;
+        #: *mode* is ``"primary"`` or ``"secondary"``. True means handled, and
+        #: the stock weapon path is skipped (LogicCombat._handle_shooting).
+        self.player_fire_handler = None
+        #: ``filter(damage, damage_kind) -> damage`` applied before the
+        #: player's health drops (armour, resistances).
+        self._player_damage_filter = None
         
         # Player stats
 
@@ -305,6 +321,12 @@ class LogicThread(threading.Thread):
         # Fail immediately if the extraction changed construction order or
         # forgot a host-owned attribute needed by one of the runtimes.
         self._validate_runtime_contracts()
+
+    #: Game-layer hooks (see __init__); class defaults so a LogicThread built
+    #: without __init__ (tests, tools) behaves as shipped Fio.
+    game_session = None
+    player_fire_handler = None
+    _player_damage_filter = None
 
     def _validate_runtime_contracts(self):
         """Validate the construction-level seam between LogicThread and runtimes."""
@@ -522,6 +544,7 @@ class LogicThread(threading.Thread):
         self.game_state.consume_mouse_delta()
         use_key = self.game_state.consume_use_key()
         self.game_state.consume_shot()
+        self.game_state.consume_secondary_shot()
         self.game_state.consume_weapon_slots()
         if self.cutscene_runtime.state or self.player_runtime.player_dead or self.interaction_runtime.level_complete_ui:
             return
@@ -570,6 +593,7 @@ class LogicThread(threading.Thread):
             self.game_state.consume_mouse_delta()
             self.game_state.consume_use_key()
             self.game_state.consume_shot()
+            self.game_state.consume_secondary_shot()
             self.game_state.consume_weapon_slots()
             return
 
@@ -578,6 +602,7 @@ class LogicThread(threading.Thread):
             self.game_state.consume_mouse_delta()
             self.game_state.consume_use_key()
             self.game_state.consume_shot()
+            self.game_state.consume_secondary_shot()
             self.game_state.consume_weapon_slots()
             return
 
@@ -586,6 +611,7 @@ class LogicThread(threading.Thread):
             self.game_state.consume_mouse_delta()
             self.game_state.consume_use_key()
             self.game_state.consume_shot()
+            self.game_state.consume_secondary_shot()
             self.game_state.consume_weapon_slots()
             return
         
@@ -639,6 +665,8 @@ class LogicThread(threading.Thread):
             self.combat_runtime.select_slot(slot)
         if self.game_state.consume_shot():
             self.combat_runtime._handle_shooting()
+        if self.game_state.consume_secondary_shot():
+            self.combat_runtime._handle_shooting(secondary=True)
             
         combat_runtime = self.combat_runtime
         combat_runtime._update_bullet_marks()

@@ -345,6 +345,12 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
             slots = self._distance_cull_slots(
                 table, slots, cx, cz, self.view_distance.distance_sq)
         groups = self._classify_brush_slots(table, slots, config)
+        # Water and glass each copy the whole frame for their refraction, so
+        # only ask for that when one of them is actually in view.
+        if len(groups['water']) or len(groups['glass']):
+            _planes = self._frustum_planes(projection * view)
+            for key in ('water', 'glass'):
+                groups[key] = self._cull_brush_slots_frustum(table, groups[key], _planes)
         if cx is not None:
             for key in ('transparent', 'water', 'glass'):
                 groups[key] = self._sort_slots_by_distance(

@@ -76,6 +76,46 @@ GL_GPU_MEM_INFO_DEDICATED_VIDMEM_NVX = 0x9047
 GL_TEXTURE_FREE_MEMORY_ATI = 0x87FC
 GL_RENDERBUFFER_FREE_MEMORY_ATI = 0x87FD
 
+def _play_menu_open(view) -> bool:
+    """True while *view* has a game's play menu open over a play session."""
+    menu = getattr(view, 'play_menu', None)
+    return bool(getattr(view, 'play_mode', False) and menu is not None
+                and menu.active)
+
+
+def _game_pointer_open(view) -> bool:
+    """Whether the game's pointer claim holds now (``QtGameView.game_pointer``).
+
+    Never while something else owns the mouse: a pause menu, the console,
+    an actor pick.
+    """
+    pointer = getattr(view, 'game_pointer', None)
+    if (pointer is None or not getattr(view, 'play_mode', False)
+            or getattr(view, 'console_overlay_active', False)
+            or getattr(view, '_actor_pick', None) is not None
+            or getattr(view, 'pause_menu', None) is not None
+            or _play_menu_open(view)):
+        return False
+    try:
+        return bool(pointer.wants_pointer())
+    except Exception:
+        return False
+
+
+def _window_wants_cursor(view) -> bool:
+    """Whether an open floating window asks for a free cursor in play
+    (``FloatingWindow.wants_cursor``), so it can be dragged and closed."""
+    manager = getattr(view, 'floating_windows', None)
+    if (manager is None or not getattr(view, 'play_mode', False)
+            or getattr(view, 'console_overlay_active', False)
+            or getattr(view, '_actor_pick', None) is not None
+            or getattr(view, 'pause_menu', None) is not None
+            or _play_menu_open(view)):
+        return False
+    return any(getattr(w, 'active', False) and getattr(w, 'wants_cursor', False)
+               for w in manager.windows)
+
+
 def perspective_projection(fov, aspect, near, far):
     if aspect == 0:
         return glm.mat4(1.0)
@@ -130,6 +170,8 @@ class QtGameView(QOpenGLWidget):
         self.sysmon = SysMon(self)
         # SysMon-style floating tools share one lightweight window manager.
         self.floating_windows = WindowManager()
+        #: The same manager, by the name game code and tools used in 2.5.
+        self.window_manager = self.floating_windows
         self.pos_window = None
 
 
@@ -328,6 +370,29 @@ class QtGameView(QOpenGLWidget):
         #: The menu's floating window (SysMon-style), and where it was left.
         self._pause_window = None
         self._pause_window_pos = None
+
+        #: A game's own modal play menu (None: Esc opens Fio's pause menu).
+        #: Duck-typed: ``active``, ``open()``, ``close()``, ``handle_key(ev)``,
+        #: ``handle_mouse_press(ev)``, ``handle_mouse_move(ev)``, ``draw(painter)``
+        #: and optionally ``handle_mouse_release(ev)`` / ``handle_wheel(ev)``.
+        #: When installed, :meth:`open_pause_menu` raises it instead of Fio's
+        #: menu; while it is active it owns the keyboard and mouse and is
+        #: painted over everything else. It freezes the world itself.
+        self.play_menu = None
+        #: A game layer's claim on the mouse during play (None: mouse-look as
+        #: usual). Duck-typed: ``wants_pointer()``, ``pointer_move(ev)``,
+        #: ``pointer_press(ev)``. While it wants the pointer (an on-screen
+        #: menu with things to click) the cursor is shown and the mouse goes
+        #: to it instead of the camera and the fire buttons.
+        self.game_pointer = None
+        self._game_pointer_shown = False
+        #: Set by a game layer that draws its own HUD through the
+        #: render.overlay hook, every frame of its play session, so the stock
+        #: HUD does not overlap it. Each session starts with the stock HUD.
+        self._suppress_default_hud = False
+        #: The camera the user chose; Play Mode may change it (a game, the
+        #: ``cam`` command) and leaving Play comes back to it.
+        self._chosen_camera_mode = None
         #: Volumes, 0..1: music (files from assets/music) and every other
         #: game sound (Settings > Play Modes > Audio, and the pause menu).
         self.sound_volume = 1.0
@@ -914,6 +979,7 @@ class QtGameView(QOpenGLWidget):
         immediately in play mode; otherwise it applies on the next play session.
         """
         self.camera_mode = str(mode)
+        self._chosen_camera_mode = self.camera_mode
         lt = self.logic_thread
         if lt is not None:
             lt.camera.set_camera_mode(self.camera_mode)
@@ -957,6 +1023,21 @@ class QtGameView(QOpenGLWidget):
             return
         if self._overhead_sprite_ctrl is None:
             self._overhead_sprite_ctrl = SpriteController(walk_fps=float(self.overhead_walk_fps))
+        # A game can replace the player's look with one still image
+        # (``logic.player_head_sprite``, a repo-relative path): every frame maps
+        # to it, and the renderer is rebuilt whenever it changes.
+        head_rel = getattr(lt, "player_head_sprite", None)
+        if head_rel and head_rel != getattr(self, "_overhead_head", None):
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            head_abs = os.path.join(root, head_rel)
+            frames = {k: head_abs for k in (
+                SpriteController.IDLE, SpriteController.WALK_A, SpriteController.WALK_B,
+                SpriteController.IDLE_G, SpriteController.WALK_A_G,
+                SpriteController.WALK_B_G, SpriteController.SHOOT)}
+            self._overhead_sprite_renderer = OverheadSpriteRenderer(
+                frame_files=frames, size=float(self.overhead_sprite_size),
+                facing_offset_deg=float(self.overhead_sprite_facing_offset))
+            self._overhead_head = head_rel
         if self._overhead_sprite_renderer is None:
             self._overhead_sprite_renderer = OverheadSpriteRenderer(
                 size=float(self.overhead_sprite_size),
@@ -972,11 +1053,79 @@ class QtGameView(QOpenGLWidget):
         angle = float(render_state.player_angle)
         armed = bool(render_state.active_weapon)
         shooting = bool(render_state.muzzle_flash_active)
+        # A game session (``logic.game_session``) may drive the player's pose,
+        # hurt flash and held weapon through duck-typed hooks:
+        # ``overhead_pose() -> (armed, attacking)``, ``overhead_player_flash()
+        # -> seconds``, ``overhead_player_weapon() -> (weapon_id, handed)`` and
+        # ``overhead_weapon_kind(weapon_id) -> "melee" | "bow" | "staff"``.
+        sess = getattr(lt, "game_session", None)
+        pose = getattr(sess, "overhead_pose", None)
+        if pose is not None:
+            try:
+                armed, shooting = pose()
+            except Exception:
+                pass
         self._overhead_sprite_ctrl.update(gpos, angle, time.perf_counter(),
                                           armed=armed, shooting=shooting)
+        flash = 0.0
+        flash_fn = getattr(sess, "overhead_player_flash", None)
+        if flash_fn is not None:
+            try:
+                flash = float(flash_fn() or 0.0)
+            except Exception:
+                flash = 0.0
+        tint = (1.0, 0.15, 0.1, min(0.8, flash * 4.0)) if flash > 0 else (0.0, 0.0, 0.0, 0.0)
         self._overhead_sprite_renderer.draw(
             self.projection_matrix, self.view_matrix, gpos,
-            self._overhead_sprite_ctrl.facing, self._overhead_sprite_ctrl.frame())
+            self._overhead_sprite_ctrl.facing, self._overhead_sprite_ctrl.frame(),
+            tint=tint)
+        held = getattr(sess, "overhead_player_weapon", None)
+        if held is None:
+            return
+        try:
+            weapon_id, handed = held()
+        except Exception as exc:
+            debug_log("Error", f"overhead_player_weapon failed: {exc}")
+            return
+        weapon_path = self._weapon_asset_path(weapon_id)
+        if weapon_path:
+            self._overhead_sprite_renderer.draw_weapon(
+                self.projection_matrix, self.view_matrix, gpos,
+                self._overhead_sprite_ctrl.facing, weapon_path,
+                time.perf_counter(), attacking=shooting,
+                weapon_kind=self._weapon_kind(weapon_id, sess),
+                handed=handed)
+
+    @staticmethod
+    def _weapon_asset_path(weapon_id):
+        """A held weapon's transparent overhead icon: assets/sprites/items/<id>.png."""
+        if not weapon_id:
+            return ""
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "assets", "sprites", "items", f"{weapon_id}.png")
+        return path if os.path.isfile(path) else ""
+
+    @staticmethod
+    def _weapon_kind(weapon_id, session=None):
+        """``"melee"``, ``"bow"`` or ``"staff"``, for the weapon's attack animation.
+
+        The game session's ``overhead_weapon_kind`` answers first; for an id it
+        does not know, or with no game, a name heuristic keeps it sensible.
+        """
+        kind_fn = getattr(session, "overhead_weapon_kind", None)
+        if kind_fn is not None:
+            try:
+                kind = kind_fn(weapon_id)
+                if kind in ("melee", "bow", "staff"):
+                    return kind
+            except Exception:
+                pass
+        wid = str(weapon_id or "").lower()
+        if "bow" in wid:
+            return "bow"
+        if "staff" in wid or "wand" in wid:
+            return "staff"
+        return "melee"
 
 
     def initializeGL(self):
@@ -1147,7 +1296,9 @@ class QtGameView(QOpenGLWidget):
 
         if self.logic_thread:
             keys = (set() if self.console_overlay_active or self.pause_menu is not None
+                    or _play_menu_open(self)
                     else self.editor.keys_pressed)
+            self._sync_game_pointer()
             self.game_state.set_keys(keys)
             # Update Player 2 input from arrow keys (if no gamepad)
             self._update_p2_keyboard_input()
@@ -2007,7 +2158,8 @@ class QtGameView(QOpenGLWidget):
                 self.editor.state, self.editor.terrain
             )
 
-        self.floating_windows.draw_all(painter)
+        if not self.play_mode:
+            self.floating_windows.draw_all(painter)
 
         # Live terrain sculpting hint: draw this inside the 3D viewport rather
         # than using the editor toast system. This is intentionally styled as
@@ -2035,11 +2187,20 @@ class QtGameView(QOpenGLWidget):
                        width=self.width(), height=self.height(),
                        play_mode=self.play_mode)
 
+        # In play, floating windows (inspectors and the like) go over the
+        # game's own overlay.
+        if self.play_mode:
+            self.floating_windows.draw_all(painter)
+
         # The pause menu covers everything, plugin overlays included; its
         # backdrop outlives it while it fades out over the resumed game.
         if self.play_mode and (self.pause_menu is not None or self._pause_backdrop is not None
                                or self._pause_fade is not None):
             self._draw_pause_menu(painter)
+
+        # A game's play menu is modal: painted last, over everything.
+        if _play_menu_open(self):
+            self.play_menu.draw(painter)
 
         painter.end()
 
@@ -2104,6 +2265,10 @@ class QtGameView(QOpenGLWidget):
 
     def _draw_hud(self, painter, render_state, viewport_width=None, viewport_height=None):
         if self._hud_style == 0:
+            return
+        # A game layer that draws its own richer HUD through the render.overlay
+        # hook sets this so the stock HUD does not overlap it.
+        if self._suppress_default_hud:
             return
         # A LogicCamera owns the player's view completely: no HUD is shown
         # while the cinematic is running.
@@ -2310,6 +2475,8 @@ class QtGameView(QOpenGLWidget):
             painter.drawText(cx - tw // 2, cy, hint)
         if self._actor_pick is not None:
             self._draw_actor_pick_hint(painter, viewport_width)
+        elif self.logic_thread is not None and self.logic_thread.camera.camera_focus is not None:
+            self._draw_camera_focus_hint(painter, viewport_width)
         # Overhead: held weapon shown as a bottom-right collectible icon (like keys).
         # It takes the rightmost slot; keys shift left so both fit side by side.
         # The bottom-right corner holds the item icon (overhead: the weapon in
@@ -2563,8 +2730,11 @@ class QtGameView(QOpenGLWidget):
     def open_pause_menu(self) -> bool:
         """Open the pause menu: the world pauses and the cursor is freed.
 
-        Returns False outside Play Mode or when it is already open.
+        Returns False outside Play Mode or when it is already open. A game
+        that installed its own :attr:`play_menu` gets that raised instead.
         """
+        if self.play_menu is not None:
+            return self.open_play_menu()
         if not self.play_mode or self.pause_menu is not None:
             return False
         from engine.pause_menu import PauseMenu
@@ -2610,6 +2780,68 @@ class QtGameView(QOpenGLWidget):
                 self._capture_play_cursor()
         self.update()
         return True
+
+    # -- a game's own play menu ------------------------------------------------
+
+    def play_menu_active(self) -> bool:
+        """True while an installed game play menu is open over a play session."""
+        return _play_menu_open(self)
+
+    def open_play_menu(self) -> bool:
+        """Raise the game's installed play menu. False when there is none.
+
+        The menu freezes the world itself; here the view frees the cursor so
+        the menu can be pointed at, and drops anything the console was doing.
+        """
+        menu = self.play_menu
+        if not self.play_mode or menu is None:
+            return False
+        if menu.active:
+            return True
+        if self.console_overlay_active:
+            self._close_console_overlay()
+        menu.open()
+        while QApplication.overrideCursor() is not None:
+            QApplication.restoreOverrideCursor()
+        QApplication.setOverrideCursor(Qt.ArrowCursor)
+        self.update()
+        return True
+
+    def play_menu_closed(self):
+        """The game's play menu calls this as it closes: take the cursor back."""
+        if not self.play_mode:
+            return
+        if self._actor_pick is not None:
+            self._show_pick_cursor()
+        elif _game_pointer_open(self):
+            self._game_pointer_shown = False
+            self._sync_game_pointer()
+        else:
+            self._capture_play_cursor()
+        self.update()
+
+    def _sync_game_pointer(self):
+        """Show the cursor while the game wants the pointer (or a floating
+        window does), recapture it after."""
+        want = _game_pointer_open(self) or _window_wants_cursor(self)
+        if want == self._game_pointer_shown:
+            return
+        self._game_pointer_shown = want
+        if want:
+            while QApplication.overrideCursor() is not None:
+                QApplication.restoreOverrideCursor()
+            QApplication.setOverrideCursor(Qt.ArrowCursor)
+        elif (self.play_mode and not self.console_overlay_active
+              and self._actor_pick is None and self.pause_menu is None
+              and not _play_menu_open(self)):
+            self._capture_play_cursor()
+
+    def return_camera_to_player(self):
+        """HOME in play: drop any camera focus and centre on the player now."""
+        logic = self.logic_thread
+        if logic is not None:
+            logic.camera.set_camera_focus(None, glide=False)
+        self.update()
 
     # -- pages -----------------------------------------------------------------
 
@@ -2757,6 +2989,9 @@ class QtGameView(QOpenGLWidget):
         or E activates. Every other key is swallowed while the menu is open.
         """
         key = event.key()
+        if _play_menu_open(self):
+            self.play_menu.handle_key(event)
+            return True
         menu = self.pause_menu
         if menu is None:
             if key == Qt.Key_Escape and not event.isAutoRepeat() \
@@ -2922,7 +3157,12 @@ class QtGameView(QOpenGLWidget):
     def toggle_play_mode(self, player_start=None, physics_enabled=True):
         """Enter Play with the player at *player_start* (a PlayerStart), or leave it."""
         self.play_mode = not self.play_mode
+        # A game layer that draws its own HUD re-asserts this every frame of
+        # its play session; a new session starts with the stock HUD.
+        self._suppress_default_hud = False
         if self.play_mode:
+            if self._chosen_camera_mode is None:
+                self._chosen_camera_mode = self.camera_mode
             player_start_pos = player_start.pos
             player_start_angle = player_start.get_angle()
             # Force split-screen OFF when entering play mode
@@ -2979,6 +3219,11 @@ class QtGameView(QOpenGLWidget):
             # looping speaker channels and one-shot mixer channels, and discard
             # any sound requests queued by the logic thread during teardown.
             self.stop_all_sounds()
+            if self.play_menu is not None and self.play_menu.active:
+                self.play_menu.close()
+            self._game_pointer_shown = False
+            # Play windows (inspectors and the like) close with Play.
+            self.floating_windows.clear()
             self._actor_pick = None
             self.actor_pick_hover = None
             if self.console_overlay_active:
@@ -2994,6 +3239,12 @@ class QtGameView(QOpenGLWidget):
             while QApplication.overrideCursor() is not None:
                 QApplication.restoreOverrideCursor()
             self.setCursor(Qt.ArrowCursor)
+            # Back to the camera the user chose; Play Mode's changes end here.
+            chosen = self._chosen_camera_mode
+            if chosen is not None:
+                self.camera_mode = chosen
+                if self.logic_thread:
+                    self.logic_thread.camera.set_camera_mode(chosen)
             if self.logic_thread:
                 self.logic_thread.session_runtime.apply_play_mode(False)
                 self.logic_thread.player_runtime.player = None
@@ -3687,6 +3938,19 @@ class QtGameView(QOpenGLWidget):
                                           shear=armed['shear'])
 
     def mousePressEvent(self, event):
+        if _play_menu_open(self):
+            self.play_menu.handle_mouse_press(event)
+            return
+        # In play, floating windows take clicks on themselves first: dragging,
+        # folding or closing one never leaks through to the game.
+        if (self.play_mode and self.pause_menu is None
+                and event.button() == Qt.LeftButton
+                and self.floating_windows.handle_mouse_press(event)):
+            self.update()
+            return
+        if _game_pointer_open(self):
+            self.game_pointer.pointer_press(event)
+            return
         if self.play_mode and self.pause_menu is not None:
             window = self._pause_window
             if event.button() == Qt.LeftButton and window is not None and window.hit(event.pos()):
@@ -3763,6 +4027,19 @@ class QtGameView(QOpenGLWidget):
                 self.editor.selected_face = face
                 self.update()
             return
+        # Fire buttons owned by a game layer: when one installed a player fire
+        # handler on the logic thread, left is primary fire and right is
+        # secondary; the handler decides what a shot is.
+        if (self.play_mode and not self.console_overlay_active
+                and self.logic_thread is not None
+                and self.logic_thread.player_fire_handler is not None
+                and event.button() in (Qt.LeftButton, Qt.RightButton)):
+            if not self.game_state.published('player_dead', False):
+                if event.button() == Qt.LeftButton:
+                    self.game_state.queue_shot()
+                else:
+                    self.game_state.queue_secondary_shot()
+            return
         if self.play_mode and event.button() == Qt.LeftButton:
             if self.console_overlay_active:
                 return
@@ -3817,9 +4094,22 @@ class QtGameView(QOpenGLWidget):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if not self.play_mode and self.floating_windows.handle_mouse_move(
-                event, self.width(), self.height()):
+        if _play_menu_open(self):
+            self.play_menu.handle_mouse_move(event)
+            return
+        if ((not self.play_mode or self.pause_menu is None)
+                and self.floating_windows.handle_mouse_move(
+                    event, self.width(), self.height())):
             self.update()
+            return
+        if _game_pointer_open(self):
+            self.game_pointer.pointer_move(event)
+            return
+        if _window_wants_cursor(self):
+            # A free cursor for a window: no mouse-look, no recentring.
+            pointer = self.game_pointer
+            if pointer is not None:
+                pointer.pointer_move(event)
             return
         if self.sysmon.handle_mouse_move(event, self.play_mode, self.width(), self.height()):
             self.update()
@@ -3901,6 +4191,15 @@ class QtGameView(QOpenGLWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if _play_menu_open(self):
+            release = getattr(self.play_menu, 'handle_mouse_release', None)
+            if release is not None:
+                release(event)
+            return
+        if (self.play_mode and self.pause_menu is None
+                and self.floating_windows.handle_mouse_release(event)):
+            self.update()
+            return
         if self.play_mode and self.pause_menu is not None:
             if self._pause_window is not None:
                 self._pause_window.handle_mouse_release(event)
@@ -3940,6 +4239,11 @@ class QtGameView(QOpenGLWidget):
         super().leaveEvent(event)
 
     def wheelEvent(self, event):
+        if _play_menu_open(self):
+            wheel = getattr(self.play_menu, 'handle_wheel', None)
+            if wheel is not None:
+                wheel(event)
+            return
         if not self.play_mode:
             self.camera.fov = np.clip(self.camera.fov - event.angleDelta().y() * 0.05, 30, 120)
             self.editor.update_views()
@@ -4220,6 +4524,19 @@ class QtGameView(QOpenGLWidget):
     def _open_inspector_for(self, actor):
         self.editor.show_entity_inspector(actor)
 
+    #: Shown while the camera is held away from the player (set_camera_focus).
+    CAMERA_FOCUS_HINT = "HOME returns cam to player"
+
+    def _draw_camera_focus_hint(self, painter, viewport_width):
+        text = self.CAMERA_FOCUS_HINT
+        metrics = QFontMetrics(self._hud_msg_font)
+        x, y = viewport_width // 2 - metrics.horizontalAdvance(text) // 2, 40
+        painter.setFont(self._hud_msg_font)
+        painter.setPen(self._hud_shadow_pen)
+        painter.drawText(x + 2, y + 2, text)
+        painter.setPen(self._hud_grey_pen)
+        painter.drawText(x, y, text)
+
     def _draw_actor_pick_hint(self, painter, viewport_width):
         hovered = self.actor_pick_hover
         name = ""
@@ -4271,6 +4588,13 @@ class QtGameView(QOpenGLWidget):
         self.game_state.set_p2_input(move_x, move_z, look_dx, look_dy, jump, crouch)
 
     def keyPressEvent(self, event):
+        # An open game play menu owns every key until it closes.
+        if _play_menu_open(self):
+            self.play_menu.handle_key(event)
+            return
+        if self.play_mode and event.key() == Qt.Key_Home:
+            self.return_camera_to_player()
+            return
         # An armed actor pick owns Escape: it cancels the pick, not Play Mode.
         if (event.key() == Qt.Key_Escape and self.play_mode
                 and self._actor_pick is not None):

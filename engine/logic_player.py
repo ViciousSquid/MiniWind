@@ -70,6 +70,12 @@ class LogicPlayer:
         player.pitch -= mouse_dy * sensitivity
         player.pitch = max(-1.5, min(1.5, player.pitch))
 
+        # Pointer aiming with an overhead camera: the view publishes the
+        # heading under the pointer each frame; None leaves yaw to mouse look.
+        aim_yaw = logic.game_state.get_aim_yaw()
+        if aim_yaw is not None:
+            player.angle = aim_yaw
+
         move_dir = glm.vec3(0)
         if KEY_W in keys:
             move_dir.z += 1

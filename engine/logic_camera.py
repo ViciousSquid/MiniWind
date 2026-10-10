@@ -6,6 +6,7 @@ and first-person/overhead transitions.
 """
 
 import math
+import time
 
 import glm
 
@@ -42,6 +43,10 @@ class LogicCamera:
         # Editor camera.
         self.editor_camera = Camera()
         self.editor_camera.pos = glm.vec3(0, 150, 400)
+
+        # Camera focus (set_camera_focus): a world point the overhead camera
+        # glides to and holds instead of the player, and glides back from.
+        self.reset_camera_focus()
 
     # ------------------------------------------------------------------
     # Editor/frustum configuration
@@ -93,6 +98,62 @@ class LogicCamera:
         if limit is not None and float(limit) > 0.0:
             height = min(height, float(limit))
         return height
+
+    # ------------------------------------------------------------------
+    # Camera focus
+    # ------------------------------------------------------------------
+
+    #: Seconds the camera takes to glide to a focus point and back.
+    CAMERA_FOCUS_SECONDS = 0.6
+
+    def reset_camera_focus(self):
+        """Follow the player again at once (every play session starts so)."""
+        self._camera_focus = None
+        self._camera_focus_from = None
+        self._camera_focus_blend = 0.0
+        self._camera_focus_clock = None
+
+    def set_camera_focus(self, point=None, glide=True):
+        """Point the overhead camera at *point* ``(x, y, z)``; None returns it.
+
+        The camera glides there over :data:`CAMERA_FOCUS_SECONDS` and holds it
+        whatever the player does, until cleared, when it glides back to the
+        player (or, with ``glide=False``, snaps straight back). A tool or game
+        uses it to show a place without moving anyone (a debug inspector's
+        "show me where he works"). First person ignores it; streaming and
+        simulation stay centred on the player.
+        """
+        if point is None:
+            self._camera_focus = None
+            if not glide:
+                self._camera_focus_blend = 0.0
+            return
+        target = (float(point[0]), float(point[1]), float(point[2]))
+        self._camera_focus = target
+        self._camera_focus_from = target
+
+    @property
+    def camera_focus(self):
+        """The point the camera is held on, or None (following the player)."""
+        return self._camera_focus
+
+    def focused_camera_centre(self, player_pos):
+        """Where the overhead camera centres this frame (see set_camera_focus)."""
+        now = time.perf_counter()
+        last = self._camera_focus_clock
+        self._camera_focus_clock = now
+        step = 0.0 if last is None else (now - last) / max(1e-3, self.CAMERA_FOCUS_SECONDS)
+        blend = self._camera_focus_blend
+        blend = (min(1.0, blend + step) if self._camera_focus is not None
+                 else max(0.0, blend - step))
+        self._camera_focus_blend = blend
+        if blend <= 0.0 or self._camera_focus_from is None:
+            return player_pos
+        k = blend * blend * (3.0 - 2.0 * blend)
+        fx, fy, fz = self._camera_focus_from
+        return glm.vec3(player_pos.x + (fx - player_pos.x) * k,
+                        player_pos.y + (fy - player_pos.y) * k,
+                        player_pos.z + (fz - player_pos.z) * k)
 
     # ------------------------------------------------------------------
     # Overhead camera geometry

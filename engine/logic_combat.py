@@ -39,6 +39,17 @@ NO_PROJECTILES = np.empty((0, 3), dtype=np.float32)
 NO_PROJECTILES.flags.writeable = False
 
 
+def _projectile_callback(fn, *args):
+    """Run a projectile's game callback; a failure is logged, never raised."""
+    if fn is None:
+        return
+    try:
+        fn(*args)
+    except Exception:
+        import traceback
+        debug_log("Error", "projectile callback failed:\n" + traceback.format_exc())
+
+
 class LogicCombat:
     """Runtime for weapons, projectiles, bullet marks, and player noise.
 
@@ -106,16 +117,36 @@ class LogicCombat:
                 and now - self._last_player_shot_time >= weapon.cooldown
                 and int(self.player_ammo) >= weapon.ammo_per_shot)
 
-    def _handle_shooting(self):
+    def _handle_shooting(self, secondary=False):
         """Fire the weapon in hand, as its definition says.
 
         Authoritative on the logic thread, so a burst of UI clicks can never
         beat a cooldown or spend ammunition twice. A weapon whose mode is
         ``none`` is held and shown but never fires: no flash, no sound, no
         noise.
+
+        A game's :attr:`LogicThread.player_fire_handler` owns what a shot *is*
+        when one is installed: it is called with ``"primary"`` or
+        ``"secondary"`` and returns True when it handled the press. Without
+        one, primary fire is the weapon in hand and secondary does nothing.
         """
         logic = self.logic
         if not logic.player_runtime.player:
+            return
+        handler = logic.player_fire_handler
+        if handler is not None:
+            mode = "secondary" if secondary else "primary"
+            try:
+                handled = bool(handler(logic, mode))
+            except Exception:
+                import traceback
+                debug_log("Error", "player fire handler failed:\n"
+                          + traceback.format_exc())
+                handled = True
+            if handled:
+                logic._plugin_emit("player_shoot", weapon=self.active_weapon, mode=mode)
+                return
+        if secondary:
             return
         weapon = self.held_weapon()
         if weapon is None or not weapon.fires:
@@ -320,13 +351,56 @@ class LogicCombat:
     # MONSTER PROJECTILES (flying monster ranged attacks)
     # =========================================================================
 
-    def _add_monster_projectile(self, pos, vel, owner_id, damage, lifetime):
+    def _add_monster_projectile(self, pos, vel, owner_id, damage, lifetime,
+                                max_dist=None, on_hit=None, on_impact=None):
         """Add one projectile directly to the dense numeric store."""
         logic = self.logic
         with logic.session_runtime.monster_lock:
             return self._monster_projectiles.add(
-                pos, vel, owner_id, damage, lifetime
+                pos, vel, owner_id, damage, lifetime, max_dist=max_dist,
+                on_hit=on_hit, on_impact=on_impact,
             )
+
+    def spawn_projectile(self, pos, vel, *, lifetime, damage=0.0,
+                         owner_id=PLAYER_PROJECTILE_OWNER, max_dist=None,
+                         on_hit=None, on_impact=None):
+        """Launch a projectile from game code; returns its store row.
+
+        It flies, crosses portals and collides like any other. *owner_id* is
+        :data:`PLAYER_PROJECTILE_OWNER` (the default) for one the player
+        fired, which never strikes the player, or a monster's ``id()``.
+        *max_dist* is its own range. ``on_hit(monster)`` resolves a hit on a
+        monster in place of the flat *damage* (so a game can roll its damage
+        at the moment of impact); ``on_impact(pos, target)`` reports where it
+        was consumed -- *target* is the monster hit, or None for a wall -- so
+        a game can leave an arrow where it landed. Neither is called when the
+        projectile simply runs out of range or time.
+        """
+        return self._add_monster_projectile(
+            pos, vel, owner_id, damage, lifetime, max_dist=max_dist,
+            on_hit=on_hit, on_impact=on_impact)
+
+    @staticmethod
+    def _strike_monster(logic, projectiles, i, monster):
+        """Apply projectile *i*'s hit on *monster*: its ``on_hit``, or its damage."""
+        on_hit, on_impact = projectiles.hooks_of(i)
+        if on_hit is not None:
+            _projectile_callback(on_hit, monster)
+        else:
+            damage = float(projectiles.damage[i])
+            logic.monster_ai._apply_monster_damage(monster, damage, attacker=None)
+            if logic.monster_ai.monster_debug_active:
+                name = monster.properties.get('name', '?')
+                debug_log("MonsterAI", f"Projectile hit {name} for {damage} dmg")
+        if on_impact is not None:
+            _projectile_callback(on_impact, glm.vec3(*projectiles.pos[i].tolist()), monster)
+
+    @staticmethod
+    def _strike_wall(projectiles, i):
+        """Projectile *i* stopped in a wall: tell its ``on_impact``."""
+        _on_hit, on_impact = projectiles.hooks_of(i)
+        if on_impact is not None:
+            _projectile_callback(on_impact, glm.vec3(*projectiles.pos[i].tolist()), None)
 
 
     #: Monster hit sphere for projectiles: centred 64 units above the
@@ -525,7 +599,7 @@ class LogicCombat:
             projectiles.distance[i] = distance
             projectiles.lifetime[i] = lifetime
 
-            if distance >= MONSTER_PROJECTILE_MAX_DIST or lifetime <= 0.0:
+            if distance >= float(projectiles.max_dist[i]) or lifetime <= 0.0:
                 continue
 
             px = float(projectiles.pos[i, 0])
@@ -575,16 +649,7 @@ class LogicCombat:
                     break
 
             if hit_monster is not None:
-                damage = float(projectiles.damage[i])
-                logic.monster_ai._apply_monster_damage(
-                    hit_monster, damage, attacker=None
-                )
-                if logic.monster_ai.monster_debug_active:
-                    name = hit_monster.properties.get('name', '?')
-                    debug_log(
-                        "MonsterAI",
-                        f"Projectile hit {name} for {damage} dmg",
-                    )
+                self._strike_monster(logic, projectiles, i, hit_monster)
                 continue
 
             hit_wall = False
@@ -601,6 +666,7 @@ class LogicCombat:
                     hit_wall = True
                     break
             if hit_wall:
+                self._strike_wall(projectiles, i)
                 continue
 
             survivors.append(i)
@@ -650,7 +716,7 @@ class LogicCombat:
         travelled = projectiles.distance[:count] + speed * delta
         lifetime = projectiles.lifetime[:count] - delta
         live = (
-            (travelled < MONSTER_PROJECTILE_MAX_DIST)
+            (travelled < projectiles.max_dist[:count])
             & (lifetime > 0.0)
         )
         # ProjectileStore positions are authoritative float32 storage, so do not
@@ -721,16 +787,7 @@ class LogicCombat:
                     hit_monster = candidate
                     break
             if hit_monster is not None:
-                damage = float(projectiles.damage[i])
-                logic.monster_ai._apply_monster_damage(
-                    hit_monster, damage, attacker=None
-                )
-                if logic.monster_ai.monster_debug_active:
-                    name = hit_monster.properties.get('name', '?')
-                    debug_log(
-                        "MonsterAI",
-                        f"Projectile hit {name} for {damage} dmg",
-                    )
+                self._strike_monster(logic, projectiles, i, hit_monster)
                 keep[i] = False
                 continue
 
@@ -755,6 +812,7 @@ class LogicCombat:
                         hit_wall = True
                         break
             if hit_wall:
+                self._strike_wall(projectiles, i)
                 keep[i] = False
 
         survivors = np.flatnonzero(keep)

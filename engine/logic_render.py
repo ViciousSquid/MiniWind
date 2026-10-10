@@ -322,7 +322,7 @@ class LogicRender:
                     fov = a[3] + (b[3] - a[3]) * t
                 elif logic.camera.is_overhead():
                     cam_pos, direction, up_vec = logic.camera._overhead_camera(
-                        player_pos,
+                        logic.camera.focused_camera_centre(player_pos),
                         player_angle,
                     )
                     view_matrix = glm.lookAt(

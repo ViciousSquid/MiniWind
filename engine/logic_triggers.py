@@ -617,7 +617,17 @@ class LogicTriggers:
             if due_ids:
                 self._poll_triggers(trigger_ids=due_ids)
 
-    def _apply_player_damage(self, damage):
+    def _apply_player_damage(self, damage, damage_kind="physical"):
+        # A game's damage filter (LogicThread._player_damage_filter) mitigates
+        # first: ``filter(damage, damage_kind) -> damage``.
+        filt = self.logic._player_damage_filter
+        if filt is not None:
+            try:
+                damage = filt(damage, damage_kind)
+            except Exception:
+                import traceback
+                debug_log("Error", "player damage filter failed:\n"
+                          + traceback.format_exc())
         with self.logic.player_runtime.damage_lock:
             if self.logic.player_runtime.god_mode:
                 return
