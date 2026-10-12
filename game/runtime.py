@@ -42,6 +42,7 @@ from .rpg import guilds
 from .rpg import disposition as disp
 from .rpg import needs as rpg_needs
 from .rpg import heads
+from .ui.arrows import arrow_sprite
 from .rpg import daily as rpg_daily
 from .rpg import quests as _quests
 from .rpg.gametime import GameClock
@@ -424,6 +425,12 @@ class MiniwindSession:
         self._offscreen_tick = 0
         #: id(actor) -> (x, z, y) where it was last stood on the ground.
         self._grounded = {}
+        #: Fio projectile tag -> sprite, for the arrows in flight: the game
+        #: draws these itself, as arrows (see :meth:`_split_projectiles`).
+        self._arrow_tags = {}
+        #: ``((x, y, z), (vx, vy, vz), sprite)`` per arrow in flight, as last
+        #: published for the renderer (read by game/ui/arrows.py).
+        self.arrows_in_flight = ()
         self._proximity_accum = 0.0
         #: Guards currently running the player down (see _start_arrest_pursuit).
         self._arrest_pursuers = []
@@ -553,6 +560,8 @@ class MiniwindSession:
         logic.player_fire_handler = self.fire_player_weapon
         # MiniWind has no jumping (Space still swims, in water).
         fio.set_jump_enabled(logic, False)
+        # Arrows are drawn as arrows, by the game, not as Fio's projectile orb.
+        fio.set_projectile_split(logic, self._split_projectiles)
         # Wound decals use MiniWind's gore art.
         try:
             logic.blood_stain_sprites = tuple(gib.stain_paths(magical=False))
@@ -579,6 +588,8 @@ class MiniwindSession:
         if getattr(self.logic, "player_fire_handler", None) == self.fire_player_weapon:
             self.logic.player_fire_handler = None
         fio.set_jump_enabled(self.logic, True)
+        fio.set_projectile_split(self.logic, None)
+        self.arrows_in_flight = ()
         from . import faction_ai
         faction_ai.uninstall(self.logic)
 
@@ -773,6 +784,11 @@ class MiniwindSession:
         self._wi_cache = None
         self._world_index()
         self._ground_actors()
+        if self.arrows_in_flight and not fio.projectile_count(self.logic):
+            # Fio does not publish an empty store, so the last arrow to land
+            # is cleared here.
+            self.arrows_in_flight = ()
+            self._arrow_tags.clear()
         self.clock.advance(delta)
         self.game.tick(delta)
         if self._attack_cooldown > 0:
@@ -3947,50 +3963,13 @@ class MiniwindSession:
         a = getattr(p, "angle", 0.0)
         return (math.sin(a), 0.0, math.cos(a))
 
-    def _pointer_aim(self):
-        """Unit aim vector toward the on-screen pointer, or None.
-
-        Only ever a vector while Settings ▸ GAME ▸ Mouse control is on: the view
-        publishes where the visible cursor is aiming every frame (see
-        ``QtGameView._update_mouse_control``). None means the pointer is not the
-        crosshair and aiming falls back to where the player is facing.
+    def _projectile_aim_point(self, start):
+        """Where a projectile fired from *start* is sent: straight ahead, the
+        way the player is facing, level with the ground (the game is played
+        top-down). With mouse control on the player already faces the pointer,
+        so this is the pointer's direction too. Damage resolves where the
+        projectile actually lands.
         """
-        gs = getattr(self.logic, "game_state", None)
-        getter = getattr(gs, "get_aim_direction", None) if gs is not None else None
-        if not callable(getter):
-            return None
-        try:
-            aim = getter()
-        except Exception:
-            return None
-        if not aim:
-            return None
-        try:
-            x, y, z = (float(aim[0]), float(aim[1]), float(aim[2]))
-        except (TypeError, ValueError, IndexError):
-            return None
-        length = math.sqrt(x * x + y * y + z * z)
-        if length < 1e-6:
-            return None
-        return (x / length, y / length, z / length)
-
-    def _projectile_aim_point(self, start, target):
-        """Where a projectile fired from *start* should be sent.
-
-        With mouse control on, always the pointer: that is the whole point of
-        aiming with it, so a creature merely standing in front no longer steals
-        a shot meant for one behind it. Damage still resolves where the
-        projectile actually lands. Otherwise the old behaviour — the locked-on
-        *target* if there is one, else straight ahead.
-        """
-        aim = self._pointer_aim()
-        if aim is not None:
-            return (start[0] + aim[0] * 1500.0,
-                    start[1] + aim[1] * 1500.0,
-                    start[2] + aim[2] * 1500.0)
-        if target is not None:
-            tp = target.pos
-            return (float(tp[0]), float(tp[1]) + 64.0, float(tp[2]))
         fwd = self._player_forward()
         return (start[0] + fwd[0] * 1500.0, start[1], start[2] + fwd[2] * 1500.0)
 
@@ -4083,10 +4062,9 @@ class MiniwindSession:
             # it flies, can miss by sailing past a moving target, gets stopped
             # by walls, and lands (and its damage is rolled) only once it
             # actually strikes something.
-            target = self._acquire_target(reach, aim_dot=AIM_DOT)
             if not self.game.fire_arrow():
                 return False   # out of arrows — fire_arrow already notified
-            self._spawn_player_arrow_projectile(target)
+            self._spawn_player_arrow_projectile()
             return True
 
         # Melee gets a more forgiving cone than ranged weapons: close-quarters
@@ -4112,9 +4090,8 @@ class MiniwindSession:
             self.add_floater("miss", kind="miss")
         return True
 
-    def _spawn_player_arrow_projectile(self, target=None) -> None:
-        """Loose a physical arrow toward *target* (or straight ahead if none
-        was locked on). Travels and collides through the same engine
+    def _spawn_player_arrow_projectile(self) -> None:
+        """Loose a physical arrow the way the player is facing. Travels and collides through the same engine
         projectile pipeline a spell bolt uses, but — unlike a spell bolt —
         embeds where it lands (``embeds=True``) and resolves its own RPG
         damage on impact via an ``on_hit`` callback instead of a flat number
@@ -4125,9 +4102,10 @@ class MiniwindSession:
         if lt is None or ppos is None:
             return
         ARROW_SPEED, ARROW_MAX_DIST = 1600.0, 3000.0
+        sprite = arrow_sprite(eq.equipped_id(self.game.character, "ammo"))
 
         start = [ppos[0], ppos[1] + 48.0, ppos[2]]
-        aim = self._projectile_aim_point(start, target)
+        aim = self._projectile_aim_point(start)
 
         dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
         dlen = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
@@ -4149,9 +4127,35 @@ class MiniwindSession:
 
         # A player-owned arrow: it flies past the archer, stops at its own
         # range, and resolves its RPG damage at the moment it actually hits.
-        fio.spawn_projectile(lt, start, vel,
-                             lifetime=ARROW_MAX_DIST / ARROW_SPEED,
-                             max_dist=ARROW_MAX_DIST, on_hit=_on_hit)
+        row = fio.spawn_projectile(lt, start, vel,
+                                   lifetime=ARROW_MAX_DIST / ARROW_SPEED,
+                                   max_dist=ARROW_MAX_DIST, on_hit=_on_hit)
+        tag = fio.projectile_tag(lt, row)
+        if tag:
+            self._arrow_tags[tag] = sprite
+
+    def _split_projectiles(self, store, count):
+        """Which projectiles Fio draws: all but the arrows, which the game
+        draws itself. Publishes the arrows in flight as it goes.
+
+        Called by Fio, under the monster lock, when it publishes a frame's
+        projectiles (fio.set_projectile_split).
+        """
+        arrows = self._arrow_tags
+        if not arrows:
+            self.arrows_in_flight = ()
+            return None
+        tags = store.tag[:count]
+        is_arrow = np.isin(tags, np.fromiter(arrows, dtype=np.int64, count=len(arrows)))
+        rows = np.flatnonzero(is_arrow).tolist()
+        self.arrows_in_flight = tuple(
+            (tuple(store.pos[r].tolist()), tuple(store.vel[r].tolist()),
+             arrows[int(tags[r])])
+            for r in rows)
+        live = set(int(t) for t in tags[rows])
+        for tag in [t for t in arrows if t not in live]:
+            del arrows[tag]
+        return ~is_arrow
 
     def _staff_attack(self, w) -> bool:
         """Channel a staff's bound spell (called from do_attack for KIND_STAFF)."""
@@ -4334,7 +4338,7 @@ class MiniwindSession:
             MONSTER_PROJECTILE_SPEED, MONSTER_PROJECTILE_MAX_DIST)
 
         start = [ppos[0], ppos[1] + 48.0, ppos[2]]
-        aim = self._projectile_aim_point(start, self._acquire_target(BOW_REACH))
+        aim = self._projectile_aim_point(start)
 
         dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
         dlen = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0

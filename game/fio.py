@@ -10,6 +10,8 @@ running, a tool, a test without one) and then answers as if nothing were there.
 
 from __future__ import annotations
 
+import contextlib
+
 
 def things(logic) -> list:
     """The live list of the world's entities (append to it to add one)."""
@@ -162,6 +164,62 @@ def spawn_projectile(logic, pos, vel, **kwargs):
     if runtime is None:
         return None
     return runtime.spawn_projectile(pos, vel, **kwargs)
+
+
+def projectile_tag(logic, row) -> int:
+    """The tag Fio gave the projectile in *row* (0 for one without hooks)."""
+    runtime = getattr(logic, "combat_runtime", None)
+    store = getattr(runtime, "_monster_projectiles", None)
+    lock = monster_lock(logic)
+    if store is None or row is None:
+        return 0
+    with lock or contextlib.nullcontext():
+        return int(store.tag[int(row)]) if int(row) < len(store) else 0
+
+
+def projectile_count(logic) -> int:
+    """How many projectiles are in flight."""
+    runtime = getattr(logic, "combat_runtime", None)
+    store = getattr(runtime, "_monster_projectiles", None)
+    return len(store) if store is not None else 0
+
+
+def set_projectile_split(logic, split) -> None:
+    """Let the game draw some projectiles itself (None puts Fio's back).
+
+    Fio draws every projectile as one shared billboard. ``split(store, count)``
+    is called, under the monster lock, whenever Fio publishes the projectiles
+    for a frame; it returns a boolean mask of the rows Fio should go on
+    drawing (or None for all of them), and may read the rest for its own
+    drawing.
+    """
+    runtime = getattr(logic, "combat_runtime", None)
+    if runtime is None:
+        return
+    current = vars(runtime).get("_publish_projectile_render_snapshot")
+    if current is not None and getattr(current, "_game_split", False):
+        del runtime._publish_projectile_render_snapshot
+    if split is None:
+        return
+    import numpy as np
+    from engine.logic_combat import NO_PROJECTILES
+
+    def publish():
+        with monster_lock(logic) or contextlib.nullcontext():
+            store = runtime._monster_projectiles
+            count = len(store)
+            keep = split(store, count) if count else None
+            if not count:
+                positions = NO_PROJECTILES
+            elif keep is None:
+                positions = store.pos[:count].astype(np.float32, copy=True)
+            else:
+                positions = store.pos[:count][keep].astype(np.float32, copy=True)
+            runtime.projectile_positions = positions
+            return positions
+
+    publish._game_split = True
+    runtime._publish_projectile_render_snapshot = publish
 
 
 def bigworld(logic):
