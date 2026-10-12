@@ -42,6 +42,7 @@ except Exception:  # pragma: no cover - PyQt-free player
 
 from .rpg import schedule as _schedule
 from .rpg import bestiary
+from .rpg import heads
 from .rpg import factions
 
 # ---------------------------------------------------------------------------
@@ -72,7 +73,7 @@ _DEFAULT_WEAPON = {
     "magic": "apprentice_staff",
 }
 # Creature roles that should NOT receive a default metal weapon
-_ANIMAL_ROLES = {"wolf", "bear", "boar", "mudcrab", "cow", "sheep", "hen"}
+_ANIMAL_ROLES = heads.ANIMAL_ROLES
 
 
 def _art_role(role: str) -> str:

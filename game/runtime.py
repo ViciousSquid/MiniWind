@@ -657,6 +657,8 @@ class MiniwindSession:
         assigned when none was set (the '(random)' option, i.e. an
         empty/invalid head) or the set one is the player's:
 
+        * an animal gets a head of its own kind (:func:`heads.animal_head`):
+          its own image once drawn, the placeholder head until then;
         * an NPC whose name contains "guard" gets a random *guard* head
           (guard01…guard06), matching the editor's guard-head option;
         * everyone else gets a random regular head that is never the player's.
@@ -675,8 +677,11 @@ class MiniwindSession:
             cur = str(p.get("head", "") or "")
             # Respect a head explicitly set in the editor (regular, guard, or
             # browsed) unless it is the player's. Otherwise roll one.
+            role = str(p.get("npc_role", "") or "").lower()
             if heads.is_any_head(cur) and cur != player_head:
                 head = cur
+            elif role in heads.ANIMAL_ROLES:
+                head = heads.animal_head(role, self.rng)
             elif heads.name_is_guard(p.get("name") or p.get("display_name")):
                 head = heads.random_guard_head(self.rng)
             else:

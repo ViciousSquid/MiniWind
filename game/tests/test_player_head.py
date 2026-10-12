@@ -120,3 +120,46 @@ def test_a_loaded_character_keeps_its_head_and_npcs_avoid_it():
     assert loaded.game.character.head == "head07"
     assert loaded.logic.player_head_sprite == heads.head_path("head07")
     assert npc.properties["head"] != "head07"
+
+
+# --- animals ---------------------------------------------------------------
+def test_an_animal_without_a_head_wears_its_own_kind_or_the_placeholder():
+    hen = _actor("Hen", kind="creature", role="hen")
+    wolf = _actor("Wolf", kind="creature", role="wolf")
+    cow = _actor("Cow", kind="creature", role="cow")
+    sheep = _actor("Sheep", head="sheep02", kind="creature", role="sheep")
+    s = _session([hen, wolf, cow, sheep])
+
+    s.begin_new_character("Tester", "imperial", "warrior", "none", "male",
+                          head="head13")
+
+    # No hen or wolf head has been drawn yet: the placeholder, never a person's.
+    assert hen.properties["head"] == heads.PLACEHOLDER_HEAD
+    assert wolf.properties["head"] == heads.PLACEHOLDER_HEAD
+    assert hen.properties["custom_idle"] == "assets/sprites/heads/placeholder.png"
+    # Cows have their own heads (cow01, cow02).
+    assert cow.properties["head"] in ("cow01", "cow02")
+    # A head set in the map is kept.
+    assert sheep.properties["head"] == "sheep02"
+    for animal in (hen, wolf, cow, sheep):
+        assert (animal.properties["sprite_width"],
+                animal.properties["sprite_height"]) == (heads.HEAD_SIZE,
+                                                        heads.HEAD_SIZE)
+
+
+def test_the_placeholder_head_ships_and_is_never_the_players():
+    assert heads.is_any_head(heads.PLACEHOLDER_HEAD)
+    assert not heads.is_head(heads.PLACEHOLDER_HEAD)
+
+
+def test_an_animals_own_head_replaces_the_placeholder_once_drawn(tmp_path,
+                                                                monkeypatch):
+    folder = tmp_path / "assets" / "sprites" / "heads"
+    folder.mkdir(parents=True)
+    monkeypatch.setattr(heads, "_repo_root", lambda: str(tmp_path))
+    assert heads.animal_head("hen") == heads.PLACEHOLDER_HEAD
+    (folder / "hen.png").write_bytes(b"png")
+    assert heads.animal_head("hen") == "hen"
+    (folder / "boar01.png").write_bytes(b"png")
+    (folder / "boar02.png").write_bytes(b"png")
+    assert heads.animal_head("boar") in ("boar01", "boar02")
