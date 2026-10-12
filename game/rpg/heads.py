@@ -40,6 +40,18 @@ GUARD_HEAD_IDS = [f"guard{n:02d}" for n in (1, 2, 3, 4, 5, 6)]
 #: Overlay blended over a head sprite when its owner is dead.
 DEAD_OVERLAY = f"{HEAD_DIR}/dead.png"
 
+#: Animal roles. Each wears a head of its own kind (see :func:`animal_head`),
+#: never a person's.
+ANIMAL_ROLES = frozenset({"wolf", "bear", "boar", "mudcrab", "cow", "sheep", "hen"})
+
+#: The head an animal wears until its own head image exists.
+PLACEHOLDER_HEAD = "placeholder"
+
+#: The world size (width and height) every head is drawn at, on every actor
+#: whatever its role, so all heads look the same size. It is the player's own
+#: overhead sprite size (Fio's ``QtGameView.overhead_sprite_size``).
+HEAD_SIZE = 128
+
 
 def _repo_root() -> str:
     """Best-effort absolute path to the project root (two levels up from
@@ -128,6 +140,30 @@ def random_guard_head(rng: Optional[_random.Random] = None) -> str:
     """A random guard head id (guard01…guard06). Used to auto-assign a head to
     a guard-named NPC that has no head explicitly set in the editor."""
     return (rng or _random).choice(GUARD_HEAD_IDS)
+
+
+def animal_head(role, rng: Optional[_random.Random] = None) -> str:
+    """The head id an animal of *role* wears.
+
+    Its own head: ``assets/sprites/heads/<role>.png``, or one of its numbered
+    variants (``<role>01.png``, ``<role>02.png``, ...) picked at random. Until
+    one has been drawn, :data:`PLACEHOLDER_HEAD`.
+    """
+    kind = str(role or "").strip().lower()
+    folder = os.path.join(_repo_root(), HEAD_DIR)
+    if kind and os.path.isfile(os.path.join(folder, f"{kind}.png")):
+        return kind
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        names = []
+    variants = sorted(
+        name[:-4] for name in names
+        if name.endswith(".png") and name.startswith(kind)
+        and name[len(kind):-4].isdigit())
+    if kind and variants:
+        return (rng or _random).choice(variants)
+    return PLACEHOLDER_HEAD
 
 
 def name_is_guard(name) -> bool:

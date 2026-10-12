@@ -8,6 +8,10 @@ resets one of them therefore used to strip the plugins' declarations with no
 way to get them back: the plugin stayed loaded and enabled while its I/O and
 entity types silently vanished, and which tests had run first decided whether
 the next one saw a working plugin.
+
+The plugin under test is the ``prop_extender`` fixture
+(``tests/plugins/fixtures``): two entity types of its own and an extension of
+the core ``prop`` type, as Fio's Tidy plugin has (MiniWind does not ship Tidy).
 """
 import pytest
 
@@ -15,13 +19,11 @@ pytest.importorskip("PyQt5", reason="the plugin registries are editor-tier")
 
 pytestmark = pytest.mark.qt
 
-from plugins.manager import get_manager, load_plugins  # noqa: E402
 
 
 @pytest.fixture
-def manager():
-    load_plugins()
-    return get_manager()
+def manager(plugin_manager):
+    return plugin_manager("prop_extender")
 
 
 def _prop_inputs():
@@ -37,9 +39,9 @@ def _prop_outputs():
 def test_registrations_are_recorded_for_replay(manager):
     kinds = {(kind, entity_type)
              for _plugin, kind, entity_type, _in, _out in manager._io_registrations}
-    # Tidy owns its own two types and extends the core prop type.
-    assert ("set", "tidyreceptacle") in kinds
-    assert ("set", "tidygoal") in kinds
+    # The plugin owns its own two types and extends the core prop type.
+    assert ("set", "extenderbin") in kinds
+    assert ("set", "extendergoal") in kinds
     assert ("extend", "prop") in kinds
 
 
@@ -49,21 +51,21 @@ def test_a_stripped_registry_is_restored_by_replay(manager):
 
     before_inputs = set(_prop_inputs())
     before_outputs = set(_prop_outputs())
-    assert "reset" in before_inputs, "Tidy's prop extension is not present to begin with"
+    assert "restock" in before_inputs, "the prop extension is not present to begin with"
 
     entry = io_system.IO_REGISTRY["prop"]
     io_system.IO_REGISTRY["prop"] = {
-        "inputs": [d for d in entry["inputs"] if d.name.lower() != "reset"],
-        "outputs": [d for d in entry["outputs"] if d.name.lower() != "ontidied"],
+        "inputs": [d for d in entry["inputs"] if d.name.lower() != "restock"],
+        "outputs": [d for d in entry["outputs"] if d.name.lower() != "onrestocked"],
     }
-    removed_class = ENTITY_TYPES.pop("TidyReceptacle", None)
-    assert "reset" not in _prop_inputs()
+    removed_class = ENTITY_TYPES.pop("ExtenderBin", None)
+    assert "restock" not in _prop_inputs()
 
     manager.reapply_registrations()
 
     assert set(_prop_inputs()) == before_inputs
     assert set(_prop_outputs()) == before_outputs
-    assert "TidyReceptacle" in ENTITY_TYPES
+    assert "ExtenderBin" in ENTITY_TYPES
     assert removed_class is not None
 
 
@@ -74,14 +76,14 @@ def test_replaying_an_extension_keeps_the_core_declarations(manager):
     pin prop's core declarations as they were at load, so a later change to
     them would be quietly reverted by the replay.
     """
-    core = [name for name in _prop_inputs() if name != "reset"]
+    core = [name for name in _prop_inputs() if name != "restock"]
     assert core, "prop should declare inputs of its own"
 
     manager.reapply_registrations()
 
     after = _prop_inputs()
     assert all(name in after for name in core)
-    assert "reset" in after
+    assert "restock" in after
 
 
 def test_replay_is_idempotent(manager):
@@ -105,11 +107,11 @@ def test_extend_io_is_idempotent_and_additive(manager):
     """The API a plugin uses to extend a type it does not own."""
     from plugins.api import EditorAPI, io_def
 
-    plugin = next(p for p in manager.plugins if p.name.lower() == "tidy")
+    plugin = next(p for p in manager.plugins if p.name.lower() == "prop_extender")
     api = EditorAPI(manager, plugin)
     before = _prop_inputs()
 
-    api.extend_io("prop", inputs=[io_def("Reset", "already there")])
+    api.extend_io("prop", inputs=[io_def("Restock", "already there")])
     assert _prop_inputs() == before, "extend_io re-added an existing declaration"
 
     api.extend_io("prop", inputs=[io_def("AuditProbe", "added by this test")])

@@ -81,9 +81,26 @@ def test_the_player_tier_reads_a_legacy_model_as_the_same_prop():
         "False True model False False"
 
 
-@pytest.mark.parametrize("name", ["DevTest.json"])
-def test_shipped_maps_load_their_models_as_props(name):
-    with open(os.path.join(ROOT, "maps", name), encoding="utf-8") as handle:
+#: A map saved before models were Props, as Fio's DevTest.json has it: the
+#: legacy ``model`` record, written to a file and read back.
+_SAVED_MAP = {
+    "brushes": [],
+    "things": [{
+        "type": "model", "pos": [-64.0, -16.0, -64.0],
+        "properties": {
+            "type": "model", "name": "LowPoly_Tree_v1",
+            "model_path": "assets/models/LowPoly_Tree_v1.obj",
+            "rotation": [0.0, 0, 0], "scale": [1, 1, 1],
+            "id": "58eae7f7-9a62-413b-b422-b30f802b282f", "io_enabled": True,
+            "collision_shape": "auto", "no_collision": True},
+        "io_connections": []}],
+}
+
+
+def test_saved_maps_load_their_models_as_props(tmp_path):
+    path = tmp_path / "legacy_models.json"
+    path.write_text(json.dumps(_SAVED_MAP), encoding="utf-8")
+    with open(path, encoding="utf-8") as handle:
         data = json.load(handle)
     legacy = [t for t in data.get("things", [])
               if str(t.get("type", "")).lower() == "model"]
@@ -94,6 +111,7 @@ def test_shipped_maps_load_their_models_as_props(name):
         assert thing.properties["render_mode"] == "model"
         assert thing.properties["model_path"] == \
             record["properties"].get("model_path")
+        assert os.path.isfile(os.path.join(ROOT, thing.properties["model_path"]))
 
 
 def test_the_asset_browser_places_a_model_as_a_prop(main_window):

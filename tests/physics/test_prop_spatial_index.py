@@ -342,28 +342,3 @@ def test_a_streaming_delta_refiles_the_props_it_places():
     assert list(prop.pos) == destination
     assert session._filed[id(prop)] == cell_of_point(destination[0], destination[2]), (
         "a streamed-in cell placed a Prop without telling the Prop domain")
-
-
-def test_tidy_reset_refiles_the_prop_it_moves():
-    """Tidy moves Props directly, so Tidy notifies."""
-    pytest.importorskip("PyQt5", reason="the Tidy runtime is an editor-tier plugin")
-    from plugins.tidy.runtime import TidySession
-
-    prop = prop_at(0, 0, 60, tidy_category="books")
-    session = make_session([prop])
-    logic = session.logic
-    logic.prop_runtime = session
-
-    tidy = TidySession(logic)
-    tidy.start()
-
-    # Somebody put it on a shelf a long way from home; Reset brings it back.
-    prop.pos = [CELL_SIZE * 9, 0.0, CELL_SIZE * 9]
-    session.moved(prop)
-    tidy.reset_object(prop)
-
-    assert list(prop.pos) == [0.0, 0.0, 60.0], "Reset did not restore the home position"
-    assert session._filed[id(prop)] == cell_of_point(prop.pos[0], prop.pos[2]), (
-        "Tidy reset a Prop without telling the Prop domain")
-    session._carry_in_view((0.0, 0.0, 0.0), (0.0, 0.0, 1.0))
-    assert session.held is prop

@@ -136,25 +136,6 @@ class Toast(QLabel):
         self.anim.start()
         
 
-def _sync_editor_camera(window):
-    """Hand *window*'s 3D view camera to the logic thread.
-
-    Outside play the logic thread's editor camera is the one the frame is
-    drawn from: a camera placed on the view alone (focusing on an object,
-    opening a map at its Player Start) is undone on the next frame unless it
-    is handed over.
-    """
-    view = getattr(window, 'view_3d', None)
-    logic = getattr(view, 'logic_thread', None)
-    camera = getattr(view, 'camera', None)
-    if logic is None or camera is None:
-        return
-    try:
-        logic.camera.set_editor_camera(camera.pos, camera.yaw, camera.pitch, camera.fov)
-    except Exception:
-        pass
-
-
 def _loading_overlay(window):
     """*window*'s loading bar (a no-op stand-in where it has none)."""
     from editor.loading_overlay import overlay_for
@@ -193,6 +174,7 @@ class MainWindow(QMainWindow):
         self.load_key_bindings()
 
         self.unsaved_changes = False
+        self.is_kiosk_mode = False
         #: The world as Play started, when Stop is set to restore it.
         self._pre_play_world = None
         #: Set while the open level is the procedural generator's untouched
@@ -754,8 +736,8 @@ class MainWindow(QMainWindow):
             import glm
             front = camera.get_front_vector()
             distance = max(radius * 3.0, 128.0)
-            camera.pos = glm.vec3(centre[0], centre[1], centre[2]) - front * distance
-            _sync_editor_camera(self)
+            self.view_3d.set_editor_camera(
+                glm.vec3(centre[0], centre[1], centre[2]) - front * distance)
             self.view_3d.update()
         except Exception:
             pass
@@ -2715,6 +2697,39 @@ class MainWindow(QMainWindow):
         """Switch the play-mode camera between First Person and Overhead."""
         self.view_3d.set_camera_mode(text)
 
+    def sync_camera_mode_combo(self):
+        """Show the camera mode the game is actually using in the Camera dropdown.
+
+        Play can switch the camera itself (the ``cam`` command, usually run by a
+        logic_command, or a loaded save), so the dropdown follows the logic
+        thread's camera. Signals are blocked: re-applying the mode through the
+        dropdown would be redundant, and the engine already holds it.
+        """
+        lt = self.view_3d.logic_thread
+        mode = lt.camera.camera_mode if lt is not None else self.view_3d.camera_mode
+        mode = "Overhead" if str(mode).strip().lower() in (
+            "overhead", "top-down", "topdown") else "First Person"
+        self.view_3d.camera_mode = mode
+        combo = getattr(self, "camera_mode_combobox", None)
+        if combo is not None and combo.currentText() != mode:
+            combo.blockSignals(True)
+            try:
+                combo.setCurrentText(mode)
+            finally:
+                combo.blockSignals(False)
+
+    def reset_camera_mode(self):
+        """Return the play camera to First Person for a newly opened map.
+
+        A map that wants Overhead switches to it itself (a logic_command
+        running ``cam topdown``); the previous map's choice must not carry over.
+        """
+        lt = self.view_3d.logic_thread
+        if lt is not None:
+            lt.camera.camera_transition = None
+        self.view_3d.set_camera_mode("First Person")
+        self.sync_camera_mode_combo()
+
     def set_cull_distance(self, distance):
         """Set Cull Dist and mirror the actual clamped value in the spinner."""
         self.view_3d.set_cull_distance(distance)
@@ -3077,7 +3092,8 @@ class MainWindow(QMainWindow):
         self._clear_terrain()
         self.state.clear_scene()
         update_all_counters_from_entities([])
-        
+        self.reset_camera_mode()
+
         self.file_path = None
         self._generated_level_marker = None
         self._package_level_dir = None
@@ -4673,6 +4689,7 @@ class MainWindow(QMainWindow):
             scene_replacement_started = True
             _loading_step(self, "Building the scene", 30)
             self._apply_level_data(level_data)
+            self.reset_camera_mode()
             _loading_step(self, "Refreshing the editor", 75)
 
             # --- The start the player will spawn at; the camera goes there ---
@@ -4685,10 +4702,12 @@ class MainWindow(QMainWindow):
                 place_camera = self.config.getboolean('Display', 'place_camera_at_player_start', fallback=True)
 
                 if place_camera:
-                    # Place 3D editor camera exactly at player start
-                    self.view_3d.camera.pos = glm.vec3(player_start_pos)
-                    self.view_3d.camera.yaw = player_angle      # face the same direction
-                    self.view_3d.camera.pitch = 0.0
+                    # Place 3D editor camera exactly at player start, facing
+                    # the way the player spawns: Play turns the start's angle
+                    # into radians(90 - angle) + pi, which the play view
+                    # shows as yaw 90 - degrees(that) = angle - 180.
+                    self.view_3d.set_editor_camera(
+                        player_start_pos, yaw=player_angle - 180.0, pitch=0.0)
 
                     # Center 2D views so the camera frustum is visible
                     self.center_2d_views_on(player_start_pos)
@@ -4696,18 +4715,14 @@ class MainWindow(QMainWindow):
                     self._after(50, lambda: self.center_2d_views_on(player_start_pos))
                 else:
                     # Old behaviour: offset camera behind the spawn
-                    self.view_3d.camera.pos = [
-                        player_start_pos[0],
-                        player_start_pos[1] + 80,
-                        player_start_pos[2] + 200
-                    ]
-                    self.view_3d.camera.pitch = -20
-                    self.view_3d.camera.yaw = -90
+                    self.view_3d.set_editor_camera(
+                        (player_start_pos[0],
+                         player_start_pos[1] + 80,
+                         player_start_pos[2] + 200),
+                        yaw=-90, pitch=-20)
             else:
                 # No player start – reset camera to default position
-                self.view_3d.camera.pos = glm.vec3(0, 150, 400)
-                self.view_3d.camera.yaw = -90
-                self.view_3d.camera.pitch = -20
+                self.view_3d.set_editor_camera((0, 150, 400), yaw=-90, pitch=-20)
 
             # Update file path and UI state
             self.file_path = file_path

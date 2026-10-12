@@ -240,13 +240,10 @@ def test_a_map_that_fails_to_parse_leaves_the_open_level_alone():
     the file, a LevelChanger and the ``map`` command all go through here, the
     last two with no unsaved-changes prompt."""
     import copy
-    import os
 
-    from tests.helpers.paths import REPO_ROOT
+    from tests.helpers import scenes
 
-    with open(os.path.join(REPO_ROOT, "maps", "Simple_Map_Test.json"),
-              encoding="utf-8") as f:
-        good = json.load(f)
+    good = scenes.simple_room()
     from editor.editor_state import EditorState
     state = EditorState()
     state.load_from_data(good)
@@ -269,14 +266,10 @@ def test_a_map_that_fails_to_parse_leaves_the_open_level_alone():
 
 
 def test_opening_a_terrain_map_keeps_its_terrain():
-    import os
-
     from editor.editor_state import EditorState
-    from tests.helpers.paths import REPO_ROOT
+    from tests.helpers import scenes
 
-    with open(os.path.join(REPO_ROOT, "maps", "Terrain_Test_small.json"),
-              encoding="utf-8") as f:
-        level = json.load(f)
+    level = scenes.terrain_map()
     assert level.get("terrain_data")
     state = EditorState()
     host = _window_host(state)
@@ -382,10 +375,10 @@ def _shipped_maps():
 @pytest.mark.parametrize("path", _shipped_maps(),
                          ids=lambda p: p.rsplit("/", 1)[-1])
 def test_every_shipped_connection_resolves(path):
-    """_SHOWCASE.json's PlayerStart fired Trigger at 'intro_messages', an
-    entity no version of the map has contained: every Play of the showcase
-    logged "Target 'intro_messages' not found". Debug -> Validate
-    Connections, run over every shipped map."""
+    """Fio's showcase map's PlayerStart fired Trigger at 'intro_messages', an
+    entity no version of the map had contained: every Play of it logged
+    "Target 'intro_messages' not found". Debug -> Validate Connections, run
+    over every shipped map."""
     from editor.editor_state import EditorState
     from editor.io_system import validate_all_scene_connections
 
@@ -483,20 +476,16 @@ def test_bind_with_no_arguments_opens_the_dialog(main_window, monkeypatch, accep
 # ---------------------------------------------------------------------------
 
 def _portal_session():
-    """Portal_Test.json in play, player physics off so positions are exact."""
-    import os
-
+    """Two linked portals in play, player physics off so positions are exact."""
     from editor.editor_state import EditorState
     from editor.things import PlayerStart, Portal
     from engine.logic_thread import LogicThread
     from engine.player import Player
     from engine.threaded_game_state import ThreadedGameState
-    from tests.helpers.paths import REPO_ROOT
+    from tests.helpers import scenes
 
     state = EditorState()
-    with open(os.path.join(REPO_ROOT, "maps", "Portal_Test.json"),
-              encoding="utf-8") as f:
-        state.load_from_data(json.load(f), save_undo=False)
+    state.load_from_data(scenes.portal_pair(), save_undo=False)
     logic = LogicThread(ThreadedGameState(), state)
     start = next(t for t in state.things if isinstance(t, PlayerStart))
     logic.player_runtime.player = Player(start.pos[0], start.pos[2])
@@ -560,7 +549,7 @@ def test_a_teleport_across_a_portal_does_not_transit(route, tmp_path):
             logic._portal_prev_player_pos = None
             logic._tick(logic.TICK_DURATION)
             ok, msg = logic.session_runtime.save_session(str(tmp_path / "s.fiosave"),
-                                         map_name="Portal_Test.json")
+                                         map_name="portal_pair.json")
             assert ok, msg
         _put(logic, front)
         logic._portal_prev_player_pos = None
@@ -578,7 +567,7 @@ def test_a_teleport_across_a_portal_does_not_transit(route, tmp_path):
             handler({"name": "tele", "target_node": "behind"}, "behind", logic)
         else:
             ok, msg = logic.session_runtime.load_session(str(tmp_path / "s.fiosave"),
-                                         map_name="Portal_Test.json")
+                                         map_name="portal_pair.json")
             assert ok, msg
         logic._tick(logic.TICK_DURATION)
 

@@ -233,7 +233,10 @@ def test_a_renderer_that_fails_to_start_leaves_no_gl_names(fio_session, flat):
 def test_the_terrain_keeps_no_name_of_a_retired_renderer(fio_session, flat):
     """The terrain is bound to the renderer's program and ground textures; a
     swap releases that binding before the renderer is retired."""
-    session = fio_session("maps/Terrain_Test_medium.json", size=(160, 120))
+    from tests.helpers import scenes
+
+    session = fio_session(scenes.terrain_map(chunks=4, chunk_size=512.0),
+                          size=(160, 120))
     session.view.sysmon.set_active(False)
     view, terrain = session.view, session.window.terrain
     assert terrain is not None and terrain.enabled

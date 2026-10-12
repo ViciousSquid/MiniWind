@@ -175,7 +175,7 @@ class TestFioPackage(unittest.TestCase):
             FioPackage.open("/no/such/package.fiopak")
 
     def test_real_repo_map_roundtrips(self):
-        blob = fixtures.build_from_repo_map("DevTest.json")
+        blob = fixtures.build_from_repo_map("BigWorld_streaming_test.json")
         if blob is None:
             self.skipTest("repo maps/ not available")
         pak = FioPackage.from_bytes(blob)

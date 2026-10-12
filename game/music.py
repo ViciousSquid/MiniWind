@@ -22,9 +22,14 @@ import random
 import sys
 import threading
 import time
+import zipfile
 
-#: Where the soundtrack lives, relative to the working directory (the repo root).
+from engine.audio_archives import list_archive_audio, open_archive_audio
+
+#: Loose soundtrack folder and adjacent ZIP-based asset archive.
 MUSIC_DIR = os.path.join("assets", "music")
+MUSIC_ARCHIVE = os.path.join("assets", "music.fiopak")
+_ARCHIVE_TRACK_PREFIX = "fiopak://"
 
 #: settings.ini switch for the music, and Fio's music volume (percent).
 SETTING = ("GAME", "music")
@@ -56,8 +61,21 @@ def _pygame_music():
 class MusicPlayer:
     """Shuffled playlist of :data:`MUSIC_DIR` for the length of a play session."""
 
-    def __init__(self, music_dir: str = MUSIC_DIR, backend=None, rng=None):
+    def __init__(self, music_dir: str = MUSIC_DIR, backend=None, rng=None,
+                 music_archive: str = None):
         self.music_dir = music_dir
+        # Use the configured archive for default assets, or a sibling archive
+        # when a custom music_dir is supplied by tests/alternate project roots.
+        if music_archive is not None:
+            self.music_archive = music_archive
+        elif os.path.normpath(music_dir) == os.path.normpath(MUSIC_DIR):
+            self.music_archive = MUSIC_ARCHIVE
+        else:
+            self.music_archive = os.path.join(
+                os.path.dirname(os.path.normpath(music_dir)), "music.fiopak"
+            )
+        self._current_archive = None
+        self._current_archive_stream = None
         self._backend = backend
         self._rng = rng or random.Random()
         self._config = None
@@ -124,7 +142,23 @@ class MusicPlayer:
 
     # ----------------------------------------------------------------- tracks
     def tracks(self):
-        """Every ``.mp3`` in :attr:`music_dir`, sorted (empty if there is none)."""
+        """Sorted soundtrack tracks from music.fiopak, or the legacy loose folder.
+
+        Archive entries retain their project-relative names behind a private
+        marker, so tracks can be identified without extracting them. An
+        existing archive is authoritative; loose files remain the fallback
+        when no archive exists.
+        """
+        if os.path.isfile(self.music_archive):
+            try:
+                members = list_archive_audio(
+                    self.music_archive, "assets/music", (".mp3",)
+                )
+            except (OSError, zipfile.BadZipFile) as exc:
+                print(f"[MiniWind] music archive cannot be read: {exc}")
+                return []
+            return [_ARCHIVE_TRACK_PREFIX + member for member in members]
+
         try:
             names = os.listdir(self.music_dir)
         except OSError:
@@ -132,6 +166,55 @@ class MusicPlayer:
         return sorted(os.path.join(self.music_dir, n) for n in names
                       if n.lower().endswith(".mp3")
                       and os.path.isfile(os.path.join(self.music_dir, n)))
+
+    def _load_track(self, music, track):
+        """Load a loose path or keep an archive member open for streaming."""
+        if not track.startswith(_ARCHIVE_TRACK_PREFIX):
+            music.load(track)
+            self._close_current_archive()
+            return
+
+        member = track[len(_ARCHIVE_TRACK_PREFIX):]
+        opened = open_archive_audio(
+            self.music_archive, member, "assets/music", (".mp3",)
+        )
+        if opened is None:
+            raise FileNotFoundError(f"Music track missing from archive: {member}")
+        archive, stream = opened
+        try:
+            # SDL_mixer needs the format hint for a file-like object. Keep both
+            # the ZipExtFile and its ZIP owner alive throughout playback.
+            music.load(stream, "mp3")
+        except BaseException:
+            stream.close()
+            archive.close()
+            raise
+
+        old_archive = self._current_archive
+        old_stream = self._current_archive_stream
+        self._current_archive = archive
+        self._current_archive_stream = stream
+        if old_stream is not None:
+            old_stream.close()
+        if old_archive is not None:
+            old_archive.close()
+
+    def _close_current_archive(self):
+        """Release the active ZIP stream after music has stopped or been replaced."""
+        stream = self._current_archive_stream
+        archive = self._current_archive
+        self._current_archive_stream = None
+        self._current_archive = None
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception:
+                pass
+        if archive is not None:
+            try:
+                archive.close()
+            except Exception:
+                pass
 
     def _next_track(self):
         """The next track of the shuffle, reshuffling once every track has played.
@@ -164,7 +247,7 @@ class MusicPlayer:
             if track is None:
                 return False
             try:
-                music.load(track)
+                self._load_track(music, track)
                 music.set_volume(self.volume)
                 music.play()
                 self.current = track
@@ -178,12 +261,16 @@ class MusicPlayer:
     def _silence(self) -> None:
         music = self._music()
         self.current = None
-        if music is None:
-            return
         try:
-            music.stop()
+            if music is not None:
+                music.stop()
+                unload = getattr(music, "unload", None)
+                if callable(unload):
+                    unload()
         except Exception:
             pass
+        finally:
+            self._close_current_archive()
 
     @property
     def playing(self) -> bool:

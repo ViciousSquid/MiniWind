@@ -71,7 +71,7 @@ def test_a_bare_prop_is_drawable():
 
 def test_a_prop_with_a_model_defaults_to_model_mode():
     prop = Prop(pos=[0, 0, 0],
-                properties={'model_path': 'plugins/tidy/assets/book.obj'})
+                properties={'model_path': 'assets/models/prop_book.obj'})
     assert prop.properties['render_mode'] == 'model'
     assert _drawn_as(prop) == {'model'}
 

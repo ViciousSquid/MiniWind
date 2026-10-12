@@ -165,40 +165,10 @@ def _patch_map_loading():
             if toast is not None:
                 toast(message, is_error=True)
             return False
-        loaded = _orig_load(self, filePath, *args, **kwargs)
-        if loaded and not getattr(self.view_3d, "play_mode", False):
-            _camera_to_player_start(self)
-        return loaded
+        return _orig_load(self, filePath, *args, **kwargs)
 
     MainWindow.load_level_file = load_level_file
     MainWindow._miniwind_maps_gated = True
-
-
-def _camera_to_player_start(window):
-    """Open the map looking from its Player Start, as Fio's load means to.
-
-    Fio places the editor camera there on the 3D view alone, and the logic
-    thread's editor camera -- the one drawn, copied back to the view every
-    frame -- puts it back where it was. MiniWind places it on both.
-    """
-    config = getattr(window, "config", None)
-    try:
-        if config is not None and not config.getboolean(
-                "Display", "place_camera_at_player_start", fallback=True):
-            return
-        spawn = window.state.resolve_player_start(None)
-    except Exception:
-        return
-    if spawn is None:
-        return
-    import glm
-    from editor.main_window import _sync_editor_camera
-    camera = window.view_3d.camera
-    camera.pos = glm.vec3(spawn.pos)
-    camera.yaw = spawn.get_angle()
-    camera.pitch = 0.0
-    _sync_editor_camera(window)
-    window.view_3d.update()
 
 
 #: The editor window's product name.
@@ -661,6 +631,8 @@ def install_play_menu(view):
     # Character creation, trading and conversations take the mouse.
     from .ui.hits import GamePointer
     view.game_pointer = GamePointer(view)
+    install_wheel_zoom(view)
+    install_bow_draw(view)
     _use_game_fonts_for_loading()
     editor = getattr(view, "editor", None)
     config = getattr(editor, "config", None)
@@ -670,6 +642,87 @@ def install_play_menu(view):
         # the same config by the play session.
         from . import runtime
         runtime.set_editor_config(config)
+
+
+def install_wheel_zoom(view):
+    """In play, the mouse wheel zooms the top-down camera on the player.
+
+    Not while the pause menu (its map zooms with the wheel), a game screen,
+    a conversation or character creation is open: those keep the wheel.
+    """
+    from PyQt5.QtCore import QEvent, QObject
+
+    class _WheelZoom(QObject):
+        def eventFilter(self, obj, event):
+            if event.type() != QEvent.Wheel:
+                return False
+            session = _free_play_session(view)
+            if session is None:
+                return False
+            notches = event.angleDelta().y() / 120.0
+            if notches:
+                session.zoom(notches)
+            return True
+
+    zoom = _WheelZoom(view)
+    view.installEventFilter(zoom)
+    view._miniwind_wheel_zoom = zoom    # kept alive with the view
+
+
+def _free_play_session(view):
+    """The play session when the player is free to act (no pause menu, game
+    screen, conversation, character creation or armed inspect), else None."""
+    if not getattr(view, "play_mode", False):
+        return None
+    menu = getattr(view, "play_menu", None)
+    if menu is not None and getattr(menu, "active", False):
+        return None
+    if getattr(view, "_actor_pick", None) is not None:
+        return None
+    session = getattr(getattr(view, "logic_thread", None), "_miniwind", None)
+    if (session is None or session.open_screen is not None
+            or session.dialogue is not None or session.needs_char_creation):
+        return None
+    return session
+
+
+def install_bow_draw(view):
+    """With a bow in hand, right mouse draws it: hold to draw, release to loose
+    (game.runtime: MiniwindSession._update_bow_draw). A left click while
+    drawing lowers the bow. The button is the game's then, so the engine does
+    not also cast the active spell on it."""
+    from PyQt5.QtCore import QEvent, QObject, Qt
+
+    class _BowDraw(QObject):
+        def eventFilter(self, obj, event):
+            kind = event.type()
+            if kind not in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease,
+                            QEvent.MouseButtonDblClick):
+                return False
+            session = _free_play_session(view)
+            if session is None:
+                return False
+            button = event.button()
+            drawing = session.bow_charge is not None
+            if button == Qt.RightButton:
+                if kind == QEvent.MouseButtonRelease:
+                    if drawing or session._bow_input:
+                        session.bow_draw_input("release")
+                        return True
+                    return False
+                if session.bow_in_hand():
+                    session.bow_draw_input("press")
+                    return True
+                return False
+            if button == Qt.LeftButton and drawing:
+                if kind != QEvent.MouseButtonRelease:
+                    session.bow_draw_input("cancel")
+                return True
+            return False
+
+    bow = _BowDraw(view)
+    view.installEventFilter(bow)
+    view._miniwind_bow_draw = bow
 
 
 def _use_game_fonts_for_loading():

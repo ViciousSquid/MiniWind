@@ -438,7 +438,25 @@ class GameState:
         if r.get("rep"):
             fac, amt = r["rep"]
             guilds.add_reputation(self.character, fac, amt)
+        self.award_xp(getattr(q, "xp", 0))
         self.message(f"Quest complete: {q.name}")
+
+    def award_xp(self, amount) -> int:
+        """Give the character *amount* experience; tells the XP listeners."""
+        gained = self.character.add_xp(amount)
+        if gained:
+            for listener in list(getattr(self, "_xp_listeners", ())):
+                try:
+                    listener(gained)
+                except Exception:
+                    pass
+        return gained
+
+    def add_xp_listener(self, fn) -> None:
+        """Call ``fn(amount)`` whenever experience is awarded."""
+        listeners = self.__dict__.setdefault("_xp_listeners", [])
+        if fn not in listeners:
+            listeners.append(fn)
 
     # ---------------------------------------------------------- per-tick regen
     def tick(self, dt: float) -> None:

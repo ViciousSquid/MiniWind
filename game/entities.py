@@ -42,6 +42,7 @@ except Exception:  # pragma: no cover - PyQt-free player
 
 from .rpg import schedule as _schedule
 from .rpg import bestiary
+from .rpg import heads
 from .rpg import factions
 
 # ---------------------------------------------------------------------------
@@ -72,7 +73,7 @@ _DEFAULT_WEAPON = {
     "magic": "apprentice_staff",
 }
 # Creature roles that should NOT receive a default metal weapon
-_ANIMAL_ROLES = {"wolf", "bear", "boar", "mudcrab", "cow", "sheep", "hen"}
+_ANIMAL_ROLES = heads.ANIMAL_ROLES
 
 
 def _art_role(role: str) -> str:
@@ -92,15 +93,17 @@ def portrait_for(role: str) -> str:
 
 def _apply_head_sprite(p: dict) -> None:
     """If a ``head`` id is set, point the actor's billboard frames at that head
-    sprite (a single static image); otherwise leave the role art in place.
-    Accepts either a regular head (headNN) or, for guard-named NPCs, one of
-    the special guard heads (guard01…guard06)."""
+    sprite (a single static image), drawn at the one head size; otherwise
+    leave the role art in place. Accepts either a regular head (headNN) or,
+    for guard-named NPCs, one of the special guard heads (guard01…guard06)."""
     from .rpg import heads
     hid = str(p.get("head", "") or "")
     if heads.is_any_head(hid):
         path = heads.any_head_path(hid)
         p["custom_idle"] = path
         p["custom_shoot"] = path
+        # Every head is the same size, whatever the role or the map says.
+        p["sprite_width"] = p["sprite_height"] = heads.HEAD_SIZE
         # No custom death sprite: a slain head-wearing actor shows its head with
         # the shared heads/dead.png overlay (see Monster.get_sprite_path).
     p.pop("custom_dead", None)
@@ -275,12 +278,13 @@ def _apply_actor_common(thing, entity_type, default_role, default_faction):
     # the special guardNN heads. Empty = use the role art; the runtime assigns
     # a random (non-guard) head — never the player's — at play start.
     p.setdefault("head", "")
-    _apply_head_sprite(p)
     p.setdefault("portrait", portrait_for(role))
     if not _authored_w:
         p["sprite_width"] = tmpl.scale if tmpl else 112
     if not _authored_h:
         p["sprite_height"] = tmpl.scale if tmpl else 112
+    # After the size: a head overrides it with the one head size.
+    _apply_head_sprite(p)
 
     p.setdefault("inventory", [])
     p.setdefault("persistent", True)

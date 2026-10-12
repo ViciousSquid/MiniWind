@@ -18,7 +18,7 @@ class TestMakePak(unittest.TestCase):
         return path
 
     def test_build_and_load(self):
-        map_path = self._map("Simple_Map_Test.json")
+        map_path = self._map("BigWorld_streaming_test.json")
         with tempfile.TemporaryDirectory() as td:
             out = os.path.join(td, "game.fiopak")
             written, _warnings = make_pak.build_pak(
@@ -28,7 +28,7 @@ class TestMakePak(unittest.TestCase):
             with FioPackage.open(out) as pak:
                 self.assertEqual(pak.title, "Test Title")
                 self.assertEqual(
-                    os.path.basename(pak.start_map_path()), "Simple_Map_Test.json"
+                    os.path.basename(pak.start_map_path()), "BigWorld_streaming_test.json"
                 )
                 level = pak.load_start_map()
                 self.assertIn("brushes", level)

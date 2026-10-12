@@ -2,7 +2,7 @@
 
 ::
 
-    session = FioTestSession(qt_app, "maps/_SHOWCASE.json")
+    session = FioTestSession(qt_app, scenes.showcase())   # tests.helpers.scenes
     session.start_play()
     session.step(10, keys={Qt.Key_W})
     with session.render_state() as frame:

@@ -16,6 +16,8 @@ player's health/magicka/stamina live on the character (mirrored into the engine'
 
 from __future__ import annotations
 
+import collections
+import contextlib
 import json
 import math
 import os
@@ -40,6 +42,8 @@ from .rpg import magic as rpg_magic
 from .rpg import guilds
 from .rpg import disposition as disp
 from .rpg import needs as rpg_needs
+from .rpg import heads
+from .ui.arrows import arrow_sprite
 from .rpg import daily as rpg_daily
 from .rpg import quests as _quests
 from .rpg.gametime import GameClock
@@ -91,6 +95,22 @@ NPC_WALK_SPEED = 90.0
 #: long as the fright does, and they go back to a walk on their own.
 FLEE_SPEED_MULTIPLIER = 2.0
 ARRIVE_RADIUS = 48.0
+#: How high an actor steps up onto a brush (a kerb, a floor, a low step);
+#: anything taller over it is a roof or a wall, not its ground.
+GROUND_STEP_UP = 24.0
+#: Mouse-wheel zoom of the top-down camera: the nearest and furthest it goes
+#: above the player (never above Big World's ceiling), how much one wheel
+#: notch changes the height, and how quickly the camera eases there.
+ZOOM_MIN_HEIGHT = 300.0
+ZOOM_MAX_HEIGHT = 1600.0
+ZOOM_STEP = 1.15
+ZOOM_EASE_SECONDS = 0.12
+#: Slack added to the zoomed-out view's ground reach when Big World is asked
+#: to cover it.
+ZOOM_REACH_MARGIN = 256.0
+#: How far an actor moves across the ground before its height is worked out
+#: again; standing still costs nothing.
+GROUND_RECHECK_DIST = 4.0
 #: How close a walking NPC may come to a wall. Close to the player's own half
 #: width (TILE_SIZE/2 = 25) rather than the combat AI's much fatter monster
 #: margin, so a villager fits through any doorway the player does.
@@ -138,6 +158,13 @@ HIT_FLASH_TIME = 0.18
 #: How far a melee swing reaches / a shot can pick a target.
 MELEE_REACH = 170.0
 BOW_REACH = 2400.0
+#: Holding right mouse with a bow draws it: how long a full draw takes, and
+#: how far an arrow flies loosed with the bow barely drawn and fully drawn.
+BOW_FULL_DRAW_SECONDS = 2.5
+BOW_MIN_RANGE = 450.0
+BOW_MAX_RANGE = 3000.0
+#: How fast an arrow flies.
+ARROW_SPEED = 1600.0
 #: Frontal cone (dot threshold) for auto-target selection.
 AIM_DOT = 0.55
 # Melee is close-quarters and forgives a wider stance than ranged aiming —
@@ -205,10 +232,9 @@ REAPER_LINGER = (0.15, 0.8)
 REAPER_APPROACH_TIMEOUT = 14.0
 #: However bloody it gets, no more than this many at once.
 REAPER_MAX = 3
-#: His head, his weapon, and how big he is drawn.
+#: His head and his weapon. He is drawn at the one head size, like everyone.
 REAPER_HEAD = "reaper"
 REAPER_WEAPON = "scythe"
-REAPER_SIZE = 132
 
 
 class _PlayerActor:
@@ -415,6 +441,22 @@ class MiniwindSession:
         #: each pass and the cost is spread instead of spiking.
         self._decision_phase = 0
         self._offscreen_tick = 0
+        #: id(actor) -> (x, z, y) where it was last stood on the ground.
+        self._grounded = {}
+        #: The camera height the wheel asked for (None: never zoomed).
+        self.zoom_height = None
+        #: How far the bow is drawn (0..1) while right mouse is held, else
+        #: None; the HUD draws it as a filling pie.
+        self.bow_charge = None
+        #: Right-mouse presses and releases from the view ("press", "release",
+        #: "cancel"), handled on the logic thread by _update_bow_draw.
+        self._bow_input = collections.deque()
+        #: Fio projectile tag -> sprite, for the arrows in flight: the game
+        #: draws these itself, as arrows (see :meth:`_split_projectiles`).
+        self._arrow_tags = {}
+        #: ``((x, y, z), (vx, vy, vz), sprite)`` per arrow in flight, as last
+        #: published for the renderer (read by game/ui/arrows.py).
+        self.arrows_in_flight = ()
         self._proximity_accum = 0.0
         #: Guards currently running the player down (see _start_arrest_pursuit).
         self._arrest_pursuers = []
@@ -433,6 +475,7 @@ class MiniwindSession:
         self.dice_type_index = len(DICE_TYPES) - 1
         self.dice_animation: Optional[Dict] = None
         self.game.add_roll_listener(self._on_dice_roll)
+        self.game.add_xp_listener(self._on_xp)
         self._attack_anim_time = 0.0   # player stab animation remaining (seconds)
 
         # ------------------------------------------------------------------
@@ -502,6 +545,7 @@ class MiniwindSession:
         self.rng = random.Random()
         self.game = GameState(self.store, rng=self.rng)
         self.game.add_roll_listener(self._on_dice_roll)
+        self.game.add_xp_listener(self._on_xp)
         self.needs_char_creation = True
         self.open_screen = "charcreate"
         self.dialogue = None
@@ -542,6 +586,10 @@ class MiniwindSession:
         # press and hands it here, and the bow's arrows and the spell bolts
         # fly through its projectile pipeline.
         logic.player_fire_handler = self.fire_player_weapon
+        # MiniWind has no jumping (Space still swims, in water).
+        fio.set_jump_enabled(logic, False)
+        # Arrows are drawn as arrows, by the game, not as Fio's projectile orb.
+        fio.set_projectile_split(logic, self._split_projectiles)
         # Wound decals use MiniWind's gore art.
         try:
             logic.blood_stain_sprites = tuple(gib.stain_paths(magical=False))
@@ -567,6 +615,9 @@ class MiniwindSession:
             self.logic._player_damage_filter = None
         if getattr(self.logic, "player_fire_handler", None) == self.fire_player_weapon:
             self.logic.player_fire_handler = None
+        fio.set_jump_enabled(self.logic, True)
+        fio.set_projectile_split(self.logic, None)
+        self.arrows_in_flight = ()
         from . import faction_ai
         faction_ai.uninstall(self.logic)
 
@@ -611,6 +662,7 @@ class MiniwindSession:
                                        head=head)
         self.game.character.handed = "left" if str(handed).lower() == "left" else "right"
         self.game.add_roll_listener(self._on_dice_roll)
+        self.game.add_xp_listener(self._on_xp)
         # Author-granted starting spells (Game Settings → Player Spells).
         c = self.game.character
         for sid in self._player_start_spells:
@@ -618,14 +670,8 @@ class MiniwindSession:
                 c.known_spells.append(sid)
         if c.known_spells and not c.active_spell:
             c.active_spell = c.known_spells[0]
-        # Record the chosen head so NPCs never reuse it (and force the player
-        # billboard to it).
-        if c.head:
-            try:
-                self.store.set("player_head", c.head)
-            except Exception:
-                pass
-            self._apply_player_head(c.head)
+        # The player is the chosen head; record it so NPCs never reuse it.
+        self._ensure_player_head()
         # Give every NPC/creature a head that is never the player's.
         self._assign_npc_heads()
         self.needs_char_creation = False
@@ -633,14 +679,38 @@ class MiniwindSession:
         self._sync_engine_health(full=True)
         self.notify(f"Welcome to {self.region_name}, {name}.", 5.0)
 
+    def _ensure_player_head(self) -> str:
+        """Make sure the player is a head, and show it; returns the head id.
+
+        Character creation always picks one, but a character without a valid
+        head (an older save) is given a random regular head rather than being
+        drawn as the stock player sprite. The head is recorded in the store and
+        the player's overhead sprite pointed at it.
+        """
+        c = self.game.character
+        head = str(getattr(c, "head", "") or "")
+        if not heads.is_head(head):
+            saved = str(self.store.get("player_head", "") or "")
+            head = saved if heads.is_head(saved) else heads.random_head(self.rng)
+            c.head = head
+        try:
+            self.store.set("player_head", head)
+        except Exception:
+            pass
+        self._apply_player_head(head)
+        return head
+
     def _assign_npc_heads(self) -> None:
-        """Give every NPC/creature a head sprite.
+        """Give every NPC/creature a head sprite — never the player's.
 
-        A head explicitly set in the editor is always respected — regular head,
-        special guard head, or any browsed PNG under assets/sprites/heads/. Only
-        when no head was set (the '(random)' option, i.e. an empty/invalid head)
-        is one assigned automatically:
+        A head explicitly set in the editor is respected — regular head,
+        special guard head, or any browsed PNG under assets/sprites/heads/ —
+        unless it is the player's head: no NPC ever wears that. A head is
+        assigned when none was set (the '(random)' option, i.e. an
+        empty/invalid head) or the set one is the player's:
 
+        * an animal gets a head of its own kind (:func:`heads.animal_head`):
+          its own image once drawn, the placeholder head until then;
         * an NPC whose name contains "guard" gets a random *guard* head
           (guard01…guard06), matching the editor's guard-head option;
         * everyone else gets a random regular head that is never the player's.
@@ -657,19 +727,26 @@ class MiniwindSession:
             if ttype not in ("npc", "creature", "monster"):
                 continue
             cur = str(p.get("head", "") or "")
-            # Always respect a head explicitly set in the editor (regular, guard,
-            # or browsed). Only roll a random head when none was set.
-            if heads.is_any_head(cur):
+            # Respect a head explicitly set in the editor (regular, guard, or
+            # browsed) unless it is the player's. Otherwise roll one.
+            role = str(p.get("npc_role", "") or "").lower()
+            if heads.is_any_head(cur) and cur != player_head:
                 head = cur
+            elif role in heads.ANIMAL_ROLES:
+                head = heads.animal_head(role, self.rng)
             elif heads.name_is_guard(p.get("name") or p.get("display_name")):
                 head = heads.random_guard_head(self.rng)
             else:
                 head = heads.random_head(self.rng, exclude={player_head})
             path = heads.any_head_path(head)
-            if p.get("head") != head or p.get("custom_idle") != path:
+            size = heads.HEAD_SIZE           # every head is drawn the same size
+            if (p.get("head") != head or p.get("custom_idle") != path
+                    or p.get("sprite_width") != size
+                    or p.get("sprite_height") != size):
                 p["head"] = head
                 p["custom_idle"] = path
                 p["custom_shoot"] = path
+                p["sprite_width"] = p["sprite_height"] = size
                 p.pop("custom_dead", None)   # no custom death sprite (removed)
                 _journal(t)
                 changed = True
@@ -721,7 +798,7 @@ class MiniwindSession:
         World's parking markers. Below :data:`WORLD_INDEX_MIN_ACTORS` nothing
         is built and :meth:`_world_index` answers None.
         """
-        actors = getattr(getattr(self, "logic", None), "_monster_things", None) or ()
+        actors = fio.monster_things(getattr(self, "logic", None))
         if len(actors) < WORLD_INDEX_MIN_ACTORS:
             self._wi_live = False
             return
@@ -735,6 +812,14 @@ class MiniwindSession:
         self._rebuild_world_index()
         self._wi_cache = None
         self._world_index()
+        self._ground_actors()
+        self._ease_zoom(delta)
+        self._update_bow_draw(delta)
+        if self.arrows_in_flight and not fio.projectile_count(self.logic):
+            # Fio does not publish an empty store, so the last arrow to land
+            # is cleared here.
+            self.arrows_in_flight = ()
+            self._arrow_tags.clear()
         self.clock.advance(delta)
         self.game.tick(delta)
         if self._attack_cooldown > 0:
@@ -1035,8 +1120,8 @@ class MiniwindSession:
                 "npc_role": "wraith",
                 "head": REAPER_HEAD,
                 "is_head": True,           # drawn like any other head actor
-                "sprite_width": REAPER_SIZE,
-                "sprite_height": REAPER_SIZE,
+                "sprite_width": heads.HEAD_SIZE,
+                "sprite_height": heads.HEAD_SIZE,
                 "equipped_weapon": REAPER_WEAPON,
                 "inventory": [],
                 "aggression": "passive",
@@ -2157,8 +2242,13 @@ class MiniwindSession:
         if len(self.notifications) > 6:
             self.notifications = self.notifications[-6:]
 
-    def add_floater(self, text, kind="dmg"):
-        self.floaters.append({"text": text, "t": 1.2, "y": 0.0, "kind": kind})
+    def add_floater(self, text, kind="dmg", y=0.0):
+        self.floaters.append({"text": text, "t": 1.2, "y": float(y), "kind": kind})
+
+    def _on_xp(self, amount) -> None:
+        """Experience earned (a kill, a quest): "+N XP" over the player, a
+        line above the "SLAIN" a kill shows at the same moment."""
+        self.add_floater(f"+{int(amount)} XP", kind="xp", y=-26.0)
 
     # ============================================================= NPC AI
     def npcs(self) -> List:
@@ -3817,6 +3907,172 @@ class MiniwindSession:
         # NPCs sliding around the world without ever rotating.
         face_heading(p, dx, dz, delta)
 
+    # ============================================================ bow draw
+    def bow_in_hand(self) -> bool:
+        """Whether the weapon in hand is a bow."""
+        c = getattr(getattr(self, "game", None), "character", None)
+        w = eq.weapon(c) if c is not None else None
+        return bool(w) and w.get("kind") == rpg_items.KIND_BOW
+
+    def bow_draw_input(self, what) -> None:
+        """The view's right mouse, for the bow: "press" starts drawing it,
+        "release" looses the arrow, "cancel" lowers it. Handled next tick."""
+        self._bow_input.append(str(what))
+
+    def _cancel_bow_draw(self) -> None:
+        self.bow_charge = None
+
+    def _update_bow_draw(self, delta) -> None:
+        """Draw the bow while right mouse is held; loose on release.
+
+        The longer it is held (up to BOW_FULL_DRAW_SECONDS) the further the
+        arrow flies. Switching weapons, opening a screen or a conversation, or
+        dying lowers the bow without loosing.
+        """
+        while self._bow_input:
+            what = self._bow_input.popleft()
+            if what == "press":
+                if self.bow_charge is None and self._can_draw_bow():
+                    self.bow_charge = 0.0
+            elif what == "release":
+                charge = self.bow_charge
+                self.bow_charge = None
+                if charge is not None:
+                    self._loose_drawn_arrow(charge)
+            else:
+                self._cancel_bow_draw()
+        if self.bow_charge is None:
+            return
+        c = self.game.character
+        if (not self.bow_in_hand() or c.is_dead or self.open_screen is not None
+                or self.dialogue is not None):
+            self._cancel_bow_draw()
+            return
+        self.bow_charge = min(1.0, self.bow_charge
+                              + max(0.0, float(delta)) / BOW_FULL_DRAW_SECONDS)
+
+    def _can_draw_bow(self) -> bool:
+        c = self.game.character
+        if c.is_dead or not self.bow_in_hand():
+            return False
+        if eq.ammo(c) is None:
+            self.notify("Out of arrows!")
+            return False
+        return True
+
+    def _loose_drawn_arrow(self, charge) -> bool:
+        """Loose an arrow from a bow drawn to *charge* (0..1): the further it
+        was drawn, the further the arrow flies."""
+        c = self.game.character
+        if c.is_dead or self._attack_cooldown > 0:
+            return False
+        if c.stamina < 4:
+            self.notify("Too exhausted to attack")
+            return False
+        w = eq.weapon(c)
+        speed = float(w.get("speed", 1.0)) if w else 1.0
+        if not self.game.fire_arrow():
+            return False
+        self._attack_cooldown = max(0.25, 1.0 / max(0.4, speed))
+        self._attack_anim_time = 0.2
+        charge = min(1.0, max(0.0, float(charge)))
+        self._spawn_player_arrow_projectile(
+            BOW_MIN_RANGE + (BOW_MAX_RANGE - BOW_MIN_RANGE) * charge)
+        return True
+
+    # ================================================================ zoom
+    def _zoom_ceiling(self) -> float:
+        cam = fio.camera(self.logic)
+        limit = getattr(cam, "overhead_height_limit", None)
+        top = ZOOM_MAX_HEIGHT
+        if limit is not None and float(limit) > 0.0:
+            top = min(top, float(limit))
+        return max(ZOOM_MIN_HEIGHT, top)
+
+    def zoom(self, notches) -> None:
+        """Zoom the top-down camera by *notches* of the mouse wheel: positive
+        closer to the player's head, negative further away. The camera follows
+        the player, so the zoom is always centred on them."""
+        cam = fio.camera(self.logic)
+        if cam is None or not notches:
+            return
+        current = self.zoom_height
+        if current is None:
+            current = float(getattr(cam, "overhead_height", 800.0) or 800.0)
+        target = current / (ZOOM_STEP ** float(notches))
+        self.zoom_height = min(self._zoom_ceiling(), max(ZOOM_MIN_HEIGHT, target))
+
+    def _ease_zoom(self, delta) -> None:
+        """Glide the camera toward the height the wheel asked for, and have
+        Big World cover what the camera will see from there."""
+        target = self.zoom_height
+        cam = fio.camera(self.logic)
+        if target is None or cam is None:
+            return
+        if target != getattr(self, "_reach_for", None):
+            self._reach_for = target
+            self._fit_bigworld_reach(cam, target)
+        target = min(target, self._zoom_ceiling())
+        height = float(getattr(cam, "overhead_height", target) or target)
+        if abs(target - height) < 0.5:
+            cam.overhead_height = target
+            return
+        blend = 1.0 - math.exp(-max(0.0, float(delta)) / ZOOM_EASE_SECONDS)
+        cam.overhead_height = height + (target - height) * blend
+
+    def _fit_bigworld_reach(self, cam, height) -> None:
+        """Size Big World's resident area for the camera at *height*: the
+        ground the view reaches scales with the camera's height, so it is read
+        off the current footprint and scaled. Back to the map's own radius when
+        that covers it."""
+        try:
+            fp = cam.overhead_ground_footprint()
+            now = float(cam.effective_overhead_height())
+        except Exception:
+            return
+        if not fp or now <= 0.0:
+            return
+        reach = float(fp[2]) if len(fp) > 2 else math.hypot(fp[0], fp[1])
+        fio.set_bigworld_reach(self.logic,
+                               reach * float(height) / now + ZOOM_REACH_MARGIN)
+
+    def _ground_actors(self) -> None:
+        """Stand every walking actor on the ground under it.
+
+        The engine's AI finds the ground through brushes only, and neither it
+        nor :meth:`_move` changes an actor's height on terrain: an actor kept
+        the height it was placed or spawned at, so one that walked downhill,
+        or stood where the ground was sculpted after it was placed, floated.
+        Each actor's feet are put on :func:`fio.ground_height` -- the terrain
+        or a floor on it -- whenever it has moved since last time. Flyers are
+        left in the air.
+        """
+        logic = self.logic
+        actors = fio.monster_things(logic)
+        if not actors:
+            return
+        seen = self._grounded
+        near = GROUND_RECHECK_DIST
+        with fio.monster_lock(logic) or contextlib.nullcontext():
+            for t in actors:
+                p = t.properties
+                if p.get("monster_type") == "flying":
+                    continue
+                pos = t.pos
+                x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
+                last = seen.get(id(t))
+                if (last is not None and abs(last[0] - x) < near
+                        and abs(last[1] - z) < near and abs(last[2] - y) < 0.5):
+                    continue
+                half = float(p.get("sprite_height", 128) or 128) * 0.5
+                ground = fio.ground_height(logic, x, z,
+                                           below=y - half + GROUND_STEP_UP)
+                if ground is not None:
+                    y = ground + half
+                    if abs(y - float(pos[1])) > 0.5:
+                        t.pos = [pos[0], y, pos[2]]
+                seen[id(t)] = (x, z, y)
+
     def _blocked_by_wall(self, x, y, z) -> bool:
         """Whether an NPC-sized body at (x, y, z) would be inside a solid brush.
 
@@ -3872,50 +4128,13 @@ class MiniwindSession:
         a = getattr(p, "angle", 0.0)
         return (math.sin(a), 0.0, math.cos(a))
 
-    def _pointer_aim(self):
-        """Unit aim vector toward the on-screen pointer, or None.
-
-        Only ever a vector while Settings ▸ GAME ▸ Mouse control is on: the view
-        publishes where the visible cursor is aiming every frame (see
-        ``QtGameView._update_mouse_control``). None means the pointer is not the
-        crosshair and aiming falls back to where the player is facing.
+    def _projectile_aim_point(self, start):
+        """Where a projectile fired from *start* is sent: straight ahead, the
+        way the player is facing, level with the ground (the game is played
+        top-down). With mouse control on the player already faces the pointer,
+        so this is the pointer's direction too. Damage resolves where the
+        projectile actually lands.
         """
-        gs = getattr(self.logic, "game_state", None)
-        getter = getattr(gs, "get_aim_direction", None) if gs is not None else None
-        if not callable(getter):
-            return None
-        try:
-            aim = getter()
-        except Exception:
-            return None
-        if not aim:
-            return None
-        try:
-            x, y, z = (float(aim[0]), float(aim[1]), float(aim[2]))
-        except (TypeError, ValueError, IndexError):
-            return None
-        length = math.sqrt(x * x + y * y + z * z)
-        if length < 1e-6:
-            return None
-        return (x / length, y / length, z / length)
-
-    def _projectile_aim_point(self, start, target):
-        """Where a projectile fired from *start* should be sent.
-
-        With mouse control on, always the pointer: that is the whole point of
-        aiming with it, so a creature merely standing in front no longer steals
-        a shot meant for one behind it. Damage still resolves where the
-        projectile actually lands. Otherwise the old behaviour — the locked-on
-        *target* if there is one, else straight ahead.
-        """
-        aim = self._pointer_aim()
-        if aim is not None:
-            return (start[0] + aim[0] * 1500.0,
-                    start[1] + aim[1] * 1500.0,
-                    start[2] + aim[2] * 1500.0)
-        if target is not None:
-            tp = target.pos
-            return (float(tp[0]), float(tp[1]) + 64.0, float(tp[2]))
         fwd = self._player_forward()
         return (start[0] + fwd[0] * 1500.0, start[1], start[2] + fwd[2] * 1500.0)
 
@@ -4008,10 +4227,9 @@ class MiniwindSession:
             # it flies, can miss by sailing past a moving target, gets stopped
             # by walls, and lands (and its damage is rolled) only once it
             # actually strikes something.
-            target = self._acquire_target(reach, aim_dot=AIM_DOT)
             if not self.game.fire_arrow():
                 return False   # out of arrows — fire_arrow already notified
-            self._spawn_player_arrow_projectile(target)
+            self._spawn_player_arrow_projectile()
             return True
 
         # Melee gets a more forgiving cone than ranged weapons: close-quarters
@@ -4037,9 +4255,9 @@ class MiniwindSession:
             self.add_floater("miss", kind="miss")
         return True
 
-    def _spawn_player_arrow_projectile(self, target=None) -> None:
-        """Loose a physical arrow toward *target* (or straight ahead if none
-        was locked on). Travels and collides through the same engine
+    def _spawn_player_arrow_projectile(self, max_dist=BOW_MAX_RANGE) -> None:
+        """Loose a physical arrow the way the player is facing, to fly up to
+        *max_dist*. Travels and collides through the same engine
         projectile pipeline a spell bolt uses, but — unlike a spell bolt —
         embeds where it lands (``embeds=True``) and resolves its own RPG
         damage on impact via an ``on_hit`` callback instead of a flat number
@@ -4049,10 +4267,11 @@ class MiniwindSession:
         ppos = self._player_pos()
         if lt is None or ppos is None:
             return
-        ARROW_SPEED, ARROW_MAX_DIST = 1600.0, 3000.0
+        max_dist = float(max_dist)
+        sprite = arrow_sprite(eq.equipped_id(self.game.character, "ammo"))
 
         start = [ppos[0], ppos[1] + 48.0, ppos[2]]
-        aim = self._projectile_aim_point(start, target)
+        aim = self._projectile_aim_point(start)
 
         dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
         dlen = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
@@ -4074,9 +4293,35 @@ class MiniwindSession:
 
         # A player-owned arrow: it flies past the archer, stops at its own
         # range, and resolves its RPG damage at the moment it actually hits.
-        fio.spawn_projectile(lt, start, vel,
-                             lifetime=ARROW_MAX_DIST / ARROW_SPEED,
-                             max_dist=ARROW_MAX_DIST, on_hit=_on_hit)
+        row = fio.spawn_projectile(lt, start, vel,
+                                   lifetime=max_dist / ARROW_SPEED,
+                                   max_dist=max_dist, on_hit=_on_hit)
+        tag = fio.projectile_tag(lt, row)
+        if tag:
+            self._arrow_tags[tag] = sprite
+
+    def _split_projectiles(self, store, count):
+        """Which projectiles Fio draws: all but the arrows, which the game
+        draws itself. Publishes the arrows in flight as it goes.
+
+        Called by Fio, under the monster lock, when it publishes a frame's
+        projectiles (fio.set_projectile_split).
+        """
+        arrows = self._arrow_tags
+        if not arrows:
+            self.arrows_in_flight = ()
+            return None
+        tags = store.tag[:count]
+        is_arrow = np.isin(tags, np.fromiter(arrows, dtype=np.int64, count=len(arrows)))
+        rows = np.flatnonzero(is_arrow).tolist()
+        self.arrows_in_flight = tuple(
+            (tuple(store.pos[r].tolist()), tuple(store.vel[r].tolist()),
+             arrows[int(tags[r])])
+            for r in rows)
+        live = set(int(t) for t in tags[rows])
+        for tag in [t for t in arrows if t not in live]:
+            del arrows[tag]
+        return ~is_arrow
 
     def _staff_attack(self, w) -> bool:
         """Channel a staff's bound spell (called from do_attack for KIND_STAFF)."""
@@ -4259,7 +4504,7 @@ class MiniwindSession:
             MONSTER_PROJECTILE_SPEED, MONSTER_PROJECTILE_MAX_DIST)
 
         start = [ppos[0], ppos[1] + 48.0, ppos[2]]
-        aim = self._projectile_aim_point(start, self._acquire_target(BOW_REACH))
+        aim = self._projectile_aim_point(start)
 
         dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
         dlen = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
@@ -4443,6 +4688,13 @@ class MiniwindSession:
 
     def _on_creature_killed(self, target):
         self.add_floater("SLAIN", kind="kill")
+        # The kill's experience (its xp_value), shown as "+N XP" by _on_xp.
+        try:
+            xp = int(float(target.properties.get("xp_value", 0) or 0))
+        except (TypeError, ValueError, AttributeError):
+            xp = 0
+        if xp > 0:
+            self.game.award_xp(xp)
         # Count the kill so a quest 'kill' objective can complete.
         self.record_kill(target)
         # guards react to murder of innocents nearby handled by faction hostility
@@ -4923,7 +5175,5 @@ class MiniwindSession:
             self.needs_char_creation = False
             self._sync_engine_health(full=True)
             # Re-apply the saved head so the player billboard matches on load.
-            head = getattr(self.game.character, "head", "") or self.store.get("player_head", "")
-            if head and head != "false":
-                self._apply_player_head(head)
+            self._ensure_player_head()
             self._assign_npc_heads()

@@ -80,6 +80,65 @@ def draw(painter, session, width, height):
         _draw_interact_prompt(painter, session, width, height)
 
 
+#: The bow-draw pie's radius, and how far it sits out from the player's head:
+#: tucked against its upper right edge, this fraction of the pie outside it.
+BOW_PIE_RADIUS = 14
+BOW_PIE_OUTSIDE = 0.35
+#: The player's head is drawn this many world units across (the overhead
+#: sprite size), which is how big it is on screen at any zoom.
+PLAYER_HEAD_SIZE = 128.0
+
+
+def draw_bow_charge(painter, session, viewport, width, height):
+    """While right mouse draws the bow: a pie tucked against the upper right
+    of the player's head that fills as the draw lengthens (a fuller pie, a
+    longer shot). Gone once the arrow is loosed or the draw is lowered.
+
+    Placed from the player's head as drawn -- projected through the live
+    camera -- so it stays against the head however far the camera is zoomed.
+    """
+    charge = getattr(session, "bow_charge", None)
+    if charge is None or session.open_screen is not None or session.dialogue is not None:
+        return
+    charge = max(0.0, min(1.0, float(charge)))
+    from .. import fio
+    player = fio.player(getattr(viewport, "logic_thread", None))
+    centre = edge = None
+    if player is not None:
+        try:
+            import glm
+            proj, view = viewport.projection_matrix, viewport.view_matrix
+            x, y, z = (float(v) for v in player.pos)
+            centre = _world_to_screen(glm, proj, view, x, y, z, width, height)
+            edge = _world_to_screen(glm, proj, view, x + PLAYER_HEAD_SIZE / 2, y, z,
+                                    width, height)
+        except Exception:
+            centre = edge = None
+    if centre is None or edge is None:
+        centre, head_r = (width / 2.0, height / 2.0), 30.0
+    else:
+        head_r = max(8.0, math.hypot(edge[0] - centre[0], edge[1] - centre[1]))
+    r = BOW_PIE_RADIUS
+    out = head_r + r * (2.0 * BOW_PIE_OUTSIDE - 1.0)
+    cx = int(round(centre[0] + out * math.cos(math.radians(45))))
+    cy = int(round(centre[1] - out * math.sin(math.radians(45))))
+    box = QRect(cx - r, cy - r, 2 * r, 2 * r)
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(10, 10, 14, 170))
+    painter.drawEllipse(box)
+    full = charge >= 1.0
+    painter.setBrush(QColor(255, 214, 90, 235) if full else QColor(235, 225, 200, 220))
+    # Qt measures pie angles in 1/16 degree, anticlockwise from 3 o'clock:
+    # start at 12 o'clock and fill clockwise.
+    painter.drawPie(box, 90 * 16, -int(round(charge * 360 * 16)))
+    painter.setBrush(Qt.NoBrush)
+    painter.setPen(QPen(QColor(255, 214, 90) if full else QColor(30, 26, 20), 2))
+    painter.drawEllipse(box)
+    painter.restore()
+
+
 def _draw_interact_prompt(painter, session, width, height):
     """The 'Press E to talk to …' prompt, centred low on screen. MiniWind draws
     it itself because it suppresses the engine's default HUD."""
@@ -913,13 +972,13 @@ def _draw_floaters(painter, session, width, height):
         "sneak": QColor(200, 160, 255), "miss": QColor(160, 160, 170),
         "fire": QColor(255, 140, 60), "frost": QColor(150, 210, 255),
         "shock": QColor(230, 230, 120), "kill": QColor(255, 90, 90),
-        "hurt": QColor(255, 80, 80),
+        "hurt": QColor(255, 80, 80), "xp": QColor(255, 214, 90),
     }
     for i, f in enumerate(session.floaters):
         col = QColor(colors.get(f["kind"], QColor(240, 240, 240)))
         col.setAlpha(max(0, min(255, int(f["t"] / 1.2 * 255))))
         fx = cx + ((i * 37) % 120) - 60
-        size = 15 if f["kind"] in ("crit", "sneak", "kill") else 12
+        size = 15 if f["kind"] in ("crit", "sneak", "kill", "xp") else 12
         T.text(painter, fx, height // 2 + int(f["y"]), f["text"], size=size,
                color=col, bold=True, family="Segoe UI")
 

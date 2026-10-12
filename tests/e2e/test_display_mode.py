@@ -1,7 +1,7 @@
 """The editor's Display box is host state; renderers only receive it.
 
-The Display box ("Wireframe", "Points", "Solid Lit", "Textured", "Overlay") defaults to
-Textured, and the box plus ``r_wireframe`` set the view's display mode. The host publishes it as the
+The Display box ("Wireframe", "Points", "Solid Lit", "Textured", "Overlay") and
+``r_wireframe`` set the view's display mode. The host publishes it as the
 ``brush_display_mode`` frame input, so:
 
 * any renderer -- here one that shares nothing with ``ForwardRenderer`` -- sees
@@ -53,6 +53,9 @@ def _level(textured=True):
 def _open(fio_session, level=None):
     session = fio_session(level or _level(), size=(240, 160))
     session.view.sysmon.set_active(False)
+    # The FPS counter's digits depend on how fast the machine draws, and
+    # these pictures are compared pixel for pixel.
+    session.view.editor.config.set("Display", "show_fps", "False")
     return session
 
 
@@ -68,8 +71,6 @@ def _diff(a, b):
 def test_the_display_box_reaches_any_renderer_on_the_next_frame(fio_session, flat):
     session = _open(fio_session)
     window, view = session.window, session.view
-    assert window.display_mode_combobox.currentText() == "Textured"
-    assert view.brush_display_mode == "Textured"
     assert view.switch_renderer("Flat")
     renderer = view.renderer
     before = dict(vars(renderer))
@@ -136,6 +137,9 @@ def test_play_is_drawn_textured_unless_wireframe_is_on(fio_session, flat):
 
 def _pictures(session):
     combo = session.window.display_mode_combobox
+    # The view the checks below are drawn from: above the spawn, looking down
+    # the room at the crate. Loading a map puts the camera on the PlayerStart.
+    session.view.set_editor_camera((0.0, 150.0, 400.0), yaw=-90.0, pitch=0.0)
     session.publish()
     pictures = {}
     for mode in MODES:

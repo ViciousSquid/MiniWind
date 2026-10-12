@@ -76,6 +76,35 @@ def _fmt(value) -> str:
     return str(value)
 
 
+#: A need at or over this level shows in the actor's mood.
+MOOD_NEED_LEVEL = 0.7
+
+
+def mood(props, target=None, confidence=None) -> Tuple[str, str]:
+    """``(mood, why)``: how an actor feels, read from what it is doing.
+
+    Frightened while fleeing (or out-matched by a threat), angry while it
+    has a target, otherwise hungry or tired when a need is high, and calm
+    when nothing presses on it.
+    """
+    if props.get("dead"):
+        return "dead", ""
+    state = str(_get(props, "sched_state", default="")).upper()
+    if props.get("_flee") or state == "FLEE":
+        return "frightened", "fleeing to safety"
+    if confidence is not None and isinstance(confidence, (int, float)) and confidence < 0.5:
+        return "uneasy", "a threat is near"
+    if target or state in ("ATTACK", "CHASE", "ALERT"):
+        return "angry", f"after {target}" if target else "on alert"
+    hunger = float(_get(props, "need_hunger", default=0.0) or 0.0)
+    fatigue = float(_get(props, "need_fatigue", default=0.0) or 0.0)
+    if hunger >= MOOD_NEED_LEVEL and hunger >= fatigue:
+        return "hungry", f"hunger {hunger:.2f}"
+    if fatigue >= MOOD_NEED_LEVEL:
+        return "tired", f"fatigue {fatigue:.2f}"
+    return "calm", ""
+
+
 def snapshot(thing, monster_state: Optional[dict] = None,
              session: Optional[object] = None) -> Dict[str, Any]:
     """Build a display-ready mental-state snapshot for *thing*.
@@ -157,6 +186,10 @@ def snapshot(thing, monster_state: Optional[dict] = None,
             if confidence is not None:
                 ai.append(("Confidence vs threat", _fmt(confidence)))
 
+    # ---- Mood -------------------------------------------------------------
+    feeling, feeling_why = mood(props, target, confidence)
+    ai.insert(0, ("Mood", f"{feeling} — {feeling_why}" if feeling_why else feeling))
+
     # ---- Task list (prioritised) ------------------------------------
     tasks = _build_tasks(props, sched_state, target, investigating, confidence)
 
@@ -170,6 +203,10 @@ def snapshot(thing, monster_state: Optional[dict] = None,
         ("Vitals & Combat", vitals),
         ("AI State", ai),
     ]
+    if "need_fatigue" in props or "need_hunger" in props:
+        sections.append(("Needs", [
+            ("Hunger", _fmt(_get(props, "need_hunger", default=0.0))),
+            ("Fatigue", _fmt(_get(props, "need_fatigue", default=0.0)))]))
 
     # ---- Why (the reactive simulation's own explanation) --------------------
     # The single most useful line in the inspector: what this actor knows that

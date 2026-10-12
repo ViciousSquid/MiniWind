@@ -13,10 +13,11 @@ Progression model (learn-by-doing, in the tradition of many fantasy RPGs):
 * **Skills improve by use.** ``use_skill(id, difficulty)`` grants skill XP; when
   it crosses the threshold the skill rises by a point. Raising a *major* skill
   also advances a hidden level-up counter.
-* **Levels come from training major skills.** Every ten major-skill increases the
-  character may :meth:`level_up`, which raises the two favoured attributes and a
-  couple of the attributes governing the skills trained this level, and adds
-  health from Endurance.
+* **Levels come from training major skills, or from experience.** Every ten
+  major-skill increases -- or :func:`xp_to_next` experience points, earned by
+  kills and quests (:meth:`add_xp`) -- the character may :meth:`level_up`,
+  which raises the two favoured attributes and a couple of the attributes
+  governing the skills trained this level, and adds health from Endurance.
 * **Derived pools** are recomputed from attributes whenever those change.
 """
 
@@ -33,6 +34,13 @@ from . import birthsigns
 
 #: Major-skill increases needed to earn one character level.
 SKILL_UPS_PER_LEVEL = 10
+#: Experience points (kills, quests) per level: level L needs L times this.
+XP_PER_LEVEL = 100
+
+
+def xp_to_next(level: int) -> int:
+    """Experience points needed to go from *level* to the next one."""
+    return XP_PER_LEVEL * max(1, int(level))
 
 
 class Character:
@@ -63,6 +71,7 @@ class Character:
         # progression
         self.level = 1
         self.xp_progress = 0            # major-skill-ups since last level
+        self.xp = 0                     # experience points toward the next level
         self._skill_xp: Dict[str, float] = {}  # fractional XP per skill
         # per-level: how many skill-ups happened under each governing attribute
         self._level_attr_gains: Dict[str, int] = {a: 0 for a in attr.ATTRIBUTES}
@@ -227,9 +236,22 @@ class Character:
         if skill_id in self.major_skills:
             self.xp_progress += 1
 
+    def add_xp(self, amount) -> int:
+        """Earn *amount* experience points (kills, quests); returns it."""
+        amount = max(0, int(amount or 0))
+        self.xp += amount
+        return amount
+
+    @property
+    def xp_needed(self) -> int:
+        """Experience points needed for the next level."""
+        return xp_to_next(self.level)
+
     @property
     def can_level_up(self) -> bool:
-        return self.xp_progress >= SKILL_UPS_PER_LEVEL
+        """Either track full: ten major-skill increases, or enough experience."""
+        return (self.xp_progress >= SKILL_UPS_PER_LEVEL
+                or self.xp >= self.xp_needed)
 
     def level_up(self, chosen_attrs: Optional[List[str]] = None) -> Dict:
         """Advance one character level.
@@ -238,11 +260,14 @@ class Character:
         otherwise the two favoured attributes plus the most-trained attribute
         this level are chosen automatically. Returns a summary dict.
         """
-        if self.xp_progress < SKILL_UPS_PER_LEVEL:
-            # allow forced level-up too, but normally gated
-            pass
+        # The level is paid for by whichever track is full -- the skill
+        # training first -- and the other keeps its progress. (A forced
+        # level-up with neither full spends nothing.)
+        if self.xp_progress >= SKILL_UPS_PER_LEVEL:
+            self.xp_progress -= SKILL_UPS_PER_LEVEL
+        elif self.xp >= self.xp_needed:
+            self.xp -= self.xp_needed
         self.level += 1
-        self.xp_progress = max(0, self.xp_progress - SKILL_UPS_PER_LEVEL)
 
         if not chosen_attrs:
             klass = cls.get(self.class_id)
@@ -342,7 +367,7 @@ class Character:
             "major_skills": list(self.major_skills),
             "health": round(self.health, 2), "max_health": round(self.max_health, 2),
             "magicka": round(self.magicka, 2), "stamina": round(self.stamina, 2),
-            "level": self.level, "xp_progress": self.xp_progress,
+            "level": self.level, "xp_progress": self.xp_progress, "xp": self.xp,
             "skill_xp": dict(self._skill_xp),
             "level_attr_gains": dict(self._level_attr_gains),
             "accum_health": self._accum_health,
@@ -378,6 +403,7 @@ class Character:
         c._sign_stat_bonuses = dict(data.get("sign_stat_bonuses", {}))
         c.level = int(data.get("level", 1))
         c.xp_progress = int(data.get("xp_progress", 0))
+        c.xp = int(data.get("xp", 0))
         c.gold = int(data.get("gold", 25))
         c.inventory = list(data.get("inventory", []))
         c.equipment = dict(data.get("equipment", {}))

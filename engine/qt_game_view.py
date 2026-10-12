@@ -1,13 +1,18 @@
+import contextlib
+import io
 import time
+import weakref
 import os
 import math
+import zipfile
 from collections import deque
 import numpy as np
 import ctypes
 from typing import Optional
+from PyQt5 import sip
 from PyQt5.QtWidgets import QOpenGLWidget, QApplication, QLineEdit
-from PyQt5.QtCore import Qt, QTimer, QPoint, QRect, QEvent, pyqtSignal
-from PyQt5.QtGui import QPainter, QColor, QFont, QCursor, QPen, QBrush, QKeySequence, QPixmap, QSurfaceFormat, QFontMetrics, QImage, QLinearGradient, QFontDatabase
+from PyQt5.QtCore import Qt, QTimer, QPoint, QRect, QEvent, QThread, pyqtSignal
+from PyQt5.QtGui import QOpenGLContext, QPainter, QColor, QFont, QCursor, QPen, QBrush, QKeySequence, QPixmap, QSurfaceFormat, QFontMetrics, QImage, QLinearGradient, QFontDatabase
 import OpenGL.GL as gl
 from OpenGL.GL.shaders import compileProgram, compileShader
 import glm
@@ -445,23 +450,54 @@ class QtGameView(QOpenGLWidget):
         self.setMouseTracking(True)
 
     def _init_sound_system(self):
-        """Preload sounds into pygame mixer cache."""
+        """Preload sounds from assets/sounds.fiopak, or the legacy loose folder."""
         if not self._ensure_pygame_mixer():
             print("[Audio] Sound system unavailable — mixer could not be initialized")
             return
 
-        sound_dir = os.path.join(os.getcwd(), 'assets', 'sounds')
-        if not os.path.exists(sound_dir):
-            print("[Audio] Warning: assets/sounds directory not found.")
+        from engine.audio_archives import list_archive_audio, read_archive_audio
+
+        sound_archive = os.path.join(os.getcwd(), "assets", "sounds.fiopak")
+        if os.path.isfile(sound_archive):
+            try:
+                members = list_archive_audio(sound_archive, "assets/sounds")
+            except (OSError, zipfile.BadZipFile) as exc:
+                print(f"[Audio] Cannot read sounds.fiopak: {exc}")
+                return
+
+            print("[Audio] Preloading sounds from sounds.fiopak...")
+            count = 0
+            for member in members:
+                try:
+                    data = read_archive_audio(sound_archive, member, "assets/sounds")
+                except (OSError, zipfile.BadZipFile) as exc:
+                    print(f"[Audio] Cannot read {member}: {exc}")
+                    continue
+                if data is None:
+                    continue
+                relative = member[len("assets/sounds/"):]
+                keys = [member]
+                # Preserve legacy bare-filename lookup for files directly under
+                # assets/sounds; nested paths use their full project-relative key.
+                if "/" not in relative:
+                    keys.append(relative)
+                if self._load_sound_bytes_to_cache(keys, data):
+                    count += 1
+            print(f"[Audio] Preloaded {count} sound files from sounds.fiopak.")
+            return
+
+        sound_dir = os.path.join(os.getcwd(), "assets", "sounds")
+        if not os.path.isdir(sound_dir):
+            print("[Audio] Warning: assets/sounds directory and sounds.fiopak not found.")
             return
 
         print("[Audio] Preloading sounds...")
         count = 0
         for f in os.listdir(sound_dir):
-            if f.lower().endswith(('.wav', '.mp3', '.ogg')):
+            if f.lower().endswith((".wav", ".mp3", ".ogg")):
                 full_path = os.path.join(sound_dir, f)
-                self._load_sound_to_cache(f, full_path)
-                count += 1
+                if self._load_sound_to_cache(f, full_path):
+                    count += 1
         print(f"[Audio] Preloaded {count} sound files.")
 
     #: Seconds between attempts to open the audio device after one failed.
@@ -508,12 +544,62 @@ class QtGameView(QOpenGLWidget):
             print(f"[Audio] Failed to load {name}: {e}")
             return False
 
-    def _get_sound_instance(self, name):
-        """Get a pygame Sound object by name. Loads on-demand if not cached.
+    def _load_sound_bytes_to_cache(self, names, data):
+        """Load one in-memory audio file and index it by all supplied names."""
+        if not self._ensure_pygame_mixer():
+            print(f"[Audio] Failed to load {names[0]}: mixer not initialized")
+            return False
 
-        A path into assets/sounds or assets/music (what a Speaker sends,
-        ``assets/music/theme.ogg``) loads that file, subfolders included; any
-        other name is looked up by its basename in assets/sounds.
+        existing = next((self.sound_pool[name] for name in names
+                         if name in self.sound_pool), None)
+        if existing is not None:
+            for name in names:
+                self.sound_pool.setdefault(name, existing)
+            return True
+
+        try:
+            sound = pygame.mixer.Sound(file=io.BytesIO(data))
+            for name in names:
+                self.sound_pool[name] = sound
+            return True
+        except Exception as exc:
+            print(f"[Audio] Failed to load archived sound {names[0]}: {exc}")
+            return False
+
+    def _load_sound_from_archive(self, rel):
+        """Resolve an explicit audio path from sounds.fiopak or music.fiopak."""
+        from engine.audio_archives import read_archive_audio
+
+        if rel.startswith("assets/sounds/"):
+            asset_root = "assets/sounds"
+            archive_path = os.path.join(os.getcwd(), "assets", "sounds.fiopak")
+        elif rel.startswith("assets/music/"):
+            asset_root = "assets/music"
+            archive_path = os.path.join(os.getcwd(), "assets", "music.fiopak")
+        else:
+            return False
+        if not os.path.isfile(archive_path):
+            return False
+        try:
+            data = read_archive_audio(archive_path, rel, asset_root)
+        except (OSError, zipfile.BadZipFile) as exc:
+            print(f"[Audio] Cannot read {os.path.basename(archive_path)}: {exc}")
+            return False
+        if data is None:
+            return False
+
+        keys = [rel]
+        relative = rel[len(asset_root) + 1:]
+        if asset_root == "assets/sounds" and "/" not in relative:
+            keys.append(relative)
+        return self._load_sound_bytes_to_cache(keys, data)
+
+    def _get_sound_instance(self, name):
+        """Get a cached sound or load it from an archive / legacy loose path.
+
+        Explicit assets/sounds/... and assets/music/... paths are resolved
+        against their corresponding .fiopak first; bare names still refer to
+        assets/sounds and retain the same cache keys as before.
         """
         from engine.speaker_audio import resolve_speaker_sound, speaker_sound_path
         rel = speaker_sound_path(name) if '/' in str(name).replace('\\', '/') else None
@@ -522,32 +608,35 @@ class QtGameView(QOpenGLWidget):
                 return self.sound_pool[rel]
             if not self._ensure_pygame_mixer():
                 return None
+            if self._load_sound_from_archive(rel):
+                return self.sound_pool[rel]
             path = resolve_speaker_sound(rel, os.getcwd())
             if path and os.path.isfile(path) and self._load_sound_to_cache(rel, path):
                 return self.sound_pool[rel]
             print(f"[Audio] Sound not found: {rel}")
             return None
         clean_name = os.path.basename(name)
-        
+
         # Already cached?
         if clean_name in self.sound_pool:
             return self.sound_pool[clean_name]
-        # No audio device: nothing can load. Its failure was reported once
-        # when the mixer was probed; do not probe the disk and log two more
-        # lines for every sound the game asks for.
         if not self._ensure_pygame_mixer():
             return None
-        
-        # Try to load on-demand
+
+        # Bare names intentionally resolve only in sounds.fiopak / assets/sounds.
+        rel = f"assets/sounds/{clean_name}"
+        if self._load_sound_from_archive(rel):
+            if clean_name in self.sound_pool:
+                return self.sound_pool[clean_name]
+            return self.sound_pool.get(rel)
+
         path = os.path.join(os.getcwd(), 'assets', 'sounds', clean_name)
         if os.path.exists(path):
             if self._load_sound_to_cache(clean_name, path):
                 return self.sound_pool[clean_name]
-        
+
         print(f"[Audio] Sound not found: {clean_name}")
         return None
-       
-
 
     @staticmethod
     def _hud_count_baseline(metrics, text, bottom):
@@ -1129,6 +1218,14 @@ class QtGameView(QOpenGLWidget):
 
 
     def initializeGL(self):
+        # Terrain deletes its GL objects from the GUI thread too (opening a
+        # map, the terrain editor); they must go to this view's context.
+        # Held weakly: a class attribute outlives the view, and a bound method
+        # there would keep this view -- and its editor window -- alive after
+        # it closes, then hand the next view's terrain a deleted context.
+        from engine.terrain import Terrain
+        gl_context = weakref.WeakMethod(self.gl_context)
+        Terrain.gl_context = lambda: (gl_context() or contextlib.nullcontext)()
         gl.glClearColor(*self.view_distance.fog_color, 1.0)
         config = self.editor.config
         self._renderer_mode = DEFAULT_RENDERER
@@ -1202,6 +1299,23 @@ class QtGameView(QOpenGLWidget):
             self.editor._exit_play_mode()
         if message:
             self._play_mode_hint = "Logic tick failed; Play Mode stopped"
+
+    def set_editor_camera(self, pos, yaw=None, pitch=None):
+        """Move the editor camera, keeping *yaw*/*pitch* unless given.
+
+        The logic thread owns the editor camera: every paint copies this
+        view's camera back from the published render state. A move made here
+        alone is undone by the next frame, so it is made on both.
+        """
+        camera = self.camera
+        camera.pos = glm.vec3(pos)
+        if yaw is not None:
+            camera.yaw = float(yaw)
+        if pitch is not None:
+            camera.pitch = float(pitch)
+        if self.logic_thread is not None:
+            self.logic_thread.camera.set_editor_camera(
+                camera.pos, camera.yaw, camera.pitch, camera.fov)
 
     def _start_logic_thread(self):
         if self._thread_started:
@@ -2902,8 +3016,8 @@ class QtGameView(QOpenGLWidget):
         from engine.pause_menu import Item, Page
         editor = self.editor
         return Page("Options", [
-            Item("Sound Volume", slider=(editor.sound_volume, editor.set_sound_volume, 0, 100, 5)),
-            Item("Music Volume", slider=(editor.music_volume, editor.set_music_volume, 0, 100, 5)),
+            Item("Sound", slider=(editor.sound_volume, editor.set_sound_volume, 0, 100, 5)),
+            Item("Music", slider=(editor.music_volume, editor.set_music_volume, 0, 100, 5)),
             Item("Video", page=self._pause_video_page),
         ])
 
@@ -3393,6 +3507,29 @@ class QtGameView(QOpenGLWidget):
         finally:
             self.doneCurrent()
             self.update()
+
+    @contextlib.contextmanager
+    def gl_context(self):
+        """Make this view's GL context current for GL work outside paintGL.
+
+        Outside paintGL the current context is usually Qt's own compositing
+        context, which shares buffers and textures with this one but not VAOs:
+        GL calls made there free the wrong objects and corrupt driver state.
+        A no-op when this context is already current (inside paintGL), before
+        the context exists or after the view is deleted, or off the GUI
+        thread, where makeCurrent is unsafe.
+        """
+        ctx = None if sip.isdeleted(self) else self.context()
+        if (ctx is None or not ctx.isValid()
+                or QOpenGLContext.currentContext() is ctx
+                or QThread.currentThread() is not self.thread()):
+            yield
+            return
+        self.makeCurrent()
+        try:
+            yield
+        finally:
+            self.doneCurrent()
 
     def get_primary_selection_pos(self):
         if not self.editor.primary_selection():
@@ -4688,7 +4825,7 @@ class QtGameView(QOpenGLWidget):
             self._toggle_splitscreen()
             return
         if self.play_mode and event.key() == Qt.Key_F12:
-            if self.editor.is_kiosk_mode:
+            if getattr(self.editor, 'is_kiosk_mode', False):
                 self.editor.exit_kiosk_mode(keep_play_mode=True)
             else:
                 self.editor.enter_kiosk_mode()

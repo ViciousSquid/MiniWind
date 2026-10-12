@@ -1,4 +1,4 @@
-"""Play and Stop, again and again, on a real map: nothing accumulates.
+"""Play and Stop, again and again, on a whole level: nothing accumulates.
 
 Each Play starts a monster AI thread, a physics world, a spatial grid, an
 effect store session and the plugins' play hooks; each Stop must take all of
@@ -16,9 +16,12 @@ pytest.importorskip("PyQt5")
 
 from PyQt5.QtCore import Qt                     # noqa: E402
 
+from tests.helpers import scenes                # noqa: E402
+
 pytestmark = [pytest.mark.qt, pytest.mark.integration, pytest.mark.slow]
 
-MAP = "maps/MonsterTest.json"
+#: A room with a patrolling monster, a pickup and a level change.
+MAP = scenes.monster_arena()
 CYCLES = 30
 
 

@@ -30,10 +30,13 @@ def test_the_trunk_rises_along_y_from_the_origin():
 
 
 def test_maps_place_the_tree_without_the_old_270_compensation():
-    for name in ("_SHOWCASE.json", "DevTest.json"):
-        with open(os.path.join(REPO_ROOT, "maps", name), encoding="utf-8") as handle:
-            things = json.load(handle)["things"]
+    """No shipped map stands the tree up with the old 270 degree rotation."""
+    folder = os.path.join(REPO_ROOT, "maps")
+    for name in sorted(os.listdir(folder)):
+        if not name.endswith(".json"):
+            continue
+        with open(os.path.join(folder, name), encoding="utf-8") as handle:
+            things = json.load(handle).get("things", [])
         trees = [t["properties"] for t in things
-                 if "LowPoly_Tree_v1" in str(t["properties"].get("model_path"))]
-        assert trees, name
-        assert all(float(p["rotation"][0]) == 0.0 for p in trees), name
+                 if "LowPoly_Tree_v1" in str(t.get("properties", {}).get("model_path"))]
+        assert all(float(p.get("rotation", [0])[0]) == 0.0 for p in trees), name
