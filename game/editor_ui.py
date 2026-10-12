@@ -382,14 +382,14 @@ def _InventoryTab(thing, QtWidgets, QtCore):
     ROLE_STACK = int(Qt.UserRole)
     ICON = 56
 
-    def _badged_icon(stack):
-        """QIcon for a stack, with a small quantity badge when qty > 1."""
+    def _badged_icon(stack, size=ICON):
+        """QIcon for a stack at *size* px, with a small quantity badge when qty > 1."""
         from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QFont, QPen
         pm = None
         if item_icons is not None:
-            pm = item_icons.icon_pixmap(stack.get("id"), stack, ICON)
+            pm = item_icons.icon_pixmap(stack.get("id"), stack, size)
         if pm is None:
-            pm = QPixmap(ICON, ICON)
+            pm = QPixmap(size, size)
             pm.fill(QColor(70, 72, 82))
         qty = int(stack.get("qty", 1) or 1)
         # Rarity ring
@@ -401,23 +401,23 @@ def _InventoryTab(thing, QtWidgets, QtCore):
             except Exception:
                 rgb = None
         if qty > 1 or rgb:
-            canvas = QPixmap(ICON, ICON)
+            canvas = QPixmap(size, size)
             canvas.fill(Qt.transparent)
             p = QPainter(canvas)
             p.setRenderHint(QPainter.Antialiasing, True)
             if rgb:
                 p.setPen(QPen(QColor(*rgb), 2))
                 p.setBrush(Qt.NoBrush)
-                p.drawRoundedRect(1, 1, ICON - 2, ICON - 2, 6, 6)
-            p.drawPixmap((ICON - pm.width()) // 2, (ICON - pm.height()) // 2, pm)
+                p.drawRoundedRect(1, 1, size - 2, size - 2, 6, 6)
+            p.drawPixmap((size - pm.width()) // 2, (size - pm.height()) // 2, pm)
             if qty > 1:
                 txt = f"×{qty}"
                 f = QFont(); f.setPointSize(9); f.setBold(True); p.setFont(f)
                 fm = p.fontMetrics(); tw = fm.horizontalAdvance(txt) + 6
                 p.setBrush(QColor(20, 20, 26, 220)); p.setPen(Qt.NoPen)
-                p.drawRoundedRect(ICON - tw - 1, ICON - 17, tw, 15, 4, 4)
+                p.drawRoundedRect(size - tw - 1, size - 17, tw, 15, 4, 4)
                 p.setPen(QColor(245, 224, 150))
-                p.drawText(ICON - tw + 2, ICON - 5, txt)
+                p.drawText(size - tw + 2, size - 5, txt)
             p.end()
             return QIcon(canvas)
         return QIcon(pm)
@@ -651,16 +651,31 @@ def _InventoryTab(thing, QtWidgets, QtCore):
     return Tab()
 
 
+#: The Add Item catalogue: the size it opens at (never more than
+#: PICKER_SCREEN_FRACTION of the screen), its icons and the cell round each.
+PICKER_SIZE = (840, 640)
+PICKER_SCREEN_FRACTION = 0.85
+PICKER_ICON = 50
+PICKER_CELL = (110, 100)
+
+
 def _ItemPicker(parent, QtWidgets, QtCore, item_icons, itemdb, badged):
-    """A modal catalogue: every item from the DB shown as an icon grid with a
-    live filter box; returns a fresh stack dict for the chosen item (or None)."""
+    """A modal catalogue: every item from the DB shown as a grid of big icons
+    with a live filter box; returns a fresh stack dict for the chosen item
+    (or None)."""
     Qt = QtCore.Qt
 
     class Picker(QtWidgets.QDialog):
         def __init__(self):
             super().__init__(parent)
             self.setWindowTitle("Add Item")
-            self.resize(520, 440)
+            w, h = PICKER_SIZE
+            screen = QtWidgets.QApplication.primaryScreen()
+            if screen is not None:
+                avail = screen.availableGeometry()
+                w = min(w, int(avail.width() * PICKER_SCREEN_FRACTION))
+                h = min(h, int(avail.height() * PICKER_SCREEN_FRACTION))
+            self.resize(w, h)
             self.result_stack = None
             v = QtWidgets.QVBoxLayout(self)
             self.filter = QtWidgets.QLineEdit()
@@ -668,16 +683,9 @@ def _ItemPicker(parent, QtWidgets, QtCore, item_icons, itemdb, badged):
             self.filter.textChanged.connect(self._apply_filter)
             v.addWidget(self.filter)
             self.grid = QtWidgets.QListWidget()
-            # A smaller-than-default font keeps the item names readable and lets
-            # them wrap onto two lines instead of being cut off (they were
-            # oversized, especially on high-DPI displays).
-            gf = QtWidgets.QApplication.font()
-            _pt = gf.pointSizeF()
-            gf.setPointSizeF(max(7.0, (_pt if _pt > 0 else 9.0) - 2.0))
-            self.grid.setFont(gf)
             self.grid.setViewMode(QtWidgets.QListView.IconMode)
-            self.grid.setIconSize(QtCore.QSize(44, 44))
-            self.grid.setGridSize(QtCore.QSize(118, 100))
+            self.grid.setIconSize(QtCore.QSize(PICKER_ICON, PICKER_ICON))
+            self.grid.setGridSize(QtCore.QSize(*PICKER_CELL))
             self.grid.setResizeMode(QtWidgets.QListView.Adjust)
             self.grid.setMovement(QtWidgets.QListView.Static)
             self.grid.setWordWrap(True)
@@ -707,14 +715,14 @@ def _ItemPicker(parent, QtWidgets, QtCore, item_icons, itemdb, badged):
 
         def _populate(self):
             for iid, name, cat, stack in self._catalogue():
-                it = QtWidgets.QListWidgetItem(badged(stack), name)
+                it = QtWidgets.QListWidgetItem(badged(stack, PICKER_ICON), name)
                 it.setData(int(Qt.UserRole), stack)
                 it.setData(int(Qt.UserRole) + 1, f"{iid} {name} {cat}".lower())
                 it.setTextAlignment(Qt.AlignHCenter | Qt.AlignTop)
                 it.setToolTip(f"{name}  ({cat})\nid: {iid}")
                 # Explicit size hint so the name wraps at the cell width rather
                 # than being clipped to the icon width.
-                it.setSizeHint(QtCore.QSize(112, 96))
+                it.setSizeHint(QtCore.QSize(PICKER_CELL[0] - 6, PICKER_CELL[1] - 6))
                 self.grid.addItem(it)
             if self.grid.count():
                 self.grid.setCurrentRow(0)
