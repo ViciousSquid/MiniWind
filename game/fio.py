@@ -50,6 +50,45 @@ def terrain(logic):
     return getattr(runtime, "terrain", None)
 
 
+def monster_things(logic) -> list:
+    """The session's actors (monsters, NPCs, creatures), as the AI sees them."""
+    runtime = getattr(logic, "world_runtime", None)
+    return getattr(runtime, "monster_things", None) or []
+
+
+def monster_lock(logic):
+    """The lock the monster AI holds while it moves actors, or None."""
+    session = getattr(logic, "session_runtime", None)
+    return getattr(session, "monster_lock", None)
+
+
+def ground_height(logic, x, z, below=None):
+    """The height of the ground at (*x*, *z*), or None where there is none.
+
+    The terrain's surface, or the top of a solid brush (a floor, a step, a
+    bridge) standing on it, whichever is higher. A brush counts only if its
+    top is at or under *below*, so a roof over an actor is not its ground.
+    """
+    ground = None
+    ter = terrain(logic)
+    if ter is not None and getattr(ter, "enabled", False):
+        try:
+            ground = ter.get_height_at_safe(float(x), float(z))
+        except Exception:
+            ground = None
+    session = getattr(logic, "session_runtime", None)
+    grid = getattr(session, "spatial_grid", None)
+    if grid is not None:
+        try:
+            top = grid.raycast_down(float(x), float(z),
+                                    1e9 if below is None else float(below))
+        except Exception:
+            top = None
+        if top is not None and (ground is None or top > ground):
+            ground = top
+    return ground
+
+
 def set_world_paused(logic, owner, paused=True) -> None:
     """Hold (or release) the world pause *owner* asks for."""
     session = getattr(logic, "session_runtime", None)

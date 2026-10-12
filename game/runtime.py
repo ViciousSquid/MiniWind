@@ -16,6 +16,7 @@ player's health/magicka/stamina live on the character (mirrored into the engine'
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -92,6 +93,12 @@ NPC_WALK_SPEED = 90.0
 #: long as the fright does, and they go back to a walk on their own.
 FLEE_SPEED_MULTIPLIER = 2.0
 ARRIVE_RADIUS = 48.0
+#: How high an actor steps up onto a brush (a kerb, a floor, a low step);
+#: anything taller over it is a roof or a wall, not its ground.
+GROUND_STEP_UP = 24.0
+#: How far an actor moves across the ground before its height is worked out
+#: again; standing still costs nothing.
+GROUND_RECHECK_DIST = 4.0
 #: How close a walking NPC may come to a wall. Close to the player's own half
 #: width (TILE_SIZE/2 = 25) rather than the combat AI's much fatter monster
 #: margin, so a villager fits through any doorway the player does.
@@ -415,6 +422,8 @@ class MiniwindSession:
         #: each pass and the cost is spread instead of spiking.
         self._decision_phase = 0
         self._offscreen_tick = 0
+        #: id(actor) -> (x, z, y) where it was last stood on the ground.
+        self._grounded = {}
         self._proximity_accum = 0.0
         #: Guards currently running the player down (see _start_arrest_pursuit).
         self._arrest_pursuers = []
@@ -746,7 +755,7 @@ class MiniwindSession:
         World's parking markers. Below :data:`WORLD_INDEX_MIN_ACTORS` nothing
         is built and :meth:`_world_index` answers None.
         """
-        actors = getattr(getattr(self, "logic", None), "_monster_things", None) or ()
+        actors = fio.monster_things(getattr(self, "logic", None))
         if len(actors) < WORLD_INDEX_MIN_ACTORS:
             self._wi_live = False
             return
@@ -760,6 +769,7 @@ class MiniwindSession:
         self._rebuild_world_index()
         self._wi_cache = None
         self._world_index()
+        self._ground_actors()
         self.clock.advance(delta)
         self.game.tick(delta)
         if self._attack_cooldown > 0:
@@ -3841,6 +3851,43 @@ class MiniwindSession:
         # weapon overlay), so writing a bare 'angle' here left schedule-driven
         # NPCs sliding around the world without ever rotating.
         face_heading(p, dx, dz, delta)
+
+    def _ground_actors(self) -> None:
+        """Stand every walking actor on the ground under it.
+
+        The engine's AI finds the ground through brushes only, and neither it
+        nor :meth:`_move` changes an actor's height on terrain: an actor kept
+        the height it was placed or spawned at, so one that walked downhill,
+        or stood where the ground was sculpted after it was placed, floated.
+        Each actor's feet are put on :func:`fio.ground_height` -- the terrain
+        or a floor on it -- whenever it has moved since last time. Flyers are
+        left in the air.
+        """
+        logic = self.logic
+        actors = fio.monster_things(logic)
+        if not actors:
+            return
+        seen = self._grounded
+        near = GROUND_RECHECK_DIST
+        with fio.monster_lock(logic) or contextlib.nullcontext():
+            for t in actors:
+                p = t.properties
+                if p.get("monster_type") == "flying":
+                    continue
+                pos = t.pos
+                x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
+                last = seen.get(id(t))
+                if (last is not None and abs(last[0] - x) < near
+                        and abs(last[1] - z) < near and abs(last[2] - y) < 0.5):
+                    continue
+                half = float(p.get("sprite_height", 128) or 128) * 0.5
+                ground = fio.ground_height(logic, x, z,
+                                           below=y - half + GROUND_STEP_UP)
+                if ground is not None:
+                    y = ground + half
+                    if abs(y - float(pos[1])) > 0.5:
+                        t.pos = [pos[0], y, pos[2]]
+                seen[id(t)] = (x, z, y)
 
     def _blocked_by_wall(self, x, y, z) -> bool:
         """Whether an NPC-sized body at (x, y, z) would be inside a solid brush.
