@@ -344,26 +344,32 @@ def test_an_exported_packages_cutscene_plays_from_the_package(main_window, tmp_p
         window._discard_package_temp_dir()
 
 
-def test_the_cutscene_lookup_prefers_the_played_package(main_window, tmp_path):
+def test_the_cutscene_lookup_prefers_the_played_package(main_window, tmp_path,
+                                                        monkeypatch):
     logic = main_window.view_3d.logic_thread
     runtime = logic.cutscene_runtime
-    package = tmp_path / "package"
     cutscene = {"version": 2, "actors": [], "camera": []}
-    _write_map(package / "cutscenes" / "showcase.json", dict(cutscene, name="pkg"))
+    # The project's own cutscenes: a project of the test's, so the check does
+    # not depend on which cutscenes the repository ships.
+    project = tmp_path / "project"
+    _write_map(project / "cutscenes" / "intro.json", dict(cutscene, name="project"))
+    monkeypatch.setattr(logic, "root_dir", str(project), raising=False)
+    package = tmp_path / "package"
+    _write_map(package / "cutscenes" / "intro.json", dict(cutscene, name="pkg"))
     _write_map(package / "cutscenes" / "only_here.json", cutscene)
     (package / "outside.json").write_text("{}")
 
     logic.package_root = str(package)
     try:
-        assert runtime._cutscene_file_path("cutscenes/showcase.json") == \
-            os.path.realpath(package / "cutscenes" / "showcase.json")
+        assert runtime._cutscene_file_path("cutscenes/intro.json") == \
+            os.path.realpath(package / "cutscenes" / "intro.json")
         assert runtime._cutscene_file_path("cutscenes/only_here.json")
         assert runtime._cutscene_file_path("cutscenes/../outside.json") is None
     finally:
         logic.package_root = None
     # Without a package: the project's own cutscenes, and nothing else.
-    assert runtime._cutscene_file_path("cutscenes/showcase.json").endswith(
-        os.path.join("cutscenes", "showcase.json"))
-    assert not runtime._cutscene_file_path("cutscenes/showcase.json").startswith(
+    assert runtime._cutscene_file_path("cutscenes/intro.json") == \
+        os.path.realpath(project / "cutscenes" / "intro.json")
+    assert not runtime._cutscene_file_path("cutscenes/intro.json").startswith(
         os.path.realpath(package))
     assert runtime._cutscene_file_path("cutscenes/only_here.json") is None

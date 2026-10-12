@@ -58,7 +58,7 @@ def minimal_package() -> bytes:
     return build_package(metadata, {"maps/level.json": level}, assets)
 
 
-def build_from_repo_map(map_name: str = "DevTest.json") -> Optional[bytes]:
+def build_from_repo_map(map_name: str = "BigWorld_streaming_test.json") -> Optional[bytes]:
     """Package a genuine repository map, or ``None`` if it isn't present."""
     src = os.path.join(REPO_ROOT, "maps", map_name)
     if not os.path.isfile(src):

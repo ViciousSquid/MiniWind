@@ -29,10 +29,10 @@ pytestmark = pytest.mark.qt
 
 def test_loading_a_map_gives_every_object_its_own_id():
     """Maps from older editors hold several brushes under one UUID (the old
-    clone copied it): _SHOWCASE.json has six such groups. Undo, I/O targeting,
-    saves and the dense tables all key on the id, so the loader must make
-    them unique -- keeping the first holder's, so aimed connections still hit
-    the same object."""
+    clone copied it): Fio's showcase map had six such groups. Undo, I/O
+    targeting, saves and the dense tables all key on the id, so the loader
+    must make them unique -- keeping the first holder's, so aimed connections
+    still hit the same object."""
     a = box_brush("a")
     b = box_brush("b", pos=(128, 0, 0))
     c = box_brush("c", pos=(256, 0, 0))
@@ -408,9 +408,23 @@ def _play(state, ticks=240):
     return logic, game_state, seen
 
 
+def _audit_level(name):
+    """A whole level: built in code (tests.helpers.scenes), or a shipped map."""
+    import os
+
+    from tests.helpers import scenes
+    from tests.helpers.paths import REPO_ROOT
+
+    builder = getattr(scenes, name, None)
+    if builder is not None:
+        return builder()
+    with open(os.path.join(REPO_ROOT, "maps", name), encoding="utf-8") as f:
+        return json.load(f)
+
+
 @pytest.mark.parametrize("map_name", [
-    "_SHOWCASE.json", "MonsterTest.json", "Portal_Test.json",
-    "Spawner_Test.json", "BigWorld_streaming_test.json",
+    "showcase", "monster_arena", "portal_pair", "spawner_room",
+    "BigWorld_streaming_test.json",
 ])
 @pytest.mark.parametrize("restore", [False, True], ids=["keep", "restore"])
 def test_no_runtime_cache_outlives_its_session_or_map(map_name, restore):
@@ -419,14 +433,10 @@ def test_no_runtime_cache_outlives_its_session_or_map(map_name, restore):
     resolve an entity of the previous map. Before the fix the per-type entity
     lists, the name/id caches, the collision set, the MonsterTable, the AI's
     enemy batch, the queued I/O and the player's ground brush all did."""
-    import os
-
-    from tests.helpers.paths import REPO_ROOT
     from tests.helpers.reachability import paths_to
 
     state = EditorState()
-    with open(os.path.join(REPO_ROOT, "maps", map_name), encoding="utf-8") as f:
-        state.load_from_data(json.load(f), save_undo=False)
+    state.load_from_data(_audit_level(map_name), save_undo=False)
     before_play = state.snapshot() if restore else None
     logic, game_state, session = _play(state)
     try:
@@ -498,9 +508,8 @@ def test_plugin_despawn_and_spawn_update_the_sessions_entity_index():
         from plugins.manager import get_manager, load_plugins
         load_plugins()
         manager = get_manager()
-        plugin = manager.find_plugin("tidy")
-        if plugin is None:
-            pytest.skip("Tidy plugin is not present in this build")
+        plugin = manager.find_plugin("bigworld")      # any loaded plugin
+        assert plugin is not None
         api = RuntimeAPI(manager, logic, plugin)
         logic.monster_ai.monster_states[id(grunt)] = {"shoot_timer": 0.0}
 

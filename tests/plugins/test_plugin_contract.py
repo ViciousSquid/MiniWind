@@ -10,6 +10,8 @@ session.*  So every "broken plugin" test asserts two things — the host survive
 and the other plugins still ran.
 """
 
+import pkgutil
+
 import pytest
 
 from plugins.api import API_VERSION, EditorAPI, FioPlugin, version_tuple
@@ -150,10 +152,22 @@ def test_version_tuple_parses_a_version_string(text, expected):
     assert version_tuple(text) == expected
 
 
+def _shipped_plugins():
+    """Every plugin package in ``plugins/``, imported."""
+    import importlib
+
+    import plugins
+    names = sorted(entry.name for entry in pkgutil.iter_modules(plugins.__path__)
+                   if entry.ispkg)
+    found = [getattr(importlib.import_module("plugins." + name), "PLUGIN", None)
+             for name in names]
+    return [plugin for plugin in found if plugin is not None]
+
+
 def test_the_host_api_version_is_at_least_what_the_shipped_plugins_need():
-    from plugins.bigworld import PLUGIN as bigworld
-    from plugins.tidy import PLUGIN as tidy
-    for plugin in (bigworld, tidy):
+    shipped = _shipped_plugins()
+    assert shipped, "no plugin packages found in plugins/"
+    for plugin in shipped:
         needs = getattr(plugin, "api_version", "1.0.0")
         assert version_tuple(needs) <= version_tuple(API_VERSION), (
             "shipped plugin '%s' needs API %s but the host provides %s"

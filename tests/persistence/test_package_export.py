@@ -87,9 +87,9 @@ def test_level_change_targets_are_packaged(project, tmp_path):
 
 
 def test_level_change_target_without_extension_is_packaged(project, tmp_path):
-    """LevelChanger adds ".json" to its target at run time (MonsterTest.json
-    ships ``target_map: "Terrain_Test_small"``); the exporter looked for the
-    name verbatim, reported the map missing and left it out of the package."""
+    """LevelChanger adds ".json" to its target at run time (a map may say
+    ``target_map: "next"``); the exporter looked for the name verbatim,
+    reported the map missing and left it out of the package."""
     _write_json(project / "maps" / "next.json", _level())
     current = _write_json(project / "maps" / "first.json",
                           _level([_changer("next")]))
@@ -105,7 +105,7 @@ def test_level_change_target_without_extension_is_packaged(project, tmp_path):
 
 def test_a_sound_found_by_filename_at_run_time_is_packaged(project, tmp_path):
     """Speakers play ``assets/sounds/<basename>`` whatever directory the map
-    names (_SHOWCASE.json ships ``assets/sound/fireloop.mp3``), and the
+    names (a map may say ``assets/sound/fireloop.mp3``), and the
     player's reader falls back to the basename too; the exporter resolved the
     path literally, reported the sound missing and left it out."""
     speaker = {"type": "Speaker", "pos": [0, 0, 0],

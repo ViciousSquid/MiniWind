@@ -4,6 +4,10 @@
 plugin is off, so a visible-but-dead entry is an offer the editor cannot
 honour. Tidy's "Load Demo map" looked available with Tidy disabled and silently
 did nothing when clicked.
+
+MiniWind does not ship Tidy: the plugin with menu actions of its own here is
+the ``menu_owner`` fixture (``tests/plugins/fixtures``), installed as the
+process's plugin manager for the test.
 """
 
 import pytest
@@ -39,13 +43,15 @@ def window(main_window):
     return main_window
 
 
-def _tidy():
-    load_plugins()
-    mgr = get_manager()
-    tidy = mgr.find_plugin("tidy")
-    if tidy is None:
-        pytest.skip("the Tidy plugin is not present in this build")
-    return mgr, tidy
+@pytest.fixture
+def menu_owner(plugin_manager, monkeypatch):
+    """``(manager, plugin)``: a manager holding the ``menu_owner`` fixture
+    plugin, standing in for the process's own while the test runs."""
+    import plugins.manager as manager_module
+
+    mgr = plugin_manager("menu_owner")
+    monkeypatch.setattr(manager_module, "get_manager", lambda: mgr)
+    return mgr, mgr.find_plugin("menu_owner")
 
 
 def test_plugin_names_in_plugins_menu_start_with_a_capital(window):
@@ -68,55 +74,55 @@ def test_plugin_names_in_plugins_menu_start_with_a_capital(window):
     pytest.fail("the Plugins menu was not created")
 
 
-def test_a_disabled_plugins_actions_are_hidden(window):
-    mgr, tidy = _tidy()
-    was = mgr.is_enabled(tidy)
+def test_a_disabled_plugins_actions_are_hidden(window, menu_owner):
+    mgr, plugin = menu_owner
+    was = mgr.is_enabled(plugin)
     try:
-        mgr.set_enabled(tidy, False)
+        mgr.set_enabled(plugin, False)
         _build_plugins_menu(window)
-        items = plugin_action_items(window, tidy)
-        assert items, "Tidy registered no menu actions; this test is looking in the wrong place"
+        items = plugin_action_items(window, plugin)
+        assert items, "the plugin registered no menu actions; this test is looking in the wrong place"
         for label, visible, _enabled in items:
             assert not visible, (
-                "'%s' is visible with Tidy disabled; clicking it does nothing"
+                "'%s' is visible with the plugin disabled; clicking it does nothing"
                 % label)
     finally:
-        mgr.set_enabled(tidy, was)
+        mgr.set_enabled(plugin, was)
 
 
-def test_an_enabled_plugins_actions_are_shown(window):
-    mgr, tidy = _tidy()
-    was = mgr.is_enabled(tidy)
+def test_an_enabled_plugins_actions_are_shown(window, menu_owner):
+    mgr, plugin = menu_owner
+    was = mgr.is_enabled(plugin)
     try:
-        mgr.set_enabled(tidy, True)
+        mgr.set_enabled(plugin, True)
         _build_plugins_menu(window)
-        items = plugin_action_items(window, tidy)
+        items = plugin_action_items(window, plugin)
         assert any(label.startswith("Load Demo map") for label, _v, _e in items), (
-            "Tidy's demo-map action is missing entirely: %r" % (items,))
+            "the plugin's demo-map action is missing entirely: %r" % (items,))
         for label, visible, enabled in items:
             assert visible and enabled, (
-                "'%s' is hidden or greyed with Tidy enabled" % label)
+                "'%s' is hidden or greyed with the plugin enabled" % label)
     finally:
-        mgr.set_enabled(tidy, was)
+        mgr.set_enabled(plugin, was)
 
 
-def test_toggling_the_plugin_flips_its_actions_without_a_rebuild(window):
+def test_toggling_the_plugin_flips_its_actions_without_a_rebuild(window, menu_owner):
     """The Enabled checkbox updates the entries already on screen."""
-    mgr, tidy = _tidy()
-    was = mgr.is_enabled(tidy)
+    mgr, plugin = menu_owner
+    was = mgr.is_enabled(plugin)
     try:
-        mgr.set_enabled(tidy, True)
+        mgr.set_enabled(plugin, True)
         _build_plugins_menu(window)
-        before = plugin_action_items(window, tidy)
+        before = plugin_action_items(window, plugin)
         assert all(v for _l, v, _e in before)
 
-        _toggle_plugin(window, tidy, False,
-                                   _live_actions(window, tidy))
-        after = plugin_action_items(window, tidy)
+        _toggle_plugin(window, plugin, False,
+                                   _live_actions(window, plugin))
+        after = plugin_action_items(window, plugin)
         assert not any(v for _l, v, _e in after), (
-            "toggling Tidy off left its actions on screen: %r" % (after,))
+            "toggling the plugin off left its actions on screen: %r" % (after,))
     finally:
-        mgr.set_enabled(tidy, was)
+        mgr.set_enabled(plugin, was)
 
 
 def _live_actions(window, plugin):
@@ -134,7 +140,7 @@ def _live_actions(window, plugin):
     return []
 
 
-def test_a_persisted_disable_really_stops_the_plugin(window, monkeypatch):
+def test_a_persisted_disable_really_stops_the_plugin(window, monkeypatch, menu_owner):
     """settings.ini's ``[Plugins] disabled`` must turn the plugin off for real.
 
     Building the menu used to write ``plugin.enabled = False`` directly. The
@@ -143,27 +149,26 @@ def test_a_persisted_disable_really_stops_the_plugin(window, monkeypatch):
     dispatched to kept ticking with its menu toggle showing it off.
     """
     import configparser
-    mgr, tidy = _tidy()
-    if not mgr._overrides(tidy, "on_tick"):
-        pytest.skip("Tidy no longer ticks; pick another plugin")
+    mgr, plugin = menu_owner
+    assert mgr._overrides(plugin, "on_tick"), "fixture: the plugin should tick"
     ticks = []
-    monkeypatch.setattr(tidy, "on_tick", lambda logic, ctx: ticks.append(1))
-    was = mgr.is_enabled(tidy)
+    monkeypatch.setattr(plugin, "on_tick", lambda logic, ctx: ticks.append(1))
+    was = mgr.is_enabled(plugin)
     logic = window.view_3d.logic_thread
     try:
-        mgr.set_enabled(tidy, True)
+        mgr.set_enabled(plugin, True)
         mgr.tick(logic)
-        assert ticks == [1], "fixture: an enabled Tidy should tick"
+        assert ticks == [1], "fixture: an enabled plugin should tick"
 
         window.config = configparser.ConfigParser()
-        window.config["Plugins"] = {"disabled": "tidy"}
+        window.config["Plugins"] = {"disabled": "menu_owner"}
         _build_plugins_menu(window)
 
-        assert not mgr.is_enabled(tidy)
+        assert not mgr.is_enabled(plugin)
         mgr.tick(logic)
         assert ticks == [1], "a plugin disabled in settings.ini still ticked"
     finally:
-        mgr.set_enabled(tidy, was)
+        mgr.set_enabled(plugin, was)
 
 
 def _enabled_toggle(window, plugin):
@@ -185,8 +190,7 @@ def test_the_toggle_shows_a_plugin_a_level_auto_enabled(window):
     load_plugins()
     mgr = get_manager()
     bigworld = mgr.find_plugin("bigworld")
-    if bigworld is None:
-        pytest.skip("the Big World plugin is not present in this build")
+    assert bigworld is not None, "MiniWind ships the Big World plugin"
     was = mgr.is_enabled(bigworld)
     try:
         mgr.set_enabled(bigworld, False)
@@ -217,26 +221,26 @@ def _plugin_submenu(window, plugin):
     return None
 
 
-def test_add_entity_at_origin_places_the_entity(window):
+def test_add_entity_at_origin_places_the_entity(window, menu_owner):
     """The Plugins menu's "Add entity (at origin)" entries place an entity.
 
     The menu moved into editor.ui while its placement helper stayed behind in
     the deleted monkey-patch module, so every entry raised NameError on click.
     """
-    mgr, tidy = _tidy()
-    was = mgr.is_enabled(tidy)
+    mgr, plugin = menu_owner
+    was = mgr.is_enabled(plugin)
     try:
-        mgr.set_enabled(tidy, True)
+        mgr.set_enabled(plugin, True)
         _build_plugins_menu(window)
-        menu = _plugin_submenu(window, tidy)
-        assert menu is not None, "Tidy has no Plugins submenu"
-        entries = [a for a in menu.actions() if a.text() == "   Tidy Goal"]
-        assert entries, "Tidy Goal is not offered under Add entity"
+        menu = _plugin_submenu(window, plugin)
+        assert menu is not None, "the plugin has no Plugins submenu"
+        entries = [a for a in menu.actions() if a.text() == "   Menu Owner Goal"]
+        assert entries, "Menu Owner Goal is not offered under Add entity"
         before = len(window.state.things)
         entries[0].trigger()
         assert len(window.state.things) == before + 1
         placed = window.state.things[-1]
-        assert placed.properties.get("type") == "tidygoal"
+        assert placed.properties.get("type") == "menuownergoal"
         assert list(placed.pos) == [0.0, 40.0, 0.0]
     finally:
-        mgr.set_enabled(tidy, was)
+        mgr.set_enabled(plugin, was)

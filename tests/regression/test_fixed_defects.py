@@ -163,9 +163,9 @@ def test_a_monster_parked_on_its_only_patrol_node_announces_it_once():
 def test_discovery_reached_during_a_plugins_own_import_does_not_drop_it():
     """A plugin package whose import calls back into the host.
 
-    ``plugins.tidy`` imports the editor for its entity base, and the editor
-    package's initialiser calls ``load_plugins()``.  Discovery then reached
-    ``plugins.tidy`` while it was still being imported, got the
+    A plugin (Fio's Tidy, say) imports the editor for its entity base, and the
+    editor package's initialiser calls ``load_plugins()``.  Discovery then
+    reached that plugin while it was still being imported, got the
     partially-initialised module (no ``PLUGIN`` yet), skipped it - and marked
     itself loaded, so the plugin was gone for the life of the process.
 
@@ -330,6 +330,6 @@ def test_parsing_a_model_file_needs_no_gl_context():
     from tests.helpers.paths import repo_path
 
     loader = OBJLoader()
-    assert loader.load(repo_path("plugins", "tidy", "assets", "book.obj")) is True
+    assert loader.load(repo_path("assets", "models", "prop_book.obj")) is True
     assert loader.vertices, "the parsed model has no vertices"
     assert loader.faces, "the parsed model has no faces"
