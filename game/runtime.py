@@ -16,6 +16,7 @@ player's health/magicka/stamina live on the character (mirrored into the engine'
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import json
 import math
@@ -154,6 +155,13 @@ HIT_FLASH_TIME = 0.18
 #: How far a melee swing reaches / a shot can pick a target.
 MELEE_REACH = 170.0
 BOW_REACH = 2400.0
+#: Holding right mouse with a bow draws it: how long a full draw takes, and
+#: how far an arrow flies loosed with the bow barely drawn and fully drawn.
+BOW_FULL_DRAW_SECONDS = 2.5
+BOW_MIN_RANGE = 450.0
+BOW_MAX_RANGE = 3000.0
+#: How fast an arrow flies.
+ARROW_SPEED = 1600.0
 #: Frontal cone (dot threshold) for auto-target selection.
 AIM_DOT = 0.55
 # Melee is close-quarters and forgives a wider stance than ranged aiming —
@@ -434,6 +442,12 @@ class MiniwindSession:
         self._grounded = {}
         #: The camera height the wheel asked for (None: never zoomed).
         self.zoom_height = None
+        #: How far the bow is drawn (0..1) while right mouse is held, else
+        #: None; the HUD draws it as a filling pie.
+        self.bow_charge = None
+        #: Right-mouse presses and releases from the view ("press", "release",
+        #: "cancel"), handled on the logic thread by _update_bow_draw.
+        self._bow_input = collections.deque()
         #: Fio projectile tag -> sprite, for the arrows in flight: the game
         #: draws these itself, as arrows (see :meth:`_split_projectiles`).
         self._arrow_tags = {}
@@ -797,6 +811,7 @@ class MiniwindSession:
         self._world_index()
         self._ground_actors()
         self._ease_zoom(delta)
+        self._update_bow_draw(delta)
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
             # Fio does not publish an empty store, so the last arrow to land
             # is cleared here.
@@ -3889,6 +3904,79 @@ class MiniwindSession:
         # NPCs sliding around the world without ever rotating.
         face_heading(p, dx, dz, delta)
 
+    # ============================================================ bow draw
+    def bow_in_hand(self) -> bool:
+        """Whether the weapon in hand is a bow."""
+        c = getattr(getattr(self, "game", None), "character", None)
+        w = eq.weapon(c) if c is not None else None
+        return bool(w) and w.get("kind") == rpg_items.KIND_BOW
+
+    def bow_draw_input(self, what) -> None:
+        """The view's right mouse, for the bow: "press" starts drawing it,
+        "release" looses the arrow, "cancel" lowers it. Handled next tick."""
+        self._bow_input.append(str(what))
+
+    def _cancel_bow_draw(self) -> None:
+        self.bow_charge = None
+
+    def _update_bow_draw(self, delta) -> None:
+        """Draw the bow while right mouse is held; loose on release.
+
+        The longer it is held (up to BOW_FULL_DRAW_SECONDS) the further the
+        arrow flies. Switching weapons, opening a screen or a conversation, or
+        dying lowers the bow without loosing.
+        """
+        while self._bow_input:
+            what = self._bow_input.popleft()
+            if what == "press":
+                if self.bow_charge is None and self._can_draw_bow():
+                    self.bow_charge = 0.0
+            elif what == "release":
+                charge = self.bow_charge
+                self.bow_charge = None
+                if charge is not None:
+                    self._loose_drawn_arrow(charge)
+            else:
+                self._cancel_bow_draw()
+        if self.bow_charge is None:
+            return
+        c = self.game.character
+        if (not self.bow_in_hand() or c.is_dead or self.open_screen is not None
+                or self.dialogue is not None):
+            self._cancel_bow_draw()
+            return
+        self.bow_charge = min(1.0, self.bow_charge
+                              + max(0.0, float(delta)) / BOW_FULL_DRAW_SECONDS)
+
+    def _can_draw_bow(self) -> bool:
+        c = self.game.character
+        if c.is_dead or not self.bow_in_hand():
+            return False
+        if eq.ammo(c) is None:
+            self.notify("Out of arrows!")
+            return False
+        return True
+
+    def _loose_drawn_arrow(self, charge) -> bool:
+        """Loose an arrow from a bow drawn to *charge* (0..1): the further it
+        was drawn, the further the arrow flies."""
+        c = self.game.character
+        if c.is_dead or self._attack_cooldown > 0:
+            return False
+        if c.stamina < 4:
+            self.notify("Too exhausted to attack")
+            return False
+        w = eq.weapon(c)
+        speed = float(w.get("speed", 1.0)) if w else 1.0
+        if not self.game.fire_arrow():
+            return False
+        self._attack_cooldown = max(0.25, 1.0 / max(0.4, speed))
+        self._attack_anim_time = 0.2
+        charge = min(1.0, max(0.0, float(charge)))
+        self._spawn_player_arrow_projectile(
+            BOW_MIN_RANGE + (BOW_MAX_RANGE - BOW_MIN_RANGE) * charge)
+        return True
+
     # ================================================================ zoom
     def _zoom_ceiling(self) -> float:
         cam = fio.camera(self.logic)
@@ -4144,8 +4232,9 @@ class MiniwindSession:
             self.add_floater("miss", kind="miss")
         return True
 
-    def _spawn_player_arrow_projectile(self) -> None:
-        """Loose a physical arrow the way the player is facing. Travels and collides through the same engine
+    def _spawn_player_arrow_projectile(self, max_dist=BOW_MAX_RANGE) -> None:
+        """Loose a physical arrow the way the player is facing, to fly up to
+        *max_dist*. Travels and collides through the same engine
         projectile pipeline a spell bolt uses, but — unlike a spell bolt —
         embeds where it lands (``embeds=True``) and resolves its own RPG
         damage on impact via an ``on_hit`` callback instead of a flat number
@@ -4155,7 +4244,7 @@ class MiniwindSession:
         ppos = self._player_pos()
         if lt is None or ppos is None:
             return
-        ARROW_SPEED, ARROW_MAX_DIST = 1600.0, 3000.0
+        max_dist = float(max_dist)
         sprite = arrow_sprite(eq.equipped_id(self.game.character, "ammo"))
 
         start = [ppos[0], ppos[1] + 48.0, ppos[2]]
@@ -4182,8 +4271,8 @@ class MiniwindSession:
         # A player-owned arrow: it flies past the archer, stops at its own
         # range, and resolves its RPG damage at the moment it actually hits.
         row = fio.spawn_projectile(lt, start, vel,
-                                   lifetime=ARROW_MAX_DIST / ARROW_SPEED,
-                                   max_dist=ARROW_MAX_DIST, on_hit=_on_hit)
+                                   lifetime=max_dist / ARROW_SPEED,
+                                   max_dist=max_dist, on_hit=_on_hit)
         tag = fio.projectile_tag(lt, row)
         if tag:
             self._arrow_tags[tag] = sprite

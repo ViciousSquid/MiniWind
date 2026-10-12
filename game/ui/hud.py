@@ -77,7 +77,42 @@ def draw(painter, session, width, height):
     _draw_notifications(painter, session, width, height)
     _draw_floaters(painter, session, width, height)
     if not menu_open:
+        _draw_bow_charge(painter, session, width, height)
         _draw_interact_prompt(painter, session, width, height)
+
+
+#: The bow-draw pie: its radius and where it sits from the screen centre (the
+#: player's head in the top-down view).
+BOW_PIE_RADIUS = 18
+BOW_PIE_OFFSET = (52, -52)
+
+
+def _draw_bow_charge(painter, session, width, height):
+    """While right mouse draws the bow: a pie beside the player's head that
+    fills as the draw lengthens (a fuller pie, a longer shot). Gone once the
+    arrow is loosed or the draw is lowered."""
+    charge = getattr(session, "bow_charge", None)
+    if charge is None:
+        return
+    charge = max(0.0, min(1.0, float(charge)))
+    cx = width // 2 + BOW_PIE_OFFSET[0]
+    cy = height // 2 + BOW_PIE_OFFSET[1]
+    r = BOW_PIE_RADIUS
+    box = QRect(cx - r, cy - r, 2 * r, 2 * r)
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(10, 10, 14, 170))
+    painter.drawEllipse(box)
+    full = charge >= 1.0
+    painter.setBrush(QColor(255, 214, 90, 235) if full else QColor(235, 225, 200, 220))
+    # Qt measures pie angles in 1/16 degree, anticlockwise from 3 o'clock:
+    # start at 12 o'clock and fill clockwise.
+    painter.drawPie(box, 90 * 16, -int(round(charge * 360 * 16)))
+    painter.setBrush(Qt.NoBrush)
+    painter.setPen(QPen(QColor(255, 214, 90) if full else QColor(30, 26, 20), 2))
+    painter.drawEllipse(box)
+    painter.restore()
 
 
 def _draw_interact_prompt(painter, session, width, height):

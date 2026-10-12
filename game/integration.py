@@ -632,6 +632,7 @@ def install_play_menu(view):
     from .ui.hits import GamePointer
     view.game_pointer = GamePointer(view)
     install_wheel_zoom(view)
+    install_bow_draw(view)
     _use_game_fonts_for_loading()
     editor = getattr(view, "editor", None)
     config = getattr(editor, "config", None)
@@ -653,15 +654,10 @@ def install_wheel_zoom(view):
 
     class _WheelZoom(QObject):
         def eventFilter(self, obj, event):
-            if event.type() != QEvent.Wheel or not getattr(view, "play_mode", False):
+            if event.type() != QEvent.Wheel:
                 return False
-            menu = getattr(view, "play_menu", None)
-            if menu is not None and getattr(menu, "active", False):
-                return False
-            logic = getattr(view, "logic_thread", None)
-            session = getattr(logic, "_miniwind", None)
-            if (session is None or session.open_screen is not None
-                    or session.dialogue is not None or session.needs_char_creation):
+            session = _free_play_session(view)
+            if session is None:
                 return False
             notches = event.angleDelta().y() / 120.0
             if notches:
@@ -671,6 +667,62 @@ def install_wheel_zoom(view):
     zoom = _WheelZoom(view)
     view.installEventFilter(zoom)
     view._miniwind_wheel_zoom = zoom    # kept alive with the view
+
+
+def _free_play_session(view):
+    """The play session when the player is free to act (no pause menu, game
+    screen, conversation, character creation or armed inspect), else None."""
+    if not getattr(view, "play_mode", False):
+        return None
+    menu = getattr(view, "play_menu", None)
+    if menu is not None and getattr(menu, "active", False):
+        return None
+    if getattr(view, "_actor_pick", None) is not None:
+        return None
+    session = getattr(getattr(view, "logic_thread", None), "_miniwind", None)
+    if (session is None or session.open_screen is not None
+            or session.dialogue is not None or session.needs_char_creation):
+        return None
+    return session
+
+
+def install_bow_draw(view):
+    """With a bow in hand, right mouse draws it: hold to draw, release to loose
+    (game.runtime: MiniwindSession._update_bow_draw). A left click while
+    drawing lowers the bow. The button is the game's then, so the engine does
+    not also cast the active spell on it."""
+    from PyQt5.QtCore import QEvent, QObject, Qt
+
+    class _BowDraw(QObject):
+        def eventFilter(self, obj, event):
+            kind = event.type()
+            if kind not in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease,
+                            QEvent.MouseButtonDblClick):
+                return False
+            session = _free_play_session(view)
+            if session is None:
+                return False
+            button = event.button()
+            drawing = session.bow_charge is not None
+            if button == Qt.RightButton:
+                if kind == QEvent.MouseButtonRelease:
+                    if drawing or session._bow_input:
+                        session.bow_draw_input("release")
+                        return True
+                    return False
+                if session.bow_in_hand():
+                    session.bow_draw_input("press")
+                    return True
+                return False
+            if button == Qt.LeftButton and drawing:
+                if kind != QEvent.MouseButtonRelease:
+                    session.bow_draw_input("cancel")
+                return True
+            return False
+
+    bow = _BowDraw(view)
+    view.installEventFilter(bow)
+    view._miniwind_bow_draw = bow
 
 
 def _use_game_fonts_for_loading():
