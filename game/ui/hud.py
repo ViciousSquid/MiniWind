@@ -77,27 +77,51 @@ def draw(painter, session, width, height):
     _draw_notifications(painter, session, width, height)
     _draw_floaters(painter, session, width, height)
     if not menu_open:
-        _draw_bow_charge(painter, session, width, height)
         _draw_interact_prompt(painter, session, width, height)
 
 
-#: The bow-draw pie: its radius and where it sits from the screen centre (the
-#: player's head in the top-down view).
-BOW_PIE_RADIUS = 18
-BOW_PIE_OFFSET = (52, -52)
+#: The bow-draw pie's radius, and how far it sits out from the player's head:
+#: tucked against its upper right edge, this fraction of the pie outside it.
+BOW_PIE_RADIUS = 14
+BOW_PIE_OUTSIDE = 0.35
+#: The player's head is drawn this many world units across (the overhead
+#: sprite size), which is how big it is on screen at any zoom.
+PLAYER_HEAD_SIZE = 128.0
 
 
-def _draw_bow_charge(painter, session, width, height):
-    """While right mouse draws the bow: a pie beside the player's head that
-    fills as the draw lengthens (a fuller pie, a longer shot). Gone once the
-    arrow is loosed or the draw is lowered."""
+def draw_bow_charge(painter, session, viewport, width, height):
+    """While right mouse draws the bow: a pie tucked against the upper right
+    of the player's head that fills as the draw lengthens (a fuller pie, a
+    longer shot). Gone once the arrow is loosed or the draw is lowered.
+
+    Placed from the player's head as drawn -- projected through the live
+    camera -- so it stays against the head however far the camera is zoomed.
+    """
     charge = getattr(session, "bow_charge", None)
-    if charge is None:
+    if charge is None or session.open_screen is not None or session.dialogue is not None:
         return
     charge = max(0.0, min(1.0, float(charge)))
-    cx = width // 2 + BOW_PIE_OFFSET[0]
-    cy = height // 2 + BOW_PIE_OFFSET[1]
+    from .. import fio
+    player = fio.player(getattr(viewport, "logic_thread", None))
+    centre = edge = None
+    if player is not None:
+        try:
+            import glm
+            proj, view = viewport.projection_matrix, viewport.view_matrix
+            x, y, z = (float(v) for v in player.pos)
+            centre = _world_to_screen(glm, proj, view, x, y, z, width, height)
+            edge = _world_to_screen(glm, proj, view, x + PLAYER_HEAD_SIZE / 2, y, z,
+                                    width, height)
+        except Exception:
+            centre = edge = None
+    if centre is None or edge is None:
+        centre, head_r = (width / 2.0, height / 2.0), 30.0
+    else:
+        head_r = max(8.0, math.hypot(edge[0] - centre[0], edge[1] - centre[1]))
     r = BOW_PIE_RADIUS
+    out = head_r + r * (2.0 * BOW_PIE_OUTSIDE - 1.0)
+    cx = int(round(centre[0] + out * math.cos(math.radians(45))))
+    cy = int(round(centre[1] - out * math.sin(math.radians(45))))
     box = QRect(cx - r, cy - r, 2 * r, 2 * r)
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
