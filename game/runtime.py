@@ -449,6 +449,7 @@ class MiniwindSession:
         self.dice_type_index = len(DICE_TYPES) - 1
         self.dice_animation: Optional[Dict] = None
         self.game.add_roll_listener(self._on_dice_roll)
+        self.game.add_xp_listener(self._on_xp)
         self._attack_anim_time = 0.0   # player stab animation remaining (seconds)
 
         # ------------------------------------------------------------------
@@ -518,6 +519,7 @@ class MiniwindSession:
         self.rng = random.Random()
         self.game = GameState(self.store, rng=self.rng)
         self.game.add_roll_listener(self._on_dice_roll)
+        self.game.add_xp_listener(self._on_xp)
         self.needs_char_creation = True
         self.open_screen = "charcreate"
         self.dialogue = None
@@ -634,6 +636,7 @@ class MiniwindSession:
                                        head=head)
         self.game.character.handed = "left" if str(handed).lower() == "left" else "right"
         self.game.add_roll_listener(self._on_dice_roll)
+        self.game.add_xp_listener(self._on_xp)
         # Author-granted starting spells (Game Settings → Player Spells).
         c = self.game.character
         for sid in self._player_start_spells:
@@ -2211,8 +2214,13 @@ class MiniwindSession:
         if len(self.notifications) > 6:
             self.notifications = self.notifications[-6:]
 
-    def add_floater(self, text, kind="dmg"):
-        self.floaters.append({"text": text, "t": 1.2, "y": 0.0, "kind": kind})
+    def add_floater(self, text, kind="dmg", y=0.0):
+        self.floaters.append({"text": text, "t": 1.2, "y": float(y), "kind": kind})
+
+    def _on_xp(self, amount) -> None:
+        """Experience earned (a kill, a quest): "+N XP" over the player, a
+        line above the "SLAIN" a kill shows at the same moment."""
+        self.add_floater(f"+{int(amount)} XP", kind="xp", y=-26.0)
 
     # ============================================================= NPC AI
     def npcs(self) -> List:
@@ -4522,6 +4530,13 @@ class MiniwindSession:
 
     def _on_creature_killed(self, target):
         self.add_floater("SLAIN", kind="kill")
+        # The kill's experience (its xp_value), shown as "+N XP" by _on_xp.
+        try:
+            xp = int(float(target.properties.get("xp_value", 0) or 0))
+        except (TypeError, ValueError, AttributeError):
+            xp = 0
+        if xp > 0:
+            self.game.award_xp(xp)
         # Count the kill so a quest 'kill' objective can complete.
         self.record_kill(target)
         # guards react to murder of innocents nearby handled by faction hostility

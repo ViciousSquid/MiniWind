@@ -913,13 +913,13 @@ def _draw_floaters(painter, session, width, height):
         "sneak": QColor(200, 160, 255), "miss": QColor(160, 160, 170),
         "fire": QColor(255, 140, 60), "frost": QColor(150, 210, 255),
         "shock": QColor(230, 230, 120), "kill": QColor(255, 90, 90),
-        "hurt": QColor(255, 80, 80),
+        "hurt": QColor(255, 80, 80), "xp": QColor(255, 214, 90),
     }
     for i, f in enumerate(session.floaters):
         col = QColor(colors.get(f["kind"], QColor(240, 240, 240)))
         col.setAlpha(max(0, min(255, int(f["t"] / 1.2 * 255))))
         fx = cx + ((i * 37) % 120) - 60
-        size = 15 if f["kind"] in ("crit", "sneak", "kill") else 12
+        size = 15 if f["kind"] in ("crit", "sneak", "kill", "xp") else 12
         T.text(painter, fx, height // 2 + int(f["y"]), f["text"], size=size,
                color=col, bold=True, family="Segoe UI")
 
