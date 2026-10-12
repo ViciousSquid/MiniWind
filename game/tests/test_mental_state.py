@@ -91,3 +91,27 @@ def test_handles_missing_properties_gracefully():
     snap = ms.snapshot(_Thing({}))
     assert snap["title"]              # non-empty
     assert snap["tasks"]             # always at least one task
+
+
+# --- mood ------------------------------------------------------------------
+def test_mood_reads_what_the_actor_is_going_through():
+    from ..mental_state import mood
+    assert mood({"sched_state": "FLEE"})[0] == "frightened"
+    assert mood({"sched_state": "WORKING"}, target="Bandit_3")[0] == "angry"
+    assert mood({"need_hunger": 0.9, "need_fatigue": 0.2})[0] == "hungry"
+    assert mood({"need_hunger": 0.1, "need_fatigue": 0.8})[0] == "tired"
+    assert mood({"sched_state": "WORKING"})[0] == "calm"
+    assert mood({"dead": True})[0] == "dead"
+
+
+def test_the_snapshot_shows_mood_and_needs():
+    from ..mental_state import snapshot
+
+    class _T:
+        properties = {"npc_role": "farmer", "sched_state": "WORKING",
+                      "need_hunger": 0.85, "need_fatigue": 0.1}
+        pos = [0, 0, 0]
+    snap = snapshot(_T())
+    sections = dict(snap["sections"])
+    assert dict(sections["AI State"])["Mood"].startswith("hungry")
+    assert dict(sections["Needs"])["Hunger"]

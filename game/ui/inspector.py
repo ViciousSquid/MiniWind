@@ -330,10 +330,17 @@ class ActorInspectorWindow(FloatingWindow):
         except Exception:
             snap = None
         if snap:
+            # Shown sections, in order, under the window's own headings: the
+            # rest (identity, vitals, anchors) is already above or in the
+            # schedule.
+            shown = {"Why": "Why", "AI State": "AI State",
+                     "Intents (ranked)": "Goals", "Needs": "Needs",
+                     "Player Standing": "Player Standing",
+                     "Knowledge": "Knows"}
             for title, items in snap.get("sections", []):
-                if title not in ("Why", "AI State"):
+                if title not in shown:
                     continue
-                head(title)
+                head(shown[title])
                 for item in items:
                     row(item[0], item[1] if len(item) > 1 else "")
             tasks = snap.get("tasks") or []
@@ -554,6 +561,48 @@ def _draw_beacon(painter, glm, proj, view_m, focus, width, height):
                  fm.horizontalAdvance(text) + 12, fm.height() + 4)
     painter.fillRect(box, QColor(10, 10, 14, 200))
     painter.setPen(colour)
+    painter.drawText(box, int(Qt.AlignCenter), text)
+    painter.restore()
+
+
+#: The highlight on the actor under the pointer while ``inspect`` is armed.
+PICK_HOVER_COLOUR = QColor(255, 225, 120)
+
+
+def draw_pick_hover(painter, viewport, width, height):
+    """While ``inspect`` is armed: highlight the actor under the pointer -- a
+    glowing ring round it and its name -- so it is clear what a click opens."""
+    if getattr(viewport, "_actor_pick", None) is None:
+        return
+    thing = getattr(viewport, "actor_pick_hover", None)
+    if thing is None:
+        return
+    try:
+        import glm
+        centre = _project(glm, viewport.projection_matrix, viewport.view_matrix,
+                          thing.pos, width, height)
+    except Exception:
+        return
+    if centre is None:
+        return
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    painter.setBrush(Qt.NoBrush)
+    glow = QColor(PICK_HOVER_COLOUR)
+    for radius, alpha, pen in ((40, 70, 8), (36, 140, 4), (34, 255, 2)):
+        glow.setAlpha(alpha)
+        painter.setPen(QPen(glow, pen))
+        painter.drawEllipse(centre, radius, radius)
+    font = QFont("Segoe UI", 9)
+    font.setBold(True)
+    painter.setFont(font)
+    fm = QFontMetrics(font)
+    text = _name(thing)
+    box = QRectF(centre.x() - fm.horizontalAdvance(text) / 2 - 6,
+                 centre.y() - 40 - fm.height() - 8,
+                 fm.horizontalAdvance(text) + 12, fm.height() + 4)
+    painter.fillRect(box, QColor(10, 10, 14, 200))
+    painter.setPen(PICK_HOVER_COLOUR)
     painter.drawText(box, int(Qt.AlignCenter), text)
     painter.restore()
 

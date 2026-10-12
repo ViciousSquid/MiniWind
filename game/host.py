@@ -1022,6 +1022,9 @@ class MiniwindGame:
                 from .ui import inspector
                 inspector.draw_world_lines(painter, viewport, w, h)
                 hud.draw(painter, session, w, h)
+                # The armed pick's highlight goes over the HUD, so its name
+                # label is never hidden under a toast.
+                inspector.draw_pick_hover(painter, viewport, w, h)
                 # The minimap, from the world's map picture (painted once,
                 # in the background, then cached per map).
                 from .ui import worldmap
