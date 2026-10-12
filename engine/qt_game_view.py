@@ -23,6 +23,7 @@ from editor.things import (
 )
 from engine.player import Player
 from engine.game_input import modal_input_active as _game_modal_input_active
+from engine.game_input import modal_escape_active as _game_modal_escape_active
 
 from engine.renderer import DEFAULT_RENDERER, available_renderers, create_renderer
 from editor.selection_overlay import describe_selection
@@ -4757,9 +4758,15 @@ class QtGameView(QOpenGLWidget):
                 self._cancel_level_complete()
                 return
 
-        if (self.play_mode and not self.console_overlay_active
-                and self.handle_pause_menu_key(event)):
-            return
+        if self.play_mode and not self.console_overlay_active:
+            if event.key() == Qt.Key_Escape and _game_modal_escape_active(self.logic_thread):
+                # Let the parent MainWindow route Escape into the running game's
+                # modal input. Otherwise QtGameView opens Fio's pause menu first,
+                # making Trade and other game screens impossible to dismiss.
+                super().keyPressEvent(event)
+                return
+            if self.handle_pause_menu_key(event):
+                return
 
         # ----- Player 2 arrow key handling (when no gamepad) -----
         if self.play_mode and not self.gamepad and self.splitscreen_mode:

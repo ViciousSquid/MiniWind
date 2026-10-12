@@ -84,3 +84,25 @@ def test_engine_modal_input_capability_is_optional():
         ))
     )
 
+def test_engine_defers_escape_to_game_owned_modal_ui():
+    """Escape routing should respect the session's existing modal contract."""
+    from types import SimpleNamespace
+    from engine.game_input import modal_escape_active
+
+    assert not modal_escape_active(None)
+    assert not modal_escape_active(SimpleNamespace(game_session=None))
+    assert not modal_escape_active(
+        SimpleNamespace(game_session=SimpleNamespace())
+    )
+    assert modal_escape_active(SimpleNamespace(
+        game_session=SimpleNamespace(escape_closes_modal=lambda: True)
+    ))
+    assert not modal_escape_active(SimpleNamespace(
+        game_session=SimpleNamespace(escape_closes_modal=lambda: False)
+    ))
+    assert not modal_escape_active(SimpleNamespace(
+        game_session=SimpleNamespace(
+            escape_closes_modal=lambda: (_ for _ in ()).throw(RuntimeError())
+        )
+    ))
+

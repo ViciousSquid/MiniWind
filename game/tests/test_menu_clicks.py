@@ -298,3 +298,13 @@ def test_no_sound_file_means_silence_not_an_error(session, tmp_path, monkeypatch
     session.game.character.gold = 1000
     assert session.buy(screens._merchant_stock(session.merchant_npc)[0]["id"])
     assert queued == []
+
+def test_trade_can_be_closed_with_escape(session):
+    session.merchant_npc = _Merchant()
+    session.open_screen = "trade"
+
+    screens.handle_key(session, "escape")
+
+    assert session.open_screen is None
+    assert session.merchant_npc is None
+
