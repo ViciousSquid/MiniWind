@@ -41,3 +41,68 @@ def test_there_is_no_key_for_rolling_dice_by_hand():
 def test_every_binding_is_a_distinct_key():
     keys = [k.lower() for k in _bindings().values()]
     assert len(keys) == len(set(keys)), "two actions share one key"
+
+
+def test_number_keys_are_claimed_by_modal_game_input():
+    """The engine must yield weapon-slot keys while MiniWind UI is modal."""
+    from types import SimpleNamespace
+    from engine.game_input import modal_input_active
+    from ..runtime import MiniwindSession
+
+    session = SimpleNamespace(
+        needs_char_creation=False, open_screen=None, dialogue=None
+    )
+    session.modal_input_active = lambda: MiniwindSession.modal_input_active(session)
+    logic = SimpleNamespace(game_session=session)
+    assert not modal_input_active(logic)
+
+    session.dialogue = object()
+    assert modal_input_active(logic)
+
+    session.dialogue = None
+    session.open_screen = "inventory"
+    assert modal_input_active(logic)
+
+    session.open_screen = None
+    session.needs_char_creation = True
+    assert modal_input_active(logic)
+
+
+def test_engine_modal_input_capability_is_optional():
+    """A game session without modal input ownership retains stock key handling."""
+    from types import SimpleNamespace
+    from engine.game_input import modal_input_active
+
+    assert not modal_input_active(None)
+    assert not modal_input_active(SimpleNamespace(game_session=None))
+    assert not modal_input_active(
+        SimpleNamespace(game_session=SimpleNamespace())
+    )
+    assert not modal_input_active(
+        SimpleNamespace(game_session=SimpleNamespace(
+            modal_input_active=lambda: False
+        ))
+    )
+
+def test_engine_defers_escape_to_game_owned_modal_ui():
+    """Escape routing should respect the session's existing modal contract."""
+    from types import SimpleNamespace
+    from engine.game_input import modal_escape_active
+
+    assert not modal_escape_active(None)
+    assert not modal_escape_active(SimpleNamespace(game_session=None))
+    assert not modal_escape_active(
+        SimpleNamespace(game_session=SimpleNamespace())
+    )
+    assert modal_escape_active(SimpleNamespace(
+        game_session=SimpleNamespace(escape_closes_modal=lambda: True)
+    ))
+    assert not modal_escape_active(SimpleNamespace(
+        game_session=SimpleNamespace(escape_closes_modal=lambda: False)
+    ))
+    assert not modal_escape_active(SimpleNamespace(
+        game_session=SimpleNamespace(
+            escape_closes_modal=lambda: (_ for _ in ()).throw(RuntimeError())
+        )
+    ))
+

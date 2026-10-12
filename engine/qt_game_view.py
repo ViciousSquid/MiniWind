@@ -22,6 +22,8 @@ from editor.things import (
     LogicGate, LogicRelay, LogicTimer, LevelChanger, Portal
 )
 from engine.player import Player
+from engine.game_input import modal_input_active as _game_modal_input_active
+from engine.game_input import modal_escape_active as _game_modal_escape_active
 
 from engine.renderer import DEFAULT_RENDERER, available_renderers, create_renderer
 from editor.selection_overlay import describe_selection
@@ -4756,9 +4758,15 @@ class QtGameView(QOpenGLWidget):
                 self._cancel_level_complete()
                 return
 
-        if (self.play_mode and not self.console_overlay_active
-                and self.handle_pause_menu_key(event)):
-            return
+        if self.play_mode and not self.console_overlay_active:
+            if event.key() == Qt.Key_Escape and _game_modal_escape_active(self.logic_thread):
+                # Let the parent MainWindow route Escape into the running game's
+                # modal input. Otherwise QtGameView opens Fio's pause menu first,
+                # making Trade and other game screens impossible to dismiss.
+                super().keyPressEvent(event)
+                return
+            if self.handle_pause_menu_key(event):
+                return
 
         # ----- Player 2 arrow key handling (when no gamepad) -----
         if self.play_mode and not self.gamepad and self.splitscreen_mode:
@@ -4847,29 +4855,32 @@ class QtGameView(QOpenGLWidget):
                 self.editor.set_grid_size(new_size)
                 self.editor.show_toast(f"Grid Size: {new_size}")
                 return
-        if self.play_mode and not self.show_render_menu and event.key() in self._SLOT_KEYS:
+        # Modal game UI (e.g. a conversation) owns its number keys. Query
+        # the game-session capability rather than hard-coding MiniWind here.
+        game_modal_input = _game_modal_input_active(self.logic_thread) if self.play_mode else False
+        if (self.play_mode and not self.show_render_menu
+                and event.key() in self._SLOT_KEYS and not game_modal_input):
             # Weapon slots 1-4 (gun1, gun2, custom1, custom2): the logic thread
             # takes the weapon in hand if the player has it.
             self.game_state.queue_weapon_slot(self._SLOT_KEYS[event.key()])
             return
-        if self.play_mode:
-            if self.show_render_menu:
-                if event.key() == Qt.Key_1:
-                    self.current_render_mode = RENDER_MODE_LIT
-                    self.update()
-                elif event.key() == Qt.Key_2:
-                    self.current_render_mode = RENDER_MODE_UNLIT
-                    self.update()
-                elif event.key() == Qt.Key_3:
-                    self.current_render_mode = RENDER_MODE_WIREFRAME
-                    self.update()
-                elif event.key() == Qt.Key_4:
-                    self.current_render_mode = RENDER_MODE_VERTEX
-                    self.update()
-                elif event.key() == Qt.Key_Escape:
-                    self.show_render_menu = False
-                    self.update()
-                return
+        if self.play_mode and self.show_render_menu and not game_modal_input:
+            if event.key() == Qt.Key_1:
+                self.current_render_mode = RENDER_MODE_LIT
+                self.update()
+            elif event.key() == Qt.Key_2:
+                self.current_render_mode = RENDER_MODE_UNLIT
+                self.update()
+            elif event.key() == Qt.Key_3:
+                self.current_render_mode = RENDER_MODE_WIREFRAME
+                self.update()
+            elif event.key() == Qt.Key_4:
+                self.current_render_mode = RENDER_MODE_VERTEX
+                self.update()
+            elif event.key() == Qt.Key_Escape:
+                self.show_render_menu = False
+                self.update()
+            return
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):

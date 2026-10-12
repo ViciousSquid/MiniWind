@@ -2222,6 +2222,19 @@ class MiniwindSession:
             return False
         return self.open_screen not in ESCAPE_LOCKED_SCREENS
 
+    def modal_input_active(self) -> bool:
+        """Whether MiniWind currently owns keyboard input for a modal UI.
+
+        Fio uses this capability to leave number keys available to dialogue
+        choices and screens instead of treating them as engine shortcuts.
+        The engine does not need to know MiniWind's screen names.
+        """
+        return bool(
+            self.needs_char_creation
+            or self.open_screen is not None
+            or self.dialogue is not None
+        )
+
     def tick_ui(self, delta: float) -> None:
         """Age only the transient HUD (toasts/floaters) while the world is paused
         (a menu or character creation is open). No clock, NPC or combat sim."""
