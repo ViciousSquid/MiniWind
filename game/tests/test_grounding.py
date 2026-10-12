@@ -110,3 +110,29 @@ def test_an_actor_does_not_climb_onto_a_wall_or_fence():
     s = _session([floor], tops=[(450, 550, 504.0)])
     s._ground_actors()
     assert floor.pos[1] == 504 + 64
+
+
+# --- no jumping ------------------------------------------------------------
+class _PlayerRuntime:
+    def __init__(self, in_water=False):
+        self.player = SimpleNamespace(in_water=in_water)
+        self.seen = []
+
+    def update_primary(self, delta, keys, mouse_dx, mouse_dy):
+        self.seen.append(set(keys))
+
+
+def test_the_jump_key_is_dropped_on_land_but_still_swims_in_water():
+    runtime = _PlayerRuntime()
+    logic = SimpleNamespace(player_runtime=runtime)
+    fio.set_jump_enabled(logic, False)
+    fio.set_jump_enabled(logic, False)          # installing twice is once
+    runtime.update_primary(0.016, {0x20, ord("W")}, 0, 0)
+    assert runtime.seen[-1] == {ord("W")}
+    runtime.player.in_water = True
+    runtime.update_primary(0.016, {0x20}, 0, 0)
+    assert runtime.seen[-1] == {0x20}
+    fio.set_jump_enabled(logic, True)
+    runtime.player.in_water = False
+    runtime.update_primary(0.016, {0x20}, 0, 0)
+    assert runtime.seen[-1] == {0x20}

@@ -551,6 +551,8 @@ class MiniwindSession:
         # press and hands it here, and the bow's arrows and the spell bolts
         # fly through its projectile pipeline.
         logic.player_fire_handler = self.fire_player_weapon
+        # MiniWind has no jumping (Space still swims, in water).
+        fio.set_jump_enabled(logic, False)
         # Wound decals use MiniWind's gore art.
         try:
             logic.blood_stain_sprites = tuple(gib.stain_paths(magical=False))
@@ -576,6 +578,7 @@ class MiniwindSession:
             self.logic._player_damage_filter = None
         if getattr(self.logic, "player_fire_handler", None) == self.fire_player_weapon:
             self.logic.player_fire_handler = None
+        fio.set_jump_enabled(self.logic, True)
         from . import faction_ai
         faction_ai.uninstall(self.logic)
 

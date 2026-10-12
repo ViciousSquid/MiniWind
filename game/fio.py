@@ -50,6 +50,43 @@ def terrain(logic):
     return getattr(runtime, "terrain", None)
 
 
+#: Fio's jump key (engine.logic_player.KEY_SPACE).
+_KEY_SPACE = 0x20
+
+
+def set_jump_enabled(logic, enabled) -> None:
+    """Allow or forbid the player's jump.
+
+    With it off the jump key is dropped before Fio's player update sees it --
+    except in water, where the same key swims up and climbs out over a pool's
+    rim, so a pool is never a trap.
+    """
+    runtime = getattr(logic, "player_runtime", None)
+    if runtime is None:
+        return
+    wrapped = vars(runtime).get("update_primary")
+    if enabled:
+        if wrapped is not None and getattr(wrapped, "_no_jump", False):
+            del runtime.update_primary
+        return
+    if wrapped is not None and getattr(wrapped, "_no_jump", False):
+        return
+    update = getattr(runtime, "update_primary", None)
+    if update is None:
+        return
+
+    def update_primary(delta, keys, mouse_dx, mouse_dy):
+        if _KEY_SPACE in keys:
+            player = getattr(runtime, "player", None)
+            if not getattr(player, "in_water", False):
+                keys = set(keys)
+                keys.discard(_KEY_SPACE)
+        return update(delta, keys, mouse_dx, mouse_dy)
+
+    update_primary._no_jump = True
+    runtime.update_primary = update_primary
+
+
 def monster_things(logic) -> list:
     """The session's actors (monsters, NPCs, creatures), as the AI sees them."""
     runtime = getattr(logic, "world_runtime", None)
