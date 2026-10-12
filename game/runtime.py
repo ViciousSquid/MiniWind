@@ -40,6 +40,7 @@ from .rpg import magic as rpg_magic
 from .rpg import guilds
 from .rpg import disposition as disp
 from .rpg import needs as rpg_needs
+from .rpg import heads
 from .rpg import daily as rpg_daily
 from .rpg import quests as _quests
 from .rpg.gametime import GameClock
@@ -205,10 +206,9 @@ REAPER_LINGER = (0.15, 0.8)
 REAPER_APPROACH_TIMEOUT = 14.0
 #: However bloody it gets, no more than this many at once.
 REAPER_MAX = 3
-#: His head, his weapon, and how big he is drawn.
+#: His head and his weapon. He is drawn at the one head size, like everyone.
 REAPER_HEAD = "reaper"
 REAPER_WEAPON = "scythe"
-REAPER_SIZE = 132
 
 
 class _PlayerActor:
@@ -666,10 +666,14 @@ class MiniwindSession:
             else:
                 head = heads.random_head(self.rng, exclude={player_head})
             path = heads.any_head_path(head)
-            if p.get("head") != head or p.get("custom_idle") != path:
+            size = heads.HEAD_SIZE           # every head is drawn the same size
+            if (p.get("head") != head or p.get("custom_idle") != path
+                    or p.get("sprite_width") != size
+                    or p.get("sprite_height") != size):
                 p["head"] = head
                 p["custom_idle"] = path
                 p["custom_shoot"] = path
+                p["sprite_width"] = p["sprite_height"] = size
                 p.pop("custom_dead", None)   # no custom death sprite (removed)
                 _journal(t)
                 changed = True
@@ -1035,8 +1039,8 @@ class MiniwindSession:
                 "npc_role": "wraith",
                 "head": REAPER_HEAD,
                 "is_head": True,           # drawn like any other head actor
-                "sprite_width": REAPER_SIZE,
-                "sprite_height": REAPER_SIZE,
+                "sprite_width": heads.HEAD_SIZE,
+                "sprite_height": heads.HEAD_SIZE,
                 "equipped_weapon": REAPER_WEAPON,
                 "inventory": [],
                 "aggression": "passive",

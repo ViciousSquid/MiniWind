@@ -40,6 +40,11 @@ GUARD_HEAD_IDS = [f"guard{n:02d}" for n in (1, 2, 3, 4, 5, 6)]
 #: Overlay blended over a head sprite when its owner is dead.
 DEAD_OVERLAY = f"{HEAD_DIR}/dead.png"
 
+#: The world size (width and height) every head is drawn at, on every actor
+#: whatever its role, so all heads look the same size. It is the player's own
+#: overhead sprite size (Fio's ``QtGameView.overhead_sprite_size``).
+HEAD_SIZE = 128
+
 
 def _repo_root() -> str:
     """Best-effort absolute path to the project root (two levels up from
