@@ -1,8 +1,10 @@
 import contextlib
+import io
 import time
 import weakref
 import os
 import math
+import zipfile
 from collections import deque
 import numpy as np
 import ctypes
@@ -448,23 +450,54 @@ class QtGameView(QOpenGLWidget):
         self.setMouseTracking(True)
 
     def _init_sound_system(self):
-        """Preload sounds into pygame mixer cache."""
+        """Preload sounds from assets/sounds.fiopak, or the legacy loose folder."""
         if not self._ensure_pygame_mixer():
             print("[Audio] Sound system unavailable — mixer could not be initialized")
             return
 
-        sound_dir = os.path.join(os.getcwd(), 'assets', 'sounds')
-        if not os.path.exists(sound_dir):
-            print("[Audio] Warning: assets/sounds directory not found.")
+        from engine.audio_archives import list_archive_audio, read_archive_audio
+
+        sound_archive = os.path.join(os.getcwd(), "assets", "sounds.fiopak")
+        if os.path.isfile(sound_archive):
+            try:
+                members = list_archive_audio(sound_archive, "assets/sounds")
+            except (OSError, zipfile.BadZipFile) as exc:
+                print(f"[Audio] Cannot read sounds.fiopak: {exc}")
+                return
+
+            print("[Audio] Preloading sounds from sounds.fiopak...")
+            count = 0
+            for member in members:
+                try:
+                    data = read_archive_audio(sound_archive, member, "assets/sounds")
+                except (OSError, zipfile.BadZipFile) as exc:
+                    print(f"[Audio] Cannot read {member}: {exc}")
+                    continue
+                if data is None:
+                    continue
+                relative = member[len("assets/sounds/"):]
+                keys = [member]
+                # Preserve legacy bare-filename lookup for files directly under
+                # assets/sounds; nested paths use their full project-relative key.
+                if "/" not in relative:
+                    keys.append(relative)
+                if self._load_sound_bytes_to_cache(keys, data):
+                    count += 1
+            print(f"[Audio] Preloaded {count} sound files from sounds.fiopak.")
+            return
+
+        sound_dir = os.path.join(os.getcwd(), "assets", "sounds")
+        if not os.path.isdir(sound_dir):
+            print("[Audio] Warning: assets/sounds directory and sounds.fiopak not found.")
             return
 
         print("[Audio] Preloading sounds...")
         count = 0
         for f in os.listdir(sound_dir):
-            if f.lower().endswith(('.wav', '.mp3', '.ogg')):
+            if f.lower().endswith((".wav", ".mp3", ".ogg")):
                 full_path = os.path.join(sound_dir, f)
-                self._load_sound_to_cache(f, full_path)
-                count += 1
+                if self._load_sound_to_cache(f, full_path):
+                    count += 1
         print(f"[Audio] Preloaded {count} sound files.")
 
     #: Seconds between attempts to open the audio device after one failed.
@@ -511,12 +544,62 @@ class QtGameView(QOpenGLWidget):
             print(f"[Audio] Failed to load {name}: {e}")
             return False
 
-    def _get_sound_instance(self, name):
-        """Get a pygame Sound object by name. Loads on-demand if not cached.
+    def _load_sound_bytes_to_cache(self, names, data):
+        """Load one in-memory audio file and index it by all supplied names."""
+        if not self._ensure_pygame_mixer():
+            print(f"[Audio] Failed to load {names[0]}: mixer not initialized")
+            return False
 
-        A path into assets/sounds or assets/music (what a Speaker sends,
-        ``assets/music/theme.ogg``) loads that file, subfolders included; any
-        other name is looked up by its basename in assets/sounds.
+        existing = next((self.sound_pool[name] for name in names
+                         if name in self.sound_pool), None)
+        if existing is not None:
+            for name in names:
+                self.sound_pool.setdefault(name, existing)
+            return True
+
+        try:
+            sound = pygame.mixer.Sound(file=io.BytesIO(data))
+            for name in names:
+                self.sound_pool[name] = sound
+            return True
+        except Exception as exc:
+            print(f"[Audio] Failed to load archived sound {names[0]}: {exc}")
+            return False
+
+    def _load_sound_from_archive(self, rel):
+        """Resolve an explicit audio path from sounds.fiopak or music.fiopak."""
+        from engine.audio_archives import read_archive_audio
+
+        if rel.startswith("assets/sounds/"):
+            asset_root = "assets/sounds"
+            archive_path = os.path.join(os.getcwd(), "assets", "sounds.fiopak")
+        elif rel.startswith("assets/music/"):
+            asset_root = "assets/music"
+            archive_path = os.path.join(os.getcwd(), "assets", "music.fiopak")
+        else:
+            return False
+        if not os.path.isfile(archive_path):
+            return False
+        try:
+            data = read_archive_audio(archive_path, rel, asset_root)
+        except (OSError, zipfile.BadZipFile) as exc:
+            print(f"[Audio] Cannot read {os.path.basename(archive_path)}: {exc}")
+            return False
+        if data is None:
+            return False
+
+        keys = [rel]
+        relative = rel[len(asset_root) + 1:]
+        if asset_root == "assets/sounds" and "/" not in relative:
+            keys.append(relative)
+        return self._load_sound_bytes_to_cache(keys, data)
+
+    def _get_sound_instance(self, name):
+        """Get a cached sound or load it from an archive / legacy loose path.
+
+        Explicit assets/sounds/... and assets/music/... paths are resolved
+        against their corresponding .fiopak first; bare names still refer to
+        assets/sounds and retain the same cache keys as before.
         """
         from engine.speaker_audio import resolve_speaker_sound, speaker_sound_path
         rel = speaker_sound_path(name) if '/' in str(name).replace('\\', '/') else None
@@ -525,32 +608,35 @@ class QtGameView(QOpenGLWidget):
                 return self.sound_pool[rel]
             if not self._ensure_pygame_mixer():
                 return None
+            if self._load_sound_from_archive(rel):
+                return self.sound_pool[rel]
             path = resolve_speaker_sound(rel, os.getcwd())
             if path and os.path.isfile(path) and self._load_sound_to_cache(rel, path):
                 return self.sound_pool[rel]
             print(f"[Audio] Sound not found: {rel}")
             return None
         clean_name = os.path.basename(name)
-        
+
         # Already cached?
         if clean_name in self.sound_pool:
             return self.sound_pool[clean_name]
-        # No audio device: nothing can load. Its failure was reported once
-        # when the mixer was probed; do not probe the disk and log two more
-        # lines for every sound the game asks for.
         if not self._ensure_pygame_mixer():
             return None
-        
-        # Try to load on-demand
+
+        # Bare names intentionally resolve only in sounds.fiopak / assets/sounds.
+        rel = f"assets/sounds/{clean_name}"
+        if self._load_sound_from_archive(rel):
+            if clean_name in self.sound_pool:
+                return self.sound_pool[clean_name]
+            return self.sound_pool.get(rel)
+
         path = os.path.join(os.getcwd(), 'assets', 'sounds', clean_name)
         if os.path.exists(path):
             if self._load_sound_to_cache(clean_name, path):
                 return self.sound_pool[clean_name]
-        
+
         print(f"[Audio] Sound not found: {clean_name}")
         return None
-       
-
 
     @staticmethod
     def _hud_count_baseline(metrics, text, bottom):

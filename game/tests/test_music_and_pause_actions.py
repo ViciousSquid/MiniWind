@@ -18,6 +18,7 @@ import json
 import os
 import random
 import sys
+import zipfile
 
 import pytest
 
@@ -36,12 +37,17 @@ class _Mixer:
 
     def __init__(self):
         self.loaded = []
+        self.streamed_prefixes = []
         self.busy = False
         self.stopped = 0
         self.volume = None
 
-    def load(self, path):
-        self.loaded.append(os.path.basename(path))
+    def load(self, path, namehint=None):
+        if hasattr(path, "read"):
+            self.loaded.append(namehint)
+            self.streamed_prefixes.append(path.read(8))
+        else:
+            self.loaded.append(os.path.basename(path))
 
     def play(self):
         self.busy = True
@@ -73,6 +79,31 @@ def _player(music_dir, mixer=None):
 def test_every_mp3_in_the_folder_is_a_track(music_dir):
     names = [os.path.basename(t) for t in _player(music_dir).tracks()]
     assert names == ["a.mp3", "b.mp3", "c.MP3"]
+
+
+def test_music_fiopak_tracks_stream_without_extracting(tmp_path):
+    archive_path = tmp_path / "music.fiopak"
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("assets/music/a.mp3", b"encoded-music-a")
+        archive.writestr("assets/music/subdir/b.mp3", b"encoded-music-b")
+        archive.writestr("assets/music/readme.txt", b"not music")
+        archive.writestr("assets/sounds/effect.wav", b"not soundtrack")
+
+    mixer = _Mixer()
+    player = MusicPlayer(
+        str(tmp_path / "music"), backend=mixer, music_archive=str(archive_path),
+        rng=random.Random(3),
+    )
+    assert [os.path.basename(t) for t in player.tracks()] == ["a.mp3", "b.mp3"]
+
+    player.start()
+    assert len(mixer.loaded) == 1
+    assert mixer.loaded[0] == "mp3"
+    assert mixer.streamed_prefixes[0].startswith(b"encoded-")
+    assert player.current.startswith("fiopak://assets/music/")
+    player.stop()
+    assert player._current_archive is None
+    assert player._current_archive_stream is None
 
 
 def test_music_plays_only_while_a_session_runs(music_dir):
