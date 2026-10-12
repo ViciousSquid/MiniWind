@@ -229,6 +229,15 @@ def bigworld(logic):
     return services.get("bigworld") if services is not None else None
 
 
+def set_bigworld_reach(logic, radius=None) -> None:
+    """Let Big World's resident, simulated area reach *radius* (None: the
+    map's own radius) -- a zoomed-out camera sees, and simulates, more."""
+    session = bigworld(logic)
+    setter = getattr(session, "set_reach", None)
+    if callable(setter):
+        setter(radius)
+
+
 def sim_tiers_fit_view(logic) -> bool:
     """Whether Big World's tiers are fitted to the overhead camera's screen:
     NEAR is then exactly what is on screen, and anything else resident is

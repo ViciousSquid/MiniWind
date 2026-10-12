@@ -105,6 +105,9 @@ ZOOM_MIN_HEIGHT = 300.0
 ZOOM_MAX_HEIGHT = 1600.0
 ZOOM_STEP = 1.15
 ZOOM_EASE_SECONDS = 0.12
+#: Slack added to the zoomed-out view's ground reach when Big World is asked
+#: to cover it.
+ZOOM_REACH_MARGIN = 256.0
 #: How far an actor moves across the ground before its height is worked out
 #: again; standing still costs nothing.
 GROUND_RECHECK_DIST = 4.0
@@ -4000,11 +4003,15 @@ class MiniwindSession:
         self.zoom_height = min(self._zoom_ceiling(), max(ZOOM_MIN_HEIGHT, target))
 
     def _ease_zoom(self, delta) -> None:
-        """Glide the camera toward the height the wheel asked for."""
+        """Glide the camera toward the height the wheel asked for, and have
+        Big World cover what the camera will see from there."""
         target = self.zoom_height
         cam = fio.camera(self.logic)
         if target is None or cam is None:
             return
+        if target != getattr(self, "_reach_for", None):
+            self._reach_for = target
+            self._fit_bigworld_reach(cam, target)
         target = min(target, self._zoom_ceiling())
         height = float(getattr(cam, "overhead_height", target) or target)
         if abs(target - height) < 0.5:
@@ -4012,6 +4019,22 @@ class MiniwindSession:
             return
         blend = 1.0 - math.exp(-max(0.0, float(delta)) / ZOOM_EASE_SECONDS)
         cam.overhead_height = height + (target - height) * blend
+
+    def _fit_bigworld_reach(self, cam, height) -> None:
+        """Size Big World's resident area for the camera at *height*: the
+        ground the view reaches scales with the camera's height, so it is read
+        off the current footprint and scaled. Back to the map's own radius when
+        that covers it."""
+        try:
+            fp = cam.overhead_ground_footprint()
+            now = float(cam.effective_overhead_height())
+        except Exception:
+            return
+        if not fp or now <= 0.0:
+            return
+        reach = float(fp[2]) if len(fp) > 2 else math.hypot(fp[0], fp[1])
+        fio.set_bigworld_reach(self.logic,
+                               reach * float(height) / now + ZOOM_REACH_MARGIN)
 
     def _ground_actors(self) -> None:
         """Stand every walking actor on the ground under it.

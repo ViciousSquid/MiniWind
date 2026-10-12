@@ -147,6 +147,9 @@ class BigWorldSession:
         self._authored_deactivation_radius = max(
             self._authored_activation_radius, float(deactivation_radius)
         )
+        #: The map's own radii, kept when :meth:`set_reach` widens the session's.
+        self._map_radii = (self._authored_activation_radius,
+                           self._authored_deactivation_radius)
         self.manager = BigWorldManager(
             activation_radius=self._authored_activation_radius,
             deactivation_radius=self._authored_deactivation_radius,
@@ -355,6 +358,24 @@ class BigWorldSession:
             self.tiers.set_near_rect(rect)
             self._tier_pos = None        # re-tier on the next tick
         return changed
+
+    def set_reach(self, radius=None) -> None:
+        """Let residency (and the camera's ceiling) reach out to *radius*, past
+        the map's own activation radius; None goes back to the map's.
+
+        A game that zooms its overhead camera out calls this so the wider view
+        is resident and simulated rather than fogged: the camera fit then
+        sizes residency from the screen up to *radius* instead of stopping at
+        the map's radius. Never narrower than the map's own.
+        """
+        base_act, base_deact = self._map_radii
+        act = base_act if radius is None else max(base_act, float(radius))
+        if act == self._authored_activation_radius:
+            return
+        self._authored_activation_radius = act
+        self._authored_deactivation_radius = act + (base_deact - base_act)
+        if self._started:
+            self._set_camera_ceiling(act)
 
     def _set_camera_ceiling(self, height) -> None:
         """Hold the host's overhead camera at or under *height* (None: no

@@ -59,6 +59,7 @@ owns the concern. The previous migration (2.4 → 2.5) is recorded in
 | Allow Fio maps | Settings > Editor > Maps (`[Editor] allow_fio_maps`) |
 | `Monster.get_render_snapshot` | `editor/things.py` |
 | `terrain_stream` | Big World config/entity/plugin/runtime |
+| Wheel zoom widens the simulated area (`BigWorldSession.set_reach`) | `plugins/bigworld/runtime.py`; driven through `game/fio.py` |
 
 The game reaches Fio 3's runtimes only through **`game/fio.py`**;
 `tests/integration/test_miniwind_boundaries.py` fails if game code reads one

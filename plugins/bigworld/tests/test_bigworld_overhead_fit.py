@@ -227,3 +227,23 @@ def test_a_camera_at_the_ceiling_still_sees_the_player():
     session.tick()
     assert session.manager.activation_radius == 2048.0
     assert logic.render_runtime.view_distance.limit > 2048.0 * 1.4
+
+
+def test_set_reach_lets_a_zoomed_out_camera_go_past_the_map_radius():
+    """A game zooming its camera out widens residency past the map's radius
+    (MiniWind's wheel zoom); None goes back to the map's own."""
+    far = (2629.0, 1600.0, 3078.0)                   # a view reaching 3078 units
+    logic, session = fitted_session(grid_world(), footprint=far)
+    session.tick()
+    assert session.manager.activation_radius == 2048.0     # capped by the map
+    session.set_reach(3334.0)
+    assert logic.camera.overhead_height_limit == 3334.0
+    session.tick()
+    assert session.manager.activation_radius >= 3078.0
+    session.set_reach(None)
+    session.tick()
+    assert session.manager.activation_radius == 2048.0
+    assert logic.camera.overhead_height_limit == 2048.0
+    session.set_reach(100.0)                          # never narrower than the map's
+    session.tick()
+    assert session.manager.activation_radius == 2048.0
