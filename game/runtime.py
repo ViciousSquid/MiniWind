@@ -97,6 +97,13 @@ ARRIVE_RADIUS = 48.0
 #: How high an actor steps up onto a brush (a kerb, a floor, a low step);
 #: anything taller over it is a roof or a wall, not its ground.
 GROUND_STEP_UP = 24.0
+#: Mouse-wheel zoom of the top-down camera: the nearest and furthest it goes
+#: above the player (never above Big World's ceiling), how much one wheel
+#: notch changes the height, and how quickly the camera eases there.
+ZOOM_MIN_HEIGHT = 300.0
+ZOOM_MAX_HEIGHT = 1600.0
+ZOOM_STEP = 1.15
+ZOOM_EASE_SECONDS = 0.12
 #: How far an actor moves across the ground before its height is worked out
 #: again; standing still costs nothing.
 GROUND_RECHECK_DIST = 4.0
@@ -425,6 +432,8 @@ class MiniwindSession:
         self._offscreen_tick = 0
         #: id(actor) -> (x, z, y) where it was last stood on the ground.
         self._grounded = {}
+        #: The camera height the wheel asked for (None: never zoomed).
+        self.zoom_height = None
         #: Fio projectile tag -> sprite, for the arrows in flight: the game
         #: draws these itself, as arrows (see :meth:`_split_projectiles`).
         self._arrow_tags = {}
@@ -787,6 +796,7 @@ class MiniwindSession:
         self._wi_cache = None
         self._world_index()
         self._ground_actors()
+        self._ease_zoom(delta)
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
             # Fio does not publish an empty store, so the last arrow to land
             # is cleared here.
@@ -3878,6 +3888,42 @@ class MiniwindSession:
         # weapon overlay), so writing a bare 'angle' here left schedule-driven
         # NPCs sliding around the world without ever rotating.
         face_heading(p, dx, dz, delta)
+
+    # ================================================================ zoom
+    def _zoom_ceiling(self) -> float:
+        cam = fio.camera(self.logic)
+        limit = getattr(cam, "overhead_height_limit", None)
+        top = ZOOM_MAX_HEIGHT
+        if limit is not None and float(limit) > 0.0:
+            top = min(top, float(limit))
+        return max(ZOOM_MIN_HEIGHT, top)
+
+    def zoom(self, notches) -> None:
+        """Zoom the top-down camera by *notches* of the mouse wheel: positive
+        closer to the player's head, negative further away. The camera follows
+        the player, so the zoom is always centred on them."""
+        cam = fio.camera(self.logic)
+        if cam is None or not notches:
+            return
+        current = self.zoom_height
+        if current is None:
+            current = float(getattr(cam, "overhead_height", 800.0) or 800.0)
+        target = current / (ZOOM_STEP ** float(notches))
+        self.zoom_height = min(self._zoom_ceiling(), max(ZOOM_MIN_HEIGHT, target))
+
+    def _ease_zoom(self, delta) -> None:
+        """Glide the camera toward the height the wheel asked for."""
+        target = self.zoom_height
+        cam = fio.camera(self.logic)
+        if target is None or cam is None:
+            return
+        target = min(target, self._zoom_ceiling())
+        height = float(getattr(cam, "overhead_height", target) or target)
+        if abs(target - height) < 0.5:
+            cam.overhead_height = target
+            return
+        blend = 1.0 - math.exp(-max(0.0, float(delta)) / ZOOM_EASE_SECONDS)
+        cam.overhead_height = height + (target - height) * blend
 
     def _ground_actors(self) -> None:
         """Stand every walking actor on the ground under it.

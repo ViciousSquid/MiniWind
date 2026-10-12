@@ -631,6 +631,7 @@ def install_play_menu(view):
     # Character creation, trading and conversations take the mouse.
     from .ui.hits import GamePointer
     view.game_pointer = GamePointer(view)
+    install_wheel_zoom(view)
     _use_game_fonts_for_loading()
     editor = getattr(view, "editor", None)
     config = getattr(editor, "config", None)
@@ -640,6 +641,36 @@ def install_play_menu(view):
         # the same config by the play session.
         from . import runtime
         runtime.set_editor_config(config)
+
+
+def install_wheel_zoom(view):
+    """In play, the mouse wheel zooms the top-down camera on the player.
+
+    Not while the pause menu (its map zooms with the wheel), a game screen,
+    a conversation or character creation is open: those keep the wheel.
+    """
+    from PyQt5.QtCore import QEvent, QObject
+
+    class _WheelZoom(QObject):
+        def eventFilter(self, obj, event):
+            if event.type() != QEvent.Wheel or not getattr(view, "play_mode", False):
+                return False
+            menu = getattr(view, "play_menu", None)
+            if menu is not None and getattr(menu, "active", False):
+                return False
+            logic = getattr(view, "logic_thread", None)
+            session = getattr(logic, "_miniwind", None)
+            if (session is None or session.open_screen is not None
+                    or session.dialogue is not None or session.needs_char_creation):
+                return False
+            notches = event.angleDelta().y() / 120.0
+            if notches:
+                session.zoom(notches)
+            return True
+
+    zoom = _WheelZoom(view)
+    view.installEventFilter(zoom)
+    view._miniwind_wheel_zoom = zoom    # kept alive with the view
 
 
 def _use_game_fonts_for_loading():
