@@ -618,14 +618,8 @@ class MiniwindSession:
                 c.known_spells.append(sid)
         if c.known_spells and not c.active_spell:
             c.active_spell = c.known_spells[0]
-        # Record the chosen head so NPCs never reuse it (and force the player
-        # billboard to it).
-        if c.head:
-            try:
-                self.store.set("player_head", c.head)
-            except Exception:
-                pass
-            self._apply_player_head(c.head)
+        # The player is the chosen head; record it so NPCs never reuse it.
+        self._ensure_player_head()
         # Give every NPC/creature a head that is never the player's.
         self._assign_npc_heads()
         self.needs_char_creation = False
@@ -633,13 +627,35 @@ class MiniwindSession:
         self._sync_engine_health(full=True)
         self.notify(f"Welcome to {self.region_name}, {name}.", 5.0)
 
-    def _assign_npc_heads(self) -> None:
-        """Give every NPC/creature a head sprite.
+    def _ensure_player_head(self) -> str:
+        """Make sure the player is a head, and show it; returns the head id.
 
-        A head explicitly set in the editor is always respected — regular head,
-        special guard head, or any browsed PNG under assets/sprites/heads/. Only
-        when no head was set (the '(random)' option, i.e. an empty/invalid head)
-        is one assigned automatically:
+        Character creation always picks one, but a character without a valid
+        head (an older save) is given a random regular head rather than being
+        drawn as the stock player sprite. The head is recorded in the store and
+        the player's overhead sprite pointed at it.
+        """
+        c = self.game.character
+        head = str(getattr(c, "head", "") or "")
+        if not heads.is_head(head):
+            saved = str(self.store.get("player_head", "") or "")
+            head = saved if heads.is_head(saved) else heads.random_head(self.rng)
+            c.head = head
+        try:
+            self.store.set("player_head", head)
+        except Exception:
+            pass
+        self._apply_player_head(head)
+        return head
+
+    def _assign_npc_heads(self) -> None:
+        """Give every NPC/creature a head sprite — never the player's.
+
+        A head explicitly set in the editor is respected — regular head,
+        special guard head, or any browsed PNG under assets/sprites/heads/ —
+        unless it is the player's head: no NPC ever wears that. A head is
+        assigned when none was set (the '(random)' option, i.e. an
+        empty/invalid head) or the set one is the player's:
 
         * an NPC whose name contains "guard" gets a random *guard* head
           (guard01…guard06), matching the editor's guard-head option;
@@ -657,9 +673,9 @@ class MiniwindSession:
             if ttype not in ("npc", "creature", "monster"):
                 continue
             cur = str(p.get("head", "") or "")
-            # Always respect a head explicitly set in the editor (regular, guard,
-            # or browsed). Only roll a random head when none was set.
-            if heads.is_any_head(cur):
+            # Respect a head explicitly set in the editor (regular, guard, or
+            # browsed) unless it is the player's. Otherwise roll one.
+            if heads.is_any_head(cur) and cur != player_head:
                 head = cur
             elif heads.name_is_guard(p.get("name") or p.get("display_name")):
                 head = heads.random_guard_head(self.rng)
@@ -4927,7 +4943,5 @@ class MiniwindSession:
             self.needs_char_creation = False
             self._sync_engine_health(full=True)
             # Re-apply the saved head so the player billboard matches on load.
-            head = getattr(self.game.character, "head", "") or self.store.get("player_head", "")
-            if head and head != "false":
-                self._apply_player_head(head)
+            self._ensure_player_head()
             self._assign_npc_heads()
