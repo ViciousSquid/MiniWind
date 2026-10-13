@@ -9,6 +9,8 @@ simulation.
   rewound moment and carries on from it).
 * **Speed** -- 0.25×, 0.5×, 1× or 2×: how many seconds the world advances
   per real second (the logic and monster-AI threads both follow it).
+* **Teleport to cave** -- one button per cave mouth in the world: it puts
+  the player just outside it, at the cave's exit start.
 
 Closing the window puts the speed back to 1×, lets the world run and stops
 recording.
@@ -28,6 +30,11 @@ SPEEDS = (0.25, 0.5, 1.0, 2.0)
 #: The world-pause request the Pause button holds.
 PAUSE_OWNER = "debug_tools"
 REWIND_STEP = 1.0
+#: The teleport buttons: how many caves the window has room for, two a row.
+CAVE_SLOTS = 12
+CAVE_ROW_H = 30
+_BASE_HEIGHT = 150
+_CAVES_TOP = _BASE_HEIGHT + 4
 
 _BG = QColor(28, 30, 36, 235)
 _BTN = QColor(52, 56, 66)
@@ -41,7 +48,8 @@ class DebugToolsWindow(FloatingWindow):
     wants_cursor = True
 
     def __init__(self, view, x=20, y=110):
-        super().__init__("Debug Tools", x, y, width=330, body_height=150)
+        super().__init__("Debug Tools", x, y, width=360,
+                         body_height=_CAVES_TOP + 24 + (CAVE_SLOTS // 2) * (CAVE_ROW_H + 6))
         self.view = view
         self.key = "debug:tools"
         self._buttons = []
@@ -82,6 +90,11 @@ class DebugToolsWindow(FloatingWindow):
             fio.set_world_paused(logic, rewind.PAUSE_OWNER, False)
         else:
             fio.set_world_paused(logic, PAUSE_OWNER, True)
+
+    def _teleport(self, pos):
+        def act():
+            hits.queue(lambda session: session.teleport_player(pos))
+        return act
 
     def _set_speed(self, value):
         def act():
@@ -135,7 +148,31 @@ class DebugToolsWindow(FloatingWindow):
         painter.setPen(_DIM)
         painter.drawText(QRect(x + pad, y + 112, w - 2 * pad, 28),
                          Qt.AlignLeft | Qt.AlignVCenter, status)
+        self._draw_caves(painter, x, y + _CAVES_TOP, w, pad, session)
         painter.restore()
+
+    def _draw_caves(self, painter, x, y, w, pad, session):
+        """A button per cave mouth: click to stand outside it."""
+        painter.setFont(self.f_small)
+        painter.setPen(_DIM)
+        painter.drawText(QRect(x + pad, y, w, 18), Qt.AlignLeft | Qt.AlignVCenter,
+                         "Teleport to cave")
+        try:
+            caves = session.cave_entrances() if session is not None else []
+        except Exception:
+            caves = []
+        if not caves:
+            painter.drawText(QRect(x + pad, y + 22, w - 2 * pad, 24),
+                             Qt.AlignLeft | Qt.AlignVCenter,
+                             "No caves in this map" if session is not None
+                             else "No game running")
+            return
+        bw = (w - 2 * pad - 8) // 2
+        for k, (name, pos) in enumerate(caves[:CAVE_SLOTS]):
+            r = QRect(x + pad + (k % 2) * (bw + 8), y + 22 + (k // 2) * (CAVE_ROW_H + 6),
+                      bw, CAVE_ROW_H)
+            label = painter.fontMetrics().elidedText(name, Qt.ElideRight, bw - 10)
+            self._button(painter, r, label, self._teleport(pos))
 
     # -- mouse -------------------------------------------------------------------
     def handle_mouse_press(self, event):

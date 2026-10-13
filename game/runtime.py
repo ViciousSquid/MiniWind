@@ -4930,6 +4930,44 @@ class MiniwindSession:
             return True
         return False
 
+    # ============================================================== teleport
+    def cave_entrances(self):
+        """``[(name, (x, y, z))]`` for every cave mouth in the loaded world,
+        in cave order: where the cave's exit start stands, just outside it."""
+        things = fio.things(self.logic)
+        token = (id(things), len(things))
+        cached = self.__dict__.get("_cave_entrances")
+        if cached is not None and cached[0] == token:
+            return cached[1]
+        names, starts = {}, {}
+        for t in things:
+            p = getattr(t, "properties", None) or {}
+            slug = p.get("_cave")
+            if not slug:
+                continue
+            ttype = str(p.get("type", "")).replace("_", "").lower()
+            if ttype == "marker" and p.get("place_name"):
+                names[slug] = str(p["place_name"])
+            elif ttype == "playerstart" or str(p.get("name", "")) == f"{slug}_exit":
+                starts[slug] = (float(t.pos[0]), float(t.pos[1]), float(t.pos[2]))
+        out = [(names.get(slug, slug), starts[slug]) for slug in sorted(starts)]
+        self._cave_entrances = (token, out)
+        return out
+
+    def teleport_player(self, pos) -> bool:
+        """Put the player at *pos* (x, y, z) at once, standing still."""
+        import glm
+        player = fio.player(self.logic)
+        if player is None:
+            return False
+        player.pos = glm.vec3(float(pos[0]), float(pos[1]), float(pos[2]))
+        player.velocity = glm.vec3(0, 0, 0)
+        portals = getattr(self.logic, "portal_runtime", None)
+        if portals is not None and hasattr(portals, "note_player_teleported"):
+            portals.note_player_teleported()
+        self._cancel_bow_draw()
+        return True
+
     # ========================================================= player combat
     def _player_pos(self):
         p = fio.player(self.logic)
