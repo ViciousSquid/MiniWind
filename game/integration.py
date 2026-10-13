@@ -127,6 +127,12 @@ _GAME_MAP_MARKER = b'"miniwindsettings"'
 def is_game_map(path) -> bool:
     """True when the map file at *path* carries MiniWind's settings entity."""
     try:
+        from engine import asset_archives
+        if asset_archives.in_archive(path):
+            return _GAME_MAP_MARKER in (asset_archives.read(path) or b"")
+    except ImportError:
+        pass
+    try:
         with open(path, "rb") as f:
             return _GAME_MAP_MARKER in f.read()
     except OSError:

@@ -149,6 +149,19 @@ def _loading_step(window, stage, percent=None):
         overlay.step(stage, percent)
 
 
+
+def _read_level_json(path):
+    """A map's JSON: from a mounted ``.fiopak`` data package when one holds
+    it (``maps/cave01.json``), else the loose file."""
+    try:
+        from engine import asset_archives
+        if asset_archives.in_archive(path):
+            return json.loads(asset_archives.read(path).decode('utf-8'))
+    except ImportError:
+        pass
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
 class MainWindow(QMainWindow):
     #: A LevelChanger asks for a map: ``(map path, destination spawn)``, the
     #: spawn being a PlayerStart name, or '' for the map's primary start.
@@ -4554,8 +4567,7 @@ class MainWindow(QMainWindow):
         with _loading_overlay(self).busy(f"Loading {name}", "Reading the map", 5), \
                 self._loading_throbber(filePath):
             try:
-                with open(filePath, 'r', encoding='utf-8') as f:
-                    level_data = json.load(f)
+                level_data = _read_level_json(filePath)
             except Exception as e:
                 print(f"ERROR loading level {filePath}: {e}")
                 self.show_toast(f"Failed to load level: {e}", is_error=True)
