@@ -404,6 +404,9 @@ class MiniwindSession:
         self.rng = random.Random()
         self.game = GameState(self.store, rng=self.rng)
         self.needs_char_creation = str(cfg.get("start_scenario", "prompt")) == "prompt"
+        #: Which map this is, for what it remembers (game/map_memory.py): the
+        #: map's own settings entity, else its region's name.
+        self._map_key = str(cfg.get("id") or cfg.get("region_name") or "")
 
         # Register quests. Precedence (later wins): built-ins < legacy map quests
         # < external .quest files. Quests now live as human-readable .quest files
@@ -511,6 +514,8 @@ class MiniwindSession:
         self.held = HeldWeapons(self)
         from .dragon_fire import DragonFire
         from .wildlife import Wildlife
+        from .map_memory import MapMemory
+        self.memory = MapMemory(self)
         self.wildlife = Wildlife(self)
         self.dragon_fire = DragonFire(self)
         #: Spell bolts in flight that carry a light: Fio tag -> Light, and
@@ -671,7 +676,9 @@ class MiniwindSession:
         # the engine's instant hit-scan (game/npc_archery.py).
         from engine.monster_ai import MonsterAI
         MonsterAI.install_shot_hook(self.archery.shot_hook)
+        self.memory.load(self._map_key)
         self.spawn_creature_points()   # materialise CreatureSpawn points once
+        self.memory.apply()            # the dead stay dead; lairs refill after a day
         self._assign_npc_handedness()  # random handedness (left rare) where unset
         self._arm_fighters()           # a bow for the swordsman, a blade for the archer
         self.dragon_fire.install(fio.things(self.logic))
@@ -982,6 +989,7 @@ class MiniwindSession:
         self.held.update()
         self.dragon_fire.update(delta)
         self.wildlife.update(delta)
+        self.memory.update(delta)
         self._update_bolt_lights()
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
             # Fio does not publish an empty store, so the last arrow to land
@@ -1663,11 +1671,16 @@ class MiniwindSession:
             radius = float(p.get("spawn_radius", 0.0))
             faction = str(p.get("faction", "") or "").strip()
             inventory = self._spawn_inventory(p.get("inventory"))
-            for _ in range(max(0, count)):
+            for slot in range(max(0, count)):
                 ox = self.rng.uniform(-radius, radius) if radius else 0.0
                 oz = self.rng.uniform(-radius, radius) if radius else 0.0
                 pos = [sp.pos[0] + ox, sp.pos[1], sp.pos[2] + oz]
-                props = {"npc_role": role}
+                props = {"npc_role": role,
+                         # Remembered by spawner and slot (game/map_memory.py):
+                         # killed today, back in about a day.
+                         "_spawner": str(p.get("id") or p.get("name") or ""),
+                         "_spawn_slot": slot,
+                         "_spawner_respawn": p.get("respawn", True) is not False}
                 if faction:
                     # Force the whole group onto one team (relationships/combat).
                     props["faction"] = faction
@@ -1766,6 +1779,8 @@ class MiniwindSession:
                 producer = self._sim_producer_of(p)
                 if producer is not None:
                     sim_prod.note_collected(producer.properties, 1)
+                elif not p.get("respawn"):
+                    self.memory.taken(it)       # gone for good from this map
                 p["dead"] = True
                 p["hidden"] = True
                 _journal(it)
@@ -6041,6 +6056,8 @@ class MiniwindSession:
         if force or (now - self._last_persist) >= 1.0:
             self._last_persist = now
             self.game.save_to_store()
+            if force:
+                self.memory.save()
             if force and getattr(self, "living", None) is not None:
                 self.living.persist()
             # The world's event history rides along in the same store, so a
