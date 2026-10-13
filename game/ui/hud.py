@@ -90,7 +90,7 @@ PLAYER_HEAD_SIZE = 128.0
 
 
 def draw_bow_charge(painter, session, viewport, width, height):
-    """While right mouse draws the bow: a pie tucked against the upper right
+    """While left mouse draws the bow: a pie tucked against the upper right
     of the player's head that fills as the draw lengthens (a fuller pie, a
     longer shot). Gone once the arrow is loosed or the draw is lowered.
 
@@ -118,6 +118,12 @@ def draw_bow_charge(painter, session, viewport, width, height):
         centre, head_r = (width / 2.0, height / 2.0), 30.0
     else:
         head_r = max(8.0, math.hypot(edge[0] - centre[0], edge[1] - centre[1]))
+    _draw_charge_pie(painter, centre, head_r, charge)
+
+
+def _draw_charge_pie(painter, centre, head_r, charge):
+    """The bow-draw pie, tucked against the upper right of a head of radius
+    *head_r* centred on *centre* (screen pixels): one look for every archer."""
     r = BOW_PIE_RADIUS
     out = head_r + r * (2.0 * BOW_PIE_OUTSIDE - 1.0)
     cx = int(round(centre[0] + out * math.cos(math.radians(45))))
@@ -137,6 +143,41 @@ def draw_bow_charge(painter, session, viewport, width, height):
     painter.setPen(QPen(QColor(255, 214, 90) if full else QColor(30, 26, 20), 2))
     painter.drawEllipse(box)
     painter.restore()
+
+
+def draw_npc_bow_charges(painter, session, viewport, width, height):
+    """The same charge pie beside every NPC or creature drawing a bow, so the
+    player can read an archer winding up a power shot and get out of the way.
+    Only archers on screen are drawn."""
+    archery = getattr(session, "archery", None)
+    if archery is None or session.open_screen is not None or session.dialogue is not None:
+        return
+    archers = archery.archers()
+    if not archers:
+        return
+    try:
+        import glm
+        proj, view = viewport.projection_matrix, viewport.view_matrix
+    except Exception:
+        return
+    for thing in archers:
+        p = getattr(thing, "properties", {}) or {}
+        charge = p.get("_bow_charge")
+        if charge is None:
+            continue
+        try:
+            x, y, z = (float(v) for v in thing.pos)
+            size = float(p.get("sprite_width", PLAYER_HEAD_SIZE) or PLAYER_HEAD_SIZE)
+            centre = _world_to_screen(glm, proj, view, x, y, z, width, height)
+            edge = _world_to_screen(glm, proj, view, x + size / 2, y, z, width, height)
+        except Exception:
+            continue
+        if centre is None or edge is None:
+            continue
+        if not (-40 <= centre[0] <= width + 40 and -40 <= centre[1] <= height + 40):
+            continue
+        head_r = max(8.0, math.hypot(edge[0] - centre[0], edge[1] - centre[1]))
+        _draw_charge_pie(painter, centre, head_r, max(0.0, min(1.0, float(charge))))
 
 
 def _draw_interact_prompt(painter, session, width, height):

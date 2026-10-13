@@ -1023,6 +1023,7 @@ class MiniwindGame:
                 inspector.draw_world_lines(painter, viewport, w, h)
                 hud.draw(painter, session, w, h)
                 hud.draw_bow_charge(painter, session, viewport, w, h)
+                hud.draw_npc_bow_charges(painter, session, viewport, w, h)
                 # The armed pick's highlight goes over the HUD, so its name
                 # label is never hidden under a toast.
                 inspector.draw_pick_hover(painter, viewport, w, h)
@@ -1085,6 +1086,10 @@ class MiniwindGame:
             except Exception:
                 pass
             session.needs_char_creation = False
+        if screen == "trade":
+            from .ui import screens as _screens
+            _screens.close_trade(session)
+            return
         session.open_screen = None
 
     @staticmethod
@@ -1151,7 +1156,7 @@ class MiniwindGame:
             return False
         try:
             from engine.floating_windows import CallbackWindow
-            from .ui import dialogue_ui, screens
+            from .ui import dialogue_ui, hits, screens
         except Exception:
             return False
 
@@ -1193,6 +1198,10 @@ class MiniwindGame:
                 draw_fn = (lambda p, x, y, ww, hh, s=session:
                            dialogue_ui.draw_in_rect(p, s, x, y, ww, hh))
                 on_close = session.end_dialogue
+                # The conversation's responses are buttons too (see
+                # game.ui.hits); the window would otherwise swallow the click.
+                click_cb = (lambda cx, cy: hits.click(cx, cy))
+                wants_cursor = True
             else:
                 screen = session.open_screen
                 title = self._SCREEN_TITLES.get(screen, str(screen).title())
@@ -1201,11 +1210,12 @@ class MiniwindGame:
                            screens.draw_in_rect(p, s, x, y, ww, hh))
                 on_close = (lambda s=session, sc=session.open_screen:
                             self._close_overlay_screen(s, sc))
-                # The quest journal is mouse-driven: free the play-mode cursor
-                # and route body clicks into the screen so its quest list and
-                # "make active quest" box can be clicked.
+                # Every screen is mouse-driven: free the play-mode cursor and
+                # route body clicks into the screen, so its buttons (a
+                # merchant's Buy / Leave, the level-up choices, the quest list)
+                # can be clicked rather than swallowed by the window.
                 click_cb = (lambda cx, cy, s=session: screens.handle_click(s, cx, cy))
-                wants_cursor = (screen == "quest")
+                wants_cursor = True
             win = CallbackWindow(key, title, draw_fn, width=bw, body_height=bh,
                                  x=max(20, (w - bw) // 2),
                                  y=max(20, (h - bh) // 2 - 24),

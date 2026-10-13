@@ -61,7 +61,7 @@ _SCREEN_BODY_SIZE = {
     "character": (720, 520),
     "journal": (700, 470),
     "spells": (700, 470),
-    "levelup": (560, 430),
+    "levelup": (640, 470),
     "trade": (760, 520),
     "container": (760, 500),
     "quest": (880, 540),
@@ -113,11 +113,14 @@ def _row_target(painter, rect, action, label=None):
 def handle_click(session, x, y):
     """Route a body click inside the open screen. Returns True if consumed.
 
-    Only the quest journal is clickable for now: a click selects the quest
-    row under the cursor, or toggles the selected quest as the tracked/active
-    one (so only its arrow shows)."""
+    The screen is hosted in a floating window, and that window swallows
+    every click on its body, so a click must be handed on from here or the
+    screen's buttons (a merchant's *Buy* and *Leave*, the level-up choices)
+    could never be pressed. The quest journal keeps its own hit areas — a
+    quest row, or the tracked/active toggle; every other screen goes through
+    the targets it published while painting (:mod:`game.ui.hits`)."""
     if getattr(session, "open_screen", None) != "quest":
-        return False
+        return hits.click(x, y)
     from PyQt5.QtCore import QPoint
     p = QPoint(int(x), int(y))
     shown = _QUEST_HITS.get("map")
@@ -134,7 +137,7 @@ def handle_click(session, x, y):
         if r.contains(p):
             _sel(session).setdefault("quest", {"row": 0})["row"] = idx
             return True
-    return False
+    return hits.click(x, y)
 
 
 def draw_in_rect(painter, session, x, y, w, h):
@@ -1119,65 +1122,136 @@ def _handle_trade(session, key):
                               gold_text=f"{'-' if buying else '+'}{price}g",
                               gold_gain=not buying)
         return True
-    if key in ("escape", "esc"):
-        session.open_screen = None; session.merchant_npc = None
-        trade_anim.reset()
+    if key in ("escape", "esc", "e"):
+        close_trade(session)
     return True
 
 
+def close_trade(session):
+    """End the trade: the screen closes and the merchant is let go."""
+    session.open_screen = None
+    session.merchant_npc = None
+    trade_anim.reset()
+
+
 # ===========================================================================
-# Level up
+# Level up — Skyrim-style: three pillars, pick one to grow.
 # ===========================================================================
+#: (pool id, label, colour, what it does) in the order the cards are laid out.
+_LEVEL_POOLS = (
+    ("health", "HEALTH", T.HEALTH, "Stand longer in a fight"),
+    ("magicka", "MAGICKA", T.MAGICKA, "Cast more, cast longer"),
+    ("stamina", "STAMINA", T.STAMINA, "Run, swing and draw for longer"),
+)
+
+
+def _levelup_state(session):
+    return _sel(session).setdefault("levelup", {"row": 0})
+
+
+def _pool_values(c, pool):
+    cur = {"health": c.max_health, "magicka": c.max_magicka,
+           "stamina": c.max_stamina}[pool]
+    from ..rpg.character import LEVEL_POOL_GAIN
+    return cur, cur + LEVEL_POOL_GAIN
+
+
 def _draw_levelup(painter, session, w, h):
+    """The level-up choice: Health, Magicka or Stamina, as three tall cards.
+
+    The skills you trained this level have already raised their attributes
+    (listed at the foot of the screen); the only decision left to the player
+    is which pool to grow — the one moment Skyrim stops to ask."""
     c = session.game.character
-    st = _sel(session).setdefault("levelup", {"row": 0, "picks": []})
+    st = _levelup_state(session)
     x, y, bw, bh = _panel_rect(w, h, 0.6, 0.7)
     inner = T.panel(painter, x, y, bw, bh)
-    ty = T.heading(painter, inner, "Level Up!",
-                   f"Choose up to 3 attributes to raise (level {c.level} → {c.level+1})")
-    for i, a in enumerate(attr.ATTRIBUTES):
-        ry = ty + 8 + i * 24
-        picked = a in st["picks"]
-        if i == st["row"]:
-            painter.fillRect(QRect(inner.x(), ry - 2, inner.width(), 22), T.SELECT)
-        mark = "☑ " if picked else "☐ "
-        gains = c._level_attr_gains.get(a, 0)
-        mult = 1 + min(4, gains // 2)
-        T.text(painter, inner.x() + 8, ry + 14, mark + attr.label(a) + f"  ({c.attrs[a]})",
-               size=11, color=T.GOLD_BRIGHT if i == st["row"] else T.INK, family="Segoe UI")
-        T.text_in(painter, QRect(inner.x(), ry - 2, inner.width() - 8, 22),
-                  f"+{mult}", size=10, color=T.STAMINA.lighter(140),
-                  align=T.ALIGN_RIGHT, family="Segoe UI")
+    ty = T.heading(painter, inner, f"Level {c.level + 1}",
+                   "Choose one to increase")
+    gap = 14
+    card_w = max(90, (inner.width() - 2 * gap) // 3)
+    card_top = ty + 14
+    card_h = max(120, inner.bottom() - 96 - card_top)
+    for i, (pool, label, colour, blurb) in enumerate(_LEVEL_POOLS):
+        cx = inner.x() + i * (card_w + gap)
+        rect = QRect(cx, card_top, card_w, card_h)
+        chosen = st["row"] == i
+        hot = hits.hovered(rect)
+        painter.save()
+        painter.setRenderHint(painter.Antialiasing, True)
+        fill = QColor(colour)
+        fill.setAlpha(150 if chosen else 70 if hot else 40)
+        painter.setBrush(fill)
+        painter.setPen(QPen(T.GOLD_BRIGHT if chosen else T.GILD, 3 if chosen else 1.5))
+        painter.drawRoundedRect(rect, 8, 8)
+        painter.restore()
+        # The pillar: a column of light that rises higher on the chosen card.
+        bar_h = int(card_h * (0.55 if chosen else 0.4))
+        bar = QRect(cx + card_w // 2 - 6, card_top + card_h - 52 - bar_h, 12, bar_h)
+        glow = QColor(colour).lighter(150 if chosen else 115)
+        painter.fillRect(bar, glow)
+        T.text_in(painter, QRect(cx, card_top + 12, card_w, 30), label, size=17,
+                  color=T.GOLD_BRIGHT if chosen else T.INK, align=T.ALIGN_CENTER,
+                  bold=True)
+        before, after = _pool_values(c, pool)
+        T.text_in(painter, QRect(cx, card_top + card_h - 48, card_w, 22),
+                  f"{int(before)}  →  {int(after)}", size=13,
+                  color=T.GOLD_BRIGHT if chosen else T.INK, align=T.ALIGN_CENTER,
+                  family="Segoe UI", bold=chosen)
+        T.text_in(painter, QRect(cx + 4, card_top + card_h - 26, card_w - 8, 20),
+                  blurb, size=9, color=T.DIM, align=T.ALIGN_CENTER,
+                  family="Segoe UI")
+        T.text_in(painter, QRect(cx + 6, card_top + 6, 24, 18), str(i + 1), size=9,
+                  color=T.DIM, family="Segoe UI")
+        _row_target(painter, rect, _levelup_pick(i), f"levelup:{pool}")
+
+    # What training has already earned, shown so the level feels deserved.
+    trained = [(a, c._level_attr_gains.get(a, 0)) for a in attr.ATTRIBUTES]
+    trained = [f"{attr.label(a)} +{1 + min(4, g // 2)}" for a, g in
+               sorted(trained, key=lambda t: -t[1]) if g > 0][:3]
+    if trained:
+        T.text_in(painter, QRect(inner.x(), inner.bottom() - 88, inner.width(), 18),
+                  "Your training also raises: " + ",  ".join(trained), size=9,
+                  color=T.STAMINA.lighter(140), align=T.ALIGN_CENTER, family="Segoe UI")
+    pool, label, _c, _b = _LEVEL_POOLS[st["row"] % 3]
+    button(painter, QRect(inner.x() + (inner.width() - 260) // 2,
+                          inner.bottom() - 62, 260, 34),
+           f"Increase {label.title()}", lambda sess: _handle_levelup(sess, "return"),
+           primary=True)
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              "↑/↓ move   Space toggle   Enter confirm", size=9, color=T.DIM,
+              "Click, 1/2/3 or ←/→ to choose   Enter confirm", size=9, color=T.DIM,
               align=T.ALIGN_CENTER, family="Segoe UI")
+
+
+def _levelup_pick(i):
+    def action(session):
+        _levelup_state(session)["row"] = i
+    return action
 
 
 def _handle_levelup(session, key):
     c = session.game.character
-    st = _sel(session).setdefault("levelup", {"row": 0, "picks": []})
-    if key in ("up", "w"):
-        st["row"] = (st["row"] - 1) % len(attr.ATTRIBUTES); return True
-    if key in ("down", "s"):
-        st["row"] = (st["row"] + 1) % len(attr.ATTRIBUTES); return True
-    if key == "space":
-        a = attr.ATTRIBUTES[st["row"]]
-        if a in st["picks"]:
-            st["picks"].remove(a)
-        elif len(st["picks"]) < 3:
-            st["picks"].append(a)
-        return True
-    if key in ("return", "enter"):
-        picks = st["picks"] or None
-        res = c.level_up(picks)
-        session.notify(f"Welcome to level {res['level']}!", 5.0)
-        st["picks"] = []
+    st = _levelup_state(session)
+    n = len(_LEVEL_POOLS)
+    if key in ("left", "a", "up", "w"):
+        st["row"] = (st["row"] - 1) % n; return True
+    if key in ("right", "d", "down", "s", "tab"):
+        st["row"] = (st["row"] + 1) % n; return True
+    if key in ("1", "2", "3"):
+        st["row"] = int(key) - 1; return True
+    if key in ("return", "enter", "space"):
+        pool = _LEVEL_POOLS[st["row"] % n][0]
+        res = c.level_up(pool=pool)
+        session.notify(f"Welcome to level {res['level']}!  "
+                       f"{pool.title()} +{int(res.get('pool_gain', 0))}", 5.0)
+        st["row"] = 0
         session.open_screen = None
         session._sync_engine_health(full=True)
+        # Another level banked? Offer it straight away.
+        if c.can_level_up:
+            session.open_screen = "levelup"
         return True
-    if key in ("escape", "esc"):
-        return True  # must choose; don't allow escape out
-    return True
+    return True  # must choose; Escape does not skip a level
 
 
 # ===========================================================================

@@ -166,6 +166,23 @@ class MonsterAI:
     #: standalone: with none installed an actor keeps its authored style.
     _attack_style_hook = None
 
+    #: ``hook(thing, target_pos, aggro_monster, distance_sq) -> bool``: a
+    #: game's chance to take over one due shot (draw a bow over time, loose
+    #: a physical arrow). True means the game owns this shot and the stock
+    #: hitscan below is skipped; False leaves the shot to the engine.
+    _shot_hook = None
+
+    @classmethod
+    def install_shot_hook(cls, hook):
+        """Install the game's shot hook (see :attr:`_shot_hook`)."""
+        cls._shot_hook = hook
+
+    @classmethod
+    def clear_shot_hook(cls, hook=None):
+        """Remove the shot hook (only if it is still *hook*, when given)."""
+        if hook is None or cls._shot_hook is hook:
+            cls._shot_hook = None
+
     @classmethod
     def install_attack_style_hook(cls, hook):
         """Install the game's attack-style chooser (see _attack_style_for)."""
@@ -195,6 +212,7 @@ class MonsterAI:
         """Drop every per-session game hook: hostility and attack style."""
         self.hostility = None
         MonsterAI.clear_attack_style_hook()
+        MonsterAI.clear_shot_hook()
 
     def _hostile(self, team_a, team_b) -> bool:
         """Does *team_a* attack *team_b*? The scalar form of the model."""
@@ -1152,6 +1170,14 @@ all accumulated time when it runs, so simulation time is not lost.
         """
         mid = id(thing)
         damage = int(thing.properties.get('damage', 20))
+
+        hook = MonsterAI._shot_hook
+        if hook is not None:
+            try:
+                if hook(thing, target_pos, aggro_monster, distance_sq):
+                    return
+            except Exception as exc:
+                debug_log("MonsterAI", f"shot hook failed: {exc}")
 
         if mtype == 'flying':
             # ---- Flying monsters: bite if very close, else projectile ----

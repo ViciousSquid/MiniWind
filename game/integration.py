@@ -687,10 +687,12 @@ def _free_play_session(view):
 
 
 def install_bow_draw(view):
-    """With a bow in hand, right mouse draws it: hold to draw, release to loose
-    (game.runtime: MiniwindSession._update_bow_draw). A left click while
-    drawing lowers the bow. The button is the game's then, so the engine does
-    not also cast the active spell on it."""
+    """With a bow in hand, the LEFT mouse draws it: hold to draw (the pie fills
+    beside the head), release to loose (game.runtime:
+    MiniwindSession._update_bow_draw). A quick click looses a short shot. The
+    button is the game's then, so the engine does not also fire on it; with a
+    blade in hand a left click is an ordinary stab, and the right mouse is
+    always the spell hand (the engine's secondary fire -> do_cast)."""
     from PyQt5.QtCore import QEvent, QObject, Qt
 
     class _BowDraw(QObject):
@@ -702,21 +704,16 @@ def install_bow_draw(view):
             session = _free_play_session(view)
             if session is None:
                 return False
-            button = event.button()
+            if event.button() != Qt.LeftButton:
+                return False
             drawing = session.bow_charge is not None
-            if button == Qt.RightButton:
-                if kind == QEvent.MouseButtonRelease:
-                    if drawing or session._bow_input:
-                        session.bow_draw_input("release")
-                        return True
-                    return False
-                if session.bow_in_hand():
-                    session.bow_draw_input("press")
+            if kind == QEvent.MouseButtonRelease:
+                if drawing or session._bow_input:
+                    session.bow_draw_input("release")
                     return True
                 return False
-            if button == Qt.LeftButton and drawing:
-                if kind != QEvent.MouseButtonRelease:
-                    session.bow_draw_input("cancel")
+            if session.bow_in_hand():
+                session.bow_draw_input("press")
                 return True
             return False
 

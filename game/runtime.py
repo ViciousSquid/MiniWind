@@ -59,6 +59,7 @@ from .rpg.dialogue import DialogueRunner
 from .rpg import inventory as inv
 from .rpg.game_state import GameState
 from .diceroll_anim import SHAKE_DURATION, ROLL_DURATION, FADE_DURATION
+from . import npc_archery
 
 _current_session = None
 
@@ -158,13 +159,13 @@ HIT_FLASH_TIME = 0.18
 #: How far a melee swing reaches / a shot can pick a target.
 MELEE_REACH = 170.0
 BOW_REACH = 2400.0
-#: Holding right mouse with a bow draws it: how long a full draw takes, and
+#: Holding left mouse with a bow draws it: how long a full draw takes, and
 #: how far an arrow flies loosed with the bow barely drawn and fully drawn.
-BOW_FULL_DRAW_SECONDS = 2.5
-BOW_MIN_RANGE = 450.0
-BOW_MAX_RANGE = 3000.0
+BOW_FULL_DRAW_SECONDS = npc_archery.BOW_FULL_DRAW_SECONDS
+BOW_MIN_RANGE = npc_archery.BOW_MIN_RANGE
+BOW_MAX_RANGE = npc_archery.BOW_MAX_RANGE
 #: How fast an arrow flies.
-ARROW_SPEED = 1600.0
+ARROW_SPEED = npc_archery.ARROW_SPEED
 #: Frontal cone (dot threshold) for auto-target selection.
 AIM_DOT = 0.55
 # Melee is close-quarters and forgives a wider stance than ranged aiming —
@@ -195,6 +196,9 @@ TORCH_LIGHT_HEIGHT = 70.0
 TORCH_DEFAULT_RADIUS = 380.0
 TORCH_DEFAULT_INTENSITY = 1.5
 TORCH_DEFAULT_COLOUR = [255, 170, 80]
+#: The light a spell bolt carries with it, in the spell's colour.
+BOLT_LIGHT_RADIUS = 420.0
+BOLT_LIGHT_INTENSITY = 2.2
 
 #: Wisp companion light — how far it may wander from the player, and its four
 #: possible hues (RGB 0-255). One is picked at cast time and never changes.
@@ -445,7 +449,7 @@ class MiniwindSession:
         self._grounded = {}
         #: The camera height the wheel asked for (None: never zoomed).
         self.zoom_height = None
-        #: How far the bow is drawn (0..1) while right mouse is held, else
+        #: How far the bow is drawn (0..1) while left mouse is held, else
         #: None; the HUD draws it as a filling pie.
         self.bow_charge = None
         #: Right-mouse presses and releases from the view ("press", "release",
@@ -454,6 +458,13 @@ class MiniwindSession:
         #: Fio projectile tag -> sprite, for the arrows in flight: the game
         #: draws these itself, as arrows (see :meth:`_split_projectiles`).
         self._arrow_tags = {}
+        #: Every NPC / creature archer mid-draw: they draw a bow by the
+        #: player's own rules (game/npc_archery.py).
+        self.archery = npc_archery.NpcArchery(self)
+        #: Spell bolts in flight that carry a light: Fio tag -> Light, and
+        #: where each lit bolt was last published (tag -> (x, y, z)).
+        self._bolt_lights = {}
+        self._bolt_positions = {}
         #: ``((x, y, z), (vx, vy, vz), sprite)`` per arrow in flight, as last
         #: published for the renderer (read by game/ui/arrows.py).
         self.arrows_in_flight = ()
@@ -601,6 +612,10 @@ class MiniwindSession:
         # "every different team is an enemy, everyone hunts the player".
         from . import faction_ai
         faction_ai.install(logic)
+        # Archers draw their bows over time, as the player does, rather than
+        # the engine's instant hit-scan (game/npc_archery.py).
+        from engine.monster_ai import MonsterAI
+        MonsterAI.install_shot_hook(self.archery.shot_hook)
         self.spawn_creature_points()   # materialise CreatureSpawn points once
         self._assign_npc_handedness()  # random handedness (left rare) where unset
         self._wire_quest_givers()      # make quest givers offer their quests
@@ -611,6 +626,8 @@ class MiniwindSession:
         _current_session = None
         self._remove_wisp()
         self._remove_all_torch_lights()
+        self._bolt_positions = {}
+        self._update_bolt_lights()          # no bolt is live: every light goes out
         if getattr(self.logic, "_player_damage_filter", None) is self._mitigate_incoming:
             self.logic._player_damage_filter = None
         if getattr(self.logic, "player_fire_handler", None) == self.fire_player_weapon:
@@ -620,6 +637,9 @@ class MiniwindSession:
         self.arrows_in_flight = ()
         from . import faction_ai
         faction_ai.uninstall(self.logic)
+        from engine.monster_ai import MonsterAI
+        MonsterAI.clear_shot_hook(self.archery.shot_hook)
+        self.archery.clear()
 
     def _mitigate_incoming(self, raw_damage, damage_kind="physical") -> float:
         c = self.game.character
@@ -815,6 +835,8 @@ class MiniwindSession:
         self._ground_actors()
         self._ease_zoom(delta)
         self._update_bow_draw(delta)
+        self.archery.update(delta)
+        self._update_bolt_lights()
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
             # Fio does not publish an empty store, so the last arrow to land
             # is cleared here.
@@ -822,6 +844,7 @@ class MiniwindSession:
             self._arrow_tags.clear()
         self.clock.advance(delta)
         self.game.tick(delta)
+        self._announce_skill_raises()
         if self._attack_cooldown > 0:
             self._attack_cooldown -= delta
         if self._cast_cooldown > 0:
@@ -2238,7 +2261,31 @@ class MiniwindSession:
     def tick_ui(self, delta: float) -> None:
         """Age only the transient HUD (toasts/floaters) while the world is paused
         (a menu or character creation is open). No clock, NPC or combat sim."""
+        self._announce_skill_raises()
         self._age_lists(delta)
+
+    def _announce_skill_raises(self) -> None:
+        """Toast each skill that rose through use ("Destruction increased to
+        12"), so learning by doing is something the player sees happen, and
+        say so when the rises have earned a level."""
+        c = getattr(getattr(self, "game", None), "character", None)
+        pop = getattr(c, "pop_skill_raises", None)
+        if pop is None:
+            return
+        raised = pop()
+        if not raised:
+            return
+        from .rpg import skills as _sk
+        for skill_id, value in raised[-3:]:
+            sd = _sk.SKILLS.get(skill_id)
+            label = sd.label if sd is not None else str(skill_id).replace("_", " ").title()
+            self.notify(f"{label} increased to {value}", 3.5)
+            self.game.message(f"Your {label} skill increased to {value}.")
+        if c.can_level_up and not getattr(self, "_level_up_announced", False):
+            self._level_up_announced = True
+            self.notify("You feel more experienced. Press L to level up.", 6.0)
+        elif not c.can_level_up:
+            self._level_up_announced = False
 
     def _age_lists(self, delta):
         for n in self.notifications:
@@ -3928,7 +3975,7 @@ class MiniwindSession:
         return bool(w) and w.get("kind") == rpg_items.KIND_BOW
 
     def bow_draw_input(self, what) -> None:
-        """The view's right mouse, for the bow: "press" starts drawing it,
+        """The view's left mouse, for the bow: "press" starts drawing it,
         "release" looses the arrow, "cancel" lowers it. Handled next tick."""
         self._bow_input.append(str(what))
 
@@ -3936,7 +3983,7 @@ class MiniwindSession:
         self.bow_charge = None
 
     def _update_bow_draw(self, delta) -> None:
-        """Draw the bow while right mouse is held; loose on release.
+        """Draw the bow while left mouse is held; loose on release.
 
         The longer it is held (up to BOW_FULL_DRAW_SECONDS) the further the
         arrow flies. Switching weapons, opening a screen or a conversation, or
@@ -4321,10 +4368,16 @@ class MiniwindSession:
         projectiles (fio.set_projectile_split).
         """
         arrows = self._arrow_tags
+        tags = store.tag[:count]
+        bolts = self._bolt_lights
+        if bolts:
+            lit = np.flatnonzero(np.isin(
+                tags, np.fromiter(bolts, dtype=np.int64, count=len(bolts)))).tolist()
+            self._bolt_positions = {int(tags[r]): tuple(store.pos[r].tolist())
+                                    for r in lit}
         if not arrows:
             self.arrows_in_flight = ()
             return None
-        tags = store.tag[:count]
         is_arrow = np.isin(tags, np.fromiter(arrows, dtype=np.int64, count=len(arrows)))
         rows = np.flatnonzero(is_arrow).tolist()
         self.arrows_in_flight = tuple(
@@ -4526,9 +4579,63 @@ class MiniwindSession:
 
         # A player-owned bolt: it flies past the caster and strikes creatures
         # with the spell's damage.
-        fio.spawn_projectile(lt, start, vel,
-                             lifetime=MONSTER_PROJECTILE_MAX_DIST / speed,
-                             damage=int(getattr(spell, "damage", 0) or 0))
+        row = fio.spawn_projectile(lt, start, vel,
+                                   lifetime=MONSTER_PROJECTILE_MAX_DIST / speed,
+                                   damage=int(getattr(spell, "damage", 0) or 0))
+        self._attach_bolt_light(row, start, spell)
+
+    def _attach_bolt_light(self, row, start, spell) -> None:
+        """Give a spell bolt its own moving light, in the spell's colour.
+
+        The light rides the bolt (see :meth:`_split_projectiles`, which reads
+        where every lit bolt is as Fio publishes the projectiles) and goes out
+        the moment the bolt strikes or fizzles out of range."""
+        if row is None:
+            return
+        tag = fio.projectile_tag(self.logic, row)
+        if not tag:
+            return
+        try:
+            colour = list(spell.color)
+        except Exception:
+            colour = list(rpg_magic.DEFAULT_SPELL_COLOR)
+        light = self._make_light(start, {
+            "colour": colour, "intensity": BOLT_LIGHT_INTENSITY,
+            "radius": BOLT_LIGHT_RADIUS, "state": "on", "casts_shadows": False,
+            "hidden_in_game": False, "_bolt": True})
+        if light is None:
+            return
+        try:
+            fio.things(self.logic).append(light)
+        except Exception:
+            return
+        self._bolt_lights[tag] = light
+        self._rebuild_entity_caches()
+
+    def _update_bolt_lights(self) -> None:
+        """Move each spell bolt's light onto its bolt; put out the spent ones."""
+        lights = self._bolt_lights
+        if not lights:
+            return
+        live = self._bolt_positions if fio.projectile_count(self.logic) else {}
+        changed = False
+        for tag in list(lights):
+            light = lights[tag]
+            pos = live.get(tag)
+            if pos is None:
+                del lights[tag]
+                try:
+                    things = fio.things(self.logic)
+                    if light in things:
+                        things.remove(light)
+                except Exception:
+                    pass
+                changed = True
+                continue
+            lp = light.pos
+            lp[0], lp[1], lp[2] = pos[0], pos[1], pos[2]
+        if changed:
+            self._rebuild_entity_caches()
 
     def overhead_player_weapon(self):
         """``(weapon_id, handed)`` for the viewport's overhead weapon overlay."""
