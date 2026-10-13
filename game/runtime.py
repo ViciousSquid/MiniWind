@@ -222,6 +222,8 @@ SUBDUED_SHOUTS = ("That's enough! Go home, the both of you.",
                   "Any more of that and it's the cells.", "Settle down. Now.")
 CHARGE_SHOUTS = ("To arms!", "Raiders! With me!", "Not in my town!",
                  "Steel out, lads!")
+#: How far inside the terrain's edge the player is stopped.
+WORLD_EDGE_MARGIN = 900.0
 #: How fast an over-encumbered player moves, as a fraction of normal.
 ENCUMBERED_SPEED = 0.33
 #: The light a spell bolt carries with it, in the spell's colour.
@@ -668,6 +670,7 @@ class MiniwindSession:
         self._assign_npc_stats()       # STRENGTH / ENDURANCE / CHARISMA for everyone
         self._wire_quest_givers()      # make quest givers offer their quests
         self._name_index()             # built now, not on the first quest's frame
+        self._world_bounds = self._read_world_bounds()
         try:
             from .living.world import LivingWorld
             self.living = LivingWorld(self)
@@ -961,6 +964,7 @@ class MiniwindSession:
             # is cleared here.
             self.arrows_in_flight = ()
             self._arrow_tags.clear()
+        self._keep_player_in_world()
         self.clock.advance(delta)
         self.game.tick(delta)
         self._announce_skill_raises()
@@ -2462,6 +2466,62 @@ class MiniwindSession:
         (a menu or character creation is open). No clock, NPC or combat sim."""
         self._announce_skill_raises()
         self._age_lists(delta)
+
+    def _read_world_bounds(self):
+        """``(min_x, max_x, min_z, max_z)`` the player may walk in: the
+        terrain's extent, drawn in by :data:`WORLD_EDGE_MARGIN` so the rim of
+        the map is a wall rather than a cliff into nothing. None without
+        terrain (an interior map keeps its own walls)."""
+        ter = fio.terrain(self.logic)
+        if ter is not None and getattr(ter, "enabled", False):
+            try:
+                (x0, x1), (z0, z1) = ter.get_terrain_bounds()
+            except Exception:
+                return None
+        else:
+            # No live terrain object on this thread (yet): the map's own
+            # terrain record says the same thing.
+            state = getattr(self.logic, "editor_state", None)
+            td = getattr(state, "terrain_data", None)
+            if not isinstance(td, dict) or not td.get("enabled", True):
+                return None
+            try:
+                size = float(td.get("chunk_size", 256.0))
+                x0 = int(td["min_chunk_x"]) * size + float(td.get("offset_x", 0.0))
+                x1 = (int(td["max_chunk_x"]) + 1) * size + float(td.get("offset_x", 0.0))
+                z0 = int(td["min_chunk_z"]) * size + float(td.get("offset_z", 0.0))
+                z1 = (int(td["max_chunk_z"]) + 1) * size + float(td.get("offset_z", 0.0))
+            except (KeyError, TypeError, ValueError):
+                return None
+        m = WORLD_EDGE_MARGIN
+        if x1 - x0 <= 4 * m or z1 - z0 <= 4 * m:
+            return None
+        return (x0 + m, x1 - m, z0 + m, z1 - m)
+
+    def _keep_player_in_world(self) -> None:
+        """The edges of the map are untraversable: the player is held inside
+        the world's bounds, sliding along the edge rather than stopping dead."""
+        bounds = getattr(self, "_world_bounds", None)
+        player = fio.player(self.logic)
+        if bounds is None or player is None:
+            return
+        x0, x1, z0, z1 = bounds
+        pos = player.pos
+        x, z = float(pos[0]), float(pos[2])
+        cx, cz = min(max(x, x0), x1), min(max(z, z0), z1)
+        if cx != x or cz != z:
+            pos[0], pos[2] = cx, cz
+            vel = getattr(player, "velocity", None)
+            if vel is not None:
+                if cx != x:
+                    vel[0] = 0.0
+                if cz != z:
+                    vel[2] = 0.0
+            if not getattr(self, "_edge_told", False):
+                self._edge_told = True
+                self.notify("The land beyond is impassable.", 2.5)
+        else:
+            self._edge_told = False
 
     def _update_encumbrance(self) -> None:
         """Carrying more than you can bear slows you to a third of your pace,
