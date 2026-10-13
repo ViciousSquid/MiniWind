@@ -134,7 +134,9 @@ class LogicInteraction:
                     # Preserve authored list order: first matching row wins.
                     row = int(candidates[0])
                     thing = world.levelchanger_things[row]
-                    self.current_hud_message = "[E] Complete Level"
+                    self.current_hud_message = (
+                        str(thing.properties.get("prompt") or "").strip()
+                        or "[E] Complete Level")
                     if use_key_pressed:
                         # The map and the PlayerStart there, as the
                         # LevelChanger's ChangeLevel input resolves them.
@@ -145,6 +147,8 @@ class LogicInteraction:
                             "destination_spawn": destination_spawn,
                             "title": "Complete",
                             "button_text": "Continue",
+                            # A doorway or cave mouth goes straight there.
+                            "immediate": not thing.properties.get("confirm", True),
                         }
                         if thing.generates_level():
                             # Continue makes a new level rather than load one.

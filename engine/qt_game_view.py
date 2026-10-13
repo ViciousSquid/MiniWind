@@ -1925,6 +1925,13 @@ class QtGameView(QOpenGLWidget):
             self._cached_projectiles = np.array(render_state.projectiles, dtype=np.float32).reshape(-1, 3)
             self._cached_monster_rays = list(render_state.monster_debug_rays)
             self._cached_level_complete_ui = render_state.level_complete_ui
+            ui = self._cached_level_complete_ui
+            if (ui and ui.get('immediate')
+                    and not getattr(self, '_level_change_queued', False)):
+                # No Complete/Continue box: change level on the next event
+                # loop turn (never from inside the frame being drawn).
+                self._level_change_queued = True
+                QTimer.singleShot(0, self._confirm_immediate_level_change)
             self._cached_underwater = render_state.player_underwater
             self._cached_underwater_tint = render_state.underwater_tint
             self._cached_p2_underwater = render_state.player2_underwater
@@ -2243,7 +2250,8 @@ class QtGameView(QOpenGLWidget):
                 self._draw_hud(painter, render_state)
         if self.play_mode and render_state and render_state.player_dead:
             self._draw_death_screen(painter)
-        if self.play_mode and self._cached_level_complete_ui:
+        if (self.play_mode and self._cached_level_complete_ui
+                and not self._cached_level_complete_ui.get('immediate')):
             self._draw_level_complete_overlay(painter)
         if self.play_mode:
             logic_thread = self.logic_thread
@@ -3222,6 +3230,12 @@ class QtGameView(QOpenGLWidget):
         self._level_complete_btn_rect = None
         if self.logic_thread:
             self.logic_thread.interaction_runtime.level_complete_ui = None
+
+    def _confirm_immediate_level_change(self):
+        self._level_change_queued = False
+        ui = getattr(self, '_cached_level_complete_ui', None)
+        if ui and ui.get('immediate'):
+            self._confirm_level_complete()
 
     def _cancel_level_complete(self):
         self._cached_level_complete_ui = None
