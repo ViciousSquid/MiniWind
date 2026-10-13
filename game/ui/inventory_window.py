@@ -393,6 +393,20 @@ class InventoryWindow(FloatingWindow):
         painter.drawEllipse(QPoint(cx, cy), int(size * 0.62), int(size * 0.62))
         c = self._character()
         head = str(getattr(c, "head", "") or "")
+        # The eyes follow the pointer where the head's eyes can be found
+        # (game/ui/eye_rig.py); otherwise the head is drawn as it is.
+        try:
+            from ..rpg import heads
+            from . import eye_rig
+            import os
+            root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            rig = eye_rig.rig_for(os.path.join(root, heads.any_head_path(head)), size)
+        except Exception:
+            rig = None
+        if rig is not None:
+            eye_rig.draw(painter, rig, cx - rig.head.width() // 2,
+                         cy - rig.head.height() // 2, hits.pointer)
+            return
         pm = self._doll.get(head)
         if pm is None:
             try:
