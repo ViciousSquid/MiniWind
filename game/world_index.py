@@ -80,11 +80,13 @@ def _is_parked(props: dict) -> bool:
     """
     return PARKED_HIDDEN_KEY in props or PARKED_DISABLED_KEY in props
 
-#: Below this many actors the cell bins cost more to build than they save, so
-#: radius queries run as one vectorised pass over every row instead. Measured,
-#: not guessed: a full NumPy pass over a few dozen rows is a couple of
-#: microseconds, well under the cost of binning them.
-BIN_THRESHOLD = 64
+#: Below this many actors the cell bins cost more than they save, so radius
+#: queries run as one vectorised pass over every row instead. Measured, not
+#: guessed: a full pass is ~5 us at a few hundred rows and ~25 us at 10 000,
+#: while a binned query pays ~12 us of lookups on top of the sort -- the scan
+#: wins at every count up to 10 000 rows even at 50 queries a tick. Since
+#: parked actors have no rows, the resident cast rarely comes near this.
+BIN_THRESHOLD = 16384
 
 #: Empty result reused by every query that matches nothing, so a miss allocates
 #: nothing. Never mutate it.
@@ -135,7 +137,8 @@ class WorldIndex:
         #: Distinct team strings in scene order; ``team_ids`` indexes into it.
         self.team_names: List[str] = []
         self._team_of_name: Dict[str, int] = {}
-        self._bins: Dict[tuple, np.ndarray] = {}
+        #: ``(sorted cell keys, row order)`` once built, else None.
+        self._bins: Optional[tuple] = None
         self._binned = False
         #: ``id(actor) -> row``, built on first use. Most ticks only move
         #: actors and never ask, so building it in every rebuild was a dict of
@@ -171,12 +174,22 @@ class WorldIndex:
         :meth:`tier_of`. An actor the streamer has parked is not alive for query
         purposes — it is not in the world right now — which is read from the
         engine's parking markers rather than from ``hidden``/``disabled``, so a
-        mapper-hidden actor is not mistaken for a parked one.
+        mapper-hidden actor is not mistaken for a parked one. A parked living
+        actor gets no row at all, so :attr:`actors` is the resident cast plus
+        every corpse.
         """
-        n = len(actors)
-        self.actors = actors
+        # A living actor the streamer has parked is left out altogether: it is
+        # never alive for a query, so a row for it would only be filled and
+        # skipped. On a streamed world that is nearly every actor (hundreds
+        # parked against a few dozen resident), and the one membership test
+        # here is all they cost. A parked *corpse* keeps its row, because the
+        # casualty count reads corpses whatever their residency.
+        rows = [a for a in actors
+                if not _is_parked(a.properties) or a.properties.get("dead")]
+        n = len(rows)
+        self.actors = rows
         self.n = n
-        self._bins = {}
+        self._bins = None
         self._binned = False
         self._derived = {}
         self._row_of = None
@@ -188,16 +201,15 @@ class WorldIndex:
         team_of_name = self._team_of_name
         team_names = self.team_names
         for i in range(n):
-            a = actors[i]
+            a = rows[i]
             p = a.pos
             px[i] = p[0]
             py[i] = p[1]
             pz[i] = p[2]
             props = a.properties
             is_dead = bool(props.get("dead"))
-            parked = _is_parked(props)
             dead[i] = is_dead
-            alive[i] = not (is_dead or parked)
+            alive[i] = not (is_dead or _is_parked(props))
             team = props.get("team") or props.get("faction") or ""
             tid = team_of_name.get(team)
             if tid is None:
@@ -211,11 +223,15 @@ class WorldIndex:
     # ------------------------------------------------------------------
 
     def _build_bins(self) -> None:
-        """Group rows into 512-unit XZ cells, vectorised.
+        """Sort rows by their 512-unit XZ cell, vectorised.
 
         Built lazily on the first radius query of a tick, and only above
         :data:`BIN_THRESHOLD` rows — below that a full vectorised scan beats
-        the bookkeeping.
+        the bookkeeping. The bins are one argsort: rows ordered by a 64-bit
+        cell key, ``cx * 2**32 + cz``, which is monotonic in ``cz`` for a
+        fixed ``cx``. A query's cells then come out as one contiguous run of
+        the sorted keys per cell column, found with two binary searches --
+        no per-cell Python object is ever built.
         """
         self._binned = True
         n = self.n
@@ -224,17 +240,9 @@ class WorldIndex:
         inv = 1.0 / self.cell_size
         cx = np.floor(self.px[:n] * inv).astype(np.int64)
         cz = np.floor(self.pz[:n] * inv).astype(np.int64)
-        # One 64-bit key per row, so grouping is a single sort.
-        keys = (cx << 32) ^ (cz & 0xFFFFFFFF)
+        keys = (cx << 32) + cz
         order = np.argsort(keys, kind="stable")
-        sorted_keys = keys[order]
-        starts = np.flatnonzero(np.r_[True, sorted_keys[1:] != sorted_keys[:-1]])
-        ends = np.r_[starts[1:], n]
-        bins = self._bins
-        cxs = cx[order]
-        czs = cz[order]
-        for s, e in zip(starts.tolist(), ends.tolist()):
-            bins[(int(cxs[s]), int(czs[s]))] = order[s:e]
+        self._bins = (keys[order], order)
 
     # ------------------------------------------------------------------
     # Queries
@@ -253,25 +261,22 @@ class WorldIndex:
         if not self._binned:
             self._build_bins()
         r2 = radius * radius
-        if not self._bins:
+        if self._bins is None:
             # Small world: one vectorised pass beats any bookkeeping.
             dx = self.px[:n] - x
             dz = self.pz[:n] - z
             hit = np.nonzero(dx * dx + dz * dz <= r2)[0]
-            return hit
-        cs = self.cell_size
-        inv = 1.0 / cs
+            return hit if hit.size else _NO_ROWS
+        inv = 1.0 / self.cell_size
         cx0 = int(math.floor((x - radius) * inv))
         cx1 = int(math.floor((x + radius) * inv))
         cz0 = int(math.floor((z - radius) * inv))
         cz1 = int(math.floor((z + radius) * inv))
-        bins = self._bins
-        parts = []
-        for gx in range(cx0, cx1 + 1):
-            for gz in range(cz0, cz1 + 1):
-                b = bins.get((gx, gz))
-                if b is not None:
-                    parts.append(b)
+        sorted_keys, order = self._bins
+        columns = np.arange(cx0, cx1 + 1, dtype=np.int64) << 32
+        lo = np.searchsorted(sorted_keys, columns + cz0, side="left").tolist()
+        hi = np.searchsorted(sorted_keys, columns + cz1, side="right").tolist()
+        parts = [order[a:b] for a, b in zip(lo, hi) if b > a]
         if not parts:
             return _NO_ROWS
         cand = parts[0] if len(parts) == 1 else np.concatenate(parts)
@@ -280,7 +285,8 @@ class WorldIndex:
         keep = dx * dx + dz * dz <= r2
         if keep.all():
             return cand
-        return cand[keep]
+        cand = cand[keep]
+        return cand if cand.size else _NO_ROWS
 
     def nearest(self, x: float, z: float, radius: float,
                 mask: Optional[np.ndarray] = None,

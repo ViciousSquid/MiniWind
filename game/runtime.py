@@ -505,6 +505,8 @@ class MiniwindSession:
         self._offscreen_tick = 0
         #: id(actor) -> (x, z, y) where it was last stood on the ground.
         self._grounded = {}
+        #: type name -> (bucket, len, frozenset of ids); see _type_ids.
+        self._type_id_cache = {}
         #: The camera height the wheel asked for (None: never zoomed).
         self.zoom_height = None
         #: How far the bow is drawn (0..1) while left mouse is held, else
@@ -1152,9 +1154,9 @@ class MiniwindSession:
         # animation is a purely visual 0.2 s decay; running it for an actor
         # outside the camera's reach changes nothing anyone sees.
         for t in self._live_actors():
-            if tier_of(t) > TIER_ACTIVE:
-                continue
             tp = t.properties
+            if tp.get("_sim_tier", TIER_NEAR) > TIER_ACTIVE:
+                continue
             was = tp.get("_was_shooting", False)
             now = tp.get("is_shooting", False)
             if now and not was:
@@ -4361,18 +4363,29 @@ class MiniwindSession:
         wi = self._world_index()
         if wi is None:
             return self.npcs()
-        # The index's alive mask already excludes the dead and whatever Big
-        # World has parked (nothing below would touch a parked NPC anyway), so
-        # only the resident rows are visited, and NPC-ness is one set lookup.
-        bucket = self._type_buckets().get("npc", ())
-        cached = getattr(self, "_npc_id_cache", None)
+        return self._live_of_type(wi, "npc")
+
+    def _type_ids(self, type_name) -> frozenset:
+        """``id()`` of every thing in the *type_name* bucket, cached until the
+        bucket changes, so membership is one set lookup per actor rather than a
+        set built per tick."""
+        bucket = self._type_buckets().get(type_name, ())
+        cache = self._type_id_cache
+        cached = cache.get(type_name)
         if cached is None or cached[0] is not bucket or cached[1] != len(bucket):
-            cached = self._npc_id_cache = (bucket, len(bucket),
-                                           frozenset(id(t) for t in bucket))
-        npc_ids = cached[2]
+            cached = cache[type_name] = (bucket, len(bucket),
+                                         frozenset(id(t) for t in bucket))
+        return cached[2]
+
+    def _live_of_type(self, wi, type_name) -> List:
+        """The index's alive rows of one type, in row order.
+
+        The alive mask already excludes the dead and whatever Big World has
+        parked, so only the resident rows are visited."""
+        ids = self._type_ids(type_name)
         actors = wi.actors
         return [actors[i] for i in np.flatnonzero(wi.alive[:wi.n]).tolist()
-                if id(actors[i]) in npc_ids]
+                if id(actors[i]) in ids]
 
     def _rally_mask(self, wi):
         """Per-row boolean: this actor has rallied. Built once per tick, so the
@@ -4754,7 +4767,10 @@ class MiniwindSession:
         left in the air.
         """
         logic = self.logic
-        actors = fio.monster_things(logic)
+        # The index's rows are this tick's resident actors (and corpses): a
+        # parked actor is hidden and still, and is grounded when it comes back.
+        wi = self._world_index()
+        actors = wi.actors if wi is not None else fio.monster_things(logic)
         if not actors:
             return
         seen = self._grounded
@@ -4872,13 +4888,20 @@ class MiniwindSession:
             return None
         fwd = self._player_forward()
         best, best_d = None, reach
-        for t in fio.things(self.logic):
-            if not self._attackable(t):
+        px, pz = ppos[0], ppos[2]
+        reach2 = reach * reach
+        # Only actors can be attackable, and the HUD asks this every frame:
+        # walk the resident actors, not the whole scene, and measure before
+        # asking who they are.
+        for t in self._live_actors():
+            pos = t.pos
+            dx = pos[0] - px
+            dz = pos[2] - pz
+            d2 = dx * dx + dz * dz
+            if d2 > reach2 or not self._attackable(t):
                 continue
-            dx = t.pos[0] - ppos[0]
-            dz = t.pos[2] - ppos[2]
-            dist = math.hypot(dx, dz)
-            if dist < 1e-3 or dist > reach:
+            dist = math.sqrt(d2)
+            if dist < 1e-3:
                 continue
             # frontal cone (horizontal only — see docstring)
             dot = (fwd[0] * dx + fwd[2] * dz) / dist
@@ -5994,22 +6017,47 @@ class MiniwindSession:
         instead of a speech bubble."""
         out = []
         r2 = radius * radius
+        px, pz = player_pos[0], player_pos[2]
         for npc in self.npcs():
+            # Distance first: the HUD asks every frame, and only the few NPCs
+            # in reach are worth reading a dialogue tree for.
+            dx = npc.pos[0] - px
+            dz = npc.pos[2] - pz
+            d = dx * dx + dz * dz
+            if d > r2:
+                continue
             kind = self.bubble_kind(npc)
             if kind is None or self.head_mark(npc) is not None:
                 continue
-            dx = npc.pos[0] - player_pos[0]
-            dz = npc.pos[2] - player_pos[2]
-            d = dx * dx + dz * dz
-            if d <= r2:
-                out.append((d, npc, kind))
+            out.append((d, npc, kind))
         out.sort(key=lambda t: t[0])
         return [(npc, kind) for _d, npc, kind in out]
 
     # -- dialogue -----------------------------------------------------------
+    def _actors_near(self, pos, radius: float):
+        """The actors within *radius* (XZ) of *pos*, as candidates: one index
+        query rather than a walk of every actor. Positions are this tick's
+        snapshot, so callers re-measure the few that come back.
+
+        Logic thread only (the index is rebuilt there); None without an index,
+        when callers fall back to their full scans."""
+        wi = self._world_index()
+        if wi is None:
+            return None
+        actors = wi.actors
+        return [actors[i] for i in wi.rows_near(float(pos[0]), float(pos[2]),
+                                                radius).tolist()]
+
     def nearest_talkable(self, player_pos, radius: float = TALK_RADIUS):
         best, best_d = None, radius * radius
-        for npc in self.npcs():
+        near = self._actors_near(player_pos, radius)
+        if near is None:
+            pool = self.npcs()
+        else:
+            npc_ids = self._type_ids("npc")
+            pool = [t for t in near
+                    if id(t) in npc_ids and not t.properties.get("dead", False)]
+        for npc in pool:
             if not npc.properties.get("dialogue") and not npc.properties.get("merchant"):
                 continue
             if str(npc.properties.get("aggression")) == "hostile":
@@ -6212,9 +6260,12 @@ class MiniwindSession:
         """The nearest dead NPC or creature within *radius* with anything on
         it to take (or a loot table not yet rolled), else None."""
         best, best_d = None, radius * radius
-        buckets = self._type_buckets()
-        for t in _chain(buckets.get("npc", ()), buckets.get("creature", ()),
-                        buckets.get("monster", ())):
+        pool = self._actors_near(player_pos, radius)
+        if pool is None:
+            buckets = self._type_buckets()
+            pool = _chain(buckets.get("npc", ()), buckets.get("creature", ()),
+                          buckets.get("monster", ()))
+        for t in pool:
             p = t.properties
             if not p.get("dead") or p.get("hidden"):
                 continue
