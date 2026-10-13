@@ -312,29 +312,43 @@ class InventoryWindow(FloatingWindow):
         right = QRect(mid.right() + 12, y + 10, x + w - mid.right() - 22, h - 20)
         self._draw_equipment(painter, left)
         self._draw_pack(painter, mid)
-        # Details / Character tabs over the right-hand panel.
-        tab_w = (right.width() - 6) // 2
-        for k, (key, label) in enumerate(self.VIEWS):
-            r = QRect(right.x() + k * (tab_w + 6), right.y(), tab_w, 26)
-            on = key == self.view
-            painter.setBrush(QColor(96, 70, 34, 240) if on else
-                             (QColor(60, 52, 40, 240) if hits.hovered(r) else QColor(40, 37, 33, 240)))
-            painter.setPen(QPen(_GOLD if on else _SLOT_EDGE, 1.2))
-            painter.drawRoundedRect(r, 5, 5)
-            painter.setFont(self.f_button)
-            painter.setPen(_GOLD if on else _INK)
-            _fit(painter, r, Qt.AlignCenter, label)
-            self._buttons.append((QRect(r), self._set_view(key)))
-        panel = QRect(right.x(), right.y() + 32, right.width(), right.height() - 32)
+        # The right-hand panel is tabbed: the item under the pointer
+        # (Details), or the character's health, armour, XP and attributes.
+        tab_h = 28
+        panel = QRect(right.x(), right.y() + tab_h, right.width(), right.height() - tab_h)
         if self.view == "character":
             self._draw_character_sheet(painter, panel)
         else:
             self._draw_details(painter, panel)
+        self._draw_view_tabs(painter, right.x() + 8, right.y(), right.width() - 16, tab_h)
         self._draw_dragged(painter)
         # Its slots and pack take drops from the strip and the container
         # screen too (game/ui/drag.py).
         drag.set_zones(self, self._targets)
         painter.restore()
+
+    def _draw_view_tabs(self, painter, x, y, w, h):
+        """File-folder tabs along the top of the right-hand panel: the one
+        open joins the panel below it, the others sit behind."""
+        tab_w = (w - 4 * (len(self.VIEWS) - 1)) // len(self.VIEWS)
+        for k, (key, label) in enumerate(self.VIEWS):
+            r = QRect(x + k * (tab_w + 4), y + (0 if key == self.view else 4),
+                      tab_w, h - (0 if key == self.view else 4))
+            on = key == self.view
+            hot = hits.hovered(r)
+            painter.save()
+            # Rounded on top only: draw it taller and clip off the bottom.
+            painter.setClipRect(QRect(r.x() - 2, r.y() - 2, r.width() + 4,
+                                      r.height() + (3 if on else 2)))
+            painter.setBrush(QColor(58, 56, 52, 250) if on else
+                             QColor(54, 48, 40, 240) if hot else QColor(32, 30, 28, 240))
+            painter.setPen(QPen(_GOLD if on else _SLOT_EDGE, 1.2))
+            painter.drawRoundedRect(r.adjusted(0, 0, 0, 10), 6, 6)
+            painter.restore()
+            painter.setFont(self.f_button)
+            painter.setPen(_GOLD if on else (_INK if hot else _DIM))
+            _fit(painter, r, Qt.AlignCenter, label)
+            self._buttons.append((QRect(r), self._set_view(key)))
 
     def _panel(self, painter, rect, title):
         path = QPainterPath()
@@ -777,8 +791,10 @@ class InventoryWindow(FloatingWindow):
             painter.setPen(_DIM)
             painter.drawText(inner.adjusted(0, 10, 0, 0), Qt.AlignTop | Qt.TextWordWrap,
                              "Point at an item to see what it is.\n\n"
-                             "Drag it onto your body to wear it, into a quick slot to "
-                             "carry it to hand, or back to the pack to put it away.")
+                             "Drag it onto your body to wear it, back to the pack to "
+                             "put it away, or out of the window to drop it on the floor."
+                             "\n\nThe Character tab shows your health, armour, "
+                             "experience and attributes.")
         else:
             stack = self._stack(iid) or {}
             try:
