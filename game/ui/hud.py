@@ -582,12 +582,14 @@ def _draw_active(painter, session, c, width, height):
     the equipped weapon and readied spell read at a glance."""
     w = eq.weapon(c)
     wname = w.name if w else "Unarmed"
-    a = eq.ammo(c)
-    if w and w.get("kind") == rpg_items.KIND_BOW and a:
+    a = eq.ammo_for(c, w) if w and w.get("kind") in rpg_items.RANGED_KINDS else None
+    if a:
         from ..rpg import inventory as inv
         wname += f"  ({inv.quantity(c.inventory, a.id)} {a.name.split()[0].lower()})"
     spell = rpg_magic.get(c.active_spell) if c.active_spell else None
     sname = spell.name if spell else "—"
+    # Dual wielding, the right mouse is the second weapon, not the spell.
+    off = eq.offhand_weapon(c)
 
     x = width - 250
     y = height - 64
@@ -603,7 +605,18 @@ def _draw_active(painter, session, c, width, height):
            color=T.GOLD_BRIGHT if w else T.DIM, family="Segoe UI")
     T.text(painter, x + 210, y + 21, "L", size=8, color=T.DIM, family="Segoe UI")
 
-    # Spell row: element-coloured swatch + name (right mouse hint).
+    # Spell row: element-coloured swatch + name (right mouse hint); the
+    # second weapon instead, when the off hand holds one.
+    if off is not None:
+        tx = x + 14
+        opm = _weapon_icon_pixmap(off, 22)
+        if opm is not None and not opm.isNull():
+            painter.drawPixmap(x + 12, y + 29, opm)
+            tx = x + 40
+        T.text(painter, tx, y + 44, off.name, size=10, color=T.GOLD_BRIGHT,
+               family="Segoe UI")
+        T.text(painter, x + 210, y + 44, "R", size=8, color=T.DIM, family="Segoe UI")
+        return
     scol = T.MAGICKA.lighter(140) if spell else T.DIM
     if spell is not None:
         col = spell.color

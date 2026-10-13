@@ -207,6 +207,62 @@ def draw_arrow(d, mat):
                   (cx + sgn * S * 0.02, S * 0.84)], fill=(200, 70, 60), outline=dk, width=SS)
 
 
+def draw_crossbow(d, mat):
+    """A crossbow seen from above, pointing up: a wooden stock, the steel
+    prod across its head, the string drawn back to the latch."""
+    _, wmid, wdk = MATERIALS["wood"]
+    wlo = MATERIALS["wood"][0]
+    slo, smid, sdk = MATERIALS["steel"]
+    cx = S * 0.5
+    # stock: wide at the butt, narrowing toward the head
+    _poly(d, [(cx - S * 0.045, S * 0.14), (cx + S * 0.045, S * 0.14),
+              (cx + S * 0.075, S * 0.80), (cx + S * 0.05, S * 0.90),
+              (cx - S * 0.05, S * 0.90), (cx - S * 0.075, S * 0.80)],
+          fill=wmid, outline=wdk, width=SS)
+    d.line([(cx - S * 0.02, S * 0.18), (cx - S * 0.035, S * 0.84)], fill=wlo, width=SS)
+    # the prod: a flat steel bow across the head of the stock
+    prod_y = S * 0.24
+    span = S * 0.38
+    bbox = [cx - span, prod_y - S * 0.02, cx + span, prod_y + S * 0.30]
+    d.arc(bbox, start=200, end=340, fill=smid, width=SS * 4)
+    d.arc([bbox[0], bbox[1] - SS, bbox[2], bbox[3] - SS], start=205, end=335,
+          fill=slo, width=SS)
+    tip_l = (cx + span * math.cos(math.radians(200)),
+             prod_y + S * 0.14 + S * 0.16 * math.sin(math.radians(200)))
+    tip_r = (cx + span * math.cos(math.radians(340)),
+             prod_y + S * 0.14 + S * 0.16 * math.sin(math.radians(340)))
+    # string, drawn back to the latch
+    latch = (cx, S * 0.46)
+    d.line([tip_l, latch, tip_r], fill=(230, 230, 220), width=max(2, SS))
+    # latch and trigger
+    d.rectangle([cx - S * 0.035, S * 0.44, cx + S * 0.035, S * 0.50], fill=sdk)
+    d.line([(cx + S * 0.07, S * 0.62), (cx + S * 0.11, S * 0.70)], fill=sdk, width=SS * 2)
+    # a bolt lying in the groove
+    d.line([(cx, S * 0.10), (cx, S * 0.44)], fill=MATERIALS["wood"][1], width=SS)
+    _poly(d, [(cx, S * 0.05), (cx + S * 0.035, S * 0.12), (cx - S * 0.035, S * 0.12)],
+          fill=smid, outline=sdk, width=max(1, SS // 2))
+
+
+def draw_bolt(d, mat):
+    """A crossbow bolt: shorter and thicker than an arrow, a heavy square
+    head and stubby vanes."""
+    lo, mid, dk = mat
+    cx = S * 0.5
+    d.line([(cx, S * 0.24), (cx, S * 0.80)], fill=MATERIALS["wood"][1], width=SS * 3)
+    d.line([(cx - SS, S * 0.26), (cx - SS, S * 0.78)], fill=MATERIALS["wood"][0], width=SS)
+    # head: a squat pyramid
+    _poly(d, [(cx, S * 0.12), (cx + S * 0.07, S * 0.22), (cx + S * 0.05, S * 0.28),
+              (cx - S * 0.05, S * 0.28), (cx - S * 0.07, S * 0.22)],
+          fill=mid, outline=dk, width=SS)
+    d.line([(cx, S * 0.13), (cx - S * 0.04, S * 0.25)], fill=lo, width=SS)
+    # short leather vanes
+    vane = MATERIALS["leather"]
+    for sgn in (-1, 1):
+        _poly(d, [(cx, S * 0.66), (cx + sgn * S * 0.08, S * 0.74),
+                  (cx + sgn * S * 0.08, S * 0.82), (cx, S * 0.80)],
+              fill=vane[1], outline=vane[2], width=SS)
+
+
 def draw_helmet(d, mat):
     lo, mid, dk = mat
     cx = S * 0.5
@@ -430,6 +486,8 @@ def shape_for(item_id, item):
 
     if cat == "gold" or iid == "gold":
         return draw_gold
+    if cat == "ammo" and ("bolt" in text or str(item.get("ammo_type", "")).lower() == "bolt"):
+        return lambda d: draw_bolt(d, mat)
     if cat == "ammo" or "arrow" in text:
         return lambda d: draw_arrow(d, mat)
     if cat == "potion":
@@ -463,6 +521,8 @@ def shape_for(item_id, item):
             return lambda d: draw_boots(d, mat)
         return lambda d: draw_cuirass(d, mat)   # cuirass / armour / fur
     if cat == "weapon":
+        if "crossbow" in text or str(item.get("kind", "")).lower() == "crossbow":
+            return lambda d: draw_crossbow(d, mat)
         if skill == "marksman" or "bow" in text:
             return lambda d: draw_bow(d, mat)
         if skill == "destruction" or "staff" in text:

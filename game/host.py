@@ -867,7 +867,8 @@ class MiniwindGame:
         # so there is nothing to poll here. Keyboard equivalents follow.
         # edge actions
         if K_ATTACK in just or "space" in just:
-            session.do_attack()
+            # Both hands, one after the other, when dual wielding.
+            session.attack_with_both()
         if K_CAST in just:
             session.do_cast()
         if K_NEXT_SPELL in just:

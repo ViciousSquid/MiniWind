@@ -26,7 +26,17 @@ SECOND_WEAPON_FACTIONS = {"guards": 0.7, "bandits": 0.55, "mercenaries": 0.8,
 SECOND_WEAPON_ROLES = {"guard": 0.7, "hunter": 0.9, "bandit": 0.55,
                        "mercenary": 0.8, "adventurer": 0.8, "ranger": 0.9}
 BOWS = ("hunting_bow", "short_bow", "long_bow")
+#: How often a fighter given a ranged weapon gets a crossbow instead of a bow.
+CROSSBOW_CHANCE = 0.3
 SIDEARMS = ("iron_dagger", "iron_shortsword")
+#: Fighters with a one-handed blade in hand who carry a second for the other
+#: hand, by faction and by role (the larger chance wins), and how often that
+#: second weapon is a twin of the first.
+DUAL_WIELD_FACTIONS = {"bandits": 0.3, "mercenaries": 0.3, "adventurers": 0.25,
+                       "guards": 0.12}
+DUAL_WIELD_ROLES = {"bandit": 0.3, "mercenary": 0.3, "adventurer": 0.25,
+                    "duelist": 0.9, "guard": 0.12}
+TWIN_CHANCE = 0.5
 
 #: Held weapons are drawn for actors within this distance of the player.
 DRAW_RADIUS = 2600.0
@@ -63,14 +73,17 @@ def arm_fighters(things, rng, make_stack) -> int:
             continue
         role = str(p.get("npc_role", "") or "").lower()
         team = str(p.get("faction") or p.get("team") or "").lower()
+        equipped = p.get("equipped_weapon") or ""
+        if _arm_off_hand(p, role, team, equipped, rng, make_stack):
+            armed += 1
         chance = max(SECOND_WEAPON_FACTIONS.get(team, 0.0),
                      max((c for r, c in SECOND_WEAPON_ROLES.items() if r in role), default=0.0))
         if chance <= 0.0 or rng.random() >= chance:
             continue
-        equipped = p.get("equipped_weapon") or ""
         styles = {_style(equipped)} | {_style(i) for i in _carried(p)}
         if "melee" in styles and "bow" not in styles:
-            extra = BOWS[int(rng.random() * len(BOWS))]
+            extra = ("crossbow" if rng.random() < CROSSBOW_CHANCE
+                     else BOWS[int(rng.random() * len(BOWS))])
         elif "bow" in styles and "melee" not in styles:
             extra = SIDEARMS[int(rng.random() * len(SIDEARMS))]
         else:
@@ -80,6 +93,29 @@ def arm_fighters(things, rng, make_stack) -> int:
             p.setdefault("inventory", []).append(stack)
             armed += 1
     return armed
+
+
+def _arm_off_hand(p, role, team, equipped, rng, make_stack) -> bool:
+    """Perhaps give a fighter with a one-handed blade a second weapon for the
+    other hand (``offhand_weapon``): a twin of the first, or a sidearm."""
+    if p.get("offhand_weapon") or not equipped:
+        return False
+    from .rpg import equipment, items
+    main = items.get(equipped)
+    if main is None or not equipment.can_dual_wield(main) \
+            or main.get("kind") != items.KIND_MELEE:
+        return False
+    chance = max(DUAL_WIELD_FACTIONS.get(team, 0.0),
+                 max((c for r, c in DUAL_WIELD_ROLES.items() if r in role), default=0.0))
+    if chance <= 0.0 or rng.random() >= chance:
+        return False
+    off = equipped if rng.random() < TWIN_CHANCE else SIDEARMS[int(rng.random() * len(SIDEARMS))]
+    stack = make_stack(off)
+    if not stack:
+        return False
+    p.setdefault("inventory", []).append(stack)
+    p["offhand_weapon"] = off
+    return True
 
 
 def choose_in_hand(props, distance: float, melee_band: float) -> str:
@@ -157,13 +193,37 @@ class HeldWeapons:
             handed = str(p.get("handed", "right"))
             facing = float(p.get("_facing", 0.0))
             weapon = p.get("_active_weapon") or p.get("equipped_weapon") or ""
+            attacking = bool(p.get("is_shooting") or p.get("_bow_charge") is not None)
             if weapon:
-                attacking = bool(p.get("is_shooting") or p.get("_bow_charge") is not None)
                 out.append(((x, y, z), facing, weapon, handed, attacking, size))
-            # A lit torch (the runtime marks who holds one: game/runtime.py,
-            # _update_torch_lights) is held in the other hand.
-            torch = p.get("_torch_lit")
-            if torch:
-                off = "left" if handed == "right" else "right"
-                out.append(((x, y, z), facing, torch, off, False, size))
+            # The other hand: a lit torch (the runtime marks who holds one:
+            # game/runtime.py, _update_torch_lights), else a second weapon.
+            # A two-handed weapon in hand (a bow) leaves neither.
+            off_item = p.get("_torch_lit") or offhand_in_use(p)
+            if off_item and not two_handed(weapon):
+                other = "left" if handed == "right" else "right"
+                striking = bool(p.get("_offhand_anim", 0.0)) and not p.get("_torch_lit")
+                out.append(((x, y, z), facing, off_item, other, striking, size))
         return out
+
+
+def two_handed(item_id) -> bool:
+    """Whether the weapon *item_id* needs both hands (every bow)."""
+    if not item_id:
+        return False
+    from .rpg import equipment, items
+    return equipment.is_two_handed(items.get(item_id))
+
+
+def offhand_in_use(props) -> str:
+    """The second weapon an actor fights with in its off hand, or ''.
+
+    Its authored ``offhand_weapon``, while the weapon in hand is a one-handed
+    one and no torch has the hand."""
+    off = str(props.get("offhand_weapon") or "")
+    if not off or props.get("_torch_lit"):
+        return ""
+    weapon = props.get("_active_weapon") or props.get("equipped_weapon") or ""
+    if two_handed(weapon):
+        return ""
+    return off

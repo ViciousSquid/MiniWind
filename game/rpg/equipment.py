@@ -62,20 +62,73 @@ def _slot_for(item_def) -> Optional[str]:
     return None
 
 
-def equip(character, item_id: str) -> bool:
-    """Equip *item_id* from the inventory into its slot. Returns success."""
+# ---------------------------------------------------------------------------
+# Hands
+#
+# A character has two hands. The main hand holds the weapon (SLOT_WEAPON).
+# The other hand -- the shield slot, SLOT_SHIELD -- holds a shield, *or* a
+# second one-handed weapon (dual wielding), *or* a torch (SLOT_LIGHT): one of
+# the three, never two. A two-handed weapon (every bow, the big hammers and
+# farm tools) takes both hands.
+# ---------------------------------------------------------------------------
+def equip(character, item_id: str, slot: Optional[str] = None) -> bool:
+    """Equip *item_id* from the inventory. Returns success.
+
+    *slot* names where it goes when that is not the item's own slot: a
+    one-handed weapon given ``SLOT_SHIELD`` is taken up in the off hand.
+    Whatever the item displaces to free its hands is put away."""
     d = items.get(item_id)
     if not d or not inv.has_item(character.inventory, item_id, 1):
         return False
-    slot = _slot_for(d)
+    own = _slot_for(d)
+    if slot is None or slot == own:
+        slot = own
+    elif not (slot == items.SLOT_SHIELD and can_dual_wield(d)):
+        return False
     if not slot:
         return False
-    character.equipment[slot] = item_id
-    # Equipping a two-handed weapon (bow, warhammer, battleaxe) frees the shield.
-    if slot == items.SLOT_WEAPON and _is_two_handed(d):
-        character.equipment.pop(items.SLOT_SHIELD, None)
+    worn = character.equipment
+    if slot == items.SLOT_SHIELD and d.category == items.WEAPON:
+        # A second weapon in the off hand: the main hand must hold a
+        # one-handed weapon (a two-hander is put away), and the pack must
+        # hold a second one if it is the same weapon as the main hand's.
+        main = equipped_def(character, items.SLOT_WEAPON)
+        if main is not None and is_two_handed(main):
+            worn.pop(items.SLOT_WEAPON, None)
+            main = None
+        if main is not None and main.id == item_id and inv.quantity(
+                character.inventory, item_id) < 2:
+            return False
+        worn[items.SLOT_SHIELD] = item_id
+        worn.pop(items.SLOT_LIGHT, None)
+    elif slot == items.SLOT_WEAPON:
+        off = worn.get(items.SLOT_SHIELD)
+        worn[items.SLOT_WEAPON] = item_id
+        if is_two_handed(d):
+            # Both hands on it: the off hand's shield, weapon or torch is put away.
+            worn.pop(items.SLOT_SHIELD, None)
+            worn.pop(items.SLOT_LIGHT, None)
+        elif off == item_id and inv.quantity(character.inventory, item_id) < 2:
+            worn.pop(items.SLOT_SHIELD, None)   # the one blade moves hands
+    elif slot == items.SLOT_SHIELD:
+        worn[items.SLOT_SHIELD] = item_id      # a shield ends dual wielding
+        worn.pop(items.SLOT_LIGHT, None)
+        _free_off_hand_of_two_hander(character)
+    elif slot == items.SLOT_LIGHT:
+        worn[items.SLOT_LIGHT] = item_id       # a torch takes the off hand
+        worn.pop(items.SLOT_SHIELD, None)
+        _free_off_hand_of_two_hander(character)
+    else:
+        worn[slot] = item_id
     _refresh_weapon_kind(character)
     return True
+
+
+def _free_off_hand_of_two_hander(character) -> None:
+    """The off hand has just been filled: a two-handed weapon is put away."""
+    main = equipped_def(character, items.SLOT_WEAPON)
+    if main is not None and is_two_handed(main):
+        character.equipment.pop(items.SLOT_WEAPON, None)
 
 
 def unequip(character, slot: str) -> bool:
@@ -91,13 +144,30 @@ def unequip(character, slot: str) -> bool:
 _LEGACY_TWO_HANDED = ("iron_warhammer", "iron_battleaxe")
 
 
-def _is_two_handed(item_def) -> bool:
+def is_two_handed(item_def) -> bool:
+    """Whether a weapon needs both hands: every bow (archery always does),
+    and whatever the item data says is two-handed. A crossbow is one-handed."""
+    if item_def is None:
+        return False
     if item_def.get("kind") == items.KIND_BOW:
         return True
     # A weapon says so itself where the data has it (scythe, pitchfork, shovel).
     if item_def.get("two_handed"):
         return True
     return item_def.id in _LEGACY_TWO_HANDED
+
+
+_is_two_handed = is_two_handed
+
+
+def can_dual_wield(item_def) -> bool:
+    """Whether a weapon may be held in the off hand: any one-handed melee
+    weapon or crossbow. Not a staff (spellwork wants the hand), not fists."""
+    if item_def is None or item_def.category != items.WEAPON:
+        return False
+    if is_two_handed(item_def) or item_def.get("innate"):
+        return False
+    return item_def.get("kind", items.KIND_MELEE) in (items.KIND_MELEE, items.KIND_CROSSBOW)
 
 
 def _refresh_weapon_kind(character) -> None:
@@ -115,8 +185,67 @@ def weapon(character):
     return equipped_def(character, items.SLOT_WEAPON)
 
 
+def offhand_weapon(character):
+    """The weapon in the off hand (the shield slot) when dual wielding, or None.
+
+    Read honestly: a second copy of the main hand's weapon only counts while
+    the pack still holds two, so selling one ends the dual wield by itself."""
+    d = equipped_def(character, items.SLOT_SHIELD)
+    if d is None or d.category != items.WEAPON:
+        return None
+    need = 2 if character.equipment.get(items.SLOT_WEAPON) == d.id else 1
+    return d if inv.quantity(character.inventory, d.id) >= need else None
+
+
+def shield(character):
+    """The shield in the off hand, or None (a weapon or a torch there is not one)."""
+    d = equipped_def(character, items.SLOT_SHIELD)
+    return d if d is not None and d.category == items.ARMOUR else None
+
+
+def dual_wielding(character) -> bool:
+    return offhand_weapon(character) is not None
+
+
+def hand_weapon(character, hand: str = "main"):
+    """The weapon in *hand* ("main" or "off"), or None."""
+    return offhand_weapon(character) if hand == "off" else weapon(character)
+
+
+def hand_slot(hand: str = "main") -> str:
+    """The equipment slot backing *hand*."""
+    return items.SLOT_SHIELD if hand == "off" else items.SLOT_WEAPON
+
+
 def ammo(character):
     return equipped_def(character, items.SLOT_AMMO)
+
+
+def ammo_type(weapon_def) -> str:
+    """What a ranged weapon shoots: ``"bolt"`` for a crossbow, else ``"arrow"``."""
+    if weapon_def is None:
+        return "arrow"
+    return str(weapon_def.get("ammo_type") or (
+        "bolt" if weapon_def.get("kind") == items.KIND_CROSSBOW else "arrow"))
+
+
+def ammo_for(character, weapon_def):
+    """The ammunition *weapon_def* would shoot next, or None when there is none.
+
+    The quiver's, when it holds the right kind (arrows for a bow, bolts for a
+    crossbow); otherwise the first of the right kind carried, so a bow and a
+    crossbow can both be fed without swapping the quiver."""
+    want = ammo_type(weapon_def)
+    quiver = ammo(character)
+    if quiver is not None and str(quiver.get("ammo_type", "arrow")) == want:
+        return quiver
+    for stack in character.inventory or ():
+        d = items.get(stack.get("id")) if isinstance(stack, dict) else None
+        if (d is not None and d.category == items.AMMO
+                and str(d.get("ammo_type", "arrow")) == want
+                and int(stack.get("qty", 1) or 0) > 0):
+            return d
+    return None
 
 
 def light_source(character):

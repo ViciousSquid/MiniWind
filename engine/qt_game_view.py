@@ -1134,7 +1134,8 @@ class QtGameView(QOpenGLWidget):
         # A game session (``logic.game_session``) may drive the player's pose,
         # hurt flash and held weapon through duck-typed hooks:
         # ``overhead_pose() -> (armed, attacking)``, ``overhead_player_flash()
-        # -> seconds``, ``overhead_player_weapon() -> (weapon_id, handed)`` and
+        # -> seconds``, ``overhead_player_weapon() -> (weapon_id, handed)`` (or
+        # a list of ``(weapon_id, handed[, attacking])``, one per hand) and
         # ``overhead_weapon_kind(weapon_id) -> "melee" | "bow" | "staff"``.
         sess = getattr(lt, "game_session", None)
         pose = getattr(sess, "overhead_pose", None)
@@ -1160,17 +1161,26 @@ class QtGameView(QOpenGLWidget):
         held = getattr(sess, "overhead_player_weapon", None)
         if held is None:
             return
+        # ``(weapon_id, handed)`` for one hand, or a list of
+        # ``(weapon_id, handed[, attacking])`` -- one per hand that holds
+        # something (a second weapon, a torch) -- each animated on its own.
         try:
-            weapon_id, handed = held()
+            in_hands = held()
+            if in_hands and isinstance(in_hands[0], str):
+                in_hands = [in_hands]
         except Exception as exc:
             debug_log("Error", f"overhead_player_weapon failed: {exc}")
             return
-        weapon_path = self._weapon_asset_path(weapon_id)
-        if weapon_path:
+        now = time.perf_counter()
+        for entry in in_hands or ():
+            weapon_id, handed = entry[0], entry[1]
+            weapon_path = self._weapon_asset_path(weapon_id)
+            if not weapon_path:
+                continue
             self._overhead_sprite_renderer.draw_weapon(
                 self.projection_matrix, self.view_matrix, gpos,
                 self._overhead_sprite_ctrl.facing, weapon_path,
-                time.perf_counter(), attacking=shooting,
+                now, attacking=bool(entry[2]) if len(entry) > 2 else shooting,
                 weapon_kind=self._weapon_kind(weapon_id, sess),
                 handed=handed)
         # Everyone else nearby holds their weapon too, through the same path:

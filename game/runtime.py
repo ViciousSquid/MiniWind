@@ -39,6 +39,7 @@ from .rpg import combat as rpg_combat
 from .rpg import equipment as eq
 from .rpg import items as rpg_items
 from . import warrior_fist
+from . import held_weapons
 from .rpg import magic as rpg_magic
 from .rpg import guilds
 from .rpg import disposition as disp
@@ -463,6 +464,9 @@ class MiniwindSession:
         #: harvest — see game.rpg.daily) exactly once per day.
         self._last_day = None
         self._attack_cooldown = 0.0
+        #: The off hand's own swing timer, when dual wielding: each hand
+        #: strikes on its own button and its own rhythm.
+        self._offhand_cooldown = 0.0
         self._cast_cooldown = 0.0
         #: Live combat actors (NPCs/creatures), refreshed once per decision pass
         #: so per-NPC threat lookups iterate a short cached list instead of
@@ -582,6 +586,7 @@ class MiniwindSession:
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
         self._attack_anim_time = 0.0   # player stab animation remaining (seconds)
+        self._offhand_anim_time = 0.0  # the off hand's, when dual wielding
 
         # ------------------------------------------------------------------
         # The reactive simulation (game.sim). Everything notable the player or
@@ -1051,6 +1056,8 @@ class MiniwindSession:
         self._update_encumbrance()
         if self._attack_cooldown > 0:
             self._attack_cooldown -= delta
+        if self._offhand_cooldown > 0:
+            self._offhand_cooldown -= delta
         if self._cast_cooldown > 0:
             self._cast_cooldown -= delta
         if self._player_flash > 0:
@@ -1171,6 +1178,8 @@ class MiniwindSession:
         # Decay player stab animation
         if self._attack_anim_time > 0:
             self._attack_anim_time = max(0.0, self._attack_anim_time - delta)
+        if self._offhand_anim_time > 0:
+            self._offhand_anim_time = max(0.0, self._offhand_anim_time - delta)
 
         # Detect NPC/creature attacks by watching the engine's is_shooting flag.
         # When it flips from False -> True we start a 0.2 s stab animation.
@@ -1189,6 +1198,8 @@ class MiniwindSession:
                 tp["_attack_anim"] = 0.2
             if tp.get("_attack_anim", 0.0) > 0:
                 tp["_attack_anim"] = max(0.0, tp["_attack_anim"] - delta)
+            if tp.get("_offhand_anim", 0.0) > 0:
+                tp["_offhand_anim"] = max(0.0, tp["_offhand_anim"] - delta)
             tp["_was_shooting"] = now
 
         # keep the engine's health pool in step with the character
@@ -1651,6 +1662,9 @@ class MiniwindSession:
             # Light entity plus a renderer light slot, so distant holders simply
             # do not carry a lit one. It relights the moment they come near.
             tdef = None if tiers[i] > TIER_ACTIVE else self._npc_torch_def(p, night)
+            if tdef is not None and held_weapons.two_handed(
+                    p.get("_active_weapon") or p.get("equipped_weapon")):
+                tdef = None          # a bow takes both hands: no torch with it
             if tdef is not None:
                 desired[id(npc)] = (list(npc.pos), tdef, shadows and tiers[i] == TIER_NEAR)
                 if p.get("_torch_lit") != tdef.id:
@@ -4716,7 +4730,7 @@ class MiniwindSession:
             return True
         if not self.bow_in_hand():
             return False
-        if eq.ammo(c) is None:
+        if eq.ammo_for(c, eq.weapon(c)) is None:
             self.notify("Out of arrows!")
             return False
         return True
@@ -4959,48 +4973,70 @@ class MiniwindSession:
     def fire_player_weapon(self, logic, mode: str) -> bool:
         """The engine's fire buttons, given MiniWind meaning.
 
-        Primary fire uses the equipped weapon -- a bow looses an arrow, a staff
-        channels its spell, a blade swings. Secondary fire casts the active
-        spell. Returns True: MiniWind always owns the shot, so Fio's hitscan
-        weapon path never runs underneath it.
+        One button per hand. Primary fire (left) uses the main hand -- a bow
+        looses an arrow, a crossbow a bolt, a staff channels its spell, a blade
+        swings. Secondary fire (right) uses the off hand: the weapon in the
+        shield slot when there is one, else it casts the active spell (which a
+        Warrior cannot). Returns True: MiniWind always owns the shot, so Fio's
+        hitscan weapon path never runs underneath it.
         """
-        if getattr(self.game.character, "is_dead", False):
+        c = self.game.character
+        if getattr(c, "is_dead", False):
             return True
         if mode == "secondary":
-            self.do_cast()
+            if eq.offhand_weapon(c) is not None:
+                self.do_attack("off")
+            else:
+                self.do_cast()
         else:
             self.do_attack()
         return True
 
-    def do_attack(self) -> bool:
-        """Player swings a melee weapon / looses an arrow / casts if staff."""
+    def do_attack(self, hand: str = "main") -> bool:
+        """Strike with the weapon in *hand* ("main", or "off" when dual
+        wielding): swing a blade, loose an arrow or a crossbow bolt, or
+        channel a staff.
+
+        Each hand is its own attack -- its own cooldown, hit roll and damage.
+        A lone weapon's swing at a close, faced target always connects; a dual
+        wielder's two blades each roll to hit, so an unpractised fighter can
+        land one and miss with the other."""
         c = self.game.character
-        if c.is_dead or self._attack_cooldown > 0:
+        off = hand == "off"
+        cooldown = self._offhand_cooldown if off else self._attack_cooldown
+        if c.is_dead or cooldown > 0:
             return False
-        w = eq.weapon(c)
+        w = eq.hand_weapon(c, hand)
+        if off and w is None:
+            return False
         kind = w.get("kind", rpg_items.KIND_MELEE) if w else rpg_items.KIND_MELEE
         speed = float(w.get("speed", 1.0)) if w else 1.2
         reach = MELEE_REACH
-        if kind == rpg_items.KIND_BOW:
+        if kind in rpg_items.RANGED_KINDS:
             reach = BOW_REACH
         elif kind == rpg_items.KIND_STAFF:
             # a staff channels its bound spell
             return self._staff_attack(w)
-        self._attack_cooldown = max(0.25, 1.0 / max(0.4, speed))
-        self._attack_anim_time = 0.2   # quick forward stab, independent of cooldown
+        wait = max(0.25, 1.0 / max(0.4, speed))
+        if off:
+            self._offhand_cooldown = wait
+            self._offhand_anim_time = 0.2
+        else:
+            self._attack_cooldown = wait
+            self._attack_anim_time = 0.2   # quick forward stab, independent of cooldown
         if c.stamina < 4:
             self.notify("Too exhausted to attack")
             return False
 
-        if kind == rpg_items.KIND_BOW:
-            # A bow looses a real, physical arrow (see
-            # _spawn_player_arrow_projectile) rather than resolving instantly —
-            # it flies, can miss by sailing past a moving target, gets stopped
-            # by walls, and lands (and its damage is rolled) only once it
-            # actually strikes something.
-            if not self.game.fire_arrow():
-                return False   # out of arrows — fire_arrow already notified
-            self._spawn_player_arrow_projectile()
+        if kind in rpg_items.RANGED_KINDS:
+            # A bow (from the keyboard) or a crossbow looses a real, physical
+            # shot (see _spawn_player_arrow_projectile) rather than resolving
+            # instantly: it flies, can miss by sailing past a moving target,
+            # gets stopped by walls, and lands (and its damage is rolled) only
+            # once it actually strikes something. A crossbow needs no draw.
+            if not self.game.fire_arrow(hand=hand):
+                return False   # out of ammunition: fire_arrow already said so
+            self._spawn_player_arrow_projectile(hand=hand)
             return True
 
         # Melee gets a more forgiving cone than ranged weapons: close-quarters
@@ -5012,11 +5048,20 @@ class MiniwindSession:
             c.spend_stamina(4.0)
             return True
         # Target acquisition already confirmed "near + facing" on the ground
-        # plane, so a melee swing is guaranteed to connect — no separate miss
-        # roll to be foiled by camera pitch or anything else.
-        res = self.game.attack_creature(target.properties, guaranteed=True)
+        # plane, so a lone weapon's swing is guaranteed to connect. Two weapons
+        # are two attacks, and each rolls to hit for itself.
+        res = self.game.attack_creature(target.properties, hand=hand,
+                                        guaranteed=not eq.dual_wielding(c))
         self._land_player_hit(target, res)
         return True
+
+    def attack_with_both(self) -> bool:
+        """The attack key: strike with the main hand, then -- dual wielding --
+        with the off hand as well, each a separate attack."""
+        struck = self.do_attack()
+        if eq.offhand_weapon(self.game.character) is not None:
+            struck = self.do_attack("off") or struck
+        return struck
 
     def _land_player_hit(self, target, res, heavy=False) -> None:
         """What a landed (or missed) melee blow does: the number over the
@@ -5032,7 +5077,7 @@ class MiniwindSession:
         else:
             self.add_floater("miss", kind="miss")
 
-    def _spawn_player_arrow_projectile(self, max_dist=BOW_MAX_RANGE) -> None:
+    def _spawn_player_arrow_projectile(self, max_dist=BOW_MAX_RANGE, hand="main") -> None:
         """Loose a physical arrow the way the player is facing, to fly up to
         *max_dist*. Travels and collides through the same engine
         projectile pipeline a spell bolt uses, but — unlike a spell bolt —
@@ -5045,7 +5090,10 @@ class MiniwindSession:
         if lt is None or ppos is None:
             return
         max_dist = float(max_dist)
-        sprite = arrow_sprite(eq.equipped_id(self.game.character, "ammo"))
+        c = self.game.character
+        shot = eq.ammo_for(c, eq.hand_weapon(c, hand))
+        sprite = arrow_sprite(shot.id if shot is not None else
+                              eq.equipped_id(c, "ammo"))
 
         start = [ppos[0], ppos[1] + 48.0, ppos[2]]
         aim = self._projectile_aim_point(start)
@@ -5057,7 +5105,7 @@ class MiniwindSession:
         game = self.game
 
         def _on_hit(hit_monster):
-            res = game.resolve_arrow_hit(hit_monster.properties)
+            res = game.resolve_arrow_hit(hit_monster.properties, hand=hand)
             _journal(hit_monster)
             if res.get("hit"):
                 tag = "sneak" if res.get("sneak") else ("crit" if res.get("crit") else "dmg")
@@ -5358,10 +5406,26 @@ class MiniwindSession:
             self._rebuild_entity_caches()
 
     def overhead_player_weapon(self):
-        """``(weapon_id, handed)`` for the viewport's overhead weapon overlay."""
+        """What the player holds, for the viewport's overhead overlay:
+        ``[(item_id, side, attacking)]``, one per hand.
+
+        The weapon on the wielding side; on the other side the second weapon
+        when dual wielding, else a lit torch. Each hand animates its own
+        attacks."""
         c = self.game.character
-        return (eq.equipped_id(c, "weapon") or "",
-                str(getattr(c, "handed", "right") or "right"))
+        handed = str(getattr(c, "handed", "right") or "right")
+        other = "left" if handed == "right" else "right"
+        held = [(eq.equipped_id(c, "weapon") or "", handed,
+                 self._attack_anim_time > 0.0
+                 or getattr(self, "_cast_cooldown", 0.0) > 0.05)]
+        off = eq.offhand_weapon(c)
+        if off is not None:
+            held.append((off.id, other, self._offhand_anim_time > 0.0))
+        else:
+            torch = self._player_torch_def()
+            if torch is not None:
+                held.append((torch.id, other, False))
+        return held
 
     @staticmethod
     def overhead_weapon_kind(weapon_id) -> str:
@@ -5383,6 +5447,7 @@ class MiniwindSession:
         c = self.game.character
         armed = bool(eq.equipped_id(c, "weapon")) or bool(c.active_spell)
         attacking = (getattr(self, "_attack_anim_time", 0.0) > 0.0
+                     or getattr(self, "_offhand_anim_time", 0.0) > 0.0
                      or getattr(self, "_cast_cooldown", 0.0) > 0.05)
         return armed, attacking
 
@@ -5697,6 +5762,15 @@ class MiniwindSession:
                 if item_id not in [e["id"] for e in self.weapon_slots()]:
                     self.inventory_assign_quick(item_id)
                 self._cancel_bow_draw()
+            if key == rpg_items.SLOT_SHIELD and d.category == rpg_items.WEAPON:
+                # A second weapon in the off hand: dual wielding.
+                self._cancel_bow_draw()
+                if self.game.equip(item_id, rpg_items.SLOT_SHIELD):
+                    self.notify(f"{d.name} in your off hand", 1.5)
+                    return True
+                if eq.equipped_id(c, rpg_items.SLOT_WEAPON) == item_id:
+                    self.notify(f"You carry only one {d.name}", 2.5)
+                return False
             if self.game.equip(item_id):
                 self.notify(f"Equipped {d.name}", 1.5)
                 return True

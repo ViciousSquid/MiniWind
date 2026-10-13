@@ -5,7 +5,8 @@ Opened with **C**. Three panels side by side:
 
 * **Equipment** — a paperdoll of the player (their own head over a body
   silhouette) ringed by the worn slots: head, amulet, chest, hands, ring,
-  shield, legs, feet and the torch hand; below it the four **Quick Weapons**
+  shield (or a second one-handed weapon: dual wielding), legs, feet and the
+  torch hand; below it the four **Quick Weapons**
   (what keys 1-4 draw — the one in hand is lit) and the **Quiver**.
 * **Pack** — everything else carried, as a grid of large icons with the stack
   count in the corner, filtered by category tabs along the top (All, Weapons,
@@ -64,7 +65,7 @@ PAPERDOLL = (
     ("ring", "Ring", 0.86, 0.33),
     ("shield", "Shield", 0.86, 0.56),
     ("light", "Torch", 0.86, 0.79),
-    ("weapon", "Main Hand", 0.30, 0.93),
+    ("weapon", "Weapon", 0.30, 0.93),
     ("feet", "Feet", 0.70, 0.93),
 )
 
@@ -148,6 +149,10 @@ def fits(target, item_def) -> bool:
     if kind == "quick":
         return item_def.category == "weapon"
     if kind == "equip":
+        if key == "shield" and item_def.category == "weapon":
+            # The off hand: a second one-handed weapon is dual wielding.
+            from ..rpg import equipment
+            return equipment.can_dual_wield(item_def)
         return slot_of(item_def) == key
     return False
 
@@ -157,6 +162,12 @@ def why_not(target, item_def) -> str:
     name = item_def.name if item_def is not None else "That"
     if kind == "quick":
         return f"{name} isn't a weapon: only weapons go in a quick slot."
+    if kind == "equip" and key == "shield" and item_def is not None \
+            and item_def.category == "weapon":
+        from ..rpg import equipment
+        if equipment.is_two_handed(item_def):
+            return f"{name} needs both hands."
+        return f"{name} can't be held in the off hand."
     if kind == "equip":
         where = {"ammo": "the quiver"}.get(key, f"the {key} slot")
         return f"{name} doesn't go in {where}."

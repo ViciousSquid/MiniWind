@@ -1233,6 +1233,7 @@ def _merchant_stock(npc):
                      "book_marksman", "book_blade"],
         "blacksmith": ["iron_longsword", "iron_mace", "steel_longsword", "iron_shield",
                        "iron_cuirass", "iron_helmet", "short_bow", "iron_arrow",
+                       "crossbow", "iron_bolt",
                        "chain_shirt", "chain_coif", "scale_mail", "kite_shield",
                        "plate_helm", "plate_armour", "tower_shield", "buckler"],
         "armourer": ["leather_cuirass", "hide_armour", "studded_leather",

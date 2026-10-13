@@ -160,6 +160,8 @@ register(LootTable("bandit", [
     LootEntry("steel_longsword", 0.15, min_level=4),
     LootEntry("short_bow", 0.2),
     LootEntry("iron_arrow", 0.5, (3, 12)),
+    LootEntry("crossbow", 0.08),
+    LootEntry("iron_bolt", 0.25, (3, 10)),
     LootEntry("leather_cuirass", 0.25),
     LootEntry("iron_helmet", 0.15),
     LootEntry("hide_armour", 0.15),
