@@ -671,9 +671,12 @@ class MiniwindSession:
         self.dialogue_npc = None
         self.merchant_npc = None
         self.show_loadout = False
-        #: The inventory strip along the bottom of the screen, toggled with I
-        #: (game/ui/inventory_strip.py).
-        self.show_strip = False
+        #: The inventory strip along the bottom of the screen
+        #: (game/ui/inventory_strip.py): always up in free play. Kept for
+        #: saves and tools that still ask.
+        self.show_strip = True
+        #: Its selected slot (a click or a number key picks it).
+        self.strip_selected = 0
         self._remove_wisp()
         self._banish_reapers()
         self.notifications = []
@@ -6047,6 +6050,68 @@ class MiniwindSession:
             strip[strip.index(item_id)] = strip[index]
         strip[index] = item_id
         self.game.character._strip_seen.add(item_id)
+        return True
+
+    def select_strip_slot(self, index: int) -> bool:
+        """A strip slot picked, by a click or its number key: selected, and a
+        weapon in it taken in hand at once (see :meth:`ready_weapon`).
+        True if anything changed in hand."""
+        slots = self.strip_slots()
+        index = int(index)
+        if not 0 <= index < len(slots):
+            return False
+        self.strip_selected = index
+        stack = slots[index]
+        if not stack:
+            return False
+        d = rpg_items.get(stack.get("id"))
+        if d is None or d.category != rpg_items.WEAPON:
+            return False
+        return self.ready_weapon(d.id)
+
+    def ready_weapon(self, item_id) -> bool:
+        """Take a carried weapon in hand at once, or put it away if it is
+        already there.
+
+        The main hand first. With the main hand already holding a weapon, a
+        one-handed weapon goes to the off hand (the shield slot) and the two
+        are dual wielded. A bow or a two-handed weapon can't be held in the
+        off hand, so it takes the main hand -- and both. Neither can anything
+        go beside a two-hander: the new weapon replaces it instead."""
+        c = self.game.character
+        d = rpg_items.get(item_id)
+        if d is None or d.category != rpg_items.WEAPON \
+                or not inv.has_item(c.inventory, item_id, 1):
+            return False
+        before = eq.armour_class(c)
+        self._cancel_bow_draw()
+        main = eq.weapon(c)
+        off = eq.offhand_weapon(c)
+        if main is not None and main.id == item_id and not (
+                off is not None and off.id == item_id):
+            eq.unequip(c, rpg_items.SLOT_WEAPON)
+            if off is not None:
+                # The off hand's weapon moves over: never a hand left empty
+                # beside a held blade.
+                eq.unequip(c, rpg_items.SLOT_SHIELD)
+                self.game.equip(off.id)
+            self.notify(f"Put away {d.name}", 1.5)
+            self._announce_ac(before)
+            return True
+        if off is not None and off.id == item_id:
+            eq.unequip(c, rpg_items.SLOT_SHIELD)
+            self.notify(f"Put away {d.name}", 1.5)
+            self._announce_ac(before)
+            return True
+        main_free = main is None or bool(main.get("innate"))
+        if (not main_free and eq.can_dual_wield(d) and not eq.is_two_handed(main)
+                and self.game.equip(item_id, rpg_items.SLOT_SHIELD)):
+            self.notify(f"{d.name} in your off hand", 1.5)
+        elif self.game.equip(item_id):
+            self.notify(f"{d.name} in hand", 1.5)
+        else:
+            return False
+        self._announce_ac(before)
         return True
 
     def _forget_in_slots(self, item_id) -> None:

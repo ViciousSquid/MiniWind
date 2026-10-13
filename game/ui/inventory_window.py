@@ -7,7 +7,7 @@ Opened with **C**. Three panels side by side:
   silhouette) ringed by the worn slots: head, amulet, chest, hands, ring,
   shield (or a second one-handed weapon: dual wielding), legs, feet and the
   torch hand; below it the four **Quick Weapons**
-  (what keys 1-4 draw — the one in hand is lit) and the **Quiver**.
+  (the one in hand is lit) and the **Quiver**. Keys 1-9 pick the strip.
 * **Pack** — everything else carried, as a grid of large icons with the stack
   count in the corner, filtered by category tabs along the top (All, Weapons,
   Armour, Potions, Food & Herbs, Other).
@@ -53,6 +53,9 @@ _NO = QColor(210, 80, 70)
 _INK = QColor(232, 226, 210)
 _DIM = QColor(150, 145, 132)
 _GOLD = QColor(240, 200, 110)
+#: A weapon dragged over the shield slot: the off hand, dual wielding.
+_OFF_HAND = QColor(110, 190, 230)
+_OFF_HAND_FILL = QColor(44, 70, 86)
 
 #: The worn slots around the paperdoll: (slot id, label, x, y) with x, y the
 #: slot's centre as fractions of the paperdoll panel.
@@ -359,13 +362,20 @@ class InventoryWindow(FloatingWindow):
         dragging = self._drag or (drag.current["source"] if drag.current else None)
         drag_def = _item(dragging[2]) if dragging else None
         border = _SLOT_EDGE
+        fill = _SLOT
         if dragging and target is not None:
-            border = _OK if fits(target, drag_def) else QColor(70, 60, 55)
+            ok = fits(target, drag_def)
+            border = _OK if ok else QColor(70, 60, 55)
+            if ok and target == ("equip", "shield") and drag_def is not None \
+                    and drag_def.category == "weapon":
+                # The off hand takes a second weapon (dual wielding): lit as
+                # a drop too, in its own tint, so it reads as the other hand.
+                border, fill = _OFF_HAND, _OFF_HAND_FILL
         elif lit:
             border = _GOLD
         if iid and (iid == self.selected):
             border = _SLOT_HOT
-        painter.setBrush(_SLOT)
+        painter.setBrush(fill)
         painter.setPen(QPen(border, 2 if (lit or dragging) else 1.4))
         painter.drawRoundedRect(rect, 4, 4)
         if hits.hovered(rect):
@@ -640,7 +650,7 @@ class InventoryWindow(FloatingWindow):
         painter.setPen(_DIM)
         _fit(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
                          Qt.AlignCenter,
-                         "Drag to equip or slot  ·  double-click to use  ·  keys 1-4 draw")
+                         "Drag to equip or slot  ·  double-click to use  ·  keys 1-9 pick the strip")
 
     def _draw_spell_grid(self, painter, inner):
         """The Spells tab: every spell known, as an orb in its colour with its
@@ -914,19 +924,31 @@ class InventoryWindow(FloatingWindow):
                          f" · deflects {int(round(eq.deflect_chance(c) * 100))}%"
                          if hasattr(eq, "deflect_chance") else "")
         yy += 54
-        # Level progress.
-        prog = int(getattr(c, "xp_progress", 0) or 0)
+        # Experience: what is earned toward the next level, and what is left.
+        # Either track fills a level: experience, or ten major-skill rises.
+        from ..rpg import character as rpg_character
+        xp = int(getattr(c, "xp", 0) or 0)
+        need = int(getattr(c, "xp_needed", 0) or rpg_character.xp_to_next(c.level))
         bar = QRect(x, yy, w, 10)
         painter.setBrush(_SLOT)
         painter.setPen(QPen(_SLOT_EDGE, 1))
         painter.drawRect(bar)
-        painter.fillRect(QRect(bar.x() + 1, bar.y() + 1, int((bar.width() - 1) * prog / 10.0),
+        painter.fillRect(QRect(bar.x() + 1, bar.y() + 1,
+                               int((bar.width() - 1) * min(1.0, xp / max(1, need))),
                                bar.height() - 1), QColor(200, 170, 70))
         painter.setFont(self.f_small)
-        painter.setPen(_DIM)
+        painter.setPen(_INK)
+        left = max(0, need - xp)
         _fit(painter, QRect(x, yy + 11, w, 14), Qt.AlignLeft | Qt.AlignVCenter,
-                         f"Level progress {prog}/10")
-        yy += 30
+             f"XP {xp} / {need}")
+        painter.setPen(_GOLD if left == 0 else _DIM)
+        _fit(painter, QRect(x, yy + 11, w, 14), Qt.AlignRight | Qt.AlignVCenter,
+             "Ready to level up" if left == 0 else f"{left} to level {c.level + 1}")
+        prog = int(getattr(c, "xp_progress", 0) or 0)
+        painter.setPen(_DIM)
+        _fit(painter, QRect(x, yy + 25, w, 14), Qt.AlignLeft | Qt.AlignVCenter,
+             f"Skill rises {prog} / {rpg_character.SKILL_UPS_PER_LEVEL}")
+        yy += 44
         # Attributes, two columns.
         painter.setFont(self.f_body)
         painter.setPen(_GOLD)

@@ -70,10 +70,10 @@ K_MAP = "m"
 # through MiniwindSession.request_roll and animate on their own, so there is
 # nothing a roll key adds.
 K_QUEST = "q"          # show the current quest (objective + how to complete)
-#: Number keys that draw a carried weapon by slot. '1' is the first weapon in
-#: the pack, '2' the second: the same order the loadout popup shows, so the keys
-#: and the screen can never disagree. Nine is plenty and leaves '0' free.
-WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 5))   # the four quick-weapon slots
+#: Number keys that pick a slot on the inventory strip: '1' the first, and so
+#: on, as numbered under the slots. A weapon there is taken in hand at once.
+#: Nine is plenty and leaves '0' free.
+WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 10))
 #: How long E stays ignored after it opened a screen, when the held-key
 #: snapshot never showed it down (a very quick tap), seconds.
 INTERACT_GRACE_SECONDS = 0.4
@@ -902,21 +902,21 @@ class MiniwindGame:
             session.do_cast()
         if K_NEXT_SPELL in just:
             session.next_spell()
-        # Weapon slots: 1 draws the first weapon you carry, 2 the second, and so
-        # on, in the order the loadout popup lists them. Pressing the slot you
-        # already hold sheathes it.
+        # Number keys pick a slot on the inventory strip; a weapon in it is
+        # taken in hand at once -- the main hand, or the off hand when the
+        # main hand is full -- and pressing it again puts it away.
         for slot in WEAPON_SLOT_KEYS:
             if slot in just:
-                session.select_weapon_slot(int(slot))
+                session.select_strip_slot(int(slot) - 1)
                 break
         if K_SNEAK in just:
             session.toggle_sneak()
         if K_HEAL in just:
             session.use_health_potion()
-        # I shows / hides the inventory strip along the bottom of the screen
-        # (game/ui/inventory_strip.py); the world keeps running.
+        # The inventory strip along the bottom is always up; I opens the
+        # inventory window (game/ui/inventory_window.py).
         if K_INVENTORY in just:
-            session.show_strip = not getattr(session, "show_strip", False)
+            session.open_screen = "inventory"
         # C opens the character window: paperdoll, pack and sheet, all drag
         # and drop (game/ui/inventory_window.py); it pauses the world.
         elif K_CHARACTER in just:
@@ -1227,13 +1227,13 @@ class MiniwindGame:
 
     @classmethod
     def _strip_wanted(cls, session, cutscene=False) -> bool:
-        """Whether the inventory strip shows: toggled on with I in free play,
-        and always over the character window or an open chest or body."""
+        """Whether the inventory strip shows: always in free play, and over
+        the character window or an open chest or body."""
         if (cutscene or session.needs_char_creation
                 or session.game.character.is_dead or session.dialogue is not None):
             return False
         if session.open_screen is None:
-            return bool(getattr(session, "show_strip", False))
+            return True                  # always up in free play
         return session.open_screen in cls._STRIP_SCREENS
 
     def _sync_strip_window(self, session, viewport, w, h, cutscene=False):

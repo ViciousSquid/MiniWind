@@ -706,9 +706,10 @@ def _draw_character(painter, session, w, h):
                   f"{bio['title']}  ·  STR {rolls.get('strength', '?')}  "
                   f"END {rolls.get('endurance', '?')}  CHA {rolls.get('personality', '?')}",
                   size=10, color=T.GOLD_BRIGHT, align=T.ALIGN_RIGHT, family="Georgia")
-    prog = c.xp_progress
-    T.bar(painter, inner.x(), ty + 14, 260, 10, prog / 10.0, T.XP,
-          label=f"Level progress {prog}/10")
+    need = max(1, int(c.xp_needed))
+    T.bar(painter, inner.x(), ty + 14, 260, 10, min(1.0, c.xp / need), T.XP,
+          label=f"XP {c.xp} / {need}  ({max(0, need - c.xp)} to level {c.level + 1})"
+                f"  ·  skill rises {c.xp_progress}/10")
 
     # attributes column
     ax = inner.x()

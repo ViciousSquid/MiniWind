@@ -130,8 +130,8 @@ def test_a_nonsense_slot_number_is_survivable():
 
 # ------------------------------------------------------------------ bindings
 
-def test_the_number_keys_are_the_four_quick_slots():
-    assert host.WEAPON_SLOT_KEYS == tuple("1234")
+def test_the_number_keys_are_the_strips_first_nine_slots():
+    assert host.WEAPON_SLOT_KEYS == tuple("123456789")
 
 
 def test_a_fifth_weapon_waits_in_the_pack():

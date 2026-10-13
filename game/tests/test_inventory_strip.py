@@ -1,5 +1,5 @@
 """
-The inventory strip (I) and dragging things between it, the character
+The inventory strip (always up) and dragging things between it, the character
 window (C), chests and bodies.
 
 Run:  python -m pytest game/tests/test_inventory_strip.py -q
@@ -135,24 +135,89 @@ def test_the_strip_survives_a_save():
 
 # ---------------------------------------------------------------- the keys
 
-def test_i_toggles_the_strip_and_c_opens_the_character_window():
-    from ..host import MiniwindGame, K_INVENTORY, K_CHARACTER
+class _Ctx:
+    def key_down(self, _k):
+        return False
 
-    class _Ctx:
-        def key_down(self, _k):
-            return False
+
+def test_the_strip_is_always_up_i_opens_the_inventory_c_the_character_window():
+    from ..host import MiniwindGame, K_INVENTORY, K_CHARACTER
 
     s = _session()
     s.needs_char_creation = False
     game = MiniwindGame.__new__(MiniwindGame)
+    assert MiniwindGame._strip_wanted(s)              # free play: always up
     game._handle_gameplay_input(s, {K_INVENTORY}, _Ctx())
-    assert s.show_strip and s.open_screen is None
-    assert MiniwindGame._strip_wanted(s)
-    game._handle_gameplay_input(s, {K_INVENTORY}, _Ctx())
-    assert not s.show_strip and not MiniwindGame._strip_wanted(s)
+    assert s.open_screen == "inventory"
+    s.open_screen = None
     game._handle_gameplay_input(s, {K_CHARACTER}, _Ctx())
     assert s.open_screen == "character"
     assert MiniwindGame._strip_wanted(s)              # up over the C window
+
+
+# ------------------------------------------------- weapons in hand at once
+
+def _hands(s):
+    eq = s.game.character.equipment
+    return eq.get("weapon"), eq.get("shield")
+
+
+def test_a_number_key_takes_the_weapon_in_its_slot_in_hand():
+    from ..host import MiniwindGame
+    s = _session()
+    s.needs_char_creation = False
+    _give(s, "potion_heal_minor", "iron_shortsword")
+    game = MiniwindGame.__new__(MiniwindGame)
+    game._handle_gameplay_input(s, {"2"}, _Ctx())
+    assert s.strip_selected == 1
+    assert _hands(s) == ("iron_shortsword", None)
+    game._handle_gameplay_input(s, {"1"}, _Ctx())      # a potion: selected only
+    assert s.strip_selected == 0 and _hands(s) == ("iron_shortsword", None)
+    game._handle_gameplay_input(s, {"2"}, _Ctx())      # again: put away
+    assert _hands(s) == (None, None)
+
+
+def test_with_the_main_hand_full_a_one_handed_weapon_goes_to_the_off_hand():
+    s = _session()
+    _give(s, "iron_shortsword", "iron_dagger", "iron_mace")
+    assert s.select_strip_slot(0) and _hands(s) == ("iron_shortsword", None)
+    assert s.select_strip_slot(1) and _hands(s) == ("iron_shortsword", "iron_dagger")
+    from ..rpg import equipment
+    assert equipment.dual_wielding(s.game.character)
+    assert s.select_strip_slot(2) and _hands(s) == ("iron_shortsword", "iron_mace")
+    assert s.select_strip_slot(2) and _hands(s) == ("iron_shortsword", None)
+    # Putting the main weapon away hands it the off hand's.
+    s.select_strip_slot(1)
+    assert s.select_strip_slot(0) and _hands(s) == ("iron_dagger", None)
+
+
+def test_bows_and_two_handers_never_go_to_the_off_hand():
+    s = _session()
+    _give(s, "iron_shortsword", "short_bow", "scythe", "iron_dagger")
+    s.select_strip_slot(0)
+    assert s.select_strip_slot(1) and _hands(s) == ("short_bow", None)
+    assert s.select_strip_slot(3) and _hands(s) == ("iron_dagger", None)   # beside a bow: no
+    assert s.select_strip_slot(2) and _hands(s) == ("scythe", None)
+
+
+def test_a_click_on_a_weapon_in_the_strip_takes_it_in_hand(qt_app):
+    from PyQt5.QtCore import QEvent, QPoint, Qt
+    from PyQt5.QtGui import QMouseEvent
+    from ..ui import hits
+    from ..ui.inventory_strip import InventoryStrip
+    s = _session()
+    _give(s, "iron_shortsword")
+    strip = InventoryStrip(s)
+    strip.place(1280, 720)
+    strip._slots = list(s.strip_slots())
+    strip._layout()
+    p = strip._rects[0].center()
+    for kind in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+        ev = QMouseEvent(kind, QPoint(p), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+        (strip.handle_mouse_press if kind == QEvent.MouseButtonPress
+         else strip.handle_mouse_release)(ev)
+    hits.run_clicks(s)
+    assert _hands(s) == ("iron_shortsword", None)
 
 
 # ----------------------------------------------------------------- console
