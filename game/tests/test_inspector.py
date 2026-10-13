@@ -115,19 +115,26 @@ def test_the_window_shows_the_schedule_with_the_current_entry_marked(qt_app):
     smith, session, logic, view = _world()
     win = inspector.open_inspector(view, smith)
     rows = win.build_rows()
-    sched = [(kind, text) for kind, text, _v in rows if kind in ("sched", "sched_now")]
-    assert len(sched) == 3
-    assert [text for kind, text in sched if kind == "sched_now"][0].startswith("09:00  WORKING")
+    assert any(kind == "tabs" for kind, _t, _v in rows)
     values = {text: value for kind, text, value in rows if kind == "row"}
     assert values["Heading to"].startswith("300, 400")
     assert "work" in values["Because"]
 
-    pixmap = QtGui.QPixmap(1280, 720)
-    painter = QtGui.QPainter(pixmap)
-    try:
-        view.window_manager.draw_all(painter)        # paints without error
-    finally:
-        painter.end()
+    win.tab = "Schedule"
+    rows = win.build_rows()
+    sched = [(kind, text) for kind, text, _v in rows if kind in ("sched", "sched_now")]
+    assert len(sched) == 3
+    assert [text for kind, text in sched if kind == "sched_now"][0].startswith("09:00  WORKING")
+
+    for tab in inspector.TABS:                       # every tab paints
+        win.tab = tab
+        win._rows = win.build_rows()
+        pixmap = QtGui.QPixmap(1280, 720)
+        painter = QtGui.QPainter(pixmap)
+        try:
+            view.window_manager.draw_all(painter)
+        finally:
+            painter.end()
 
 
 def test_one_window_per_actor_and_the_close_button_closes_it(qt_app):
