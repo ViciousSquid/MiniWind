@@ -128,36 +128,107 @@ def light_source(character):
     return d if items.is_light_source(d) else None
 
 
+#: The three weights of armour. Light leaves you nimble, heavy turns blows
+#: but slows nothing except your dodging.
+LIGHT = "light"
+MEDIUM = "medium"
+HEAVY = "heavy"
+ARMOUR_WEIGHTS = (LIGHT, MEDIUM, HEAVY)
+
+#: Base Armour Class with nothing on, D&D-style.
+BASE_AC = 10
+#: Armour rating points per point of Armour Class.
+RATING_PER_AC = 4.0
+#: How many points of Agility bonus each weight of armour still lets through
+#: (None: all of it). Agility gives +1 AC per 10 points above 40.
+AGILITY_CAP = {LIGHT: None, MEDIUM: 2, HEAVY: 0}
+#: Chance per point of AC above :data:`BASE_AC` that a blow glances off
+#: entirely, and the most that can ever do.
+DEFLECT_PER_AC = 0.025
+DEFLECT_MAX = 0.6
+
+
+def _armour_skill(character, weight: str) -> float:
+    """The skill that makes armour of *weight* protect better. Medium armour
+    draws on both Light and Heavy Armour, so either trains it."""
+    if weight == HEAVY:
+        return float(character.skill(sk.HEAVY_ARMOR))
+    if weight == MEDIUM:
+        return (character.skill(sk.HEAVY_ARMOR) + character.skill(sk.LIGHT_ARMOR)) / 2.0
+    return float(character.skill(sk.LIGHT_ARMOR))
+
+
 def armor_rating(character) -> float:
     """Sum of worn armour ratings, scaled by the relevant armour skill.
 
     Higher Heavy/Light Armor skill makes the same plate protect more (classic
     'skill multiplies base rating'). Shield adds when not two-handed.
     """
-    total = 0.0
+    return sum(piece_ratings(character).values())
+
+
+def piece_ratings(character) -> dict:
+    """Each worn armour piece's skill-scaled rating, by slot."""
+    out = {}
     for slot in items.ARMOUR_SLOTS:
         d = equipped_def(character, slot)
         if not d or d.category != items.ARMOUR:
             continue
         base = float(d.get("armor_rating", 0))
-        klass = d.get("armor_class", "light")
-        skill_id = sk.HEAVY_ARMOR if klass == "heavy" else sk.LIGHT_ARMOR
-        skill = character.skill(skill_id)
-        total += base * (0.4 + skill / 100.0) * rarity_stat(character, slot)
-    return total
+        skill = _armour_skill(character, str(d.get("armor_class", LIGHT)))
+        out[slot] = base * (0.4 + skill / 100.0) * rarity_stat(character, slot)
+    return out
 
 
 def armor_class_worn(character) -> str:
-    """Whether the character is mostly in heavy or light armour (for training)."""
-    heavy = light = 0
+    """The heaviest weight of armour worn: "heavy", "medium", "light" or
+    "none". That is what governs how nimble you still are, and which armour
+    skill a blow trains."""
+    worn = set()
     for slot in items.ARMOUR_SLOTS:
         d = equipped_def(character, slot)
         if d and d.category == items.ARMOUR:
-            if d.get("armor_class") == "heavy":
-                heavy += 1
-            else:
-                light += 1
-    return "heavy" if heavy >= light and heavy > 0 else ("light" if light > 0 else "none")
+            weight = str(d.get("armor_class", LIGHT))
+            if weight in ARMOUR_WEIGHTS:
+                worn.add(weight)
+    for weight in (HEAVY, MEDIUM, LIGHT):
+        if weight in worn:
+            return weight
+    return "none"
+
+
+def armour_class(character) -> int:
+    """The character's Armour Class: how hard they are to hurt at all.
+
+    ``10 + armour + agility + charms``: each worn piece adds one per
+    :data:`RATING_PER_AC` points of its (skill-scaled) rating, rounded, and
+    never less than one -- so putting on a helmet always shows; Agility adds one per ten points above
+    40, as much as the heaviest armour worn allows (all of it in light armour,
+    two in medium, none in heavy); and protective rings and amulets add their
+    ``ac_bonus``. Shown on the inventory and character sheet, and rolled
+    against every physical blow (:func:`deflect_chance`).
+    """
+    from . import attributes as attr
+    armour = sum(max(1, int(round(r / RATING_PER_AC)))
+                 for r in piece_ratings(character).values() if r > 0)
+    agility = max(0, (int(character.attrs.get(attr.AGILITY, 40)) - 40) // 10)
+    cap = AGILITY_CAP.get(armor_class_worn(character))
+    if cap is not None:
+        agility = min(agility, cap)
+    charms = 0
+    for slot in (items.SLOT_RING, items.SLOT_AMULET):
+        d = equipped_def(character, slot)
+        if d is not None:
+            try:
+                charms += int(d.get("ac_bonus", 0) or 0)
+            except (TypeError, ValueError):
+                pass
+    return BASE_AC + armour + agility + charms
+
+
+def deflect_chance(character) -> float:
+    """Chance a physical blow glances off without harm, from Armour Class."""
+    return max(0.0, min(DEFLECT_MAX, (armour_class(character) - BASE_AC) * DEFLECT_PER_AC))
 
 
 def total_equipped_weight(character) -> float:

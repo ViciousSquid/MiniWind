@@ -185,6 +185,9 @@ class Player:
 
         # Walking speed (Quake 2's cl_forwardspeed); sprint runs at PM_MAXSPEED.
         self.speed = CL_FORWARDSPEED
+        #: Multiplier on how fast the player can move, for a game to slow
+        #: them (a heavy load, a snare). 1.0 is the stock speed.
+        self.move_speed_scale = 1.0
         self.mouse_sensitivity = 0.0015
         self.width, self.height, self.depth = TILE_SIZE, TILE_SIZE * 2, TILE_SIZE
         self.camera_height = 40.0  # Offset from pos.y
@@ -384,6 +387,7 @@ class Player:
         wish_speed = glm.length(wish)
         wish_dir = wish / wish_speed if wish_speed > 0.0 else glm.vec3(0.0)
         wish_speed = min(wish_speed, PM_DUCKSPEED if self.ducked else PM_MAXSPEED)
+        wish_speed *= max(0.0, float(getattr(self, "move_speed_scale", 1.0)))
 
         swimming = self.swimming and self.physics_enabled
 

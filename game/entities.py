@@ -103,7 +103,7 @@ def _apply_head_sprite(p: dict) -> None:
         p["custom_idle"] = path
         p["custom_shoot"] = path
         # Every head is the same size, whatever the role or the map says.
-        p["sprite_width"] = p["sprite_height"] = heads.HEAD_SIZE
+        p["sprite_width"] = p["sprite_height"] = heads.size_for(p)
         # No custom death sprite: a slain head-wearing actor shows its head with
         # the shared heads/dead.png overlay (see Monster.get_sprite_path).
     p.pop("custom_dead", None)
@@ -372,7 +372,10 @@ class Creature(Monster):
         # monster gameplay: loot table, respawn, and an idle roam radius so wild
         # creatures drift around their spawn instead of standing stock-still.
         p.setdefault("respawn", False)
-        p.setdefault("roam", aggression != "hostile")
+        # Wild beasts wander their ground (game/wildlife.py); sheep and cows
+        # stay in their fields.
+        p.setdefault("roam", faction == "wildlife" and role not in ("sheep", "cow")
+                     or aggression != "hostile")
         p.setdefault("roam_radius", 300.0)
         # Creatures have no schedule/dialogue by default, but the fields exist so
         # a boss/quest creature can be given them without a new entity type.

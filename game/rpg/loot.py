@@ -144,6 +144,10 @@ register(LootTable("bandit", [
     LootEntry("iron_arrow", 0.5, (3, 12)),
     LootEntry("leather_cuirass", 0.25),
     LootEntry("iron_helmet", 0.15),
+    LootEntry("hide_armour", 0.15),
+    LootEntry("studded_leather", 0.08, min_level=3),
+    LootEntry("chain_coif", 0.08, min_level=2),
+    LootEntry("buckler", 0.12),
     LootEntry("potion_heal_minor", 0.25),
     LootEntry("lockpick", 0.3, (1, 3)),
 ], gold_range=(2, 25)))
@@ -152,6 +156,9 @@ register(LootTable("bandit_chief", [
     LootEntry("steel_longsword", 0.5, min_level=3),
     LootEntry("elven_saber", 0.1, min_level=8),
     LootEntry("steel_cuirass", 0.4),
+    LootEntry("chain_shirt", 0.3, min_level=2),
+    LootEntry("scale_mail", 0.12, min_level=5),
+    LootEntry("kite_shield", 0.2, min_level=3),
     LootEntry("potion_heal", 0.5),
     LootEntry("long_bow", 0.3),
     LootEntry("steel_arrow", 0.6, (5, 15)),
@@ -169,6 +176,8 @@ register(LootTable("skeleton", [
     LootEntry("iron_shortsword", 0.3),
     LootEntry("ingr_bonemeal", 0.7, (1, 3)),
     LootEntry("iron_shield", 0.2),
+    LootEntry("chain_leggings", 0.08, min_level=3),
+    LootEntry("copper_ring", 0.1),
 ], gold_range=(0, 10)))
 
 register(LootTable("chest_common", [
@@ -176,6 +185,8 @@ register(LootTable("chest_common", [
     LootEntry("lockpick", 0.5, (1, 4)),
     LootEntry("iron_dagger", 0.2),
     LootEntry("book_lore", 0.1),
+    LootEntry("cloth_robe", 0.12),
+    LootEntry("copper_ring", 0.1),
 ], gold_range=(5, 40)))
 
 register(LootTable("chest_rich", [
@@ -183,5 +194,9 @@ register(LootTable("chest_rich", [
     LootEntry("elven_saber", 0.08, min_level=8),
     LootEntry("potion_heal", 0.5),
     LootEntry("silver_sword", 0.15, min_level=5),
+    LootEntry("plate_helm", 0.1, min_level=6),
+    LootEntry("mithril_mail", 0.04, min_level=10),
+    LootEntry("ring_of_protection", 0.08, min_level=4),
+    LootEntry("amulet_of_warding", 0.03, min_level=8),
     LootEntry("elven_arrow", 0.3, (5, 20)),
 ], gold_range=(40, 200)))

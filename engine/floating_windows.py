@@ -44,6 +44,11 @@ class FloatingWindow:
 
     HEADER_H = 25
     MIN_W = 180
+    #: True while the window holds the mouse for something of its own (an
+    #: item being dragged within its body), so the manager keeps sending it
+    #: the moves until the button comes back up -- as it does while the
+    #: window itself is being dragged.
+    mouse_captured = False
 
     def __init__(self, title, x=40, y=40, width=340, body_height=200):
         self.title = title
@@ -234,7 +239,7 @@ class WindowManager:
 
     def handle_mouse_move(self, event, view_w, view_h):
         for w in reversed(self.windows):
-            if w.dragging:
+            if w.dragging or getattr(w, "mouse_captured", False):
                 return w.handle_mouse_move(event, view_w, view_h)
         return False
 

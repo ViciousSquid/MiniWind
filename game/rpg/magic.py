@@ -289,17 +289,43 @@ def cast_cost(character, spell: Spell) -> float:
     return round(spell.base_cost * factor, 1)
 
 
+#: Most a single spell's practice adds to its cast chance, and how much each
+#: successful cast of it adds toward that.
+PRACTICE_BONUS_MAX = 0.15
+PRACTICE_PER_CAST = 0.005
+
+
+def cast_chance(character, spell: Spell) -> float:
+    """Probability [0.10, 0.98] that casting *spell* works.
+
+    Learn-by-doing: the school skill carries most of it, so every point a
+    caster earns by casting shows up as fewer fizzles. A novice (skill 5,
+    average Willpower) lands a cheap spell a little under half the time; by
+    skill 50 three casts in four; a master almost never fizzles. Willpower
+    and Luck nudge it, an expensive spell is harder, and practice with one
+    particular spell (successful casts of it) steadies it by up to
+    :data:`PRACTICE_BONUS_MAX`.
+    """
+    if spell.base_cost <= 0:
+        return 1.0
+    skill = character.skill(spell.school)
+    wil = character.attrs.get(attr.WILLPOWER, 40)
+    luck = character.attrs.get(attr.LUCK, 40)
+    practice = int(getattr(character, "spell_practice", {}).get(spell.id, 0))
+    chance = (0.42 + skill * 0.0065
+              + (wil - 40) * 0.004 + (luck - 40) * 0.002
+              - spell.base_cost * 0.008
+              + min(PRACTICE_BONUS_MAX, practice * PRACTICE_PER_CAST))
+    return max(0.10, min(0.98, chance))
+
+
 def cast_check(character, spell: Spell, rng: Optional[random.Random] = None,
                dice: Optional["DiceRoller"] = None):
     """Resolve a cast check and return ``(success, dice_result)``."""
     rng = rng or random
     if spell.base_cost <= 0:
         return True, None  # powers never fizzle
-    skill = character.skill(spell.school)
-    wil = character.attrs.get(attr.WILLPOWER, 40)
-    luck = character.attrs.get(attr.LUCK, 40)
-    chance = (skill * 1.2 + wil * 0.2 + luck * 0.1 - spell.base_cost * 0.4) / 100.0
-    chance = max(0.05, min(0.98, chance))
+    chance = cast_chance(character, spell)
     # A d20 check, like every other chance in the game — there is no d100 die
     # to put on screen (see diceroll.CHECK_DIE). The cast succeeds on a roll at
     # or above *target*, so the winning faces are the top check_threshold ones.
@@ -345,10 +371,14 @@ def try_cast(character, spell_id: str, rng: Optional[random.Random] = None,
         return CastResult(False, "not enough magicka", spell)
     success, roll = cast_check(character, spell, rng=rng, dice=dice)
     if not success:
-        character.use_skill(spell.school, 1.0)
+        # A fizzle still teaches -- you learn as much from what goes wrong.
+        character.use_skill(spell.school, 1.0 + spell.base_cost / 60.0)
         return CastResult(False, "fizzle", spell, roll=roll)
 
-    character.use_skill(spell.school, 1.0 + spell.base_cost / 40.0)
+    character.use_skill(spell.school, 1.5 + spell.base_cost / 30.0)
+    practice = getattr(character, "spell_practice", None)
+    if isinstance(practice, dict):
+        practice[spell.id] = int(practice.get(spell.id, 0)) + 1
 
     if spell.delivery == SELF:
         apply_effects_to_character(character, spell.effects)

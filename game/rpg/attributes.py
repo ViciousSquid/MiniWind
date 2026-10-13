@@ -38,7 +38,8 @@ ATTRIBUTE_INFO: Dict[str, Dict[str, str]] = {
     SPEED:        {"label": "Speed",        "desc": "How fast you move."},
     INTELLIGENCE: {"label": "Intelligence", "desc": "Maximum magicka."},
     WILLPOWER:    {"label": "Willpower",    "desc": "Magicka regeneration and resistance to magic."},
-    PERSONALITY:  {"label": "Personality",  "desc": "NPC disposition and merchant prices."},
+    PERSONALITY:  {"label": "Charisma",  "desc": "How others see you: their disposition, "
+                   "merchants' prices, and whether they can bear to deal with you."},
     LUCK:         {"label": "Luck",         "desc": "A small thumb on the scale of every roll."},
 }
 

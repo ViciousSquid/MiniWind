@@ -1,9 +1,10 @@
 """
 Drawing a weapon with the number keys.
 
-1 draws the first weapon you carry, 2 the second, and so on — the same order the
-loadout popup lists them in, so what is on screen and what the keys do can never
-disagree. Pressing the slot you already hold sheathes it.
+Keys 1-4 draw the weapon in the four quick-weapon slots. A weapon picked up for
+the first time drops into the first free slot, so 1 draws the first weapon you
+carry, 2 the second, and so on; the inventory window rearranges them by drag and
+drop. Pressing the slot you already hold sheathes it.
 
 Run:  python -m pytest game/tests/test_weapon_slots.py -q
 """
@@ -29,6 +30,8 @@ class _Character:
         # equipment._refresh_weapon_kind reads both of these off a real Character.
         self.active_spell = None
         self.active_weapon_kind = "unarmed"
+        self.quick_weapons = [None] * 4
+        self._quick_seen = set()
 
 
 
@@ -45,6 +48,12 @@ class _Game:
 class _Session:
     weapon_slots = MiniwindSession.weapon_slots
     select_weapon_slot = MiniwindSession.select_weapon_slot
+    quick_weapon_slots = MiniwindSession.quick_weapon_slots
+    _carried_weapons = MiniwindSession._carried_weapons
+    set_quick_weapon = MiniwindSession.set_quick_weapon
+
+    def _cancel_bow_draw(self):
+        pass
 
     def __init__(self, inventory):
         self.game = _Game(inventory)
@@ -121,8 +130,37 @@ def test_a_nonsense_slot_number_is_survivable():
 
 # ------------------------------------------------------------------ bindings
 
-def test_the_number_keys_are_bound_and_leave_zero_free():
-    assert host.WEAPON_SLOT_KEYS == tuple("123456789")
+def test_the_number_keys_are_the_four_quick_slots():
+    assert host.WEAPON_SLOT_KEYS == tuple("1234")
+
+
+def test_a_fifth_weapon_waits_in_the_pack():
+    session = _pack("iron_shortsword", "hunting_bow", "iron_mace",
+                    "iron_longsword", "iron_dagger")
+    assert len(session.weapon_slots()) == 4
+    assert session.quick_weapon_slots()[3]["id"] == "iron_longsword"
+
+
+def test_a_weapon_dragged_into_a_slot_is_what_that_key_draws():
+    session = _pack("iron_shortsword", "hunting_bow")
+    assert session.set_quick_weapon(3, "iron_shortsword") is True
+    slots = session.quick_weapon_slots()
+    assert slots[3]["id"] == "iron_shortsword" and slots[0] is None
+    session.select_weapon_slot(4)
+    assert eq.equipped_id(session.game.character, rpg_items.SLOT_WEAPON) == \
+        "iron_shortsword"
+
+
+def test_only_a_weapon_goes_in_a_quick_slot():
+    session = _pack("bread", "iron_shortsword")
+    assert session.set_quick_weapon(1, "bread") is False
+
+
+def test_a_weapon_taken_out_of_the_slots_stays_out():
+    session = _pack("iron_shortsword")
+    session.quick_weapon_slots()
+    session.set_quick_weapon(0, None)
+    assert session.weapon_slots() == []
 
 
 def test_the_slot_keys_do_not_clash_with_any_action_binding():

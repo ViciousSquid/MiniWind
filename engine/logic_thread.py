@@ -389,8 +389,11 @@ class LogicThread(threading.Thread):
             
             if frame_time > 0.25:
                 frame_time = 0.25
-                
-            accumulator += frame_time
+
+            # Simulation speed (debug tools): the world advances this many
+            # seconds per real second. The tick itself stays fixed, so a slow
+            # world runs fewer ticks and a fast one more, never a longer tick.
+            accumulator += frame_time * max(0.0, float(getattr(self, "time_scale", 1.0)))
             accumulator = self._step_frame(accumulator)
             self._publish_frame()
             

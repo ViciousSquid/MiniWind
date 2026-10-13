@@ -59,7 +59,7 @@ K_QUEST = "q"          # show the current quest (objective + how to complete)
 #: Number keys that draw a carried weapon by slot. '1' is the first weapon in
 #: the pack, '2' the second: the same order the loadout popup shows, so the keys
 #: and the screen can never disagree. Nine is plenty and leaves '0' free.
-WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 10))
+WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 5))   # the four quick-weapon slots
 
 
 # ---------------------------------------------------------------------------
@@ -860,10 +860,10 @@ class MiniwindGame:
             session.toggle_sneak()
         if K_HEAL in just:
             session.use_health_potion()
-        # The loadout popup (weapons + spells) toggles with I and stays open
-        # while you fight — it does not pause the world.
+        # I opens the inventory: the big drag-and-drop window
+        # (game/ui/inventory_window.py), which pauses the world like any screen.
         if K_INVENTORY in just:
-            session.show_loadout = not getattr(session, "show_loadout", False)
+            session.open_screen = "inventory"
         # screens
         elif K_CHARACTER in just:
             session.open_screen = "character"
@@ -1023,6 +1023,7 @@ class MiniwindGame:
                 inspector.draw_world_lines(painter, viewport, w, h)
                 hud.draw(painter, session, w, h)
                 hud.draw_bow_charge(painter, session, viewport, w, h)
+                hud.draw_npc_bow_charges(painter, session, viewport, w, h)
                 # The armed pick's highlight goes over the HUD, so its name
                 # label is never hidden under a toast.
                 inspector.draw_pick_hover(painter, viewport, w, h)
@@ -1039,6 +1040,7 @@ class MiniwindGame:
                 if session.open_screen is None and session.dialogue is None \
                         and not session.game.character.is_dead:
                     hud.draw_bubbles(painter, session, viewport, w, h)
+                    hud.draw_barks(painter, session, viewport, w, h)
                 # The "stay near the guard" ring during a prison escort.
                 hud.draw_escort_ring(painter, session, viewport, w, h)
                 # "!" / "?" over heightened NPCs (a guard coming to arrest
@@ -1060,6 +1062,8 @@ class MiniwindGame:
             if viewport is not None and session.open_screen == "trade" \
                     and trade_anim.active():
                 viewport.update()
+            if viewport is not None and screens.animating(session):
+                viewport.update()                # character-creation dice
         except Exception:
             import traceback
             traceback.print_exc()
@@ -1085,6 +1089,10 @@ class MiniwindGame:
             except Exception:
                 pass
             session.needs_char_creation = False
+        if screen == "trade":
+            from .ui import screens as _screens
+            _screens.close_trade(session)
+            return
         session.open_screen = None
 
     @staticmethod
@@ -1151,7 +1159,7 @@ class MiniwindGame:
             return False
         try:
             from engine.floating_windows import CallbackWindow
-            from .ui import dialogue_ui, screens
+            from .ui import dialogue_ui, hits, screens
         except Exception:
             return False
 
@@ -1181,6 +1189,29 @@ class MiniwindGame:
         if key is None:
             return True  # own the (empty) popup slot: suppress legacy draw
 
+        if cur is None and key == "screen:book":
+            # A book is read open over the game (game/ui/book_window.py).
+            from .ui.book_window import BookWindow
+            win = BookWindow(session)
+            win.place(w, h)
+            wm.add(win)
+            session._overlay_win = win
+            session._overlay_key = key
+            return True
+
+        if cur is None and key in ("screen:inventory", "screen:character"):
+            # The inventory and the character sheet are one window: drag and
+            # drop onto the paperdoll, with the sheet or the item details
+            # beside it (game/ui/inventory_window.py).
+            from .ui.inventory_window import InventoryWindow
+            win = InventoryWindow(session, view="character" if key == "screen:character"
+                                  else "details")
+            win.place(w, h)
+            wm.add(win)
+            session._overlay_win = win
+            session._overlay_key = key
+            return True
+
         if cur is None:
             click_cb = None
             wants_cursor = False
@@ -1193,6 +1224,10 @@ class MiniwindGame:
                 draw_fn = (lambda p, x, y, ww, hh, s=session:
                            dialogue_ui.draw_in_rect(p, s, x, y, ww, hh))
                 on_close = session.end_dialogue
+                # The conversation's responses are buttons too (see
+                # game.ui.hits); the window would otherwise swallow the click.
+                click_cb = (lambda cx, cy: hits.click(cx, cy))
+                wants_cursor = True
             else:
                 screen = session.open_screen
                 title = self._SCREEN_TITLES.get(screen, str(screen).title())
@@ -1201,11 +1236,12 @@ class MiniwindGame:
                            screens.draw_in_rect(p, s, x, y, ww, hh))
                 on_close = (lambda s=session, sc=session.open_screen:
                             self._close_overlay_screen(s, sc))
-                # The quest journal is mouse-driven: free the play-mode cursor
-                # and route body clicks into the screen so its quest list and
-                # "make active quest" box can be clicked.
+                # Every screen is mouse-driven: free the play-mode cursor and
+                # route body clicks into the screen, so its buttons (a
+                # merchant's Buy / Leave, the level-up choices, the quest list)
+                # can be clicked rather than swallowed by the window.
                 click_cb = (lambda cx, cy, s=session: screens.handle_click(s, cx, cy))
-                wants_cursor = (screen == "quest")
+                wants_cursor = True
             win = CallbackWindow(key, title, draw_fn, width=bw, body_height=bh,
                                  x=max(20, (w - bw) // 2),
                                  y=max(20, (h - bh) // 2 - 24),

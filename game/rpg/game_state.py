@@ -152,11 +152,16 @@ class GameState:
             self.message(f"Drank {d.name}")
             return True
         if d.category == items.BOOK:
+            c = self.character
+            first = item_id not in c.read_books
+            if first:
+                c.read_books.append(item_id)
             skill_id = d.get("teaches_skill")
-            if skill_id:
-                self.character.use_skill(skill_id, 5.0)
+            if skill_id and first:
+                # A skill book teaches once; reading it again is only reading.
+                c.use_skill(skill_id, 5.0)
                 self.message(f"You study {d.name}.")
-            else:
+            elif not d.get("book"):
                 self.message(f"You read {d.name}.")
             return True
         if d.category in (items.WEAPON, items.ARMOUR, items.AMMO, items.LIGHT):
@@ -235,7 +240,8 @@ class GameState:
         return self.character.active_spell
 
     def attack_creature(self, target_props: Dict, distance: float = 0.0,
-                        draw: float = 1.0, guaranteed: bool = False) -> Dict:
+                        draw: float = 1.0, guaranteed: bool = False,
+                        power: float = 1.0) -> Dict:
         """Resolve a melee attack on a creature. Returns the combat result.
 
         Spends stamina, applies damage to the target's ``health`` property,
@@ -252,7 +258,7 @@ class GameState:
         char = self.character
         res = combat.player_attack(char, target_props, sneaking=self.sneaking,
                                    draw=draw, rng=self.rng, dice=self.dice,
-                                   guaranteed_hit=guaranteed)
+                                   guaranteed_hit=guaranteed, power=power)
         if res.get("no_ammo"):
             self.message("Out of arrows!")
             return res

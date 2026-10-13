@@ -197,7 +197,7 @@ class LoadoutWindow(FloatingWindow):
         painter.setPen(_MUTED)
         painter.setFont(self.small_font)
         painter.drawText(x + 8, top + len(weapons) * self.ROW_H + 14,
-                         "Press 1-9 or click to equip • Left-mouse attacks")
+                         "Press 1-4 or click to equip • Left-mouse attacks")
 
     def _draw_spells(self, painter, x, top, w):
         spells = self._spells()

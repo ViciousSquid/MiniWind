@@ -30,6 +30,15 @@ except ImportError:
 from editor.things import Prop, Light, LevelChanger, Portal
 
 
+
+def _archived(path):
+    """Whether a mounted ``.fiopak`` data package holds *path*."""
+    try:
+        from engine import asset_archives
+        return asset_archives.in_archive(path)
+    except Exception:
+        return False
+
 class ConsoleCommandHandler:
     """
     FULL console control with clear mode-specific messages + extensive render commands.
@@ -2380,7 +2389,7 @@ entity to drive them from the I/O system.</i><br>
         relative = os.path.join('maps', os.path.relpath(map_path, maps_dir))
         if self.main_window._package_map_path(relative) is not None:
             target = relative
-        elif os.path.exists(map_path):
+        elif os.path.exists(map_path) or _archived(map_path):
             target = map_path
         else:
             target = None
@@ -2569,7 +2578,7 @@ entity to drive them from the I/O system.</i><br>
             # the map it loads becomes the editor's save target).
             map_path = os.path.join(self.main_window.root_dir, 'maps',
                                     os.path.basename(str(map_name)))
-            if os.path.isfile(map_path):
+            if os.path.isfile(map_path) or _archived(map_path):
                 # Cancelled at the unsaved-changes prompt, or the map failed
                 # to load: the save belongs to that map, so stop here.
                 if not self.main_window.open_level_file(map_path):

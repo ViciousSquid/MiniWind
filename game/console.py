@@ -336,6 +336,120 @@ def cmd_inspect(ctx, args):
     return None
 
 
+#: The world-pause request the ``pause`` command holds (its own owner, so it
+#: never clashes with the menus, an inspector or the actor pick).
+CONSOLE_PAUSE = "console_pause"
+
+
+def cmd_pause(ctx, args):
+    """pause -- freeze the world (game time, NPCs, combat) or let it run again.
+
+    A toggle, with no pause menu: the view stays as it is, so the frozen
+    scene can be looked at and inspected. Play Mode only."""
+    if not ctx.play_mode or ctx.logic_thread is None:
+        debug_log("Error", "pause: Play Mode only.")
+        return None
+    runtime = getattr(ctx.logic_thread, "session_runtime", None)
+    if runtime is None:
+        return None
+    owners = getattr(runtime, "world_pause_owners", None)
+    owners = (owners() if callable(owners) else owners) or frozenset()
+    want = CONSOLE_PAUSE not in owners
+    runtime.set_world_paused(CONSOLE_PAUSE, want)
+    msg = "World paused (type 'pause' again to resume)." if want else "World running."
+    debug_log("Info", msg)
+    toast = getattr(ctx.main_window, "show_toast", None)
+    if toast is not None:
+        toast(msg)
+    return None
+
+
+def cmd_dragonfire(ctx, args):
+    """dragonfire 1..5 -- which FIRE setting the dragon's breath is made of.
+
+    The breath is a stream of the engine's FIRE Effects (game/dragon_fire.py);
+    this picks their fire (fire01..fire05). The choice is remembered."""
+    from .dragon_fire import FIRE_SETTINGS
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    fire = getattr(session, "dragon_fire", None)
+    text = str(args or "").strip()
+    if fire is None:
+        debug_log("Error", "dragonfire: Play Mode only.")
+        return None
+    if not text:
+        current = session.store.get("dragonfire", None)
+        debug_log("Info", f"dragonfire: setting {current or 1} "
+                          f"({len(fire.flames)} flames in this map). Use dragonfire 1..{FIRE_SETTINGS}.")
+        return None
+    try:
+        setting = int(text.split()[0])
+    except ValueError:
+        setting = 0
+    if not fire.set_setting(setting):
+        debug_log("Error", f"dragonfire: pick 1..{FIRE_SETTINGS}.")
+        return None
+    msg = f"Dragon fire set to {setting}."
+    debug_log("Info", msg)
+    toast = getattr(ctx.main_window, "show_toast", None)
+    if toast is not None:
+        toast(msg)
+    return None
+
+
+def cmd_debugtools(ctx, args):
+    """debugtools -- a floating window of time controls for the simulation:
+    rewind, play / pause, and speed (0.25×, 0.5×, 1×, 2×). Play Mode only."""
+    if not ctx.play_mode:
+        debug_log("Error", "debugtools: Play Mode only.")
+        return None
+    view = getattr(ctx.main_window, "view_3d", None)
+    from .ui import debug_tools
+    if debug_tools.open_debug_tools(view) is None:
+        debug_log("Error", "debugtools: no game view to open it on.")
+    return None
+
+
+def cmd_resurrect(ctx, args):
+    """resurrect -- click an NPC or monster to bring it back to life at full
+    health (a living one is healed). The world pauses while you choose; Esc
+    or a right-click cancels. Play Mode only."""
+    if not ctx.play_mode:
+        debug_log("Error", "resurrect: Play Mode only.")
+        return None
+    window = ctx.main_window
+
+    def _raise(actor):
+        from . import rewind
+        from .ui import hits
+        hits.queue(lambda session: rewind.resurrect(session, actor))
+
+    begin = getattr(window, "begin_actor_pick", None)
+    if begin is None or not begin(_raise):
+        debug_log("Error", "resurrect: the actor picker is not available in this view.")
+        return None
+    toast = getattr(window, "show_toast", None)
+    if toast is not None:
+        toast("Resurrect: click an NPC or monster (Esc to cancel)")
+    return None
+
+
+def cmd_roads(ctx, args):
+    """roads -- who is travelling the roads right now, and where.
+
+    Lists every party on the living world's board (game/living): kind, leader,
+    whether they are walking or resting, origin and destination, where the
+    clock puts them, and which are near enough to be actors ([LIVE])."""
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    living = getattr(session, "living", None)
+    if living is None:
+        debug_log("Error", "roads: the living world is not running (Play Mode on a map "
+                  "with places).")
+        return None
+    for line in living.summary():
+        debug_log("Info", line)
+    return None
+
+
 #: (names, handler, help) for every command this module provides.
 COMMANDS = (
     (("diceroll", "dice"), cmd_diceroll,
@@ -347,6 +461,16 @@ COMMANDS = (
      " — Reactive simulation (Play Mode)"),
     (("inspect", "mind"), cmd_inspect,
      "— Pause and click an actor: schedule, destination, AI state (Play Mode)"),
+    (("roads", "travellers"), cmd_roads,
+     "— List the parties on the roads: who, where from/to, where now (Play Mode)"),
+    (("debugtools",), cmd_debugtools,
+     "— Time controls: rewind, play/pause, speed 0.25/0.5/1/2 (Play Mode)"),
+    (("resurrect",), cmd_resurrect,
+     "— Click an NPC or monster to restore it to life and full health (Play Mode)"),
+    (("dragonfire",), cmd_dragonfire,
+     "1..5 — Which FIRE setting the dragon breathes (remembered)"),
+    (("pause", "freeze"), cmd_pause,
+     "— Toggle freezing the world (time, NPCs, combat); no pause menu (Play Mode)"),
 )
 
 

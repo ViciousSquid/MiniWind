@@ -49,6 +49,8 @@ REFRESH_SECONDS = 0.25
 _TEXT = QColor(220, 220, 220)
 _MUTED = QColor(150, 150, 160)
 _HEAD = QColor(240, 200, 120)
+#: Strength, Endurance and Charisma letters in the inspector.
+_STAT_COLOURS = (QColor(230, 120, 100), QColor(120, 200, 120), QColor(150, 170, 255))
 _HILITE = QColor(90, 130, 128, 120)
 _LINK = QColor(120, 190, 255)
 _LINK_HOT = QColor(190, 230, 255)
@@ -242,10 +244,16 @@ class ActorInspectorWindow(FloatingWindow):
         self.font = QFont("Arial", 8)
         self.bold = QFont("Arial", 8, QFont.Bold)
         self.title_font = QFont("Arial", 9, QFont.Bold)
+        #: Strength / Endurance / Charisma stand out from the rest of the data.
+        self.stats_font = QFont("Arial", 11, QFont.Bold)
         self._fm = QFontMetrics(self.font)
         self._rows = []          # [(kind, text, value)] kind: head/row/sched/sched_now
         self._refreshed = 0.0
         self._links = []         # [(QRectF, action)] of the last paint
+        #: Whether this window holds the world paused (its own pause request,
+        #: so several inspectors and the menus never fight over it). Off: the
+        #: world runs while you watch.
+        self.paused = False
 
     # -- data ----------------------------------------------------------------
     def _logic(self):
@@ -272,10 +280,16 @@ class ActorInspectorWindow(FloatingWindow):
         def row(label, value):
             rows.append(("row", label, "" if value is None else str(value)))
 
+        rows.append(("pause", "\u23f8 World paused \u2014 click to run" if self.paused
+                     else "\u25b6 World running \u2014 click to pause", ""))
         focus = focused_place(logic)
         if focus is not None and focus["window"] is self:
             rows.append(("back", f"\u25c0 Back to player   (showing {focus['label']})", ""))
         head("Actor")
+        if all(props.get(k) is not None for k in ("strength", "endurance", "charisma")):
+            # The three rolled stats, larger than the rest (see draw_body).
+            rows.append(("stats", "", (props.get("strength"), props.get("endurance"),
+                                       props.get("charisma"))))
         row("Type", "{} / {}".format(props.get("type", "?"),
                                      props.get("npc_role") or props.get("creature_role")
                                      or props.get("monster_type") or "-"))
@@ -352,9 +366,17 @@ class ActorInspectorWindow(FloatingWindow):
         return rows
 
     # -- window --------------------------------------------------------------
+    #: Height of the larger S / E / C row.
+    STATS_H = 24
+
+    def _row_h(self, kind):
+        return self.STATS_H if kind == "stats" else self.LINE_H
+
     def content_height(self):
         self.refresh()
-        return 10 + self.LINE_H * max(1, len(self._rows))
+        if not self._rows:
+            return 10 + self.LINE_H
+        return 10 + sum(self._row_h(kind) for kind, _t, _v in self._rows)
 
     def draw(self, painter, focused=False):
         super().draw(painter, focused)
@@ -379,6 +401,22 @@ class ActorInspectorWindow(FloatingWindow):
         painter.drawText(QPointF(x, base), text)
         self._links.append((rect, action))
         return rect.right()
+
+    def _draw_stats(self, painter, x, ty, values):
+        """S / E / C in the larger face: the letter in its colour, the 3..18
+        score after it."""
+        painter.setFont(self.stats_font)
+        fm = QFontMetrics(self.stats_font)
+        base = ty + self.STATS_H - 6
+        cx = x
+        for letter, value, colour in zip("SEC", values, _STAT_COLOURS):
+            painter.setPen(colour)
+            painter.drawText(QPointF(cx, base), letter)
+            cx += fm.horizontalAdvance(letter) + 4
+            painter.setPen(_TEXT)
+            text = str(value)
+            painter.drawText(QPointF(cx, base), text)
+            cx += fm.horizontalAdvance(text) + 22
 
     def _place_action(self, key):
         def action():
@@ -407,7 +445,24 @@ class ActorInspectorWindow(FloatingWindow):
                 return True
         return False
 
+    def _pause_owner(self):
+        return f"inspector:{id(self)}"
+
+    def toggle_pause(self):
+        """Hold the world still while reading this window, or let it run."""
+        self.set_paused(not self.paused)
+
+    def set_paused(self, paused: bool):
+        logic = self._logic()
+        runtime = getattr(logic, "session_runtime", None)
+        if runtime is not None:
+            runtime.set_world_paused(self._pause_owner(), bool(paused))
+        self.paused = bool(paused)
+        self._rows = []              # redraw the toggle's label now
+
     def on_close(self):
+        if self.paused:
+            self.set_paused(False)
         # Closing the window that is showing a place snaps the camera home.
         focus = focused_place(self._logic())
         if focus is not None and focus["window"] is self:
@@ -423,6 +478,15 @@ class ActorInspectorWindow(FloatingWindow):
         label_w = 112
         for kind, text, value in self._rows:
             base = ty + self.LINE_H - 3
+            if kind == "stats":
+                self._draw_stats(painter, x + 14, ty, value)
+                ty += self.STATS_H
+                continue
+            if kind == "pause":
+                self._link(painter, x + 8, base, text, self.toggle_pause,
+                           active=self.paused)
+                ty += self.LINE_H
+                continue
             if kind == "back":
                 logic = self._logic()
                 self._link(painter, x + 8, base, text,
@@ -482,11 +546,42 @@ def open_inspector(view, thing):
         view.update()
         return existing
     n = sum(1 for w in manager.windows if isinstance(w, ActorInspectorWindow))
-    x = max(10, view.width() - 400 - (n % 4) * 26)
-    win = ActorInspectorWindow(view, thing, x=x, y=70 + (n % 4) * 26)
+    x, y = _beside(view, thing, n)
+    win = ActorInspectorWindow(view, thing, x=x, y=y)
     manager.add(win)
     view.update()
     return win
+
+
+#: Where a new inspector opens relative to its actor on screen (px), and
+#: how far each further window steps so they do not stack exactly.
+OPEN_OFFSET = (70, -60)
+OPEN_STEP = 22
+
+
+def _beside(view, thing, n):
+    """Top-left for a new inspector window: just beside its actor on screen,
+    kept fully inside the view. Falls back to the right-hand side when the
+    actor cannot be projected (behind the camera, no frame drawn yet)."""
+    width, height = view.width(), view.height()
+    win_w, win_h = 380, 260
+    point = None
+    try:
+        import glm
+        point = _project(glm, view.projection_matrix, view.view_matrix,
+                         thing.pos, width, height)
+    except Exception:
+        point = None
+    if point is None or not (0 <= point.x() <= width and 0 <= point.y() <= height):
+        return (max(10, width - 400 - (n % 4) * 26), 70 + (n % 4) * 26)
+    x = point.x() + OPEN_OFFSET[0] + (n % 4) * OPEN_STEP
+    y = point.y() + OPEN_OFFSET[1] + (n % 4) * OPEN_STEP
+    if x + win_w > width - 10:
+        # No room to the right: open on the actor's left instead.
+        x = point.x() - OPEN_OFFSET[0] - win_w
+    x = max(10, min(int(x), width - win_w - 10))
+    y = max(10, min(int(y), height - win_h - 10))
+    return x, y
 
 
 def open_windows(view):
@@ -607,6 +702,25 @@ def draw_pick_hover(painter, viewport, width, height):
     painter.restore()
 
 
+def _draw_leader(painter, win, actor_pt, colour):
+    """A line from the inspector window to its actor: from the point of the
+    window's outline nearest the actor, so it stays attached wherever the
+    window is dragged (read off the live window rect every frame)."""
+    rect = win._full_rect()
+    x = min(max(actor_pt.x(), rect.left()), rect.right())
+    y = min(max(actor_pt.y(), rect.top()), rect.bottom())
+    anchor = QPointF(x, y)
+    if rect.contains(int(actor_pt.x()), int(actor_pt.y())):
+        return                       # the window sits over its actor
+    faint = QColor(colour)
+    faint.setAlpha(200)
+    painter.setPen(QPen(faint, 1.6))
+    painter.drawLine(anchor, actor_pt)
+    painter.setBrush(faint)
+    painter.drawEllipse(anchor, 3.5, 3.5)
+    painter.setBrush(Qt.NoBrush)
+
+
 def draw_world_lines(painter, viewport, width, height):
     """For every open inspector: a ring round its actor and a line to where it
     is heading, ending in a ring there; and the beacon on a place a link is
@@ -634,6 +748,7 @@ def draw_world_lines(painter, viewport, width, height):
         if start is None:
             continue
         colour = QColor(win.colour)
+        _draw_leader(painter, win, start, colour)
         painter.setPen(QPen(colour, 2))
         painter.drawEllipse(start, 18, 18)
         dest = destination(session, logic, thing)

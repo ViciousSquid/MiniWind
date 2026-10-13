@@ -11,7 +11,7 @@ import os
 from types import SimpleNamespace
 
 from PyQt5.QtCore import QRect, QRectF, Qt
-from PyQt5.QtGui import QColor, QPixmap, QPolygon, QPen, QConicalGradient
+from PyQt5.QtGui import QColor, QFontMetrics, QPixmap, QPolygon, QPen, QConicalGradient
 from PyQt5.QtCore import QPoint, QPointF
 
 from .. import fio
@@ -90,7 +90,7 @@ PLAYER_HEAD_SIZE = 128.0
 
 
 def draw_bow_charge(painter, session, viewport, width, height):
-    """While right mouse draws the bow: a pie tucked against the upper right
+    """While left mouse draws the bow: a pie tucked against the upper right
     of the player's head that fills as the draw lengthens (a fuller pie, a
     longer shot). Gone once the arrow is loosed or the draw is lowered.
 
@@ -118,6 +118,12 @@ def draw_bow_charge(painter, session, viewport, width, height):
         centre, head_r = (width / 2.0, height / 2.0), 30.0
     else:
         head_r = max(8.0, math.hypot(edge[0] - centre[0], edge[1] - centre[1]))
+    _draw_charge_pie(painter, centre, head_r, charge)
+
+
+def _draw_charge_pie(painter, centre, head_r, charge):
+    """The bow-draw pie, tucked against the upper right of a head of radius
+    *head_r* centred on *centre* (screen pixels): one look for every archer."""
     r = BOW_PIE_RADIUS
     out = head_r + r * (2.0 * BOW_PIE_OUTSIDE - 1.0)
     cx = int(round(centre[0] + out * math.cos(math.radians(45))))
@@ -137,6 +143,41 @@ def draw_bow_charge(painter, session, viewport, width, height):
     painter.setPen(QPen(QColor(255, 214, 90) if full else QColor(30, 26, 20), 2))
     painter.drawEllipse(box)
     painter.restore()
+
+
+def draw_npc_bow_charges(painter, session, viewport, width, height):
+    """The same charge pie beside every NPC or creature drawing a bow, so the
+    player can read an archer winding up a power shot and get out of the way.
+    Only archers on screen are drawn."""
+    archery = getattr(session, "archery", None)
+    if archery is None or session.open_screen is not None or session.dialogue is not None:
+        return
+    archers = archery.archers()
+    if not archers:
+        return
+    try:
+        import glm
+        proj, view = viewport.projection_matrix, viewport.view_matrix
+    except Exception:
+        return
+    for thing in archers:
+        p = getattr(thing, "properties", {}) or {}
+        charge = p.get("_bow_charge")
+        if charge is None:
+            continue
+        try:
+            x, y, z = (float(v) for v in thing.pos)
+            size = float(p.get("sprite_width", PLAYER_HEAD_SIZE) or PLAYER_HEAD_SIZE)
+            centre = _world_to_screen(glm, proj, view, x, y, z, width, height)
+            edge = _world_to_screen(glm, proj, view, x + size / 2, y, z, width, height)
+        except Exception:
+            continue
+        if centre is None or edge is None:
+            continue
+        if not (-40 <= centre[0] <= width + 40 and -40 <= centre[1] <= height + 40):
+            continue
+        head_r = max(8.0, math.hypot(edge[0] - centre[0], edge[1] - centre[1]))
+        _draw_charge_pie(painter, centre, head_r, max(0.0, min(1.0, float(charge))))
 
 
 def _draw_interact_prompt(painter, session, width, height):
@@ -193,6 +234,43 @@ def draw_bubbles(painter, session, viewport, width, height):
         sp = _world_to_screen(glm, proj, view, npc.pos[0], head_y, npc.pos[2], width, height)
         if sp is not None:
             _draw_bubble(painter, int(sp[0]), int(sp[1]), kind)
+
+
+def draw_barks(painter, session, viewport, width, height):
+    """What people are saying aloud, in a small plate over their heads: a
+    guard's "Halt!", a traveller's greeting, a brigand's threat."""
+    if viewport is None:
+        return
+    barks = session.live_barks() if hasattr(session, "live_barks") else ()
+    if not barks:
+        return
+    try:
+        import glm
+        proj, view = viewport.projection_matrix, viewport.view_matrix
+    except Exception:
+        return
+    from . import fonts
+    font = fonts.dialogue_font(11)
+    fm = QFontMetrics(font)
+    painter.save()
+    painter.setFont(font)
+    painter.setRenderHint(painter.Antialiasing, True)
+    for thing, text, left in barks[:8]:
+        head_y = thing.pos[1] + float(thing.properties.get("sprite_height", 112)) * 0.5 + 40.0
+        sp = _world_to_screen(glm, proj, view, thing.pos[0], head_y, thing.pos[2],
+                              width, height)
+        if sp is None:
+            continue
+        alpha = int(255 * max(0.0, min(1.0, left / 0.4)))
+        w = min(320, fm.horizontalAdvance(text) + 16)
+        rect = QRect(int(sp[0] - w / 2), int(sp[1] - 26), w, 22)
+        painter.setPen(QPen(QColor(168, 142, 84, alpha), 1))
+        painter.setBrush(QColor(0, 0, 0, int(alpha * 0.72)))
+        painter.drawRoundedRect(rect, 6, 6)
+        painter.setPen(QColor(247, 238, 214, alpha))
+        painter.drawText(rect, int(Qt.AlignCenter),
+                         fm.elidedText(text, Qt.ElideRight, w - 10))
+    painter.restore()
 
 
 #: Mark images, by mark (assets/sprites/marks); loaded on first use.
@@ -357,10 +435,14 @@ def _draw_orbs(painter, c, width, height):
     T.bar(painter, x, base_y, w, h,
           c.health / c.max_health if c.max_health else 0, T.HEALTH,
           label=f"{int(c.health)} / {int(c.max_health)}")
-    T.bar(painter, x, base_y - 22, w, h,
-          c.magicka / c.max_magicka if c.max_magicka else 0, T.MAGICKA,
-          label=f"{int(c.magicka)} / {int(c.max_magicka)}")
-    T.bar(painter, x, base_y - 44, w * 0.7, h * 0.7,
+    # No Magicka bar for one who works no magic (a Warrior): stamina moves
+    # down into its place.
+    magical = c.max_magicka > 0 or getattr(c, "can_use_magic", lambda: True)()
+    if magical:
+        T.bar(painter, x, base_y - 22, w, h,
+              c.magicka / c.max_magicka if c.max_magicka else 0, T.MAGICKA,
+              label=f"{int(c.magicka)} / {int(c.max_magicka)}")
+    T.bar(painter, x, base_y - (44 if magical else 22), w * 0.7, h * 0.7,
           c.stamina / c.max_stamina if c.max_stamina else 0, T.STAMINA)
 
 

@@ -53,7 +53,7 @@ def hit_chance(character, weapon_skill: int, target_agility: int = 30,
 def player_attack(character, target_props: Dict, *, sneaking: bool = False,
                   draw: float = 1.0, rng: Optional[random.Random] = None,
                   dice: Optional[DiceRoller] = None,
-                  guaranteed_hit: bool = False) -> Dict:
+                  guaranteed_hit: bool = False, power: float = 1.0) -> Dict:
     """Resolve a player attack against a creature's ``properties`` dict.
 
     Returns a result dict::
@@ -117,6 +117,8 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     if kind == items.KIND_MELEE:
         # Strength adds a meaningful chunk to melee.
         dmg *= 0.7 + character.attrs.get(attr.STRENGTH, 40) / 100.0
+        # A gathered blow (a warrior's charged fist) multiplies it.
+        dmg *= max(0.1, float(power))
     elif kind == items.KIND_BOW:
         arrow = eq.ammo(character)
         dmg += float(arrow.get("damage", 0)) if arrow else 0.0
@@ -169,6 +171,15 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
     dmg = max(0.0, float(raw_damage))
     result = {"final": dmg, "blocked": 0.0, "armor": 0.0, "resisted": 0.0,
               "armor_class": eq.armor_class_worn(character)}
+
+    # Armour Class: a well-armoured, nimble body turns some blows aside
+    # completely before anything else is weighed.
+    if damage_kind == "physical" and dmg > 0:
+        result["ac"] = eq.armour_class(character)
+        if rng.random() < eq.deflect_chance(character):
+            result["deflected"] = True
+            result["final"] = 0.0
+            return result
 
     # Block: a shield + Block skill soaks a fraction of a physical blow.
     if blocking and damage_kind == "physical":

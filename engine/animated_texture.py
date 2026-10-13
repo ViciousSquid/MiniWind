@@ -20,7 +20,8 @@ DEFAULT_FRAME_SECONDS = 0.1
 
 def is_animated_gif(path) -> bool:
     """True for a GIF with more than one frame."""
-    if not str(path).lower().endswith(".gif"):
+    # A path must say .gif; an in-memory file (an archive member) is asked.
+    if not hasattr(path, "read") and not str(path).lower().endswith(".gif"):
         return False
     try:
         from PIL import Image

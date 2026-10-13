@@ -127,6 +127,12 @@ _GAME_MAP_MARKER = b'"miniwindsettings"'
 def is_game_map(path) -> bool:
     """True when the map file at *path* carries MiniWind's settings entity."""
     try:
+        from engine import asset_archives
+        if asset_archives.in_archive(path):
+            return _GAME_MAP_MARKER in (asset_archives.read(path) or b"")
+    except ImportError:
+        pass
+    try:
         with open(path, "rb") as f:
             return _GAME_MAP_MARKER in f.read()
     except OSError:
@@ -263,6 +269,16 @@ def _add_tools_menu_entries(MainWindow):
             lambda _checked=False: _open_world_sim(MainWindow))
         tools._miniwind_world_sim_added = True
 
+    if not getattr(tools, "_miniwind_dungeon_designer_added", False):
+        dungeon_action = tools.addAction("Dungeon Designer…")
+        dungeon_action.setToolTip(
+            "Draw a dungeon or cave on a grid (SOLID / open), or generate one "
+            "with Fio alpha's generators, place the entrance, monsters, chests "
+            "and lights, and save it as a playable map.")
+        dungeon_action.triggered.connect(
+            lambda _checked=False: _open_dungeon_designer(MainWindow))
+        tools._miniwind_dungeon_designer_added = True
+
     if not getattr(tools, "_miniwind_dice_test_added", False):
         dice_action = tools.addAction("Dice Roll Test…")
         dice_action.setToolTip("Roll a tabletop dice expression and print the result in "
@@ -303,6 +319,15 @@ def _open_spell_editor(MainWindow):
             MainWindow.show_toast("Spells saved to game/data/spells.json")
     except Exception as exc:
         _log(f"Spell Editor failed to open: {exc}")
+
+def _open_dungeon_designer(MainWindow):
+    """Open the Dungeon Designer (game/tools/dungeon_designer.py)."""
+    try:
+        from .tools import dungeon_designer
+        dungeon_designer.open_designer(MainWindow)
+    except Exception as exc:
+        _log(f"Dungeon Designer failed to open: {exc}")
+
 
 def _open_world_sim(MainWindow):
     """Open the World Simulation window (actors · history · simulate event)."""
@@ -687,10 +712,12 @@ def _free_play_session(view):
 
 
 def install_bow_draw(view):
-    """With a bow in hand, right mouse draws it: hold to draw, release to loose
-    (game.runtime: MiniwindSession._update_bow_draw). A left click while
-    drawing lowers the bow. The button is the game's then, so the engine does
-    not also cast the active spell on it."""
+    """With a bow in hand, the LEFT mouse draws it: hold to draw (the pie fills
+    beside the head), release to loose (game.runtime:
+    MiniwindSession._update_bow_draw). A quick click looses a short shot. The
+    button is the game's then, so the engine does not also fire on it; with a
+    blade in hand a left click is an ordinary stab, and the right mouse is
+    always the spell hand (the engine's secondary fire -> do_cast)."""
     from PyQt5.QtCore import QEvent, QObject, Qt
 
     class _BowDraw(QObject):
@@ -702,21 +729,17 @@ def install_bow_draw(view):
             session = _free_play_session(view)
             if session is None:
                 return False
-            button = event.button()
+            if event.button() != Qt.LeftButton:
+                return False
             drawing = session.bow_charge is not None
-            if button == Qt.RightButton:
-                if kind == QEvent.MouseButtonRelease:
-                    if drawing or session._bow_input:
-                        session.bow_draw_input("release")
-                        return True
-                    return False
-                if session.bow_in_hand():
-                    session.bow_draw_input("press")
+            if kind == QEvent.MouseButtonRelease:
+                if drawing or session._bow_input:
+                    session.bow_draw_input("release")
                     return True
                 return False
-            if button == Qt.LeftButton and drawing:
-                if kind != QEvent.MouseButtonRelease:
-                    session.bow_draw_input("cancel")
+            charge = getattr(session, "charge_in_hand", session.bow_in_hand)
+            if charge():
+                session.bow_draw_input("press")
                 return True
             return False
 

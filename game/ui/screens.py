@@ -19,6 +19,7 @@ from . import theme as T
 from ..rpg import (races, classes, birthsigns, attributes as attr, skills as sk,
                    items as rpg_items, inventory as inv, equipment as eq,
                    magic as rpg_magic, guilds, quests, heads)
+from ..rpg import charisma as _cha
 
 
 def _sel(session):
@@ -61,7 +62,7 @@ _SCREEN_BODY_SIZE = {
     "character": (720, 520),
     "journal": (700, 470),
     "spells": (700, 470),
-    "levelup": (560, 430),
+    "levelup": (640, 470),
     "trade": (760, 520),
     "container": (760, 500),
     "quest": (880, 540),
@@ -113,11 +114,14 @@ def _row_target(painter, rect, action, label=None):
 def handle_click(session, x, y):
     """Route a body click inside the open screen. Returns True if consumed.
 
-    Only the quest journal is clickable for now: a click selects the quest
-    row under the cursor, or toggles the selected quest as the tracked/active
-    one (so only its arrow shows)."""
+    The screen is hosted in a floating window, and that window swallows
+    every click on its body, so a click must be handed on from here or the
+    screen's buttons (a merchant's *Buy* and *Leave*, the level-up choices)
+    could never be pressed. The quest journal keeps its own hit areas — a
+    quest row, or the tracked/active toggle; every other screen goes through
+    the targets it published while painting (:mod:`game.ui.hits`)."""
     if getattr(session, "open_screen", None) != "quest":
-        return False
+        return hits.click(x, y)
     from PyQt5.QtCore import QPoint
     p = QPoint(int(x), int(y))
     shown = _QUEST_HITS.get("map")
@@ -134,7 +138,7 @@ def handle_click(session, x, y):
         if r.contains(p):
             _sel(session).setdefault("quest", {"row": 0})["row"] = idx
             return True
-    return False
+    return hits.click(x, y)
 
 
 def draw_in_rect(painter, session, x, y, w, h):
@@ -162,7 +166,10 @@ def _panel_rect(w, h, pw=0.8, ph=0.82):
 
 # ===========================================================================
 # Character creation
-_CC_STEPS = ["identity", "class", "birthsign", "confirm"]
+_CC_STEPS = ["identity", "fortune", "class", "birthsign", "confirm"]
+#: How long one die tumbles before it settles, and the stagger between dice.
+_ROLL_TUMBLE = 0.85
+_ROLL_STAGGER = 0.14
 _DEFAULT_RACE = "imperial"          # simplified creator asks no race / gender
 _MAX_NAME = 18
 _HEAD_PIXMAP_CACHE = {}
@@ -205,6 +212,9 @@ def _draw_charcreate(painter, session, w, h):
     if step == "identity":
         _draw_identity(painter, inner, ty, s)
         hint = "Type a name    ←/→ head    ↑/↓ switch hand    Enter next"
+    elif step == "fortune":
+        _draw_fortune(painter, inner, ty, s)
+        hint = "R or Space re-roll    Enter next    Esc back"
     elif step == "class":
         ids = classes.CREATION_CLASS_IDS
         k = classes.get(ids[s["class"]])
@@ -238,7 +248,11 @@ def _draw_charcreate(painter, session, w, h):
             tx = inner.x() + (min(140, inner.width() // 3)) + 20
         else:
             tx = inner.x()
-        summary = (f"Name: {name}\nClass: {k.label}\nBirthsign: {b.label}\n\n"
+        bio = _cc_bio(s)
+        totals = "   ".join(f"{label} {sum(s['rolls'][a])}"
+                            for a, label in _cha.ROLLED) if s.get("rolls") else ""
+        summary = (f"Name: {name}\nClass: {k.label}\nBirthsign: {b.label}\n"
+                   f"{totals}\n\n{bio['title']}\n\n"
                    "Begin your adventure, or go back to change anything.")
         _cc_detail(painter, tx, ty, inner.right() - tx, "Ready?", summary)
         hint = "Enter begin    Esc back"
@@ -255,6 +269,108 @@ def _draw_charcreate(painter, session, w, h):
 
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
               hint, size=10, color=T.DIM, align=T.ALIGN_CENTER, family="Georgia")
+
+
+def _cc_bio(s):
+    from ..rpg import bios
+    return bios.bio_from_rolls(s.get("rolls") or {})
+
+
+def _cc_roll(session):
+    """Roll (or re-roll) 3d6 for STRENGTH, ENDURANCE and CHARISMA. The dice
+    tumble on screen for a moment before they settle (see _draw_fortune)."""
+    import time
+    s = _cc(session)
+    rng = getattr(session, "rng", None)
+    s["rolls"] = {a: _cha.roll_3d6(rng) for a, _label in _cha.ROLLED}
+    s["roll_t"] = time.monotonic()
+    s["rerolls"] = s.get("rerolls", -1) + 1
+
+
+def _roll_settled(s) -> bool:
+    import time
+    t = time.monotonic() - float(s.get("roll_t", 0.0))
+    return t >= _ROLL_TUMBLE + _ROLL_STAGGER * 8
+
+
+def animating(session) -> bool:
+    """Whether the open screen has something moving (dice still tumbling), so
+    the view keeps repainting it while the world is paused."""
+    if getattr(session, "open_screen", None) != "charcreate":
+        return False
+    s = _cc(session)
+    return _CC_STEPS[s["step"]] == "fortune" and not _roll_settled(s)
+
+
+def _draw_fortune(painter, inner, ty, s):
+    """Three rows of 3d6 -- STRENGTH, ENDURANCE, CHARISMA -- tumbling, then
+    settled, each with its total and what it does to the attribute; and the
+    bio the dice have written so far underneath."""
+    import math as _m
+    import time
+    from . import hud
+    from ..rpg import bios
+    rolls = s.get("rolls") or {}
+    elapsed = time.monotonic() - float(s.get("roll_t", 0.0))
+    T.text(painter, inner.x(), ty + 16, "Roll your fortune", size=15,
+           color=T.GOLD_BRIGHT, bold=True)
+    T.text(painter, inner.x(), ty + 36, "Three six-sided dice for each. Keep what fate "
+           "gives you, or tempt it again.", size=10, color=T.DIM, family="Georgia")
+    die = 54
+    row_h = die + 18
+    top = ty + 52
+    all_settled = True
+    for r, (attr_id, label) in enumerate(_cha.ROLLED):
+        y = top + r * row_h
+        T.text(painter, inner.x(), y + die // 2 + 6, label, size=14,
+               color=T.GOLD_BRIGHT, bold=True)
+        dice = rolls.get(attr_id) or [1, 1, 1]
+        for k, value in enumerate(dice):
+            idx = r * 3 + k
+            local = elapsed - idx * _ROLL_STAGGER
+            cx = inner.x() + 170 + k * (die + 14) + die // 2
+            cy = y + die // 2
+            if local < _ROLL_TUMBLE:
+                all_settled = False
+                shown = int(max(0.0, local) * 22 + idx * 3) % 6 + 1
+                wob = _m.sin(max(0.0, local) * 26 + idx)
+                angle, dy = 22 * wob, -10 * abs(_m.sin(max(0.0, local) * 9 + idx))
+            else:
+                shown, angle, dy = int(value), 0.0, 0.0
+            hud._draw_dice_image(painter, hud._dice_face_image(shown), cx, int(cy + dy),
+                                 die, angle, 255)
+        tx = inner.x() + 170 + 3 * (die + 14) + 16
+        if all_settled or elapsed - (r * 3 + 2) * _ROLL_STAGGER >= _ROLL_TUMBLE:
+            total = sum(int(d) for d in dice)
+            delta = _cha.delta_for(total)
+            colour = (T.STAMINA.lighter(140) if delta > 0 else
+                      T.HEALTH.lighter(140) if delta < 0 else T.PARCH)
+            T.text(painter, tx, cy + 4, f"{total}", size=20, color=T.GOLD_BRIGHT, bold=True)
+            T.text(painter, tx + 44, cy + 2,
+                   f"{'+' if delta >= 0 else ''}{delta} {attr.label(attr_id)}  ·  "
+                   f"{bios.band(total)}", size=11, color=colour, family="Georgia")
+    # The bio, once the dice are down.
+    by = top + 3 * row_h + 6
+    box = QRect(inner.x(), by, inner.width(), inner.bottom() - 70 - by)
+    painter.setBrush(QColor(12, 12, 16, 220))
+    painter.setPen(QPen(T.GILD, 1))
+    painter.drawRect(box)
+    if all_settled and rolls:
+        bio = bios.bio_from_rolls(rolls)
+        T.text(painter, box.x() + 12, box.y() + 24, bio["title"], size=15,
+               color=T.GOLD_BRIGHT, bold=True)
+        T.text_in(painter, box.adjusted(12, 34, -12, -8), bio["text"], size=11,
+                  color=T.PARCH, align=int(Qt.AlignTop | Qt.AlignLeft) | int(Qt.TextWordWrap),
+                  family="Georgia")
+    else:
+        T.text_in(painter, box, "The dice are rolling…", size=12, color=T.DIM,
+                  align=T.ALIGN_CENTER)
+    n = int(s.get("rerolls", 0) or 0)
+    button(painter, QRect(inner.x() + inner.width() // 2 - 90, inner.bottom() - 60, 180, 32),
+           "Re-roll" if rolls else "Roll", _cc_roll, enabled=all_settled)
+    if n:
+        T.text_in(painter, QRect(inner.x(), inner.bottom() - 60, inner.width() // 2 - 100, 32),
+                  f"re-rolled {n}×", size=9, color=T.DIM, align=T.ALIGN_RIGHT)
 
 
 def _cc_next(session):
@@ -377,6 +493,11 @@ def _handle_charcreate(session, key):
             if len(s["name"]) < _MAX_NAME:
                 s["name"] += key
             return True
+    elif step == "fortune":
+        if key in ("r", "space"):
+            if _roll_settled(s):
+                _cc_roll(session)
+            return True
     elif step in ("class", "birthsign"):
         ids = (classes.CREATION_CLASS_IDS if step == "class"
                else birthsigns.CREATION_BIRTHSIGN_IDS)
@@ -387,8 +508,13 @@ def _handle_charcreate(session, key):
     if key in ("return", "enter"):
         if s["step"] == 0 and not s["name"].strip():
             return True                       # a name is required
+        if _CC_STEPS[s["step"]] == "fortune" and not s.get("rolls"):
+            _cc_roll(session)
+            return True
         if s["step"] < len(_CC_STEPS) - 1:
             s["step"] += 1
+            if _CC_STEPS[s["step"]] == "fortune" and not s.get("rolls"):
+                _cc_roll(session)               # the dice fall as you arrive
         else:
             _finish_charcreate(session)
         return True
@@ -406,8 +532,10 @@ def _finish_charcreate(session):
     sign = birthsigns.CREATION_BIRTHSIGN_IDS[s["birthsign"]]
     head = heads.head_at(s["head"])
     # Gender is fixed internally and never asked (it changes nothing in play).
+    if not s.get("rolls"):
+        _cc_roll(session)
     session.begin_new_character(name, _DEFAULT_RACE, klass, sign, "male", head=head,
-                                handed=s.get("handed", "right"))
+                                handed=s.get("handed", "right"), rolls=s.get("rolls"))
 
 
 # ===========================================================================
@@ -566,8 +694,18 @@ def _draw_character(painter, session, w, h):
 
     # derived pools
     T.text(painter, inner.x(), ty + 6, f"Health {int(c.max_health)}    "
-           f"Magicka {int(c.max_magicka)}    Stamina {int(c.max_stamina)}",
+           f"Magicka {int(c.max_magicka)}    Stamina {int(c.max_stamina)}    "
+           f"Armour Class {eq.armour_class(c)}",
            size=11, color=T.PARCH, family="Segoe UI")
+    rolls = getattr(c, "rolls", None) or {}
+    if rolls:
+        from ..rpg import bios
+        bio = bios.bio_for(rolls.get("strength", 10), rolls.get("endurance", 10),
+                           rolls.get("personality", 10))
+        T.text_in(painter, QRect(inner.x() + 280, ty - 6, inner.width() - 280, 18),
+                  f"{bio['title']}  ·  STR {rolls.get('strength', '?')}  "
+                  f"END {rolls.get('endurance', '?')}  CHA {rolls.get('personality', '?')}",
+                  size=10, color=T.GOLD_BRIGHT, align=T.ALIGN_RIGHT, family="Georgia")
     prog = c.xp_progress
     T.bar(painter, inner.x(), ty + 14, 260, 10, prog / 10.0, T.XP,
           label=f"Level progress {prog}/10")
@@ -1059,7 +1197,8 @@ def _draw_trade(painter, session, w, h):
 def _sell_list(c):
     """What the player can sell: everything carried but keys."""
     return [s for s in c.inventory if rpg_items.get(s.get("id")) and
-            rpg_items.get(s.get("id")).category != rpg_items.KEY]
+            rpg_items.get(s.get("id")).category != rpg_items.KEY
+            and not rpg_items.get(s.get("id")).get("innate")]
 
 
 def _trade_select(side, row):
@@ -1079,9 +1218,17 @@ def _merchant_stock(npc):
     role = str(npc.properties.get("npc_role", "merchant"))
     defaults = {
         "merchant": ["potion_heal_minor", "potion_magicka", "torch", "lockpick",
-                     "iron_arrow", "bread" if rpg_items.get("bread") else "book_lore"],
+                     "cloth_robe", "cloth_hood", "sandals", "hide_boots", "copper_ring",
+                     "iron_arrow", "bread" if rpg_items.get("bread") else "book_lore",
+                     "book_lore", "book_last_ferryman", "book_lament_greywood",
+                     "book_marksman", "book_blade"],
         "blacksmith": ["iron_longsword", "iron_mace", "steel_longsword", "iron_shield",
-                       "iron_cuirass", "iron_helmet", "short_bow", "iron_arrow"],
+                       "iron_cuirass", "iron_helmet", "short_bow", "iron_arrow",
+                       "chain_shirt", "chain_coif", "scale_mail", "kite_shield",
+                       "plate_helm", "plate_armour", "tower_shield", "buckler"],
+        "armourer": ["leather_cuirass", "hide_armour", "studded_leather",
+                     "chain_shirt", "scale_mail", "plate_armour", "plate_helm",
+                     "plate_greaves", "round_shield", "kite_shield"],
     }
     return [{"id": i} for i in defaults.get(role, defaults["merchant"])]
 
@@ -1119,65 +1266,147 @@ def _handle_trade(session, key):
                               gold_text=f"{'-' if buying else '+'}{price}g",
                               gold_gain=not buying)
         return True
-    if key in ("escape", "esc"):
-        session.open_screen = None; session.merchant_npc = None
-        trade_anim.reset()
+    if key in ("escape", "esc", "e"):
+        close_trade(session)
     return True
 
 
+def close_trade(session):
+    """End the trade: the screen closes and the merchant is let go."""
+    session.open_screen = None
+    session.merchant_npc = None
+    trade_anim.reset()
+
+
 # ===========================================================================
-# Level up
+# Level up — Skyrim-style: three pillars, pick one to grow.
 # ===========================================================================
+#: (pool id, label, colour, what it does) in the order the cards are laid out.
+_LEVEL_POOLS = (
+    ("health", "HEALTH", T.HEALTH, "Stand longer in a fight"),
+    ("magicka", "MAGICKA", T.MAGICKA, "Cast more, cast longer"),
+    ("stamina", "STAMINA", T.STAMINA, "Run, swing and draw for longer"),
+)
+
+
+def _pools_for(c):
+    """The pools this character may grow: no Magicka for a Warrior, who
+    works no magic."""
+    can = getattr(c, "can_use_magic", None)
+    if can is not None and not can():
+        return tuple(p for p in _LEVEL_POOLS if p[0] != "magicka")
+    return _LEVEL_POOLS
+
+
+def _levelup_state(session):
+    return _sel(session).setdefault("levelup", {"row": 0})
+
+
+def _pool_values(c, pool):
+    cur = {"health": c.max_health, "magicka": c.max_magicka,
+           "stamina": c.max_stamina}[pool]
+    from ..rpg.character import LEVEL_POOL_GAIN
+    return cur, cur + LEVEL_POOL_GAIN
+
+
 def _draw_levelup(painter, session, w, h):
+    """The level-up choice: Health, Magicka or Stamina, as three tall cards.
+
+    The skills you trained this level have already raised their attributes
+    (listed at the foot of the screen); the only decision left to the player
+    is which pool to grow — the one moment Skyrim stops to ask."""
     c = session.game.character
-    st = _sel(session).setdefault("levelup", {"row": 0, "picks": []})
+    st = _levelup_state(session)
     x, y, bw, bh = _panel_rect(w, h, 0.6, 0.7)
     inner = T.panel(painter, x, y, bw, bh)
-    ty = T.heading(painter, inner, "Level Up!",
-                   f"Choose up to 3 attributes to raise (level {c.level} → {c.level+1})")
-    for i, a in enumerate(attr.ATTRIBUTES):
-        ry = ty + 8 + i * 24
-        picked = a in st["picks"]
-        if i == st["row"]:
-            painter.fillRect(QRect(inner.x(), ry - 2, inner.width(), 22), T.SELECT)
-        mark = "☑ " if picked else "☐ "
-        gains = c._level_attr_gains.get(a, 0)
-        mult = 1 + min(4, gains // 2)
-        T.text(painter, inner.x() + 8, ry + 14, mark + attr.label(a) + f"  ({c.attrs[a]})",
-               size=11, color=T.GOLD_BRIGHT if i == st["row"] else T.INK, family="Segoe UI")
-        T.text_in(painter, QRect(inner.x(), ry - 2, inner.width() - 8, 22),
-                  f"+{mult}", size=10, color=T.STAMINA.lighter(140),
-                  align=T.ALIGN_RIGHT, family="Segoe UI")
+    ty = T.heading(painter, inner, f"Level {c.level + 1}",
+                   "Choose one to increase")
+    gap = 14
+    pools = _pools_for(c)
+    card_w = max(90, (inner.width() - (len(pools) - 1) * gap) // len(pools))
+    card_top = ty + 14
+    card_h = max(120, inner.bottom() - 96 - card_top)
+    for i, (pool, label, colour, blurb) in enumerate(pools):
+        cx = inner.x() + i * (card_w + gap)
+        rect = QRect(cx, card_top, card_w, card_h)
+        chosen = st["row"] == i
+        hot = hits.hovered(rect)
+        painter.save()
+        painter.setRenderHint(painter.Antialiasing, True)
+        fill = QColor(colour)
+        fill.setAlpha(150 if chosen else 70 if hot else 40)
+        painter.setBrush(fill)
+        painter.setPen(QPen(T.GOLD_BRIGHT if chosen else T.GILD, 3 if chosen else 1.5))
+        painter.drawRoundedRect(rect, 8, 8)
+        painter.restore()
+        # The pillar: a column of light that rises higher on the chosen card.
+        bar_h = int(card_h * (0.55 if chosen else 0.4))
+        bar = QRect(cx + card_w // 2 - 6, card_top + card_h - 52 - bar_h, 12, bar_h)
+        glow = QColor(colour).lighter(150 if chosen else 115)
+        painter.fillRect(bar, glow)
+        T.text_in(painter, QRect(cx, card_top + 12, card_w, 30), label, size=17,
+                  color=T.GOLD_BRIGHT if chosen else T.INK, align=T.ALIGN_CENTER,
+                  bold=True)
+        before, after = _pool_values(c, pool)
+        T.text_in(painter, QRect(cx, card_top + card_h - 48, card_w, 22),
+                  f"{int(before)}  →  {int(after)}", size=13,
+                  color=T.GOLD_BRIGHT if chosen else T.INK, align=T.ALIGN_CENTER,
+                  family="Segoe UI", bold=chosen)
+        T.text_in(painter, QRect(cx + 4, card_top + card_h - 26, card_w - 8, 20),
+                  blurb, size=9, color=T.DIM, align=T.ALIGN_CENTER,
+                  family="Segoe UI")
+        T.text_in(painter, QRect(cx + 6, card_top + 6, 24, 18), str(i + 1), size=9,
+                  color=T.DIM, family="Segoe UI")
+        _row_target(painter, rect, _levelup_pick(i), f"levelup:{pool}")
+
+    # What training has already earned, shown so the level feels deserved.
+    trained = [(a, c._level_attr_gains.get(a, 0)) for a in attr.ATTRIBUTES]
+    trained = [f"{attr.label(a)} +{1 + min(4, g // 2)}" for a, g in
+               sorted(trained, key=lambda t: -t[1]) if g > 0][:3]
+    if trained:
+        T.text_in(painter, QRect(inner.x(), inner.bottom() - 88, inner.width(), 18),
+                  "Your training also raises: " + ",  ".join(trained), size=9,
+                  color=T.STAMINA.lighter(140), align=T.ALIGN_CENTER, family="Segoe UI")
+    pool, label, _c, _b = pools[st["row"] % len(pools)]
+    button(painter, QRect(inner.x() + (inner.width() - 260) // 2,
+                          inner.bottom() - 62, 260, 34),
+           f"Increase {label.title()}", lambda sess: _handle_levelup(sess, "return"),
+           primary=True)
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              "↑/↓ move   Space toggle   Enter confirm", size=9, color=T.DIM,
+              f"Click, 1–{len(pools)} or ←/→ to choose   Enter confirm", size=9, color=T.DIM,
               align=T.ALIGN_CENTER, family="Segoe UI")
+
+
+def _levelup_pick(i):
+    def action(session):
+        _levelup_state(session)["row"] = i
+    return action
 
 
 def _handle_levelup(session, key):
     c = session.game.character
-    st = _sel(session).setdefault("levelup", {"row": 0, "picks": []})
-    if key in ("up", "w"):
-        st["row"] = (st["row"] - 1) % len(attr.ATTRIBUTES); return True
-    if key in ("down", "s"):
-        st["row"] = (st["row"] + 1) % len(attr.ATTRIBUTES); return True
-    if key == "space":
-        a = attr.ATTRIBUTES[st["row"]]
-        if a in st["picks"]:
-            st["picks"].remove(a)
-        elif len(st["picks"]) < 3:
-            st["picks"].append(a)
-        return True
-    if key in ("return", "enter"):
-        picks = st["picks"] or None
-        res = c.level_up(picks)
-        session.notify(f"Welcome to level {res['level']}!", 5.0)
-        st["picks"] = []
+    st = _levelup_state(session)
+    pools = _pools_for(c)
+    n = len(pools)
+    if key in ("left", "a", "up", "w"):
+        st["row"] = (st["row"] - 1) % n; return True
+    if key in ("right", "d", "down", "s", "tab"):
+        st["row"] = (st["row"] + 1) % n; return True
+    if key in ("1", "2", "3") and int(key) <= n:
+        st["row"] = int(key) - 1; return True
+    if key in ("return", "enter", "space"):
+        pool = pools[st["row"] % n][0]
+        res = c.level_up(pool=pool)
+        session.notify(f"Welcome to level {res['level']}!  "
+                       f"{pool.title()} +{int(res.get('pool_gain', 0))}", 5.0)
+        st["row"] = 0
         session.open_screen = None
         session._sync_engine_health(full=True)
+        # Another level banked? Offer it straight away.
+        if c.can_level_up:
+            session.open_screen = "levelup"
         return True
-    if key in ("escape", "esc"):
-        return True  # must choose; don't allow escape out
-    return True
+    return True  # must choose; Escape does not skip a level
 
 
 # ===========================================================================
@@ -1284,4 +1513,16 @@ _HANDLE = {
     "character": _handle_character, "journal": _handle_journal,
     "spells": _handle_spells, "trade": _handle_trade, "levelup": _handle_levelup,
     "container": _handle_container, "quest": _handle_quest,
+    "book": lambda session, key: _handle_book(session, key),
 }
+
+
+def _handle_book(session, key):
+    """An open book (game/ui/book_window.py): turn pages, or close it."""
+    if key in ("left", "a", "pageup", "backspace"):
+        session.turn_book(-1)
+    elif key in ("right", "d", "pagedown", "space", "return", "enter"):
+        session.turn_book(+1)
+    elif key in ("escape", "esc", "e", "tab", "i", "b"):
+        session.close_book()
+    return True

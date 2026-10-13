@@ -476,6 +476,14 @@ void main() {
     vec3 worldPos = sprite_pos_world
                   + cameraRight * aPos.x * sprite_size.x
                   + cameraUp * aPos.y * sprite_size.y;
+    // Seen from above (a top-down play camera) a camera-facing billboard
+    // lies flat in the ground plane through its centre: a corpse on the floor
+    // or a fire set on the ground would sink into the terrain. Looking down,
+    // lift it toward the camera by half its height so it rests on top of
+    // the ground; looking level (first person) nothing changes.
+    vec3 towardCamera = vec3(view[0][2], view[1][2], view[2][2]);
+    float lookingDown = smoothstep(0.35, 0.8, towardCamera.y);
+    worldPos += towardCamera * (lookingDown * 0.5 * sprite_size.y);
     FragPos = worldPos;
     gl_Position = projection * view * vec4(worldPos, 1.0);
 }""",
@@ -522,13 +530,19 @@ void main() {
     }
     float growth = mix(1.0, 3.0, smoothstep(0.0, 0.28, t));
 
+    // A camera-facing billboard. The burst grows up from its base along the
+    // camera's up; seen from above (top-down play) it is lifted toward the
+    // camera so it sits on the ground rather than in it.
     vec3 cameraRight = normalize(vec3(view[0][0], view[1][0], view[2][0]));
-    const vec3 worldUp = vec3(0.0, 1.0, 0.0);
+    vec3 cameraUp = normalize(vec3(view[0][1], view[1][1], view[2][1]));
+    vec3 towardCamera = vec3(view[0][2], view[1][2], view[2][2]);
+    float lookingDown = smoothstep(0.35, 0.8, towardCamera.y);
     float vertical = aPos.y + 0.5;
 
     vec3 worldPos = iEffectPos
                   + cameraRight * aPos.x * width * growth
-                  + worldUp * vertical * height * growth;
+                  + cameraUp * vertical * height * growth
+                  + towardCamera * (lookingDown * 0.5 * height * growth);
 
     TexCoords = aPos + 0.5;
     FragPos = worldPos;
@@ -1621,6 +1635,12 @@ uniform sampler2DArray terrainPaintMap;
 uniform int uPaintLayer;
 uniform int uPaintEnabled;
 
+// Regional biomes (engine/terrain_biomes.py): one RGBA map over the
+// terrain's bounds -- desert, snow, swamp, wheat.
+uniform sampler2D uBiomeMap;
+uniform int uBiomeEnabled;
+uniform highp vec4 uBiomeBounds;     // min x, min z, 1 / range x, 1 / range z
+
 // Height texture layers. uHeightRange is the terrain's world-space height
 // range; uLayerHeights are the sand->grass, grass->rock and rock->snow
 // boundaries as fractions of it.
@@ -1677,6 +1697,58 @@ highp float noise(highp vec2 p) {
 }
 float fbm2(highp vec2 p) {
     return noise(p) * 0.6 + noise(p * 2.03 + 17.1) * 0.3 + noise(p * 4.1 + 5.3) * 0.1;
+}
+
+vec3 applyBiomes(vec3 base, highp vec3 p, float slope, float flatness) {
+    highp vec2 uv = (p.xz - uBiomeBounds.xy) * uBiomeBounds.zw;
+    if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return base;
+    vec4 w = texture(uBiomeMap, uv);
+    if (dot(w, vec4(1.0)) < 0.004) return base;
+    float n = fbm2(p.xz * 0.004);
+    float grain = noise(p.xz * 0.35);
+    vec3 col = base;
+    if (w.r > 0.004) {
+        // Sand in long dunes, red sandstone where it is steep.
+        float dune = 0.5 + 0.5 * sin(p.x * 0.0042 + p.z * 0.0026 + n * 7.0);
+        vec3 sand = mix(vec3(0.76, 0.61, 0.38), vec3(0.91, 0.79, 0.54), dune)
+                  * mix(0.93, 1.05, grain);
+        if (use_textures == 1)
+            sand = mix(sand, texture(texSand, TexCoords * 1.5).rgb * vec3(1.06, 0.96, 0.80), 0.45);
+        vec3 stone = vec3(0.62, 0.38, 0.24) * mix(0.82, 1.06, noise(p.xz * 0.05 + p.y * 0.08));
+        sand = mix(sand, stone, smoothstep(0.3, 0.55, slope));
+        float a = clamp(w.r + (n - 0.5) * 0.35, 0.0, 1.0);
+        col = mix(col, sand, smoothstep(0.0, 1.0, a));
+    }
+    if (w.a > 0.004) {
+        // Wheat: gold in furrows, each field turned its own way.
+        highp vec2 cell = floor(p.xz / 900.0);
+        float turn = hash(cell + 4.2) * 3.14159;
+        highp float along = dot(p.xz, vec2(cos(turn), sin(turn)));
+        float row = 0.5 + 0.5 * sin(along * 0.28);
+        vec3 gold = mix(vec3(0.70, 0.54, 0.22), vec3(0.90, 0.76, 0.38), noise(p.xz * 0.012))
+                  * mix(0.86, 1.04, row);
+        float a = smoothstep(0.35, 0.6, w.a + (grain - 0.5) * 0.08);
+        col = mix(col, gold, a);
+    }
+    if (w.b > 0.004) {
+        // Swamp: moss and mud, with dark standing water in the hollows.
+        vec3 moss = mix(vec3(0.19, 0.24, 0.11), vec3(0.31, 0.33, 0.16), n)
+                  * mix(0.9, 1.06, grain);
+        float puddle = smoothstep(0.55, 0.62, fbm2(p.xz * 0.012 + 3.1)) * flatness;
+        moss = mix(moss, vec3(0.08, 0.12, 0.11), puddle * 0.85 * w.b);
+        float a = clamp(w.b + (n - 0.5) * 0.3, 0.0, 1.0);
+        col = mix(col, moss, smoothstep(0.0, 1.0, a));
+    }
+    if (w.g > 0.004) {
+        // Snow, with rock breaking through on the steepest ground.
+        vec3 snow = vec3(0.90, 0.93, 0.98) * mix(0.95, 1.03, grain);
+        if (use_textures == 1)
+            snow = mix(snow, texture(texSnow, TexCoords * 0.8).rgb, 0.5);
+        float a = clamp(w.g + (n - 0.5) * 0.3, 0.0, 1.0);
+        a = smoothstep(0.0, 1.0, a) * (1.0 - 0.7 * smoothstep(0.45, 0.7, slope));
+        col = mix(col, snow, a);
+    }
+    return col;
 }
 
 float heightFraction(highp float y) {
@@ -1771,6 +1843,11 @@ void main() {
         texColor = splatColor * 1.1;
     } else {
         texColor = VertexColor * 1.1;
+    }
+
+    // ---- Regional biomes ----------------------------------------------
+    if (uBiomeEnabled == 1) {
+        texColor = applyBiomes(texColor, FragPos, 1.0 - max(smoothNorm.y, 0.0), flatness);
     }
 
         // ---- Baked terrain material paint -------------------------------
@@ -2003,6 +2080,8 @@ void main() {
 
     float height = uBladeHeight * iSize * mix(0.7, 1.3, seedC) * distanceScale;
     float halfWidth = uBladeWidth * mix(0.8, 1.2, seedB) * (0.5 + 0.5 * distanceScale);
+    // Tall stalks (reeds, wheat) are proportionally a little thicker.
+    halfWidth *= max(1.0, sqrt(iSize) * 0.6);
 
     // Static curl direction is fixed in the world. The flat side of the
     // blade turns towards the camera (with a stable per-blade offset) so a

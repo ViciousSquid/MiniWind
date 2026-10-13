@@ -17,6 +17,7 @@ import time
 import random
 from . import shaders
 from . import terrain_style
+from . import terrain_biomes
 from .terrain_table import GRID_BORDER, STORED_GRID, TerrainTable
 
 
@@ -370,6 +371,7 @@ class Terrain:
         'terrainPaintMap', 'uPaintLayer', 'uPaintEnabled',
         'uHeights', 'uChunkI', 'uChunkX', 'uChunkY', 'uTiling', 'uFlatMode',
         'uGradCount', 'uGradH', 'uGradC', 'uGradW', 'uGradD',
+        'uBiomeMap', 'uBiomeEnabled', 'uBiomeBounds',
     ) + terrain_style.UNIFORM_NAMES
     #: World units per repeat of the terrain textures (they are 1024 px).
     #: At 20 a tile was half a player-height across, so at any ordinary
@@ -492,6 +494,12 @@ class Terrain:
         self.heightmap_data: Optional[np.ndarray] = None  # 2D float32, 0..1
         self.heightmap_strength: float = 100.0
         self.heightmap_blend: str = 'additive'  # 'additive' or 'replace'
+        # Regional biomes (desert, snow, swamp, wheat) painted over the
+        # terrain's bounds: HxWx4 uint8, or None. See engine.terrain_biomes.
+        self.biome_map: Optional[np.ndarray] = None
+        self._biome_version = 0
+        self._biome_gpu_version = -1
+        self._biome_tex = 0
         # -- Chunk streaming (Big World "fill world with terrain") -----------
         # When ``streaming`` is on, only the chunks within ``stream_radius`` of
         # the camera are kept resident; chunks beyond ``stream_radius +
@@ -705,6 +713,63 @@ class Terrain:
     # ------------------------------------------------------------------
     # Appearance
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Regional biomes
+    # ------------------------------------------------------------------
+    def set_biome_map(self, biome_map: Optional[np.ndarray]):
+        """Paint regional biomes over the terrain (HxWx4 uint8: desert,
+        snow, swamp, wheat), or clear them with None. Grass regrows."""
+        if biome_map is not None:
+            biome_map = np.ascontiguousarray(biome_map, dtype=np.uint8)
+            if biome_map.ndim != 3 or biome_map.shape[2] != 4:
+                raise ValueError("biome map must be HxWx4")
+        self.biome_map = biome_map
+        self._biome_version += 1
+        self.table.mark_grass_dirty()
+
+    def biome_weights_batch(self, world_x, world_z) -> np.ndarray:
+        """Biome weights (n x 4: desert, snow, swamp, wheat) at points."""
+        return terrain_biomes.sample(self.biome_map, self.get_terrain_bounds(),
+                                     world_x, world_z)
+
+    def _bind_biome_map(self, u, unit):
+        """Upload (when changed) and bind the biome map; tell the shader
+        whether there is one."""
+        enabled_loc = u.get('uBiomeEnabled', -1)
+        if self.biome_map is None or self.flat_mode:
+            if enabled_loc != -1:
+                gl.glUniform1i(enabled_loc, 0)
+            loc = u.get('uBiomeMap', -1)
+            if loc != -1:
+                gl.glUniform1i(loc, unit)
+            return
+        if not self._biome_tex:
+            self._biome_tex = int(gl.glGenTextures(1))
+            self._biome_gpu_version = -1
+        gl.glActiveTexture(gl.GL_TEXTURE0 + unit)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self._biome_tex)
+        if self._biome_gpu_version != self._biome_version:
+            h, w = self.biome_map.shape[:2]
+            gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 1)
+            gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA8, w, h, 0,
+                            gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, self.biome_map)
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
+            self._biome_gpu_version = self._biome_version
+        (x0, x1), (z0, z1) = self.get_terrain_bounds()
+        loc = u.get('uBiomeBounds', -1)
+        if loc != -1:
+            gl.glUniform4f(loc, float(x0), float(z0),
+                           1.0 / max(float(x1 - x0), 1e-3), 1.0 / max(float(z1 - z0), 1e-3))
+        loc = u.get('uBiomeMap', -1)
+        if loc != -1:
+            gl.glUniform1i(loc, unit)
+        if enabled_loc != -1:
+            gl.glUniform1i(enabled_loc, 1)
+        gl.glActiveTexture(gl.GL_TEXTURE0)
+
     def _textures_active(self) -> bool:
         return bool(getattr(self, 'use_textures', False)) and not self.flat_mode
 
@@ -1440,6 +1505,17 @@ class Terrain:
         surface. Tufts are dropped on steep ground, outside the grass height
         layer (high rock and snow, low sand) and in broad noise clearings.
         """
+        meadow = self._generate_meadow_blades(slot)
+        if self.biome_map is None:
+            return meadow
+        wheat = self._generate_wheat_blades(slot)
+        if len(wheat) == 0:
+            return meadow
+        return np.concatenate([meadow, wheat]) if len(meadow) else wheat
+
+    def _generate_meadow_blades(self, slot: int) -> np.ndarray:
+        """The ordinary grass of :meth:`_generate_grass_blades`: none on
+        sand or snow, reeds in the swamp."""
         table = self.table
         size = float(table.size[slot])
         tufts = min(
@@ -1478,11 +1554,21 @@ class Terrain:
         clearing = self.noise.noise2d_batch(
             (tx - self.offset_x) * 0.0035 + 91.7, (tz - self.offset_z) * 0.0035 - 13.3)
         weight = weight * np.clip((clearing + 0.3) / 0.45, 0.0, 1.0)
+        biomes = None
+        if self.biome_map is not None:
+            biomes = self.biome_weights_batch(tx, tz)
+            # Swamp reeds grow anywhere wet, whatever the height layer.
+            weight = np.maximum(weight, biomes[:, terrain_biomes.SWAMP] * 0.8)
+            weight = weight * terrain_biomes.grass_keep(biomes)
         keep &= edge_roll < weight
+        if self.texture_paint_maps:
+            keep &= self._paint_alpha_batch(tx, tz) < self.GRASS_PAINT_CLEAR
         tx = tx[keep]
         tz = tz[keep]
         tuft_raw = h0[keep]
         tuft_slope = 1.0 - normal_y[keep]
+        if biomes is not None:
+            biomes = biomes[keep]
         if len(tx) == 0:
             return np.empty((0, 9), dtype=np.float32)
 
@@ -1502,9 +1588,76 @@ class Terrain:
         data[:, 5] = rng.uniform(0.82, 1.12, count)
         # The colour of the ground each blade stands on, for grass that
         # matches the terrain (the default until a blade colour is chosen).
-        data[:, 6:9] = self._ground_colors(
-            slot, data[:, 1], np.repeat(tuft_raw, per_tuft),
+        data[:, 6:9] = self._ground_colors_at(
+            slot, data[:, 0], data[:, 2], data[:, 1], np.repeat(tuft_raw, per_tuft),
             np.repeat(tuft_slope, per_tuft))
+        if biomes is not None:
+            # Reeds: taller, darker, olive.
+            reed = np.repeat(biomes[:, terrain_biomes.SWAMP], per_tuft)
+            lo, hi = terrain_biomes.REED_SIZE
+            reed_size = rng.uniform(lo, hi, count)
+            t = np.clip(reed * 1.4, 0.0, 1.0)
+            data[:, 3] = data[:, 3] * (1.0 - t) + reed_size * t
+            data[:, 6:9] = (data[:, 6:9] * (1.0 - t[:, None])
+                            + terrain_biomes.REED_COLOUR[None, :] * t[:, None])
+        return data
+
+    def _generate_wheat_blades(self, slot: int) -> np.ndarray:
+        """Wheat: dense clumps of tall golden stalks wherever the biome map
+        paints a field, with its own budget so a field is never sparse."""
+        table = self.table
+        size = float(table.size[slot])
+        x0 = float(table.world[slot, 0])
+        z0 = float(table.world[slot, 1])
+        # Cheap reject: no wheat anywhere on a coarse grid over the chunk.
+        g = np.linspace(0.0, size, 9, dtype=np.float32)
+        GX, GZ = np.meshgrid(x0 + g, z0 + g)
+        coarse = self.biome_weights_batch(GX.ravel(), GZ.ravel())[:, terrain_biomes.WHEAT]
+        cover = float(np.mean(coarse))
+        if float(np.max(coarse)) < 0.3:
+            return np.empty((0, 9), dtype=np.float32)
+        density_scale = min(1.0, max(0.0, self.grass_density) / 0.02)
+        tufts = int(terrain_biomes.WHEAT_MAX_PER_CHUNK * min(1.0, cover * 1.3 + 0.1)
+                    * max(0.35, density_scale))
+        if tufts <= 0:
+            return np.empty((0, 9), dtype=np.float32)
+        seed = ((int(self.seed) * 2654435761)
+                ^ (int(table.coord[slot, 0]) * 40503)
+                ^ (int(table.coord[slot, 1]) * 2246822519)) & 0xFFFFFFFF
+        rng = np.random.default_rng(seed)
+        tx = x0 + rng.random(tufts) * size
+        tz = z0 + rng.random(tufts) * size
+        w = self.biome_weights_batch(tx, tz)[:, terrain_biomes.WHEAT]
+        # Fields have crisp edges: a smoothstep on the painted weight.
+        t = np.clip((w - 0.35) / 0.25, 0.0, 1.0)
+        keep = rng.random(tufts) < t * t * (3.0 - 2.0 * t)
+        eps = 1.0
+        h0 = self._get_raw_heights_batch(tx, tz)
+        gx = (self._get_raw_heights_batch(tx + eps, tz) - h0) / eps
+        gz = (self._get_raw_heights_batch(tx, tz + eps) - h0) / eps
+        keep &= 1.0 / np.sqrt(1.0 + gx * gx + gz * gz) >= self.GRASS_MIN_NORMAL_Y
+        if self.texture_paint_maps:
+            keep &= self._paint_alpha_batch(tx, tz) < self.GRASS_PAINT_CLEAR
+        tx, tz = tx[keep], tz[keep]
+        if len(tx) == 0:
+            return np.empty((0, 9), dtype=np.float32)
+        per = terrain_biomes.WHEAT_STALKS_PER_TUFT
+        count = len(tx) * per
+        angle = rng.uniform(0.0, 6.2831853, count)
+        radius = np.sqrt(rng.random(count)) * terrain_biomes.WHEAT_TUFT_RADIUS
+        bx = np.repeat(tx, per) + np.cos(angle) * radius
+        bz = np.repeat(tz, per) + np.sin(angle) * radius
+        data = np.empty((count, 9), dtype=np.float32)
+        data[:, 0] = bx
+        data[:, 1] = self._get_heights_batch(bx, bz)
+        data[:, 2] = bz
+        lo, hi = terrain_biomes.WHEAT_SIZE
+        data[:, 3] = rng.uniform(lo, hi, count)
+        data[:, 4] = rng.uniform(0.0, 6.2831853, count)
+        data[:, 5] = rng.uniform(0.9, 1.1, count)
+        ripe = rng.random(count)[:, None]
+        data[:, 6:9] = (terrain_biomes.WHEAT_COLOUR[None, :] * (1.0 - ripe * 0.5)
+                        + terrain_biomes.WHEAT_TIP[None, :] * ripe * 0.5)
         return data
 
     def _ground_colors(self, slot: int, y: np.ndarray, raw: np.ndarray,
@@ -1538,6 +1691,14 @@ class Terrain:
             lo, hi = self._layer_height_range()
         out = self._get_colors_batch(y, (np.asarray(y) - lo) / max(hi - lo, 1e-3)) * 1.1
         return np.clip(out, 0.0, 1.0).astype(np.float32)
+
+    def _ground_colors_at(self, slot, x, z, y, raw, slope) -> np.ndarray:
+        """:meth:`_ground_colors` with the regional biomes painted over."""
+        out = self._ground_colors(slot, y, raw, slope)
+        if self.biome_map is None or self.flat_mode:
+            return out
+        weights = self.biome_weights_batch(x, z)
+        return terrain_biomes.blend_colors(out, weights, slope).astype(np.float32)
 
     def _upload_grass_chunk(self, slot: int):
         """Generate deterministic grass instances for one chunk and upload them."""
@@ -1773,6 +1934,7 @@ class Terrain:
         height_texture_unit = shadow_unit_base + shaders.MAX_SHADOW_LIGHTS
         paint_texture_unit = height_texture_unit + 1
         self._upload_appearance_uniforms(u)
+        self._bind_biome_map(u, paint_texture_unit + 1)
         loc = u.get('terrainPaintMap', -1)
         if loc != -1:
             gl.glUniform1i(loc, paint_texture_unit)
@@ -2374,9 +2536,43 @@ class Terrain:
         return top * (1 - fy) + bot * fy
 
     def _touch_texture_paint(self, coord):
-        """Bump the version for one baked terrain paint chunk."""
+        """Bump the version for one baked terrain paint chunk. Its grass
+        regrows, so a road stamped over a meadow clears the grass on it."""
         self._paint_version_counter += 1
         self._paint_map_versions[tuple(coord)] = self._paint_version_counter
+        table = self.table
+        slots = table.live_slots()
+        if len(slots):
+            hit = ((table.coord[slots, 0] == int(coord[0]))
+                   & (table.coord[slots, 1] == int(coord[1])))
+            table.grass_dirty[slots[hit]] = True
+
+    #: Grass does not grow where stamped/painted texture covers the ground
+    #: more than this (roads, floors, plazas).
+    GRASS_PAINT_CLEAR = 0.25
+
+    def _paint_alpha_batch(self, world_x, world_z) -> np.ndarray:
+        """Coverage (0..1) of baked texture paint at world points."""
+        xs = np.asarray(world_x, np.float32).ravel()
+        zs = np.asarray(world_z, np.float32).ravel()
+        out = np.zeros(len(xs), np.float32)
+        if not self.texture_paint_maps or len(xs) == 0:
+            return out
+        res = self.TERRAIN_PAINT_RESOLUTION
+        size = float(self.chunk_size)
+        fx = (xs - self.offset_x) / size
+        fz = (zs - self.offset_z) / size
+        cx = np.floor(fx).astype(np.int64)
+        cz = np.floor(fz).astype(np.int64)
+        ix = np.clip(((fx - cx) * res).astype(np.int64), 0, res - 1)
+        iz = np.clip(((fz - cz) * res).astype(np.int64), 0, res - 1)
+        for key in set(zip(cx.tolist(), cz.tolist())):
+            paint = self.texture_paint_maps.get(key)
+            if paint is None:
+                continue
+            m = (cx == key[0]) & (cz == key[1])
+            out[m] = paint[ix[m], iz[m], 3].astype(np.float32) / 255.0
+        return out
 
     @staticmethod
     def _load_texture_rgba(path):
@@ -2543,6 +2739,7 @@ class Terrain:
         self._paint_map_versions = {}
         self._paint_version_counter += 1
         self._paint_gpu_version[:] = 0
+        self.table.mark_grass_dirty()
 
     def clear_texture_stamps(self):
         """Compatibility alias for the old stamp tool name."""
@@ -2672,6 +2869,13 @@ class Terrain:
         if self._empty_vao:
             gl.glDeleteVertexArrays(1, [self._empty_vao])
             self._empty_vao = 0
+        if self._biome_tex:
+            try:
+                gl.glDeleteTextures(1, [self._biome_tex])
+            except Exception:
+                pass
+            self._biome_tex = 0
+            self._biome_gpu_version = -1
         self._gpu_version[:] = 0
         self._paint_gpu_version[:] = 0
     
@@ -2734,6 +2938,8 @@ class Terrain:
             data['heightmap_blob'] = base64.b64encode(buf.getvalue()).decode('ascii')
             data['heightmap_strength'] = self.heightmap_strength
             data['heightmap_blend'] = self.heightmap_blend
+        if self.biome_map is not None:
+            data['biome_map_blob'] = terrain_biomes.encode(self.biome_map)
         return data
     
     @staticmethod
@@ -2861,4 +3067,6 @@ class Terrain:
             self.heightmap_blend = data.get('heightmap_blend', 'additive')
         else:
             self.heightmap_data = None
+        blob = data.get('biome_map_blob')
+        self.set_biome_map(terrain_biomes.decode(blob) if blob else None)
         self.mark_all_dirty()

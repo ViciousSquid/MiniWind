@@ -53,6 +53,16 @@ PLACEHOLDER_HEAD = "placeholder"
 HEAD_SIZE = 128
 
 
+def size_for(props) -> int:
+    """The size an actor's head is drawn at: :data:`HEAD_SIZE`, times its
+    ``head_scale`` for the few that are meant to be enormous (a dragon)."""
+    try:
+        scale = float((props or {}).get("head_scale", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        scale = 1.0
+    return int(round(HEAD_SIZE * max(0.25, min(scale, 12.0))))
+
+
 def _repo_root() -> str:
     """Best-effort absolute path to the project root (two levels up from
     this file: game/rpg/heads.py -> game/rpg -> game -> root)."""
@@ -72,6 +82,26 @@ def is_guard_head(head_id) -> bool:
     return str(head_id) in GUARD_HEAD_IDS
 
 
+#: Heads whose art may not be in place yet, and what stands in until it is
+#: (the dragon wears ``dragon.png``; ``dragon01.png`` is drawn by
+#: game/tools/make_dragon_head.py).
+FALLBACK_HEADS = {"dragon": "dragon01"}
+
+
+def _head_file(hid) -> str:
+    return os.path.join(_repo_root(), HEAD_DIR, f"{hid}.png")
+
+
+def _available(hid) -> str:
+    """*hid*, or its stand-in when its own PNG is missing ("" if neither)."""
+    if hid and os.path.isfile(_head_file(hid)):
+        return hid
+    alt = FALLBACK_HEADS.get(hid)
+    if alt and os.path.isfile(_head_file(alt)):
+        return alt
+    return ""
+
+
 def is_any_head(head_id) -> bool:
     """True for a regular head id, a special guard head id, or any other
     id whose PNG actually exists under assets/sprites/heads/ (e.g. a head
@@ -81,7 +111,7 @@ def is_any_head(head_id) -> bool:
         return False
     if hid in HEAD_IDS or hid in GUARD_HEAD_IDS:
         return True
-    return os.path.isfile(os.path.join(_repo_root(), HEAD_DIR, f"{hid}.png"))
+    return bool(_available(hid))
 
 
 def normalise(head_id) -> str:
@@ -111,8 +141,9 @@ def any_head_path(head_id) -> str:
         return guard_head_path(hid)
     if hid in HEAD_IDS:
         return head_path(hid)
-    if hid and os.path.isfile(os.path.join(_repo_root(), HEAD_DIR, f"{hid}.png")):
-        return f"{HEAD_DIR}/{hid}.png"
+    found = _available(hid)
+    if found:
+        return f"{HEAD_DIR}/{found}.png"
     return head_path(hid)
 
 

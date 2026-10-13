@@ -1066,6 +1066,12 @@ class LevelChanger(Thing):
         # Instead of target_map, generate a new random level (with the
         # procedural generator's ``generator_params``) and go there.
         self.properties.setdefault('generate_level', False)
+        # The HUD prompt when the player can use it ("[E] Enter the cave");
+        # empty for the default "[E] Complete Level".
+        self.properties.setdefault('prompt', '')
+        # Ask "Complete / Continue" first (True), or go straight there when
+        # the player presses E (a doorway, a cave mouth).
+        self.properties.setdefault('confirm', True)
 
         # An explicit window to signal (tests set one). Otherwise it is found
         # when the level change fires: an entity holding the MainWindow could

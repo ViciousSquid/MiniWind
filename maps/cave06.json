@@ -1,0 +1,4511 @@
+{
+ "version": 3,
+ "brushes": [
+  {
+   "pos": [
+    0.0,
+    -16.0,
+    0.0
+   ],
+   "size": [
+    4096.0,
+    32.0,
+    4608.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "cave.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "d8be76a6-5dd4-497f-ac03-152098e9b1de"
+  },
+  {
+   "pos": [
+    0.0,
+    160.0,
+    -1984.0
+   ],
+   "size": [
+    4096.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "0241e21c-c79f-4e95-93f8-4b45771c79a4"
+  },
+  {
+   "pos": [
+    0.0,
+    192.0,
+    -1856.0
+   ],
+   "size": [
+    4096.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "724c63ce-e8c1-4cab-8517-d9b3c9547fd7"
+  },
+  {
+   "pos": [
+    -1216.0,
+    224.0,
+    -1728.0
+   ],
+   "size": [
+    1664.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "03fef394-390f-47de-a1da-f247963d086b"
+  },
+  {
+   "pos": [
+    -64.0,
+    224.0,
+    -1728.0
+   ],
+   "size": [
+    128.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "9373fcdd-29db-46a9-a5e5-cff587510bde"
+  },
+  {
+   "pos": [
+    1344.0,
+    192.0,
+    -1728.0
+   ],
+   "size": [
+    1408.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "77e77a97-1708-4961-9136-be6429f72075"
+  },
+  {
+   "pos": [
+    -1664.0,
+    176.0,
+    -1600.0
+   ],
+   "size": [
+    768.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "838610b3-d204-4260-b200-38bd02d8fae8"
+  },
+  {
+   "pos": [
+    1728.0,
+    192.0,
+    -1600.0
+   ],
+   "size": [
+    640.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "811b01a9-4fab-4bf5-9a1b-1ad4877b217a"
+  },
+  {
+   "pos": [
+    -1728.0,
+    208.0,
+    -1472.0
+   ],
+   "size": [
+    640.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "7e18b9e0-b4a4-4436-9c50-bd7e487b565d"
+  },
+  {
+   "pos": [
+    1792.0,
+    192.0,
+    -1472.0
+   ],
+   "size": [
+    512.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "e6523b01-4c86-4e4c-8d40-0b13942ce892"
+  },
+  {
+   "pos": [
+    -1792.0,
+    160.0,
+    -1344.0
+   ],
+   "size": [
+    512.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "26079cce-9701-43f0-b3ba-0c838e154bae"
+  },
+  {
+   "pos": [
+    1792.0,
+    224.0,
+    -1344.0
+   ],
+   "size": [
+    512.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "722703a3-db37-4e51-bec0-d71412635b79"
+  },
+  {
+   "pos": [
+    -1792.0,
+    192.0,
+    -1216.0
+   ],
+   "size": [
+    512.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "994167a3-2d58-4705-a8f7-293fe2223fd2"
+  },
+  {
+   "pos": [
+    1856.0,
+    224.0,
+    -1216.0
+   ],
+   "size": [
+    384.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "a0c713c5-2532-4b04-ae08-b4a09ead7b39"
+  },
+  {
+   "pos": [
+    -1792.0,
+    224.0,
+    -1088.0
+   ],
+   "size": [
+    512.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "3354de7a-0b13-4843-80de-fe86e91c2377"
+  },
+  {
+   "pos": [
+    1856.0,
+    176.0,
+    -1088.0
+   ],
+   "size": [
+    384.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "b0568645-656b-4d48-a598-8c836be3069e"
+  },
+  {
+   "pos": [
+    -1792.0,
+    176.0,
+    -960.0
+   ],
+   "size": [
+    512.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "384f2677-e30d-4064-805d-9e23f32c726d"
+  },
+  {
+   "pos": [
+    1856.0,
+    208.0,
+    -960.0
+   ],
+   "size": [
+    384.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "b6bab5e3-9e6e-4bae-ac37-e01d878cb69d"
+  },
+  {
+   "pos": [
+    -1728.0,
+    208.0,
+    -832.0
+   ],
+   "size": [
+    640.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "ad868af1-72f7-4691-9acb-89948eaf6148"
+  },
+  {
+   "pos": [
+    1792.0,
+    192.0,
+    -832.0
+   ],
+   "size": [
+    512.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "96e8b92c-b699-42d7-9ddf-64fe21e5d70a"
+  },
+  {
+   "pos": [
+    -1728.0,
+    160.0,
+    -704.0
+   ],
+   "size": [
+    640.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "9f9fad2d-c858-4024-8b8e-a6aef6646f04"
+  },
+  {
+   "pos": [
+    1792.0,
+    224.0,
+    -704.0
+   ],
+   "size": [
+    512.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "be5c72d1-2b78-457b-9b90-9458e465867f"
+  },
+  {
+   "pos": [
+    -1728.0,
+    192.0,
+    -576.0
+   ],
+   "size": [
+    640.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "18403d67-7cba-4094-b104-817db517de25"
+  },
+  {
+   "pos": [
+    1792.0,
+    176.0,
+    -576.0
+   ],
+   "size": [
+    512.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "0f07c478-6049-483d-8221-680221e2706c"
+  },
+  {
+   "pos": [
+    -1792.0,
+    224.0,
+    -448.0
+   ],
+   "size": [
+    512.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "5d454d0b-2944-40a5-b7d9-9984ea243b2d"
+  },
+  {
+   "pos": [
+    960.0,
+    208.0,
+    -448.0
+   ],
+   "size": [
+    128.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "5a2f67fd-51d4-4bc1-9bd4-fabd5ff647e7"
+  },
+  {
+   "pos": [
+    1856.0,
+    176.0,
+    -448.0
+   ],
+   "size": [
+    384.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "bc32bed5-2727-4838-89da-fbfc0c4228bb"
+  },
+  {
+   "pos": [
+    -1856.0,
+    176.0,
+    -320.0
+   ],
+   "size": [
+    384.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "9c239738-e6c2-47e3-8f5a-5019655c416b"
+  },
+  {
+   "pos": [
+    1856.0,
+    208.0,
+    -320.0
+   ],
+   "size": [
+    384.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "131e901f-534e-4440-955e-afc38d80980e"
+  },
+  {
+   "pos": [
+    -1856.0,
+    208.0,
+    -192.0
+   ],
+   "size": [
+    384.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "f9a72104-9cc2-4255-8022-91ee1b76dab0"
+  },
+  {
+   "pos": [
+    896.0,
+    224.0,
+    -192.0
+   ],
+   "size": [
+    256.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "3eff8a95-d1d0-4745-a62e-65df5b0af332"
+  },
+  {
+   "pos": [
+    1856.0,
+    160.0,
+    -192.0
+   ],
+   "size": [
+    384.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "86709540-afac-4bf5-b9c9-0a3456cea5ac"
+  },
+  {
+   "pos": [
+    -1856.0,
+    160.0,
+    -64.0
+   ],
+   "size": [
+    384.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "fce7d20b-cbaf-478f-ae88-29e8c035424b"
+  },
+  {
+   "pos": [
+    896.0,
+    176.0,
+    -64.0
+   ],
+   "size": [
+    256.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "1dd30f20-0bbc-4269-a0dc-308866298edc"
+  },
+  {
+   "pos": [
+    1856.0,
+    192.0,
+    -64.0
+   ],
+   "size": [
+    384.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "e027855d-99e5-4055-b44d-b186de820938"
+  },
+  {
+   "pos": [
+    -1792.0,
+    192.0,
+    64.0
+   ],
+   "size": [
+    512.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "50ad9676-7b02-4fa6-9885-cea8e1776695"
+  },
+  {
+   "pos": [
+    832.0,
+    160.0,
+    64.0
+   ],
+   "size": [
+    384.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "80a392c2-aaf0-4046-bba2-811136471fcf"
+  },
+  {
+   "pos": [
+    1856.0,
+    224.0,
+    64.0
+   ],
+   "size": [
+    384.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "9d87567c-bb74-405e-9179-5efc94df141f"
+  },
+  {
+   "pos": [
+    -1792.0,
+    224.0,
+    192.0
+   ],
+   "size": [
+    512.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "54f76cde-5b54-46fe-87c5-79e34133068a"
+  },
+  {
+   "pos": [
+    896.0,
+    192.0,
+    192.0
+   ],
+   "size": [
+    512.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "8a7cad5d-5119-46e2-85cf-2219ba9dd026"
+  },
+  {
+   "pos": [
+    1856.0,
+    176.0,
+    192.0
+   ],
+   "size": [
+    384.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "ea0b6270-9433-4911-81a5-a6b042a080c6"
+  },
+  {
+   "pos": [
+    -1792.0,
+    176.0,
+    320.0
+   ],
+   "size": [
+    512.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "5b41d016-afba-4293-9893-d83e395d525a"
+  },
+  {
+   "pos": [
+    1024.0,
+    192.0,
+    320.0
+   ],
+   "size": [
+    512.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "229d0386-5d67-4a3b-af32-0b7cd4f6ba10"
+  },
+  {
+   "pos": [
+    1856.0,
+    208.0,
+    320.0
+   ],
+   "size": [
+    384.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "a780feae-908c-4cd0-b5b3-765275974de4"
+  },
+  {
+   "pos": [
+    -1792.0,
+    208.0,
+    448.0
+   ],
+   "size": [
+    512.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "09125348-d631-4e76-b0ab-a8e5a1c2be97"
+  },
+  {
+   "pos": [
+    1024.0,
+    224.0,
+    448.0
+   ],
+   "size": [
+    512.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "4aeccbab-409b-455f-94fa-1279580f0626"
+  },
+  {
+   "pos": [
+    1856.0,
+    160.0,
+    448.0
+   ],
+   "size": [
+    384.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "7d57cfa1-a941-49c3-821b-04d096a72aaf"
+  },
+  {
+   "pos": [
+    -1792.0,
+    160.0,
+    576.0
+   ],
+   "size": [
+    512.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "4cee736c-9eb4-4d1b-9da4-881bab1bcc3c"
+  },
+  {
+   "pos": [
+    1024.0,
+    208.0,
+    576.0
+   ],
+   "size": [
+    768.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "e0940a5d-b0e9-4904-9d95-29c8bc96e3d5"
+  },
+  {
+   "pos": [
+    1856.0,
+    192.0,
+    576.0
+   ],
+   "size": [
+    384.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "a57b316f-3589-47f7-b4e0-b14c99c8000b"
+  },
+  {
+   "pos": [
+    -1728.0,
+    192.0,
+    704.0
+   ],
+   "size": [
+    640.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "a25cc440-9742-43fa-8a54-90bc3d97bde1"
+  },
+  {
+   "pos": [
+    896.0,
+    224.0,
+    704.0
+   ],
+   "size": [
+    1024.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "d3a322fc-6313-40a8-ad22-9b603fed143a"
+  },
+  {
+   "pos": [
+    1856.0,
+    224.0,
+    704.0
+   ],
+   "size": [
+    384.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "ec3d3cb1-fa1a-40b0-b9cf-d53a3eefc02d"
+  },
+  {
+   "pos": [
+    -1728.0,
+    224.0,
+    832.0
+   ],
+   "size": [
+    640.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "73d24860-1186-4b1e-bf1a-ed481698006f"
+  },
+  {
+   "pos": [
+    832.0,
+    208.0,
+    832.0
+   ],
+   "size": [
+    1152.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "684b1c1d-5caa-4c2a-a561-668a39e8a620"
+  },
+  {
+   "pos": [
+    1856.0,
+    176.0,
+    832.0
+   ],
+   "size": [
+    384.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "3eb7cfa0-0310-4800-b9c7-7b1349465b86"
+  },
+  {
+   "pos": [
+    -1728.0,
+    176.0,
+    960.0
+   ],
+   "size": [
+    640.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "df5772b5-6829-4bba-9d1d-3a8932e547dc"
+  },
+  {
+   "pos": [
+    832.0,
+    160.0,
+    960.0
+   ],
+   "size": [
+    1152.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "d9ece070-991b-4467-909d-5fdea133a89e"
+  },
+  {
+   "pos": [
+    1856.0,
+    208.0,
+    960.0
+   ],
+   "size": [
+    384.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "10dee12b-ae53-4f7a-a9be-7810e35116fd"
+  },
+  {
+   "pos": [
+    -1664.0,
+    208.0,
+    1088.0
+   ],
+   "size": [
+    768.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "effbae35-b9eb-48c0-8322-6b18e4b49568"
+  },
+  {
+   "pos": [
+    -768.0,
+    160.0,
+    1088.0
+   ],
+   "size": [
+    256.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "ccf1c208-cc2e-4863-a17e-282233ddb1e8"
+  },
+  {
+   "pos": [
+    768.0,
+    192.0,
+    1088.0
+   ],
+   "size": [
+    1024.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "a32d6985-1a2a-41b2-9bb8-167f8e399414"
+  },
+  {
+   "pos": [
+    1856.0,
+    160.0,
+    1088.0
+   ],
+   "size": [
+    384.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "de81f179-8998-457c-a2af-0cec9cc845b1"
+  },
+  {
+   "pos": [
+    -1664.0,
+    160.0,
+    1216.0
+   ],
+   "size": [
+    768.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "3097b7ed-1459-4be2-af2e-7b0ad426d71b"
+  },
+  {
+   "pos": [
+    -704.0,
+    192.0,
+    1216.0
+   ],
+   "size": [
+    384.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "304e01ca-e2d5-4adb-9d07-c0f7a8381d88"
+  },
+  {
+   "pos": [
+    832.0,
+    224.0,
+    1216.0
+   ],
+   "size": [
+    1152.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "0b93ddc0-58ee-4632-a888-efe4c9cd5138"
+  },
+  {
+   "pos": [
+    1792.0,
+    224.0,
+    1216.0
+   ],
+   "size": [
+    512.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "369966f6-95b6-4656-9c99-a940f52823c7"
+  },
+  {
+   "pos": [
+    -1664.0,
+    192.0,
+    1344.0
+   ],
+   "size": [
+    768.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "e7e9ab0e-6950-4457-828c-7fd175948dc8"
+  },
+  {
+   "pos": [
+    -704.0,
+    224.0,
+    1344.0
+   ],
+   "size": [
+    384.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "31fc39ff-a8f2-402f-9353-1ce294e3c84c"
+  },
+  {
+   "pos": [
+    1152.0,
+    176.0,
+    1344.0
+   ],
+   "size": [
+    1792.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "4a69f1ce-d295-4aaa-b124-1a0afbf4f705"
+  },
+  {
+   "pos": [
+    -1664.0,
+    224.0,
+    1472.0
+   ],
+   "size": [
+    768.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "97c1df9a-e788-454b-9f08-a40a7539d354"
+  },
+  {
+   "pos": [
+    -704.0,
+    176.0,
+    1472.0
+   ],
+   "size": [
+    384.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "5005662b-1aa5-41d1-a5e4-dcde752ce133"
+  },
+  {
+   "pos": [
+    1152.0,
+    208.0,
+    1472.0
+   ],
+   "size": [
+    1792.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "a61b08c6-0396-433b-87e7-b52cedb544cf"
+  },
+  {
+   "pos": [
+    -1600.0,
+    176.0,
+    1600.0
+   ],
+   "size": [
+    896.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "36bad55b-944e-44ef-8cb8-013585a420fe"
+  },
+  {
+   "pos": [
+    -768.0,
+    160.0,
+    1600.0
+   ],
+   "size": [
+    512.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "a351d55e-65e1-4fe4-99d3-d7e21f48d997"
+  },
+  {
+   "pos": [
+    1152.0,
+    160.0,
+    1600.0
+   ],
+   "size": [
+    1792.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "8863527a-10fb-4396-a0fa-06d04b004d15"
+  },
+  {
+   "pos": [
+    -1216.0,
+    208.0,
+    1728.0
+   ],
+   "size": [
+    1664.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "20f5568d-b9ef-4229-9f5f-99bc41d23bcc"
+  },
+  {
+   "pos": [
+    1152.0,
+    192.0,
+    1728.0
+   ],
+   "size": [
+    1792.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "2ce657c9-6c16-4ebc-9e5c-9211679999ff"
+  },
+  {
+   "pos": [
+    -1088.0,
+    160.0,
+    1856.0
+   ],
+   "size": [
+    1920.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "f5c6ccfb-0ba9-40f1-a13c-9fed4715f106"
+  },
+  {
+   "pos": [
+    1152.0,
+    224.0,
+    1856.0
+   ],
+   "size": [
+    1792.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "6a988a52-9b90-4fe3-9bba-6cbbf2fa0e55"
+  },
+  {
+   "pos": [
+    -1088.0,
+    192.0,
+    1984.0
+   ],
+   "size": [
+    1920.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "b7a64f53-b53b-4414-a132-73ee2b901489"
+  },
+  {
+   "pos": [
+    1152.0,
+    176.0,
+    1984.0
+   ],
+   "size": [
+    1792.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "c69b8079-d312-461c-b6fa-73b1946b47cd"
+  },
+  {
+   "pos": [
+    64.0,
+    140.0,
+    2048.0
+   ],
+   "size": [
+    384.0,
+    280.0,
+    32.0
+   ],
+   "textures": {
+    "north": "_black.jpg",
+    "south": "_black.jpg",
+    "east": "_black.jpg",
+    "west": "_black.jpg",
+    "top": "_black.jpg",
+    "down": "_black.jpg"
+   },
+   "id": "7cae5b53-c17e-4f12-bfd0-f9dacf6ed75d"
+  }
+ ],
+ "things": [
+  {
+   "type": "levelchanger",
+   "pos": [
+    64.0,
+    64.0,
+    1932.8
+   ],
+   "properties": {
+    "type": "levelchanger",
+    "name": "LevelChanger_cave06_out",
+    "id": "c2ad8d87-0a8d-4651-926a-7c448659481e",
+    "target_map": "maps/village_walled_source.json",
+    "delay": 0.0,
+    "fade_time": 0.5,
+    "show_radius": false,
+    "radius": 170.0,
+    "usable": true,
+    "destination_spawn": "cave06_exit",
+    "generate_level": false,
+    "prompt": "[E] Leave Whisperdeep",
+    "confirm": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "playerstart",
+   "pos": [
+    64.0,
+    72.0,
+    1472.0
+   ],
+   "properties": {
+    "type": "playerstart",
+    "name": "entrance",
+    "id": "974c21eb-6c62-49ff-9749-f86d6464a111",
+    "angle": 90.0,
+    "primary": true,
+    "creation_index": 0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    64.0,
+    220.0,
+    1728.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_daylight",
+    "id": "ff53b39f-e3bd-4607-8525-294933cfafb8",
+    "colour": [
+     200,
+     215,
+     255
+    ],
+    "intensity": 1.4,
+    "radius": 700.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    64.0,
+    200.0,
+    1088.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_0",
+    "id": "3a8660da-f37c-4af9-863a-f40e1ee09897",
+    "colour": [
+     255,
+     150,
+     80
+    ],
+    "intensity": 1.8,
+    "radius": 620.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    320.0,
+    200.0,
+    448.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_1",
+    "id": "52a32e02-24f9-49e6-b5ba-14c98af59170",
+    "colour": [
+     120,
+     200,
+     255
+    ],
+    "intensity": 1.8,
+    "radius": 620.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    -448.0,
+    200.0,
+    704.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_2",
+    "id": "c37b1aa7-51df-4d7e-9260-59bcb54900f4",
+    "colour": [
+     255,
+     150,
+     80
+    ],
+    "intensity": 1.8,
+    "radius": 620.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    -64.0,
+    200.0,
+    -64.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_3",
+    "id": "f884d47c-15ed-40a2-9379-ae72f11e30f0",
+    "colour": [
+     120,
+     200,
+     255
+    ],
+    "intensity": 1.8,
+    "radius": 620.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    -1088.0,
+    200.0,
+    960.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_4",
+    "id": "6716fa0c-0de7-4f9b-8cdd-841f20f8f61d",
+    "colour": [
+     255,
+     150,
+     80
+    ],
+    "intensity": 1.8,
+    "radius": 620.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    -832.0,
+    200.0,
+    192.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_5",
+    "id": "aee4e73a-488c-4c63-8cda-5445942c8ea2",
+    "colour": [
+     120,
+     200,
+     255
+    ],
+    "intensity": 1.8,
+    "radius": 620.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    192.0,
+    200.0,
+    -704.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_6",
+    "id": "d05e145a-5b70-4789-aa6f-320d1ee178c8",
+    "colour": [
+     255,
+     150,
+     80
+    ],
+    "intensity": 1.8,
+    "radius": 620.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    704.0,
+    200.0,
+    -320.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_7",
+    "id": "66c9a983-26cf-42c2-a7b4-76da5e7e94e3",
+    "colour": [
+     120,
+     200,
+     255
+    ],
+    "intensity": 1.8,
+    "radius": 620.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "creature",
+   "pos": [
+    64.0,
+    40.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "creature",
+    "name": "Dragon_cave06",
+    "id": "9c65bf8d-4f2d-47ac-a7e0-e4d958e53a2b",
+    "npc_role": "dragon",
+    "faction": "monsters",
+    "team": "monsters",
+    "aggression": "hostile",
+    "combatant": true,
+    "triggered": false,
+    "wake_on_sight": true,
+    "awake": false,
+    "respawn": false,
+    "roam": false,
+    "persistent": true,
+    "monster_type": "human",
+    "inventory": [],
+    "home": [
+     64.0,
+     40.0,
+     -832.0
+    ],
+    "portrait": "assets/portraits/miniwind/monster.png",
+    "display_name": "Vharzul the Ember Wyrm",
+    "head": "dragon",
+    "head_scale": 5.0,
+    "health": 3000,
+    "max_health": 3000,
+    "damage": 45,
+    "attack_style": "melee",
+    "creature_level": 30,
+    "breathes_fire": true,
+    "breath_damage": 14,
+    "xp_value": 2500,
+    "move_speed": 70.0,
+    "sight_range": 1500,
+    "sight": 1500,
+    "courage": 1.0,
+    "resist_fire": 1.0,
+    "loot": "",
+    "equipped_weapon": ""
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    704.6,
+    24.0,
+    -1611.9
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_0",
+    "id": "76c5014a-fc92-4b53-90d2-19b21cfdfa6c",
+    "item_id": "gold",
+    "quantity": 11,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -809.5,
+    24.0,
+    -955.2
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_1",
+    "id": "ab1c4986-db93-405e-a77a-e544a82419ca",
+    "item_id": "gold",
+    "quantity": 17,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    723.0,
+    24.0,
+    -102.8
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_2",
+    "id": "7ce8721d-c948-455e-8ecf-0b75af80f2ca",
+    "item_id": "gold",
+    "quantity": 36,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    304.1,
+    24.0,
+    -618.4
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_3",
+    "id": "936aa5f2-5a60-43c8-9baf-15274ed367d2",
+    "item_id": "gold",
+    "quantity": 29,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -344.1,
+    24.0,
+    -1091.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_4",
+    "id": "f0f44828-9d2e-437c-93b8-17d6f5751d02",
+    "item_id": "gold",
+    "quantity": 15,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    447.6,
+    24.0,
+    -319.9
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_5",
+    "id": "69451baf-9aa0-4108-9715-1433137ce4be",
+    "item_id": "gold",
+    "quantity": 36,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -215.2,
+    24.0,
+    -344.2
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_6",
+    "id": "1e5bde75-8143-4659-86ba-7b5d1183f4d8",
+    "item_id": "gold",
+    "quantity": 11,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    947.7,
+    24.0,
+    -1171.7
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_7",
+    "id": "2ade7440-44f7-490a-9543-58598b0a43ae",
+    "item_id": "gold",
+    "quantity": 20,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -322.9,
+    24.0,
+    -543.8
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_8",
+    "id": "94b8b7b0-5063-4d59-b6f7-0e91cb63716f",
+    "item_id": "gold",
+    "quantity": 44,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -299.9,
+    24.0,
+    -571.5
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_9",
+    "id": "a8112e15-66e8-487c-90bb-0216678e39cc",
+    "item_id": "gold",
+    "quantity": 42,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    435.6,
+    24.0,
+    -82.3
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_10",
+    "id": "e0f87721-6c22-4229-ac8f-5ad4d3c64921",
+    "item_id": "gold",
+    "quantity": 29,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    323.4,
+    24.0,
+    -15.2
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_11",
+    "id": "6e1bcf2a-a4ef-4087-8e84-f755a4d30659",
+    "item_id": "gold",
+    "quantity": 24,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    527.0,
+    24.0,
+    -823.9
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_12",
+    "id": "2baa43e0-2f68-47e4-b32c-34fa21d758ee",
+    "item_id": "gold",
+    "quantity": 30,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    482.3,
+    24.0,
+    -489.5
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_13",
+    "id": "dfaee2c1-e561-4151-89c5-2d4cc48489b6",
+    "item_id": "gold",
+    "quantity": 24,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -48.7,
+    24.0,
+    -215.5
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_14",
+    "id": "2b5a6999-c8eb-4031-ae79-7bc4e8fbb81d",
+    "item_id": "gold",
+    "quantity": 13,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -356.9,
+    24.0,
+    -559.7
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_15",
+    "id": "551248a9-ba6e-47ea-a292-ef4833525770",
+    "item_id": "gold",
+    "quantity": 24,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -747.3,
+    24.0,
+    -1429.2
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_16",
+    "id": "7931822a-d821-49c7-bac0-116290bdaac8",
+    "item_id": "gold",
+    "quantity": 27,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    330.0,
+    24.0,
+    -1714.8
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_17",
+    "id": "5f45446c-b26a-472c-80b2-d66f8896c340",
+    "item_id": "gold",
+    "quantity": 29,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -481.8,
+    24.0,
+    -867.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_18",
+    "id": "1631915b-b0ef-4778-9163-a78b8b76e5e4",
+    "item_id": "gold",
+    "quantity": 8,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    620.1,
+    24.0,
+    -699.3
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_19",
+    "id": "cf785a1a-7386-4e98-b068-c1f9019fd6a1",
+    "item_id": "gold",
+    "quantity": 37,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    355.3,
+    24.0,
+    -1586.6
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_20",
+    "id": "19f40e4e-d011-4858-a80a-78f8243e812a",
+    "item_id": "gold",
+    "quantity": 32,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    805.3,
+    24.0,
+    -1454.4
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_21",
+    "id": "2ecc8344-485b-49fd-99b3-25a0bba7c110",
+    "item_id": "gold",
+    "quantity": 24,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    749.5,
+    24.0,
+    -1446.4
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_22",
+    "id": "19d368f4-7f5b-429b-b99c-6de96f83cf50",
+    "item_id": "gold",
+    "quantity": 21,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -575.6,
+    24.0,
+    -1259.3
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_23",
+    "id": "1c545121-1c26-4053-9410-5405b41ac631",
+    "item_id": "gold",
+    "quantity": 8,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -156.8,
+    24.0,
+    -960.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_24",
+    "id": "15198614-8dc6-464c-bcfa-4c24ea936c31",
+    "item_id": "gold",
+    "quantity": 41,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -238.4,
+    24.0,
+    -815.5
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_25",
+    "id": "ecaef505-e51d-4d27-b9c4-2b3916d8ab6b",
+    "item_id": "gold",
+    "quantity": 12,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -701.5,
+    24.0,
+    -957.5
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_26",
+    "id": "22bd1838-98a3-4c7c-992e-cf25b13d5348",
+    "item_id": "gold",
+    "quantity": 24,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -472.5,
+    24.0,
+    -363.8
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_27",
+    "id": "187e244c-198f-4e52-bc15-869e8125dc19",
+    "item_id": "gold",
+    "quantity": 28,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    548.7,
+    24.0,
+    -707.9
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_28",
+    "id": "4eae61d7-ed8a-42b3-821b-81d1e985454a",
+    "item_id": "gold",
+    "quantity": 15,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    810.9,
+    24.0,
+    -362.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_29",
+    "id": "f7e83f34-35ad-4b84-84bf-b2ef0c07a5e7",
+    "item_id": "gold",
+    "quantity": 8,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -305.7,
+    24.0,
+    -1495.2
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_30",
+    "id": "72bafc56-9928-4f6b-ac38-a9237f2d1d26",
+    "item_id": "gold",
+    "quantity": 16,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -348.9,
+    24.0,
+    -1244.6
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_31",
+    "id": "f48042e9-8a3b-439d-8b11-4276fbc2e880",
+    "item_id": "gold",
+    "quantity": 10,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    612.0,
+    24.0,
+    -1229.9
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_32",
+    "id": "02d48545-3c00-41be-8d1b-3c604782b002",
+    "item_id": "gold",
+    "quantity": 29,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    801.4,
+    24.0,
+    -1124.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_33",
+    "id": "c53dbb90-b630-444e-a6d4-e8ef01c4d50e",
+    "item_id": "gold",
+    "quantity": 27,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -853.1,
+    24.0,
+    -967.9
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_34",
+    "id": "a7130f4e-9a33-4333-8714-010dca879aac",
+    "item_id": "gold",
+    "quantity": 38,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    862.6,
+    24.0,
+    -698.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_35",
+    "id": "c91836e6-4f5a-43a0-b390-a040f3062c2f",
+    "item_id": "gold",
+    "quantity": 34,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -22.6,
+    24.0,
+    -863.7
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_36",
+    "id": "8301d545-059e-4a32-b89b-b57bae02a76f",
+    "item_id": "gold",
+    "quantity": 42,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    963.9,
+    24.0,
+    -1175.6
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_37",
+    "id": "25bf148c-755b-40be-88cf-0671c5a3b8ce",
+    "item_id": "gold",
+    "quantity": 40,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    859.1,
+    24.0,
+    -1428.3
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_38",
+    "id": "70c1049d-261e-42e1-9ae1-986b04347fbf",
+    "item_id": "gold",
+    "quantity": 36,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -798.5,
+    24.0,
+    -464.7
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_39",
+    "id": "97be543d-a7f4-44a4-ab05-4aff29c77461",
+    "item_id": "gold",
+    "quantity": 20,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -185.9,
+    24.0,
+    -1258.8
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_40",
+    "id": "70a4a01d-528b-4d53-8573-d22bbf53f083",
+    "item_id": "gold",
+    "quantity": 43,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    84.0,
+    24.0,
+    -1129.7
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_41",
+    "id": "30ef96e7-0409-4975-bcc2-67043dc21815",
+    "item_id": "gold",
+    "quantity": 16,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    63.9,
+    24.0,
+    -788.3
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_42",
+    "id": "5d445cdb-1b3c-4a67-b9c3-7eeb4b5b0f33",
+    "item_id": "gold",
+    "quantity": 31,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -472.1,
+    24.0,
+    -1177.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_43",
+    "id": "a6a51fc5-0dca-417f-baa0-e6631d7aa5ee",
+    "item_id": "gold",
+    "quantity": 28,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    743.8,
+    24.0,
+    -36.9
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_44",
+    "id": "f89ae683-bca3-4f6f-94e3-5acd3a283870",
+    "item_id": "gold",
+    "quantity": 19,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -828.7,
+    24.0,
+    -1082.3
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_45",
+    "id": "184b255d-569a-46a4-92ac-5fee8e6ad409",
+    "item_id": "gold",
+    "quantity": 29,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    327.3,
+    24.0,
+    -1457.7
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_46",
+    "id": "d4c0881f-a84d-4fbd-9f64-3ec6c32bba1a",
+    "item_id": "gold",
+    "quantity": 10,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -843.4,
+    24.0,
+    -1200.2
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_47",
+    "id": "634ef8f4-e5b9-48aa-872a-f7f3951c220d",
+    "item_id": "gold",
+    "quantity": 36,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    617.7,
+    24.0,
+    -1137.9
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_48",
+    "id": "21e5a7d6-687f-40ef-8342-0fcfefc9d1ca",
+    "item_id": "gold",
+    "quantity": 34,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    785.2,
+    24.0,
+    -992.3
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_49",
+    "id": "974ef873-4c36-4a6e-84ef-ceb7335f6e1c",
+    "item_id": "gold",
+    "quantity": 29,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    274.5,
+    24.0,
+    -43.7
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_50",
+    "id": "47530489-bc16-4998-a8d4-567686f3243e",
+    "item_id": "gold",
+    "quantity": 26,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    18.1,
+    24.0,
+    -659.4
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_51",
+    "id": "0bcb8b3a-4054-4a7a-84ae-33185d7eb705",
+    "item_id": "gold",
+    "quantity": 44,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    495.9,
+    24.0,
+    -1070.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_52",
+    "id": "e2a974fd-704c-4c02-905e-810a23ae56f1",
+    "item_id": "gold",
+    "quantity": 37,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    548.2,
+    24.0,
+    -91.3
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_53",
+    "id": "0cbfb39a-92c3-47a9-b456-eace67994ed3",
+    "item_id": "gold",
+    "quantity": 21,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -106.0,
+    24.0,
+    -1469.8
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_54",
+    "id": "c0b8f8bb-31ea-4b97-9310-5b68e2caeef0",
+    "item_id": "gold",
+    "quantity": 39,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    874.3,
+    24.0,
+    -1058.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_55",
+    "id": "5cd52b63-bc69-436a-adc6-896648908a01",
+    "item_id": "gold",
+    "quantity": 31,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -303.2,
+    24.0,
+    -1331.3
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_56",
+    "id": "0289ac75-2b50-4702-85e6-f64f6a100fdd",
+    "item_id": "gold",
+    "quantity": 39,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    1101.8,
+    24.0,
+    -849.1
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_57",
+    "id": "271a91d7-bd16-40c7-b0c2-fbee072c6cf1",
+    "item_id": "gold",
+    "quantity": 40,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    279.1,
+    24.0,
+    -1716.7
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_58",
+    "id": "6b8e60cf-bd93-447e-9c8b-55e8d878db02",
+    "item_id": "gold",
+    "quantity": 17,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    344.9,
+    24.0,
+    -329.7
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_59",
+    "id": "6d203b8f-e48d-4d70-9384-15560a1e7bc2",
+    "item_id": "gold",
+    "quantity": 18,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -730.3,
+    24.0,
+    -1128.7
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_60",
+    "id": "a53d1108-0891-44f5-b79b-8a96f33ee742",
+    "item_id": "gold",
+    "quantity": 27,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    416.3,
+    24.0,
+    -1468.5
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_61",
+    "id": "cce566bf-a6a5-44cd-811f-6327ecbca62d",
+    "item_id": "gold",
+    "quantity": 44,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    341.9,
+    24.0,
+    -995.1
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_62",
+    "id": "5c8e7a95-6f95-46e4-9c9b-34998b2cf9ef",
+    "item_id": "gold",
+    "quantity": 21,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -225.6,
+    24.0,
+    -1747.1
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_63",
+    "id": "212a9321-47c3-42bd-b483-0f0a263e918a",
+    "item_id": "gold",
+    "quantity": 23,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    819.6,
+    24.0,
+    -287.3
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_64",
+    "id": "566828b9-6b0a-4361-91a1-d09cd4854de8",
+    "item_id": "gold",
+    "quantity": 43,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -568.0,
+    24.0,
+    -997.7
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_65",
+    "id": "adbc1b49-562c-4998-96a8-64fe2542320b",
+    "item_id": "gold",
+    "quantity": 25,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -79.0,
+    24.0,
+    -992.5
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_66",
+    "id": "03d5f869-1189-4c09-bd2c-57fbc7e608aa",
+    "item_id": "gold",
+    "quantity": 31,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -405.1,
+    24.0,
+    -412.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_67",
+    "id": "e8a448d8-e950-480c-b612-75d5a3fbe17a",
+    "item_id": "gold",
+    "quantity": 35,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -68.0,
+    24.0,
+    -692.3
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_68",
+    "id": "4a9ff4fb-5574-40ae-9b6d-84faea6c48a6",
+    "item_id": "gold",
+    "quantity": 22,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -98.0,
+    24.0,
+    -657.8
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_69",
+    "id": "47bf6535-4498-4f79-bb01-4eaedcc069d6",
+    "item_id": "gold",
+    "quantity": 33,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -91.8,
+    24.0,
+    -1210.3
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_70",
+    "id": "cff12628-cfc8-4bb5-95f4-debd2a7356b5",
+    "item_id": "gold",
+    "quantity": 20,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    46.1,
+    24.0,
+    -1506.6
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_71",
+    "id": "e9216747-29d5-45ed-9f2e-e5c81f338294",
+    "item_id": "gold",
+    "quantity": 8,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    866.6,
+    24.0,
+    -315.2
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_72",
+    "id": "f4369b8e-8d92-4b9f-9f2c-cbbc3eab4c73",
+    "item_id": "gold",
+    "quantity": 39,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -459.8,
+    24.0,
+    -1317.7
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_73",
+    "id": "f5043dad-9314-4ec5-b4fd-f0d0b9b79922",
+    "item_id": "gold",
+    "quantity": 22,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -467.2,
+    24.0,
+    -202.8
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_74",
+    "id": "e082cce4-8c63-4041-af8e-c5c66075e4fa",
+    "item_id": "gold",
+    "quantity": 34,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    1106.8,
+    24.0,
+    -840.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_75",
+    "id": "978fbc03-b9ee-4ffe-af6f-e5364baf485f",
+    "item_id": "gold",
+    "quantity": 9,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -182.5,
+    24.0,
+    -730.3
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_76",
+    "id": "12105e9a-b43e-4cd4-9c62-6eb0a7f48cea",
+    "item_id": "gold",
+    "quantity": 8,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    945.7,
+    24.0,
+    -1106.6
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_77",
+    "id": "ec5ac962-69f5-4d99-8089-546feb1125cb",
+    "item_id": "gold",
+    "quantity": 25,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    606.0,
+    24.0,
+    -733.8
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_78",
+    "id": "7b539da0-de36-4a01-ad77-51f3d97010ad",
+    "item_id": "gold",
+    "quantity": 28,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -549.5,
+    24.0,
+    -609.5
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Gold_cave06_79",
+    "id": "98bfbfad-a4d5-4a62-a0a6-cf07064b845a",
+    "item_id": "gold",
+    "quantity": 36,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_0",
+    "id": "d508234f-38a2-4d08-acbf-d685f15f734c",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": true,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_1",
+    "id": "f17e0104-aa48-414b-b61f-2f80fc171169",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_2",
+    "id": "a9b7e84f-7097-48b7-8e55-8bae90c95a9f",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_3",
+    "id": "7dc1d8b8-fabc-49d7-9076-fae912e8de1e",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_4",
+    "id": "fdde7eb3-5ebb-47a1-a911-f598897e0085",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": true,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_5",
+    "id": "8270f5a1-434f-4e66-acb0-4b58ca88687b",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_6",
+    "id": "6b583de6-9875-4569-936f-bc71f166e6bb",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_7",
+    "id": "96a57792-ad03-4d70-95df-a77a034c16ce",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_8",
+    "id": "301756db-3fd7-4269-8807-14c65af18632",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": true,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_9",
+    "id": "42ee66db-c915-4a65-af52-cd69c8ab7dc7",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_10",
+    "id": "577024bc-b465-4a61-8fe4-45efabebfd83",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_11",
+    "id": "e1baf558-c8ca-4a01-8789-caa05c269df8",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_12",
+    "id": "47d534af-9d63-4bf2-a4af-03ac844b73a8",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": true,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_13",
+    "id": "d98f281e-ed01-4b00-a7ed-7cfb862534c6",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_14",
+    "id": "90bc1b66-ba32-49ab-819c-a0c017e60ccb",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_15",
+    "id": "1351956f-e64f-4a29-930c-c7b46d707a84",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    -512.0,
+    260.0,
+    -1408.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_lair_0",
+    "id": "f0c85f25-84d4-4f0d-b115-60064169b3fc",
+    "colour": [
+     255,
+     120,
+     50
+    ],
+    "intensity": 2.2,
+    "radius": 900.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    640.0,
+    260.0,
+    -1408.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_lair_1",
+    "id": "1e5e59a8-ad85-4f34-a6e4-10dfee38e3a5",
+    "colour": [
+     255,
+     120,
+     50
+    ],
+    "intensity": 2.2,
+    "radius": 900.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    -512.0,
+    260.0,
+    -256.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_lair_2",
+    "id": "b4a34c81-559a-4d90-85ed-7d04ef3d5467",
+    "colour": [
+     255,
+     120,
+     50
+    ],
+    "intensity": 2.2,
+    "radius": 900.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    640.0,
+    260.0,
+    -256.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_lair_3",
+    "id": "21d98f6c-cd89-42cc-bd30-7268bd91096f",
+    "colour": [
+     255,
+     120,
+     50
+    ],
+    "intensity": 2.2,
+    "radius": 900.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1472.0,
+    48.0,
+    1088.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave06",
+    "id": "3b845d22-6f0f-40a8-810d-6926c8920b07",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 80,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "potion_magicka",
+      "name": "Potion of Magicka",
+      "qty": 2,
+      "type": "potion",
+      "value": 35,
+      "weight": 0.5,
+      "description": "Restores 60 magicka."
+     },
+     {
+      "id": "potion_heal",
+      "name": "Healing Potion",
+      "qty": 2,
+      "type": "potion",
+      "value": 40,
+      "weight": 0.5,
+      "description": "Restores 75 health."
+     },
+     {
+      "id": "book_ember_wyrm",
+      "name": "The Ember Wyrm of Whisperdeep",
+      "qty": 1,
+      "type": "book",
+      "value": 60,
+      "weight": 1.0,
+      "description": "A monk's account of a journey into the red hills, and what he found there."
+     }
+    ],
+    "use_radius": 128.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    1472.0,
+    160.0,
+    1088.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_hoard",
+    "id": "5fd49664-8a71-48bc-aa34-0aba4aa1ec00",
+    "colour": [
+     255,
+     210,
+     120
+    ],
+    "intensity": 2.0,
+    "radius": 520.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "miniwindsettings",
+   "pos": [
+    0.0,
+    400.0,
+    0.0
+   ],
+   "properties": {
+    "type": "miniwindsettings",
+    "name": "GameSettings_1",
+    "id": "c92af8ed-c766-45e5-8e04-1dc243fc0e8b",
+    "start_hour": 8.0,
+    "start_day": 1,
+    "minutes_per_day": 20.0,
+    "show_clock": true,
+    "state_store": "miniwind",
+    "difficulty": "normal",
+    "start_scenario": "prompt",
+    "region_name": "Whisperdeep",
+    "player_spells": [],
+    "quests": []
+   },
+   "io_connections": []
+  },
+  {
+   "type": "logic_command",
+   "pos": [
+    0.0,
+    420.0,
+    64.0
+   ],
+   "properties": {
+    "type": "logic_command",
+    "name": "LogicCommand_1",
+    "id": "bf87f436-2ae5-4744-9c6d-6d819c9e83bf",
+    "command": "cam topdown",
+    "disabled": false
+   },
+   "io_connections": []
+  }
+ ],
+ "created": "make_caves",
+ "terrain_data": {
+  "enabled": false
+ },
+ "_miniwind_cave": {
+  "name": "Whisperdeep",
+  "overworld": "maps/village_walled_source.json"
+ }
+}

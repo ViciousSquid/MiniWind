@@ -457,24 +457,17 @@ class QtGameView(QOpenGLWidget):
             print("[Audio] Sound system unavailable — mixer could not be initialized")
             return
 
-        from engine.audio_archives import list_archive_audio, read_archive_audio
+        from engine import asset_archives
+        from engine.audio_archives import AUDIO_EXTENSIONS
 
-        sound_archive = os.path.join(os.getcwd(), "assets", "sounds.fiopak")
-        if os.path.isfile(sound_archive):
-            try:
-                members = list_archive_audio(sound_archive, "assets/sounds")
-            except (OSError, zipfile.BadZipFile) as exc:
-                print(f"[Audio] Cannot read sounds.fiopak: {exc}")
-                return
-
-            print("[Audio] Preloading sounds from sounds.fiopak...")
+        # Every sound in every mounted archive (sounds.fiopak, sounds2.fiopak,
+        # anything.fiopak holding assets/sounds/...); later archives override.
+        members = asset_archives.members("assets/sounds", AUDIO_EXTENSIONS)
+        if members:
+            print(f"[Audio] Preloading {len(members)} sounds from .fiopak archives...")
             count = 0
             for member in members:
-                try:
-                    data = read_archive_audio(sound_archive, member, "assets/sounds")
-                except (OSError, zipfile.BadZipFile) as exc:
-                    print(f"[Audio] Cannot read {member}: {exc}")
-                    continue
+                data = asset_archives.read(member)
                 if data is None:
                     continue
                 relative = member[len("assets/sounds/"):]
@@ -569,24 +562,18 @@ class QtGameView(QOpenGLWidget):
             return False
 
     def _load_sound_from_archive(self, rel):
-        """Resolve an explicit audio path from sounds.fiopak or music.fiopak."""
-        from engine.audio_archives import read_archive_audio
+        """Resolve an explicit audio path from whichever mounted .fiopak holds it."""
+        from engine import asset_archives
 
         if rel.startswith("assets/sounds/"):
             asset_root = "assets/sounds"
-            archive_path = os.path.join(os.getcwd(), "assets", "sounds.fiopak")
         elif rel.startswith("assets/music/"):
             asset_root = "assets/music"
-            archive_path = os.path.join(os.getcwd(), "assets", "music.fiopak")
         else:
             return False
-        if not os.path.isfile(archive_path):
+        if not asset_archives.in_archive(rel):
             return False
-        try:
-            data = read_archive_audio(archive_path, rel, asset_root)
-        except (OSError, zipfile.BadZipFile) as exc:
-            print(f"[Audio] Cannot read {os.path.basename(archive_path)}: {exc}")
-            return False
+        data = asset_archives.read(rel)
         if data is None:
             return False
 
@@ -1186,6 +1173,29 @@ class QtGameView(QOpenGLWidget):
                 time.perf_counter(), attacking=shooting,
                 weapon_kind=self._weapon_kind(weapon_id, sess),
                 handed=handed)
+        # Everyone else nearby holds their weapon too, through the same path:
+        # ``overhead_actor_weapons() -> [(pos, facing, weapon_id, handed,
+        # attacking, size)]``.
+        others = getattr(sess, "overhead_actor_weapons", None)
+        if others is None:
+            return
+        try:
+            held_list = others() or ()
+        except Exception as exc:
+            debug_log("Error", f"overhead_actor_weapons failed: {exc}")
+            return
+        now = time.perf_counter()
+        player_size = max(1.0, float(self.overhead_sprite_size))
+        for a_pos, a_facing, a_weapon, a_handed, a_attacking, a_size in held_list:
+            path = self._weapon_asset_path(a_weapon)
+            if not path:
+                continue
+            self._overhead_sprite_renderer.draw_weapon(
+                self.projection_matrix, self.view_matrix, a_pos, a_facing, path,
+                now, attacking=a_attacking,
+                weapon_kind=self._weapon_kind(a_weapon, sess),
+                size=player_size * 0.55 * (a_size / player_size),
+                handed=a_handed)
 
     @staticmethod
     def _weapon_asset_path(weapon_id):
@@ -1938,6 +1948,13 @@ class QtGameView(QOpenGLWidget):
             self._cached_projectiles = np.array(render_state.projectiles, dtype=np.float32).reshape(-1, 3)
             self._cached_monster_rays = list(render_state.monster_debug_rays)
             self._cached_level_complete_ui = render_state.level_complete_ui
+            ui = self._cached_level_complete_ui
+            if (ui and ui.get('immediate')
+                    and not getattr(self, '_level_change_queued', False)):
+                # No Complete/Continue box: change level on the next event
+                # loop turn (never from inside the frame being drawn).
+                self._level_change_queued = True
+                QTimer.singleShot(0, self._confirm_immediate_level_change)
             self._cached_underwater = render_state.player_underwater
             self._cached_underwater_tint = render_state.underwater_tint
             self._cached_p2_underwater = render_state.player2_underwater
@@ -2256,7 +2273,8 @@ class QtGameView(QOpenGLWidget):
                 self._draw_hud(painter, render_state)
         if self.play_mode and render_state and render_state.player_dead:
             self._draw_death_screen(painter)
-        if self.play_mode and self._cached_level_complete_ui:
+        if (self.play_mode and self._cached_level_complete_ui
+                and not self._cached_level_complete_ui.get('immediate')):
             self._draw_level_complete_overlay(painter)
         if self.play_mode:
             logic_thread = self.logic_thread
@@ -3235,6 +3253,12 @@ class QtGameView(QOpenGLWidget):
         self._level_complete_btn_rect = None
         if self.logic_thread:
             self.logic_thread.interaction_runtime.level_complete_ui = None
+
+    def _confirm_immediate_level_change(self):
+        self._level_change_queued = False
+        ui = getattr(self, '_cached_level_complete_ui', None)
+        if ui and ui.get('immediate'):
+            self._confirm_level_complete()
 
     def _cancel_level_complete(self):
         self._cached_level_complete_ui = None

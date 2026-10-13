@@ -34,6 +34,12 @@ from . import birthsigns
 
 #: Major-skill increases needed to earn one character level.
 SKILL_UPS_PER_LEVEL = 10
+#: The three pools a level-up can grow, Skyrim-style: the player picks one.
+LEVEL_POOLS = ("health", "magicka", "stamina")
+#: How much the chosen pool grows per level.
+LEVEL_POOL_GAIN = 10.0
+#: How many quick-weapon slots there are (keys 1-4).
+QUICK_WEAPON_SLOTS = 4
 #: Experience points (kills, quests) per level: level L needs L times this.
 XP_PER_LEVEL = 100
 
@@ -75,6 +81,26 @@ class Character:
         self._skill_xp: Dict[str, float] = {}  # fractional XP per skill
         # per-level: how many skill-ups happened under each governing attribute
         self._level_attr_gains: Dict[str, int] = {a: 0 for a in attr.ATTRIBUTES}
+        #: Skill rises not yet announced, as (skill id, new value). Transient:
+        #: the play session drains it (:meth:`pop_skill_raises`) and shows each
+        #: as "Destruction increased to 12", so practice is visible.
+        self._skill_raises: List = []
+        #: Successful casts per spell id. Practice with one spell makes it
+        #: steadier on top of the school skill (see magic.cast_chance).
+        self.spell_practice: Dict[str, int] = {}
+        #: The 3d6 totals rolled at creation ({"strength", "endurance",
+        #: "personality"}), which write the character's bio (game.rpg.bios).
+        self.rolls: Dict[str, int] = {}
+        #: The four quick-weapon slots (Baldur's Gate's "Quick Weapons"): an
+        #: item id or None each. Keys 1-4 draw the weapon in that slot; the
+        #: inventory window fills them by drag and drop.
+        self.quick_weapons: List[Optional[str]] = [None] * QUICK_WEAPON_SLOTS
+        #: Books read (item ids): a skill book teaches only the first time.
+        self.read_books: List[str] = []
+        #: Weapon ids the slots have already been offered (transient). A weapon
+        #: picked up for the first time drops into a free slot by itself; one
+        #: the player has taken out of the slots stays out.
+        self._quick_seen = set()
 
         # wealth & gear
         self.gold = 25
@@ -99,6 +125,9 @@ class Character:
         self.recompute_derived(reset_current=True)
 
     # ------------------------------------------------------------------ build
+    def can_use_magic(self) -> bool:
+        return cls.can_use_magic(self)
+
     @classmethod
     def create(cls_, name: str, race_id: str, class_id: str, birthsign_id: str = "none",
                gender: str = "male", custom_class: cls.CharClass = None) -> "Character":
@@ -134,9 +163,11 @@ class Character:
                 skills[sid] = min(100, skills[sid] + int(delta))
         c.skills = skills
 
-        # starting spells from race + birthsign + class
-        for sp in (list(race.starting_spells) + list(sign.spells)
-                   + list(getattr(klass, "starting_spells", []))):
+        # starting spells from race + birthsign + class (none for a class
+        # that works no magic: a Warrior)
+        for sp in ((list(race.starting_spells) + list(sign.spells)
+                    + list(getattr(klass, "starting_spells", [])))
+                   if getattr(klass, "magic", True) else []):
             if sp not in c.known_spells:
                 c.known_spells.append(sp)
         # Safety net: a spellcasting class (Mage, Sorcerer, Healer, Nightblade,
@@ -168,13 +199,22 @@ class Character:
         # Health: endurance-driven, plus accumulated per-level gains.
         base_health = end * 2.0 + self._accum_health
         self.max_health = base_health + sign_bonus.get("health", 0)
-        # Magicka: intelligence-driven (+ birthsign, which can be large).
-        self.max_magicka = intel * 1.5 + sign_bonus.get("magicka", 0)
+        # Magicka: intelligence-driven (+ birthsign, which can be large), plus
+        # whatever levels were spent on it.
+        self.max_magicka = (intel * 1.5 + self._accum_magicka
+                            + sign_bonus.get("magicka", 0))
         # Stamina/fatigue: the "can I keep swinging/running" pool.
-        self.max_stamina = (stg + wil + agi + end) * 0.5 + sign_bonus.get("stamina", 0)
+        self.max_stamina = ((stg + wil + agi + end) * 0.5 + self._accum_stamina
+                            + sign_bonus.get("stamina", 0))
 
         self.max_health = max(1.0, self.max_health)
         self.max_magicka = max(0.0, self.max_magicka)
+        if not self.can_use_magic():
+            # A Warrior has no magicka and no spells, whatever the birthsign.
+            self.max_magicka = 0.0
+            self.magicka = 0.0
+            self.known_spells = []
+            self.active_spell = None
         self.max_stamina = max(1.0, self.max_stamina)
         if reset_current:
             self.health = self.max_health
@@ -187,6 +227,9 @@ class Character:
 
     #: health accumulated from levelling (added on top of endurance*2)
     _accum_health: float = 0.0
+    #: magicka and stamina chosen at level-ups (added on top of the attributes)
+    _accum_magicka: float = 0.0
+    _accum_stamina: float = 0.0
 
     @property
     def carry_capacity(self) -> float:
@@ -228,6 +271,9 @@ class Character:
         return leveled
 
     def _on_skill_raised(self, skill_id: str) -> None:
+        self._skill_raises.append((skill_id, int(self.skills.get(skill_id, 0))))
+        if len(self._skill_raises) > 16:
+            del self._skill_raises[:-16]
         gov = sk.governing_attribute(skill_id)
         self._level_attr_gains[gov] = self._level_attr_gains.get(gov, 0) + 1
         # Athletics/heavy skills also nudge derived pools live.
@@ -235,6 +281,12 @@ class Character:
             self.max_stamina += 1
         if skill_id in self.major_skills:
             self.xp_progress += 1
+
+    def pop_skill_raises(self) -> List:
+        """The skill rises since the last call, oldest first, and forget them."""
+        out = list(self._skill_raises)
+        self._skill_raises.clear()
+        return out
 
     def add_xp(self, amount) -> int:
         """Earn *amount* experience points (kills, quests); returns it."""
@@ -253,12 +305,16 @@ class Character:
         return (self.xp_progress >= SKILL_UPS_PER_LEVEL
                 or self.xp >= self.xp_needed)
 
-    def level_up(self, chosen_attrs: Optional[List[str]] = None) -> Dict:
+    def level_up(self, chosen_attrs: Optional[List[str]] = None,
+                 pool: Optional[str] = None) -> Dict:
         """Advance one character level.
 
-        If *chosen_attrs* (up to 3) is given those attributes are raised;
-        otherwise the two favoured attributes plus the most-trained attribute
-        this level are chosen automatically. Returns a summary dict.
+        *pool* is the Skyrim-style choice: ``"health"``, ``"magicka"`` or
+        ``"stamina"`` grows by :data:`LEVEL_POOL_GAIN`. Attributes still rise
+        as well, from what was actually trained (Oblivion-style): if
+        *chosen_attrs* (up to 3) is given those are raised; otherwise the two
+        favoured attributes plus the most-trained attribute this level. With no
+        *pool* the old Endurance-based health gain applies. Returns a summary.
         """
         # The level is paid for by whichever track is full -- the skill
         # training first -- and the other keeps its progress. (A forced
@@ -293,13 +349,25 @@ class Character:
             raised[a] = new_val - self.attrs[a]
             self.attrs[a] = new_val
 
-        # Health gain from endurance (classic: 10% of endurance per level).
-        hp_gain = self.attrs.get(attr.ENDURANCE, 40) * 0.1
-        self._accum_health += hp_gain
+        pool = str(pool or "").lower()
+        gains = {"health": 0.0, "magicka": 0.0, "stamina": 0.0}
+        if pool in LEVEL_POOLS:
+            gains[pool] = LEVEL_POOL_GAIN
+        else:
+            # Health gain from endurance (classic: 10% of endurance per level).
+            gains["health"] = self.attrs.get(attr.ENDURANCE, 40) * 0.1
+        self._accum_health += gains["health"]
+        self._accum_magicka += gains["magicka"]
+        self._accum_stamina += gains["stamina"]
         self._level_attr_gains = {a: 0 for a in attr.ATTRIBUTES}
         self.recompute_derived(reset_current=False)
-        self.health = self.max_health  # full heal on level up
-        return {"level": self.level, "attrs_raised": raised, "health_gain": hp_gain}
+        # A level-up restores you fully, as in Skyrim.
+        self.health = self.max_health
+        self.magicka = self.max_magicka
+        self.stamina = self.max_stamina
+        return {"level": self.level, "attrs_raised": raised,
+                "health_gain": gains["health"], "pool": pool if pool in LEVEL_POOLS else "",
+                "pool_gain": gains.get(pool, 0.0) if pool in LEVEL_POOLS else 0.0}
 
     # --------------------------------------------------------------- pools help
     def damage(self, amount: float) -> float:
@@ -371,6 +439,8 @@ class Character:
             "skill_xp": dict(self._skill_xp),
             "level_attr_gains": dict(self._level_attr_gains),
             "accum_health": self._accum_health,
+            "accum_magicka": self._accum_magicka,
+            "accum_stamina": self._accum_stamina,
             "gold": self.gold, "inventory": list(self.inventory),
             "equipment": dict(self.equipment), "known_spells": list(self.known_spells),
             "active_spell": self.active_spell,
@@ -378,6 +448,10 @@ class Character:
             "head": self.head,
             "factions": dict(self.factions), "bounty": self.bounty,
             "sign_stat_bonuses": dict(getattr(self, "_sign_stat_bonuses", {})),
+            "spell_practice": dict(self.spell_practice),
+            "quick_weapons": list(self.quick_weapons),
+            "rolls": dict(self.rolls),
+            "read_books": list(self.read_books),
         }
 
     @classmethod
@@ -400,6 +474,8 @@ class Character:
         c._level_attr_gains = {a: int(data.get("level_attr_gains", {}).get(a, 0))
                                for a in attr.ATTRIBUTES}
         c._accum_health = float(data.get("accum_health", 0.0))
+        c._accum_magicka = float(data.get("accum_magicka", 0.0))
+        c._accum_stamina = float(data.get("accum_stamina", 0.0))
         c._sign_stat_bonuses = dict(data.get("sign_stat_bonuses", {}))
         c.level = int(data.get("level", 1))
         c.xp_progress = int(data.get("xp_progress", 0))
@@ -413,6 +489,20 @@ class Character:
         c.head = data.get("head", "")
         c.factions = dict(data.get("factions", {}))
         c.bounty = int(data.get("bounty", 0))
+        if isinstance(data.get("read_books"), list):
+            c.read_books = [str(b) for b in data["read_books"]]
+        if isinstance(data.get("rolls"), dict):
+            c.rolls = {str(k): int(v) for k, v in data["rolls"].items()}
+        quick = data.get("quick_weapons")
+        if isinstance(quick, list):
+            quick = [str(q) if q else None for q in quick[:QUICK_WEAPON_SLOTS]]
+            c.quick_weapons = quick + [None] * (QUICK_WEAPON_SLOTS - len(quick))
+            # Whatever was carried when saved has been offered already.
+            c._quick_seen = {str(s.get("id")) for s in c.inventory
+                             if isinstance(s, dict) and s.get("id")}
+        practice = data.get("spell_practice")
+        if isinstance(practice, dict):
+            c.spell_practice = {str(k): int(v) for k, v in practice.items()}
         c.recompute_derived(reset_current=False)
         c.health = float(data.get("health", c.max_health))
         c.magicka = float(data.get("magicka", c.max_magicka))

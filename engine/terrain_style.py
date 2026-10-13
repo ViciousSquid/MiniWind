@@ -696,6 +696,19 @@ def texture_average(filename: str) -> Optional[np.ndarray]:
         return _TEXTURE_AVERAGES[filename]
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     result = None
+    from engine import asset_archives
+    packed = f"assets/textures/terrain/{filename}"
+    if asset_archives.in_archive(packed):
+        try:
+            import io
+            from PIL import Image
+            with Image.open(io.BytesIO(asset_archives.read(packed))) as img:
+                small = img.convert('RGB').resize((64, 64))
+                result = np.asarray(small, dtype=np.float64).reshape(-1, 3).mean(0) / 255.0
+        except Exception:
+            result = None
+        _TEXTURE_AVERAGES[filename] = result
+        return result
     for root in (here, os.getcwd()):
         path = os.path.join(root, 'assets', 'textures', 'terrain', filename)
         if os.path.isfile(path):

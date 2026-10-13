@@ -238,6 +238,103 @@ which is also the `ember_tome` quest item of Thalen's quest *The Ember Tome*.
 The quest arrow points at the book; reading it teaches firebolt, hands over the
 tome and completes the quest. The tool refuses to expand a map twice.
 
+### Geography, biomes and forests
+
+```bash
+python -m game.tools.enliven_world --preview world.png   # once; --force to redo
+```
+
+gives the Vale its lie of the land (the picture is `world_map.png`):
+
+* **Relief** -- rolling hills, ridgelines, desert dunes and four flat-topped
+  mesas, added to the heightmap. It fades to nothing near every site, so towns
+  sit in the valleys with the hills rising between them; anything on changed
+  ground was lifted with it.
+* **Biomes** -- a biome map over the terrain (`engine/terrain_biomes.py`, saved
+  as `biome_map_blob`, drawn by `terrain.frag`): **desert** in the south-west
+  fading through steppe into meadow, **snow** on the Emberpeaks and the high
+  summits, **swamp** round the lakes (an oasis in the desert), and **wheat** --
+  fields round every farm and three great golden plains. Grass follows it: none
+  on sand or snow, reeds in the swamp, dense waist-high wheat in the fields, and
+  never on a road stamped with the terrain paint tool.
+* **Forests** -- about 11 000 trees, by biome: pines and snowy pines in the
+  north-east, willows in the swamps, palms at desert water, dead trees and
+  scrub at the desert's edge, broadleaf elsewhere, and a great forest round
+  Greywood (art: `python -m game.tools.make_tree_art`).
+* **Six shrines**, one per biome, each a named place.
+
+### Caves and the dragon
+
+```bash
+python -m game.tools.make_caves                    # mouths on the overworld + maps
+python -m game.tools.make_caves --maps-only cave06 # just rewrite cave maps
+```
+
+Six caves open in the foothills. Each mouth on the overworld is a rock arch with
+a **LevelChanger** ("[E] Enter ...", no confirmation box: `confirm: false`, its
+text from `prompt`) and a **PlayerStart** `<cave>_exit` outside it. Its map,
+`maps/cave01.json` .. `cave06.json`, is a rock cave with a start named
+`entrance` and a LevelChanger back out to the exit start. The character crosses
+over through the state store like any level change.
+
+**Whisperdeep** (`cave06`) is a dragon's lair: *Vharzul the Ember Wyrm*, five
+times the player's size (`head_scale: 5`, head `dragon.png`) with 3000 hit
+points, in a great hall with gold all over the floor. Close up he bites; further
+off he breathes fire -- a stream of the engine's FIRE Effects, each flame
+animating out of step, burning whoever stands in the cone
+(`game/dragon_fire.py`). Console: `dragonfire 1`..`5` picks the fire setting
+(remembered).
+
+Maps, like textures and sounds, may live in `.fiopak` packages: they are read
+from a package first and from the loose file otherwise.
+
+### Dungeon Designer
+
+**Tools ▸ Dungeon Designer…** (or `python -m game.tools.dungeon_designer`)
+draws dungeons on a grid the way Fio's alpha editor did: left-drag paints
+SOLID or open, right-drag the other, Ctrl+click fills. **Generate** uses
+alpha's two generators (`game/tilemap_gen.py`): rooms and corridors, or long
+winding corridors. Place the **Entrance**, **Monsters**, **Chests** and
+**Lights**, pick a cave or dungeon look, and **Save**: the map is built by
+`game/dungeon_map.py` with a PlayerStart `entrance` and a LevelChanger back to
+the map named under *Way out*. The design is kept in the map, so **Load**
+opens it again. To enter it from the overworld, put a LevelChanger there with
+`target_map` = the saved file and `destination_spawn` = `entrance`, and a
+PlayerStart beside it named in the designer's *At start*.
+
+### Books
+
+Books are read open over the game, two parchment pages at a time, in the
+medieval face (`game/ui/book_window.py`): double-click one in the pack (or
+Use), click a page or press ←/→ to turn, Esc to close. Their texts are plain
+files, `assets/books/<id>.txt` — a `Title:` / `Author:` header, then
+paragraphs separated by blank lines, `[page]` for a forced page break — named
+by a book item's `"book"` in `game/data/items.json` (`game/books.py`). Pack the
+folder into `books.fiopak` (`python tools/make_fiopak.py assets/books
+assets/books.fiopak`) and they are read from there; a loose file still
+overrides. The shipped texts are examples to replace.
+
+### Maps remember, lairs refill
+
+Each map keeps what happened in it (`game/map_memory.py`, in the state store):
+the dead stay dead, taken pickups stay gone, chests keep what was left.
+Generic hostile creatures and spawner members come back about a day later
+(22-32 game hours), never in front of the player; one-of-a-kind creatures
+(the dragon) and townsfolk never do. Clear a cave and it may be full again
+tomorrow.
+
+### The world in motion
+
+* **Roads and travellers** (`game/living/`): traders, pilgrims, adventurers,
+  brigands and wolf packs travel between places along the PathNodes you lay
+  (or straight tracks where there are none). Far away a journey is a sum on
+  the clock; near the player its party walks as real actors. Console: `roads`.
+* **Wildlife roams** its ground when idle (`game/wildlife.py`) -- not sheep or
+  cows -- and only where Big World is simulating.
+* **Held weapons** -- every actor's weapon in hand is drawn beside its head on
+  its wielding side (one in five is left-handed). Fighters carry a blade and a
+  bow and switch by range (`game/held_weapons.py`).
+
 ## The living settlement (vertical slice)
 
 The starter settlement **Millbrook** is authored entirely as data
