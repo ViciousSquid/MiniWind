@@ -1057,8 +1057,9 @@ class MiniwindGame:
                 hud.draw_time_tint(painter, session, w, h, viewport)
                 # Inspector lines (console 'inspect') lie on the world, under
                 # the HUD; their windows float above everything.
-                from .ui import inspector
+                from .ui import inspector, path_debug
                 inspector.draw_world_lines(painter, viewport, w, h)
+                path_debug.draw(painter, session, viewport, w, h)   # console 'paths'
                 hud.draw(painter, session, w, h)
                 hud.draw_bow_charge(painter, session, viewport, w, h)
                 hud.draw_npc_bow_charges(painter, session, viewport, w, h)

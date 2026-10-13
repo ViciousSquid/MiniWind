@@ -549,6 +549,25 @@ def cmd_roads(ctx, args):
     return None
 
 
+def cmd_paths(ctx, args):
+    """paths [on|off] -- draw where every nearby actor is walking: cyan for a
+    route round walls, yellow for a straight walk, red for a chase."""
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    if session is None:
+        debug_log("Error", "paths: enter Play Mode first.")
+        return None
+    want = (args[0].lower() if args else "")
+    if want in ("on", "1", "true"):
+        session.show_paths = True
+    elif want in ("off", "0", "false"):
+        session.show_paths = False
+    else:
+        session.show_paths = not getattr(session, "show_paths", False)
+    debug_log("Info", "Pathfinding lines " + ("on: cyan = route round walls, "
+              "yellow = straight walk, red = chase" if session.show_paths else "off"))
+    return None
+
+
 #: (names, handler, help) for every command this module provides.
 COMMANDS = (
     (("diceroll", "dice"), cmd_diceroll,
@@ -560,6 +579,8 @@ COMMANDS = (
      " — Reactive simulation (Play Mode)"),
     (("inspect", "mind"), cmd_inspect,
      "— Pause and click an actor: schedule, destination, AI state (Play Mode)"),
+    (("paths", "pathfinding"), cmd_paths,
+     "[on|off] — Draw every nearby actor's path: routes, walks, chases (Play Mode)"),
     (("roads", "travellers"), cmd_roads,
      "— List the parties on the roads: who, where from/to, where now (Play Mode)"),
     (("debugtools", "debug"), cmd_debugtools,
