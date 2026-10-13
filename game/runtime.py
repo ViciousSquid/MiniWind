@@ -4042,7 +4042,28 @@ class MiniwindSession:
         return list(home) if isinstance(home, (list, tuple)) and len(home) == 3 else list(npc.pos)
 
     def _find_named(self, name: str):
-        for t in fio.things(self.logic):
+        """The first thing called exactly *name*, or None.
+
+        Schedules ask this for every NPC on every decision pass (work places,
+        patrol markers), so it reads a name -> thing dict rebuilt only when the
+        scene's thing list changes, not a walk of the whole world per ask. A
+        renamed thing is caught by checking the hit still carries the name."""
+        things = fio.things(self.logic)
+        token = (id(things), len(things))
+        cached = getattr(self, "_exact_name_cache", None)
+        if cached is None or cached[0] != token:
+            index = {}
+            for t in list(things):
+                props = getattr(t, "properties", None)
+                if isinstance(props, dict):
+                    index.setdefault(str(props.get("name", "")), t)
+            cached = self._exact_name_cache = (token, index)
+        hit = cached[1].get(str(name))
+        if hit is not None and str(hit.properties.get("name", "")) == str(name):
+            return hit
+        if hit is not None:
+            self._exact_name_cache = None            # stale: a rename; rebuild next ask
+        for t in things:
             if str(t.properties.get("name", "")) == name:
                 return t
         return None
