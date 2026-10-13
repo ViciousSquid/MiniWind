@@ -1561,6 +1561,8 @@ class Terrain:
             weight = np.maximum(weight, biomes[:, terrain_biomes.SWAMP] * 0.8)
             weight = weight * terrain_biomes.grass_keep(biomes)
         keep &= edge_roll < weight
+        if self.texture_paint_maps:
+            keep &= self._paint_alpha_batch(tx, tz) < self.GRASS_PAINT_CLEAR
         tx = tx[keep]
         tz = tz[keep]
         tuft_raw = h0[keep]
@@ -1634,6 +1636,8 @@ class Terrain:
         gx = (self._get_raw_heights_batch(tx + eps, tz) - h0) / eps
         gz = (self._get_raw_heights_batch(tx, tz + eps) - h0) / eps
         keep &= 1.0 / np.sqrt(1.0 + gx * gx + gz * gz) >= self.GRASS_MIN_NORMAL_Y
+        if self.texture_paint_maps:
+            keep &= self._paint_alpha_batch(tx, tz) < self.GRASS_PAINT_CLEAR
         tx, tz = tx[keep], tz[keep]
         if len(tx) == 0:
             return np.empty((0, 9), dtype=np.float32)
@@ -2532,9 +2536,43 @@ class Terrain:
         return top * (1 - fy) + bot * fy
 
     def _touch_texture_paint(self, coord):
-        """Bump the version for one baked terrain paint chunk."""
+        """Bump the version for one baked terrain paint chunk. Its grass
+        regrows, so a road stamped over a meadow clears the grass on it."""
         self._paint_version_counter += 1
         self._paint_map_versions[tuple(coord)] = self._paint_version_counter
+        table = self.table
+        slots = table.live_slots()
+        if len(slots):
+            hit = ((table.coord[slots, 0] == int(coord[0]))
+                   & (table.coord[slots, 1] == int(coord[1])))
+            table.grass_dirty[slots[hit]] = True
+
+    #: Grass does not grow where stamped/painted texture covers the ground
+    #: more than this (roads, floors, plazas).
+    GRASS_PAINT_CLEAR = 0.25
+
+    def _paint_alpha_batch(self, world_x, world_z) -> np.ndarray:
+        """Coverage (0..1) of baked texture paint at world points."""
+        xs = np.asarray(world_x, np.float32).ravel()
+        zs = np.asarray(world_z, np.float32).ravel()
+        out = np.zeros(len(xs), np.float32)
+        if not self.texture_paint_maps or len(xs) == 0:
+            return out
+        res = self.TERRAIN_PAINT_RESOLUTION
+        size = float(self.chunk_size)
+        fx = (xs - self.offset_x) / size
+        fz = (zs - self.offset_z) / size
+        cx = np.floor(fx).astype(np.int64)
+        cz = np.floor(fz).astype(np.int64)
+        ix = np.clip(((fx - cx) * res).astype(np.int64), 0, res - 1)
+        iz = np.clip(((fz - cz) * res).astype(np.int64), 0, res - 1)
+        for key in set(zip(cx.tolist(), cz.tolist())):
+            paint = self.texture_paint_maps.get(key)
+            if paint is None:
+                continue
+            m = (cx == key[0]) & (cz == key[1])
+            out[m] = paint[ix[m], iz[m], 3].astype(np.float32) / 255.0
+        return out
 
     @staticmethod
     def _load_texture_rgba(path):
@@ -2701,6 +2739,7 @@ class Terrain:
         self._paint_map_versions = {}
         self._paint_version_counter += 1
         self._paint_gpu_version[:] = 0
+        self.table.mark_grass_dirty()
 
     def clear_texture_stamps(self):
         """Compatibility alias for the old stamp tool name."""
