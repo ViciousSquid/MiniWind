@@ -257,14 +257,17 @@ WISP_COLOURS = [
 # _maybe_send_the_reaper.
 # ---------------------------------------------------------------------------
 #: How often a fresh corpse is visited at all.
-REAPER_CHANCE = 0.25
-#: He appears this far off, on a random bearing, rather than on top of the body.
-REAPER_ARRIVE_DIST = (240.0, 460.0)
+REAPER_CHANCE = 1.0
+#: He appears this far off -- beyond the edge of the overhead view -- on the
+#: far side of the body from the player, and walks in.
+REAPER_ARRIVE_DIST = (1150.0, 1400.0)
+#: The most of him that is ever seen: he is never more than a shade.
+REAPER_MAX_OPACITY = 0.7
 #: Seconds to fade in on arrival, and to fade out on leaving.
 REAPER_FADE_IN = 1.0
 REAPER_FADE_OUT = 0.9
 #: He glides — no pathfinding, no collision, no gravity.
-REAPER_SPEED = 165.0
+REAPER_SPEED = 230.0
 #: How close he comes before he swings.
 REAPER_REACH = 70.0
 #: The stroke of the scythe, and the very short pause after it before he goes.
@@ -1352,7 +1355,14 @@ class MiniwindSession:
             bpos = [float(body.pos[0]), float(body.pos[1]), float(body.pos[2])]
         except (TypeError, ValueError, IndexError):
             return None
-        bearing = self.rng.uniform(0.0, 2.0 * math.pi)
+        # From beyond the edge of the view: on the far side of the body from
+        # the player (give or take), and far enough out to be off screen.
+        ppos = self._player_pos()
+        if ppos is not None and (bpos[0] - ppos[0] or bpos[2] - ppos[2]):
+            away = math.atan2(bpos[0] - ppos[0], bpos[2] - ppos[2])
+            bearing = away + self.rng.uniform(-0.9, 0.9)
+        else:
+            bearing = self.rng.uniform(0.0, 2.0 * math.pi)
         distance = self.rng.uniform(*REAPER_ARRIVE_DIST)
         pos = [bpos[0] + math.sin(bearing) * distance,
                bpos[1],
@@ -1384,6 +1394,7 @@ class MiniwindSession:
             })
         except Exception:
             return None
+        reaper._respawn_fade_alpha = 0.0      # unseen until he fades in
         return reaper
 
     def _update_reapers(self, delta: float) -> None:
@@ -1421,14 +1432,15 @@ class MiniwindSession:
             return self._reaper_phase(visit, "leave")
 
         if phase == "arrive":
-            props["_opacity"] = min(1.0, visit["t"] / REAPER_FADE_IN)
-            self._reaper_face_body(visit)
+            # Fading in as he starts toward the body, still off screen.
+            self._set_reaper_opacity(reaper, visit["t"] / REAPER_FADE_IN)
+            self._reaper_glide(visit, delta)
             if visit["t"] >= REAPER_FADE_IN:
                 return self._reaper_phase(visit, "approach")
             return True
 
         if phase == "approach":
-            props["_opacity"] = 1.0
+            self._set_reaper_opacity(reaper, 1.0)
             arrived = self._reaper_glide(visit, delta)
             if arrived or visit["t"] >= REAPER_APPROACH_TIMEOUT:
                 return self._reaper_phase(visit, "reap")
@@ -1457,11 +1469,23 @@ class MiniwindSession:
                 return self._reaper_phase(visit, "leave")
             return True
 
-        # leave
+        # leave: he turns from the body and walks off, fading to nothing.
         props["is_shooting"] = False
         props.pop("_attack_anim", None)
-        props["_opacity"] = max(0.0, 1.0 - visit["t"] / REAPER_FADE_OUT)
+        self._set_reaper_opacity(reaper, 1.0 - visit["t"] / REAPER_FADE_OUT)
+        self._reaper_walk_off(visit, delta)
         return visit["t"] < REAPER_FADE_OUT
+
+    @staticmethod
+    def _set_reaper_opacity(reaper, fraction: float) -> None:
+        """Show *reaper* at *fraction* of his full presence, which is itself
+        at most REAPER_MAX_OPACITY. Drawn through the engine's per-entity
+        render alpha, and journalled so the renderer re-reads it."""
+        alpha = REAPER_MAX_OPACITY * max(0.0, min(1.0, float(fraction)))
+        reaper.properties["_opacity"] = alpha
+        if getattr(reaper, "_respawn_fade_alpha", None) != alpha:
+            reaper._respawn_fade_alpha = alpha
+            _journal(reaper)
 
     def _reaper_phase(self, visit, phase: str) -> bool:
         """Move a visit into *phase*, restarting its clock. Always still alive."""
@@ -1495,13 +1519,26 @@ class MiniwindSession:
         if distance <= REAPER_REACH:
             return True
         step = min(distance - REAPER_REACH, REAPER_SPEED * max(0.0, delta))
-        reaper.pos[0] += dx / distance * step
-        reaper.pos[2] += dz / distance * step
-        # Ride at the body's height rather than the ground he set out from, so
-        # he does not walk through the floor of a room on another storey.
-        reaper.pos[1] = float(body.pos[1])
+        # A new list, not an in-place edit: assigning pos is what tells the
+        # renderer he moved. Ride at the body's height rather than the ground
+        # he set out from, so he does not walk through another storey's floor.
+        reaper.pos = [float(reaper.pos[0]) + dx / distance * step,
+                      float(body.pos[1]),
+                      float(reaper.pos[2]) + dz / distance * step]
         face_heading(reaper.properties, dx, dz)
         return distance - step <= REAPER_REACH
+
+    def _reaper_walk_off(self, visit, delta: float) -> None:
+        """Leaving: glide away from the body, the way he came."""
+        reaper, body = visit["thing"], visit["body"]
+        dx = float(reaper.pos[0]) - float(body.pos[0])
+        dz = float(reaper.pos[2]) - float(body.pos[2])
+        distance = math.hypot(dx, dz) or 1.0
+        step = REAPER_SPEED * max(0.0, delta)
+        reaper.pos = [float(reaper.pos[0]) + dx / distance * step,
+                      float(reaper.pos[1]),
+                      float(reaper.pos[2]) + dz / distance * step]
+        face_heading(reaper.properties, dx, dz)
 
     def _despawn_reaper(self, visit) -> None:
         """Take one reaper out of the scene."""
@@ -2811,6 +2848,7 @@ class MiniwindSession:
                 continue          # already recorded before a save/load
             tp["_death_noted"] = True
             self._on_npc_death(t)
+            # Death comes for every fallen NPC (never for a creature).
             self._maybe_send_the_reaper(t)
 
     def _on_npc_death(self, npc) -> None:

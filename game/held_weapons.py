@@ -186,6 +186,8 @@ class HeldWeapons:
             if p.get("dead") or p.get("hidden") or p.get("_bw_parked_hidden") \
                     or p.get("away_on_journey"):
                 continue
+            if p.get("_reaper") and float(p.get("_opacity", 1.0) or 0.0) < 0.3:
+                continue          # Death's scythe comes and goes with him
             x, y, z = float(t.pos[0]), float(t.pos[1]), float(t.pos[2])
             if (x - ppos[0]) ** 2 + (z - ppos[2]) ** 2 > r2:
                 continue

@@ -59,6 +59,11 @@ class _Session:
     _banish_reapers = MiniwindSession._banish_reapers
     _rebuild_entity_caches = MiniwindSession._rebuild_entity_caches
     _attackable = MiniwindSession._attackable
+    _set_reaper_opacity = staticmethod(MiniwindSession._set_reaper_opacity)
+    _reaper_walk_off = MiniwindSession._reaper_walk_off
+
+    def _player_pos(self):
+        return None
 
     def __init__(self, seed=1):
         self.logic = _Logic()
@@ -87,6 +92,14 @@ def _run(session, seconds, step=0.05):
         session._update_reapers(step)
 
 
+def _run_until_reaping(session, visit, step=0.05, limit=30.0):
+    """Tick until he has walked in from off screen and starts his swing."""
+    for _ in range(int(limit / step)):
+        if visit["phase"] == "reap":
+            return
+        session._update_reapers(step)
+
+
 # ===========================================================================
 # Who gets a visit
 # ===========================================================================
@@ -104,16 +117,16 @@ def test_a_roll_over_the_chance_does_not(session):
     assert session.logic.things == []
 
 
-def test_roughly_one_death_in_four_is_attended():
-    """The odds, over enough deaths to be sure it is not one-in-two."""
+def test_every_death_is_attended():
+    """Death comes for every body (bar the cap on how many walk at once)."""
     session = _Session(seed=7)
     visited = 0
-    for _ in range(400):
+    for _ in range(100):
         session._reapers = []               # each death judged on its own
         session.logic.things = []
         session._maybe_send_the_reaper(_Body())
         visited += bool(session._reapers)
-    assert 0.18 < visited / 400 < 0.32
+    assert visited == 100
 
 
 def test_no_more_than_the_cap_at_once(session):
@@ -182,7 +195,9 @@ def test_he_fades_in_where_he_appeared(session):
 def test_he_is_solid_once_he_has_arrived(session):
     visit, _ = _summon(session)
     _run(session, runtime.REAPER_FADE_IN + 0.2)
-    assert visit["thing"].properties["_opacity"] == 1.0
+    # As solid as he ever gets: never more than a shade.
+    assert visit["thing"].properties["_opacity"] == runtime.REAPER_MAX_OPACITY
+    assert visit["thing"]._respawn_fade_alpha == runtime.REAPER_MAX_OPACITY
     assert visit["phase"] == "approach"
 
 
@@ -198,7 +213,7 @@ def test_he_moves_toward_the_body(session):
 def test_he_stops_within_reach_and_swings(session):
     visit, body = _summon(session)
     reaper = visit["thing"]
-    _run(session, 12.0)
+    _run_until_reaping(session, visit)
     distance = math.hypot(reaper.pos[0] - body.pos[0], reaper.pos[2] - body.pos[2])
     assert distance <= runtime.REAPER_REACH + 1e-6
     assert visit["phase"] in ("reap", "linger", "leave")
@@ -207,7 +222,7 @@ def test_he_stops_within_reach_and_swings(session):
 def test_he_faces_the_body_when_he_reaps(session):
     body = _Body(pos=(0.0, 0.0, 0.0))
     visit, _ = _summon(session, body)
-    _run(session, 12.0)
+    _run_until_reaping(session, visit)
     reaper = visit["thing"]
     want = math.atan2(body.pos[0] - reaper.pos[0], body.pos[2] - reaper.pos[2])
     got = float(reaper.properties["_facing"])
