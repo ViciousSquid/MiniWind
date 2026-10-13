@@ -457,24 +457,17 @@ class QtGameView(QOpenGLWidget):
             print("[Audio] Sound system unavailable — mixer could not be initialized")
             return
 
-        from engine.audio_archives import list_archive_audio, read_archive_audio
+        from engine import asset_archives
+        from engine.audio_archives import AUDIO_EXTENSIONS
 
-        sound_archive = os.path.join(os.getcwd(), "assets", "sounds.fiopak")
-        if os.path.isfile(sound_archive):
-            try:
-                members = list_archive_audio(sound_archive, "assets/sounds")
-            except (OSError, zipfile.BadZipFile) as exc:
-                print(f"[Audio] Cannot read sounds.fiopak: {exc}")
-                return
-
-            print("[Audio] Preloading sounds from sounds.fiopak...")
+        # Every sound in every mounted archive (sounds.fiopak, sounds2.fiopak,
+        # anything.fiopak holding assets/sounds/...); later archives override.
+        members = asset_archives.members("assets/sounds", AUDIO_EXTENSIONS)
+        if members:
+            print(f"[Audio] Preloading {len(members)} sounds from .fiopak archives...")
             count = 0
             for member in members:
-                try:
-                    data = read_archive_audio(sound_archive, member, "assets/sounds")
-                except (OSError, zipfile.BadZipFile) as exc:
-                    print(f"[Audio] Cannot read {member}: {exc}")
-                    continue
+                data = asset_archives.read(member)
                 if data is None:
                     continue
                 relative = member[len("assets/sounds/"):]
@@ -569,24 +562,18 @@ class QtGameView(QOpenGLWidget):
             return False
 
     def _load_sound_from_archive(self, rel):
-        """Resolve an explicit audio path from sounds.fiopak or music.fiopak."""
-        from engine.audio_archives import read_archive_audio
+        """Resolve an explicit audio path from whichever mounted .fiopak holds it."""
+        from engine import asset_archives
 
         if rel.startswith("assets/sounds/"):
             asset_root = "assets/sounds"
-            archive_path = os.path.join(os.getcwd(), "assets", "sounds.fiopak")
         elif rel.startswith("assets/music/"):
             asset_root = "assets/music"
-            archive_path = os.path.join(os.getcwd(), "assets", "music.fiopak")
         else:
             return False
-        if not os.path.isfile(archive_path):
+        if not asset_archives.in_archive(rel):
             return False
-        try:
-            data = read_archive_audio(archive_path, rel, asset_root)
-        except (OSError, zipfile.BadZipFile) as exc:
-            print(f"[Audio] Cannot read {os.path.basename(archive_path)}: {exc}")
-            return False
+        data = asset_archives.read(rel)
         if data is None:
             return False
 

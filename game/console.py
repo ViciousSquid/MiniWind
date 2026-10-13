@@ -336,6 +336,34 @@ def cmd_inspect(ctx, args):
     return None
 
 
+#: The world-pause request the ``pause`` command holds (its own owner, so it
+#: never clashes with the menus, an inspector or the actor pick).
+CONSOLE_PAUSE = "console_pause"
+
+
+def cmd_pause(ctx, args):
+    """pause -- freeze the world (game time, NPCs, combat) or let it run again.
+
+    A toggle, with no pause menu: the view stays as it is, so the frozen
+    scene can be looked at and inspected. Play Mode only."""
+    if not ctx.play_mode or ctx.logic_thread is None:
+        debug_log("Error", "pause: Play Mode only.")
+        return None
+    runtime = getattr(ctx.logic_thread, "session_runtime", None)
+    if runtime is None:
+        return None
+    owners = getattr(runtime, "world_pause_owners", None)
+    owners = (owners() if callable(owners) else owners) or frozenset()
+    want = CONSOLE_PAUSE not in owners
+    runtime.set_world_paused(CONSOLE_PAUSE, want)
+    msg = "World paused (type 'pause' again to resume)." if want else "World running."
+    debug_log("Info", msg)
+    toast = getattr(ctx.main_window, "show_toast", None)
+    if toast is not None:
+        toast(msg)
+    return None
+
+
 #: (names, handler, help) for every command this module provides.
 COMMANDS = (
     (("diceroll", "dice"), cmd_diceroll,
@@ -347,6 +375,8 @@ COMMANDS = (
      " — Reactive simulation (Play Mode)"),
     (("inspect", "mind"), cmd_inspect,
      "— Pause and click an actor: schedule, destination, AI state (Play Mode)"),
+    (("pause", "freeze"), cmd_pause,
+     "— Toggle freezing the world (time, NPCs, combat); no pause menu (Play Mode)"),
 )
 
 

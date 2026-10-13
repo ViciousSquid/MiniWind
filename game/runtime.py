@@ -273,24 +273,16 @@ _ARCHIVED_SOUNDS = None
 
 
 def sound_available(name: str) -> bool:
-    """Whether an interface sound *name* ships with the game: loose under
-    ``assets/sounds`` or packed in ``assets/sounds.fiopak`` (where the sounds
-    live now; checking only the loose folder silenced every interface sound
-    once they were archived)."""
-    global _ARCHIVED_SOUNDS
+    """Whether an interface sound *name* ships with the game: in any mounted
+    ``assets/*.fiopak`` (sounds.fiopak, sounds2.fiopak, ...) or loose under
+    ``assets/sounds``. (Checking only the loose folder silenced every
+    interface sound once they were archived.)"""
     if os.path.isfile(os.path.join(SOUND_DIR, name)):
         return True
-    if _ARCHIVED_SOUNDS is None:
-        _ARCHIVED_SOUNDS = set()
-        archive = os.path.join("assets", "sounds.fiopak")
-        if os.path.isfile(archive):
-            try:
-                from engine.audio_archives import list_archive_audio
-                for member in list_archive_audio(archive, "assets/sounds"):
-                    _ARCHIVED_SOUNDS.add(member[len("assets/sounds/"):])
-            except Exception:
-                pass
-    return name in _ARCHIVED_SOUNDS
+    if _ARCHIVED_SOUNDS is not None:          # pinned by a test
+        return name in _ARCHIVED_SOUNDS
+    from engine import asset_archives
+    return asset_archives.in_archive(f"assets/sounds/{name}")
 
 
 class _PlayerActor:

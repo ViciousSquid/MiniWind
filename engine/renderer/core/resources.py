@@ -179,20 +179,34 @@ class ResourcesMixin:
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
             return tex_id
 
+        # Packed first (any assets/*.fiopak holding the path), then loose.
+        from engine import asset_archives
         texture_path = os.path.join('assets', subfolder, texture_name)
-        if not os.path.exists(texture_path):
+        if asset_archives.in_archive(texture_path):
+            import io
+            data = asset_archives.read(texture_path)
+            source = io.BytesIO(data) if data is not None else None
+        elif os.path.exists(texture_path):
+            source = texture_path
+        else:
+            source = None
+        if source is None:
             return self.load_texture('default.png', 'textures')
 
         try:
             from PIL import Image
             from engine.animated_texture import cumulative, decode_gif_frames, is_animated_gif
             frames = None
-            if is_animated_gif(texture_path):
-                images, seconds = decode_gif_frames(texture_path)
+            if is_animated_gif(source):
+                if hasattr(source, "seek"):
+                    source.seek(0)
+                images, seconds = decode_gif_frames(source)
                 frames = [im.transpose(Image.FLIP_TOP_BOTTOM).tobytes() for im in images]
                 img = images[0].transpose(Image.FLIP_TOP_BOTTOM)
             else:
-                img = Image.open(texture_path).convert("RGBA")
+                if hasattr(source, "seek"):
+                    source.seek(0)
+                img = Image.open(source).convert("RGBA")
                 img = img.transpose(Image.FLIP_TOP_BOTTOM)
             tex_id = gl.glGenTextures(1)
             self.texture_manager[tex_cache_name] = tex_id
@@ -309,15 +323,10 @@ class ResourcesMixin:
     # FIRE animation textures
     # --------------------------------------------------------------------------
     def _fire_asset_bytes(self, asset_path):
-        """Read an effect asset's bytes from the project directory."""
-        disk_path = os.path.join(os.getcwd(), asset_path)
-        if os.path.exists(disk_path):
-            try:
-                with open(disk_path, "rb") as handle:
-                    return handle.read()
-            except OSError:
-                pass
-        return None
+        """Read an effect asset's bytes: from a mounted .fiopak, else the
+        project directory."""
+        from engine import asset_archives
+        return asset_archives.read(asset_path)
 
     def _upload_fire_frame(self, cache_key, image):
         """Upload one already-decoded FIRE frame and return its GL texture id."""
@@ -650,7 +659,12 @@ class ResourcesMixin:
             return tex_id
         try:
             from PIL import Image
-            img = Image.open(resolved_path).convert('RGBA')
+            from engine import asset_archives
+            if asset_archives.in_archive(resolved_path):
+                import io
+                img = Image.open(io.BytesIO(asset_archives.read(resolved_path))).convert('RGBA')
+            else:
+                img = Image.open(resolved_path).convert('RGBA')
             img = img.transpose(Image.FLIP_TOP_BOTTOM)
             tex_id = gl.glGenTextures(1)
             self.texture_manager[tex_cache_name] = tex_id
@@ -679,6 +693,8 @@ class ResourcesMixin:
         """
         if not texture_name:
             return None
+        # Packed (.fiopak) or loose: either counts as found.
+        from engine import asset_archives
 
         # Normalise separators from MTL files authored on another platform.
         texture_name = (
@@ -698,17 +714,17 @@ class ResourcesMixin:
                 .replace('/', os.sep)
             )
             resolved = os.path.normpath(os.path.join(mtl_dir, texture_name))
-            if os.path.exists(resolved):
+            if asset_archives.exists(resolved):
                 return resolved
 
         # 2. Try assets/textures/ (global fallback)
         resolved = os.path.normpath(os.path.join('assets', 'textures', texture_name))
-        if os.path.exists(resolved):
+        if asset_archives.exists(resolved):
             return resolved
 
         # 3. Try assets/models/ (legacy fallback)
         resolved = os.path.normpath(os.path.join('assets', 'models', texture_name))
-        if os.path.exists(resolved):
+        if asset_archives.exists(resolved):
             return resolved
 
         # 4. Return as-is and let the loader handle errors

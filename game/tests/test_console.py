@@ -76,3 +76,26 @@ def test_inspect_reports_a_view_that_cannot_pick():
     _manager().dispatch_console_command("inspect", "", object(), main_window=window,
                                         play_mode=True)
     assert window.picks == 1 and window.toasts == []
+
+
+def test_pause_toggles_a_world_freeze_without_a_menu():
+    from .. import console
+
+    class _Runtime:
+        def __init__(self):
+            self.owners = set()
+
+        def world_pause_owners(self):
+            return frozenset(self.owners)
+
+        def set_world_paused(self, owner, paused=True):
+            (self.owners.add if paused else self.owners.discard)(owner)
+
+    class _Logic:
+        session_runtime = _Runtime()
+
+    ctx = console.ConsoleContext(logic_thread=_Logic(), play_mode=True, main_window=None)
+    console.cmd_pause(ctx, "")
+    assert console.CONSOLE_PAUSE in _Logic.session_runtime.owners
+    console.cmd_pause(ctx, "")
+    assert not _Logic.session_runtime.owners

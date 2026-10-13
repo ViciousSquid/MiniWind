@@ -546,11 +546,42 @@ def open_inspector(view, thing):
         view.update()
         return existing
     n = sum(1 for w in manager.windows if isinstance(w, ActorInspectorWindow))
-    x = max(10, view.width() - 400 - (n % 4) * 26)
-    win = ActorInspectorWindow(view, thing, x=x, y=70 + (n % 4) * 26)
+    x, y = _beside(view, thing, n)
+    win = ActorInspectorWindow(view, thing, x=x, y=y)
     manager.add(win)
     view.update()
     return win
+
+
+#: Where a new inspector opens relative to its actor on screen (px), and
+#: how far each further window steps so they do not stack exactly.
+OPEN_OFFSET = (70, -60)
+OPEN_STEP = 22
+
+
+def _beside(view, thing, n):
+    """Top-left for a new inspector window: just beside its actor on screen,
+    kept fully inside the view. Falls back to the right-hand side when the
+    actor cannot be projected (behind the camera, no frame drawn yet)."""
+    width, height = view.width(), view.height()
+    win_w, win_h = 380, 260
+    point = None
+    try:
+        import glm
+        point = _project(glm, view.projection_matrix, view.view_matrix,
+                         thing.pos, width, height)
+    except Exception:
+        point = None
+    if point is None or not (0 <= point.x() <= width and 0 <= point.y() <= height):
+        return (max(10, width - 400 - (n % 4) * 26), 70 + (n % 4) * 26)
+    x = point.x() + OPEN_OFFSET[0] + (n % 4) * OPEN_STEP
+    y = point.y() + OPEN_OFFSET[1] + (n % 4) * OPEN_STEP
+    if x + win_w > width - 10:
+        # No room to the right: open on the actor's left instead.
+        x = point.x() - OPEN_OFFSET[0] - win_w
+    x = max(10, min(int(x), width - win_w - 10))
+    y = max(10, min(int(y), height - win_h - 10))
+    return x, y
 
 
 def open_windows(view):

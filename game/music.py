@@ -149,6 +149,13 @@ class MusicPlayer:
         existing archive is authoritative; loose files remain the fallback
         when no archive exists.
         """
+        if os.path.normpath(self.music_archive) == os.path.normpath(MUSIC_ARCHIVE):
+            # The game's own soundtrack: every mounted .fiopak may carry
+            # tracks (music.fiopak, music2.fiopak, ...); later ones override.
+            from engine import asset_archives
+            members = asset_archives.members("assets/music", (".mp3",))
+            if members:
+                return [_ARCHIVE_TRACK_PREFIX + member for member in members]
         if os.path.isfile(self.music_archive):
             try:
                 members = list_archive_audio(
@@ -175,8 +182,12 @@ class MusicPlayer:
             return
 
         member = track[len(_ARCHIVE_TRACK_PREFIX):]
+        archive_path = self.music_archive
+        if os.path.normpath(archive_path) == os.path.normpath(MUSIC_ARCHIVE):
+            from engine import asset_archives
+            archive_path = asset_archives.archive_of(member) or archive_path
         opened = open_archive_audio(
-            self.music_archive, member, "assets/music", (".mp3",)
+            archive_path, member, "assets/music", (".mp3",)
         )
         if opened is None:
             raise FileNotFoundError(f"Music track missing from archive: {member}")

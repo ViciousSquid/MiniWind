@@ -12,7 +12,13 @@ class TextureManager:
         return self.textures[path]
 
     def _load_texture(self, path):
-        image = QImage(path)
+        # Packed in any mounted .fiopak first, then the loose file.
+        from engine import asset_archives
+        if asset_archives.in_archive(path):
+            image = QImage()
+            image.loadFromData(asset_archives.read(path) or b"")
+        else:
+            image = QImage(path)
 
         if image.isNull():
             print(f"Error loading image: {path}")
