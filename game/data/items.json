@@ -735,6 +735,14 @@
     "weight": 0.0,
     "desc": "For coaxing open stubborn locks."
   },
+  "satchel": {
+    "name": "Satchel",
+    "category": "misc",
+    "value": 60,
+    "weight": 1.0,
+    "desc": "A sturdy leather satchel. While you carry it your pack has 4 more slots (a second one adds nothing).",
+    "pack_slots": 4
+  },
   "repair_hammer": {
     "name": "Repair Hammer",
     "category": "misc",

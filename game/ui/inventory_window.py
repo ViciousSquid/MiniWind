@@ -87,7 +87,7 @@ SPELLS_TAB = ("Spells", "spells")
 CELL = 58
 GAP = 6
 GRID_COLS = 6
-GRID_ROWS = 6
+GRID_ROWS = 4                   # 24 cells: the pack's 20 slots and a satchel's 4
 DOUBLE_CLICK = 0.35
 DRAG_START = 5
 
@@ -242,21 +242,21 @@ class InventoryWindow(FloatingWindow):
             return [None] * 4
 
     def _pack(self):
-        """Carried stacks that are neither worn nor in a quick slot, filtered
-        by the open tab."""
+        """What the pack holds (each copy of a weapon in a slot of its own,
+        nothing worn or in hand), filtered by the open tab."""
         c = self._character()
         if c is None:
             return []
-        worn = set(v for v in self._equipment().values() if v)
-        quick = set(e["id"] for e in self._quick() if e)
         cats = self._tabs()[min(self.tab, len(self._tabs()) - 1)][1]
         if cats == "spells":
             return []
+        try:
+            stacks = list(self.session.pack_stacks())
+        except Exception:
+            stacks = []
         out = []
-        for stack in list(getattr(c, "inventory", []) or []):
+        for stack in stacks:
             iid = stack.get("id")
-            if not iid or iid in worn or iid in quick:
-                continue
             d = _item(iid)
             cat = d.category if d is not None else str(stack.get("type", "misc"))
             if cats is not None and cat not in cats:
@@ -356,9 +356,17 @@ class InventoryWindow(FloatingWindow):
         return QRect(rect.x() + 10, bar.bottom() + 8, rect.width() - 20,
                      rect.bottom() - bar.bottom() - 16)
 
+    def _locked_cell(self, painter, rect):
+        """A pack slot the player does not have: a satchel adds them."""
+        painter.setBrush(QColor(14, 13, 12, 200))
+        painter.setPen(QPen(QColor(44, 40, 36), 1, Qt.DashLine))
+        painter.drawRoundedRect(rect, 4, 4)
+
     def _slot_box(self, painter, rect, iid, target=None, source=None, label=None,
-                  lit=False, number=None):
-        """One item slot: a sunken frame, its icon and count, its drop state."""
+                  lit=False, number=None, stack=None):
+        """One item slot: a sunken frame, its icon and count, its drop state.
+        *stack* is what the slot shows when it is not the whole carried stack
+        (one copy of a weapon carried twice)."""
         dragging = self._drag or (drag.current["source"] if drag.current else None)
         drag_def = _item(dragging[2]) if dragging else None
         border = _SLOT_EDGE
@@ -396,7 +404,7 @@ class InventoryWindow(FloatingWindow):
                 painter.setPen(_INK)
                 painter.drawText(rect.adjusted(3, 3, -3, -3), Qt.AlignCenter | Qt.TextWordWrap,
                                  d.name if d else iid)
-            stack = self._stack(iid)
+            stack = stack if stack is not None else self._stack(iid)
             qty = int(stack.get("qty", 1)) if stack else 1
             if qty > 1:
                 painter.setFont(self.f_count)
@@ -620,6 +628,11 @@ class InventoryWindow(FloatingWindow):
             self._draw_spell_grid(painter, inner)
             return
         pack = self._pack()
+        try:
+            cap, used = self.session.pack_capacity(), self.session.pack_used()
+        except Exception:
+            cap, used = GRID_COLS * GRID_ROWS, len(pack)
+        everything = tabs[self.tab][1] is None
         per_page = GRID_COLS * GRID_ROWS
         pages = max(1, int(math.ceil(len(pack) / float(per_page))))
         self.page = min(self.page, pages - 1)
@@ -630,8 +643,17 @@ class InventoryWindow(FloatingWindow):
             col, row = i % GRID_COLS, i // GRID_COLS
             r = QRect(grid.x() + col * (CELL + GAP), gy + row * (CELL + GAP), CELL, CELL)
             iid = shown[i]["id"] if i < len(shown) else None
+            if not iid and everything and self.page * per_page + i >= cap:
+                self._locked_cell(painter, r)    # a slot only a satchel gives
+                continue
             self._slot_box(painter, r, iid, target=("pack", None),
-                           source=("pack", None, iid) if iid else None)
+                           source=("pack", None, iid) if iid else None,
+                           stack=shown[i] if iid else None)
+        # How full the pack is, under the grid.
+        painter.setFont(self.f_small)
+        painter.setPen(_NO if used >= cap else _DIM)
+        _fit(painter, QRect(grid.x(), grid.bottom() + 4, grid.width() - 4, 16),
+             Qt.AlignRight | Qt.AlignVCenter, f"{used} / {cap} slots")
         # The whole grid takes a drop, not just its cells.
         self._targets.append((QRect(grid), ("pack", None)))
         # Page arrows.
@@ -645,12 +667,12 @@ class InventoryWindow(FloatingWindow):
             painter.setFont(self.f_small)
             painter.setPen(_DIM)
             _fit(painter, QRect(grid.x(), grid.bottom() + 4, grid.width(), 16),
-                             Qt.AlignCenter, f"page {self.page + 1} of {pages}")
+                             Qt.AlignLeft | Qt.AlignVCenter, f"page {self.page + 1} of {pages}")
         painter.setFont(self.f_small)
         painter.setPen(_DIM)
         _fit(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
                          Qt.AlignCenter,
-                         "Drag to equip or slot  ·  double-click to use  ·  keys 1-9 pick the strip")
+                         "Drag to equip  ·  out of the window to drop  ·  double-click to use")
 
     def _draw_spell_grid(self, painter, inner):
         """The Spells tab: every spell known, as an orb in its colour with its
@@ -1103,6 +1125,9 @@ class InventoryWindow(FloatingWindow):
             target = drag.target_at(event.x(), event.y(), exclude=self)
             if target is not None:
                 self._queue(lambda session: session.item_drop(dragged, target))
+            elif dragged[0] != "spell" and not drag.over_window(event.x(), event.y()):
+                # Out over the world: on the floor.
+                self._queue(lambda session: session.drop_item(iid))
             return True
         if target[:1] == dragged[:1] and target[1] == dragged[1]:
             return True

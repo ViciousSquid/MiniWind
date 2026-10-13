@@ -11,13 +11,14 @@ raised and lit, its name shown above the bar.
   taken in hand at once -- the main hand, or the off hand when the main hand
   is full -- and clicked again is put away. Double-click anything else to
   use or wear it;
-* drag a slot onto another to rearrange (the two swap);
+* drag a slot onto another to rearrange (the two swap); out over the world,
+  it is dropped on the floor;
 * drag between the strip and the character window (C), a chest or a body:
   out of the strip into the pack takes it off the strip, onto the body wears
   it, into a container stores it; from any of them onto a slot puts it there
   (taking it first, from a chest or a body).
 
-How many slots: the console's ``inventory_strip_size N``.
+Always nine slots, one per number key.
 
 The strip is a :class:`FloatingWindow` without chrome so the view routes the
 mouse to it like any window; it does not pause the world. As everywhere in
@@ -386,6 +387,10 @@ class InventoryStrip(FloatingWindow):
         mine = self._slot_at(event.pos())
         target = ("strip", mine) if mine is not None else drag.target_at(
             event.x(), event.y(), exclude=self)
+        if target is None and iid and not drag.over_window(event.x(), event.y()):
+            # Out over the world: on the floor (one copy of a weapon).
+            hits.queue(lambda session: session.drop_item(iid))
+            return True
         if target is None or target == ("strip", i) or not iid:
             return True
         if target[0] == "strip":

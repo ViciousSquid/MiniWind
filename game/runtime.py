@@ -127,10 +127,13 @@ NPC_BLOCKED_GIVE_UP_TICKS = 60
 #: How close the player must be to talk. Comfortably larger than a billboard so
 #: walking up to an NPC (whose speech bubble is showing) and pressing E works.
 TALK_RADIUS = 140.0
-#: The inventory strip's width in slots, unless ``inventory_strip_size``
-#: (console, saved as GAME/inventory_strip_size) says otherwise.
-STRIP_DEFAULT_SIZE = 9
-STRIP_MAX_SIZE = 30
+#: The inventory strip's width in slots: always nine, one per number key.
+STRIP_SIZE = 9
+#: Slots in the pack (the player's inventory) before a satchel's: each one
+#: holds a stack, or a single weapon (a pair to dual wield takes two).
+PACK_SLOTS = 20
+#: How far from the player something dropped lands (world units).
+DROP_DISTANCE = (45.0, 75.0)
 #: How near a talkable NPC must be for its speech bubble to appear. Kept a short
 #: step beyond the interaction range so a bubble means "you are close enough to
 #: talk", rather than floating over every NPC across the settlement — the cue
@@ -1059,6 +1062,7 @@ class MiniwindSession:
         self.dragon_fire.update(delta)
         self.wildlife.update(delta)
         self.memory.update(delta)
+        self._check_pack()
         self.rewind.tick(delta)
         self._update_bolt_lights()
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
@@ -1931,11 +1935,25 @@ class MiniwindSession:
             p = it.properties
             if p.get("dead"):
                 continue
-            if self._dist2d(ppos, it.pos) <= float(p.get("pickup_radius", 60.0)):
+            radius = float(p.get("pickup_radius", 60.0))
+            near = self._dist2d(ppos, it.pos) <= radius
+            if p.get("_await_away"):
+                # Just dropped: not picked straight back up while the player
+                # still stands on it; walking off and back takes it.
+                if self._dist2d(ppos, it.pos) > radius * 1.4:
+                    p.pop("_await_away", None)
+                continue
+            if near:
                 iid = p.get("item_id", "gold")
                 qty = int(p.get("quantity", 1))
-                stack = rpg_items.make(iid, qty) or inv.make_item(iid, qty=qty)
+                kept = p.get("_stack")
+                stack = (dict(kept, qty=qty) if isinstance(kept, dict)
+                         else rpg_items.make(iid, qty) or inv.make_item(iid, qty=qty))
                 name = stack.get("name", iid)
+                if not self.pack_has_room(iid, qty):
+                    self._pack_full_note()
+                    p["_await_away"] = True   # walk off and back to try again
+                    continue
                 # Taking an *owned* item is a theft, with everything that
                 # follows: witnesses, a report, a bounty, an owner who
                 # remembers. Taking an unowned one is just picking it up. One
@@ -2686,6 +2704,7 @@ class MiniwindSession:
         (a menu or character creation is open). No clock, NPC or combat sim."""
         self._announce_skill_raises()
         self._age_lists(delta)
+        self._check_pack()          # a satchel sold over the counter
 
     def _read_world_bounds(self):
         """``(min_x, max_x, min_z, max_z)`` the player may walk in: the
@@ -5893,6 +5912,9 @@ class MiniwindSession:
             return self.set_quick_weapon(int(key), item_id)
         # Back to the pack: take it off, or out of its quick slot.
         if source[0] == "equip":
+            if not self.pack_has_room(item_id, 1):
+                self._pack_full_note()
+                return False
             if source[1] == rpg_items.SLOT_WEAPON:
                 self._cancel_bow_draw()
             self.game.unequip(source[1])
@@ -5924,6 +5946,9 @@ class MiniwindSession:
             return False
         worn = {v: k for k, v in c.equipment.items() if v}
         if item_id in worn:
+            if not self.pack_has_room(item_id, 1):
+                self._pack_full_note()
+                return False
             self.game.unequip(worn[item_id])
             if worn[item_id] == rpg_items.SLOT_WEAPON:
                 self._cancel_bow_draw()
@@ -5975,27 +6000,160 @@ class MiniwindSession:
     # ------------------------------------------------------ inventory strip
     # The Minecraft-style bar along the bottom of the screen (I, and
     # game/ui/inventory_strip.py). Its slots hold carried item ids, like the
-    # quick-weapon slots; ``inventory_strip_size`` (console) sets how many.
+    # quick-weapon slots: nine of them, one per number key.
     def strip_size(self) -> int:
-        n = getattr(self, "_strip_size", None)
-        if n is None:
-            n = STRIP_DEFAULT_SIZE
-            try:
-                config = self._editor_config()
-                if config is not None:
-                    n = config.getint("GAME", "inventory_strip_size",
-                                      fallback=STRIP_DEFAULT_SIZE)
-            except (AttributeError, TypeError, ValueError):
-                n = STRIP_DEFAULT_SIZE
-            n = self._strip_size = max(1, min(STRIP_MAX_SIZE, int(n)))
-        return n
+        return STRIP_SIZE
 
-    def set_strip_size(self, n) -> int:
-        """Make the strip *n* slots wide (clamped). Things in slots that go
-        stay in the pack. Returns the size set."""
-        self._strip_size = max(1, min(STRIP_MAX_SIZE, int(n)))
-        self.strip_slots()
-        return self._strip_size
+    # ------------------------------------------------------------- the pack
+    # The player's inventory: PACK_SLOTS slots, more with a satchel. A slot
+    # holds a stack -- or one weapon, so a pair of the same blade takes two.
+    # What is worn or in hand is on the body, not in the pack.
+    def pack_capacity(self) -> int:
+        """Slots in the pack: :data:`PACK_SLOTS`, plus the best satchel's
+        (an item's ``pack_slots``; carrying two does not double it)."""
+        bonus = 0
+        for stack in self.game.character.inventory or ():
+            d = rpg_items.get(stack.get("id")) if isinstance(stack, dict) else None
+            if d is not None and int(stack.get("qty", 1) or 0) > 0:
+                bonus = max(bonus, int(d.get("pack_slots") or 0))
+        return PACK_SLOTS + bonus
+
+    def pack_stacks(self) -> List[Dict]:
+        """What the pack holds, slot by slot, in the order things came: every
+        carried stack not worn, and each copy of a weapon not in hand on its
+        own (as a stack of one). Coin is in the purse."""
+        c = self.game.character
+        worn = [v for v in (c.equipment or {}).values() if v]
+        out = []
+        for stack in c.inventory or ():
+            if not isinstance(stack, dict):
+                continue
+            iid = stack.get("id")
+            qty = int(stack.get("qty", 1) or 0)
+            if not iid or qty <= 0 or iid == rpg_items.GOLD:
+                continue
+            d = rpg_items.get(iid)
+            if d is not None and d.category == rpg_items.WEAPON:
+                if d.get("innate"):
+                    continue                     # fists are not carried
+                loose = qty - worn.count(iid)
+                if loose == 1 and qty == 1:
+                    out.append(stack)
+                else:
+                    out.extend(dict(stack, qty=1) for _ in range(max(0, loose)))
+            elif iid not in worn:
+                out.append(stack)
+        return out
+
+    def pack_used(self) -> int:
+        return len(self.pack_stacks())
+
+    def pack_has_room(self, item_id, qty: int = 1, freed: int = 0) -> bool:
+        """Whether *qty* of *item_id* fit in the pack (with *freed* slots
+        about to be emptied): a weapon needs a slot per copy, anything else
+        a slot unless it joins a stack already there."""
+        if item_id == rpg_items.GOLD:
+            return True
+        d = rpg_items.get(item_id)
+        if d is not None and d.category == rpg_items.WEAPON:
+            need = max(1, int(qty))
+        else:
+            need = 0 if any(st.get("id") == item_id for st in self.pack_stacks()) else 1
+        return self.pack_used() - int(freed) + need <= self.pack_capacity()
+
+    def _pack_full_note(self) -> None:
+        import time as _time
+        now = _time.monotonic()
+        if now - getattr(self, "_pack_full_at", -10.0) > 2.0:
+            self._pack_full_at = now
+            self.notify("Your pack is full", 2.0)
+
+    def _check_pack(self) -> None:
+        """Keep the pack within its slots.
+
+        When it loses slots (a satchel sold, stored or dropped) what no
+        longer fits falls to the floor, from the last slot back; so does
+        anything that arrives in a full pack some way that could not ask
+        first (a quest reward). A pack already over-full -- from before
+        packs had a size -- is left as it is, but cannot grow."""
+        c = getattr(self.game, "character", None)
+        if c is None:
+            return
+        cap, used = self.pack_capacity(), self.pack_used()
+        seen = getattr(self, "_pack_seen", None)
+        self._pack_seen = (cap, used)
+        if seen is None or used <= cap:
+            return
+        was_cap, was_used = seen
+        limit = cap if cap < was_cap else max(cap, min(was_used, used))
+        if used <= limit:
+            return
+        for stack in self.pack_stacks()[limit:][::-1]:
+            self.drop_item(stack.get("id"), int(stack.get("qty", 1) or 1), quiet=True)
+        self.notify("Your pack can't hold everything: some of it fell to the floor", 3.0)
+        self._pack_seen = (cap, self.pack_used())
+
+    def drop_item(self, item_id, qty=None, quiet=False) -> bool:
+        """Put carried *item_id* on the floor beside the player: one copy of
+        a weapon, else the whole stack (or *qty* of it). Taken off the body
+        first if that was the last of it. It can be picked up again once the
+        player has stepped away and comes back."""
+        c = self.game.character
+        stack = inv.find(c.inventory, item_id)
+        d = rpg_items.get(item_id)
+        if stack is None or warrior_fist.innate(item_id):
+            return False
+        have = int(stack.get("qty", 1) or 0)
+        if qty is None:
+            qty = 1 if (d is not None and d.category == rpg_items.WEAPON) else have
+        qty = max(1, min(int(qty), have))
+        before = eq.armour_class(c)
+        left = have - qty
+        if left <= 0:
+            self._forget_in_slots(item_id)
+        else:
+            # Fewer copies than hands holding it: the off hand lets go first.
+            for slot in (rpg_items.SLOT_SHIELD, rpg_items.SLOT_WEAPON):
+                if list((c.equipment or {}).values()).count(item_id) > left \
+                        and c.equipment.get(slot) == item_id:
+                    if slot == rpg_items.SLOT_WEAPON:
+                        self._cancel_bow_draw()
+                    self.game.unequip(slot)
+        kept = {k: v for k, v in stack.items() if k != "qty"}
+        removed = inv.remove_item(c.inventory, item_id, qty)
+        if removed <= 0:
+            return False
+        self._place_dropped(item_id, removed, kept)
+        self._announce_ac(before)
+        if not quiet:
+            name = stack.get("name") or (d.name if d else item_id)
+            self.notify(f"Dropped {name}" + (f" ({removed})" if removed > 1 else ""), 1.5)
+        return True
+
+    def _place_dropped(self, item_id, qty, stack) -> None:
+        """An ordinary Item pickup on the ground beside the player."""
+        ppos = self._player_pos()
+        if ppos is None:
+            return
+        try:
+            from .entities import ItemPickup
+        except Exception:
+            return
+        ang = self.rng.uniform(0.0, math.tau)
+        dist = self.rng.uniform(*DROP_DISTANCE)
+        pos = [ppos[0] + math.cos(ang) * dist, ppos[1], ppos[2] + math.sin(ang) * dist]
+        item = ItemPickup(pos)
+        d = rpg_items.get(item_id)
+        item.properties.update({
+            "item_id": item_id,
+            "quantity": int(qty),
+            "display_name": stack.get("name") or (d.name if d else item_id),
+            "_stack": dict(stack),
+            "_await_away": True,
+            "_dropped": True,
+        })
+        fio.things(self.logic).append(item)
+        self._type_index_token = None      # force the type index to rebuild
 
     @staticmethod
     def _strip_copies(stack) -> int:
@@ -6164,6 +6322,9 @@ class MiniwindSession:
             held = hands[0] if hands else None
         else:
             held = hands[copy] if 0 <= copy < len(hands) else None
+        if held is not None and not self.pack_has_room(item_id, 1):
+            self._pack_full_note()          # nowhere to put it away
+            return False
         if held == "main":
             eq.unequip(c, rpg_items.SLOT_WEAPON)
             if off is not None:
@@ -6741,6 +6902,10 @@ class MiniwindSession:
         items = self.container_inventory()
         if not (0 <= index < len(items)):
             return False
+        if items[index].get("id") != rpg_items.GOLD and not self.pack_has_room(
+                items[index].get("id"), int(items[index].get("qty", 1) or 1)):
+            self._pack_full_note()
+            return False
         stack = items.pop(index)
         name = stack.get("name", stack.get("id", ""))
         # A chest with an owner makes emptying it a theft, exactly like a world
@@ -6835,6 +7000,9 @@ class MiniwindSession:
         price = self._price(d.value, buying=True, npc=self.merchant_npc)
         if c.gold < price:
             self.notify("Not enough gold")
+            return False
+        if not self.pack_has_room(item_id, 1):
+            self._pack_full_note()
             return False
         if left is not None:
             # The full shelf, remembered the first time one is sold.

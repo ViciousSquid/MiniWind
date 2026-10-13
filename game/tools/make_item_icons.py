@@ -455,6 +455,22 @@ def draw_amulet(d, _id=None):
     d.ellipse([cx - S * 0.05, S * 0.58, cx + S * 0.05, S * 0.70], fill=(120, 200, 230))
 
 
+def draw_satchel(d, _id=None):
+    """A leather satchel: a strap over the top, a flap with a brass buckle."""
+    lo, mid, dk = MATERIALS["leather"]
+    cx = S * 0.5
+    d.arc([cx - S * 0.26, S * 0.08, cx + S * 0.26, S * 0.62], 190, 350,
+          fill=dk, width=SS * 4)
+    d.rounded_rectangle([cx - S * 0.32, S * 0.34, cx + S * 0.32, S * 0.86],
+                        radius=S * 0.08, fill=mid, outline=dk, width=SS * 2)
+    d.rounded_rectangle([cx - S * 0.34, S * 0.30, cx + S * 0.34, S * 0.58],
+                        radius=S * 0.07, fill=lo, outline=dk, width=SS * 2)
+    d.line([(cx - S * 0.26, S * 0.54), (cx + S * 0.26, S * 0.54)], fill=dk, width=SS)
+    d.rounded_rectangle([cx - S * 0.06, S * 0.50, cx + S * 0.06, S * 0.64],
+                        radius=S * 0.02, fill=GOLD[1], outline=GOLD[2], width=SS)
+    d.line([(cx, S * 0.30), (cx, S * 0.50)], fill=dk, width=SS * 2)
+
+
 def draw_repair(d, _id=None):
     draw_hammer(d, MATERIALS["iron"])
 
@@ -499,6 +515,8 @@ def shape_for(item_id, item):
     if cat == "misc":
         if "lockpick" in text:
             return draw_lockpick
+        if "satchel" in text or "bag" in text:
+            return draw_satchel
         if "torch" in text:
             return draw_torch
         if "amulet" in text or "ring" in text:

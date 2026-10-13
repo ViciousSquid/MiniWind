@@ -602878,6 +602878,11 @@
                     "potion_cure",
                     "lockpick",
                     "torch",
+                    {
+                        "id": "satchel",
+                        "qty": 2,
+                        "restock": 2
+                    },
                     "book_marksman",
                     "book_blade"
                 ],

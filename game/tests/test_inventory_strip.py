@@ -82,16 +82,6 @@ def test_from_the_pack_onto_a_slot():
     assert _ids(s)[6] == "iron_shortsword"
 
 
-def test_the_strip_resizes_and_what_falls_off_stays_carried():
-    s = _session()
-    _give(s, "iron_shortsword", "potion_heal_minor", "ingr_wolf_pelt")
-    assert s.set_strip_size(2) == 2
-    assert _ids(s) == ["iron_shortsword", "potion_heal_minor"]
-    assert any(st["id"] == "ingr_wolf_pelt" for st in s.game.character.inventory)
-    assert s.set_strip_size(500) == 30
-    assert len(_ids(s)) == 30
-
-
 def test_a_chest_or_body_trades_with_the_strip():
     from ..rpg import items
     chest = _Thing("Chest", type="container",
@@ -218,42 +208,6 @@ def test_a_click_on_a_weapon_in_the_strip_takes_it_in_hand(qt_app):
          else strip.handle_mouse_release)(ev)
     hits.run_clicks(s)
     assert _hands(s) == ("iron_shortsword", None)
-
-
-# ----------------------------------------------------------------- console
-
-def test_the_console_sets_and_saves_the_strip_size():
-    import configparser
-    from plugins.api import EditorAPI
-    from plugins.manager import PluginManager
-    from .. import console
-
-    class _Window:
-        def __init__(self):
-            self.config = configparser.ConfigParser()
-            self.saved = 0
-            self.toasts = []
-
-        def save_config(self):
-            self.saved += 1
-
-        def show_toast(self, text):
-            self.toasts.append(text)
-
-    mgr = PluginManager()
-    console.register(EditorAPI(mgr, None))
-    s = _session()
-    logic = type("L", (), {"_miniwind": s})()
-    window = _Window()
-    handled, _ = mgr.dispatch_console_command("inventory_strip_size", "12", logic,
-                                              main_window=window, play_mode=True)
-    assert handled
-    assert s.strip_size() == 12
-    assert window.config.get("GAME", "inventory_strip_size") == "12"
-    assert window.saved == 1
-    mgr.dispatch_console_command("inventory_strip_size", "0", logic,
-                                 main_window=window, play_mode=True)
-    assert s.strip_size() == 12                       # out of range: refused
 
 
 # ------------------------------------------------------------- the mouse
