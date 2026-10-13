@@ -81,3 +81,27 @@ def test_heads_assigned_at_play_start_are_the_one_size():
     assert heads.is_any_head(rolled.properties["head"])
     for thing in (authored, rolled):
         assert _size(thing) == (heads.HEAD_SIZE, heads.HEAD_SIZE)
+
+
+# --- small heads -----------------------------------------------------------
+def test_a_chicken_head_is_a_third_of_the_size():
+    third = int(round(heads.HEAD_SIZE / 3.0))
+    assert heads.size_for({"npc_role": "hen", "head": "chicken"}) == third
+    assert heads.size_for({"head": "chicken02"}) == third       # its variants too
+    assert heads.size_for({}, "chicken") == third               # the head it is given
+
+
+def test_an_authored_head_scale_still_wins():
+    assert heads.size_for({"head": "chicken", "head_scale": 2.0}) == heads.HEAD_SIZE * 2
+    assert heads.size_for({"head": "head03"}) == heads.HEAD_SIZE
+
+
+def test_a_hen_wears_the_chicken_head(tmp_path, monkeypatch):
+    folder = tmp_path / heads.HEAD_DIR
+    folder.mkdir(parents=True)
+    monkeypatch.setattr(heads, "_repo_root", lambda: str(tmp_path))
+    assert heads.animal_head("hen") == heads.PLACEHOLDER_HEAD     # not drawn yet
+    (folder / "chicken.png").write_bytes(b"")
+    assert heads.animal_head("hen") == "chicken"
+    (folder / "hen.png").write_bytes(b"")                       # its own art wins
+    assert heads.animal_head("hen") == "hen"

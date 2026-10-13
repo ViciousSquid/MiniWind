@@ -884,7 +884,10 @@ class MiniwindSession:
             # Respect a head explicitly set in the editor (regular, guard, or
             # browsed) unless it is the player's. Otherwise roll one.
             role = str(p.get("npc_role", "") or "").lower()
-            if heads.is_any_head(cur) and cur != player_head:
+            # An animal still on the stand-in (from a save made before its art
+            # was drawn) looks again, so new art reaches it.
+            stand_in = cur == heads.PLACEHOLDER_HEAD and role in heads.ANIMAL_ROLES
+            if heads.is_any_head(cur) and cur != player_head and not stand_in:
                 head = cur
             elif role in heads.ANIMAL_ROLES:
                 head = heads.animal_head(role, self.rng)
@@ -893,7 +896,7 @@ class MiniwindSession:
             else:
                 head = heads.random_head(self.rng, exclude={player_head})
             path = heads.any_head_path(head)
-            size = heads.size_for(p)         # every head the same size, bar giants
+            size = heads.size_for(p, head)   # one size, bar giants and chickens
             if (p.get("head") != head or p.get("custom_idle") != path
                     or p.get("sprite_width") != size
                     or p.get("sprite_height") != size):
