@@ -122,3 +122,22 @@ def test_the_loot_screen_takes_the_mouse(qt_app):
     hits.run_clicks(s)
     assert s.game.character.gold == gold + 5
     hits.clear()
+
+
+def test_a_searched_body_opens_in_a_window_titled_loot(qt_app):
+    from engine.floating_windows import WindowManager
+    from ..host import MiniwindGame
+    from ..rpg import items
+    body = _bandit(dead=True, loot_rolled=True, inventory=[items.make("gold", 5)])
+    chest = _Thing("Old Chest", type="container", inventory=[])
+    s = _session(body, chest)
+    viewport = type("V", (), {"window_manager": WindowManager()})()
+    game = MiniwindGame.__new__(MiniwindGame)
+    s.loot_corpse(body)
+    game._sync_overlay_windows(s, viewport, 1280, 800)
+    assert s._overlay_win.title == "Loot"
+    s.close_container()
+    game._sync_overlay_windows(s, viewport, 1280, 800)
+    s.open_container(chest)
+    game._sync_overlay_windows(s, viewport, 1280, 800)
+    assert s._overlay_win.title != "Loot"

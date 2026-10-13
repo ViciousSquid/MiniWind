@@ -1321,7 +1321,11 @@ class MiniwindGame:
                 # things drag in (game/ui/container_window.py).
                 from .ui.container_window import ContainerWindow
                 window_cls = ContainerWindow
-                title = session.container_name()
+                # A searched body is "Loot" (its name heads the screen); a
+                # chest keeps the usual title.
+                thing = getattr(session, "container_thing", None)
+                if thing is not None and thing.properties.get("dead"):
+                    title = "Loot"
             win = window_cls(key, title, draw_fn, width=bw, body_height=bh,
                                  x=max(20, (w - bw) // 2),
                                  y=max(20, (h - bh) // 2 - 24),
