@@ -1662,11 +1662,16 @@ class MiniwindSession:
                 lp[2] = pos[2]
             lprops = light.properties
             lprops["casts_shadows"] = bool(cast)
-            phase = float(lprops.setdefault("_torch_phase", (hash(str(key)) % 6283) / 1000.0))
-            k_int, k_rad = self._torch_flicker(t, phase)
+            phase = lprops.get("_torch_phase")
+            if phase is None:
+                phase = lprops["_torch_phase"] = (hash(str(key)) % 6283) / 1000.0
+            k_int, k_rad = self._torch_flicker(t, float(phase))
             base = float(lprops.get("_torch_base_intensity", TORCH_DEFAULT_INTENSITY))
-            base_r = float(lprops.setdefault("_torch_base_radius",
-                                             lprops.get("radius", TORCH_DEFAULT_RADIUS)))
+            base_r = lprops.get("_torch_base_radius")
+            if base_r is None:
+                base_r = lprops["_torch_base_radius"] = lprops.get(
+                    "radius", TORCH_DEFAULT_RADIUS)
+            base_r = float(base_r)
             lprops["intensity"] = base * k_int
             lprops["radius"] = base_r * k_rad
             # The renderer copies a light's intensity, radius and shadow flag
@@ -2744,9 +2749,17 @@ class MiniwindSession:
         the persistent KV store, so it survives save/load and dialogue can read
         it — the town remembers who is gone.
         """
-        # PERF: only NPCs matter here — walk the cached "npc" bucket instead of
-        # re-scanning + normalising every thing in the scene each tick.
-        for t in self._things_of_type("npc"):
+        # PERF: only dead NPCs matter here. With the index that is its corpse
+        # rows (a few) rather than every NPC; without it, the "npc" bucket.
+        wi = self._world_index()
+        if wi is None:
+            pool = self._things_of_type("npc")
+        else:
+            npc_ids = self._type_ids("npc")
+            actors = wi.actors
+            pool = [actors[i] for i in np.flatnonzero(wi.dead[:wi.n]).tolist()
+                    if id(actors[i]) in npc_ids]
+        for t in pool:
             tp = t.properties
             if not tp.get("dead"):
                 continue
@@ -4204,6 +4217,9 @@ class MiniwindSession:
             if target is not None:
                 fights.append((t, target))
         self._actors = actors
+        #: (the list above, id -> actor over it), for per-tick passes that
+        #: resolve an ``_aggro_target`` id without building their own map.
+        self._actors_by_id = (actors, by_id)
         self._dead_actors = dead
         self._fights = fights
         # The watch, indexed once. A frightened villager looks for the nearest
@@ -6248,10 +6264,14 @@ class MiniwindSession:
     def nearest_container(self, player_pos, radius: float = TALK_RADIUS):
         """The nearest usable container within its own use radius."""
         best, best_d = None, None
+        px, pz = player_pos[0], player_pos[2]
         for c in self._things_of_type("container"):
             r = float(c.properties.get("use_radius", radius))
-            d = self._dist2d(player_pos, c.pos)
-            if d <= r and (best_d is None or d < best_d):
+            pos = c.pos
+            dx = px - pos[0]
+            dz = pz - pos[2]
+            d = dx * dx + dz * dz          # squared: compared, never shown
+            if r >= 0.0 and d <= r * r and (best_d is None or d < best_d):
                 best, best_d = c, d
         return best
 
