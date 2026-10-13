@@ -184,8 +184,10 @@ class WorldIndex:
         # parked against a few dozen resident), and the one membership test
         # here is all they cost. A parked *corpse* keeps its row, because the
         # casualty count reads corpses whatever their residency.
+        hidden_key, disabled_key = PARKED_HIDDEN_KEY, PARKED_DISABLED_KEY
         rows = [a for a in actors
-                if not _is_parked(a.properties) or a.properties.get("dead")]
+                if (hidden_key not in (p := a.properties) and disabled_key not in p)
+                or p.get("dead")]
         n = len(rows)
         self.actors = rows
         self.n = n

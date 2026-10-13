@@ -41,12 +41,29 @@ ARRIVE = 24.0
 BLOCKED_GIVE_UP = 12
 
 
-def roams(props) -> bool:
-    role = str(props.get("npc_role", "") or "").lower()
-    if role in STAY_PUT:
+def _roams(role, team, roam) -> bool:
+    if str(role or "").lower() in STAY_PUT:
         return False
-    team = str(props.get("faction") or props.get("team") or "").lower()
-    return team == "wildlife" or bool(props.get("roam"))
+    return str(team or "").lower() == "wildlife" or bool(roam)
+
+
+#: roams() answers by the raw values it reads: asked for every live creature
+#: every tick, and a world has a handful of distinct (role, team) pairs.
+_ROAMS = {}
+
+
+def roams(props) -> bool:
+    key = (props.get("npc_role", ""), props.get("faction") or props.get("team"),
+           props.get("roam"))
+    try:
+        return _ROAMS[key]
+    except KeyError:
+        if len(_ROAMS) > 1024:
+            _ROAMS.clear()
+        found = _ROAMS[key] = _roams(*key)
+        return found
+    except TypeError:                    # an unhashable value: just answer
+        return _roams(*key)
 
 
 class Wildlife:
