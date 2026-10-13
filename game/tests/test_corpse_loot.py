@@ -141,3 +141,31 @@ def test_bodies_and_chests_open_in_a_window_titled_loot(qt_app):
     s.open_container(chest)
     game._sync_overlay_windows(s, viewport, 1280, 800)
     assert s._overlay_win.title == "Loot"
+
+
+def test_the_e_that_opened_the_loot_does_not_close_it_when_frames_are_slow():
+    """The held-key snapshot comes from the UI thread once a frame; the use
+    key is latched at once. With slow frames, ticks pass before the snapshot
+    shows E down at all -- the late "E pressed" edge must still not close
+    the screen it opened."""
+    from plugins.api import TickContext, key_code
+    from ..host import MiniwindGame, K_INTERACT, INTERACT_GRACE_SECONDS
+    game = MiniwindGame.__new__(MiniwindGame)
+    e = frozenset({key_code(K_INTERACT)})
+    game._hold_interact()                       # E opened the loot
+    t0 = game._suppress_since
+    for i in range(3):                          # snapshot not caught up yet
+        game._update_interact_hold(TickContext(keys=frozenset()), now=t0 + 0.016 * i)
+        assert game._suppress_interact
+    game._update_interact_hold(TickContext(keys=e), now=t0 + 0.06)      # the late edge
+    assert game._suppress_interact
+    game._update_interact_hold(TickContext(keys=frozenset()), now=t0 + 0.2)  # let go
+    assert not game._suppress_interact
+
+    game._hold_interact()                       # a tap the snapshot never saw
+    t0 = game._suppress_since
+    game._update_interact_hold(TickContext(keys=frozenset()), now=t0 + 0.1)
+    assert game._suppress_interact
+    game._update_interact_hold(TickContext(keys=frozenset()),
+                               now=t0 + INTERACT_GRACE_SECONDS + 0.01)
+    assert not game._suppress_interact

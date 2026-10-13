@@ -74,6 +74,9 @@ K_QUEST = "q"          # show the current quest (objective + how to complete)
 #: the pack, '2' the second: the same order the loadout popup shows, so the keys
 #: and the screen can never disagree. Nine is plenty and leaves '0' free.
 WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 5))   # the four quick-weapon slots
+#: How long E stays ignored after it opened a screen, when the held-key
+#: snapshot never showed it down (a very quick tap), seconds.
+INTERACT_GRACE_SECONDS = 0.4
 
 
 # ---------------------------------------------------------------------------
@@ -817,8 +820,14 @@ class MiniwindGame:
         # close it immediately (the container "flash"). Suppress the interact key
         # inside screens/dialogue until it has been released at least once after
         # opening.
-        if getattr(self, "_suppress_interact", False) and not ctx.key_down(K_INTERACT):
-            self._suppress_interact = False
+        #
+        # "Released" means seen held and then let go: the held-key snapshot is
+        # published by the UI thread once a frame, so while frames are slow
+        # several logic ticks can pass before it shows E down at all -- and
+        # lifting the suppression on the first of those let the late edge
+        # through. A tap so quick the snapshot never shows it gets a short
+        # grace period instead.
+        self._update_interact_hold(ctx)
 
         if world_paused:
             session.tick_ui(ctx.delta)   # ages toasts/floaters only, no world sim
@@ -843,6 +852,26 @@ class MiniwindGame:
         session.persist()
 
     # -- input helpers ------------------------------------------------------
+    def _hold_interact(self):
+        """E just opened a screen or conversation: keep that same press from
+        reaching it (see :meth:`on_tick`)."""
+        self._suppress_interact = True
+        self._suppress_seen_down = False
+        self._suppress_since = time.monotonic()
+
+    def _update_interact_hold(self, ctx, now=None):
+        """Lift :meth:`_hold_interact` once E has been seen held and let go,
+        or after :data:`INTERACT_GRACE_SECONDS` if it was never seen held."""
+        if not getattr(self, "_suppress_interact", False):
+            return
+        if ctx.key_down(K_INTERACT):
+            self._suppress_seen_down = True
+            return
+        now = time.monotonic() if now is None else now
+        if (getattr(self, "_suppress_seen_down", False)
+                or now - getattr(self, "_suppress_since", 0.0) > INTERACT_GRACE_SECONDS):
+            self._suppress_interact = False
+
     def _just_pressed(self, ctx):
         """Set of key *names* newly pressed this tick."""
         keys = ctx.keys or frozenset()
@@ -933,7 +962,7 @@ class MiniwindGame:
             session.interact_prompt = prompt
             if K_INTERACT in just or ctx.use_pressed:
                 session.start_dialogue(arrest_guard, player)
-                self._suppress_interact = True
+                self._hold_interact()
             return
 
         npc = session.nearest_talkable(player.pos, TALK_RADIUS)
@@ -949,7 +978,7 @@ class MiniwindGame:
             # honoured where a host wires it up).
             if K_INTERACT in just or ctx.use_pressed:
                 session.start_dialogue(npc, player)
-                self._suppress_interact = True
+                self._hold_interact()
             return
         # No NPC to talk to — offer a nearby container to open, or a body to
         # loot, with the same key (whichever is nearer).
@@ -962,7 +991,7 @@ class MiniwindGame:
             session.interact_prompt = prompt
             if K_INTERACT in just or ctx.use_pressed:
                 session.loot_corpse(corpse)
-                self._suppress_interact = True
+                self._hold_interact()
             return
         if container is not None:
             cname = container.properties.get("display_name", "container")
@@ -971,7 +1000,7 @@ class MiniwindGame:
             session.interact_prompt = prompt
             if K_INTERACT in just or ctx.use_pressed:
                 session.open_container(container)
-                self._suppress_interact = True
+                self._hold_interact()
 
     # -------------------------------------------------------------- overlay
     def _on_overlay(self, ev):
