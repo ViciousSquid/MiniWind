@@ -2247,7 +2247,8 @@ class MonsterAIThread(threading.Thread):
             if frame_time > 0.25:
                 frame_time = 0.25
 
-            accumulator += frame_time
+            # The same simulation speed as the logic thread (LogicThread.time_scale).
+            accumulator += frame_time * max(0.0, float(getattr(self.lt, "time_scale", 1.0)))
 
             # The world is paused through LogicSession's pause ownership:
             # still, and the paused time is dropped rather than caught up on

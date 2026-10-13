@@ -396,6 +396,43 @@ def cmd_dragonfire(ctx, args):
     return None
 
 
+def cmd_debugtools(ctx, args):
+    """debugtools -- a floating window of time controls for the simulation:
+    rewind, play / pause, and speed (0.25×, 0.5×, 1×, 2×). Play Mode only."""
+    if not ctx.play_mode:
+        debug_log("Error", "debugtools: Play Mode only.")
+        return None
+    view = getattr(ctx.main_window, "view_3d", None)
+    from .ui import debug_tools
+    if debug_tools.open_debug_tools(view) is None:
+        debug_log("Error", "debugtools: no game view to open it on.")
+    return None
+
+
+def cmd_resurrect(ctx, args):
+    """resurrect -- click an NPC or monster to bring it back to life at full
+    health (a living one is healed). The world pauses while you choose; Esc
+    or a right-click cancels. Play Mode only."""
+    if not ctx.play_mode:
+        debug_log("Error", "resurrect: Play Mode only.")
+        return None
+    window = ctx.main_window
+
+    def _raise(actor):
+        from . import rewind
+        from .ui import hits
+        hits.queue(lambda session: rewind.resurrect(session, actor))
+
+    begin = getattr(window, "begin_actor_pick", None)
+    if begin is None or not begin(_raise):
+        debug_log("Error", "resurrect: the actor picker is not available in this view.")
+        return None
+    toast = getattr(window, "show_toast", None)
+    if toast is not None:
+        toast("Resurrect: click an NPC or monster (Esc to cancel)")
+    return None
+
+
 def cmd_roads(ctx, args):
     """roads -- who is travelling the roads right now, and where.
 
@@ -426,6 +463,10 @@ COMMANDS = (
      "— Pause and click an actor: schedule, destination, AI state (Play Mode)"),
     (("roads", "travellers"), cmd_roads,
      "— List the parties on the roads: who, where from/to, where now (Play Mode)"),
+    (("debugtools",), cmd_debugtools,
+     "— Time controls: rewind, play/pause, speed 0.25/0.5/1/2 (Play Mode)"),
+    (("resurrect",), cmd_resurrect,
+     "— Click an NPC or monster to restore it to life and full health (Play Mode)"),
     (("dragonfire",), cmd_dragonfire,
      "1..5 — Which FIRE setting the dragon breathes (remembered)"),
     (("pause", "freeze"), cmd_pause,

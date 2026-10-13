@@ -518,6 +518,8 @@ class MiniwindSession:
         from .dragon_fire import DragonFire
         from .wildlife import Wildlife
         from .map_memory import MapMemory
+        from .rewind import Rewind
+        self.rewind = Rewind(self)
         self.memory = MapMemory(self)
         self.wildlife = Wildlife(self)
         self.dragon_fire = DragonFire(self)
@@ -996,6 +998,7 @@ class MiniwindSession:
         self.dragon_fire.update(delta)
         self.wildlife.update(delta)
         self.memory.update(delta)
+        self.rewind.tick(delta)
         self._update_bolt_lights()
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
             # Fio does not publish an empty store, so the last arrow to land
