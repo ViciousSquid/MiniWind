@@ -30,7 +30,7 @@ import math
 import time
 
 from PyQt5.QtCore import QPoint, QRect, QRectF, Qt
-from PyQt5.QtGui import (QBrush, QColor, QLinearGradient, QPainterPath,
+from PyQt5.QtGui import (QBrush, QColor, QLinearGradient, QRadialGradient, QPainterPath,
                          QPen, QPixmap)
 
 from engine.floating_windows import FloatingWindow
@@ -374,33 +374,23 @@ class InventoryWindow(FloatingWindow):
             self._cells.append((QRect(rect), source))
 
     def _draw_paperdoll_figure(self, painter, area):
-        """The player: their own head over a robed silhouette."""
+        """The player as MiniWind draws everyone: a head, and nothing else
+        (there are no bodies in MiniWind). Faint spokes run from it to the
+        slots round it."""
         cx = area.center().x()
-        top = area.y() + int(area.height() * 0.16)
-        body_h = int(area.height() * 0.62)
-        body = QPainterPath()
-        bw = area.width() * 0.22
-        body.moveTo(cx - bw * 0.35, top + 40)
-        body.cubicTo(cx - bw * 0.9, top + 60, cx - bw * 0.7, top + body_h * 0.6,
-                     cx - bw, top + body_h)
-        body.lineTo(cx + bw, top + body_h)
-        body.cubicTo(cx + bw * 0.7, top + body_h * 0.6, cx + bw * 0.9, top + 60,
-                     cx + bw * 0.35, top + 40)
-        body.closeSubpath()
-        g = QLinearGradient(float(cx - bw), 0.0, float(cx + bw), 0.0)
-        g.setColorAt(0.0, QColor(70, 58, 84))
-        g.setColorAt(0.5, QColor(150, 126, 170))
-        g.setColorAt(1.0, QColor(70, 58, 84))
-        painter.setBrush(QBrush(g))
-        painter.setPen(Qt.NoPen)
-        painter.drawPath(body)
-        painter.setPen(QPen(QColor(20, 18, 24), 1.5))
-        painter.drawPath(body)
-        # faint spokes from the figure to the slots, as in the original
+        cy = area.y() + int(area.height() * 0.45)
+        size = 150
         painter.setPen(QPen(QColor(90, 84, 72, 110), 1, Qt.DashLine))
         for _slot, _label, fx, fy in PAPERDOLL:
-            painter.drawLine(cx, top + body_h // 3,
-                             int(area.x() + fx * area.width()), int(area.y() + fy * area.height()))
+            painter.drawLine(cx, cy, int(area.x() + fx * area.width()),
+                             int(area.y() + fy * area.height()))
+        # A soft pool of light under the head, so it does not float on stone.
+        glow = QRadialGradient(float(cx), float(cy), size * 0.62)
+        glow.setColorAt(0.0, QColor(120, 104, 80, 90))
+        glow.setColorAt(1.0, QColor(120, 104, 80, 0))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(glow))
+        painter.drawEllipse(QPoint(cx, cy), int(size * 0.62), int(size * 0.62))
         c = self._character()
         head = str(getattr(c, "head", "") or "")
         pm = self._doll.get(head)
@@ -412,12 +402,12 @@ class InventoryWindow(FloatingWindow):
                 root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                 pm = QPixmap(os.path.join(root, path))
                 if not pm.isNull():
-                    pm = pm.scaled(104, 104, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    pm = pm.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             except Exception:
                 pm = QPixmap()
             self._doll[head] = pm
         if pm is not None and not pm.isNull():
-            painter.drawPixmap(cx - pm.width() // 2, top - pm.height() // 2 + 6, pm)
+            painter.drawPixmap(cx - pm.width() // 2, cy - pm.height() // 2, pm)
 
     def _draw_equipment(self, painter, rect):
         c = self._character()
