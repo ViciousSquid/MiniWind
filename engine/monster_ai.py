@@ -172,6 +172,25 @@ class MonsterAI:
     #: hitscan below is skipped; False leaves the shot to the engine.
     _shot_hook = None
 
+    #: ``hook(things, starts, targets) -> [waypoint or None, ...]``: an
+    #: optional game hook that steers chasing monsters. Called once a tick
+    #: with the monsters about to step toward their targets (``starts`` and
+    #: ``targets`` are ``(n, 3)`` arrays); a waypoint ``(x, y, z)`` replaces
+    #: that monster's target for this step -- a corner on the way round a
+    #: wall -- and None leaves it heading straight for the target.
+    _steer_hook = None
+
+    @classmethod
+    def install_steer_hook(cls, hook):
+        """Install the game's steer hook (see :attr:`_steer_hook`)."""
+        cls._steer_hook = hook
+
+    @classmethod
+    def clear_steer_hook(cls, hook=None):
+        """Remove the steer hook (only if it is still *hook*, when given)."""
+        if hook is None or cls._steer_hook is hook:
+            cls._steer_hook = None
+
     @classmethod
     def install_shot_hook(cls, hook):
         """Install the game's shot hook (see :attr:`_shot_hook`)."""
@@ -213,6 +232,7 @@ class MonsterAI:
         self.hostility = None
         MonsterAI.clear_attack_style_hook()
         MonsterAI.clear_shot_hook()
+        MonsterAI.clear_steer_hook()
 
     def _hostile(self, team_a, team_b) -> bool:
         """Does *team_a* attack *team_b*? The scalar form of the model."""
@@ -717,7 +737,22 @@ all accumulated time when it runs, so simulation time is not lost.
         mover = in_sight & (dist_sq > MONSTER_STOP_DISTANCE * MONSTER_STOP_DISTANCE)
         if mover.any():
             m = np.flatnonzero(mover)
-            direction = target_pos[m] - p32[m]
+            heading = target_pos[m]
+            steer = MonsterAI._steer_hook
+            if steer is not None:
+                # The game may route a chaser round a wall: head for the next
+                # corner of its way instead of straight at the target.
+                try:
+                    waypoints = steer([monsters[rows[i]] for i in m], p32[m], heading)
+                except Exception as exc:
+                    debug_log("MonsterAI", f"steer hook failed: {exc}")
+                    waypoints = None
+                if waypoints:
+                    heading = heading.copy()
+                    for k, wp in enumerate(waypoints):
+                        if wp is not None:
+                            heading[k] = wp
+            direction = heading - p32[m]
             dir_len = np.sqrt(direction[:, 0] * direction[:, 0]
                               + direction[:, 1] * direction[:, 1]
                               + direction[:, 2] * direction[:, 2])

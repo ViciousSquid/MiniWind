@@ -534,6 +534,9 @@ class MiniwindSession:
         self._offscreen_tick = 0
         #: id(actor) -> (x, z, y) where it was last stood on the ground.
         self._grounded = {}
+        #: Routes round walls for every walker (game/navigation.py).
+        from .navigation import Navigator
+        self.nav = Navigator(self._blocked_by_wall)
         #: type name -> (bucket, len, frozenset of ids); see _type_ids.
         self._type_id_cache = {}
         #: The camera height the wheel asked for (None: never zoomed).
@@ -724,6 +727,9 @@ class MiniwindSession:
         # the engine's instant hit-scan (game/npc_archery.py).
         from engine.monster_ai import MonsterAI
         MonsterAI.install_shot_hook(self.archery.shot_hook)
+        # Chasers route round walls rather than pressing into them
+        # (game/navigation.py); schedule walking uses the same routes.
+        MonsterAI.install_steer_hook(self.nav.steer_many)
         self.memory.load(self._map_key)
         self.spawn_creature_points()   # materialise CreatureSpawn points once
         self.memory.apply()            # the dead stay dead; lairs refill after a day
@@ -765,6 +771,11 @@ class MiniwindSession:
             self.logic.player_fire_handler = None
         fio.set_jump_enabled(self.logic, True)
         fio.set_projectile_split(self.logic, None)
+        try:
+            from engine.monster_ai import MonsterAI
+            MonsterAI.clear_steer_hook(self.nav.steer_many)
+        except Exception:
+            pass
         self.arrows_in_flight = ()
         from . import faction_ai
         faction_ai.uninstall(self.logic)
@@ -4679,6 +4690,16 @@ class MiniwindSession:
         speed = float(p.get("move_speed", NPC_WALK_SPEED)) or NPC_WALK_SPEED
         if p.get("sched_state") == sched.FLEE:
             speed *= FLEE_SPEED_MULTIPLIER   # a fright doubles the step
+        # Round a wall rather than into it: once a step has been blocked (or a
+        # route is being followed) head for the next corner of a route.
+        nav = getattr(self, "nav", None)
+        key = id(npc)
+        if nav is not None and (p.get("_blocked_ticks") or nav.has_route(key)):
+            way = nav.steer(key, pos, dest)
+            wx, wz = way[0] - pos[0], way[2] - pos[2]
+            wd = math.hypot(wx, wz)
+            if wd > 1e-3:
+                dx, dz, dist = wx, wz, wd
         step = min(speed * delta, dist)
         nx = pos[0] + dx / dist * step
         nz = pos[2] + dz / dist * step
