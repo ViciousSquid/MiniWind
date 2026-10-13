@@ -66,6 +66,23 @@ def _mark_gibbed(props, damage, new_health, magical: bool = False) -> bool:
     return True
 
 
+def _stacks_from_text(text) -> List[Dict]:
+    """``"id:qty, id"`` as item stacks; unknown ids are skipped."""
+    out = []
+    for part in str(text or "").split(","):
+        iid, sep, qty = part.strip().partition(":")
+        if not iid.strip():
+            continue
+        try:
+            n = max(1, int(qty)) if sep and qty.strip() else 1
+        except ValueError:
+            n = 1
+        stack = items.make(iid.strip(), n)
+        if stack:
+            out.append(stack)
+    return out
+
+
 #: Starting gear by class specialisation, granted at character creation.
 STARTER_KITS = {
     "Combat": [("iron_longsword", 1), ("iron_shield", 1), ("leather_cuirass", 1),
@@ -393,20 +410,45 @@ class GameState:
         creature = bestiary.get(role)
         name = target_props.get("display_name", target_props.get("name", "foe"))
         self.message(f"{name} slain!")
-        # XP toward... skills already trained on hit; award a small luck bump via loot
-        table = target_props.get("loot") or (creature.loot if creature else "")
-        if table:
-            stacks, gold = loot_mod.roll(table, self.character.level, self.rng,
-                                         self.character.attrs.get("luck", 40),
-                                         dice=self.dice)
-            for s in stacks:
-                inv.add_item(self.character.inventory, s)
-            if stacks:
-                self.message("Looted: " + ", ".join(s.get("name", "?") for s in stacks))
-            if gold:
-                self.add_gold(gold)
+        # The loot is rolled now, while the kill is fresh, but it lies on the
+        # body: the player takes it by looting the corpse (E), as they would
+        # empty a chest.
+        self.stock_corpse(target_props)
         # quest kill counters
         self._count_kill(role)
+
+    def stock_corpse(self, target_props: Dict) -> bool:
+        """Roll *target_props*' loot table onto the body, once.
+
+        What it drops joins whatever it was already carrying in its own
+        ``inventory`` (so a bandit's sword is on his corpse too), and its gold
+        becomes a ``gold`` stack there, taken as coin. Marks the body
+        ``loot_rolled`` so it is never rolled twice: a death the player did not
+        cause is stocked the first time the corpse is opened instead. Returns
+        whether a roll happened."""
+        if target_props.get("loot_rolled"):
+            return False
+        target_props["loot_rolled"] = True
+        role = str(target_props.get("npc_role") or target_props.get("monster_role") or "").lower()
+        creature = bestiary.get(role)
+        table = target_props.get("loot") or (creature.loot if creature else "")
+        if not table:
+            return True
+        stacks, gold = loot_mod.roll(table, self.character.level, self.rng,
+                                     self.character.attrs.get("luck", 40),
+                                     dice=self.dice)
+        carried = target_props.get("inventory")
+        if isinstance(carried, str):
+            # Authored shorthand ("id:qty, id"): expand it rather than lose it.
+            target_props["inventory"] = _stacks_from_text(carried)
+        carried = inv.get_inventory(target_props)
+        for s in stacks:
+            inv.add_item(carried, s)
+        if gold:
+            coin = items.make(items.GOLD, int(gold)) or inv.make_item(
+                items.GOLD, name="Gold", qty=int(gold), item_type="gold", value=1)
+            inv.add_item(carried, coin)
+        return True
 
     def _count_kill(self, role: str) -> None:
         # generic per-role kill counter in the store for quest logic

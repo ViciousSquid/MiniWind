@@ -1,7 +1,7 @@
 """
-The inventory: a large floating window in the spirit of Baldur's Gate.
+The character window: a large floating window in the spirit of Baldur's Gate.
 
-Opened with **I**. Three panels side by side:
+Opened with **C**. Three panels side by side:
 
 * **Equipment** — a paperdoll of the player (their own head over a body
   silhouette) ringed by the worn slots: head, amulet, chest, hands, ring,
@@ -12,12 +12,14 @@ Opened with **I**. Three panels side by side:
   Armour, Potions, Food & Herbs, Other).
 * **Details** — the item under the pointer or last clicked: its name in its
   rarity colour, what it is, what it does, its value and weight, and buttons
-  to Use / Equip, Assign it to a quick slot, or leave.
+  to Use / Equip, Assign it to a quick slot, or leave — or the character sheet.
 
 Everything moves by **drag and drop**. Only what fits goes in a slot: a
 weapon in a quick slot, a helmet on the head, arrows in the quiver; anything
 else springs back with a word of why. Dragging something worn or slotted back
-to the pack takes it off. A double-click uses or equips.
+to the pack takes it off. A double-click uses or equips. Things also drag
+to and from the inventory strip (I) and an open chest or body
+(:mod:`game.ui.drag`).
 
 Painting and the mouse belong to the UI thread; the character belongs to the
 game tick. So every change is *queued* through :mod:`game.ui.hits` and carried
@@ -30,12 +32,12 @@ import math
 import time
 
 from PyQt5.QtCore import QPoint, QRect, QRectF, Qt
-from PyQt5.QtGui import (QBrush, QColor, QLinearGradient, QRadialGradient, QPainterPath,
-                         QPen, QPixmap)
+from PyQt5.QtGui import (QBrush, QColor, QFont, QFontMetrics, QLinearGradient,
+                         QRadialGradient, QPainterPath, QPen, QPixmap)
 
 from engine.floating_windows import FloatingWindow
 
-from . import hits
+from . import drag, hits
 from . import theme as T
 
 # -- palette: dressed stone and old gilt ------------------------------------
@@ -84,6 +86,32 @@ GRID_COLS = 6
 GRID_ROWS = 6
 DOUBLE_CLICK = 0.35
 DRAG_START = 5
+
+
+def _fit(painter, rect, flags, text, min_px=8):
+    """Draw one line of *text* in *rect* without spilling out of it: the
+    painter's font is shrunk until the text fits (no smaller than *min_px*),
+    and anything still too wide is elided."""
+    text = str(text)
+    font = painter.font()
+    fm = painter.fontMetrics()
+    avail = max(1, rect.width())
+    if fm.horizontalAdvance(text) > avail or fm.height() > rect.height() + 4:
+        px = font.pixelSize() if font.pixelSize() > 0 else int(round(font.pointSizeF() * 4 / 3))
+        small = QFont(font)
+        while px > min_px:
+            px -= 1
+            small.setPixelSize(px)
+            m = QFontMetrics(small)
+            if m.horizontalAdvance(text) <= avail and m.height() <= rect.height() + 4:
+                break
+        painter.save()
+        painter.setFont(small)
+        shown = QFontMetrics(small).elidedText(text, Qt.ElideRight, avail)
+        painter.drawText(rect, flags, shown)
+        painter.restore()
+        return
+    painter.drawText(rect, flags, text)
 
 
 def _item(iid):
@@ -146,8 +174,7 @@ class InventoryWindow(FloatingWindow):
 
     def __init__(self, session, x=40, y=40, view="details"):
         width = 1120
-        super().__init__("Inventory" if view == "details" else "Character",
-                         x, y, width, body_height=640)
+        super().__init__("Character", x, y, width, body_height=640)
         self.session = session
         self.key = f"screen:{'inventory' if view == 'details' else 'character'}"
         self.view = view if view in dict(self.VIEWS) else "details"
@@ -172,14 +199,16 @@ class InventoryWindow(FloatingWindow):
         # One typeface throughout, the conversation's own (MedievalSharp,
         # game/ui/fonts.py): it has a single upright weight, so nothing here
         # asks it for bold or italic.
-        self.f_body = fonts.dialogue_font(11)
-        self.f_small = fonts.dialogue_font(9)
-        self.f_count = fonts.dialogue_font(10)
-        self.f_title = fonts.dialogue_font(16)
-        self.f_name = fonts.dialogue_font(15)
-        self.f_button = fonts.dialogue_font(12)
+        # Sized in pixels, as the layout is: point sizes grow with the
+        # screen's DPI and would spill out of every box on a high-DPI display.
+        self.f_body = fonts.dialogue_font_px(15)
+        self.f_small = fonts.dialogue_font_px(12)
+        self.f_count = fonts.dialogue_font_px(13)
+        self.f_title = fonts.dialogue_font_px(21)
+        self.f_name = fonts.dialogue_font_px(20)
+        self.f_button = fonts.dialogue_font_px(16)
         # The window's own title bar too, rather than the chrome's Arial.
-        self.title_font = fonts.dialogue_font(10)
+        self.title_font = fonts.dialogue_font_px(13)
 
     # ------------------------------------------------------------ the model
     def _character(self):
@@ -280,7 +309,7 @@ class InventoryWindow(FloatingWindow):
             painter.drawRoundedRect(r, 5, 5)
             painter.setFont(self.f_button)
             painter.setPen(_GOLD if on else _INK)
-            painter.drawText(r, Qt.AlignCenter, label)
+            _fit(painter, r, Qt.AlignCenter, label)
             self._buttons.append((QRect(r), self._set_view(key)))
         panel = QRect(right.x(), right.y() + 32, right.width(), right.height() - 32)
         if self.view == "character":
@@ -288,6 +317,9 @@ class InventoryWindow(FloatingWindow):
         else:
             self._draw_details(painter, panel)
         self._draw_dragged(painter)
+        # Its slots and pack take drops from the strip and the container
+        # screen too (game/ui/drag.py).
+        drag.set_zones(self, self._targets)
         painter.restore()
 
     def _panel(self, painter, rect, title):
@@ -306,23 +338,24 @@ class InventoryWindow(FloatingWindow):
         painter.drawLine(bar.bottomLeft(), bar.bottomRight())
         painter.setFont(self.f_title)
         painter.setPen(_GOLD)
-        painter.drawText(bar.adjusted(12, 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft, title)
+        _fit(painter, bar.adjusted(12, 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft, title)
         return QRect(rect.x() + 10, bar.bottom() + 8, rect.width() - 20,
                      rect.bottom() - bar.bottom() - 16)
 
     def _slot_box(self, painter, rect, iid, target=None, source=None, label=None,
                   lit=False, number=None):
         """One item slot: a sunken frame, its icon and count, its drop state."""
-        drag_def = _item(self._drag[2]) if self._drag else None
+        dragging = self._drag or (drag.current["source"] if drag.current else None)
+        drag_def = _item(dragging[2]) if dragging else None
         border = _SLOT_EDGE
-        if self._drag and target is not None:
+        if dragging and target is not None:
             border = _OK if fits(target, drag_def) else QColor(70, 60, 55)
         elif lit:
             border = _GOLD
         if iid and (iid == self.selected):
             border = _SLOT_HOT
         painter.setBrush(_SLOT)
-        painter.setPen(QPen(border, 2 if (lit or self._drag) else 1.4))
+        painter.setPen(QPen(border, 2 if (lit or dragging) else 1.4))
         painter.drawRoundedRect(rect, 4, 4)
         if hits.hovered(rect):
             painter.fillRect(rect.adjusted(2, 2, -2, -2), QColor(255, 230, 170, 26))
@@ -363,7 +396,7 @@ class InventoryWindow(FloatingWindow):
         elif label and not iid:
             painter.setFont(self.f_small)
             painter.setPen(QColor(120, 112, 98))
-            painter.drawText(rect, Qt.AlignCenter, label)
+            _fit(painter, rect, Qt.AlignCenter, label)
         if number is not None:
             painter.setFont(self.f_count)
             painter.setPen(_GOLD if lit else _DIM)
@@ -434,7 +467,7 @@ class InventoryWindow(FloatingWindow):
                 sub = f"Level {getattr(c, 'level', 1)}"
             painter.setFont(self.f_small)
             painter.setPen(_DIM)
-            painter.drawText(QRect(inner.x(), inner.y() - 4, inner.width(), 14),
+            _fit(painter, QRect(inner.x(), inner.y() - 4, inner.width(), 14),
                              Qt.AlignRight | Qt.AlignVCenter, sub)
         doll = QRect(inner.x(), inner.y() + 12, inner.width(), 330)
         self._draw_paperdoll_figure(painter, doll)
@@ -482,16 +515,21 @@ class InventoryWindow(FloatingWindow):
         except Exception:
             ar, weight, load, cap, gold = 10, "none", 0.0, 0.0, 0
         foot = QRect(inner.x(), inner.bottom() - 20, inner.width(), 20)
+        # Three cells, so the armour, the purse and the load never run together.
+        third = foot.width() // 3
+        f_left = QRect(foot.x(), foot.y(), third + 16, foot.height())
+        f_mid = QRect(foot.x() + third + 16, foot.y(), third - 16, foot.height())
+        f_right = QRect(foot.x() + 2 * third, foot.y(), foot.width() - 2 * third, foot.height())
         painter.setFont(self.f_body)
         painter.setPen(_INK)
-        painter.drawText(foot, Qt.AlignLeft | Qt.AlignVCenter,
-                         "Unarmoured" if weight == "none" else f"{weight.title()} armour")
+        _fit(painter, f_left, Qt.AlignLeft | Qt.AlignVCenter,
+             "Unarmoured" if weight == "none" else f"{weight.title()} armour")
         self._draw_ac_badge(painter, QPoint(inner.x() + int(inner.width() * 0.31),
                                             inner.y() + 40), ar)
         painter.setPen(_GOLD)
-        painter.drawText(foot, Qt.AlignHCenter | Qt.AlignVCenter, f"{gold} gold")
+        _fit(painter, f_mid, Qt.AlignHCenter | Qt.AlignVCenter, f"{gold} gold")
         painter.setPen(_NO if cap and load > cap else _INK)
-        painter.drawText(foot, Qt.AlignRight | Qt.AlignVCenter, f"{load:.0f} / {cap:.0f} wt")
+        _fit(painter, f_right, Qt.AlignRight | Qt.AlignVCenter, f"{load:.0f} / {cap:.0f} wt")
 
     def _draw_ac_badge(self, painter, centre, ac):
         """Armour Class on a little heater shield, top left of the paperdoll."""
@@ -555,7 +593,7 @@ class InventoryWindow(FloatingWindow):
             painter.drawRoundedRect(r, 4, 4)
             painter.setFont(self.f_small)
             painter.setPen(_GOLD if on else _DIM)
-            painter.drawText(r, Qt.AlignCenter, label)
+            _fit(painter, r, Qt.AlignCenter, label)
             self._buttons.append((QRect(r), self._set_tab(i)))
         if tabs[self.tab][1] == "spells":
             self._draw_spell_grid(painter, inner)
@@ -585,11 +623,11 @@ class InventoryWindow(FloatingWindow):
                 self._buttons.append((QRect(r), self._turn_page(step, pages)))
             painter.setFont(self.f_small)
             painter.setPen(_DIM)
-            painter.drawText(QRect(grid.x(), grid.bottom() + 4, grid.width(), 16),
+            _fit(painter, QRect(grid.x(), grid.bottom() + 4, grid.width(), 16),
                              Qt.AlignCenter, f"page {self.page + 1} of {pages}")
         painter.setFont(self.f_small)
         painter.setPen(_DIM)
-        painter.drawText(QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
+        _fit(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
                          Qt.AlignCenter,
                          "Drag to equip or slot  ·  double-click to use  ·  keys 1-4 draw")
 
@@ -630,7 +668,7 @@ class InventoryWindow(FloatingWindow):
             self._cells.append((QRect(r), ("spell", None, sid)))
         painter.setFont(self.f_small)
         painter.setPen(_DIM)
-        painter.drawText(QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
+        _fit(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
                          Qt.AlignCenter, "Double-click a spell to ready it  ·  right mouse casts")
 
     def _draw_spell_details(self, painter, inner, sid):
@@ -639,7 +677,7 @@ class InventoryWindow(FloatingWindow):
         c = self._character()
         painter.setFont(self.f_name)
         painter.setPen(QColor(*sp.color))
-        painter.drawText(QRect(inner.x(), inner.y(), inner.width(), 26),
+        _fit(painter, QRect(inner.x(), inner.y(), inner.width(), 26),
                          Qt.AlignLeft | Qt.AlignVCenter, sp.name)
         painter.setFont(self.f_small)
         painter.setPen(_DIM)
@@ -686,7 +724,7 @@ class InventoryWindow(FloatingWindow):
                 painter.drawRoundedRect(r, 5, 5)
                 painter.setFont(self.f_button)
                 painter.setPen(_GOLD)
-                painter.drawText(r, Qt.AlignCenter, label)
+                _fit(painter, r, Qt.AlignCenter, label)
                 self._buttons.append((QRect(r), action))
             return
         iid = self.hover[1] if (self.hover and self.hover[0] == "item") else self.selected
@@ -708,7 +746,7 @@ class InventoryWindow(FloatingWindow):
                 rgb, prefix = (232, 228, 240), ""
             painter.setFont(self.f_name)
             painter.setPen(QColor(*rgb))
-            painter.drawText(QRect(inner.x(), inner.y(), inner.width(), 26),
+            _fit(painter, QRect(inner.x(), inner.y(), inner.width(), 26),
                              Qt.AlignLeft | Qt.AlignVCenter, prefix + d.name)
             painter.setFont(self.f_small)
             painter.setPen(_DIM)
@@ -747,10 +785,10 @@ class InventoryWindow(FloatingWindow):
             painter.setPen(QPen(_SLOT_EDGE, 1))
             painter.drawRect(stats)
             painter.setPen(_GOLD)
-            painter.drawText(stats.adjusted(8, 0, 0, 0), Qt.AlignLeft | Qt.AlignVCenter,
+            _fit(painter, stats.adjusted(8, 0, 0, 0), Qt.AlignLeft | Qt.AlignVCenter,
                              f"{int(stack.get('value', d.value))} gold")
             painter.setPen(_INK)
-            painter.drawText(stats.adjusted(0, 0, -8, 0), Qt.AlignRight | Qt.AlignVCenter,
+            _fit(painter, stats.adjusted(0, 0, -8, 0), Qt.AlignRight | Qt.AlignVCenter,
                              f"{float(d.weight):g} wt")
         # Buttons.
         by = inner.bottom() - 34
@@ -769,7 +807,7 @@ class InventoryWindow(FloatingWindow):
             painter.drawRoundedRect(r, 5, 5)
             painter.setFont(self.f_button)
             painter.setPen(_GOLD if enabled else QColor(90, 86, 80))
-            painter.drawText(r, Qt.AlignCenter, label)
+            _fit(painter, r, Qt.AlignCenter, label)
             if enabled:
                 self._buttons.append((QRect(r), action))
 
@@ -792,7 +830,6 @@ class InventoryWindow(FloatingWindow):
     def _set_view(self, key):
         def act():
             self.view = key
-            self.title = "Inventory" if key == "details" else "Character"
         return act
 
     # ------------------------------------------------------- character sheet
@@ -810,7 +847,7 @@ class InventoryWindow(FloatingWindow):
         x, y, w = inner.x(), inner.y(), inner.width()
         painter.setFont(self.f_name)
         painter.setPen(_GOLD)
-        painter.drawText(QRect(x, y, w, 22), Qt.AlignLeft | Qt.AlignVCenter, c.name)
+        _fit(painter, QRect(x, y, w, 22), Qt.AlignLeft | Qt.AlignVCenter, c.name)
         painter.setFont(self.f_small)
         painter.setPen(_DIM)
         try:
@@ -818,7 +855,7 @@ class InventoryWindow(FloatingWindow):
                    f"{classes.get(c.class_id).label} · {birthsigns.get(c.birthsign_id).label}")
         except Exception:
             sub = f"Level {c.level}"
-        painter.drawText(QRect(x, y + 22, w, 16), Qt.AlignLeft | Qt.AlignVCenter, sub)
+        _fit(painter, QRect(x, y + 22, w, 16), Qt.AlignLeft | Qt.AlignVCenter, sub)
         rolls = getattr(c, "rolls", None) or {}
         yy = y + 40
         if rolls:
@@ -827,7 +864,7 @@ class InventoryWindow(FloatingWindow):
                 bio = bios.bio_for(rolls.get("strength", 10), rolls.get("endurance", 10),
                                    rolls.get("personality", 10))
                 painter.setPen(_GOLD)
-                painter.drawText(QRect(x, yy, w, 16), Qt.AlignLeft | Qt.AlignVCenter,
+                _fit(painter, QRect(x, yy, w, 16), Qt.AlignLeft | Qt.AlignVCenter,
                                  f"{bio['title']} · STR {rolls.get('strength', '?')} "
                                  f"END {rolls.get('endurance', '?')} "
                                  f"CHA {rolls.get('personality', '?')}")
@@ -841,7 +878,7 @@ class InventoryWindow(FloatingWindow):
                 ("Stamina", c.stamina, c.max_stamina, QColor(90, 170, 90))):
             bar = QRect(x + 64, yy + 3, w - 64, 11)
             painter.setPen(_INK)
-            painter.drawText(QRect(x, yy, 62, 16), Qt.AlignLeft | Qt.AlignVCenter, label)
+            _fit(painter, QRect(x, yy, 62, 16), Qt.AlignLeft | Qt.AlignVCenter, label)
             painter.setBrush(_SLOT)
             painter.setPen(QPen(_SLOT_EDGE, 1))
             painter.drawRect(bar)
@@ -849,7 +886,7 @@ class InventoryWindow(FloatingWindow):
             painter.fillRect(QRect(bar.x() + 1, bar.y() + 1, int((bar.width() - 1) * frac),
                                    bar.height() - 1), colour)
             painter.setPen(_INK)
-            painter.drawText(bar, Qt.AlignCenter, f"{int(cur)} / {int(top)}")
+            _fit(painter, bar, Qt.AlignCenter, f"{int(cur)} / {int(top)}")
             yy += 18
         # Armour Class, and what kind of armour gives it.
         ac = int(eq.armour_class(c))
@@ -857,11 +894,11 @@ class InventoryWindow(FloatingWindow):
         self._draw_ac_badge(painter, QPoint(x + 22, yy + 26), ac)
         painter.setFont(self.f_body)
         painter.setPen(_INK)
-        painter.drawText(QRect(x + 52, yy + 8, w - 52, 18), Qt.AlignLeft | Qt.AlignVCenter,
+        _fit(painter, QRect(x + 52, yy + 8, w - 52, 18), Qt.AlignLeft | Qt.AlignVCenter,
                          f"Armour Class {ac}")
         painter.setFont(self.f_small)
         painter.setPen(_DIM)
-        painter.drawText(QRect(x + 52, yy + 26, w - 52, 16), Qt.AlignLeft | Qt.AlignVCenter,
+        _fit(painter, QRect(x + 52, yy + 26, w - 52, 16), Qt.AlignLeft | Qt.AlignVCenter,
                          "Unarmoured" if weight == "none" else f"{weight.title()} armour"
                          f" · deflects {int(round(eq.deflect_chance(c) * 100))}%"
                          if hasattr(eq, "deflect_chance") else "")
@@ -876,7 +913,7 @@ class InventoryWindow(FloatingWindow):
                                bar.height() - 1), QColor(200, 170, 70))
         painter.setFont(self.f_small)
         painter.setPen(_DIM)
-        painter.drawText(QRect(x, yy + 11, w, 14), Qt.AlignLeft | Qt.AlignVCenter,
+        _fit(painter, QRect(x, yy + 11, w, 14), Qt.AlignLeft | Qt.AlignVCenter,
                          f"Level progress {prog}/10")
         yy += 30
         # Attributes, two columns.
@@ -890,7 +927,7 @@ class InventoryWindow(FloatingWindow):
             col, row = i % 2, i // 2
             r = QRect(x + col * (half + 10), yy + row * 15, half, 15)
             painter.setPen(_INK)
-            painter.drawText(r, Qt.AlignLeft | Qt.AlignVCenter, attr.label(a))
+            _fit(painter, r.adjusted(0, 0, -26, 0), Qt.AlignLeft | Qt.AlignVCenter, attr.label(a))
             painter.setPen(_GOLD)
             painter.drawText(r, Qt.AlignRight | Qt.AlignVCenter, str(c.attrs.get(a, 0)))
         yy += ((len(attr.ATTRIBUTES) + 1) // 2) * 15 + 8
@@ -914,7 +951,7 @@ class InventoryWindow(FloatingWindow):
         if getattr(c, "bounty", 0):
             painter.setFont(self.f_body)
             painter.setPen(_NO)
-            painter.drawText(QRect(x, inner.bottom() - 18, w, 18), Qt.AlignLeft | Qt.AlignVCenter,
+            _fit(painter, QRect(x, inner.bottom() - 18, w, 18), Qt.AlignLeft | Qt.AlignVCenter,
                              f"Bounty: {c.bounty} gold")
 
     def _set_tab(self, i):
@@ -1001,6 +1038,7 @@ class InventoryWindow(FloatingWindow):
             if (source[0] != "spell"
                     and (event.pos() - start).manhattanLength() >= DRAG_START):
                 self._drag = source
+                drag.start(self, source)
         return self._press is not None
 
     def handle_mouse_release(self, event):
@@ -1010,8 +1048,9 @@ class InventoryWindow(FloatingWindow):
             return False
         _start, source = self._press
         self._press = None
-        drag, self._drag = self._drag, None
-        if drag is None:
+        dragged, self._drag = self._drag, None
+        drag.stop(self)
+        if dragged is None:
             # A click: a second one on the same item soon after uses it.
             now = time.monotonic()
             last_t, last_src = self._last_click
@@ -1024,21 +1063,32 @@ class InventoryWindow(FloatingWindow):
                     self._queue(lambda session: session.inventory_use(iid))
                 self._last_click = (0.0, None)
             return True
+        iid = dragged[2]
         target = self._at(self._targets, event.pos())
-        if target is None or target[:1] == drag[:1] and target[1] == drag[1]:
+        if target is None:
+            # Let go over another window: the strip, an open chest or body.
+            target = drag.target_at(event.x(), event.y(), exclude=self)
+            if target is not None:
+                self._queue(lambda session: session.item_drop(dragged, target))
             return True
-        iid = drag[2]
-        self._queue(lambda session: session.inventory_move(drag, target, iid))
+        if target[:1] == dragged[:1] and target[1] == dragged[1]:
+            return True
+        self._queue(lambda session: session.inventory_move(dragged, target, iid))
         return True
 
     def handle_body_click(self, x, y):
         return True
 
     def on_close(self):
+        drag.forget(self)
         self._queue(lambda session: setattr(session, "open_screen", None))
 
-    # the body has a fixed size; keep it inside the view when it opens
+    # the body has a fixed size; keep it inside the view when it opens, and
+    # clear of the inventory strip along the bottom edge where there is room
     def place(self, view_w, view_h):
+        from .inventory_strip import height_needed
         bw = self.width
         bh = self.HEADER_H + self.content_height()
-        self.window_rect.moveTo(max(10, (view_w - bw) // 2), max(10, (view_h - bh) // 2))
+        y = (view_h - bh) // 2
+        y = min(y, view_h - height_needed() - bh)
+        self.window_rect.moveTo(max(10, (view_w - bw) // 2), max(10, y))

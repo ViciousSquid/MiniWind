@@ -312,3 +312,78 @@ def test_trade_can_be_closed_with_escape(session):
     assert session.open_screen is None
     assert session.merchant_npc is None
 
+
+
+# ------------------------------------------------- menus in floating windows
+
+class _Press:
+    """Just enough of a QMouseEvent for FloatingWindow.handle_mouse_press."""
+
+    def __init__(self, point):
+        self._p = point
+
+    def pos(self):
+        return self._p
+
+    def x(self):
+        return self._p.x()
+
+    def y(self):
+        return self._p.y()
+
+    def button(self):
+        return QtCore.Qt.LeftButton
+
+
+def _paint_as_play_does(window):
+    """The view's order: the game's overlay hook opens and publishes the
+    frame, *then* the floating windows (holding the menus) are painted."""
+    pixmap = QtGui.QPixmap(W, H)
+    painter = QtGui.QPainter(pixmap)
+    hits.begin()
+    hits.end()
+    window.draw(painter)
+    painter.end()
+
+
+def _window_for(session):
+    from engine.floating_windows import CallbackWindow
+    if session.dialogue is not None:
+        draw = lambda p, x, y, w, h: dialogue_ui.draw_in_rect(p, session, x, y, w, h)
+        bw, bh = dialogue_ui.window_body_size(session)
+    else:
+        draw = lambda p, x, y, w, h: screens.draw_in_rect(p, session, x, y, w, h)
+        bw, bh = screens.window_body_size(session.open_screen)
+    return CallbackWindow("menu", "Menu", draw, width=bw, body_height=bh, x=40, y=40,
+                          on_body_click_cb=lambda cx, cy: screens.handle_click(session, cx, cy))
+
+
+def _click_in_window(session, window, label):
+    _paint_as_play_does(window)
+    found = [rect for rect, lab in hits.targets() if lab == label]
+    assert found, f"no {label!r} among {[lab for _, lab in hits.targets()]}"
+    assert window.handle_mouse_press(_Press(found[-1].center()))
+    assert hits.run_clicks(session) == 1
+
+
+def test_a_reply_in_the_conversation_window_can_be_clicked(session):
+    chosen = []
+    session.dialogue = object()
+    session.current_view = lambda: {"text": "Well met.", "responses": [
+        {"text": "Hello."}, {"text": "Goodbye."}]}
+    session.choose = chosen.append
+    window = _window_for(session)
+    _click_in_window(session, window, "Goodbye.")
+    assert chosen == [1]
+
+
+def test_character_creation_in_its_window_takes_the_mouse(session):
+    session.open_screen = "charcreate"
+    cc = screens._cc(session)
+    screens.handle_key(session, "a")
+    window = _window_for(session)
+    head = cc["head"]
+    _click_in_window(session, window, ">")
+    assert cc["head"] == head + 1
+    _click_in_window(session, window, "Next")
+    assert screens._CC_STEPS[cc["step"]] == "fortune"

@@ -14,7 +14,7 @@ from __future__ import annotations
 from PyQt5.QtCore import QRect, Qt
 from PyQt5.QtGui import QColor, QPen
 
-from . import fonts, hits, trade_anim
+from . import drag, fonts, hits, trade_anim
 from . import theme as T
 from ..rpg import (races, classes, birthsigns, attributes as attr, skills as sk,
                    items as rpg_items, inventory as inv, equipment as eq,
@@ -1418,7 +1418,15 @@ def _cont_state(session):
                                     {"side": 0, "row_c": 0, "row_p": 0})
 
 
+#: The container screen's draggable rows and its two drop zones, recorded as
+#: it paints for the window that hosts it (game/ui/container_window.py):
+#: ``cells`` [(QRect, source)], ``zones`` [(QRect, target)].
+CONTAINER_DRAG = {"cells": [], "zones": []}
+
+
 def _draw_container(painter, session, w, h):
+    CONTAINER_DRAG["cells"] = []
+    CONTAINER_DRAG["zones"] = []
     c = session.game.character
     st = _cont_state(session)
     citems = session.container_inventory()
@@ -1426,7 +1434,7 @@ def _draw_container(painter, session, w, h):
     x, y, bw, bh = _panel_rect(w, h)
     inner = T.panel(painter, x, y, bw, bh)
     ty = T.heading(painter, inner, session.container_name(),
-                   f"{c.gold} gold    ·    Tab/←/→ switch side   ·   Enter take/store   ·   E/Esc close")
+                   f"{c.gold} gold    ·    click or Enter to take / store   ·   E/Esc close")
 
     st["row_c"] = max(0, min(st["row_c"], max(0, len(citems) - 1)))
     st["row_p"] = max(0, min(st["row_p"], max(0, len(pitems) - 1)))
@@ -1438,7 +1446,16 @@ def _draw_container(painter, session, w, h):
     list_y = head_y + 24
     row_h = 22
 
-    def _column(cx, title, items, sel_row, active):
+    def _column(cx, title, items, sel_row, active, side):
+        zone = QRect(cx, head_y - 16, col_w, inner.bottom() - 40 - (head_y - 16))
+        CONTAINER_DRAG["zones"].append((zone, ("container", None) if side == 0
+                                        else ("pack", None)))
+        if drag.current is not None and hits.hovered(zone):
+            painter.save()
+            painter.setPen(QPen(T.GOLD_BRIGHT, 1.5))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(zone, 5, 5)
+            painter.restore()
         head_col = T.GOLD_BRIGHT if active else T.DIM
         T.text(painter, cx + 6, head_y, title, size=12, color=head_col, bold=True,
                family="Segoe UI")
@@ -1447,11 +1464,17 @@ def _draw_container(painter, session, w, h):
                    family="Segoe UI")
         for i, stack in enumerate(items):
             ry = list_y + i * row_h
-            if ry > inner.bottom() - 24:
+            if ry > inner.bottom() - 58:
                 break
             if i == sel_row and active:
                 painter.fillRect(QRect(cx, ry, col_w, row_h - 2), T.SELECT)
             name = stack.get("name", stack.get("id"))
+            _row_target(painter, QRect(cx, ry, col_w, row_h - 2),
+                        _cont_click(side, i), f"{'take' if side == 0 else 'store'}:{i}")
+            CONTAINER_DRAG["cells"].append(
+                (QRect(cx, ry, col_w, row_h - 2),
+                 ("container", i, stack.get("id")) if side == 0
+                 else ("pack", None, stack.get("id"))))
             qty = f" ×{stack['qty']}" if stack.get("qty", 1) > 1 else ""
             ncol = T.GOLD_BRIGHT if (i == sel_row and active) else T.INK
             T.text(painter, cx + 8, ry + 15, name + qty, size=11, color=ncol,
@@ -1459,17 +1482,36 @@ def _draw_container(painter, session, w, h):
 
     left_x = inner.x()
     right_x = inner.x() + col_w + 24
-    _column(left_x, "Contents", citems, st["row_c"], st["side"] == 0)
-    _column(right_x, "Your inventory", pitems, st["row_p"], st["side"] == 1)
+    _column(left_x, "Contents", citems, st["row_c"], st["side"] == 0, 0)
+    _column(right_x, "Your inventory", pitems, st["row_p"], st["side"] == 1, 1)
 
     # divider
     painter.setPen(T.GILD)
     midx = inner.x() + col_w + 12
-    painter.drawLine(midx, list_y - 4, midx, inner.bottom() - 20)
+    painter.drawLine(midx, list_y - 4, midx, inner.bottom() - 40)
 
+    bw, bh = 120, 30
+    by = inner.bottom() - bh
+    button(painter, QRect(inner.x(), by, bw, bh), "Take all",
+           lambda sess: sess.take_all_from_container(), enabled=bool(citems),
+           primary=True)
+    button(painter, QRect(inner.right() - bw, by, bw, bh), "Close",
+           lambda sess: sess.close_container())
     hint = "Enter: take →" if st["side"] == 0 else "← Enter: store"
-    T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
+    T.text_in(painter, QRect(inner.x() + bw, by, inner.width() - 2 * bw, bh),
               hint, size=9, color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
+
+
+def _cont_click(side, index):
+    """A click on a container row: take it (contents) or store it (yours)."""
+    def act(session):
+        st = _cont_state(session)
+        st["side"] = side
+        if side == 0:
+            session.take_from_container(index)
+        else:
+            session.store_in_container(index)
+    return act
 
 
 def _handle_container(session, key):

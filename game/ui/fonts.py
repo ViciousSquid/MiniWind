@@ -85,6 +85,17 @@ def dialogue_font(size):
     return QFont(family, int(size))
 
 
+def dialogue_font_px(pixels):
+    """The conversation font at *pixels* tall, whatever the screen's DPI.
+
+    For UI laid out in pixels (the character window): a point size grows
+    with the display's DPI and scaling while the layout does not, so text
+    sized in points overflows its boxes on a high-DPI screen."""
+    f = dialogue_font(10)
+    f.setPixelSize(max(1, int(pixels)))
+    return f
+
+
 #: Sans faces the game's UI code names; :func:`game_family` replaces them.
 SANS_FAMILIES = frozenset({"segoe ui", "arial", "helvetica", "verdana",
                            "tahoma", "sans-serif", "sans"})

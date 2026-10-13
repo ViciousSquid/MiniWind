@@ -126,6 +126,10 @@ NPC_BLOCKED_GIVE_UP_TICKS = 60
 #: How close the player must be to talk. Comfortably larger than a billboard so
 #: walking up to an NPC (whose speech bubble is showing) and pressing E works.
 TALK_RADIUS = 140.0
+#: The inventory strip's width in slots, unless ``inventory_strip_size``
+#: (console, saved as GAME/inventory_strip_size) says otherwise.
+STRIP_DEFAULT_SIZE = 9
+STRIP_MAX_SIZE = 30
 #: How near a talkable NPC must be for its speech bubble to appear. Kept a short
 #: step beyond the interaction range so a bubble means "you are close enough to
 #: talk", rather than floating over every NPC across the settlement — the cue
@@ -628,6 +632,9 @@ class MiniwindSession:
         self.dialogue_npc = None
         self.merchant_npc = None
         self.show_loadout = False
+        #: The inventory strip along the bottom of the screen, toggled with I
+        #: (game/ui/inventory_strip.py).
+        self.show_strip = False
         self._remove_wisp()
         self._banish_reapers()
         self.notifications = []
@@ -5649,6 +5656,150 @@ class MiniwindSession:
         self.open_screen = getattr(self, "_book_return", None)
         self._book_return = None
 
+    # ------------------------------------------------------ inventory strip
+    # The Minecraft-style bar along the bottom of the screen (I, and
+    # game/ui/inventory_strip.py). Its slots hold carried item ids, like the
+    # quick-weapon slots; ``inventory_strip_size`` (console) sets how many.
+    def strip_size(self) -> int:
+        n = getattr(self, "_strip_size", None)
+        if n is None:
+            n = STRIP_DEFAULT_SIZE
+            try:
+                config = self._editor_config()
+                if config is not None:
+                    n = config.getint("GAME", "inventory_strip_size",
+                                      fallback=STRIP_DEFAULT_SIZE)
+            except (AttributeError, TypeError, ValueError):
+                n = STRIP_DEFAULT_SIZE
+            n = self._strip_size = max(1, min(STRIP_MAX_SIZE, int(n)))
+        return n
+
+    def set_strip_size(self, n) -> int:
+        """Make the strip *n* slots wide (clamped). Things in slots that go
+        stay in the pack. Returns the size set."""
+        self._strip_size = max(1, min(STRIP_MAX_SIZE, int(n)))
+        self.strip_slots()
+        return self._strip_size
+
+    def strip_slots(self) -> List[Optional[Dict]]:
+        """The strip's slots, each the carried stack in it or None.
+
+        Kept honest on every ask, as the quick slots are: a thing no longer
+        carried leaves its slot, and one picked up for the first time takes
+        the first free slot by itself."""
+        c = getattr(self.game, "character", None)
+        if c is None:
+            return []
+        size = self.strip_size()
+        strip = getattr(c, "strip", None)
+        if not isinstance(strip, list):
+            strip = c.strip = []
+        if len(strip) > size:
+            del strip[size:]
+        strip.extend([None] * (size - len(strip)))
+        seen = getattr(c, "_strip_seen", None)
+        if seen is None:
+            seen = c._strip_seen = set()
+        carried = {}
+        for stack in c.inventory or ():
+            if isinstance(stack, dict) and stack.get("id") and int(stack.get("qty", 1) or 0) > 0:
+                carried.setdefault(str(stack["id"]), stack)
+        for i, iid in enumerate(strip):
+            if iid and iid not in carried:
+                strip[i] = None
+        for iid in carried:
+            if iid in seen:
+                continue
+            seen.add(iid)
+            if iid not in strip and None in strip:
+                strip[strip.index(None)] = iid
+        # Forget what has gone, so it is offered a slot again when it comes back.
+        seen.intersection_update(carried)
+        return [carried.get(iid) if iid else None for iid in strip]
+
+    def set_strip_slot(self, index: int, item_id) -> bool:
+        """Put *item_id* (carried) in strip slot *index*, or empty it with
+        None. Something already in another slot swaps with what was here."""
+        self.strip_slots()
+        strip = self.game.character.strip
+        index = int(index)
+        if not 0 <= index < len(strip):
+            return False
+        if item_id is None:
+            strip[index] = None
+            return True
+        if not inv.has_item(self.game.character.inventory, item_id, 1):
+            return False
+        if item_id in strip:
+            strip[strip.index(item_id)] = strip[index]
+        strip[index] = item_id
+        self.game.character._strip_seen.add(item_id)
+        return True
+
+    def _forget_in_slots(self, item_id) -> None:
+        """*item_id* is leaving the pack: off the body, out of every slot."""
+        c = self.game.character
+        for slot, iid in list(c.equipment.items()):
+            if iid == item_id:
+                if slot == rpg_items.SLOT_WEAPON:
+                    self._cancel_bow_draw()
+                self.game.unequip(slot)
+        quick = getattr(c, "quick_weapons", None) or []
+        for i, iid in enumerate(quick):
+            if iid == item_id:
+                quick[i] = None
+        strip = getattr(c, "strip", None) or []
+        for i, iid in enumerate(strip):
+            if iid == item_id:
+                strip[i] = None
+
+    def store_item_in_container(self, item_id) -> bool:
+        """Put the whole carried stack of *item_id* in the open container."""
+        if self.container_thing is None:
+            return False
+        pinv = self.game.character.inventory
+        index = next((i for i, st in enumerate(pinv) if st.get("id") == item_id), None)
+        if index is None:
+            return False
+        return self.store_in_container(index)
+
+    def item_drop(self, source, target) -> bool:
+        """One drag and drop between any of the item windows: the pack and the
+        body (C), the strip, and an open container or corpse.
+
+        *source* is ``(kind, key, item id)`` and *target* ``(kind, key)``,
+        where kind is ``pack``, ``equip``, ``quick``, ``strip`` or
+        ``container`` (key: a slot, a slot index, or a container row)."""
+        skind, skey, iid = source[0], source[1], source[2]
+        tkind, tkey = target[0], target[1]
+        if not iid:
+            return False
+        if skind == "container":
+            if tkind == "container":
+                return False
+            items = self.container_inventory()
+            row = skey if (isinstance(skey, int) and 0 <= skey < len(items)
+                           and items[skey].get("id") == iid) else next(
+                (i for i, st in enumerate(items) if st.get("id") == iid), None)
+            if row is None or not self.take_from_container(row):
+                return False
+            if iid == rpg_items.GOLD:
+                return True                          # coin goes to the purse
+            if tkind == "strip":
+                return self.set_strip_slot(int(tkey), iid)
+            if tkind in ("equip", "quick"):
+                return self.inventory_move(("pack", None, iid), (tkind, tkey), iid)
+            return True
+        if tkind == "container":
+            return self.store_item_in_container(iid)
+        if tkind == "strip":
+            return self.set_strip_slot(int(tkey), iid)
+        if skind == "strip":
+            if tkind == "pack":
+                return self.set_strip_slot(int(skey), None)
+            return self.inventory_move(("pack", None, iid), (tkind, tkey), iid)
+        return self.inventory_move(source, (tkind, tkey), iid)
+
     def inventory_assign_quick(self, item_id) -> bool:
         """Assign: put a weapon in the first free quick slot."""
         slots = self.quick_weapon_slots()
@@ -5991,6 +6142,63 @@ class MiniwindSession:
                 best, best_d = c, d
         return best
 
+    # -- corpses ------------------------------------------------------------
+    def nearest_corpse(self, player_pos, radius: float = TALK_RADIUS):
+        """The nearest dead NPC or creature within *radius* with anything on
+        it to take (or a loot table not yet rolled), else None."""
+        best, best_d = None, radius * radius
+        buckets = self._type_buckets()
+        for t in _chain(buckets.get("npc", ()), buckets.get("creature", ()),
+                        buckets.get("monster", ())):
+            p = t.properties
+            if not p.get("dead") or p.get("hidden"):
+                continue
+            dx = t.pos[0] - player_pos[0]
+            dz = t.pos[2] - player_pos[2]
+            d = dx * dx + dz * dz
+            if d >= best_d or not self._corpse_has_loot(p):
+                continue
+            best, best_d = t, d
+        return best
+
+    @staticmethod
+    def _corpse_has_loot(props) -> bool:
+        if not props.get("loot_rolled"):
+            return True                    # its loot table is still to be rolled
+        carried = props.get("inventory")
+        if isinstance(carried, str):
+            return bool(carried.strip())
+        return any(not warrior_fist.innate(s.get("id", "")) and int(s.get("qty", 1) or 0) > 0
+                   for s in (carried or ()) if isinstance(s, dict))
+
+    def corpse_name(self, thing) -> str:
+        p = thing.properties
+        return str(p.get("display_name") or p.get("name") or "the body")
+
+    def loot_corpse(self, thing) -> bool:
+        """Open a body's belongings in the container screen (E on a corpse).
+
+        A death the player caused was stocked from its loot table at the kill;
+        any other is stocked now, the first time it is searched."""
+        if thing is None:
+            return False
+        p = thing.properties
+        carried = p.get("inventory")
+        if not isinstance(carried, list):
+            p["inventory"] = self._spawn_inventory(carried)
+        self.game.stock_corpse(p)
+        # Nothing innate (a warrior's fists) is left on a body to be taken.
+        p["inventory"] = [s for s in p["inventory"]
+                          if isinstance(s, dict) and not warrior_fist.innate(s.get("id", ""))]
+        return self.open_container(thing)
+
+    def take_all_from_container(self) -> int:
+        """Take every stack from the open container. Returns how many."""
+        n = 0
+        while self.container_inventory() and self.take_from_container(0):
+            n += 1
+        return n
+
     def open_container(self, thing) -> bool:
         """Open *thing*'s graphical inventory (a screen separate from the player)."""
         if thing is None:
@@ -6019,6 +6227,8 @@ class MiniwindSession:
         t = self.container_thing
         if t is None:
             return "Container"
+        if t.properties.get("dead"):
+            return f"{self.corpse_name(t)} (dead)"
         return str(t.properties.get("display_name") or "Container")
 
     def take_from_container(self, index: int) -> bool:
@@ -6042,8 +6252,13 @@ class MiniwindSession:
                                 sim_own.owner_name_of(props))
             self.notify(f"Stole {name}")
         else:
-            self.notify(f"Took {name}")
-        inv.add_item(self.game.character.inventory, stack)
+            self.notify(f"Took {name}" if stack.get("id") != rpg_items.GOLD
+                        else f"Took {int(stack.get('qty', 1))} gold")
+        if stack.get("id") == rpg_items.GOLD:
+            # Coin is counted, not carried as an item.
+            self.game.character.gold += int(stack.get("qty", 1) or 0)
+        else:
+            inv.add_item(self.game.character.inventory, stack)
         return True
 
     def store_in_container(self, index: int) -> bool:
@@ -6053,6 +6268,15 @@ class MiniwindSession:
         pinv = self.game.character.inventory
         if not (0 <= index < len(pinv)):
             return False
+        iid = pinv[index].get("id", "")
+        if warrior_fist.innate(iid):
+            self.notify("Your fists stay with you", 2.0)
+            return False
+        # Whatever is worn or slotted comes off first, so nothing points at a
+        # stack that is no longer carried.
+        before = eq.armour_class(self.game.character)
+        self._forget_in_slots(iid)
+        self._announce_ac(before)
         stack = pinv.pop(index)
         self.container_inventory().append(stack)
         self.notify(f"Stored {stack.get('name', stack.get('id',''))}")
