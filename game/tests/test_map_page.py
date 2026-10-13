@@ -209,3 +209,29 @@ def test_the_quest_screen_m_key_asks_for_the_objective():
     s = _Session()
     screens._handle_quest(s, "m")
     assert s.map_request == (30.0, 40.0, "The Lost Ring")
+
+
+def _map_pixel(menu, x, z):
+    pixmap = QtGui.QPixmap(menu.view.width(), menu.view.height())
+    painter = QtGui.QPainter(pixmap)
+    menu.draw(painter)
+    painter.end()
+    p = menu.map.to_screen(menu.map._rect, x, z)
+    return QtGui.QColor(pixmap.toImage().pixel(int(p.x()), int(p.y())))
+
+
+def test_the_map_is_dark_at_night_but_for_its_lamps(app):
+    menu = _menu()
+    menu.open_map((0.0, 0.0, "here"))
+    menu.map.focus = None
+    menu.map.features["player"] = None
+    menu.map.features["places"] = []
+    menu.map.features["quests"] = []
+    menu.map.features["night"] = None                       # noon
+    day = _map_pixel(menu, 2500.0, 2500.0).lightness()
+    menu.map.features["night"] = {"hour": 0.0,
+                                  "lights": [(-2500.0, -2500.0, 900.0, 1.5, (255, 180, 100))]}
+    night = _map_pixel(menu, 2500.0, 2500.0).lightness()
+    lamp = _map_pixel(menu, -2500.0, -2500.0).lightness()
+    assert night < day * 0.5
+    assert lamp > night + 20

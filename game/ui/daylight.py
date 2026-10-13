@@ -59,7 +59,7 @@ MASK_SCALE = 0.25
 #: At most this many holes a frame (the nearest to the screen's centre win).
 MAX_HOLES = 48
 
-_mask = {"image": None}
+_mask = {}
 
 
 def _ease(t: float) -> float:
@@ -160,15 +160,17 @@ def holes(session, viewport, width, height):
     return out
 
 
-def paint_mask(width, height, colour, darkness, lifted, night=1.0) -> QImage:
-    """The darkness layer at *MASK_SCALE*: *colour* at *darkness*, with each of
-    *lifted* (``(x, y, r, strength, rgb)`` in view pixels) cut out softly
-    and, after dark, washed faintly with its light's colour."""
-    mw = max(1, int(width * MASK_SCALE))
-    mh = max(1, int(height * MASK_SCALE))
-    img = _mask["image"]
+def paint_mask(width, height, colour, darkness, lifted, night=1.0,
+               scale=MASK_SCALE, key="view") -> QImage:
+    """The darkness layer at *scale*: *colour* at *darkness*, with each of
+    *lifted* (``(x, y, r, strength, rgb)`` in pixels of the area) cut out
+    softly and, after dark, washed faintly with its light's colour. Each
+    *key* (the view, the map, the minimap) keeps an image of its own."""
+    mw = max(1, int(width * scale))
+    mh = max(1, int(height * scale))
+    img = _mask.get(key)
     if img is None or img.width() != mw or img.height() != mh:
-        img = _mask["image"] = QImage(mw, mh, QImage.Format_ARGB32_Premultiplied)
+        img = _mask[key] = QImage(mw, mh, QImage.Format_ARGB32_Premultiplied)
     img.fill(Qt.transparent)
     p = QPainter(img)
     # No antialiasing: every edge here is a gradient already fading to nothing.
@@ -177,8 +179,8 @@ def paint_mask(width, height, colour, darkness, lifted, night=1.0) -> QImage:
     p.setPen(Qt.NoPen)
     p.setCompositionMode(QPainter.CompositionMode_DestinationOut)
     for x, y, r, strength, _rgb in lifted:
-        c = QPointF(x * MASK_SCALE, y * MASK_SCALE)
-        rr = r * MASK_SCALE
+        c = QPointF(x * scale, y * scale)
+        rr = r * scale
         g = QRadialGradient(c, rr)
         g.setColorAt(0.0, QColor(0, 0, 0, int(255 * strength)))
         g.setColorAt(0.45, QColor(0, 0, 0, int(255 * strength * 0.8)))
@@ -190,8 +192,8 @@ def paint_mask(width, height, colour, darkness, lifted, night=1.0) -> QImage:
         for x, y, r, strength, rgb in lifted:
             if rgb is None:
                 continue
-            c = QPointF(x * MASK_SCALE, y * MASK_SCALE)
-            rr = r * MASK_SCALE * 0.85
+            c = QPointF(x * scale, y * scale)
+            rr = r * scale * 0.85
             g = QRadialGradient(c, rr)
             g.setColorAt(0.0, QColor(rgb[0], rgb[1], rgb[2], int(60 * strength * night)))
             g.setColorAt(1.0, QColor(rgb[0], rgb[1], rgb[2], 0))
@@ -214,4 +216,59 @@ def draw(painter, session, viewport, width, height) -> None:
     painter.save()
     painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
     painter.drawImage(QRect(0, 0, int(width), int(height)), img)
+    painter.restore()
+
+
+# ---------------------------------------------------------------- the maps
+#: On a map a lamp is drawn no smaller than this (px), so a lit village still
+#: shows as a few lights when the map is zoomed right out.
+MAP_MIN_LIGHT_PX = 2.5
+#: The maps' masks are finer than the view's: their lights are small.
+MAP_MASK_SCALE = 0.5
+
+
+def map_night(session):
+    """What the maps need to show the night: ``{"hour", "lights": [(x, z,
+    radius, intensity, rgb)]}``, or None by day."""
+    clock = getattr(session, "clock", None)
+    if clock is None or sky_at(clock.hour)[1] <= 0.004:
+        return None
+    lights = [(float(pos[0]), float(pos[2]), radius, intensity, rgb)
+              for pos, radius, intensity, rgb in _local_lights(session)]
+    return {"hour": float(clock.hour), "lights": lights}
+
+
+def draw_map_night(painter, rect, night, to_screen, scale, player=None,
+                   key="map") -> None:
+    """Lay the night over a map drawn in *rect* (a QRectF).
+
+    *night* is :func:`map_night`'s answer; *to_screen(x, z)* places a world
+    point on the map (a QPointF) and *scale* is map pixels per world unit;
+    *player* is ``(x, z)`` for their moonlight."""
+    if not night:
+        return
+    colour, darkness = sky_at(night["hour"])
+    if darkness <= 0.004:
+        return
+    w, h = int(rect.width()), int(rect.height())
+    if w <= 0 or h <= 0:
+        return
+    ox, oy = rect.left(), rect.top()
+    lifted = []
+    for x, z, radius, intensity, rgb in night.get("lights", ()):
+        c = to_screen(x, z)
+        r = max(MAP_MIN_LIGHT_PX, radius * LIT_FRACTION * scale)
+        cx, cy = c.x() - ox, c.y() - oy
+        if cx + r < 0 or cy + r < 0 or cx - r > w or cy - r > h:
+            continue
+        lifted.append((cx, cy, r, max(0.0, min(1.0, 0.45 + 0.4 * intensity)), rgb))
+    if player is not None:
+        c = to_screen(player[0], player[1])
+        lifted.append((c.x() - ox, c.y() - oy,
+                       max(MAP_MIN_LIGHT_PX, PLAYER_GLOW_RADIUS * scale), PLAYER_GLOW, None))
+    img = paint_mask(w, h, colour, darkness, lifted, night_amount(night["hour"]),
+                     scale=MAP_MASK_SCALE, key=key)
+    painter.save()
+    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    painter.drawImage(rect, img)
     painter.restore()

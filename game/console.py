@@ -14,6 +14,7 @@ session is running, and the editor window) plus the raw argument string.
     sim               inspect and drive the reactive simulation
     inspect | mind    pause and click an actor for its live mental state
     inventory_strip_size N   how many slots the inventory strip (I) has
+    torch_shadows [on|off]   torches near you cast shadows (toggles)
 """
 
 import time
@@ -483,6 +484,54 @@ def cmd_inventory_strip_size(ctx, args):
     return None
 
 
+def cmd_torch_shadows(ctx, args):
+    """torch_shadows [on|off] -- whether carried torches near you (the NEAR
+    simulation distance) cast shadows. With no argument it toggles.
+
+    The same setting as Settings > Game > Torch shadows (GAME /
+    torch_shadows in settings.ini): it applies at once and is saved."""
+    from . import runtime
+    config = getattr(ctx.main_window, "config", None) or runtime._editor_config
+    if config is None:
+        debug_log("Error", "torch_shadows: no settings to change (no editor).")
+        return None
+    try:
+        current = config.getboolean("GAME", "torch_shadows", fallback=False)
+    except (AttributeError, TypeError, ValueError):
+        current = False
+    word = str(args or "").strip().lower()
+    if word in ("on", "1", "true", "yes", "enable"):
+        want = True
+    elif word in ("off", "0", "false", "no", "disable"):
+        want = False
+    elif not word or word == "toggle":
+        want = not current
+    else:
+        debug_log("Error", "torch_shadows: use on, off, or nothing to toggle.")
+        return None
+    try:
+        if not config.has_section("GAME"):
+            config.add_section("GAME")
+        config.set("GAME", "torch_shadows", str(want))
+    except Exception as exc:
+        debug_log("Error", f"torch_shadows: could not change the setting ({exc}).")
+        return None
+    if runtime._editor_config is None:
+        runtime.set_editor_config(config)        # so a running game reads it
+    save = getattr(ctx.main_window, "save_config", None)
+    if save is not None:
+        try:
+            save()
+        except Exception as exc:
+            debug_log("Error", f"torch_shadows: could not save the setting ({exc}).")
+    msg = f"Torch shadows {'on' if want else 'off'}."
+    debug_log("Info", msg)
+    toast = getattr(ctx.main_window, "show_toast", None)
+    if toast is not None:
+        toast(msg)
+    return None
+
+
 def cmd_roads(ctx, args):
     """roads -- who is travelling the roads right now, and where.
 
@@ -521,6 +570,8 @@ COMMANDS = (
      "1..5 — Which FIRE setting the dragon breathes (remembered)"),
     (("inventory_strip_size",), cmd_inventory_strip_size,
      "N — How many slots the inventory strip (I) has (saved)"),
+    (("torch_shadows",), cmd_torch_shadows,
+     "[on|off] — Torches near you cast shadows; no argument toggles (saved)"),
     (("pause", "freeze"), cmd_pause,
      "— Toggle freezing the world (time, NPCs, combat); no pause menu (Play Mode)"),
 )

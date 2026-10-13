@@ -299,3 +299,44 @@ def test_dragging_from_the_character_window_onto_the_strip_and_back(qt_app):
     assert "potion_heal_minor" not in _ids(s)
     drag.reset()
     hits.clear()
+
+
+def test_the_console_toggles_torch_shadows_and_saves_it():
+    import configparser
+    from plugins.api import EditorAPI
+    from plugins.manager import PluginManager
+    from .. import console, runtime
+
+    class _Window:
+        def __init__(self):
+            self.config = configparser.ConfigParser()
+            self.saved = 0
+
+        def save_config(self):
+            self.saved += 1
+
+    mgr = PluginManager()
+    console.register(EditorAPI(mgr, None))
+    window = _Window()
+    previous = runtime._editor_config
+    runtime.set_editor_config(window.config)
+    try:
+        s = _session()
+        logic = type("L", (), {"_miniwind": s})()
+
+        def run(arg=""):
+            handled, _ = mgr.dispatch_console_command("torch_shadows", arg, logic,
+                                                      main_window=window, play_mode=True)
+            assert handled
+            return s.torch_shadows_enabled()
+
+        assert s.torch_shadows_enabled() is False
+        assert run() is True                       # toggles on
+        assert run() is False                      # and off
+        assert run("on") is True and run("on") is True
+        assert run("off") is False
+        assert run("sideways") is False            # refused, unchanged
+        assert window.config.get("GAME", "torch_shadows") == "False"
+        assert window.saved == 5
+    finally:
+        runtime.set_editor_config(previous)
