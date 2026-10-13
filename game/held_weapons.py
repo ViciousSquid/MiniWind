@@ -105,9 +105,12 @@ class HeldWeapons:
         if ppos is None:
             return
         r2 = DRAW_RADIUS * DRAW_RADIUS
-        by_id = {id(t): t for t in s._actors}
+        actors = s._actors
+        cached = getattr(s, "_actors_by_id", None)
+        by_id = (cached[1] if cached is not None and cached[0] is actors
+                 else {id(t): t for t in actors})
         last = {}
-        for t in s._actors:
+        for t in actors:
             x, z = float(t.pos[0]), float(t.pos[2])
             dx, dz = x - ppos[0], z - ppos[2]
             if dx * dx + dz * dz > r2:

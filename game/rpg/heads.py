@@ -44,6 +44,9 @@ DEAD_OVERLAY = f"{HEAD_DIR}/dead.png"
 #: never a person's.
 ANIMAL_ROLES = frozenset({"wolf", "bear", "boar", "mudcrab", "cow", "sheep", "hen"})
 
+#: Animal roles whose head art goes by another name: a hen wears chicken.png.
+ANIMAL_HEAD_ALIASES = {"hen": "chicken"}
+
 #: The head an animal wears until its own head image exists.
 PLACEHOLDER_HEAD = "placeholder"
 
@@ -53,13 +56,34 @@ PLACEHOLDER_HEAD = "placeholder"
 HEAD_SIZE = 128
 
 
-def size_for(props) -> int:
+#: Heads drawn at other than :data:`HEAD_SIZE` by nature, as a fraction of it:
+#: a chicken is a small bird. Numbered variants share their head's scale
+#: (``chicken01`` is a chicken). An actor's own ``head_scale`` wins over this.
+HEAD_SCALES = {"chicken": 1.0 / 3.0}
+
+
+def default_scale(head_id) -> float:
+    """The scale *head_id* is drawn at when its actor sets none (1.0 for most)."""
+    hid = str(head_id or "").strip().lower()
+    if hid in HEAD_SCALES:
+        return HEAD_SCALES[hid]
+    return HEAD_SCALES.get(hid.rstrip("0123456789"), 1.0)
+
+
+def size_for(props, head_id=None) -> int:
     """The size an actor's head is drawn at: :data:`HEAD_SIZE`, times its
-    ``head_scale`` for the few that are meant to be enormous (a dragon)."""
+    ``head_scale`` for the few that are meant to be enormous (a dragon), or
+    else the head's own :func:`default_scale` (a chicken is a third).
+
+    *head_id* is the head it wears, when that is not yet in *props*."""
+    props = props or {}
+    authored = props.get("head_scale")
     try:
-        scale = float((props or {}).get("head_scale", 1.0) or 1.0)
+        scale = float(authored) if authored not in (None, "") else 0.0
     except (TypeError, ValueError):
-        scale = 1.0
+        scale = 0.0
+    if not scale:
+        scale = default_scale(props.get("head") if head_id is None else head_id)
     return int(round(HEAD_SIZE * max(0.25, min(scale, 12.0))))
 
 
@@ -177,23 +201,28 @@ def animal_head(role, rng: Optional[_random.Random] = None) -> str:
     """The head id an animal of *role* wears.
 
     Its own head: ``assets/sprites/heads/<role>.png``, or one of its numbered
-    variants (``<role>01.png``, ``<role>02.png``, ...) picked at random. Until
-    one has been drawn, :data:`PLACEHOLDER_HEAD`.
+    variants (``<role>01.png``, ``<role>02.png``, ...) picked at random; then
+    the same under the role's :data:`ANIMAL_HEAD_ALIASES` name (a hen wears
+    ``chicken.png``). Until one has been drawn, :data:`PLACEHOLDER_HEAD`.
     """
     kind = str(role or "").strip().lower()
+    if not kind:
+        return PLACEHOLDER_HEAD
     folder = os.path.join(_repo_root(), HEAD_DIR)
-    if kind and os.path.isfile(os.path.join(folder, f"{kind}.png")):
-        return kind
     try:
         names = os.listdir(folder)
     except OSError:
         names = []
-    variants = sorted(
-        name[:-4] for name in names
-        if name.endswith(".png") and name.startswith(kind)
-        and name[len(kind):-4].isdigit())
-    if kind and variants:
-        return (rng or _random).choice(variants)
+    for name in (kind, ANIMAL_HEAD_ALIASES.get(kind)):
+        if not name:
+            continue
+        if os.path.isfile(os.path.join(folder, f"{name}.png")):
+            return name
+        variants = sorted(
+            f[:-4] for f in names
+            if f.endswith(".png") and f.startswith(name) and f[len(name):-4].isdigit())
+        if variants:
+            return (rng or _random).choice(variants)
     return PLACEHOLDER_HEAD
 
 

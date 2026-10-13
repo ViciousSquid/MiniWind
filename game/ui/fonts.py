@@ -59,9 +59,18 @@ def installed_families():
     return families
 
 
+#: ``(installed family set, {lowercase name: name})``: the lookup table for
+#: :func:`_family`, rebuilt only when the installed set is a different one
+#: (it is loaded once), not on each of the dozens of asks a HUD frame makes.
+_by_lower = (None, {})
+
+
 def _family(wanted, fallback):
-    families = {f.lower(): f for f in installed_families()}
-    return families.get(wanted.lower(), fallback)
+    global _by_lower
+    families = installed_families()
+    if _by_lower[0] is not families:
+        _by_lower = (families, {f.lower(): f for f in families})
+    return _by_lower[1].get(wanted.lower(), fallback)
 
 
 def menu_family() -> str:

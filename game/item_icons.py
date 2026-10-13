@@ -14,6 +14,7 @@ only imported where PyQt5 is present.
 from __future__ import annotations
 
 import os
+import time
 from functools import lru_cache
 from typing import Optional
 
@@ -48,6 +49,25 @@ def _category_of(stack) -> str:
     return ""
 
 
+#: How long a file-exists answer is trusted. The HUD and the inventory screens
+#: resolve icons every frame; a stat per item per frame bought nothing, since
+#: the folder only changes when the icon tool runs.
+_ISFILE_TTL = 2.0
+_isfile_cache: dict = {}
+
+
+def _isfile(path) -> bool:
+    now = time.monotonic()
+    hit = _isfile_cache.get(path)
+    if hit is not None and now - hit[1] < _ISFILE_TTL:
+        return hit[0]
+    if len(_isfile_cache) > 4096:
+        _isfile_cache.clear()
+    found = os.path.isfile(path)
+    _isfile_cache[path] = (found, now)
+    return found
+
+
 def icon_path(item_id, stack=None) -> Optional[str]:
     """Absolute path to the best icon for *item_id* / *stack*, or None.
 
@@ -56,7 +76,7 @@ def icon_path(item_id, stack=None) -> Optional[str]:
     used to recover a category when the id is unknown to the DB."""
     iid = str(item_id or "")
     exact = os.path.join(_ICON_DIR, f"{iid}.png")
-    if os.path.isfile(exact):
+    if _isfile(exact):
         return exact
     cat = _category_of(stack) or _categories().get(iid, "")
     # normalise a couple of synonyms to the files we actually ship
@@ -64,10 +84,10 @@ def icon_path(item_id, stack=None) -> Optional[str]:
            "quest": "misc"}.get(cat, cat)
     if cat:
         fb = os.path.join(_ICON_DIR, f"_{cat}.png")
-        if os.path.isfile(fb):
+        if _isfile(fb):
             return fb
     generic = os.path.join(_ICON_DIR, "_misc.png")
-    return generic if os.path.isfile(generic) else None
+    return generic if _isfile(generic) else None
 
 
 # ---------------------------------------------------------------------------

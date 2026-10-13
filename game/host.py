@@ -36,6 +36,20 @@ _NAV_NAMES = (list("abcdefghijklmnopqrstuvwxyz") + [str(d) for d in range(0, 10)
               ["up", "down", "left", "right", "return", "enter", "escape",
                "space", "tab", "shift", "backspace"])
 
+
+def _names_by_code():
+    by_code = {}
+    for name in _NAV_NAMES:
+        code = key_code(name)
+        if code is not None:
+            by_code.setdefault(code, []).append(name)
+    return {code: tuple(names) for code, names in by_code.items()}
+
+
+#: Qt key code -> the names above it answers to, resolved once rather than
+#: re-resolving every name every tick.
+_NAV_BY_CODE = _names_by_code()
+
 # action bindings (single-press unless noted)
 K_ATTACK = "f"
 K_CAST = "r"
@@ -833,13 +847,16 @@ class MiniwindGame:
         """Set of key *names* newly pressed this tick."""
         keys = ctx.keys or frozenset()
         prev = getattr(self, "_prev_keys", frozenset())
-        new_codes = set(keys) - set(prev)
-        self._prev_keys = frozenset(keys)
+        keys = frozenset(keys)
+        self._prev_keys = keys
+        new_codes = keys - prev
+        if not new_codes:
+            return set()
         names = set()
-        for name in _NAV_NAMES:
-            code = key_code(name)
-            if code is not None and code in new_codes:
-                names.add(name)
+        for code in new_codes:
+            found = _NAV_BY_CODE.get(code)
+            if found:
+                names.update(found)
         return names
 
     def _handle_gameplay_input(self, session, just, ctx):
