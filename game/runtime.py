@@ -38,6 +38,7 @@ from .rpg import schedule as sched
 from .rpg import combat as rpg_combat
 from .rpg import equipment as eq
 from .rpg import items as rpg_items
+from . import warrior_fist
 from .rpg import magic as rpg_magic
 from .rpg import guilds
 from .rpg import disposition as disp
@@ -504,6 +505,8 @@ class MiniwindSession:
         #: Right-mouse presses and releases from the view ("press", "release",
         #: "cancel"), handled on the logic thread by _update_bow_draw.
         self._bow_input = collections.deque()
+        #: One-off effects (a fist's burst) and when each is cleared away.
+        self._transient_effects = []
         #: Fio projectile tag -> sprite, for the arrows in flight: the game
         #: draws these itself, as arrows (see :meth:`_split_projectiles`).
         self._arrow_tags = {}
@@ -782,6 +785,8 @@ class MiniwindSession:
                 c.known_spells.append(sid)
         if c.known_spells and not c.active_spell:
             c.active_spell = c.known_spells[0]
+        # A Warrior's fists are a weapon of their own, in quick slot 1.
+        warrior_fist.ensure_fist(self)
         # The player is the chosen head; record it so NPCs never reuse it.
         self._ensure_player_head()
         # Give every NPC/creature a head that is never the player's.
@@ -986,6 +991,7 @@ class MiniwindSession:
         self._ease_zoom(delta)
         self._update_bow_draw(delta)
         self.archery.update(delta)
+        warrior_fist.clear_spent(self)
         self.held.update()
         self.dragon_fire.update(delta)
         self.wildlife.update(delta)
@@ -4515,6 +4521,16 @@ class MiniwindSession:
         face_heading(p, dx, dz, delta)
 
     # ============================================================ bow draw
+    def fist_in_hand(self) -> bool:
+        """Whether the weapon in hand is a warrior's fist (game/warrior_fist.py)."""
+        c = getattr(getattr(self, "game", None), "character", None)
+        return c is not None and eq.equipped_id(c, rpg_items.SLOT_WEAPON) == warrior_fist.FIST
+
+    def charge_in_hand(self) -> bool:
+        """Whether the left mouse charges what is in hand: a bow's draw or a
+        fist's gathered blow (hold for the pie, release to loose)."""
+        return self.bow_in_hand() or self.fist_in_hand()
+
     def bow_in_hand(self) -> bool:
         """Whether the weapon in hand is a bow."""
         c = getattr(getattr(self, "game", None), "character", None)
@@ -4545,22 +4561,30 @@ class MiniwindSession:
                 charge = self.bow_charge
                 self.bow_charge = None
                 if charge is not None:
-                    self._loose_drawn_arrow(charge)
+                    if self.fist_in_hand():
+                        warrior_fist.strike(self, charge)
+                    else:
+                        self._loose_drawn_arrow(charge)
             else:
                 self._cancel_bow_draw()
         if self.bow_charge is None:
             return
         c = self.game.character
-        if (not self.bow_in_hand() or c.is_dead or self.open_screen is not None
+        if (not self.charge_in_hand() or c.is_dead or self.open_screen is not None
                 or self.dialogue is not None):
             self._cancel_bow_draw()
             return
-        self.bow_charge = min(1.0, self.bow_charge
-                              + max(0.0, float(delta)) / BOW_FULL_DRAW_SECONDS)
+        full = (warrior_fist.FULL_CHARGE_SECONDS if self.fist_in_hand()
+                else BOW_FULL_DRAW_SECONDS)
+        self.bow_charge = min(1.0, self.bow_charge + max(0.0, float(delta)) / full)
 
     def _can_draw_bow(self) -> bool:
         c = self.game.character
-        if c.is_dead or not self.bow_in_hand():
+        if c.is_dead:
+            return False
+        if self.fist_in_hand():
+            return True
+        if not self.bow_in_hand():
             return False
         if eq.ammo(c) is None:
             self.notify("Out of arrows!")
@@ -4851,16 +4875,22 @@ class MiniwindSession:
         # plane, so a melee swing is guaranteed to connect — no separate miss
         # roll to be foiled by camera pitch or anything else.
         res = self.game.attack_creature(target.properties, guaranteed=True)
+        self._land_player_hit(target, res)
+        return True
+
+    def _land_player_hit(self, target, res, heavy=False) -> None:
+        """What a landed (or missed) melee blow does: the number over the
+        target, the target's anger, a kill."""
         _journal(target)     # a kill/gib changes how the target is drawn
         if res.get("hit"):
-            tag = "sneak" if res.get("sneak") else ("crit" if res.get("crit") else "dmg")
+            tag = ("sneak" if res.get("sneak")
+                   else "crit" if (res.get("crit") or heavy) else "dmg")
             self.add_floater(f"-{int(res['damage'])}", kind=tag)
             self._provoke(target)
             if res.get("killed"):
                 self._on_creature_killed(target)
         else:
             self.add_floater("miss", kind="miss")
-        return True
 
     def _spawn_player_arrow_projectile(self, max_dist=BOW_MAX_RANGE) -> None:
         """Loose a physical arrow the way the player is facing, to fly up to
@@ -5543,6 +5573,9 @@ class MiniwindSession:
             self.notify(f"Took off {d.name}", 1.5)
             return True
         if source[0] == "quick":
+            if warrior_fist.innate(item_id):
+                self.notify("Your fists stay in your first weapon slot", 2.0)
+                return False
             self.set_quick_weapon(int(source[1]), None)
             if eq.equipped_id(c, rpg_items.SLOT_WEAPON) == item_id:
                 eq.unequip(c, rpg_items.SLOT_WEAPON)
@@ -6020,6 +6053,9 @@ class MiniwindSession:
         d = rpg_items.get(item_id)
         if not d or not inv.has_item(c.inventory, item_id):
             return False
+        if warrior_fist.innate(item_id):
+            self.notify("Your fists are not for sale")
+            return False
         price = self._price(d.value, buying=False, npc=self.merchant_npc)
         inv.remove_item(c.inventory, item_id, 1)
         c.gold += price
@@ -6110,6 +6146,7 @@ class MiniwindSession:
                 pass
         if self.game.load_from_store():
             self.needs_char_creation = False
+            warrior_fist.ensure_fist(self)
             self._sync_engine_health(full=True)
             # Re-apply the saved head so the player billboard matches on load.
             self._ensure_player_head()

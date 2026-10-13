@@ -737,7 +737,8 @@ def install_bow_draw(view):
                     session.bow_draw_input("release")
                     return True
                 return False
-            if session.bow_in_hand():
+            charge = getattr(session, "charge_in_hand", session.bow_in_hand)
+            if charge():
                 session.bow_draw_input("press")
                 return True
             return False

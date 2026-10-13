@@ -1073,5 +1073,20 @@
     "value": 15,
     "weight": 0.2,
     "desc": "A worn token -- a ring on a cord, a lock of hair in a locket -- taken from the remains of someone who went looking for glory and did not come home."
+  },
+  "fist": {
+    "name": "Fist",
+    "category": "weapon",
+    "value": 0,
+    "weight": 0.0,
+    "desc": "Your own two fists, and a warrior's oldest weapon. Hold to gather your strength; let go to strike a crushing blow.",
+    "kind": "melee",
+    "skill": "blunt",
+    "damage": 7,
+    "reach": 95,
+    "speed": 1.3,
+    "slot": "weapon",
+    "innate": true,
+    "charged": true
   }
 }

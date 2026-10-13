@@ -235,7 +235,8 @@ class GameState:
         return self.character.active_spell
 
     def attack_creature(self, target_props: Dict, distance: float = 0.0,
-                        draw: float = 1.0, guaranteed: bool = False) -> Dict:
+                        draw: float = 1.0, guaranteed: bool = False,
+                        power: float = 1.0) -> Dict:
         """Resolve a melee attack on a creature. Returns the combat result.
 
         Spends stamina, applies damage to the target's ``health`` property,
@@ -252,7 +253,7 @@ class GameState:
         char = self.character
         res = combat.player_attack(char, target_props, sneaking=self.sneaking,
                                    draw=draw, rng=self.rng, dice=self.dice,
-                                   guaranteed_hit=guaranteed)
+                                   guaranteed_hit=guaranteed, power=power)
         if res.get("no_ammo"):
             self.message("Out of arrows!")
             return res

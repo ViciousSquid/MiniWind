@@ -1197,7 +1197,8 @@ def _draw_trade(painter, session, w, h):
 def _sell_list(c):
     """What the player can sell: everything carried but keys."""
     return [s for s in c.inventory if rpg_items.get(s.get("id")) and
-            rpg_items.get(s.get("id")).category != rpg_items.KEY]
+            rpg_items.get(s.get("id")).category != rpg_items.KEY
+            and not rpg_items.get(s.get("id")).get("innate")]
 
 
 def _trade_select(side, row):
