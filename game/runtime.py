@@ -350,10 +350,32 @@ class StateStore:
     def __init__(self, globals_store, store_name: str = "miniwind"):
         self._g = globals_store
         self._name = store_name
+        # The registry Fio's GlobalStore reads, resolved once: the quest log,
+        # the HUD and the dialogue read this store dozens of times a frame,
+        # and GlobalStore.get looks the registry up (an import) on each.
+        self._registry = None
+        try:
+            from plugins.api import GlobalStore
+            if type(globals_store) is GlobalStore:
+                self._registry = globals_store._registry()
+        except Exception:
+            self._registry = None
 
     def get(self, key, default="false"):
         if self._g is None:
             return default
+        registry = self._registry
+        if registry is not None:
+            # GlobalStore.get, read straight from the registry it would use.
+            data = registry.get(self._name)
+            if data is None:
+                return default
+            key = str(key)
+            if key not in data:
+                return default
+            value = data[key]
+            if value is None or type(value) is str:
+                return value
         try:
             return self._g.get(key, default, store=self._name)
         except Exception:
@@ -5929,10 +5951,28 @@ class MiniwindSession:
 
     # -- overhead speech bubbles -------------------------------------------
     def _quest_ids_in_dialogue(self, tree) -> List[str]:
-        """Quest ids a dialogue tree can start (for the '!' available-quest cue)."""
-        out = []
+        """Quest ids a dialogue tree can start (for the '!' available-quest cue).
+
+        Asked for every NPC near the player every frame (the speech bubbles),
+        so the walk is kept per tree object: a tree is authored data, and the
+        cache holds the tree itself, so an id is never mistaken for a new one."""
         if not isinstance(tree, dict):
-            return out
+            return []
+        memo = self.__dict__.setdefault("_dialogue_quest_ids", {})
+        nodes = tree.get("nodes")
+        size = len(nodes) if isinstance(nodes, dict) else 0
+        hit = memo.get(id(tree))
+        if hit is not None and hit[0] is tree and hit[1] == size:
+            return hit[2]
+        if len(memo) > 512:
+            memo.clear()
+        out = self._walk_quest_ids(tree)
+        memo[id(tree)] = (tree, size, out)
+        return out
+
+    @staticmethod
+    def _walk_quest_ids(tree) -> List[str]:
+        out = []
         for node in (tree.get("nodes", {}) or {}).values():
             actions = list(node.get("on_enter", []) or [])
             for r in node.get("responses", []) or []:
