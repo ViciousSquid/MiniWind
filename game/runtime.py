@@ -816,6 +816,8 @@ class MiniwindSession:
         c.damage(final)
         if final > 0:
             self._player_flash = HIT_FLASH_TIME   # brief red flash on the head
+            # Who or what did it, as the engine recorded (for the death screen).
+            c._last_harm = getattr(fio.player_runtime(self.logic), "last_damage", None)
         self.add_floater(f"-{int(round(final))}", kind="hurt")
         return final
 
@@ -7073,6 +7075,32 @@ class MiniwindSession:
         if buying:
             return max(1, int(base_value * (2.0 - factor) * like * face))
         return max(1, int(base_value * factor * 0.8 / like * face))
+
+    # -- the death screen -----------------------------------------------------
+    _death_message = None
+
+    def death_message(self):
+        """How the player died, in one line ("Stabbed to death by Kestrel
+        the Guard"), from the last hit that hurt them (game/death_causes.py);
+        chosen once per death. None while the player lives."""
+        c = self.game.character
+        if not c.is_dead:
+            self._death_message = None
+            return None
+        if self._death_message is None:
+            from . import death_causes
+            source, cause, kind = (getattr(c, "_last_harm", None) or (None, None, None))
+            thing, trap = None, ""
+            if isinstance(source, dict):
+                trap = str(source.get("name") or "")          # a hurt trigger's brush
+            elif isinstance(source, int):
+                # A projectile's owner, by id(): looked up once, at death.
+                thing = next((t for t in fio.things(self.logic) if id(t) == source), None)
+            elif source is not None:
+                thing = source
+            self._death_message = death_causes.describe(
+                thing, cause, kind, rng=self.rng, trap_name=trap)
+        return self._death_message
 
     # -- persistence --------------------------------------------------------
     _last_persist = 0.0

@@ -48,6 +48,13 @@ class LogicPlayer:
         self.player_armor = 0
         self.player_max_armor = 100
         self.player_dead = False
+        #: What dealt the player's latest hit, ``(source, cause, damage_kind)``
+        #: or None: *source* is the attacking entity, a hurt trigger's brush,
+        #: or a projectile owner's ``id()``; *cause* says how ("attack",
+        #: "bite", "projectile", "trigger", or a game's own). Set by
+        #: LogicTriggers._apply_player_damage before the game's damage filter
+        #: runs, so a game can say what killed the player.
+        self.last_damage = None
         self.damage_lock = threading.Lock()
         self.player2_health = 100
         self.player2_max_health = 100

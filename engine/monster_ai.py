@@ -1219,7 +1219,8 @@ all accumulated time when it runs, so simulation time is not lost.
             if distance_sq <= MONSTER_BITE_DISTANCE * MONSTER_BITE_DISTANCE and aggro_monster is None:
                 # Bite attack: instant hitscan, double damage
                 bite_damage = int(damage * MONSTER_BITE_DAMAGE_MULT)
-                self.lt.trigger_runtime._apply_player_damage(bite_damage)
+                self.lt.trigger_runtime._apply_player_damage(
+                    bite_damage, source=thing, cause="bite")
                 name = thing.properties.get('name', '?')
                 debug_log("MonsterAI", f"{name} used bite attack for 2x damage!")
             else:
@@ -1248,7 +1249,8 @@ all accumulated time when it runs, so simulation time is not lost.
                         debug_log("MonsterAI",
                                   f"CROSSFIRE: {a_name} hit {v_name} — infighting!")
                 else:
-                    self.lt.trigger_runtime._apply_player_damage(damage)
+                    self.lt.trigger_runtime._apply_player_damage(
+                        damage, source=thing, cause="attack")
 
         # ---- Use per-type shoot sound ----
         sound_file = MONSTER_SHOOT_SOUNDS.get(mtype, MONSTER_SHOOT_SOUND_DEFAULT)

@@ -125,7 +125,7 @@ class DragonFire:
             reach = min(BREATH_RANGE, state["t"] * FLAME_SPEED + 200.0)
             if state["burn"] <= 0.0 and off <= CONE_HALF_ANGLE and dist <= reach:
                 state["burn"] = BURN_EVERY
-                self._burn(int(p.get("breath_damage", 14) or 14))
+                self._burn(int(p.get("breath_damage", 14) or 14), dragon)
         if not burning:
             self._park()
 
@@ -191,11 +191,11 @@ class DragonFire:
             touch(t)
         self._parked = True
 
-    def _burn(self, damage):
+    def _burn(self, damage, dragon=None):
         trig = getattr(self.session.logic, "trigger_runtime", None)
         if trig is None:
             return
         try:
-            trig._apply_player_damage(damage, "fire")
+            trig._apply_player_damage(damage, "fire", source=dragon, cause="breath")
         except TypeError:
             trig._apply_player_damage(damage)

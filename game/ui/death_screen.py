@@ -1,5 +1,6 @@
 """
-The death screen: DIED, and the way back -- the last autosave.
+The death screen: DIED, how ("Stabbed to death by Kestrel the Guard",
+:mod:`game.death_causes`), and the way back -- the last autosave.
 
 Dying used to end the game. Now, when there is an autosave
 (:mod:`game.autosave`), the screen offers it with how long ago it was made,
@@ -83,6 +84,16 @@ def draw(painter, view, w, h) -> None:
     painter.drawText(title.translated(4, 4), int(Qt.AlignCenter), "DIED")
     painter.setPen(QColor(220, 50, 40))
     painter.drawText(title, int(Qt.AlignCenter), "DIED")
+    # How: "Stabbed to death by Kestrel the Guard".
+    session = getattr(getattr(view, "logic_thread", None), "_miniwind", None)
+    cause = session.death_message() if session is not None else None
+    if cause:
+        line = QRect(0, title.bottom() - 6, w, 34)
+        painter.setFont(fonts.dialogue_font_px(26))
+        painter.setPen(QColor(30, 0, 0, 200))
+        painter.drawText(line.translated(2, 2), int(Qt.AlignCenter), cause)
+        painter.setPen(QColor(235, 205, 170))
+        painter.drawText(line, int(Qt.AlignCenter), cause)
     if info is not None:
         r = QRect(w // 2 - 170, h // 2 - 20, 340, 54)
         hot = hits.hovered(r)

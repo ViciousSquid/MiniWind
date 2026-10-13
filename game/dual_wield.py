@@ -77,5 +77,5 @@ def offhand_strike(session, thing, aggro_monster, rng) -> bool:
     triggers = getattr(logic, "trigger_runtime", None)
     if triggers is None or fio.player(logic) is None:
         return False
-    triggers._apply_player_damage(damage)
+    triggers._apply_player_damage(damage, source=thing, cause="attack")
     return True
