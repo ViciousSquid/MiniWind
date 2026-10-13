@@ -60,6 +60,8 @@ MASK_SCALE = 0.25
 MAX_HOLES = 48
 
 _mask = {}
+#: key -> what its image in _mask was last painted from.
+_mask_signature = {}
 
 
 def _ease(t: float) -> float:
@@ -168,9 +170,16 @@ def paint_mask(width, height, colour, darkness, lifted, night=1.0,
     *key* (the view, the map, the minimap) keeps an image of its own."""
     mw = max(1, int(width * scale))
     mh = max(1, int(height * scale))
+    # Unchanged since the last frame (a player standing still, the map left
+    # open): the last picture is this one.
+    signature = (tuple(colour), darkness, night, scale,
+                 tuple(tuple(h) for h in lifted))
     img = _mask.get(key)
     if img is None or img.width() != mw or img.height() != mh:
         img = _mask[key] = QImage(mw, mh, QImage.Format_ARGB32_Premultiplied)
+    elif _mask_signature.get(key) == signature:
+        return img
+    _mask_signature[key] = signature
     img.fill(Qt.transparent)
     p = QPainter(img)
     # No antialiasing: every edge here is a gradient already fading to nothing.

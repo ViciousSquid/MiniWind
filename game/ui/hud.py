@@ -453,10 +453,25 @@ def _draw_clock(painter, session, width):
     hour = clock.hour
     h_int = int(hour)
     m_int = int((hour - h_int) * 60.0)
+    day_name = getattr(clock, "day_name", "")
+    day_line = f"{day_name} · Day {clock.day}" if day_name else f"Day {clock.day}"
 
     radius = 34
     cx = width - radius - 16
     cy = radius + 16
+    # The face changes once a game minute: painted then, blitted between.
+    left, top = cx - radius - 20, cy - radius - 2
+    w, h = radius * 2 + 40, radius * 2 + 2 + 3 + 34
+    pm = T.sprite(painter, ("clock", h_int, m_int, day_line), w, h,
+                  lambda p: _paint_clock(p, radius + 20, radius + 2, radius,
+                                         h_int, m_int, day_line))
+    if pm is not None:
+        painter.drawPixmap(left, top, pm)
+    else:
+        _paint_clock(painter, cx, cy, radius, h_int, m_int, day_line)
+
+
+def _paint_clock(painter, cx, cy, radius, h_int, m_int, day_line):
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
 
@@ -478,8 +493,8 @@ def _draw_clock(painter, session, width):
         painter.setPen(QPen(T.GOLD_BRIGHT if i % 3 == 0 else T.GILD, pen_w))
         painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
 
-    # hour hand
-    h_angle = math.radians((hour % 12) * 30 - 90)
+    # hour hand (to the minute: it turns half a degree a minute)
+    h_angle = math.radians(((h_int % 12) + m_int / 60.0) * 30 - 90)
     h_len = radius * 0.5
     painter.setPen(QPen(T.GOLD_BRIGHT, 3, Qt.SolidLine, Qt.RoundCap))
     painter.drawLine(QPointF(cx, cy),
@@ -504,8 +519,6 @@ def _draw_clock(painter, session, width):
     T.text_in(painter, QRect(box.x(), box.y(), box.width(), 16),
               f"{h_int:02d}:{m_int:02d}", size=13, color=T.GOLD_BRIGHT,
               align=T.ALIGN_CENTER, bold=True)
-    day_name = getattr(clock, "day_name", "")
-    day_line = f"{day_name} · Day {clock.day}" if day_name else f"Day {clock.day}"
     T.text_in(painter, QRect(box.x(), box.y() + 16, box.width(), 14),
               day_line, size=9, color=T.DIM, align=T.ALIGN_CENTER,
               family="Segoe UI")
