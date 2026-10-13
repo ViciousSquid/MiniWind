@@ -23,6 +23,12 @@ from engine.portal_transform import (
 )
 
 
+#: How far from the frame's ``light_focus`` (the player, in play) a light may
+#: be and still light: a map can hold far more lights than a shader has room
+#: for, as long as only the ones near the player are lit at once.
+ACTIVE_LIGHT_RANGE = 2048.0
+
+
 @dataclass(frozen=True)
 class RenderView:
     """Camera state for a secondary render view.
@@ -227,7 +233,12 @@ class VisibilityMixin:
         )
 
     def _get_active_lights(self, config):
-        """Return active lights directly from the dense EntityTable."""
+        """Return active lights directly from the dense EntityTable.
+
+        With a ``light_focus`` in the frame input, only the lights within
+        ``light_range`` of it (:data:`ACTIVE_LIGHT_RANGE` by default), nearest
+        first: the shaders take the first so many, so those are the closest
+        rather than whichever came first in the table."""
         table = config.get('entity_table')
         if table is None or not hasattr(table, 'light_color'):
             raise RuntimeError("dense EntityTable is required for light rendering")
@@ -241,6 +252,15 @@ class VisibilityMixin:
                 # not keep lighting (or take light and shadow slots).
                 keep = keep & ~np.asarray(hidden)[slots]
             slots = slots[keep]
+        focus = config.get('light_focus')
+        if focus is not None and len(slots):
+            reach = config.get('light_range')
+            reach = float(ACTIVE_LIGHT_RANGE if reach is None else reach)
+            d = table.pos[slots] - np.asarray(focus, dtype=np.float64)[:3]
+            d2 = np.einsum('ij,ij->i', d, d)
+            near = d2 <= reach * reach
+            slots, d2 = slots[near], d2[near]
+            slots = slots[np.argsort(d2, kind='stable')]
         return (table, slots)
 
     def env_uniform_values(self):

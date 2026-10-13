@@ -982,3 +982,22 @@ def test_an_entity_table_adopts_its_peer_instead_of_rebuilding():
     assert second.ids == fresh.ids
     assert second.sprite_recipes() == fresh.sprite_recipes()
     assert second.pos is not first.pos
+
+
+def test_only_lights_near_the_light_focus_light_and_nearest_first():
+    from engine.renderer.core.visibility import ACTIVE_LIGHT_RANGE, VisibilityMixin
+    far = make_thing(Light, 'far', pos=(ACTIVE_LIGHT_RANGE + 100.0, 0.0, 0.0))
+    near = make_thing(Light, 'near', pos=(10.0, 0.0, 0.0))
+    mid = make_thing(Light, 'mid', pos=(0.0, 0.0, -900.0))
+    table = _synced([far, near, mid])
+    # No focus (the editor): every light, in table order.
+    _t, slots = VisibilityMixin._get_active_lights(None, {'entity_table': table})
+    assert slots.tolist() == [0, 1, 2]
+    # Play: only those within reach of the player, the nearest first.
+    _t, slots = VisibilityMixin._get_active_lights(
+        None, {'entity_table': table, 'light_focus': (0.0, 0.0, 0.0)})
+    assert slots.tolist() == [1, 2]
+    _t, slots = VisibilityMixin._get_active_lights(
+        None, {'entity_table': table, 'light_focus': (0.0, 0.0, 0.0),
+               'light_range': 500.0})
+    assert slots.tolist() == [1]
