@@ -266,7 +266,12 @@ class OverlaysMixin:
             right /= right_norm
 
         if explosion:
-            up = np.asarray((0.0, 1.0, 0.0), dtype=np.float32)
+            # Camera-facing, as effect.vert draws it.
+            up = np.asarray(
+                (float(view[0][1]), float(view[1][1]), float(view[2][1])),
+                dtype=np.float32)
+            up_norm = float(np.linalg.norm(up))
+            up = up / up_norm if up_norm > 1e-6 else np.asarray((0.0, 1.0, 0.0), np.float32)
             t = (10.0 - 0.5) / 16.0
             smooth = t * t * (3.0 - 2.0 * t)
             growth = 1.0 + 2.0 * smooth

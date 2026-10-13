@@ -476,6 +476,14 @@ void main() {
     vec3 worldPos = sprite_pos_world
                   + cameraRight * aPos.x * sprite_size.x
                   + cameraUp * aPos.y * sprite_size.y;
+    // Seen from above (a top-down play camera) a camera-facing billboard
+    // lies flat in the ground plane through its centre: a corpse on the floor
+    // or a fire set on the ground would sink into the terrain. Looking down,
+    // lift it toward the camera by half its height so it rests on top of
+    // the ground; looking level (first person) nothing changes.
+    vec3 towardCamera = vec3(view[0][2], view[1][2], view[2][2]);
+    float lookingDown = smoothstep(0.35, 0.8, towardCamera.y);
+    worldPos += towardCamera * (lookingDown * 0.5 * sprite_size.y);
     FragPos = worldPos;
     gl_Position = projection * view * vec4(worldPos, 1.0);
 }""",
@@ -522,13 +530,19 @@ void main() {
     }
     float growth = mix(1.0, 3.0, smoothstep(0.0, 0.28, t));
 
+    // A camera-facing billboard. The burst grows up from its base along the
+    // camera's up; seen from above (top-down play) it is lifted toward the
+    // camera so it sits on the ground rather than in it.
     vec3 cameraRight = normalize(vec3(view[0][0], view[1][0], view[2][0]));
-    const vec3 worldUp = vec3(0.0, 1.0, 0.0);
+    vec3 cameraUp = normalize(vec3(view[0][1], view[1][1], view[2][1]));
+    vec3 towardCamera = vec3(view[0][2], view[1][2], view[2][2]);
+    float lookingDown = smoothstep(0.35, 0.8, towardCamera.y);
     float vertical = aPos.y + 0.5;
 
     vec3 worldPos = iEffectPos
                   + cameraRight * aPos.x * width * growth
-                  + worldUp * vertical * height * growth;
+                  + cameraUp * vertical * height * growth
+                  + towardCamera * (lookingDown * 0.5 * height * growth);
 
     TexCoords = aPos + 0.5;
     FragPos = worldPos;
