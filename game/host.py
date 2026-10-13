@@ -1061,6 +1061,8 @@ class MiniwindGame:
             if viewport is not None and session.open_screen == "trade" \
                     and trade_anim.active():
                 viewport.update()
+            if viewport is not None and screens.animating(session):
+                viewport.update()                # character-creation dice
         except Exception:
             import traceback
             traceback.print_exc()

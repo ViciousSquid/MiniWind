@@ -49,6 +49,8 @@ REFRESH_SECONDS = 0.25
 _TEXT = QColor(220, 220, 220)
 _MUTED = QColor(150, 150, 160)
 _HEAD = QColor(240, 200, 120)
+#: Strength, Endurance and Charisma letters in the inspector.
+_STAT_COLOURS = (QColor(230, 120, 100), QColor(120, 200, 120), QColor(150, 170, 255))
 _HILITE = QColor(90, 130, 128, 120)
 _LINK = QColor(120, 190, 255)
 _LINK_HOT = QColor(190, 230, 255)
@@ -242,6 +244,8 @@ class ActorInspectorWindow(FloatingWindow):
         self.font = QFont("Arial", 8)
         self.bold = QFont("Arial", 8, QFont.Bold)
         self.title_font = QFont("Arial", 9, QFont.Bold)
+        #: Strength / Endurance / Charisma stand out from the rest of the data.
+        self.stats_font = QFont("Arial", 11, QFont.Bold)
         self._fm = QFontMetrics(self.font)
         self._rows = []          # [(kind, text, value)] kind: head/row/sched/sched_now
         self._refreshed = 0.0
@@ -276,6 +280,10 @@ class ActorInspectorWindow(FloatingWindow):
         if focus is not None and focus["window"] is self:
             rows.append(("back", f"\u25c0 Back to player   (showing {focus['label']})", ""))
         head("Actor")
+        if all(props.get(k) is not None for k in ("strength", "endurance", "charisma")):
+            # The three rolled stats, larger than the rest (see draw_body).
+            rows.append(("stats", "", (props.get("strength"), props.get("endurance"),
+                                       props.get("charisma"))))
         row("Type", "{} / {}".format(props.get("type", "?"),
                                      props.get("npc_role") or props.get("creature_role")
                                      or props.get("monster_type") or "-"))
@@ -352,9 +360,17 @@ class ActorInspectorWindow(FloatingWindow):
         return rows
 
     # -- window --------------------------------------------------------------
+    #: Height of the larger S / E / C row.
+    STATS_H = 24
+
+    def _row_h(self, kind):
+        return self.STATS_H if kind == "stats" else self.LINE_H
+
     def content_height(self):
         self.refresh()
-        return 10 + self.LINE_H * max(1, len(self._rows))
+        if not self._rows:
+            return 10 + self.LINE_H
+        return 10 + sum(self._row_h(kind) for kind, _t, _v in self._rows)
 
     def draw(self, painter, focused=False):
         super().draw(painter, focused)
@@ -379,6 +395,22 @@ class ActorInspectorWindow(FloatingWindow):
         painter.drawText(QPointF(x, base), text)
         self._links.append((rect, action))
         return rect.right()
+
+    def _draw_stats(self, painter, x, ty, values):
+        """S / E / C in the larger face: the letter in its colour, the 3..18
+        score after it."""
+        painter.setFont(self.stats_font)
+        fm = QFontMetrics(self.stats_font)
+        base = ty + self.STATS_H - 6
+        cx = x
+        for letter, value, colour in zip("SEC", values, _STAT_COLOURS):
+            painter.setPen(colour)
+            painter.drawText(QPointF(cx, base), letter)
+            cx += fm.horizontalAdvance(letter) + 4
+            painter.setPen(_TEXT)
+            text = str(value)
+            painter.drawText(QPointF(cx, base), text)
+            cx += fm.horizontalAdvance(text) + 22
 
     def _place_action(self, key):
         def action():
@@ -423,6 +455,10 @@ class ActorInspectorWindow(FloatingWindow):
         label_w = 112
         for kind, text, value in self._rows:
             base = ty + self.LINE_H - 3
+            if kind == "stats":
+                self._draw_stats(painter, x + 14, ty, value)
+                ty += self.STATS_H
+                continue
             if kind == "back":
                 logic = self._logic()
                 self._link(painter, x + 8, base, text,

@@ -88,6 +88,9 @@ class Character:
         #: Successful casts per spell id. Practice with one spell makes it
         #: steadier on top of the school skill (see magic.cast_chance).
         self.spell_practice: Dict[str, int] = {}
+        #: The 3d6 totals rolled at creation ({"strength", "endurance",
+        #: "personality"}), which write the character's bio (game.rpg.bios).
+        self.rolls: Dict[str, int] = {}
         #: The four quick-weapon slots (Baldur's Gate's "Quick Weapons"): an
         #: item id or None each. Keys 1-4 draw the weapon in that slot; the
         #: inventory window fills them by drag and drop.
@@ -434,6 +437,7 @@ class Character:
             "sign_stat_bonuses": dict(getattr(self, "_sign_stat_bonuses", {})),
             "spell_practice": dict(self.spell_practice),
             "quick_weapons": list(self.quick_weapons),
+            "rolls": dict(self.rolls),
         }
 
     @classmethod
@@ -471,6 +475,8 @@ class Character:
         c.head = data.get("head", "")
         c.factions = dict(data.get("factions", {}))
         c.bounty = int(data.get("bounty", 0))
+        if isinstance(data.get("rolls"), dict):
+            c.rolls = {str(k): int(v) for k, v in data["rolls"].items()}
         quick = data.get("quick_weapons")
         if isinstance(quick, list):
             quick = [str(q) if q else None for q in quick[:QUICK_WEAPON_SLOTS]]

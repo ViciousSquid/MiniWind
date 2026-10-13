@@ -105,6 +105,9 @@ def test_character_creation_can_be_done_with_the_mouse(session):
     assert cc["handed"] != hand
 
     _click(session, "Next")
+    assert screens._CC_STEPS[cc["step"]] == "fortune"
+    assert set(cc["rolls"]) == {"strength", "endurance", "personality"}
+    _click(session, "Next")
     assert screens._CC_STEPS[cc["step"]] == "class"
     third_class = [lab for lab in _labels(session)
                    if lab not in ("Back", "Next", "Begin")][2]
@@ -112,7 +115,7 @@ def test_character_creation_can_be_done_with_the_mouse(session):
     assert cc["class"] == 2
 
     _click(session, "Back")
-    assert screens._CC_STEPS[cc["step"]] == "identity"
+    assert screens._CC_STEPS[cc["step"]] == "fortune"
     _click(session, "Next")
     _click(session, "Next")                              # class -> birthsign
     _click(session, "Next")                              # -> confirm

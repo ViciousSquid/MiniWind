@@ -19,6 +19,7 @@ from . import theme as T
 from ..rpg import (races, classes, birthsigns, attributes as attr, skills as sk,
                    items as rpg_items, inventory as inv, equipment as eq,
                    magic as rpg_magic, guilds, quests, heads)
+from ..rpg import charisma as _cha
 
 
 def _sel(session):
@@ -165,7 +166,10 @@ def _panel_rect(w, h, pw=0.8, ph=0.82):
 
 # ===========================================================================
 # Character creation
-_CC_STEPS = ["identity", "class", "birthsign", "confirm"]
+_CC_STEPS = ["identity", "fortune", "class", "birthsign", "confirm"]
+#: How long one die tumbles before it settles, and the stagger between dice.
+_ROLL_TUMBLE = 0.85
+_ROLL_STAGGER = 0.14
 _DEFAULT_RACE = "imperial"          # simplified creator asks no race / gender
 _MAX_NAME = 18
 _HEAD_PIXMAP_CACHE = {}
@@ -208,6 +212,9 @@ def _draw_charcreate(painter, session, w, h):
     if step == "identity":
         _draw_identity(painter, inner, ty, s)
         hint = "Type a name    ←/→ head    ↑/↓ switch hand    Enter next"
+    elif step == "fortune":
+        _draw_fortune(painter, inner, ty, s)
+        hint = "R or Space re-roll    Enter next    Esc back"
     elif step == "class":
         ids = classes.CREATION_CLASS_IDS
         k = classes.get(ids[s["class"]])
@@ -241,7 +248,11 @@ def _draw_charcreate(painter, session, w, h):
             tx = inner.x() + (min(140, inner.width() // 3)) + 20
         else:
             tx = inner.x()
-        summary = (f"Name: {name}\nClass: {k.label}\nBirthsign: {b.label}\n\n"
+        bio = _cc_bio(s)
+        totals = "   ".join(f"{label} {sum(s['rolls'][a])}"
+                            for a, label in _cha.ROLLED) if s.get("rolls") else ""
+        summary = (f"Name: {name}\nClass: {k.label}\nBirthsign: {b.label}\n"
+                   f"{totals}\n\n{bio['title']}\n\n"
                    "Begin your adventure, or go back to change anything.")
         _cc_detail(painter, tx, ty, inner.right() - tx, "Ready?", summary)
         hint = "Enter begin    Esc back"
@@ -258,6 +269,108 @@ def _draw_charcreate(painter, session, w, h):
 
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
               hint, size=10, color=T.DIM, align=T.ALIGN_CENTER, family="Georgia")
+
+
+def _cc_bio(s):
+    from ..rpg import bios
+    return bios.bio_from_rolls(s.get("rolls") or {})
+
+
+def _cc_roll(session):
+    """Roll (or re-roll) 3d6 for STRENGTH, ENDURANCE and CHARISMA. The dice
+    tumble on screen for a moment before they settle (see _draw_fortune)."""
+    import time
+    s = _cc(session)
+    rng = getattr(session, "rng", None)
+    s["rolls"] = {a: _cha.roll_3d6(rng) for a, _label in _cha.ROLLED}
+    s["roll_t"] = time.monotonic()
+    s["rerolls"] = s.get("rerolls", -1) + 1
+
+
+def _roll_settled(s) -> bool:
+    import time
+    t = time.monotonic() - float(s.get("roll_t", 0.0))
+    return t >= _ROLL_TUMBLE + _ROLL_STAGGER * 8
+
+
+def animating(session) -> bool:
+    """Whether the open screen has something moving (dice still tumbling), so
+    the view keeps repainting it while the world is paused."""
+    if getattr(session, "open_screen", None) != "charcreate":
+        return False
+    s = _cc(session)
+    return _CC_STEPS[s["step"]] == "fortune" and not _roll_settled(s)
+
+
+def _draw_fortune(painter, inner, ty, s):
+    """Three rows of 3d6 -- STRENGTH, ENDURANCE, CHARISMA -- tumbling, then
+    settled, each with its total and what it does to the attribute; and the
+    bio the dice have written so far underneath."""
+    import math as _m
+    import time
+    from . import hud
+    from ..rpg import bios
+    rolls = s.get("rolls") or {}
+    elapsed = time.monotonic() - float(s.get("roll_t", 0.0))
+    T.text(painter, inner.x(), ty + 16, "Roll your fortune", size=15,
+           color=T.GOLD_BRIGHT, bold=True)
+    T.text(painter, inner.x(), ty + 36, "Three six-sided dice for each. Keep what fate "
+           "gives you, or tempt it again.", size=10, color=T.DIM, family="Georgia")
+    die = 54
+    row_h = die + 18
+    top = ty + 52
+    all_settled = True
+    for r, (attr_id, label) in enumerate(_cha.ROLLED):
+        y = top + r * row_h
+        T.text(painter, inner.x(), y + die // 2 + 6, label, size=14,
+               color=T.GOLD_BRIGHT, bold=True)
+        dice = rolls.get(attr_id) or [1, 1, 1]
+        for k, value in enumerate(dice):
+            idx = r * 3 + k
+            local = elapsed - idx * _ROLL_STAGGER
+            cx = inner.x() + 170 + k * (die + 14) + die // 2
+            cy = y + die // 2
+            if local < _ROLL_TUMBLE:
+                all_settled = False
+                shown = int(max(0.0, local) * 22 + idx * 3) % 6 + 1
+                wob = _m.sin(max(0.0, local) * 26 + idx)
+                angle, dy = 22 * wob, -10 * abs(_m.sin(max(0.0, local) * 9 + idx))
+            else:
+                shown, angle, dy = int(value), 0.0, 0.0
+            hud._draw_dice_image(painter, hud._dice_face_image(shown), cx, int(cy + dy),
+                                 die, angle, 255)
+        tx = inner.x() + 170 + 3 * (die + 14) + 16
+        if all_settled or elapsed - (r * 3 + 2) * _ROLL_STAGGER >= _ROLL_TUMBLE:
+            total = sum(int(d) for d in dice)
+            delta = _cha.delta_for(total)
+            colour = (T.STAMINA.lighter(140) if delta > 0 else
+                      T.HEALTH.lighter(140) if delta < 0 else T.PARCH)
+            T.text(painter, tx, cy + 4, f"{total}", size=20, color=T.GOLD_BRIGHT, bold=True)
+            T.text(painter, tx + 44, cy + 2,
+                   f"{'+' if delta >= 0 else ''}{delta} {attr.label(attr_id)}  ·  "
+                   f"{bios.band(total)}", size=11, color=colour, family="Georgia")
+    # The bio, once the dice are down.
+    by = top + 3 * row_h + 6
+    box = QRect(inner.x(), by, inner.width(), inner.bottom() - 70 - by)
+    painter.setBrush(QColor(12, 12, 16, 220))
+    painter.setPen(QPen(T.GILD, 1))
+    painter.drawRect(box)
+    if all_settled and rolls:
+        bio = bios.bio_from_rolls(rolls)
+        T.text(painter, box.x() + 12, box.y() + 24, bio["title"], size=15,
+               color=T.GOLD_BRIGHT, bold=True)
+        T.text_in(painter, box.adjusted(12, 34, -12, -8), bio["text"], size=11,
+                  color=T.PARCH, align=int(Qt.AlignTop | Qt.AlignLeft) | int(Qt.TextWordWrap),
+                  family="Georgia")
+    else:
+        T.text_in(painter, box, "The dice are rolling…", size=12, color=T.DIM,
+                  align=T.ALIGN_CENTER)
+    n = int(s.get("rerolls", 0) or 0)
+    button(painter, QRect(inner.x() + inner.width() // 2 - 90, inner.bottom() - 60, 180, 32),
+           "Re-roll" if rolls else "Roll", _cc_roll, enabled=all_settled)
+    if n:
+        T.text_in(painter, QRect(inner.x(), inner.bottom() - 60, inner.width() // 2 - 100, 32),
+                  f"re-rolled {n}×", size=9, color=T.DIM, align=T.ALIGN_RIGHT)
 
 
 def _cc_next(session):
@@ -380,6 +493,11 @@ def _handle_charcreate(session, key):
             if len(s["name"]) < _MAX_NAME:
                 s["name"] += key
             return True
+    elif step == "fortune":
+        if key in ("r", "space"):
+            if _roll_settled(s):
+                _cc_roll(session)
+            return True
     elif step in ("class", "birthsign"):
         ids = (classes.CREATION_CLASS_IDS if step == "class"
                else birthsigns.CREATION_BIRTHSIGN_IDS)
@@ -390,8 +508,13 @@ def _handle_charcreate(session, key):
     if key in ("return", "enter"):
         if s["step"] == 0 and not s["name"].strip():
             return True                       # a name is required
+        if _CC_STEPS[s["step"]] == "fortune" and not s.get("rolls"):
+            _cc_roll(session)
+            return True
         if s["step"] < len(_CC_STEPS) - 1:
             s["step"] += 1
+            if _CC_STEPS[s["step"]] == "fortune" and not s.get("rolls"):
+                _cc_roll(session)               # the dice fall as you arrive
         else:
             _finish_charcreate(session)
         return True
@@ -409,8 +532,10 @@ def _finish_charcreate(session):
     sign = birthsigns.CREATION_BIRTHSIGN_IDS[s["birthsign"]]
     head = heads.head_at(s["head"])
     # Gender is fixed internally and never asked (it changes nothing in play).
+    if not s.get("rolls"):
+        _cc_roll(session)
     session.begin_new_character(name, _DEFAULT_RACE, klass, sign, "male", head=head,
-                                handed=s.get("handed", "right"))
+                                handed=s.get("handed", "right"), rolls=s.get("rolls"))
 
 
 # ===========================================================================
@@ -572,6 +697,15 @@ def _draw_character(painter, session, w, h):
            f"Magicka {int(c.max_magicka)}    Stamina {int(c.max_stamina)}    "
            f"Armour Class {eq.armour_class(c)}",
            size=11, color=T.PARCH, family="Segoe UI")
+    rolls = getattr(c, "rolls", None) or {}
+    if rolls:
+        from ..rpg import bios
+        bio = bios.bio_for(rolls.get("strength", 10), rolls.get("endurance", 10),
+                           rolls.get("personality", 10))
+        T.text_in(painter, QRect(inner.x() + 280, ty - 6, inner.width() - 280, 18),
+                  f"{bio['title']}  ·  STR {rolls.get('strength', '?')}  "
+                  f"END {rolls.get('endurance', '?')}  CHA {rolls.get('personality', '?')}",
+                  size=10, color=T.GOLD_BRIGHT, align=T.ALIGN_RIGHT, family="Georgia")
     prog = c.xp_progress
     T.bar(painter, inner.x(), ty + 14, 260, 10, prog / 10.0, T.XP,
           label=f"Level progress {prog}/10")

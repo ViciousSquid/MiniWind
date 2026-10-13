@@ -43,6 +43,7 @@ from .rpg import guilds
 from .rpg import disposition as disp
 from .rpg import needs as rpg_needs
 from .rpg import heads
+from .rpg import charisma as rpg_cha
 from .ui.arrows import arrow_sprite
 from .rpg import daily as rpg_daily
 from .rpg import quests as _quests
@@ -196,6 +197,14 @@ TORCH_LIGHT_HEIGHT = 70.0
 TORCH_DEFAULT_RADIUS = 380.0
 TORCH_DEFAULT_INTENSITY = 1.5
 TORCH_DEFAULT_COLOUR = [255, 170, 80]
+#: Hostile factions whose members can be put off a fight by a repulsive
+#: face, how near the player they must be to judge it, and for how many game
+#: hours they stay put off.
+REPEL_RADIUS = 520.0
+REPEL_HOURS = 3.0
+REPELLABLE_FACTIONS = frozenset({"bandits", "cultists"})
+#: How fast an over-encumbered player moves, as a fraction of normal.
+ENCUMBERED_SPEED = 0.33
 #: The light a spell bolt carries with it, in the spell's colour.
 BOLT_LIGHT_RADIUS = 420.0
 BOLT_LIGHT_INTENSITY = 2.2
@@ -618,6 +627,7 @@ class MiniwindSession:
         MonsterAI.install_shot_hook(self.archery.shot_hook)
         self.spawn_creature_points()   # materialise CreatureSpawn points once
         self._assign_npc_handedness()  # random handedness (left rare) where unset
+        self._assign_npc_stats()       # STRENGTH / ENDURANCE / CHARISMA for everyone
         self._wire_quest_givers()      # make quest givers offer their quests
         self._sync_engine_health(full=True)
 
@@ -682,10 +692,13 @@ class MiniwindSession:
     # -- character creation result -----------------------------------------
     def begin_new_character(self, name, race_id, class_id, birthsign_id="none",
                             gender="male", custom_class=None, head="",
-                            handed="right") -> None:
+                            handed="right", rolls=None) -> None:
         self.game = GameState.new_game(self.store, name, race_id, class_id,
                                        birthsign_id, gender, custom_class, self.rng,
                                        head=head)
+        if rolls:
+            # STRENGTH, ENDURANCE and CHARISMA as the player rolled them.
+            rpg_cha.apply_rolls(self.game.character, rolls)
         self.game.character.handed = "left" if str(handed).lower() == "left" else "right"
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
@@ -784,6 +797,51 @@ class MiniwindSession:
                 pass
             self._rebuild_entity_caches()
 
+    def _assign_npc_stats(self) -> None:
+        """Give every person in the world STRENGTH, ENDURANCE and CHARISMA.
+
+        The same 3d6 the player rolls, seeded by name so a person always rolls
+        the same, and leaning by trade (game.rpg.bios.ROLE_LEAN). They are
+        ordinary properties -- ``strength`` / ``endurance`` / ``charisma``,
+        3..18 -- so they save, show in the inspector, and are authorable. The
+        first time they are given, they shape the body: Strength scales how
+        hard the person hits and Endurance how much they can take (by up to
+        about a quarter either way). Beasts and the undead have no such
+        numbers.
+        """
+        from .rpg import bios
+        for t in fio.things(self.logic):
+            p = getattr(t, "properties", None)
+            if not isinstance(p, dict):
+                continue
+            if str(p.get("type", "")) not in ("npc", "creature"):
+                continue
+            if p.get("monster_type", "human") != "human":
+                continue
+            role = str(p.get("npc_role", "") or "")
+            if role in heads.ANIMAL_ROLES or role in ("skeleton", "skeleton_archer",
+                                                      "wraith", "shroomling"):
+                continue
+            if not all(k in p for k in ("strength", "endurance", "charisma")):
+                st, en, ch = bios.npc_rolls(str(p.get("name", "")), role)
+                p.setdefault("strength", st)
+                p.setdefault("endurance", en)
+                p.setdefault("charisma", ch)
+            if p.get("body_from_stats"):
+                continue
+            p["body_from_stats"] = True
+            try:
+                st = int(p["strength"])
+                en = int(p["endurance"])
+                p["damage"] = max(1, int(round(float(p.get("damage", 6))
+                                               * (1.0 + (st - 10.5) * 0.03))))
+                hp_scale = 1.0 + (en - 10.5) * 0.03
+                p["max_health"] = max(1, int(round(float(p.get("max_health",
+                                                               p.get("health", 60))) * hp_scale)))
+                p["health"] = max(1, int(round(float(p.get("health", 60)) * hp_scale)))
+            except (TypeError, ValueError):
+                pass
+
     def _assign_npc_handedness(self) -> None:
         """Give every NPC/creature a handedness where none was authored.
 
@@ -851,6 +909,7 @@ class MiniwindSession:
         self.clock.advance(delta)
         self.game.tick(delta)
         self._announce_skill_raises()
+        self._update_encumbrance()
         if self._attack_cooldown > 0:
             self._attack_cooldown -= delta
         if self._cast_cooldown > 0:
@@ -901,13 +960,14 @@ class MiniwindSession:
                    or hour_int != self._last_hour_int)
         if decided:
             coarse_delta = max(self._decision_accum, delta)
+            self._refresh_actor_cache()
+            self._repel_hostiles()
             self._decision_accum = 0.0
             self._last_hour_int = hour_int
             self._decision_phase ^= 1
             phase = self._decision_phase
             pass_no = getattr(self, "_decision_pass", 0) + 1
             self._decision_pass = pass_no
-            self._refresh_actor_cache()
             for i, npc in enumerate(npcs):
                 tier = npc_tiers[i]
                 if tier >= TIER_DORMANT:
@@ -2269,6 +2329,28 @@ class MiniwindSession:
         (a menu or character creation is open). No clock, NPC or combat sim."""
         self._announce_skill_raises()
         self._age_lists(delta)
+
+    def _update_encumbrance(self) -> None:
+        """Carrying more than you can bear slows you to a third of your pace,
+        and the game says so -- once when it happens, again every few seconds
+        while you stay overloaded, and once more when you are free of it."""
+        c = getattr(getattr(self, "game", None), "character", None)
+        player = fio.player(self.logic)
+        if c is None or player is None:
+            return
+        try:
+            heavy = bool(c.is_overencumbered)
+        except Exception:
+            heavy = False
+        player.move_speed_scale = ENCUMBERED_SPEED if heavy else 1.0
+        was = getattr(self, "_encumbered", False)
+        now = self.clock.day * 24.0 + self.clock.hour
+        if heavy and (not was or now - getattr(self, "_encumbered_told", -99.0) > 0.08):
+            self.notify("You are encumbered!", 2.5)
+            self._encumbered_told = now
+        elif was and not heavy:
+            self.notify("You can move freely again.", 2.0)
+        self._encumbered = heavy
 
     def _announce_skill_raises(self) -> None:
         """Toast each skill that rose through use ("Destruction increased to
@@ -5170,6 +5252,7 @@ class MiniwindSession:
         if not tree:
             # a bare merchant/greeter: synthesise a tiny greeting tree
             tree = self._default_tree(npc)
+        tree = self._with_first_impression(tree, npc)
         self.dialogue = DialogueRunner(
             tree, store=self.store,
             give_item=lambda item: inv.add_item(self.game.character.inventory, item),
@@ -5184,6 +5267,76 @@ class MiniwindSession:
         # Note the conversation for any quest 'talk to X' objective.
         self.record_talk(npc)
         return True
+
+    def _with_first_impression(self, tree, npc):
+        """*tree* with the NPC's reaction to the player's face put in front of
+        its opening line -- a copy, never the authored tree itself. Plain faces
+        draw no comment. Hostile-looking strangers aside, only someone meeting
+        the player afresh remarks on it; an old friend has seen it before."""
+        c = self.game.character
+        line = rpg_cha.greeting_line(rpg_cha.charisma_of(c),
+                                     npc.properties.get("name", ""))
+        if not line or not isinstance(tree, dict):
+            return tree
+        if disp.of(c, npc.properties, self.store) >= 75:
+            return tree
+        start = tree.get("start")
+        nodes = tree.get("nodes") or {}
+        node = nodes.get(start)
+        if not isinstance(node, dict):
+            return tree
+        import copy
+        tree = copy.deepcopy(tree)
+        node = tree["nodes"][start]
+        node["text"] = f"{line} {node.get('text', '')}".strip()
+        return tree
+
+    def _repel_hostiles(self) -> None:
+        """A truly repulsive face can end a fight before it starts: a hostile
+        brigand or cultist who gets a proper look at the player may decide it
+        wants no part of them, lower its weapon and back off for a few hours.
+        Each actor makes that judgement once per meeting; monsters and beasts
+        do not care what anyone looks like."""
+        c = self.game.character
+        chance = rpg_cha.repel_chance(rpg_cha.charisma_of(c))
+        if chance <= 0.0:
+            return
+        ppos = self._player_pos()
+        if ppos is None:
+            return
+        now = self.clock.day * 24.0 + self.clock.hour
+        for t in self._actors:
+            p = t.properties
+            if str(p.get("aggression")) != "hostile" or p.get("triggered", False):
+                continue
+            if p.get("monster_type", "human") != "human":
+                continue
+            if str(p.get("faction") or p.get("team")) not in REPELLABLE_FACTIONS:
+                continue
+            if self._dist2d(t.pos, ppos) > REPEL_RADIUS:
+                p.pop("_repel_judged", None)
+                continue
+            if p.get("_repel_judged"):
+                continue
+            p["_repel_judged"] = True
+            if self.rng.random() >= chance:
+                continue
+            p["aggression"] = "passive"
+            p["triggered"] = True
+            p["awake"] = False
+            p.pop("_aggro_target", None)
+            p["_repelled_until"] = now + REPEL_HOURS
+            name = p.get("display_name", "The brigand")
+            self.notify(f"{name} takes one look at your face and wants no part of you.", 3.5)
+        # Courage returns with time.
+        for t in self._actors:
+            p = t.properties
+            until = p.get("_repelled_until")
+            if until is not None and now >= float(until):
+                p.pop("_repelled_until", None)
+                p.pop("_repel_judged", None)
+                p["aggression"] = "hostile"
+                p["triggered"] = False
 
     def _default_tree(self, npc):
         name = npc.properties.get("display_name", "Villager")
@@ -5218,6 +5371,15 @@ class MiniwindSession:
         elif op == "resist_arrest":
             self._start_arrest_pursuit()
         elif op == "open_trade":
+            c = self.game.character
+            if rpg_cha.merchant_refuses(rpg_cha.charisma_of(c),
+                                        disp.of(c, npc.properties, self.store)):
+                self.end_dialogue()
+                self.merchant_npc = None
+                name = npc.properties.get("display_name", "The merchant")
+                self.notify(f"{name} won't trade with you: \"Not with that face. "
+                            f"You'll scare off my real customers.\"", 4.5)
+                return
             self.merchant_npc = npc
             self.end_dialogue()
             self.open_screen = "trade"
@@ -5395,9 +5557,11 @@ class MiniwindSession:
         # A trader who likes the player shaves coin off the asking price and
         # pays a little more for goods; a wary one does the opposite.
         like = disp.price_factor(c, npc.properties, self.store) if npc is not None else 1.0
+        # What the merchant thinks of your face, on top of everything else.
+        face = rpg_cha.price_multiplier(rpg_cha.charisma_of(c), buying)
         if buying:
-            return max(1, int(base_value * (2.0 - factor) * like))
-        return max(1, int(base_value * factor * 0.8 / like))
+            return max(1, int(base_value * (2.0 - factor) * like * face))
+        return max(1, int(base_value * factor * 0.8 / like * face))
 
     # -- persistence --------------------------------------------------------
     _last_persist = 0.0
