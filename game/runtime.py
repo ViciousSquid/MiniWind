@@ -5453,16 +5453,28 @@ class MiniwindSession:
         c = self.game.character
         handed = str(getattr(c, "handed", "right") or "right")
         other = "left" if handed == "right" else "right"
+        # Each hand trails a turn on its own spring (game/weapon_sway.py): the
+        # fourth field is that hand's offset from the head's facing.
+        import time as _time
+        sway = self.__dict__.get("_weapon_sway")
+        if sway is None:
+            from .weapon_sway import WeaponSway
+            sway = self._weapon_sway = WeaponSway()
+        player = fio.player(self.logic)
+        facing = float(getattr(player, "angle", 0.0) or 0.0)
+        now = _time.perf_counter()
         held = [(eq.equipped_id(c, "weapon") or "", handed,
                  self._attack_anim_time > 0.0
-                 or getattr(self, "_cast_cooldown", 0.0) > 0.05)]
+                 or getattr(self, "_cast_cooldown", 0.0) > 0.05,
+                 sway.offset("main", facing, now))]
+        off_lag = sway.offset("off", facing, now)
         off = eq.offhand_weapon(c)
         if off is not None:
-            held.append((off.id, other, self._offhand_anim_time > 0.0))
+            held.append((off.id, other, self._offhand_anim_time > 0.0, off_lag))
         else:
             torch = self._player_torch_def()
             if torch is not None:
-                held.append((torch.id, other, False))
+                held.append((torch.id, other, False, off_lag))
         return held
 
     @staticmethod

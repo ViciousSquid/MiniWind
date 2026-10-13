@@ -1162,8 +1162,10 @@ class QtGameView(QOpenGLWidget):
         if held is None:
             return
         # ``(weapon_id, handed)`` for one hand, or a list of
-        # ``(weapon_id, handed[, attacking])`` -- one per hand that holds
-        # something (a second weapon, a torch) -- each animated on its own.
+        # ``(weapon_id, handed[, attacking[, facing_offset]])`` -- one per
+        # hand that holds something (a second weapon, a torch) -- each
+        # animated on its own, and turned by its offset (radians) from the
+        # head's facing, so a game can let a weapon trail a turn.
         try:
             in_hands = held()
             if in_hands and isinstance(in_hands[0], str):
@@ -1177,9 +1179,12 @@ class QtGameView(QOpenGLWidget):
             weapon_path = self._weapon_asset_path(weapon_id)
             if not weapon_path:
                 continue
+            facing = self._overhead_sprite_ctrl.facing
+            if len(entry) > 3:
+                facing += float(entry[3] or 0.0)
             self._overhead_sprite_renderer.draw_weapon(
                 self.projection_matrix, self.view_matrix, gpos,
-                self._overhead_sprite_ctrl.facing, weapon_path,
+                facing, weapon_path,
                 now, attacking=bool(entry[2]) if len(entry) > 2 else shooting,
                 weapon_kind=self._weapon_kind(weapon_id, sess),
                 handed=handed)
