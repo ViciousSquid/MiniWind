@@ -524,7 +524,7 @@ class MiniwindGame:
                  group="TIME"),
             prop("start_day", "int", "Start day", default=1, min=1, max=100000, group="TIME"),
             prop("minutes_per_day", "float", "Real minutes per game day",
-                 default=20.0, min=0.5, max=1440.0, group="TIME"),
+                 default=24.0, min=0.5, max=1440.0, group="TIME"),
             prop("show_clock", "bool", "Show clock HUD", default=True, group="TIME"),
             prop("state_store", "string", "Quest-state store name", default="miniwind",
                  group="STATE"),
@@ -1036,7 +1036,7 @@ class MiniwindGame:
             self._sync_strip_window(session, viewport, w, h)
 
             if not session.needs_char_creation and session.open_screen != "charcreate":
-                hud.draw_time_tint(painter, session, w, h)
+                hud.draw_time_tint(painter, session, w, h, viewport)
                 # Inspector lines (console 'inspect') lie on the world, under
                 # the HUD; their windows float above everything.
                 from .ui import inspector

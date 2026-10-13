@@ -1065,39 +1065,8 @@ def _draw_floaters(painter, session, width, height):
                color=col, bold=True, family="Segoe UI")
 
 
-def draw_time_tint(painter, session, width, height):
-    """Full-screen colour overlay that shifts with game time of day."""
-    hour = session.clock.hour
-    # Interpolate between time-of-day tint colours:
-    #   6-8   dawn     warm gold
-    #   8-16  day      clear (no tint)
-    #   16-19 evening  amber/orange
-    #   19-21 dusk     deep blue-purple
-    #   21-5  night    dark blue
-    #   5-6   pre-dawn deep blue fading
-    if 8.0 <= hour < 16.0:
-        return
-    if 6.0 <= hour < 8.0:
-        t = (hour - 6.0) / 2.0
-        r, g, b = 255, 200, 100
-        alpha = int(40 * (1.0 - t))
-    elif 16.0 <= hour < 19.0:
-        t = (hour - 16.0) / 3.0
-        r = int(255 - 60 * t)
-        g = int(170 - 80 * t)
-        b = int(60 + 80 * t)
-        alpha = int(20 + 50 * t)
-    elif 19.0 <= hour < 21.0:
-        t = (hour - 19.0) / 2.0
-        r = int(80 - 50 * t)
-        g = int(60 - 30 * t)
-        b = int(140 + 30 * t)
-        alpha = int(70 + 40 * t)
-    else:
-        # night: 21-24 and 0-5
-        r, g, b = 20, 25, 80
-        alpha = 110
-        if 5.0 <= hour < 6.0:
-            t = (hour - 5.0)
-            alpha = int(110 * (1.0 - t))
-    painter.fillRect(QRect(0, 0, width, height), QColor(r, g, b, alpha))
+def draw_time_tint(painter, session, width, height, viewport=None):
+    """The hour's light over the world: dawn, day, dusk and a dark night lit
+    only where lamps and torches burn (game/ui/daylight.py)."""
+    from . import daylight
+    daylight.draw(painter, session, viewport, width, height)

@@ -105,7 +105,7 @@ def build(settlement: dict, base: dict) -> dict:
         "name": "MiniwindSettings_1",
         "start_hour": w.get("start_hour", 7.0),
         "start_day": w.get("start_day", 1),
-        "minutes_per_day": w.get("minutes_per_day", 12.0),
+        "minutes_per_day": w.get("minutes_per_day", 24.0),
         "show_clock": True,
         "state_store": "miniwind",
         "region_name": w.get("region_name", "The Vale of MiniWind"),

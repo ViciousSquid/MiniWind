@@ -48,7 +48,7 @@ from .rpg import charisma as rpg_cha
 from .ui.arrows import arrow_sprite
 from .rpg import daily as rpg_daily
 from .rpg import quests as _quests
-from .rpg.gametime import GameClock
+from .rpg.gametime import DEFAULT_MINUTES_PER_DAY, GameClock
 from .world_index import WorldIndex
 from . import sim
 from .sim import appraisal as sim_appraisal
@@ -202,6 +202,9 @@ TORCH_LIGHT_HEIGHT = 70.0
 TORCH_DEFAULT_RADIUS = 380.0
 TORCH_DEFAULT_INTENSITY = 1.5
 TORCH_DEFAULT_COLOUR = [255, 170, 80]
+#: How far a flame's brightness and reach waver around their base (fractions).
+TORCH_FLICKER_INTENSITY = 0.18
+TORCH_FLICKER_RADIUS = 0.06
 #: Hostile factions whose members can be put off a fight by a repulsive
 #: face, how near the player they must be to judge it, and for how many game
 #: hours they stay put off.
@@ -389,7 +392,8 @@ class MiniwindSession:
     def __init__(self, logic, cfg: Dict = None, globals_store=None):
         self.logic = logic
         cfg = cfg or {}
-        mins_per_day = float(cfg.get("minutes_per_day", 20.0)) or 20.0
+        mins_per_day = (float(cfg.get("minutes_per_day", DEFAULT_MINUTES_PER_DAY))
+                        or DEFAULT_MINUTES_PER_DAY)
         self.clock = GameClock(
             hour=float(cfg.get("start_hour", 8.0)),
             day=int(cfg.get("start_day", 1)),
@@ -1538,43 +1542,93 @@ class MiniwindSession:
         ``torch_always`` burns day and night; ``torch`` lights only after dark —
         so authoring ``torch: true`` gives the lovely "guards carry torches at
         night" behaviour with no schedule work. The specific item can be named
-        via ``torch_item`` (defaults to the generic ``torch``)."""
+        via ``torch_item`` (defaults to the generic ``torch``). And anyone who
+        simply *carries* a light (a torch in their inventory) holds it lit
+        after dark too."""
         if props.get("dead") or props.get("hidden"):
             return None
-        if not (props.get("torch_always") or (props.get("torch") and night)):
+        if props.get("torch_always") or (props.get("torch") and night):
+            tid = props.get("torch_item") or "torch"
+            return rpg_items.get(tid) or rpg_items.get("torch")
+        if night:
+            return self._carried_light(props)
+        return None
+
+    @staticmethod
+    def _carried_light(props: Dict):
+        """The first light source (torch, lantern) in *props*' inventory."""
+        carried = props.get("inventory")
+        if not isinstance(carried, list):
             return None
-        tid = props.get("torch_item") or "torch"
-        return rpg_items.get(tid) or rpg_items.get("torch")
+        for stack in carried:
+            if not isinstance(stack, dict) or int(stack.get("qty", 1) or 0) <= 0:
+                continue
+            d = rpg_items.get(stack.get("id", ""))
+            if d is not None and d.category == rpg_items.LIGHT:
+                return d
+        return None
+
+    def torch_shadows_enabled(self) -> bool:
+        """GAME → "Torch shadows": torches near the player cast shadows.
+        Off unless set (shadow-casting point lights are costly)."""
+        try:
+            config = self._editor_config()
+            if config is None:
+                return False
+            return config.getboolean("GAME", "torch_shadows", fallback=False)
+        except (AttributeError, TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _torch_flicker(t: float, phase: float):
+        """(intensity, radius) multipliers for a torch flame at time *t*.
+
+        Three incommensurate waves and a fast shimmer, offset per torch by
+        *phase*, so neighbouring torches never pulse in step and none of them
+        settles into an obvious rhythm."""
+        a = math.sin(t * 7.3 + phase)
+        b = math.sin(t * 12.9 + phase * 1.7)
+        c = math.sin(t * 3.1 + phase * 0.6)
+        d = math.sin(t * 23.0 + phase * 2.3)
+        wave = 0.45 * a + 0.25 * b + 0.2 * c + 0.1 * d        # -1..1
+        return 1.0 + TORCH_FLICKER_INTENSITY * wave, 1.0 + TORCH_FLICKER_RADIUS * (0.6 * a + 0.4 * c)
 
     def _update_torch_lights(self, delta: float, npcs=None, tiers=None) -> None:
         """Spawn / move / remove the dynamic lights carried by torch holders.
 
         Cheap and allocation-light: one pass builds the set of holders that
         should have a lit torch right now (the player if a torch is equipped,
-        plus any NPC whose flags say so), existing lights are repositioned in
-        place onto their holder, new ones are spawned and vanished ones removed,
-        and the engine caches are rebuilt only when the light set actually
-        changes (a spawn/despawn), never on a mere reposition."""
+        plus any NPC whose flags say so, or who carries one after dark),
+        existing lights are repositioned in place onto their holder, new ones
+        are spawned and vanished ones removed, and the engine caches are
+        rebuilt only when the light set actually changes (a spawn/despawn),
+        never on a mere reposition. Each flame flickers, and with GAME →
+        "Torch shadows" on, the torches in the NEAR simulation tier cast
+        shadows."""
         night = not self.clock.is_daytime
-        # holder key -> (holder position, torch item def)
+        shadows = self.torch_shadows_enabled()
+        # holder key -> (holder position, torch item def, casts shadows)
         desired = {}
         ppos = self._player_pos()
         pdef = self._player_torch_def()
         if pdef is not None and ppos is not None:
-            desired["player"] = (ppos, pdef)
+            desired["player"] = (ppos, pdef, shadows)
         if npcs is None:
             npcs = self.npcs()
             tiers = [self._tier_of(n) for n in npcs]
         for i, npc in enumerate(npcs):
+            p = npc.properties
             # A torch is a dynamic light. One carried beyond the player's
             # vicinity illuminates nothing the camera can see, and each costs a
             # Light entity plus a renderer light slot, so distant holders simply
             # do not carry a lit one. It relights the moment they come near.
-            if tiers[i] > TIER_ACTIVE:
-                continue
-            tdef = self._npc_torch_def(npc.properties, night)
+            tdef = None if tiers[i] > TIER_ACTIVE else self._npc_torch_def(p, night)
             if tdef is not None:
-                desired[id(npc)] = (list(npc.pos), tdef)
+                desired[id(npc)] = (list(npc.pos), tdef, shadows and tiers[i] == TIER_NEAR)
+                if p.get("_torch_lit") != tdef.id:
+                    p["_torch_lit"] = tdef.id       # drawn in the off hand
+            elif "_torch_lit" in p:
+                p.pop("_torch_lit", None)
 
         changed = False
         for key in list(self._torch_lights):
@@ -1583,12 +1637,14 @@ class MiniwindSession:
                 changed = True
 
         self._torch_flicker_t += delta
-        flick = 0.9 + 0.1 * math.sin(self._torch_flicker_t * 9.0)
-        for key, (pos, tdef) in desired.items():
+        t = self._torch_flicker_t
+        for key, (pos, tdef, cast) in desired.items():
             light = self._torch_lights.get(key)
             if light is None:
                 start = [pos[0], pos[1] + TORCH_LIGHT_HEIGHT, pos[2]]
-                light = self._make_light(start, self._torch_light_props(tdef))
+                props = self._torch_light_props(tdef)
+                props["casts_shadows"] = bool(cast)
+                light = self._make_light(start, props)
                 if light is None:
                     continue
                 try:
@@ -1602,9 +1658,18 @@ class MiniwindSession:
                 lp[0] = pos[0]
                 lp[1] = pos[1] + TORCH_LIGHT_HEIGHT
                 lp[2] = pos[2]
-            base = float(light.properties.get("_torch_base_intensity",
-                                              TORCH_DEFAULT_INTENSITY))
-            light.properties["intensity"] = base * flick
+            lprops = light.properties
+            lprops["casts_shadows"] = bool(cast)
+            phase = float(lprops.setdefault("_torch_phase", (hash(str(key)) % 6283) / 1000.0))
+            k_int, k_rad = self._torch_flicker(t, phase)
+            base = float(lprops.get("_torch_base_intensity", TORCH_DEFAULT_INTENSITY))
+            base_r = float(lprops.setdefault("_torch_base_radius",
+                                             lprops.get("radius", TORCH_DEFAULT_RADIUS)))
+            lprops["intensity"] = base * k_int
+            lprops["radius"] = base_r * k_rad
+            # The renderer copies a light's intensity, radius and shadow flag
+            # into its tables; say they changed, or the flame holds still.
+            _journal(light)
         if changed:
             self._rebuild_entity_caches()
 

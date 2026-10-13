@@ -2628,7 +2628,7 @@
     "id": "c54ef390-54f2-4cd0-b5ab-be7bb7b7c214",
     "start_hour": 8.0,
     "start_day": 1,
-    "minutes_per_day": 20.0,
+    "minutes_per_day": 24.0,
     "show_clock": true,
     "state_store": "miniwind",
     "difficulty": "normal",
