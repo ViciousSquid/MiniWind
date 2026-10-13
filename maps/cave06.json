@@ -4412,6 +4412,15 @@
       "value": 40,
       "weight": 0.5,
       "description": "Restores 75 health."
+     },
+     {
+      "id": "book_ember_wyrm",
+      "name": "The Ember Wyrm of Whisperdeep",
+      "qty": 1,
+      "type": "book",
+      "value": 60,
+      "weight": 1.0,
+      "description": "A monk's account of a journey into the red hills, and what he found there."
      }
     ],
     "use_radius": 128.0,

@@ -302,6 +302,18 @@ opens it again. To enter it from the overworld, put a LevelChanger there with
 `target_map` = the saved file and `destination_spawn` = `entrance`, and a
 PlayerStart beside it named in the designer's *At start*.
 
+### Books
+
+Books are read open over the game, two parchment pages at a time, in the
+medieval face (`game/ui/book_window.py`): double-click one in the pack (or
+Use), click a page or press ←/→ to turn, Esc to close. Their texts are plain
+files, `assets/books/<id>.txt` — a `Title:` / `Author:` header, then
+paragraphs separated by blank lines, `[page]` for a forced page break — named
+by a book item's `"book"` in `game/data/items.json` (`game/books.py`). Pack the
+folder into `books.fiopak` (`python tools/make_fiopak.py assets/books
+assets/books.fiopak`) and they are read from there; a loose file still
+overrides. The shipped texts are examples to replace.
+
 ### Maps remember, lairs refill
 
 Each map keeps what happened in it (`game/map_memory.py`, in the state store):

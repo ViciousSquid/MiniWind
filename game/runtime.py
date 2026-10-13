@@ -5612,7 +5612,39 @@ class MiniwindSession:
                 self.notify(f"Equipped {d.name}", 1.5)
                 return True
             return False
-        return bool(self.game.use_item(item_id))
+        used = bool(self.game.use_item(item_id))
+        if used and d.category == rpg_items.BOOK and d.get("book"):
+            self.open_book(item_id)
+        return used
+
+    # ============================================================== books
+    def open_book(self, item_id) -> bool:
+        """Open a book item to read it (game/ui/book_window.py), from
+        whatever screen the player was on, which comes back when it closes."""
+        from . import books as lib
+        book = lib.book_of_item(item_id)
+        if book is None:
+            self.notify("The pages are blank", 2.0)
+            return False
+        self.reading = {"item": item_id, "book": book.id, "spread": 0, "spreads": 1}
+        self._book_return = self.open_screen if self.open_screen != "book" else None
+        self.open_screen = "book"
+        self.play_ui_sound("page")
+        return True
+
+    def turn_book(self, step) -> None:
+        r = getattr(self, "reading", None)
+        if not r:
+            return
+        spread = max(0, min(int(r.get("spreads", 1)) - 1, int(r.get("spread", 0)) + int(step)))
+        if spread != r.get("spread"):
+            r["spread"] = spread
+            self.play_ui_sound("page")
+
+    def close_book(self) -> None:
+        self.reading = None
+        self.open_screen = getattr(self, "_book_return", None)
+        self._book_return = None
 
     def inventory_assign_quick(self, item_id) -> bool:
         """Assign: put a weapon in the first free quick slot."""

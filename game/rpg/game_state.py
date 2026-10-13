@@ -152,11 +152,16 @@ class GameState:
             self.message(f"Drank {d.name}")
             return True
         if d.category == items.BOOK:
+            c = self.character
+            first = item_id not in c.read_books
+            if first:
+                c.read_books.append(item_id)
             skill_id = d.get("teaches_skill")
-            if skill_id:
-                self.character.use_skill(skill_id, 5.0)
+            if skill_id and first:
+                # A skill book teaches once; reading it again is only reading.
+                c.use_skill(skill_id, 5.0)
                 self.message(f"You study {d.name}.")
-            else:
+            elif not d.get("book"):
                 self.message(f"You read {d.name}.")
             return True
         if d.category in (items.WEAPON, items.ARMOUR, items.AMMO, items.LIGHT):

@@ -631,7 +631,8 @@
     "value": 50,
     "weight": 1.0,
     "desc": "Reading this treatise sharpens your aim.",
-    "teaches_skill": "marksman"
+    "teaches_skill": "marksman",
+    "book": "hunters_eye"
   },
   "book_blade": {
     "name": "The Duellist's Companion",
@@ -639,14 +640,16 @@
     "value": 50,
     "weight": 1.0,
     "desc": "A manual of the blade.",
-    "teaches_skill": "blade"
+    "teaches_skill": "blade",
+    "book": "duellists_companion"
   },
   "book_lore": {
     "name": "The Chronicle of Miniwind",
     "category": "book",
     "value": 20,
     "weight": 1.0,
-    "desc": "A history of the vale and its founding."
+    "desc": "A history of the vale and its founding.",
+    "book": "chronicle_of_miniwind"
   },
   "bread": {
     "name": "Bread",
@@ -1088,5 +1091,37 @@
     "slot": "weapon",
     "innate": true,
     "charged": true
+  },
+  "book_last_ferryman": {
+    "name": "The Last Ferryman of Mirrormere",
+    "category": "book",
+    "value": 35,
+    "weight": 1.0,
+    "desc": "A worn volume of Reedhollow tales, its pages stained by lake water.",
+    "book": "last_ferryman"
+  },
+  "book_ember_wyrm": {
+    "name": "The Ember Wyrm of Whisperdeep",
+    "category": "book",
+    "value": 60,
+    "weight": 1.0,
+    "desc": "A monk's account of a journey into the red hills, and what he found there.",
+    "book": "ember_wyrm"
+  },
+  "book_lament_greywood": {
+    "name": "A Lament for Greywood",
+    "category": "book",
+    "value": 10,
+    "weight": 1.0,
+    "desc": "A thin book of verse, with oak leaves pressed between its pages.",
+    "book": "lament_for_greywood"
+  },
+  "letter_to_mara": {
+    "name": "A Letter, Much Folded",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "A letter that has been folded and unfolded many times.",
+    "book": "letter_to_mara"
   }
 }

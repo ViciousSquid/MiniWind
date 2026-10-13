@@ -1189,6 +1189,16 @@ class MiniwindGame:
         if key is None:
             return True  # own the (empty) popup slot: suppress legacy draw
 
+        if cur is None and key == "screen:book":
+            # A book is read open over the game (game/ui/book_window.py).
+            from .ui.book_window import BookWindow
+            win = BookWindow(session)
+            win.place(w, h)
+            wm.add(win)
+            session._overlay_win = win
+            session._overlay_key = key
+            return True
+
         if cur is None and key in ("screen:inventory", "screen:character"):
             # The inventory and the character sheet are one window: drag and
             # drop onto the paperdoll, with the sheet or the item details

@@ -2350,6 +2350,15 @@
       "value": 90,
       "weight": 16.0,
       "description": "A steel longsword."
+     },
+     {
+      "id": "book_marksman",
+      "name": "A Hunter's Eye",
+      "qty": 1,
+      "type": "book",
+      "value": 50,
+      "weight": 1.0,
+      "description": "Reading this treatise sharpens your aim."
      }
     ],
     "use_radius": 128.0,

@@ -2568,6 +2568,15 @@
       "value": 20,
       "weight": 0.5,
       "description": "Restores stamina."
+     },
+     {
+      "id": "book_lament_greywood",
+      "name": "A Lament for Greywood",
+      "qty": 1,
+      "type": "book",
+      "value": 10,
+      "weight": 1.0,
+      "description": "A thin book of verse, with oak leaves pressed between its pages."
      }
     ],
     "use_radius": 128.0,

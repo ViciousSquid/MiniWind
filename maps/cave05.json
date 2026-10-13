@@ -2691,6 +2691,15 @@
       "value": 70,
       "weight": 6.0,
       "description": "Steel helmet."
+     },
+     {
+      "id": "book_last_ferryman",
+      "name": "The Last Ferryman of Mirrormere",
+      "qty": 1,
+      "type": "book",
+      "value": 35,
+      "weight": 1.0,
+      "description": "A worn volume of Reedhollow tales, its pages stained by lake water."
      }
     ],
     "use_radius": 128.0,

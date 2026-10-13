@@ -1875,6 +1875,15 @@
       "value": 250,
       "weight": 0.2,
       "description": "A silver ring cut with warding runes. Blows seem to glance away."
+     },
+     {
+      "id": "book_lore",
+      "name": "The Chronicle of Miniwind",
+      "qty": 1,
+      "type": "book",
+      "value": 20,
+      "weight": 1.0,
+      "description": "A history of the vale and its founding."
      }
     ],
     "use_radius": 128.0,

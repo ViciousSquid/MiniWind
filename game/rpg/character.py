@@ -95,6 +95,8 @@ class Character:
         #: item id or None each. Keys 1-4 draw the weapon in that slot; the
         #: inventory window fills them by drag and drop.
         self.quick_weapons: List[Optional[str]] = [None] * QUICK_WEAPON_SLOTS
+        #: Books read (item ids): a skill book teaches only the first time.
+        self.read_books: List[str] = []
         #: Weapon ids the slots have already been offered (transient). A weapon
         #: picked up for the first time drops into a free slot by itself; one
         #: the player has taken out of the slots stays out.
@@ -449,6 +451,7 @@ class Character:
             "spell_practice": dict(self.spell_practice),
             "quick_weapons": list(self.quick_weapons),
             "rolls": dict(self.rolls),
+            "read_books": list(self.read_books),
         }
 
     @classmethod
@@ -486,6 +489,8 @@ class Character:
         c.head = data.get("head", "")
         c.factions = dict(data.get("factions", {}))
         c.bounty = int(data.get("bounty", 0))
+        if isinstance(data.get("read_books"), list):
+            c.read_books = [str(b) for b in data["read_books"]]
         if isinstance(data.get("rolls"), dict):
             c.rolls = {str(k): int(v) for k, v in data["rolls"].items()}
         quick = data.get("quick_weapons")

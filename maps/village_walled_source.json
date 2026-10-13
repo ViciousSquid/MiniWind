@@ -666530,6 +666530,126 @@
                 "discover_radius": 700.0
             },
             "io_connections": []
+        },
+        {
+            "type": "itempickup",
+            "pos": [
+                90.0,
+                232,
+                -36.0
+            ],
+            "properties": {
+                "type": "itempickup",
+                "name": "Pickup_book_lore",
+                "id": "473ae6b7-d694-484b-8df9-6e71d4df454e",
+                "item_id": "book_lore",
+                "quantity": 1,
+                "respawn": false,
+                "pickup_radius": 60.0,
+                "custom_idle": "assets/sprites/items/_book.png",
+                "_book_placed": true
+            },
+            "io_connections": []
+        },
+        {
+            "type": "itempickup",
+            "pos": [
+                -110.0,
+                232,
+                -56.0
+            ],
+            "properties": {
+                "type": "itempickup",
+                "name": "Pickup_book_last_ferryman",
+                "id": "c695a7fd-8543-4d77-8f89-bc47ab736f5c",
+                "item_id": "book_last_ferryman",
+                "quantity": 1,
+                "respawn": false,
+                "pickup_radius": 60.0,
+                "custom_idle": "assets/sprites/items/_book.png",
+                "_book_placed": true
+            },
+            "io_connections": []
+        },
+        {
+            "type": "itempickup",
+            "pos": [
+                11843.3,
+                185.5,
+                10976.1
+            ],
+            "properties": {
+                "type": "itempickup",
+                "name": "Pickup_book_ember_wyrm",
+                "id": "bcef1fd2-5634-44fc-843e-0be02ebb34d8",
+                "item_id": "book_ember_wyrm",
+                "quantity": 1,
+                "respawn": false,
+                "pickup_radius": 60.0,
+                "custom_idle": "assets/sprites/items/_book.png",
+                "_book_placed": true
+            },
+            "io_connections": []
+        },
+        {
+            "type": "itempickup",
+            "pos": [
+                -2685.5,
+                209.1,
+                3970.7
+            ],
+            "properties": {
+                "type": "itempickup",
+                "name": "Pickup_letter_to_mara",
+                "id": "8993b345-b6a3-43c4-b99c-0db55049ef99",
+                "item_id": "letter_to_mara",
+                "quantity": 1,
+                "respawn": false,
+                "pickup_radius": 60.0,
+                "custom_idle": "assets/sprites/items/_book.png",
+                "_book_placed": true
+            },
+            "io_connections": []
+        },
+        {
+            "type": "itempickup",
+            "pos": [
+                -12156.0,
+                226.0,
+                -9686.0
+            ],
+            "properties": {
+                "type": "itempickup",
+                "name": "Pickup_book_lament_greywood",
+                "id": "566e0661-a26e-46d8-ad2a-e898f7e06f1f",
+                "item_id": "book_lament_greywood",
+                "quantity": 1,
+                "respawn": false,
+                "pickup_radius": 60.0,
+                "custom_idle": "assets/sprites/items/_book.png",
+                "_book_placed": true
+            },
+            "io_connections": []
+        },
+        {
+            "type": "itempickup",
+            "pos": [
+                -5215.5,
+                208.7,
+                -22839.4
+            ],
+            "properties": {
+                "type": "itempickup",
+                "name": "Pickup_book_marksman",
+                "id": "755d9964-7e98-418a-93c7-e3096541e944",
+                "item_id": "book_marksman",
+                "quantity": 1,
+                "respawn": false,
+                "pickup_radius": 60.0,
+                "custom_idle": "assets/sprites/items/_book.png",
+                "_book_placed": true
+            },
+            "io_connections": []
         }
     ],
     "created": "2026-09-16T19:31:20",

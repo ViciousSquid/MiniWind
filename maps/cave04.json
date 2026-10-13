@@ -2290,6 +2290,15 @@
       "value": 40,
       "weight": 0.5,
       "description": "Restores 75 health."
+     },
+     {
+      "id": "book_blade",
+      "name": "The Duellist's Companion",
+      "qty": 1,
+      "type": "book",
+      "value": 50,
+      "weight": 1.0,
+      "description": "A manual of the blade."
      }
     ],
     "use_radius": 128.0,

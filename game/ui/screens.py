@@ -1219,7 +1219,9 @@ def _merchant_stock(npc):
     defaults = {
         "merchant": ["potion_heal_minor", "potion_magicka", "torch", "lockpick",
                      "cloth_robe", "cloth_hood", "sandals", "hide_boots", "copper_ring",
-                     "iron_arrow", "bread" if rpg_items.get("bread") else "book_lore"],
+                     "iron_arrow", "bread" if rpg_items.get("bread") else "book_lore",
+                     "book_lore", "book_last_ferryman", "book_lament_greywood",
+                     "book_marksman", "book_blade"],
         "blacksmith": ["iron_longsword", "iron_mace", "steel_longsword", "iron_shield",
                        "iron_cuirass", "iron_helmet", "short_bow", "iron_arrow",
                        "chain_shirt", "chain_coif", "scale_mail", "kite_shield",
@@ -1511,4 +1513,16 @@ _HANDLE = {
     "character": _handle_character, "journal": _handle_journal,
     "spells": _handle_spells, "trade": _handle_trade, "levelup": _handle_levelup,
     "container": _handle_container, "quest": _handle_quest,
+    "book": lambda session, key: _handle_book(session, key),
 }
+
+
+def _handle_book(session, key):
+    """An open book (game/ui/book_window.py): turn pages, or close it."""
+    if key in ("left", "a", "pageup", "backspace"):
+        session.turn_book(-1)
+    elif key in ("right", "d", "pagedown", "space", "return", "enter"):
+        session.turn_book(+1)
+    elif key in ("escape", "esc", "e", "tab", "i", "b"):
+        session.close_book()
+    return True
