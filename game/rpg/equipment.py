@@ -164,15 +164,20 @@ def armor_rating(character) -> float:
     Higher Heavy/Light Armor skill makes the same plate protect more (classic
     'skill multiplies base rating'). Shield adds when not two-handed.
     """
-    total = 0.0
+    return sum(piece_ratings(character).values())
+
+
+def piece_ratings(character) -> dict:
+    """Each worn armour piece's skill-scaled rating, by slot."""
+    out = {}
     for slot in items.ARMOUR_SLOTS:
         d = equipped_def(character, slot)
         if not d or d.category != items.ARMOUR:
             continue
         base = float(d.get("armor_rating", 0))
         skill = _armour_skill(character, str(d.get("armor_class", LIGHT)))
-        total += base * (0.4 + skill / 100.0) * rarity_stat(character, slot)
-    return total
+        out[slot] = base * (0.4 + skill / 100.0) * rarity_stat(character, slot)
+    return out
 
 
 def armor_class_worn(character) -> str:
@@ -195,15 +200,17 @@ def armor_class_worn(character) -> str:
 def armour_class(character) -> int:
     """The character's Armour Class: how hard they are to hurt at all.
 
-    ``10 + armour + agility + charms``: every :data:`RATING_PER_AC` points of
-    (skill-scaled) armour rating add one; Agility adds one per ten points above
+    ``10 + armour + agility + charms``: each worn piece adds one per
+    :data:`RATING_PER_AC` points of its (skill-scaled) rating, rounded, and
+    never less than one -- so putting on a helmet always shows; Agility adds one per ten points above
     40, as much as the heaviest armour worn allows (all of it in light armour,
     two in medium, none in heavy); and protective rings and amulets add their
     ``ac_bonus``. Shown on the inventory and character sheet, and rolled
     against every physical blow (:func:`deflect_chance`).
     """
     from . import attributes as attr
-    armour = int(armor_rating(character) // RATING_PER_AC)
+    armour = sum(max(1, int(round(r / RATING_PER_AC)))
+                 for r in piece_ratings(character).values() if r > 0)
     agility = max(0, (int(character.attrs.get(attr.AGILITY, 40)) - 40) // 10)
     cap = AGILITY_CAP.get(armor_class_worn(character))
     if cap is not None:

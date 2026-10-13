@@ -1189,11 +1189,13 @@ class MiniwindGame:
         if key is None:
             return True  # own the (empty) popup slot: suppress legacy draw
 
-        if cur is None and key == "screen:inventory":
-            # The inventory is its own window: drag and drop, not a painted
-            # screen (game/ui/inventory_window.py).
+        if cur is None and key in ("screen:inventory", "screen:character"):
+            # The inventory and the character sheet are one window: drag and
+            # drop onto the paperdoll, with the sheet or the item details
+            # beside it (game/ui/inventory_window.py).
             from .ui.inventory_window import InventoryWindow
-            win = InventoryWindow(session)
+            win = InventoryWindow(session, view="character" if key == "screen:character"
+                                  else "details")
             win.place(w, h)
             wm.add(win)
             session._overlay_win = win

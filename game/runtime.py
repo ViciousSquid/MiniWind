@@ -5493,7 +5493,20 @@ class MiniwindSession:
     # the logic thread.
     def inventory_move(self, source, target, item_id) -> bool:
         """Carry out one drag and drop: *source* and *target* are the window's
-        ``(kind, key, ...)`` tuples. Only what fits goes in a slot."""
+        ``(kind, key, ...)`` tuples. Only what fits goes in a slot. A change
+        of Armour Class is announced."""
+        before = eq.armour_class(self.game.character)
+        done = self._inventory_move(source, target, item_id)
+        self._announce_ac(before)
+        return done
+
+    def _announce_ac(self, before) -> None:
+        after = eq.armour_class(self.game.character)
+        if after != before:
+            arrow = "▲" if after > before else "▼"
+            self.notify(f"Armour Class {before} → {after} {arrow}", 2.5)
+
+    def _inventory_move(self, source, target, item_id) -> bool:
         from .ui import inventory_window as iw
         c = self.game.character
         d = rpg_items.get(item_id)
@@ -5535,6 +5548,12 @@ class MiniwindSession:
     def inventory_use(self, item_id) -> bool:
         """Double-click / Use: wear or take off what is worn, draw a weapon,
         drink a potion, read a book."""
+        before = eq.armour_class(self.game.character)
+        done = self._inventory_use(item_id)
+        self._announce_ac(before)
+        return done
+
+    def _inventory_use(self, item_id) -> bool:
         c = self.game.character
         d = rpg_items.get(item_id)
         if d is None:

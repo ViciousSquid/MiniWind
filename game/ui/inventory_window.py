@@ -140,11 +140,17 @@ class InventoryWindow(FloatingWindow):
 
     wants_cursor = True
 
-    def __init__(self, session, x=40, y=40):
-        width = 1000
-        super().__init__("Inventory", x, y, width, body_height=640)
+    #: What the right-hand panel shows: the item under the pointer, or the
+    #: character sheet (the C key opens the window on that).
+    VIEWS = (("details", "Details"), ("character", "Character"))
+
+    def __init__(self, session, x=40, y=40, view="details"):
+        width = 1120
+        super().__init__("Inventory" if view == "details" else "Character",
+                         x, y, width, body_height=640)
         self.session = session
-        self.key = "screen:inventory"
+        self.key = f"screen:{'inventory' if view == 'details' else 'character'}"
+        self.view = view if view in dict(self.VIEWS) else "details"
         self.tab = 0
         self.page = 0
         self.selected = None            # item id shown in Details
@@ -263,7 +269,24 @@ class InventoryWindow(FloatingWindow):
         right = QRect(mid.right() + 12, y + 10, x + w - mid.right() - 22, h - 20)
         self._draw_equipment(painter, left)
         self._draw_pack(painter, mid)
-        self._draw_details(painter, right)
+        # Details / Character tabs over the right-hand panel.
+        tab_w = (right.width() - 6) // 2
+        for k, (key, label) in enumerate(self.VIEWS):
+            r = QRect(right.x() + k * (tab_w + 6), right.y(), tab_w, 26)
+            on = key == self.view
+            painter.setBrush(QColor(96, 70, 34, 240) if on else
+                             (QColor(60, 52, 40, 240) if hits.hovered(r) else QColor(40, 37, 33, 240)))
+            painter.setPen(QPen(_GOLD if on else _SLOT_EDGE, 1.2))
+            painter.drawRoundedRect(r, 5, 5)
+            painter.setFont(self.f_button)
+            painter.setPen(_GOLD if on else _INK)
+            painter.drawText(r, Qt.AlignCenter, label)
+            self._buttons.append((QRect(r), self._set_view(key)))
+        panel = QRect(right.x(), right.y() + 32, right.width(), right.height() - 32)
+        if self.view == "character":
+            self._draw_character_sheet(painter, panel)
+        else:
+            self._draw_details(painter, panel)
         self._draw_dragged(painter)
         painter.restore()
 
@@ -761,6 +784,134 @@ class InventoryWindow(FloatingWindow):
     # Each returns a callable(session), queued and run by the game tick.
     def _queue(self, action):
         hits.queue(action)
+
+    def _set_view(self, key):
+        def act():
+            self.view = key
+            self.title = "Inventory" if key == "details" else "Character"
+        return act
+
+    # ------------------------------------------------------- character sheet
+    def _draw_character_sheet(self, painter, rect):
+        """Who the character is: pools, Armour Class, attributes, skills."""
+        inner = self._panel(painter, rect, "Character")
+        c = self._character()
+        if c is None:
+            return
+        try:
+            from ..rpg import attributes as attr, birthsigns, classes, equipment as eq
+            from ..rpg import races, skills as sk
+        except Exception:
+            return
+        x, y, w = inner.x(), inner.y(), inner.width()
+        painter.setFont(self.f_name)
+        painter.setPen(_GOLD)
+        painter.drawText(QRect(x, y, w, 22), Qt.AlignLeft | Qt.AlignVCenter, c.name)
+        painter.setFont(self.f_small)
+        painter.setPen(_DIM)
+        try:
+            sub = (f"Level {c.level} {races.get(c.race_id).label} "
+                   f"{classes.get(c.class_id).label} · {birthsigns.get(c.birthsign_id).label}")
+        except Exception:
+            sub = f"Level {c.level}"
+        painter.drawText(QRect(x, y + 22, w, 16), Qt.AlignLeft | Qt.AlignVCenter, sub)
+        rolls = getattr(c, "rolls", None) or {}
+        yy = y + 40
+        if rolls:
+            try:
+                from ..rpg import bios
+                bio = bios.bio_for(rolls.get("strength", 10), rolls.get("endurance", 10),
+                                   rolls.get("personality", 10))
+                painter.setPen(_GOLD)
+                painter.drawText(QRect(x, yy, w, 16), Qt.AlignLeft | Qt.AlignVCenter,
+                                 f"{bio['title']} · STR {rolls.get('strength', '?')} "
+                                 f"END {rolls.get('endurance', '?')} "
+                                 f"CHA {rolls.get('personality', '?')}")
+            except Exception:
+                pass
+            yy += 18
+        # Pools.
+        for label, cur, top, colour in (
+                ("Health", c.health, c.max_health, QColor(200, 70, 60)),
+                ("Magicka", c.magicka, c.max_magicka, QColor(80, 120, 220)),
+                ("Stamina", c.stamina, c.max_stamina, QColor(90, 170, 90))):
+            bar = QRect(x + 64, yy + 3, w - 64, 11)
+            painter.setPen(_INK)
+            painter.drawText(QRect(x, yy, 62, 16), Qt.AlignLeft | Qt.AlignVCenter, label)
+            painter.setBrush(_SLOT)
+            painter.setPen(QPen(_SLOT_EDGE, 1))
+            painter.drawRect(bar)
+            frac = max(0.0, min(1.0, float(cur) / max(1.0, float(top))))
+            painter.fillRect(QRect(bar.x() + 1, bar.y() + 1, int((bar.width() - 1) * frac),
+                                   bar.height() - 1), colour)
+            painter.setPen(_INK)
+            painter.drawText(bar, Qt.AlignCenter, f"{int(cur)} / {int(top)}")
+            yy += 18
+        # Armour Class, and what kind of armour gives it.
+        ac = int(eq.armour_class(c))
+        weight = eq.armor_class_worn(c)
+        self._draw_ac_badge(painter, QPoint(x + 22, yy + 26), ac)
+        painter.setFont(self.f_body)
+        painter.setPen(_INK)
+        painter.drawText(QRect(x + 52, yy + 8, w - 52, 18), Qt.AlignLeft | Qt.AlignVCenter,
+                         f"Armour Class {ac}")
+        painter.setFont(self.f_small)
+        painter.setPen(_DIM)
+        painter.drawText(QRect(x + 52, yy + 26, w - 52, 16), Qt.AlignLeft | Qt.AlignVCenter,
+                         "Unarmoured" if weight == "none" else f"{weight.title()} armour"
+                         f" · deflects {int(round(eq.deflect_chance(c) * 100))}%"
+                         if hasattr(eq, "deflect_chance") else "")
+        yy += 54
+        # Level progress.
+        prog = int(getattr(c, "xp_progress", 0) or 0)
+        bar = QRect(x, yy, w, 10)
+        painter.setBrush(_SLOT)
+        painter.setPen(QPen(_SLOT_EDGE, 1))
+        painter.drawRect(bar)
+        painter.fillRect(QRect(bar.x() + 1, bar.y() + 1, int((bar.width() - 1) * prog / 10.0),
+                               bar.height() - 1), QColor(200, 170, 70))
+        painter.setFont(self.f_small)
+        painter.setPen(_DIM)
+        painter.drawText(QRect(x, yy + 11, w, 14), Qt.AlignLeft | Qt.AlignVCenter,
+                         f"Level progress {prog}/10")
+        yy += 30
+        # Attributes, two columns.
+        painter.setFont(self.f_body)
+        painter.setPen(_GOLD)
+        painter.drawText(x, yy + 12, "Attributes")
+        yy += 18
+        painter.setFont(self.f_small)
+        half = (w - 10) // 2
+        for i, a in enumerate(attr.ATTRIBUTES):
+            col, row = i % 2, i // 2
+            r = QRect(x + col * (half + 10), yy + row * 15, half, 15)
+            painter.setPen(_INK)
+            painter.drawText(r, Qt.AlignLeft | Qt.AlignVCenter, attr.label(a))
+            painter.setPen(_GOLD)
+            painter.drawText(r, Qt.AlignRight | Qt.AlignVCenter, str(c.attrs.get(a, 0)))
+        yy += ((len(attr.ATTRIBUTES) + 1) // 2) * 15 + 8
+        # Skills, by specialisation, three columns.
+        col_w = (w - 12) // 3
+        for ci, spec in enumerate((sk.COMBAT, sk.MAGIC, sk.STEALTH)):
+            cx = x + ci * (col_w + 6)
+            painter.setFont(self.f_body)
+            painter.setPen(_GOLD)
+            painter.drawText(cx, yy + 12, spec.title())
+            painter.setFont(self.f_small)
+            for j, sid in enumerate(sk.BY_SPEC[spec]):
+                r = QRect(cx, yy + 18 + j * 14, col_w, 14)
+                major = sid in getattr(c, "major_skills", ())
+                painter.setPen(_GOLD if major else _INK)
+                label = painter.fontMetrics().elidedText(
+                    ("★" if major else "") + sk.label(sid), Qt.ElideRight, col_w - 22)
+                painter.drawText(r, Qt.AlignLeft | Qt.AlignVCenter, label)
+                painter.setPen(_INK)
+                painter.drawText(r, Qt.AlignRight | Qt.AlignVCenter, str(c.skill(sid)))
+        if getattr(c, "bounty", 0):
+            painter.setFont(self.f_body)
+            painter.setPen(_NO)
+            painter.drawText(QRect(x, inner.bottom() - 18, w, 18), Qt.AlignLeft | Qt.AlignVCenter,
+                             f"Bounty: {c.bounty} gold")
 
     def _set_tab(self, i):
         def act():
