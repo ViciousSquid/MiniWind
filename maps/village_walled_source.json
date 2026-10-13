@@ -601542,6 +601542,25 @@
                 "id": "5cf87d54-5967-448c-9883-e35a5bffafaa",
                 "display_name": "Elowen the Trader",
                 "npc_role": "merchant",
+                "stock": [
+                    {
+                        "id": "potion_heal",
+                        "qty": 5,
+                        "restock": 5
+                    },
+                    {
+                        "id": "potion_heal_minor",
+                        "qty": 10,
+                        "restock": 10
+                    },
+                    "potion_magicka",
+                    "potion_stamina",
+                    "potion_cure",
+                    "lockpick",
+                    "torch",
+                    "book_marksman",
+                    "book_blade"
+                ],
                 "home": [
                     560.0,
                     272,

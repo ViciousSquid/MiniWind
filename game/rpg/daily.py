@@ -105,8 +105,31 @@ def _resolve_one_day(store, day: int, actors: List[Dict], rng=None) -> List[str]
     return events
 
 
+def _restock_shelves(p: Dict) -> bool:
+    """Fill each limited stock row back to its ``restock`` count (its full
+    shelf; a row never sold from has no count yet and is still full).
+    True if anything was put back."""
+    stock = p.get("stock")
+    if not isinstance(stock, list):
+        return False
+    refilled = False
+    for entry in stock:
+        if not isinstance(entry, dict) or "qty" not in entry or "restock" not in entry:
+            continue
+        try:
+            full = int(entry["restock"])
+            qty = int(entry.get("qty") or 0)
+        except (TypeError, ValueError):
+            continue
+        if qty < full:
+            entry["qty"] = full
+            refilled = True
+    return refilled
+
+
 def _restock_merchants(store, actors: List[Dict]) -> List[str]:
-    """Top a merchant's coin purse back up to its baseline overnight."""
+    """Top a merchant's coin purse back up to its baseline overnight, and
+    refill the limited goods on their shelves."""
     events: List[str] = []
     for p in actors:
         if not p.get("merchant") or p.get("dead"):
@@ -117,9 +140,14 @@ def _restock_merchants(store, actors: List[Dict]) -> List[str]:
             base = max(cur, 1)
             p["merchant_gold_base"] = base
         base = int(base)
-        if cur < base:
+        coin = cur < base
+        if coin:
             p["merchant_gold"] = base
+        goods = _restock_shelves(p)
+        if coin:
             events.append(f"{_name(p)} restocked the shop and counted out fresh coin.")
+        elif goods:
+            events.append(f"{_name(p)} restocked the shop.")
     return events
 
 

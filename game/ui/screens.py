@@ -1158,8 +1158,14 @@ def _draw_trade(painter, session, w, h):
             nm = (d.name if d else iid)
             if not buying and isinstance(entry, dict) and entry.get("qty", 1) > 1:
                 nm += f" ×{entry['qty']}"
+            left = session.stock_left(entry) if buying else None
+            if left == 0:
+                nm += "  (sold out)"
+            elif left is not None:
+                nm += f" ×{left}"
+            colour = T.GOLD_BRIGHT if selected else T.INK
             T.text(painter, cx + 8, ry + 12, nm, size=10,
-                   color=T.GOLD_BRIGHT if selected else T.INK, family="Segoe UI")
+                   color=T.DIM if left == 0 else colour, family="Segoe UI")
             T.text_in(painter, QRect(cx, ry - 2, col_w - 8, 20), f"{price}g", size=9,
                       color=T.GOLD, align=T.ALIGN_RIGHT, family="Segoe UI")
         # Where a new row would appear: a card with no row to land on (an
@@ -1175,10 +1181,13 @@ def _draw_trade(painter, session, w, h):
         buying = st["side"] == 0
         price = session._price(d.value if d else 0, buying, npc=npc)
         name_ = d.name if d else "item"
-        can = (c.gold >= price) if buying else True
+        sold_out = buying and session.stock_left(entry) == 0
+        can = (c.gold >= price and not sold_out) if buying else True
         label = (f"Buy {name_} for {price}g" if buying
                  else f"Sell {name_} for {price}g")
-        if buying and not can:
+        if sold_out:
+            label = f"{name_}: sold out until tomorrow"
+        elif buying and not can:
             label = f"{name_}: {price}g (not enough gold)"
     by = inner.bottom() - 58
     button(painter, QRect(inner.x() + (inner.width() - 360) // 2, by, 360, 34),

@@ -6471,15 +6471,50 @@ class MiniwindSession:
         return self.dialogue.view() if self.dialogue is not None else None
 
     # -- merchant trade -----------------------------------------------------
+    @staticmethod
+    def stock_entry(npc, item_id):
+        """*npc*'s own stock row for *item_id* (a dict), or None.
+
+        A row with a ``qty`` is limited: buying takes one, at none it is sold
+        out, and the daily resolution fills it back to its ``restock`` count
+        (game/rpg/daily.py). A row without one -- or a plain item id -- is an
+        endless supply, as all stock used to be."""
+        stock = getattr(npc, "properties", {}).get("stock") if npc is not None else None
+        if not isinstance(stock, list):
+            return None
+        for entry in stock:
+            if isinstance(entry, dict) and entry.get("id") == item_id:
+                return entry
+        return None
+
+    @staticmethod
+    def stock_left(entry):
+        """How many of a stock row are left, or None for an endless one."""
+        if not isinstance(entry, dict) or "qty" not in entry:
+            return None
+        try:
+            return max(0, int(entry.get("qty") or 0))
+        except (TypeError, ValueError):
+            return 0
+
     def buy(self, item_id: str) -> bool:
         c = self.game.character
         d = rpg_items.get(item_id)
         if not d:
             return False
+        entry = self.stock_entry(self.merchant_npc, item_id)
+        left = self.stock_left(entry)
+        if left == 0:
+            self.notify(f"{d.name}: sold out until tomorrow")
+            return False
         price = self._price(d.value, buying=True, npc=self.merchant_npc)
         if c.gold < price:
             self.notify("Not enough gold")
             return False
+        if left is not None:
+            # The full shelf, remembered the first time one is sold.
+            entry.setdefault("restock", left)
+            entry["qty"] = left - 1
         c.gold -= price
         self.game.pick_up(item_id, 1)
         c.use_skill("mercantile", 0.5)
