@@ -185,10 +185,29 @@ class _Session:
     def persist(self, force=False):
         self.persisted += 1
 
+    def notify(self, text, seconds=3.0):
+        self.notes = getattr(self, "notes", []) + [text]
+
+
+class _SessionRuntime:
+    """The engine's save: writes a stub save file, remembering the mode."""
+
+    def __init__(self):
+        self.modes = []
+
+    def save_session(self, path, *, map_name="", save_mode="full", base_level=None):
+        self.modes.append(save_mode)
+        with open(path, "w") as fh:
+            json.dump({"fio_savegame": True, "map": map_name or "village.json",
+                       "save_mode": save_mode,
+                       "saved_at": "2026-10-01T10:00:00"}, fh)
+        return True, "saved"
+
 
 class _Logic(FioLogic):
     def __init__(self):
         self._miniwind = _Session()
+        self.session_runtime = _SessionRuntime()
 
 
 class _Console:
@@ -199,6 +218,9 @@ class _Console:
 
     def _resolve_save_path(self, name):
         return os.path.join(self.root, name + ".fiosave")
+
+    def _current_map_name(self):
+        return "village.json"
 
     def cmd_save(self, name):
         with open(self._resolve_save_path(name), "w") as fh:
@@ -275,6 +297,28 @@ def test_loading_puts_the_store_back_before_play_restarts(actions):
     assert not playing                       # stopped before the store swap
     assert json.loads(values["_character"])["name"] == "Aldric"
     assert "stray_key" not in values
+
+
+def test_saves_are_delta_saves(actions):
+    assert actions.pause_menu_save_slot(1)
+    assert actions.view.logic_thread.session_runtime.modes == ["delta"]
+
+
+def test_the_autosave_is_written_and_restored_like_a_slot(actions):
+    store = pause_actions._global_store()
+    store.set("_character", json.dumps({"name": "Aldric", "level": 2}), store="miniwind")
+    assert actions.autosave_info() is None
+    assert actions.autosave("timer")
+    info = actions.autosave_info()
+    assert info["summary"] == "Aldric, level 2" and info["age"] >= 0.0
+    with open(actions._console()._resolve_save_path("autosave")) as fh:
+        data = json.load(fh)
+    assert data["save_mode"] == "delta" and data["autosave_reason"] == "timer"
+    store.set("_character", json.dumps({"name": "Aldric", "level": 1}), store="miniwind")
+    assert actions.restore_autosave()
+    name, values, playing = actions.window.console_handler.loaded[-1]
+    assert name == "autosave" and not playing
+    assert json.loads(values["_character"])["level"] == 2
 
 
 def test_an_empty_slot_is_not_loaded(actions):

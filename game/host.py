@@ -1103,6 +1103,7 @@ class MiniwindGame:
                     worldmap.ensure_for(logic, viewport)
                 worldmap.draw_minimap(painter, session, viewport, w, h)
                 self._serve_map_request(session, viewport)
+                self._serve_autosave(session, viewport)
                 # Speech bubbles over nearby NPCs (only during free play, not
                 # while a menu or conversation is open).
                 if session.open_screen is None and session.dialogue is None \
@@ -1120,7 +1121,8 @@ class MiniwindGame:
                 if session.open_screen is not None:
                     screens.draw(painter, session, w, h)
             if session.game.character.is_dead:
-                self._draw_death(painter, w, h)
+                from .ui import death_screen
+                death_screen.draw(painter, viewport, w, h)
             # The fade-to-black transition (e.g. paying off a bounty) sits on
             # top of everything else, including dialogue and the death screen.
             hud.draw_fade(painter, session, w, h)
@@ -1393,12 +1395,22 @@ class MiniwindGame:
             cur.set_body_size(bw, bh)
         return True
 
-    def _draw_death(self, painter, w, h):
-        from PyQt5.QtCore import QRect
-        from .ui import theme as T
-        T.dim_screen(painter, w, h, alpha=180)
-        T.text_in(painter, QRect(0, h // 2 - 30, w, 60), "You have died",
-                  size=28, color=T.HEALTH.lighter(130), align=T.ALIGN_CENTER, bold=True)
+    @staticmethod
+    def _serve_autosave(session, viewport):
+        """Make the autosave the game tick says is due (game/autosave.py).
+
+        Here, on the UI thread, because the engine's save takes the logic
+        thread's tick lock; deferred out of the paint pass like the map."""
+        saver = getattr(session, "autosave", None)
+        if saver is None or not saver.ready():
+            return
+        menu = getattr(viewport, "play_menu", None)
+        actions = getattr(menu, "actions", None)
+        if actions is None or not hasattr(actions, "autosave"):
+            return
+        reason = saver.take()
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(0, lambda: actions.autosave(reason))
 
     # --------------------------------------------------------------- helpers
     @staticmethod

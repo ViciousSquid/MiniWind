@@ -147,6 +147,10 @@ class GamePointer:
         session = self._session()
         if session is None:
             return False
+        if session.game.character.is_dead:
+            # The death screen's "Restore last autosave".
+            from . import death_screen
+            return death_screen.has_button()
         menu_up = (session.needs_char_creation or session.open_screen is not None
                    or session.dialogue is not None)
         return bool(menu_up and has_targets())
@@ -159,6 +163,13 @@ class GamePointer:
     def pointer_press(self, event):
         from PyQt5.QtCore import Qt
         if event.button() != Qt.LeftButton:
+            return True
+        session = self._session()
+        if session is not None and session.game.character.is_dead:
+            # The tick is not running: the death screen acts here.
+            from . import death_screen
+            death_screen.press(self.view, event.x(), event.y())
+            self.view.update()
             return True
         click(event.x(), event.y())
         self.view.update()

@@ -393,6 +393,9 @@ class QtGameView(QOpenGLWidget):
         #: to it instead of the camera and the fire buttons.
         self.game_pointer = None
         self._game_pointer_shown = False
+        #: Set by a game layer that paints its own death screen (through the
+        #: render.overlay hook), so the stock "DIED" screen stays off.
+        self.game_death_screen = False
         #: Set by a game layer that draws its own HUD through the
         #: render.overlay hook, every frame of its play session, so the stock
         #: HUD does not overlap it. Each session starts with the stock HUD.
@@ -2293,7 +2296,8 @@ class QtGameView(QOpenGLWidget):
                 self._draw_hud_splitscreen(painter, render_state)
             else:
                 self._draw_hud(painter, render_state)
-        if self.play_mode and render_state and render_state.player_dead:
+        if (self.play_mode and render_state and render_state.player_dead
+                and not getattr(self, 'game_death_screen', False)):
             self._draw_death_screen(painter)
         if (self.play_mode and self._cached_level_complete_ui
                 and not self._cached_level_complete_ui.get('immediate')):

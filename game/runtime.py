@@ -495,6 +495,10 @@ class MiniwindSession:
         self._type_index: Dict[str, list] = {}
         self._type_index_token = None
 
+        #: Says when an autosave is due; the host makes it (game/autosave.py).
+        from .autosave import Autosaver
+        self.autosave = Autosaver(self)
+
         # transient UI state (driven by plugin/input, read by overlays)
         self.interact_prompt = ""       # e.g. "Press E to talk to Thalen"
         self.dialogue: Optional[DialogueRunner] = None
@@ -1063,6 +1067,7 @@ class MiniwindSession:
         self.wildlife.update(delta)
         self.memory.update(delta)
         self._check_pack()
+        self.autosave.tick(delta)
         self.rewind.tick(delta)
         self._update_bolt_lights()
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
@@ -2057,6 +2062,7 @@ class MiniwindSession:
                 p["_discovered"] = True
                 self.store.set(f"visited.{self._slug(name)}", "1")
                 self.notify(f"{name} discovered", 4.0)
+                self.autosave.discovered(name)
 
     @staticmethod
     def _slug(text) -> str:
