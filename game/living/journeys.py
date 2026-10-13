@@ -443,6 +443,8 @@ class JourneyBoard:
             return made                     # time went backwards (a load): skip
         self._watch_bounty(t, made)
         for j in list(self.journeys.values()):
+            if not j.alive() and not j.live:
+                j.state = "done"
             if j.state == "done":
                 self._retire(j)
                 continue

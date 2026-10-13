@@ -364,6 +364,23 @@ def cmd_pause(ctx, args):
     return None
 
 
+def cmd_roads(ctx, args):
+    """roads -- who is travelling the roads right now, and where.
+
+    Lists every party on the living world's board (game/living): kind, leader,
+    whether they are walking or resting, origin and destination, where the
+    clock puts them, and which are near enough to be actors ([LIVE])."""
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    living = getattr(session, "living", None)
+    if living is None:
+        debug_log("Error", "roads: the living world is not running (Play Mode on a map "
+                  "with places).")
+        return None
+    for line in living.summary():
+        debug_log("Info", line)
+    return None
+
+
 #: (names, handler, help) for every command this module provides.
 COMMANDS = (
     (("diceroll", "dice"), cmd_diceroll,
@@ -375,6 +392,8 @@ COMMANDS = (
      " — Reactive simulation (Play Mode)"),
     (("inspect", "mind"), cmd_inspect,
      "— Pause and click an actor: schedule, destination, AI state (Play Mode)"),
+    (("roads", "travellers"), cmd_roads,
+     "— List the parties on the roads: who, where from/to, where now (Play Mode)"),
     (("pause", "freeze"), cmd_pause,
      "— Toggle freezing the world (time, NPCs, combat); no pause menu (Play Mode)"),
 )

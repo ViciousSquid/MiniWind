@@ -6,7 +6,9 @@
     "bandits",
     "cultists",
     "wildlife",
-    "monsters"
+    "monsters",
+    "adventurers",
+    "mercenaries"
   ],
   "relationships": [
     [
@@ -73,6 +75,66 @@
       "wildlife",
       "player",
       "neutral"
+    ],
+    [
+      "player",
+      "adventurers",
+      "friendly"
+    ],
+    [
+      "villagers",
+      "adventurers",
+      "friendly"
+    ],
+    [
+      "guards",
+      "adventurers",
+      "friendly"
+    ],
+    [
+      "adventurers",
+      "bandits",
+      "hostile"
+    ],
+    [
+      "adventurers",
+      "cultists",
+      "hostile"
+    ],
+    [
+      "adventurers",
+      "monsters",
+      "hostile"
+    ],
+    [
+      "villagers",
+      "mercenaries",
+      "friendly"
+    ],
+    [
+      "guards",
+      "mercenaries",
+      "friendly"
+    ],
+    [
+      "adventurers",
+      "mercenaries",
+      "friendly"
+    ],
+    [
+      "mercenaries",
+      "bandits",
+      "hostile"
+    ],
+    [
+      "mercenaries",
+      "cultists",
+      "hostile"
+    ],
+    [
+      "mercenaries",
+      "monsters",
+      "hostile"
     ]
   ]
 }

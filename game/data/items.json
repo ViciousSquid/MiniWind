@@ -1066,5 +1066,12 @@
     "armor_rating": 0,
     "ac_bonus": 2,
     "material": "silver"
+  },
+  "adventurers_keepsake": {
+    "name": "Adventurer's Keepsake",
+    "category": "quest",
+    "value": 15,
+    "weight": 0.2,
+    "desc": "A worn token -- a ring on a cord, a lock of hair in a locket -- taken from the remains of someone who went looking for glory and did not come home."
   }
 }

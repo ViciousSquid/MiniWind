@@ -550,6 +550,9 @@ class MiniwindSession:
         #: propagation and production advance on world time rather than frames.
         self._sim_hours = 0.0
         self._sim_last_hour = float(self.clock.hour)
+        #: The roads' population (game/living/world.py): travellers simulated
+        #: as data far away and as actors near the player. Built at install.
+        self.living = None
 
     def _editor_config(self):
         """The editor's live settings (settings.ini), or None without an editor."""
@@ -665,11 +668,27 @@ class MiniwindSession:
         self._assign_npc_stats()       # STRENGTH / ENDURANCE / CHARISMA for everyone
         self._wire_quest_givers()      # make quest givers offer their quests
         self._name_index()             # built now, not on the first quest's frame
+        try:
+            from .living.world import LivingWorld
+            self.living = LivingWorld(self)
+            if not self.living.build():
+                self.living = None
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            print(f"[MiniWind] living world unavailable: {exc}")
+            self.living = None
         self._sync_engine_health(full=True)
 
     def uninstall(self) -> None:
         global _current_session
         _current_session = None
+        if self.living is not None:
+            try:
+                self.living.persist()
+                self.living.shutdown()
+            except Exception:
+                pass
         self._remove_wisp()
         self._remove_all_torch_lights()
         self._bolt_positions = {}
@@ -1034,6 +1053,11 @@ class MiniwindSession:
                 self._move(npc, delta * stride)
                 continue
             self._move(npc, delta)
+
+        # The roads: journeys advance off-screen on the clock, and parties
+        # inside Big World's live region walk as actors (game/living).
+        if self.living is not None:
+            self.living.tick(delta)
 
         # Turn any NPC deaths (from player or engine combat) into persistent
         # settlement consequences — cheap: it walks the same cached actor list.
@@ -3280,6 +3304,10 @@ class MiniwindSession:
 
     def _decide(self, npc) -> None:
         p = npc.properties
+        if p.get("_journey") and not p.get("_arrest_state") and self.living is not None:
+            return          # a traveller: its party is driven by game/living
+        if p.get("away_on_journey"):
+            return          # away on a trip; a stand-in walks the road
 
         # Arrest movement is owned by the runtime, not the normal schedule or
         # MonsterAI. The guard remains visible and walks to the player/prison.
@@ -3586,6 +3614,8 @@ class MiniwindSession:
         state is the same state, only reached more coarsely.
         """
         p = npc.properties
+        if p.get("_journey") or p.get("away_on_journey"):
+            return
 
         if p.get("_arrest_state"):
             self._decide(npc)              # the arrest flow owns this one
@@ -5553,6 +5583,8 @@ class MiniwindSession:
             # a bare merchant/greeter: synthesise a tiny greeting tree
             tree = self._default_tree(npc)
         tree = self._with_first_impression(tree, npc)
+        if getattr(self, "living", None) is not None:
+            tree = self.living.prepare_tree(tree, npc)
         self.dialogue = DialogueRunner(
             tree, store=self.store,
             give_item=lambda item: inv.add_item(self.game.character.inventory, item),
@@ -5878,6 +5910,8 @@ class MiniwindSession:
         if force or (now - self._last_persist) >= 1.0:
             self._last_persist = now
             self.game.save_to_store()
+            if force and getattr(self, "living", None) is not None:
+                self.living.persist()
             # The world's event history rides along in the same store, so a
             # save carries what happened and what it caused — everything else
             # the simulation knows (who believes what, who was wronged, which
@@ -5888,6 +5922,8 @@ class MiniwindSession:
         # The event history first, so anything that reads it during the rest of
         # the restore sees the world's past rather than an empty log.
         self.director.restore()
+        if getattr(self, "living", None) is not None:
+            self.living.restore()
         hour = self.store.get("_clock_hour", None)
         day = self.store.get("_clock_day", None)
         if hour not in (None, "false"):
