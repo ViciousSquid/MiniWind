@@ -2844,24 +2844,49 @@ class MiniwindSession:
         """Townsfolk who were fighting the player stop once a guard steps in.
         Real enemies (bandits, monsters) do not: they are not the watch's to
         calm, they are the watch's to fight."""
+        player_id = id(self.player_actor)
         for t in self._actors:
             p = t.properties
             if p.get("triggered", True) or p.get("dead"):
                 continue
-            if self._is_guard(t):
+            if self._is_guard(t) or p.get("_journey_hostile"):
                 continue
-            team = p.get("faction") or p.get("team")
-            if factions.is_hostile("player", team) or p.get("_journey_hostile"):
+            # Wolves, bears, monsters, bandits: hostile by nature, not
+            # because of a brawl, so not the watch's to calm.
+            if self._natively_hostile(p):
                 continue
-            if p.get("_aggro_target") not in (None, id(self.player_actor)) \
-                    and str(p.get("aggression")) != "hostile":
+            # Only those actually fighting the player.
+            if not (p.get("_aggro_target") == player_id
+                    or str(p.get("aggression")) == "hostile"):
                 continue
             p["triggered"] = True
             p["awake"] = False
             p.pop("_aggro_target", None)
-            base = p.get("_base_aggression")
+            base = p.pop("_base_aggression", None)
             p["aggression"] = base if base else ("defensive" if p.get("combatant")
                                                  else "passive")
+
+    @staticmethod
+    def _natively_hostile(p) -> bool:
+        """Hostile by nature (a wolf, a bandit) rather than provoked into it.
+        Provocation records the aggression an actor had before
+        (``_base_aggression``); without that, hostility toward the player is
+        native for the factions at war with the player and for beasts and
+        monsters."""
+        if str(p.get("aggression")) != "hostile":
+            return False
+        base = p.get("_base_aggression")
+        if base is not None:
+            return str(base) == "hostile"
+        team = str(p.get("faction") or p.get("team") or "")
+        return factions.is_hostile("player", team) or team in ("wildlife", "monsters")
+
+    @staticmethod
+    def _provoke(p) -> None:
+        """Remember an actor's own aggression before it turns hostile, so it
+        can be restored when the fight is called off."""
+        if str(p.get("aggression")) != "hostile":
+            p.setdefault("_base_aggression", str(p.get("aggression") or "passive"))
 
     def nearest_arrest_guard(self, player_pos, radius: float = TALK_RADIUS):
         """Return the guard currently waiting to discuss the player's arrest."""
@@ -3338,6 +3363,7 @@ class MiniwindSession:
         self._set_rally(npc, False)
         if offender is self.player_actor:
             # The engine MonsterAI hunts the player when an actor is hostile.
+            self._provoke(p)
             p["aggression"] = "hostile"
             p["wake_on_sight"] = True
         else:
@@ -3613,11 +3639,10 @@ class MiniwindSession:
             if tp.get("dead") or t is self.player_actor:
                 continue
             tp.pop("_aggro_target", None)
-            if not (str(tp.get("aggression")) == "hostile"
-                    and factions.is_hostile("player", tp.get("faction") or tp.get("team"))):
+            if not self._natively_hostile(tp):
                 tp["triggered"] = True
                 tp["awake"] = False
-                base = tp.get("_base_aggression")
+                base = tp.pop("_base_aggression", None)
                 tp["aggression"] = base if base else (
                     "defensive" if tp.get("combatant") else "passive")
         gp = guard.properties
@@ -5229,6 +5254,7 @@ class MiniwindSession:
         self.director.emit("attack", actor=self.player_actor, target=target,
                            observers=self._sim_observers(),
                            crime=self._sim_is_crime_against(target))
+        self._provoke(tp)
         tp["aggression"] = "hostile"
         tp["triggered"] = False
         tp["awake"] = True
