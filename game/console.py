@@ -364,6 +364,38 @@ def cmd_pause(ctx, args):
     return None
 
 
+def cmd_dragonfire(ctx, args):
+    """dragonfire 1..5 -- which FIRE setting the dragon's breath is made of.
+
+    The breath is a stream of the engine's FIRE Effects (game/dragon_fire.py);
+    this picks their fire (fire01..fire05). The choice is remembered."""
+    from .dragon_fire import FIRE_SETTINGS
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    fire = getattr(session, "dragon_fire", None)
+    text = str(args or "").strip()
+    if fire is None:
+        debug_log("Error", "dragonfire: Play Mode only.")
+        return None
+    if not text:
+        current = session.store.get("dragonfire", None)
+        debug_log("Info", f"dragonfire: setting {current or 1} "
+                          f"({len(fire.flames)} flames in this map). Use dragonfire 1..{FIRE_SETTINGS}.")
+        return None
+    try:
+        setting = int(text.split()[0])
+    except ValueError:
+        setting = 0
+    if not fire.set_setting(setting):
+        debug_log("Error", f"dragonfire: pick 1..{FIRE_SETTINGS}.")
+        return None
+    msg = f"Dragon fire set to {setting}."
+    debug_log("Info", msg)
+    toast = getattr(ctx.main_window, "show_toast", None)
+    if toast is not None:
+        toast(msg)
+    return None
+
+
 def cmd_roads(ctx, args):
     """roads -- who is travelling the roads right now, and where.
 
@@ -394,6 +426,8 @@ COMMANDS = (
      "— Pause and click an actor: schedule, destination, AI state (Play Mode)"),
     (("roads", "travellers"), cmd_roads,
      "— List the parties on the roads: who, where from/to, where now (Play Mode)"),
+    (("dragonfire",), cmd_dragonfire,
+     "1..5 — Which FIRE setting the dragon breathes (remembered)"),
     (("pause", "freeze"), cmd_pause,
      "— Toggle freezing the world (time, NPCs, combat); no pause menu (Play Mode)"),
 )

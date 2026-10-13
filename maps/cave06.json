@@ -20,7 +20,7 @@
     "top": "cave.png",
     "down": "tiledrock.jpg"
    },
-   "id": "4eccb8ba-e702-4aaa-8cd0-f00bd20d8327"
+   "id": "d8be76a6-5dd4-497f-ac03-152098e9b1de"
   },
   {
    "pos": [
@@ -41,7 +41,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "b582b869-43f9-44b3-8a51-29ff8752101f"
+   "id": "0241e21c-c79f-4e95-93f8-4b45771c79a4"
   },
   {
    "pos": [
@@ -62,7 +62,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "a1fa7b86-9403-497c-aaca-fe96f10df513"
+   "id": "724c63ce-e8c1-4cab-8517-d9b3c9547fd7"
   },
   {
    "pos": [
@@ -83,7 +83,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "859cfd48-62ee-4585-b1e6-6625083962b3"
+   "id": "03fef394-390f-47de-a1da-f247963d086b"
   },
   {
    "pos": [
@@ -104,7 +104,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "8cab52c7-bd7c-40bc-8638-2858329d26cc"
+   "id": "9373fcdd-29db-46a9-a5e5-cff587510bde"
   },
   {
    "pos": [
@@ -125,7 +125,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "fcd26f0c-42b8-4c71-b202-c4ccaf59b691"
+   "id": "77e77a97-1708-4961-9136-be6429f72075"
   },
   {
    "pos": [
@@ -146,7 +146,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "58afcb2e-6166-4f02-bf70-e0ad4ccd6f9b"
+   "id": "838610b3-d204-4260-b200-38bd02d8fae8"
   },
   {
    "pos": [
@@ -167,7 +167,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "367073c1-e200-41e6-8a6f-9788482b30f0"
+   "id": "811b01a9-4fab-4bf5-9a1b-1ad4877b217a"
   },
   {
    "pos": [
@@ -188,7 +188,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "57a0e7e2-0708-40a4-9c91-e299a03ba254"
+   "id": "7e18b9e0-b4a4-4436-9c50-bd7e487b565d"
   },
   {
    "pos": [
@@ -209,7 +209,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "de5bad80-1eea-4b88-90d1-6b1e579e9ca7"
+   "id": "e6523b01-4c86-4e4c-8d40-0b13942ce892"
   },
   {
    "pos": [
@@ -230,7 +230,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "a2e354ff-b37e-48ea-b6f8-d8a81a6c4e60"
+   "id": "26079cce-9701-43f0-b3ba-0c838e154bae"
   },
   {
    "pos": [
@@ -251,7 +251,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "1d85ec6c-7739-4516-9c85-e7e000ca7de4"
+   "id": "722703a3-db37-4e51-bec0-d71412635b79"
   },
   {
    "pos": [
@@ -272,7 +272,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "e1a0fdac-a644-4039-a723-d9c8a0588eb4"
+   "id": "994167a3-2d58-4705-a8f7-293fe2223fd2"
   },
   {
    "pos": [
@@ -293,7 +293,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "04275b60-0a4a-412a-b0cc-b2983a4eed01"
+   "id": "a0c713c5-2532-4b04-ae08-b4a09ead7b39"
   },
   {
    "pos": [
@@ -314,7 +314,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "276f31f5-096e-4f53-b280-e680d260284a"
+   "id": "3354de7a-0b13-4843-80de-fe86e91c2377"
   },
   {
    "pos": [
@@ -335,7 +335,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "8a0125d9-f5a4-4b8f-8e17-337a45d084ab"
+   "id": "b0568645-656b-4d48-a598-8c836be3069e"
   },
   {
    "pos": [
@@ -356,7 +356,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "ec72f2c1-ab9a-4d6d-a7a3-72db3da3604b"
+   "id": "384f2677-e30d-4064-805d-9e23f32c726d"
   },
   {
    "pos": [
@@ -377,7 +377,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "cb403272-97a1-4de7-a73f-c87e862afe2f"
+   "id": "b6bab5e3-9e6e-4bae-ac37-e01d878cb69d"
   },
   {
    "pos": [
@@ -398,7 +398,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "dfbafef8-02e4-4b7d-ba37-ec967fbdced1"
+   "id": "ad868af1-72f7-4691-9acb-89948eaf6148"
   },
   {
    "pos": [
@@ -419,7 +419,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "7fdc9b3f-89c1-4d95-b5cf-e4df9aeec3e4"
+   "id": "96e8b92c-b699-42d7-9ddf-64fe21e5d70a"
   },
   {
    "pos": [
@@ -440,7 +440,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "83db921b-f13b-4d0e-8227-d0203b8be17d"
+   "id": "9f9fad2d-c858-4024-8b8e-a6aef6646f04"
   },
   {
    "pos": [
@@ -461,7 +461,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "c1fe13c0-b2f4-4f55-8efd-5a37b467f30e"
+   "id": "be5c72d1-2b78-457b-9b90-9458e465867f"
   },
   {
    "pos": [
@@ -482,7 +482,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "97cf1916-e93b-4567-9eb7-5093b5033cf7"
+   "id": "18403d67-7cba-4094-b104-817db517de25"
   },
   {
    "pos": [
@@ -503,7 +503,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "0dfe44ab-b043-4eef-be14-1e209426915b"
+   "id": "0f07c478-6049-483d-8221-680221e2706c"
   },
   {
    "pos": [
@@ -524,7 +524,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "6a5ca647-6047-41f6-b676-e17e5fa451c6"
+   "id": "5d454d0b-2944-40a5-b7d9-9984ea243b2d"
   },
   {
    "pos": [
@@ -545,7 +545,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "678bb85e-a852-48f2-a2a1-451f38fcd59b"
+   "id": "5a2f67fd-51d4-4bc1-9bd4-fabd5ff647e7"
   },
   {
    "pos": [
@@ -566,7 +566,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "7402cec5-b152-4498-bf3e-375c38e994b9"
+   "id": "bc32bed5-2727-4838-89da-fbfc0c4228bb"
   },
   {
    "pos": [
@@ -587,7 +587,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "ece43683-c219-461b-bab0-b53e882ea8a5"
+   "id": "9c239738-e6c2-47e3-8f5a-5019655c416b"
   },
   {
    "pos": [
@@ -608,7 +608,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "3494c881-b5b1-4228-b6e6-1c7907942f0f"
+   "id": "131e901f-534e-4440-955e-afc38d80980e"
   },
   {
    "pos": [
@@ -629,7 +629,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "a1791934-3bc4-42ca-8875-ed94e768e999"
+   "id": "f9a72104-9cc2-4255-8022-91ee1b76dab0"
   },
   {
    "pos": [
@@ -650,7 +650,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "3869f368-d223-4a5c-acd8-35ec020b07e3"
+   "id": "3eff8a95-d1d0-4745-a62e-65df5b0af332"
   },
   {
    "pos": [
@@ -671,7 +671,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "bf597456-9657-495f-b820-a033da033a7e"
+   "id": "86709540-afac-4bf5-b9c9-0a3456cea5ac"
   },
   {
    "pos": [
@@ -692,7 +692,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "78bfef45-93c6-4846-913a-6ea9917cb645"
+   "id": "fce7d20b-cbaf-478f-ae88-29e8c035424b"
   },
   {
    "pos": [
@@ -713,7 +713,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "d7c95105-b232-4636-ada4-352f7a6fc8d5"
+   "id": "1dd30f20-0bbc-4269-a0dc-308866298edc"
   },
   {
    "pos": [
@@ -734,7 +734,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "281f1dd3-3001-480c-9fc1-1f5b1c97bae0"
+   "id": "e027855d-99e5-4055-b44d-b186de820938"
   },
   {
    "pos": [
@@ -755,7 +755,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "a3af372e-a17a-48f6-9def-7d7757a825a6"
+   "id": "50ad9676-7b02-4fa6-9885-cea8e1776695"
   },
   {
    "pos": [
@@ -776,7 +776,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "22463fc5-670b-4c07-b860-6c7a95f551ab"
+   "id": "80a392c2-aaf0-4046-bba2-811136471fcf"
   },
   {
    "pos": [
@@ -797,7 +797,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "6402c19a-9de8-4d0f-a038-83ff23b6488f"
+   "id": "9d87567c-bb74-405e-9179-5efc94df141f"
   },
   {
    "pos": [
@@ -818,7 +818,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "944859c4-e68a-4aa6-b53d-673caf53dbd1"
+   "id": "54f76cde-5b54-46fe-87c5-79e34133068a"
   },
   {
    "pos": [
@@ -839,7 +839,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "e90d1f42-18b2-48e0-a32d-23c64afb411a"
+   "id": "8a7cad5d-5119-46e2-85cf-2219ba9dd026"
   },
   {
    "pos": [
@@ -860,7 +860,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "324778e2-be1e-423d-8e80-fa1b05234801"
+   "id": "ea0b6270-9433-4911-81a5-a6b042a080c6"
   },
   {
    "pos": [
@@ -881,7 +881,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "c9de0640-a229-4cd7-8bf0-f6737d9c91ef"
+   "id": "5b41d016-afba-4293-9893-d83e395d525a"
   },
   {
    "pos": [
@@ -902,7 +902,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "a9986696-4915-45d1-95e9-e4a80c123708"
+   "id": "229d0386-5d67-4a3b-af32-0b7cd4f6ba10"
   },
   {
    "pos": [
@@ -923,7 +923,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "ff7589a2-26c8-43a9-8eb9-791e5b575559"
+   "id": "a780feae-908c-4cd0-b5b3-765275974de4"
   },
   {
    "pos": [
@@ -944,7 +944,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "401a9a6f-8e0f-4b7d-927c-c08b352f56d2"
+   "id": "09125348-d631-4e76-b0ab-a8e5a1c2be97"
   },
   {
    "pos": [
@@ -965,7 +965,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "3e4ed14f-2750-4040-a4ad-496809bd33de"
+   "id": "4aeccbab-409b-455f-94fa-1279580f0626"
   },
   {
    "pos": [
@@ -986,7 +986,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "764d0918-e598-4b27-9065-4501719b9708"
+   "id": "7d57cfa1-a941-49c3-821b-04d096a72aaf"
   },
   {
    "pos": [
@@ -1007,7 +1007,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "9bc0db43-c8a1-44d5-b7f2-8f0936036daa"
+   "id": "4cee736c-9eb4-4d1b-9da4-881bab1bcc3c"
   },
   {
    "pos": [
@@ -1028,7 +1028,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "fd678360-0a11-4a0b-bae5-5fd498437c0f"
+   "id": "e0940a5d-b0e9-4904-9d95-29c8bc96e3d5"
   },
   {
    "pos": [
@@ -1049,7 +1049,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "a9c88295-edca-4fe6-8405-9567cca31a45"
+   "id": "a57b316f-3589-47f7-b4e0-b14c99c8000b"
   },
   {
    "pos": [
@@ -1070,7 +1070,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "109bd86e-b228-4389-82f1-730eff80ced5"
+   "id": "a25cc440-9742-43fa-8a54-90bc3d97bde1"
   },
   {
    "pos": [
@@ -1091,7 +1091,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "8a9e4083-58a8-48b3-85d1-5a166e6638ac"
+   "id": "d3a322fc-6313-40a8-ad22-9b603fed143a"
   },
   {
    "pos": [
@@ -1112,7 +1112,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "acbd4e8f-e22a-4101-96c0-aaf2fe4b121e"
+   "id": "ec3d3cb1-fa1a-40b0-b9cf-d53a3eefc02d"
   },
   {
    "pos": [
@@ -1133,7 +1133,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "123e4d87-7a5d-4549-8ead-1f8fdf61cee3"
+   "id": "73d24860-1186-4b1e-bf1a-ed481698006f"
   },
   {
    "pos": [
@@ -1154,7 +1154,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "a55975b4-bfbf-4c43-93d5-fcbfbde4aa18"
+   "id": "684b1c1d-5caa-4c2a-a561-668a39e8a620"
   },
   {
    "pos": [
@@ -1175,7 +1175,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "12cd45ee-d064-40fa-827b-a25a4aaa36a9"
+   "id": "3eb7cfa0-0310-4800-b9c7-7b1349465b86"
   },
   {
    "pos": [
@@ -1196,7 +1196,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "7545cd63-9cde-4001-89df-33c7391647e2"
+   "id": "df5772b5-6829-4bba-9d1d-3a8932e547dc"
   },
   {
    "pos": [
@@ -1217,7 +1217,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "80b86030-8946-4db6-848b-0473169ed0b8"
+   "id": "d9ece070-991b-4467-909d-5fdea133a89e"
   },
   {
    "pos": [
@@ -1238,7 +1238,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "ef9cecf3-6e1d-4b02-957d-8179690899c9"
+   "id": "10dee12b-ae53-4f7a-a9be-7810e35116fd"
   },
   {
    "pos": [
@@ -1259,7 +1259,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "22f57811-2e21-48ad-8674-55b90e14147e"
+   "id": "effbae35-b9eb-48c0-8322-6b18e4b49568"
   },
   {
    "pos": [
@@ -1280,7 +1280,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "5a1dfb46-823d-4138-9cd4-59ce845bd5f0"
+   "id": "ccf1c208-cc2e-4863-a17e-282233ddb1e8"
   },
   {
    "pos": [
@@ -1301,7 +1301,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "c0e52cde-5e77-43da-8461-535db30a98db"
+   "id": "a32d6985-1a2a-41b2-9bb8-167f8e399414"
   },
   {
    "pos": [
@@ -1322,7 +1322,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "785316c4-7ee0-46f8-8caa-baf171c2c560"
+   "id": "de81f179-8998-457c-a2af-0cec9cc845b1"
   },
   {
    "pos": [
@@ -1343,7 +1343,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "c12b6a51-0a7c-4472-b7e4-b8c11c9b4ee6"
+   "id": "3097b7ed-1459-4be2-af2e-7b0ad426d71b"
   },
   {
    "pos": [
@@ -1364,7 +1364,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "67ec9159-ac4c-491f-aa75-eae500819cfe"
+   "id": "304e01ca-e2d5-4adb-9d07-c0f7a8381d88"
   },
   {
    "pos": [
@@ -1385,7 +1385,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "1c71ac22-31e1-4fbb-9033-4e9ba3611fe6"
+   "id": "0b93ddc0-58ee-4632-a888-efe4c9cd5138"
   },
   {
    "pos": [
@@ -1406,7 +1406,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "d17eca7a-1cc0-4cc4-8056-782c5b1fb5a7"
+   "id": "369966f6-95b6-4656-9c99-a940f52823c7"
   },
   {
    "pos": [
@@ -1427,7 +1427,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "b095c4b1-b120-490b-a564-5d4801eb06bb"
+   "id": "e7e9ab0e-6950-4457-828c-7fd175948dc8"
   },
   {
    "pos": [
@@ -1448,7 +1448,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "3896407d-7ebf-48fa-86bd-783a026d2007"
+   "id": "31fc39ff-a8f2-402f-9353-1ce294e3c84c"
   },
   {
    "pos": [
@@ -1469,7 +1469,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "a6d6ca37-1766-4484-b04d-a2955248d51a"
+   "id": "4a69f1ce-d295-4aaa-b124-1a0afbf4f705"
   },
   {
    "pos": [
@@ -1490,7 +1490,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "b1d608cf-f55f-4ff5-9760-daf8e9dcc565"
+   "id": "97c1df9a-e788-454b-9f08-a40a7539d354"
   },
   {
    "pos": [
@@ -1511,7 +1511,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "6903615d-61b0-41d2-ac8a-ac4fd696011b"
+   "id": "5005662b-1aa5-41d1-a5e4-dcde752ce133"
   },
   {
    "pos": [
@@ -1532,7 +1532,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "65b3fd1c-3019-45be-930a-79398d2ab258"
+   "id": "a61b08c6-0396-433b-87e7-b52cedb544cf"
   },
   {
    "pos": [
@@ -1553,7 +1553,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "d9663f42-38cd-4972-93e5-093ac7af57eb"
+   "id": "36bad55b-944e-44ef-8cb8-013585a420fe"
   },
   {
    "pos": [
@@ -1574,7 +1574,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "7b8723cb-d1cd-4386-bf36-39dc51802b2b"
+   "id": "a351d55e-65e1-4fe4-99d3-d7e21f48d997"
   },
   {
    "pos": [
@@ -1595,7 +1595,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "6892ded8-111c-4f74-b2d5-02d8ce0970b4"
+   "id": "8863527a-10fb-4396-a0fa-06d04b004d15"
   },
   {
    "pos": [
@@ -1616,7 +1616,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "c90bcf7f-ff42-4937-a9a2-d4d12a19fdf9"
+   "id": "20f5568d-b9ef-4229-9f5f-99bc41d23bcc"
   },
   {
    "pos": [
@@ -1637,7 +1637,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "1aea5ce5-d35a-4291-a5cd-f05f981dcc64"
+   "id": "2ce657c9-6c16-4ebc-9e5c-9211679999ff"
   },
   {
    "pos": [
@@ -1658,7 +1658,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "8bf13352-7d8e-4275-87ae-011fb11b1521"
+   "id": "f5c6ccfb-0ba9-40f1-a13c-9fed4715f106"
   },
   {
    "pos": [
@@ -1679,7 +1679,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "bebcb78e-178f-4526-a37e-0fd069622008"
+   "id": "6a988a52-9b90-4fe3-9bba-6cbbf2fa0e55"
   },
   {
    "pos": [
@@ -1700,7 +1700,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "be12b587-407a-4c92-a889-b296c0d4046c"
+   "id": "b7a64f53-b53b-4414-a132-73ee2b901489"
   },
   {
    "pos": [
@@ -1721,7 +1721,7 @@
     "top": "Stone_09-512x512.png",
     "down": "tiledrock.jpg"
    },
-   "id": "eed24244-9abc-4de0-8311-4b87ebdc16ec"
+   "id": "c69b8079-d312-461c-b6fa-73b1946b47cd"
   },
   {
    "pos": [
@@ -1742,7 +1742,7 @@
     "top": "_black.jpg",
     "down": "_black.jpg"
    },
-   "id": "1f4a9682-f4b3-46b5-9e6e-80f388ca505d"
+   "id": "7cae5b53-c17e-4f12-bfd0-f9dacf6ed75d"
   }
  ],
  "things": [
@@ -1756,7 +1756,7 @@
    "properties": {
     "type": "levelchanger",
     "name": "LevelChanger_cave06_out",
-    "id": "22c92093-439f-4eaa-a0ae-5f445c198f03",
+    "id": "c2ad8d87-0a8d-4651-926a-7c448659481e",
     "target_map": "maps/village_walled_source.json",
     "delay": 0.0,
     "fade_time": 0.5,
@@ -1780,7 +1780,7 @@
    "properties": {
     "type": "playerstart",
     "name": "entrance",
-    "id": "3a7736d3-aaeb-43e7-81bc-ed848c04aa3e",
+    "id": "974c21eb-6c62-49ff-9749-f86d6464a111",
     "angle": 90.0,
     "primary": true,
     "creation_index": 0
@@ -1797,7 +1797,7 @@
    "properties": {
     "type": "light",
     "name": "Light_daylight",
-    "id": "7aeea955-ba60-40a3-87e1-ab11ebf3183e",
+    "id": "ff53b39f-e3bd-4607-8525-294933cfafb8",
     "colour": [
      200,
      215,
@@ -1827,7 +1827,7 @@
    "properties": {
     "type": "light",
     "name": "Light_0",
-    "id": "c94d1677-e35c-4367-b5f9-90065f081a4e",
+    "id": "3a8660da-f37c-4af9-863a-f40e1ee09897",
     "colour": [
      255,
      150,
@@ -1857,7 +1857,7 @@
    "properties": {
     "type": "light",
     "name": "Light_1",
-    "id": "43b3b1ce-db0c-4f10-ae3f-a173c63a9f8a",
+    "id": "52a32e02-24f9-49e6-b5ba-14c98af59170",
     "colour": [
      120,
      200,
@@ -1887,7 +1887,7 @@
    "properties": {
     "type": "light",
     "name": "Light_2",
-    "id": "dfc4b765-fbfa-450c-ad8c-51a25bbb9256",
+    "id": "c37b1aa7-51df-4d7e-9260-59bcb54900f4",
     "colour": [
      255,
      150,
@@ -1917,7 +1917,7 @@
    "properties": {
     "type": "light",
     "name": "Light_3",
-    "id": "b06664b2-c78b-4c11-8481-5b0ccb8a79f1",
+    "id": "f884d47c-15ed-40a2-9379-ae72f11e30f0",
     "colour": [
      120,
      200,
@@ -1947,7 +1947,7 @@
    "properties": {
     "type": "light",
     "name": "Light_4",
-    "id": "52eeaa68-db6e-499b-9cd6-3ed901f7c82b",
+    "id": "6716fa0c-0de7-4f9b-8cdd-841f20f8f61d",
     "colour": [
      255,
      150,
@@ -1977,7 +1977,7 @@
    "properties": {
     "type": "light",
     "name": "Light_5",
-    "id": "7c759546-0a3e-498d-8a12-9c17ce08b3e5",
+    "id": "aee4e73a-488c-4c63-8cda-5445942c8ea2",
     "colour": [
      120,
      200,
@@ -2007,7 +2007,7 @@
    "properties": {
     "type": "light",
     "name": "Light_6",
-    "id": "76c42c1c-26f0-4d2d-8c6a-d74c22d2c544",
+    "id": "d05e145a-5b70-4789-aa6f-320d1ee178c8",
     "colour": [
      255,
      150,
@@ -2037,7 +2037,7 @@
    "properties": {
     "type": "light",
     "name": "Light_7",
-    "id": "77f47538-5f75-4a41-a848-6bc00eff076e",
+    "id": "66c9a983-26cf-42c2-a7b4-76da5e7e94e3",
     "colour": [
      120,
      200,
@@ -2067,7 +2067,7 @@
    "properties": {
     "type": "creature",
     "name": "Dragon_cave06",
-    "id": "f16b8112-86ae-4f20-8e2d-660861397cd4",
+    "id": "9c65bf8d-4f2d-47ac-a7e0-e4d958e53a2b",
     "npc_role": "dragon",
     "faction": "monsters",
     "team": "monsters",
@@ -2093,8 +2093,10 @@
     "health": 3000,
     "max_health": 3000,
     "damage": 45,
-    "attack_style": "magic",
+    "attack_style": "melee",
     "creature_level": 30,
+    "breathes_fire": true,
+    "breath_damage": 14,
     "xp_value": 2500,
     "move_speed": 70.0,
     "sight_range": 1500,
@@ -2102,18 +2104,6 @@
     "courage": 1.0,
     "resist_fire": 1.0,
     "loot": "",
-    "spells": [
-     {
-      "id": "firebolt",
-      "color": [
-       255,
-       110,
-       30
-      ],
-      "damage": 40,
-      "speed": 820.0
-     }
-    ],
     "equipped_weapon": ""
    },
    "io_connections": []
@@ -2128,7 +2118,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_0",
-    "id": "9fb7774c-570d-4b2d-add9-0deb5f51dcf4",
+    "id": "76c5014a-fc92-4b53-90d2-19b21cfdfa6c",
     "item_id": "gold",
     "quantity": 11,
     "respawn": false,
@@ -2147,7 +2137,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_1",
-    "id": "3c3c7adc-82ca-4fb0-a406-e2a95e8c7437",
+    "id": "ab1c4986-db93-405e-a77a-e544a82419ca",
     "item_id": "gold",
     "quantity": 17,
     "respawn": false,
@@ -2166,7 +2156,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_2",
-    "id": "32bb07a4-9951-4970-bd9a-eed27565cc7b",
+    "id": "7ce8721d-c948-455e-8ecf-0b75af80f2ca",
     "item_id": "gold",
     "quantity": 36,
     "respawn": false,
@@ -2185,7 +2175,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_3",
-    "id": "57134b9f-7631-4e3d-95aa-b7902e50e3ff",
+    "id": "936aa5f2-5a60-43c8-9baf-15274ed367d2",
     "item_id": "gold",
     "quantity": 29,
     "respawn": false,
@@ -2204,7 +2194,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_4",
-    "id": "cef41f3d-0829-4084-8523-f61ff25af80e",
+    "id": "f0f44828-9d2e-437c-93b8-17d6f5751d02",
     "item_id": "gold",
     "quantity": 15,
     "respawn": false,
@@ -2223,7 +2213,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_5",
-    "id": "877d4b14-eaa7-45ee-94f4-d15850e09e1d",
+    "id": "69451baf-9aa0-4108-9715-1433137ce4be",
     "item_id": "gold",
     "quantity": 36,
     "respawn": false,
@@ -2242,7 +2232,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_6",
-    "id": "d1653fa5-061f-48d7-b5a6-994dbf727168",
+    "id": "1e5bde75-8143-4659-86ba-7b5d1183f4d8",
     "item_id": "gold",
     "quantity": 11,
     "respawn": false,
@@ -2261,7 +2251,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_7",
-    "id": "44841581-0cd5-41a4-b27a-90c2118be744",
+    "id": "2ade7440-44f7-490a-9543-58598b0a43ae",
     "item_id": "gold",
     "quantity": 20,
     "respawn": false,
@@ -2280,7 +2270,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_8",
-    "id": "083b99bb-9a45-4528-a2a5-663a3270acb7",
+    "id": "94b8b7b0-5063-4d59-b6f7-0e91cb63716f",
     "item_id": "gold",
     "quantity": 44,
     "respawn": false,
@@ -2299,7 +2289,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_9",
-    "id": "491d041b-b488-48a4-944a-4e319b26f193",
+    "id": "a8112e15-66e8-487c-90bb-0216678e39cc",
     "item_id": "gold",
     "quantity": 42,
     "respawn": false,
@@ -2318,7 +2308,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_10",
-    "id": "06e771f9-86a6-4464-9fb4-5ad8e8c4e946",
+    "id": "e0f87721-6c22-4229-ac8f-5ad4d3c64921",
     "item_id": "gold",
     "quantity": 29,
     "respawn": false,
@@ -2337,7 +2327,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_11",
-    "id": "09fefb15-5797-456a-a8e2-0fc0d98d2a69",
+    "id": "6e1bcf2a-a4ef-4087-8e84-f755a4d30659",
     "item_id": "gold",
     "quantity": 24,
     "respawn": false,
@@ -2356,7 +2346,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_12",
-    "id": "833f9932-3784-4a3a-9a6b-1150757f3543",
+    "id": "2baa43e0-2f68-47e4-b32c-34fa21d758ee",
     "item_id": "gold",
     "quantity": 30,
     "respawn": false,
@@ -2375,7 +2365,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_13",
-    "id": "a078c87c-5419-4772-84b9-ccd6b2fb3389",
+    "id": "dfaee2c1-e561-4151-89c5-2d4cc48489b6",
     "item_id": "gold",
     "quantity": 24,
     "respawn": false,
@@ -2394,7 +2384,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_14",
-    "id": "dbd1e0c4-ce3f-45de-a093-f25080624b23",
+    "id": "2b5a6999-c8eb-4031-ae79-7bc4e8fbb81d",
     "item_id": "gold",
     "quantity": 13,
     "respawn": false,
@@ -2413,7 +2403,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_15",
-    "id": "d4525e5b-c0b3-414e-884b-1da6dcb1caa2",
+    "id": "551248a9-ba6e-47ea-a292-ef4833525770",
     "item_id": "gold",
     "quantity": 24,
     "respawn": false,
@@ -2432,7 +2422,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_16",
-    "id": "4d6ac795-91ad-4752-a237-27affc51ae86",
+    "id": "7931822a-d821-49c7-bac0-116290bdaac8",
     "item_id": "gold",
     "quantity": 27,
     "respawn": false,
@@ -2451,7 +2441,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_17",
-    "id": "1f31abce-7fdb-4d80-84cc-a9302b5ef43c",
+    "id": "5f45446c-b26a-472c-80b2-d66f8896c340",
     "item_id": "gold",
     "quantity": 29,
     "respawn": false,
@@ -2470,7 +2460,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_18",
-    "id": "4fb19cc2-6d7b-4278-8fdf-632f84587895",
+    "id": "1631915b-b0ef-4778-9163-a78b8b76e5e4",
     "item_id": "gold",
     "quantity": 8,
     "respawn": false,
@@ -2489,7 +2479,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_19",
-    "id": "53877341-2d7f-4894-b963-0182ff6bae49",
+    "id": "cf785a1a-7386-4e98-b068-c1f9019fd6a1",
     "item_id": "gold",
     "quantity": 37,
     "respawn": false,
@@ -2508,7 +2498,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_20",
-    "id": "f6fcfde3-0f92-40cf-86ca-5aa03c7d0c8f",
+    "id": "19f40e4e-d011-4858-a80a-78f8243e812a",
     "item_id": "gold",
     "quantity": 32,
     "respawn": false,
@@ -2527,7 +2517,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_21",
-    "id": "46b85089-0697-4d10-8a12-2e3071f195bb",
+    "id": "2ecc8344-485b-49fd-99b3-25a0bba7c110",
     "item_id": "gold",
     "quantity": 24,
     "respawn": false,
@@ -2546,7 +2536,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_22",
-    "id": "54dc8168-9327-45af-88b8-766aaa7eec1d",
+    "id": "19d368f4-7f5b-429b-b99c-6de96f83cf50",
     "item_id": "gold",
     "quantity": 21,
     "respawn": false,
@@ -2565,7 +2555,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_23",
-    "id": "6354613b-0335-4b3c-a233-f95917190aee",
+    "id": "1c545121-1c26-4053-9410-5405b41ac631",
     "item_id": "gold",
     "quantity": 8,
     "respawn": false,
@@ -2584,7 +2574,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_24",
-    "id": "bee6742d-a712-4f52-a793-a2f6b4e547e2",
+    "id": "15198614-8dc6-464c-bcfa-4c24ea936c31",
     "item_id": "gold",
     "quantity": 41,
     "respawn": false,
@@ -2603,7 +2593,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_25",
-    "id": "c3361b7d-9cf5-469e-a526-244aa9023886",
+    "id": "ecaef505-e51d-4d27-b9c4-2b3916d8ab6b",
     "item_id": "gold",
     "quantity": 12,
     "respawn": false,
@@ -2622,7 +2612,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_26",
-    "id": "60a38040-2c9d-454a-ba9d-128fb40c6600",
+    "id": "22bd1838-98a3-4c7c-992e-cf25b13d5348",
     "item_id": "gold",
     "quantity": 24,
     "respawn": false,
@@ -2641,7 +2631,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_27",
-    "id": "a0462a6c-538b-4d46-bb5f-6923b898787c",
+    "id": "187e244c-198f-4e52-bc15-869e8125dc19",
     "item_id": "gold",
     "quantity": 28,
     "respawn": false,
@@ -2660,7 +2650,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_28",
-    "id": "abf7ee16-c70e-42b5-883a-0b31d676c3cd",
+    "id": "4eae61d7-ed8a-42b3-821b-81d1e985454a",
     "item_id": "gold",
     "quantity": 15,
     "respawn": false,
@@ -2679,7 +2669,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_29",
-    "id": "08d95795-5e5f-4223-b4bd-58da3568f796",
+    "id": "f7e83f34-35ad-4b84-84bf-b2ef0c07a5e7",
     "item_id": "gold",
     "quantity": 8,
     "respawn": false,
@@ -2698,7 +2688,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_30",
-    "id": "dbfc0bc4-831e-4fa4-be2e-df5309543688",
+    "id": "72bafc56-9928-4f6b-ac38-a9237f2d1d26",
     "item_id": "gold",
     "quantity": 16,
     "respawn": false,
@@ -2717,7 +2707,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_31",
-    "id": "55ead7fc-7c7c-4549-805f-a091bb5e3a42",
+    "id": "f48042e9-8a3b-439d-8b11-4276fbc2e880",
     "item_id": "gold",
     "quantity": 10,
     "respawn": false,
@@ -2736,7 +2726,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_32",
-    "id": "d8773d0c-1333-49f2-919a-26d8cddea2e5",
+    "id": "02d48545-3c00-41be-8d1b-3c604782b002",
     "item_id": "gold",
     "quantity": 29,
     "respawn": false,
@@ -2755,7 +2745,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_33",
-    "id": "e5593153-c803-450b-96a4-12045fbbc416",
+    "id": "c53dbb90-b630-444e-a6d4-e8ef01c4d50e",
     "item_id": "gold",
     "quantity": 27,
     "respawn": false,
@@ -2774,7 +2764,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_34",
-    "id": "b13b2cd6-b624-46a0-8bee-8d713de075ef",
+    "id": "a7130f4e-9a33-4333-8714-010dca879aac",
     "item_id": "gold",
     "quantity": 38,
     "respawn": false,
@@ -2793,7 +2783,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_35",
-    "id": "66555af5-1d8e-4ba2-8cef-6745577a17f3",
+    "id": "c91836e6-4f5a-43a0-b390-a040f3062c2f",
     "item_id": "gold",
     "quantity": 34,
     "respawn": false,
@@ -2812,7 +2802,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_36",
-    "id": "9d29d25a-a51c-4c72-ac3a-909bb30363ea",
+    "id": "8301d545-059e-4a32-b89b-b57bae02a76f",
     "item_id": "gold",
     "quantity": 42,
     "respawn": false,
@@ -2831,7 +2821,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_37",
-    "id": "97f58edc-d1d4-4beb-97af-a858e0a57522",
+    "id": "25bf148c-755b-40be-88cf-0671c5a3b8ce",
     "item_id": "gold",
     "quantity": 40,
     "respawn": false,
@@ -2850,7 +2840,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_38",
-    "id": "52e0fcfe-dbcd-4701-8224-a88fe8f10b36",
+    "id": "70c1049d-261e-42e1-9ae1-986b04347fbf",
     "item_id": "gold",
     "quantity": 36,
     "respawn": false,
@@ -2869,7 +2859,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_39",
-    "id": "fd2a8840-2e7f-4f65-a6a2-6f4a932817a3",
+    "id": "97be543d-a7f4-44a4-ab05-4aff29c77461",
     "item_id": "gold",
     "quantity": 20,
     "respawn": false,
@@ -2888,7 +2878,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_40",
-    "id": "0f02b070-435b-4347-80f2-58fcd929df16",
+    "id": "70a4a01d-528b-4d53-8573-d22bbf53f083",
     "item_id": "gold",
     "quantity": 43,
     "respawn": false,
@@ -2907,7 +2897,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_41",
-    "id": "f81b58c5-ce67-473f-85c2-f810a76e411d",
+    "id": "30ef96e7-0409-4975-bcc2-67043dc21815",
     "item_id": "gold",
     "quantity": 16,
     "respawn": false,
@@ -2926,7 +2916,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_42",
-    "id": "1659607d-7f89-4798-a284-b1c975e2dfef",
+    "id": "5d445cdb-1b3c-4a67-b9c3-7eeb4b5b0f33",
     "item_id": "gold",
     "quantity": 31,
     "respawn": false,
@@ -2945,7 +2935,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_43",
-    "id": "fa6fdaa0-8ae3-47b4-b0a9-69ca99555f8a",
+    "id": "a6a51fc5-0dca-417f-baa0-e6631d7aa5ee",
     "item_id": "gold",
     "quantity": 28,
     "respawn": false,
@@ -2964,7 +2954,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_44",
-    "id": "6f2121f1-8723-4b1a-a49b-ec1d2d962f65",
+    "id": "f89ae683-bca3-4f6f-94e3-5acd3a283870",
     "item_id": "gold",
     "quantity": 19,
     "respawn": false,
@@ -2983,7 +2973,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_45",
-    "id": "f491a62f-4b74-4feb-a550-2283876815f5",
+    "id": "184b255d-569a-46a4-92ac-5fee8e6ad409",
     "item_id": "gold",
     "quantity": 29,
     "respawn": false,
@@ -3002,7 +2992,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_46",
-    "id": "b6cbdca8-ed32-4d11-926e-f8b1332550c6",
+    "id": "d4c0881f-a84d-4fbd-9f64-3ec6c32bba1a",
     "item_id": "gold",
     "quantity": 10,
     "respawn": false,
@@ -3021,7 +3011,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_47",
-    "id": "c0548322-cc6b-48b2-8287-c09caa0a05f8",
+    "id": "634ef8f4-e5b9-48aa-872a-f7f3951c220d",
     "item_id": "gold",
     "quantity": 36,
     "respawn": false,
@@ -3040,7 +3030,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_48",
-    "id": "7c831357-d903-4e56-8363-45db1ddcfbde",
+    "id": "21e5a7d6-687f-40ef-8342-0fcfefc9d1ca",
     "item_id": "gold",
     "quantity": 34,
     "respawn": false,
@@ -3059,7 +3049,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_49",
-    "id": "739835f1-5910-4f06-b424-ded319c6db6b",
+    "id": "974ef873-4c36-4a6e-84ef-ceb7335f6e1c",
     "item_id": "gold",
     "quantity": 29,
     "respawn": false,
@@ -3078,7 +3068,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_50",
-    "id": "16946ddd-45de-4ee8-a235-405e93a2678b",
+    "id": "47530489-bc16-4998-a8d4-567686f3243e",
     "item_id": "gold",
     "quantity": 26,
     "respawn": false,
@@ -3097,7 +3087,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_51",
-    "id": "ea2a6b3a-fc67-41f3-a5fe-0f2a1b9116e5",
+    "id": "0bcb8b3a-4054-4a7a-84ae-33185d7eb705",
     "item_id": "gold",
     "quantity": 44,
     "respawn": false,
@@ -3116,7 +3106,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_52",
-    "id": "ac31945f-ecf4-4f1e-b02a-48fbc8de9c98",
+    "id": "e2a974fd-704c-4c02-905e-810a23ae56f1",
     "item_id": "gold",
     "quantity": 37,
     "respawn": false,
@@ -3135,7 +3125,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_53",
-    "id": "18d347ab-fe62-4e25-877f-1e4c357b6faa",
+    "id": "0cbfb39a-92c3-47a9-b456-eace67994ed3",
     "item_id": "gold",
     "quantity": 21,
     "respawn": false,
@@ -3154,7 +3144,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_54",
-    "id": "e9ad4ab8-87ab-4153-a4cc-4eb856adb839",
+    "id": "c0b8f8bb-31ea-4b97-9310-5b68e2caeef0",
     "item_id": "gold",
     "quantity": 39,
     "respawn": false,
@@ -3173,7 +3163,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_55",
-    "id": "67b44fec-465c-4730-80cd-86ab3b9a21b6",
+    "id": "5cd52b63-bc69-436a-adc6-896648908a01",
     "item_id": "gold",
     "quantity": 31,
     "respawn": false,
@@ -3192,7 +3182,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_56",
-    "id": "c4169419-9fa5-48ab-aca9-39f9f39cf2ad",
+    "id": "0289ac75-2b50-4702-85e6-f64f6a100fdd",
     "item_id": "gold",
     "quantity": 39,
     "respawn": false,
@@ -3211,7 +3201,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_57",
-    "id": "2e4339c2-cd8c-4e86-9d67-57e33b62c772",
+    "id": "271a91d7-bd16-40c7-b0c2-fbee072c6cf1",
     "item_id": "gold",
     "quantity": 40,
     "respawn": false,
@@ -3230,7 +3220,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_58",
-    "id": "dec3cb98-4e5d-44b6-a352-07763dee3e29",
+    "id": "6b8e60cf-bd93-447e-9c8b-55e8d878db02",
     "item_id": "gold",
     "quantity": 17,
     "respawn": false,
@@ -3249,7 +3239,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_59",
-    "id": "e61ca898-361e-4e31-b2a5-5d4aac545eed",
+    "id": "6d203b8f-e48d-4d70-9384-15560a1e7bc2",
     "item_id": "gold",
     "quantity": 18,
     "respawn": false,
@@ -3268,7 +3258,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_60",
-    "id": "01c97a2f-2c55-41b7-b90c-9b1674b848d0",
+    "id": "a53d1108-0891-44f5-b79b-8a96f33ee742",
     "item_id": "gold",
     "quantity": 27,
     "respawn": false,
@@ -3287,7 +3277,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_61",
-    "id": "b6e4a927-7012-4b08-bb09-e4777b181b88",
+    "id": "cce566bf-a6a5-44cd-811f-6327ecbca62d",
     "item_id": "gold",
     "quantity": 44,
     "respawn": false,
@@ -3306,7 +3296,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_62",
-    "id": "f711468c-1182-47a5-af7f-e4495b222ee2",
+    "id": "5c8e7a95-6f95-46e4-9c9b-34998b2cf9ef",
     "item_id": "gold",
     "quantity": 21,
     "respawn": false,
@@ -3325,7 +3315,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_63",
-    "id": "bae99af1-6e46-48e0-903b-968e4aca676c",
+    "id": "212a9321-47c3-42bd-b483-0f0a263e918a",
     "item_id": "gold",
     "quantity": 23,
     "respawn": false,
@@ -3344,7 +3334,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_64",
-    "id": "42c1e459-df13-4738-b8cd-256d07700fb3",
+    "id": "566828b9-6b0a-4361-91a1-d09cd4854de8",
     "item_id": "gold",
     "quantity": 43,
     "respawn": false,
@@ -3363,7 +3353,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_65",
-    "id": "6318c750-94d4-4b1e-944a-d553e3b7e967",
+    "id": "adbc1b49-562c-4998-96a8-64fe2542320b",
     "item_id": "gold",
     "quantity": 25,
     "respawn": false,
@@ -3382,7 +3372,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_66",
-    "id": "221af636-a796-47ae-a67c-78630fe79e0a",
+    "id": "03d5f869-1189-4c09-bd2c-57fbc7e608aa",
     "item_id": "gold",
     "quantity": 31,
     "respawn": false,
@@ -3401,7 +3391,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_67",
-    "id": "c2898b6d-6809-4835-8325-21a45840d298",
+    "id": "e8a448d8-e950-480c-b612-75d5a3fbe17a",
     "item_id": "gold",
     "quantity": 35,
     "respawn": false,
@@ -3420,7 +3410,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_68",
-    "id": "50892cc4-a047-4186-bfcb-fc24bdfa059e",
+    "id": "4a9ff4fb-5574-40ae-9b6d-84faea6c48a6",
     "item_id": "gold",
     "quantity": 22,
     "respawn": false,
@@ -3439,7 +3429,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_69",
-    "id": "a25bdccf-da3c-4599-87ed-444ef709bc84",
+    "id": "47bf6535-4498-4f79-bb01-4eaedcc069d6",
     "item_id": "gold",
     "quantity": 33,
     "respawn": false,
@@ -3458,7 +3448,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_70",
-    "id": "a956e714-ddff-47ed-84a3-9e2703da8fe2",
+    "id": "cff12628-cfc8-4bb5-95f4-debd2a7356b5",
     "item_id": "gold",
     "quantity": 20,
     "respawn": false,
@@ -3477,7 +3467,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_71",
-    "id": "600bfd9c-3115-421f-93ec-383524123d4c",
+    "id": "e9216747-29d5-45ed-9f2e-e5c81f338294",
     "item_id": "gold",
     "quantity": 8,
     "respawn": false,
@@ -3496,7 +3486,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_72",
-    "id": "dfbb2178-8080-45c4-96f5-0ef588f2de14",
+    "id": "f4369b8e-8d92-4b9f-9f2c-cbbc3eab4c73",
     "item_id": "gold",
     "quantity": 39,
     "respawn": false,
@@ -3515,7 +3505,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_73",
-    "id": "99c38c5c-829f-4c23-836e-86f5382f69a4",
+    "id": "f5043dad-9314-4ec5-b4fd-f0d0b9b79922",
     "item_id": "gold",
     "quantity": 22,
     "respawn": false,
@@ -3534,7 +3524,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_74",
-    "id": "ed1f3e60-874f-4c12-8497-241e678b6bdc",
+    "id": "e082cce4-8c63-4041-af8e-c5c66075e4fa",
     "item_id": "gold",
     "quantity": 34,
     "respawn": false,
@@ -3553,7 +3543,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_75",
-    "id": "2d64cbda-06d7-4140-ace9-2c9dbe06fad0",
+    "id": "978fbc03-b9ee-4ffe-af6f-e5364baf485f",
     "item_id": "gold",
     "quantity": 9,
     "respawn": false,
@@ -3572,7 +3562,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_76",
-    "id": "e8c67fae-5046-442d-9615-04cd9384f0e1",
+    "id": "12105e9a-b43e-4cd4-9c62-6eb0a7f48cea",
     "item_id": "gold",
     "quantity": 8,
     "respawn": false,
@@ -3591,7 +3581,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_77",
-    "id": "9fc01fdd-5f24-4a1f-ae7e-40b2f1c1e5f8",
+    "id": "ec5ac962-69f5-4d99-8089-546feb1125cb",
     "item_id": "gold",
     "quantity": 25,
     "respawn": false,
@@ -3610,7 +3600,7 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_78",
-    "id": "0b97d860-153c-4326-b4e9-73a79eb6564a",
+    "id": "7b539da0-de36-4a01-ad77-51f3d97010ad",
     "item_id": "gold",
     "quantity": 28,
     "respawn": false,
@@ -3629,12 +3619,636 @@
    "properties": {
     "type": "itempickup",
     "name": "Gold_cave06_79",
-    "id": "ff687c0b-ac07-4d3a-8e1b-c5799e06e01f",
+    "id": "98bfbfad-a4d5-4a62-a0a6-cf07064b845a",
     "item_id": "gold",
     "quantity": 36,
     "respawn": false,
     "pickup_radius": 60.0,
     "custom_idle": "assets/sprites/items/gold.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_0",
+    "id": "d508234f-38a2-4d08-acbf-d685f15f734c",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": true,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_1",
+    "id": "f17e0104-aa48-414b-b61f-2f80fc171169",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_2",
+    "id": "a9b7e84f-7097-48b7-8e55-8bae90c95a9f",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_3",
+    "id": "7dc1d8b8-fabc-49d7-9076-fae912e8de1e",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_4",
+    "id": "fdde7eb3-5ebb-47a1-a911-f598897e0085",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": true,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_5",
+    "id": "8270f5a1-434f-4e66-acb0-4b58ca88687b",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_6",
+    "id": "6b583de6-9875-4569-936f-bc71f166e6bb",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_7",
+    "id": "96a57792-ad03-4d70-95df-a77a034c16ce",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_8",
+    "id": "301756db-3fd7-4269-8807-14c65af18632",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": true,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_9",
+    "id": "42ee66db-c915-4a65-af52-cd69c8ab7dc7",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_10",
+    "id": "577024bc-b465-4a61-8fe4-45efabebfd83",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_11",
+    "id": "e1baf558-c8ca-4a01-8789-caa05c269df8",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_12",
+    "id": "47d534af-9d63-4bf2-a4af-03ac844b73a8",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": true,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_13",
+    "id": "d98f281e-ed01-4b00-a7ed-7cfb862534c6",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_14",
+    "id": "90bc1b66-ba32-49ab-819c-a0c017e60ccb",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
+   },
+   "io_connections": []
+  },
+  {
+   "type": "effect",
+   "pos": [
+    64.0,
+    -3000.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "effect",
+    "name": "DragonFire_cave06_15",
+    "id": "1351956f-e64f-4a29-930c-c7b46d707a84",
+    "effect_type": "FIRE",
+    "preview": false,
+    "silent": true,
+    "fire_texture": "assets/textures/effects/fire01.gif",
+    "orb_texture": "assets/textures/effects/orb01.gif",
+    "custom_gif": "",
+    "custom_loop": true,
+    "width": 60.0,
+    "height": 90.0,
+    "intensity": 1.0,
+    "colour": [
+     255,
+     110,
+     25
+    ],
+    "lifetime": 0.5,
+    "light_enabled": false,
+    "light_radius": 260.0,
+    "light_intensity": 2.5,
+    "light_colour": [
+     255,
+     150,
+     60
+    ],
+    "dragon_fire": true
    },
    "io_connections": []
   },
@@ -3648,7 +4262,7 @@
    "properties": {
     "type": "light",
     "name": "Light_lair_0",
-    "id": "a031cfaf-f146-4270-b2bd-dc12cefd8414",
+    "id": "f0c85f25-84d4-4f0d-b115-60064169b3fc",
     "colour": [
      255,
      120,
@@ -3678,7 +4292,7 @@
    "properties": {
     "type": "light",
     "name": "Light_lair_1",
-    "id": "4e53e61a-1a50-4ed8-9512-1e4aad9b7041",
+    "id": "1e5e59a8-ad85-4f34-a6e4-10dfee38e3a5",
     "colour": [
      255,
      120,
@@ -3708,7 +4322,7 @@
    "properties": {
     "type": "light",
     "name": "Light_lair_2",
-    "id": "5c9f4f87-b864-4a08-9775-c588a9c0cd29",
+    "id": "b4a34c81-559a-4d90-85ed-7d04ef3d5467",
     "colour": [
      255,
      120,
@@ -3738,7 +4352,7 @@
    "properties": {
     "type": "light",
     "name": "Light_lair_3",
-    "id": "2ae3bf02-b700-4b56-b179-7cb575ea5a8c",
+    "id": "21d98f6c-cd89-42cc-bd30-7268bd91096f",
     "colour": [
      255,
      120,
@@ -3768,7 +4382,7 @@
    "properties": {
     "type": "container",
     "name": "Chest_cave06",
-    "id": "c71aff05-86a1-4093-b639-ef71e98c0a55",
+    "id": "3b845d22-6f0f-40a8-810d-6926c8920b07",
     "container_kind": "chest",
     "display_name": "Chest",
     "inventory": [
@@ -3816,7 +4430,7 @@
    "properties": {
     "type": "light",
     "name": "Light_hoard",
-    "id": "b60c983d-486e-466d-9f29-2f949f1bfd92",
+    "id": "5fd49664-8a71-48bc-aa34-0aba4aa1ec00",
     "colour": [
      255,
      210,
@@ -3846,7 +4460,7 @@
    "properties": {
     "type": "miniwindsettings",
     "name": "GameSettings_1",
-    "id": "b1c1cff1-30ef-4fa4-b74f-c873f4814161",
+    "id": "c92af8ed-c766-45e5-8e04-1dc243fc0e8b",
     "start_hour": 8.0,
     "start_day": 1,
     "minutes_per_day": 20.0,
@@ -3870,7 +4484,7 @@
    "properties": {
     "type": "logic_command",
     "name": "LogicCommand_1",
-    "id": "af88ea30-505d-4111-ac21-be259eaee148",
+    "id": "bf87f436-2ae5-4744-9c6d-6d819c9e83bf",
     "command": "cam topdown",
     "disabled": false
    },

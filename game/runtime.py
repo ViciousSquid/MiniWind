@@ -509,6 +509,8 @@ class MiniwindSession:
         self.archery = npc_archery.NpcArchery(self)
         from .held_weapons import HeldWeapons
         self.held = HeldWeapons(self)
+        from .dragon_fire import DragonFire
+        self.dragon_fire = DragonFire(self)
         #: Spell bolts in flight that carry a light: Fio tag -> Light, and
         #: where each lit bolt was last published (tag -> (x, y, z)).
         self._bolt_lights = {}
@@ -670,6 +672,7 @@ class MiniwindSession:
         self.spawn_creature_points()   # materialise CreatureSpawn points once
         self._assign_npc_handedness()  # random handedness (left rare) where unset
         self._arm_fighters()           # a bow for the swordsman, a blade for the archer
+        self.dragon_fire.install(fio.things(self.logic))
         self._assign_npc_stats()       # STRENGTH / ENDURANCE / CHARISMA for everyone
         self._wire_quest_givers()      # make quest givers offer their quests
         self._name_index()             # built now, not on the first quest's frame
@@ -975,6 +978,7 @@ class MiniwindSession:
         self._update_bow_draw(delta)
         self.archery.update(delta)
         self.held.update()
+        self.dragon_fire.update(delta)
         self._update_bolt_lights()
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
             # Fio does not publish an empty store, so the last arrow to land

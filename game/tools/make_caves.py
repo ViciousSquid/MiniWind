@@ -66,14 +66,16 @@ LAIRS = {
             "display_name": "Vharzul the Ember Wyrm", "head": "dragon",
             # Five times the player's size, and hit points to match.
             "head_scale": 5.0, "health": 3000, "max_health": 3000,
-            "damage": 45, "attack_style": "magic", "creature_level": 30,
+            # It bites what is close; what is not, it burns (game/dragon_fire.py).
+            "damage": 45, "attack_style": "melee", "creature_level": 30,
+            "breathes_fire": True, "breath_damage": 14,
             "xp_value": 2500, "move_speed": 70.0, "sight_range": 1500, "sight": 1500,
             "courage": 1.0, "resist_fire": 1.0, "loot": "",
-            "spells": [{"id": "firebolt", "color": [255, 110, 30], "damage": 40,
-                        "speed": 820.0}],
             "equipped_weapon": "",
         },
         "gold_piles": 80,
+        #: FIRE Effects the breath is made of, parked under the floor.
+        "flames": 16,
     },
 }
 
@@ -460,6 +462,16 @@ def _furnish_lair(things, lair, hall, open_, slug):
                              item_id="gold", quantity=int(rng.integers(8, 45)),
                              respawn=False, pickup_radius=60.0,
                              custom_idle="assets/sprites/items/gold.png"))
+    for k in range(int(lair.get("flames", 0))):
+        things.append(_thing("effect", (x, -3000.0, z), name=f"DragonFire_{slug}_{k}",
+                             effect_type="FIRE", preview=False, silent=True,
+                             fire_texture="assets/textures/effects/fire01.gif",
+                             orb_texture="assets/textures/effects/orb01.gif",
+                             custom_gif="", custom_loop=True, width=60.0, height=90.0,
+                             intensity=1.0, colour=[255, 110, 25], lifetime=0.5,
+                             light_enabled=(k % 4 == 0), light_radius=260.0,
+                             light_intensity=2.5, light_colour=[255, 150, 60],
+                             dragon_fire=True))
     for k, (dx, dz) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1))):
         lx, lz = x + dx * r * CELL * 0.6, z + dz * r * CELL * 0.6
         things.append(_light(f"Light_lair_{k}", (lx, 260.0, lz), 900.0, (255, 120, 50), 2.2))
