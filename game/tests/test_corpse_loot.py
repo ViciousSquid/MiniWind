@@ -124,7 +124,7 @@ def test_the_loot_screen_takes_the_mouse(qt_app):
     hits.clear()
 
 
-def test_a_searched_body_opens_in_a_window_titled_loot(qt_app):
+def test_bodies_and_chests_open_in_a_window_titled_loot(qt_app):
     from engine.floating_windows import WindowManager
     from ..host import MiniwindGame
     from ..rpg import items
@@ -140,4 +140,4 @@ def test_a_searched_body_opens_in_a_window_titled_loot(qt_app):
     game._sync_overlay_windows(s, viewport, 1280, 800)
     s.open_container(chest)
     game._sync_overlay_windows(s, viewport, 1280, 800)
-    assert s._overlay_win.title != "Loot"
+    assert s._overlay_win.title == "Loot"
