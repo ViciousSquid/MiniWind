@@ -58,6 +58,25 @@ CAVES = (
      (("gold", 80), ("potion_magicka", 2), ("potion_heal", 2))),
 )
 
+#: Caves that are a dragon's lair: a great hall carved out of the cave, the
+#: dragon in the middle of it and its gold all over the floor.
+LAIRS = {
+    "cave06": {
+        "dragon": {
+            "display_name": "Vharzul the Ember Wyrm", "head": "dragon",
+            # Five times the player's size, and hit points to match.
+            "head_scale": 5.0, "health": 3000, "max_health": 3000,
+            "damage": 45, "attack_style": "magic", "creature_level": 30,
+            "xp_value": 2500, "move_speed": 70.0, "sight_range": 1500, "sight": 1500,
+            "courage": 1.0, "resist_fire": 1.0, "loot": "",
+            "spells": [{"id": "firebolt", "color": [255, 110, 30], "damage": 40,
+                        "speed": 820.0}],
+            "equipped_weapon": "",
+        },
+        "gold_piles": 80,
+    },
+}
+
 ROCK = "tiledrock.jpg"
 ROCK_TOP = "Stone_09-512x512.png"
 FLOOR = "cave.png"
@@ -288,6 +307,19 @@ def build_cave_map(slug, name, monsters, count, loot, settings, camera, protos,
                    overworld_path=OVERWORLD, seed=0):
     open_, (mi, mj) = grow_cave(seed)
     n = GRID
+    lair = LAIRS.get(slug)
+    hall = None
+    if lair:
+        # The great hall, in the north of the cave, joined to the mouth by a
+        # wide passage.
+        hall = (8, n // 2, 7.5)
+        I, J = np.mgrid[0:n, 0:n]
+        ragged = 0.6 * np.sin(I * 1.7) * np.cos(J * 1.3)
+        open_ |= (np.hypot(I - hall[0], J - hall[1]) + ragged) <= hall[2]
+        open_[hall[0]:mi + 1, mj - 1:mj + 2] = True
+        open_[0, :] = open_[:, 0] = open_[:, -1] = False
+        open_[n - 1, :] = False
+        open_[n - 1, mj - 1:mj + 2] = True
     brushes, things = [], []
     rock = _tex(ROCK, ROCK_TOP)
     # Floor under everything (its top at y = 0), rock walls a cell thick
@@ -355,6 +387,9 @@ def build_cave_map(slug, name, monsters, count, loot, settings, camera, protos,
         x, z = _cell_pos(i, j)
         colour = (255, 150, 80) if k % 2 == 0 else (120, 200, 255)
         things.append(_light(f"Light_{k}", (x, 200.0, z), 620.0, colour, 1.8))
+    if lair:
+        _furnish_lair(things, lair, hall, open_, slug)
+        count = 0
     # Monsters, in the deeper part.
     placed = 0
     for i, j in cells:
@@ -398,14 +433,71 @@ def build_cave_map(slug, name, monsters, count, loot, settings, camera, protos,
             "_miniwind_cave": {"name": name, "overworld": overworld_path.replace(os.sep, "/")}}
 
 
+def _furnish_lair(things, lair, hall, open_, slug):
+    """The dragon in the middle of its hall, gold everywhere around it."""
+    hi, hj, r = hall
+    x, z = _cell_pos(hi, hj)
+    props = {"type": "creature", "name": f"Dragon_{slug}", "id": _uid(),
+             "npc_role": "dragon", "faction": "monsters", "team": "monsters",
+             "aggression": "hostile", "combatant": True, "triggered": False,
+             "wake_on_sight": True, "awake": False, "respawn": False, "roam": False,
+             "persistent": True, "monster_type": "human", "inventory": [],
+             "home": [round(x, 1), 40.0, round(z, 1)],
+             "portrait": "assets/portraits/miniwind/monster.png"}
+    props.update(lair["dragon"])
+    things.append({"type": "creature", "pos": [round(x, 1), 40.0, round(z, 1)],
+                   "properties": props, "io_connections": []})
+    rng = np.random.default_rng(sum(map(ord, slug)) + 7)
+    n = open_.shape[0]
+    cells = [(i, j) for i in range(n) for j in range(n)
+             if open_[i, j] and math.hypot(i - hi, j - hj) <= r + 0.5]
+    for k in range(int(lair.get("gold_piles", 60))):
+        i, j = cells[int(rng.integers(len(cells)))]
+        gx, gz = _cell_pos(i, j)
+        gx += float(rng.uniform(-50, 50))
+        gz += float(rng.uniform(-50, 50))
+        things.append(_thing("itempickup", (gx, 24.0, gz), name=f"Gold_{slug}_{k}",
+                             item_id="gold", quantity=int(rng.integers(8, 45)),
+                             respawn=False, pickup_radius=60.0,
+                             custom_idle="assets/sprites/items/gold.png"))
+    for k, (dx, dz) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1))):
+        lx, lz = x + dx * r * CELL * 0.6, z + dz * r * CELL * 0.6
+        things.append(_light(f"Light_lair_{k}", (lx, 260.0, lz), 900.0, (255, 120, 50), 2.2))
+
+
+def _write_cave_maps(world, overworld_path, only=None):
+    settings = next(t for t in world["things"] if t["type"] == "miniwindsettings")
+    camera = next((t for t in world["things"] if t["type"] == "logic_command"), None)
+    protos = {}
+    for t in world["things"]:
+        if t["type"] == "creature":
+            protos.setdefault(t["properties"].get("display_name"), t)
+    for k, (slug, name, monsters, count, loot) in enumerate(CAVES):
+        if only and slug not in only:
+            continue
+        cave = build_cave_map(slug, name, monsters, count, loot, settings, camera,
+                              protos, overworld_path, seed=101 + k * 17)
+        path = os.path.join("maps", f"{slug}.json")
+        with open(path, "w") as f:
+            json.dump(cave, f, indent=1)
+        print(f"{name} -> {path} ({len(cave['brushes'])} brushes, "
+              f"{len(cave['things'])} things)")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("map", nargs="?", default=OVERWORLD)
     ap.add_argument("--count", type=int, default=len(CAVES))
+    ap.add_argument("--maps-only", nargs="*", metavar="CAVE",
+                    help="only rewrite the cave maps (all, or those named), "
+                         "leaving the overworld and its cave mouths alone")
     args = ap.parse_args()
     with open(args.map) as f:
         world = json.load(f)
+    if args.maps_only is not None:
+        _write_cave_maps(world, args.map, set(args.maps_only))
+        return
     mouths = CaveMouths(world)
     mouths._remove_old()
     caves = CAVES[:args.count]

@@ -836,7 +836,7 @@ class MiniwindSession:
             else:
                 head = heads.random_head(self.rng, exclude={player_head})
             path = heads.any_head_path(head)
-            size = heads.HEAD_SIZE           # every head is drawn the same size
+            size = heads.size_for(p)         # every head the same size, bar giants
             if (p.get("head") != head or p.get("custom_idle") != path
                     or p.get("sprite_width") != size
                     or p.get("sprite_height") != size):
