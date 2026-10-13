@@ -432,11 +432,19 @@ class GameState:
         role = str(target_props.get("npc_role") or target_props.get("monster_role") or "").lower()
         creature = bestiary.get(role)
         table = target_props.get("loot") or (creature.loot if creature else "")
-        if not table:
+        luck = self.character.attrs.get("luck", 40)
+        stacks, gold = [], 0
+        if table:
+            stacks, gold = loot_mod.roll(table, self.character.level, self.rng,
+                                         luck, dice=self.dice)
+        # Now and then an enemy carries a healing potion, whatever it is.
+        if _is_enemy(target_props) and not loot_mod.offers_healing(table):
+            potions, _ = loot_mod.roll(loot_mod.ENEMY_POTION_TABLE,
+                                       self.character.level, self.rng, luck,
+                                       dice=self.dice)
+            stacks += potions
+        if not stacks and not gold and not table:
             return True
-        stacks, gold = loot_mod.roll(table, self.character.level, self.rng,
-                                     self.character.attrs.get("luck", 40),
-                                     dice=self.dice)
         carried = target_props.get("inventory")
         if isinstance(carried, str):
             # Authored shorthand ("id:qty, id"): expand it rather than lose it.
@@ -527,3 +535,16 @@ class GameState:
             return True
         except Exception:
             return False
+
+
+def _is_enemy(props: Dict) -> bool:
+    """Whether the actor with *props* was the player's enemy: hostile by
+    temperament, or of a faction at war with the player."""
+    if str(props.get("aggression", "")).lower() == "hostile":
+        return True
+    from . import factions
+    team = props.get("faction") or props.get("team") or ""
+    try:
+        return bool(team) and factions.is_hostile("player", team)
+    except Exception:
+        return False
