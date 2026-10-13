@@ -267,7 +267,7 @@ REAPER_MAX_OPACITY = 0.7
 REAPER_FADE_IN = 1.0
 REAPER_FADE_OUT = 0.9
 #: He glides — no pathfinding, no collision, no gravity.
-REAPER_SPEED = 230.0
+REAPER_SPEED = 170.0
 #: How close he comes before he swings.
 REAPER_REACH = 70.0
 #: The stroke of the scythe, and the very short pause after it before he goes.
