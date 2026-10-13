@@ -256,8 +256,8 @@ WISP_COLOURS = [
 # talked to, is invisible to the simulation and leaves nothing behind. See
 # _maybe_send_the_reaper.
 # ---------------------------------------------------------------------------
-#: How often a fresh corpse is visited at all.
-REAPER_CHANCE = 1.0
+#: How often a fallen NPC is visited at all: one death in eight.
+REAPER_CHANCE = 1.0 / 8.0
 #: He appears this far off -- beyond the edge of the overhead view -- on the
 #: far side of the body from the player, and walks in.
 REAPER_ARRIVE_DIST = (1150.0, 1400.0)
@@ -2848,7 +2848,7 @@ class MiniwindSession:
                 continue          # already recorded before a save/load
             tp["_death_noted"] = True
             self._on_npc_death(t)
-            # Death comes for every fallen NPC (never for a creature).
+            # Death may come for a fallen NPC (never for a creature).
             self._maybe_send_the_reaper(t)
 
     def _on_npc_death(self, npc) -> None:

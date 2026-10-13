@@ -117,16 +117,16 @@ def test_a_roll_over_the_chance_does_not(session):
     assert session.logic.things == []
 
 
-def test_every_death_is_attended():
-    """Death comes for every body (bar the cap on how many walk at once)."""
+def test_roughly_one_death_in_eight_is_attended():
+    """The odds, over enough deaths to be sure it is not one-in-four."""
     session = _Session(seed=7)
     visited = 0
-    for _ in range(100):
+    for _ in range(800):
         session._reapers = []               # each death judged on its own
         session.logic.things = []
         session._maybe_send_the_reaper(_Body())
         visited += bool(session._reapers)
-    assert visited == 100
+    assert 0.08 < visited / 800 < 0.17
 
 
 def test_no_more_than_the_cap_at_once(session):
