@@ -13,7 +13,8 @@ Icons land in ``assets/sprites/items/<id>.png`` (64×64, transparent). A generic
 fallback per category is also written (``_weapon.png``, ``_armour.png``, …) so a
 modded item with no bespoke icon still gets something sensible.
 
-Run from the repo root:  python -m game.tools.make_item_icons
+Run from the repo root:  python -m game.tools.make_item_icons [--missing]
+(``--missing`` draws only items that have no icon yet.)
 """
 
 from __future__ import annotations
@@ -40,6 +41,13 @@ MATERIALS = {
     "leather": ((176, 126, 82), (140, 96, 58), (92, 62, 36)),
     "fur":     ((160, 132, 104), (124, 100, 76), (84, 66, 48)),
     "gold":    ((252, 214, 108), (226, 176, 58), (150, 110, 20)),
+    "cloth":   ((214, 200, 170), (176, 160, 128), (112, 98, 74)),
+    "hide":    ((170, 140, 104), (132, 104, 74), (86, 64, 42)),
+    "studded": ((168, 118, 74), (128, 86, 50), (70, 46, 26)),
+    "chain":   ((190, 192, 198), (140, 142, 150), (84, 86, 94)),
+    "scale":   ((200, 196, 170), (150, 144, 116), (90, 86, 64)),
+    "plate":   ((214, 222, 236), (164, 174, 194), (96, 104, 124)),
+    "mithril": ((236, 244, 255), (196, 214, 236), (124, 146, 176)),
     "default": ((178, 180, 188), (132, 134, 144), (78, 80, 90)),
 }
 GRIP = (98, 66, 40)        # leather grip
@@ -441,15 +449,17 @@ def shape_for(item_id, item):
             return draw_repair
         return lambda d: draw_book(d, iid)
     if cat == "armour" or cat == "armor":
-        if "helm" in text:
+        if "ring" in text or "amulet" in text:
+            return draw_amulet
+        if any(w in text for w in ("helm", "hood", "cap", "coif")):
             return lambda d: draw_helmet(d, mat)
-        if "shield" in text:
+        if "shield" in text or "buckler" in text:
             return lambda d: draw_shield(d, mat)
-        if "gauntlet" in text or "bracer" in text or "glove" in text:
+        if any(w in text for w in ("gauntlet", "bracer", "glove", "wraps")):
             return lambda d: draw_gauntlet(d, mat)
-        if "greave" in text or "leg" in text:
+        if any(w in text for w in ("greave", "leg", "trouser")):
             return lambda d: draw_greaves(d, mat)
-        if "boot" in text:
+        if any(w in text for w in ("boot", "sandal", "sabaton")):
             return lambda d: draw_boots(d, mat)
         return lambda d: draw_cuirass(d, mat)   # cuirass / armour / fur
     if cat == "weapon":
@@ -503,13 +513,19 @@ def main():
     with open(items_path, encoding="utf-8") as f:
         items = json.load(f)
 
+    import sys
+    missing_only = "--missing" in sys.argv[1:]
     n = 0
     for item_id, item in items.items():
+        if missing_only and os.path.isfile(os.path.join(out_dir, f"{item_id}.png")):
+            continue
         img = render(shape_for(item_id, item))
         img.save(os.path.join(out_dir, f"{item_id}.png"))
         n += 1
 
     for cat, fn in CATEGORY_FALLBACK.items():
+        if missing_only and os.path.isfile(os.path.join(out_dir, f"_{cat}.png")):
+            continue
         render(fn).save(os.path.join(out_dir, f"_{cat}.png"))
 
     print(f"Wrote {n} item icons + {len(CATEGORY_FALLBACK)} category fallbacks to {out_dir}")

@@ -649,15 +649,21 @@ class MiniwindSession:
                                           damage_kind=damage_kind,
                                           blocking=self._blocking, rng=self.rng)
         final = res["final"]
+        # armour training whenever armour is tested -- a deflected blow too
+        worn = res["armor_class"]
+        if worn == "heavy":
+            c.use_skill("heavy_armor", 1.0)
+        elif worn == "light":
+            c.use_skill("light_armor", 1.0)
+        elif worn == "medium":
+            c.use_skill("heavy_armor", 0.5)
+            c.use_skill("light_armor", 0.5)
+        if res.get("deflected"):
+            self.add_floater("Deflected", kind="miss")
+            return 0.0
         c.damage(final)
         if final > 0:
             self._player_flash = HIT_FLASH_TIME   # brief red flash on the head
-        # armour training when actually hit
-        ac = res["armor_class"]
-        if ac == "heavy":
-            c.use_skill("heavy_armor", 1.0)
-        elif ac == "light":
-            c.use_skill("light_armor", 1.0)
         self.add_floater(f"-{int(round(final))}", kind="hurt")
         return final
 
@@ -4958,6 +4964,11 @@ class MiniwindSession:
             self.notify(iw.why_not((kind, key), d), 2.5)
             return False
         if kind == "equip":
+            if key == rpg_items.SLOT_WEAPON:
+                # In hand: it rides a quick slot too, so a number key finds it.
+                if item_id not in [e["id"] for e in self.weapon_slots()]:
+                    self.inventory_assign_quick(item_id)
+                self._cancel_bow_draw()
             if self.game.equip(item_id):
                 self.notify(f"Equipped {d.name}", 1.5)
                 return True
@@ -4968,6 +4979,8 @@ class MiniwindSession:
             return self.set_quick_weapon(int(key), item_id)
         # Back to the pack: take it off, or out of its quick slot.
         if source[0] == "equip":
+            if source[1] == rpg_items.SLOT_WEAPON:
+                self._cancel_bow_draw()
             self.game.unequip(source[1])
             self.notify(f"Took off {d.name}", 1.5)
             return True

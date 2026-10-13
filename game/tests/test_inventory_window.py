@@ -112,3 +112,77 @@ def test_assign_fills_the_first_free_quick_slot():
     s.set_quick_weapon(0, None)
     assert s.inventory_assign_quick("iron_longsword")
     assert s.quick_weapon_slots()[0]["id"] == "iron_longsword"
+
+
+# ------------------------------------------------------------ armour class
+
+def test_unarmoured_is_armour_class_ten():
+    s = _session()
+    c = s.game.character
+    c.attrs["agility"] = 40
+    assert eq.armour_class(c) == eq.BASE_AC
+    assert eq.deflect_chance(c) == 0.0
+
+
+def test_plate_raises_armour_class_more_than_cloth():
+    plate = _session("plate_armour").game.character
+    cloth = _session("cloth_robe").game.character
+    for c in (plate, cloth):
+        c.attrs["agility"] = 40
+    plate_char = plate
+    eq.equip(plate_char, "plate_armour")
+    eq.equip(cloth, "cloth_robe")
+    assert eq.armour_class(plate_char) > eq.armour_class(cloth)
+
+
+def test_heavy_armour_spends_your_agility_bonus():
+    s = _session("plate_armour")
+    c = s.game.character
+    c.attrs["agility"] = 80                       # +4 out of armour
+    nimble = eq.armour_class(c)
+    eq.equip(c, "plate_armour")
+    assert eq.armor_class_worn(c) == eq.HEAVY
+    plate_only = eq.armour_class(c) - eq.BASE_AC
+    assert plate_only == int(eq.armor_rating(c) // eq.RATING_PER_AC)
+    assert nimble == eq.BASE_AC + 4
+
+
+def test_medium_armour_lets_two_points_of_agility_through():
+    s = _session("chain_shirt")
+    c = s.game.character
+    c.attrs["agility"] = 90
+    eq.equip(c, "chain_shirt")
+    assert eq.armour_class(c) == eq.BASE_AC + int(eq.armor_rating(c) // eq.RATING_PER_AC) + 2
+
+
+def test_a_ring_of_protection_adds_to_armour_class():
+    s = _session("ring_of_protection")
+    c = s.game.character
+    before = eq.armour_class(c)
+    s.inventory_move(("pack", None, "ring_of_protection"), ("equip", "ring"),
+                     "ring_of_protection")
+    assert eq.armour_class(c) == before + 1
+
+
+def test_a_deflected_blow_does_no_harm():
+    import random
+    from ..rpg import combat
+    s = _session("plate_armour", "plate_helm", "tower_shield")
+    c = s.game.character
+    for iid in ("plate_armour", "plate_helm", "tower_shield"):
+        eq.equip(c, iid)
+    rng = random.Random(1)
+    results = [combat.resolve_incoming(c, 20.0, rng=rng) for _ in range(200)]
+    deflected = [r for r in results if r.get("deflected")]
+    assert deflected and all(r["final"] == 0.0 for r in deflected)
+    assert len(deflected) < len(results)
+
+
+def test_dropping_a_weapon_on_the_main_hand_draws_it_and_slots_it():
+    s = _session("iron_longsword")
+    s.quick_weapon_slots()
+    s.set_quick_weapon(0, None)
+    assert s.inventory_move(("pack", None, "iron_longsword"), ("equip", "weapon"),
+                            "iron_longsword")
+    assert eq.equipped_id(s.game.character, "weapon") == "iron_longsword"
+    assert any(e["id"] == "iron_longsword" for e in s.weapon_slots())

@@ -569,7 +569,8 @@ def _draw_character(painter, session, w, h):
 
     # derived pools
     T.text(painter, inner.x(), ty + 6, f"Health {int(c.max_health)}    "
-           f"Magicka {int(c.max_magicka)}    Stamina {int(c.max_stamina)}",
+           f"Magicka {int(c.max_magicka)}    Stamina {int(c.max_stamina)}    "
+           f"Armour Class {eq.armour_class(c)}",
            size=11, color=T.PARCH, family="Segoe UI")
     prog = c.xp_progress
     T.bar(painter, inner.x(), ty + 14, 260, 10, prog / 10.0, T.XP,
@@ -1082,9 +1083,15 @@ def _merchant_stock(npc):
     role = str(npc.properties.get("npc_role", "merchant"))
     defaults = {
         "merchant": ["potion_heal_minor", "potion_magicka", "torch", "lockpick",
+                     "cloth_robe", "cloth_hood", "sandals", "hide_boots", "copper_ring",
                      "iron_arrow", "bread" if rpg_items.get("bread") else "book_lore"],
         "blacksmith": ["iron_longsword", "iron_mace", "steel_longsword", "iron_shield",
-                       "iron_cuirass", "iron_helmet", "short_bow", "iron_arrow"],
+                       "iron_cuirass", "iron_helmet", "short_bow", "iron_arrow",
+                       "chain_shirt", "chain_coif", "scale_mail", "kite_shield",
+                       "plate_helm", "plate_armour", "tower_shield", "buckler"],
+        "armourer": ["leather_cuirass", "hide_armour", "studded_leather",
+                     "chain_shirt", "scale_mail", "plate_armour", "plate_helm",
+                     "plate_greaves", "round_shield", "kite_shield"],
     }
     return [{"id": i} for i in defaults.get(role, defaults["merchant"])]
 

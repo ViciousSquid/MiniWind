@@ -170,6 +170,15 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
     result = {"final": dmg, "blocked": 0.0, "armor": 0.0, "resisted": 0.0,
               "armor_class": eq.armor_class_worn(character)}
 
+    # Armour Class: a well-armoured, nimble body turns some blows aside
+    # completely before anything else is weighed.
+    if damage_kind == "physical" and dmg > 0:
+        result["ac"] = eq.armour_class(character)
+        if rng.random() < eq.deflect_chance(character):
+            result["deflected"] = True
+            result["final"] = 0.0
+            return result
+
     # Block: a shield + Block skill soaks a fraction of a physical blow.
     if blocking and damage_kind == "physical":
         shield = eq.equipped_def(character, items.SLOT_SHIELD)

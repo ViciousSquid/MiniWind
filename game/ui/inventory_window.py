@@ -62,7 +62,8 @@ PAPERDOLL = (
     ("ring", "Ring", 0.86, 0.33),
     ("shield", "Shield", 0.86, 0.56),
     ("light", "Torch", 0.86, 0.79),
-    ("feet", "Feet", 0.50, 0.93),
+    ("weapon", "Main Hand", 0.30, 0.93),
+    ("feet", "Feet", 0.70, 0.93),
 )
 
 #: Pack tabs: (label, categories shown; None = everything).
@@ -74,6 +75,8 @@ TABS = (
     ("Herbs", ("ingredient", "food")),
     ("Other", ("book", "misc", "quest", "key", "gold")),
 )
+#: The extra tab shown only to a character who knows any spells.
+SPELLS_TAB = ("Spells", "spells")
 
 CELL = 58
 GAP = 6
@@ -145,6 +148,7 @@ class InventoryWindow(FloatingWindow):
         self.tab = 0
         self.page = 0
         self.selected = None            # item id shown in Details
+        self.selected_spell = None      # or a spell id, from the Spells tab
         self.hover = None               # item id under the pointer
         #: (QRect, source) for every item cell drawn this frame, where source
         #: is ("pack"|"equip"|"quick", key, item id).
@@ -196,7 +200,9 @@ class InventoryWindow(FloatingWindow):
             return []
         worn = set(v for v in self._equipment().values() if v)
         quick = set(e["id"] for e in self._quick() if e)
-        cats = TABS[self.tab][1]
+        cats = self._tabs()[min(self.tab, len(self._tabs()) - 1)][1]
+        if cats == "spells":
+            return []
         out = []
         for stack in list(getattr(c, "inventory", []) or []):
             iid = stack.get("id")
@@ -208,6 +214,19 @@ class InventoryWindow(FloatingWindow):
                 continue
             out.append(stack)
         return out
+
+    def _known_spells(self):
+        c = self._character()
+        try:
+            from ..rpg import magic
+        except Exception:
+            return []
+        return [(sid, magic.get(sid)) for sid in (getattr(c, "known_spells", []) or [])
+                if magic.get(sid) is not None] if c else []
+
+    def _tabs(self):
+        """The pack's tabs: the item categories, and Spells for a caster."""
+        return TABS + ((SPELLS_TAB,) if self._known_spells() else ())
 
     def _stack(self, iid):
         c = self._character()
@@ -255,6 +274,7 @@ class InventoryWindow(FloatingWindow):
         g.setColorAt(0.0, QColor(58, 56, 52, 250))
         g.setColorAt(1.0, QColor(38, 37, 35, 250))
         painter.fillPath(path, QBrush(g))
+        painter.setBrush(Qt.NoBrush)
         painter.setPen(QPen(_STONE_EDGE, 2))
         painter.drawPath(path)
         bar = QRect(rect.x() + 2, rect.y() + 2, rect.width() - 4, 28)
@@ -427,20 +447,44 @@ class InventoryWindow(FloatingWindow):
         # Footer: armour, gold, load.
         try:
             from ..rpg import equipment as eq, inventory as inv
-            ar = int(round(eq.armor_rating(c)))
+            ar = int(eq.armour_class(c))
+            weight = eq.armor_class_worn(c)
             load = inv.total_weight(c.inventory)
             cap = c.carry_capacity
             gold = int(c.gold)
         except Exception:
-            ar, load, cap, gold = 0, 0.0, 0.0, 0
+            ar, weight, load, cap, gold = 10, "none", 0.0, 0.0, 0
         foot = QRect(inner.x(), inner.bottom() - 20, inner.width(), 20)
         painter.setFont(self.f_body)
         painter.setPen(_INK)
-        painter.drawText(foot, Qt.AlignLeft | Qt.AlignVCenter, f"Armour {ar}")
+        painter.drawText(foot, Qt.AlignLeft | Qt.AlignVCenter,
+                         "Unarmoured" if weight == "none" else f"{weight.title()} armour")
+        self._draw_ac_badge(painter, QPoint(inner.x() + int(inner.width() * 0.31),
+                                            inner.y() + 40), ar)
         painter.setPen(_GOLD)
         painter.drawText(foot, Qt.AlignHCenter | Qt.AlignVCenter, f"{gold} gold")
         painter.setPen(_NO if cap and load > cap else _INK)
         painter.drawText(foot, Qt.AlignRight | Qt.AlignVCenter, f"{load:.0f} / {cap:.0f} wt")
+
+    def _draw_ac_badge(self, painter, centre, ac):
+        """Armour Class on a little heater shield, top left of the paperdoll."""
+        cx, cy = centre.x(), centre.y()
+        path = QPainterPath()
+        path.moveTo(cx - 20, cy - 22)
+        path.lineTo(cx + 20, cy - 22)
+        path.lineTo(cx + 20, cy + 2)
+        path.quadTo(cx + 18, cy + 18, cx, cy + 26)
+        path.quadTo(cx - 18, cy + 18, cx - 20, cy + 2)
+        path.closeSubpath()
+        painter.setBrush(QColor(52, 46, 36, 245))
+        painter.setPen(QPen(_GOLD, 1.6))
+        painter.drawPath(path)
+        painter.setFont(self.f_title)
+        painter.setPen(QColor(255, 236, 170))
+        painter.drawText(QRect(cx - 20, cy - 20, 40, 30), Qt.AlignCenter, str(ac))
+        painter.setFont(self.f_small)
+        painter.setPen(_DIM)
+        painter.drawText(QRect(cx - 20, cy + 8, 40, 14), Qt.AlignCenter, "AC")
 
     def _draw_spells(self, painter, x, y, w):
         c = self._character()
@@ -473,8 +517,10 @@ class InventoryWindow(FloatingWindow):
     def _draw_pack(self, painter, rect):
         inner = self._panel(painter, rect, "Pack")
         # Category tabs.
-        tw = (inner.width()) // len(TABS)
-        for i, (label, _cats) in enumerate(TABS):
+        tabs = self._tabs()
+        self.tab = min(self.tab, len(tabs) - 1)
+        tw = (inner.width()) // len(tabs)
+        for i, (label, _cats) in enumerate(tabs):
             r = QRect(inner.x() + i * tw, inner.y(), tw - 4, 26)
             on = i == self.tab
             painter.setBrush(QColor(78, 70, 52, 240) if on else QColor(34, 33, 31, 240))
@@ -484,6 +530,9 @@ class InventoryWindow(FloatingWindow):
             painter.setPen(_GOLD if on else _DIM)
             painter.drawText(r, Qt.AlignCenter, label)
             self._buttons.append((QRect(r), self._set_tab(i)))
+        if tabs[self.tab][1] == "spells":
+            self._draw_spell_grid(painter, inner)
+            return
         pack = self._pack()
         per_page = GRID_COLS * GRID_ROWS
         pages = max(1, int(math.ceil(len(pack) / float(per_page))))
@@ -517,8 +566,102 @@ class InventoryWindow(FloatingWindow):
                          Qt.AlignCenter,
                          "Drag to equip or slot  ·  double-click to use  ·  keys 1-4 draw")
 
+    def _draw_spell_grid(self, painter, inner):
+        """The Spells tab: every spell known, as an orb in its colour with its
+        magicka cost in the corner. Click to see it, double-click to ready it."""
+        c = self._character()
+        active = getattr(c, "active_spell", None)
+        gy = inner.y() + 36
+        for i, (sid, sp) in enumerate(self._known_spells()[:GRID_COLS * GRID_ROWS]):
+            col, row = i % GRID_COLS, i // GRID_COLS
+            r = QRect(inner.x() + col * (CELL + GAP), gy + row * (CELL + GAP), CELL, CELL)
+            chosen = sid == self.selected_spell
+            painter.setBrush(_SLOT)
+            painter.setPen(QPen(_SLOT_HOT if chosen else _GOLD if sid == active else _SLOT_EDGE,
+                                2 if (chosen or sid == active) else 1.4))
+            painter.drawRoundedRect(r, 4, 4)
+            col_ = QColor(*sp.color)
+            glow = QColor(col_)
+            glow.setAlpha(70)
+            painter.setBrush(glow)
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(r.adjusted(6, 6, -6, -6))
+            painter.setBrush(col_)
+            painter.setPen(QPen(col_.darker(160), 1))
+            painter.drawEllipse(r.adjusted(15, 15, -15, -15))
+            try:
+                from ..rpg import magic
+                cost = int(round(magic.cast_cost(c, sp)))
+            except Exception:
+                cost = int(getattr(sp, "base_cost", 0) or 0)
+            painter.setFont(self.f_count)
+            painter.setPen(QColor(150, 190, 255))
+            painter.drawText(r.adjusted(0, 0, -4, -2), Qt.AlignRight | Qt.AlignBottom, str(cost))
+            if hits.hovered(r):
+                painter.fillRect(r.adjusted(2, 2, -2, -2), QColor(255, 230, 170, 26))
+                self.hover = ("spell", sid)
+            self._cells.append((QRect(r), ("spell", None, sid)))
+        painter.setFont(self.f_small)
+        painter.setPen(_DIM)
+        painter.drawText(QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
+                         Qt.AlignCenter, "Double-click a spell to ready it  ·  right mouse casts")
+
+    def _draw_spell_details(self, painter, inner, sid):
+        from ..rpg import magic
+        sp = magic.get(sid)
+        c = self._character()
+        painter.setFont(self.f_name)
+        painter.setPen(QColor(*sp.color))
+        painter.drawText(QRect(inner.x(), inner.y(), inner.width(), 26),
+                         Qt.AlignLeft | Qt.AlignVCenter, sp.name)
+        painter.setFont(self.f_small)
+        painter.setPen(_DIM)
+        painter.drawText(inner.x(), inner.y() + 40,
+                         f"{str(sp.school).title()}  ·  {str(sp.delivery).title()}")
+        desc = QRect(inner.x(), inner.y() + 56, inner.width(), 110)
+        painter.setBrush(QColor(20, 19, 18, 200))
+        painter.setPen(QPen(_SLOT_EDGE, 1))
+        painter.drawRect(desc)
+        painter.setFont(self.f_body)
+        painter.setPen(_INK)
+        painter.drawText(desc.adjusted(8, 6, -8, -6), Qt.AlignTop | Qt.TextWordWrap,
+                         getattr(sp, "desc", "") or "")
+        try:
+            cost = magic.cast_cost(c, sp)
+            chance = magic.cast_chance(c, sp)
+            skill = c.skill(sp.school)
+        except Exception:
+            cost, chance, skill = sp.base_cost, 1.0, 0
+        lines = [f"Magicka {cost:g}",
+                 f"{str(sp.school).title()} skill {skill}",
+                 f"Chance to cast {int(round(chance * 100))}%"]
+        for e in sp.effects or []:
+            mag = e.get("magnitude", "")
+            lines.append(f"{str(e.get('kind', '')).replace('_', ' ').title()} {mag}")
+        for k, line in enumerate(lines[:6]):
+            painter.drawText(inner.x(), desc.bottom() + 22 + k * 18, line)
+
     def _draw_details(self, painter, rect):
         inner = self._panel(painter, rect, "Details")
+        spell = (self.hover[1] if (self.hover and self.hover[0] == "spell")
+                 else None if (self.hover and self.hover[0] == "item")
+                 else self.selected_spell)
+        if spell:
+            self._draw_spell_details(painter, inner, spell)
+            by = inner.bottom() - 34
+            bw = (inner.width() - 6) // 2
+            for k, (label, action) in enumerate((("Ready", self._ready_spell(spell)),
+                                                 ("Exit", self._close_action))):
+                r = QRect(inner.x() + k * (bw + 6), by, bw, 30)
+                hot = hits.hovered(r)
+                painter.setBrush(QColor(96, 70, 34, 240) if hot else QColor(40, 37, 33, 240))
+                painter.setPen(QPen(_GOLD, 1.4))
+                painter.drawRoundedRect(r, 5, 5)
+                painter.setFont(self.f_button)
+                painter.setPen(_GOLD)
+                painter.drawText(r, Qt.AlignCenter, label)
+                self._buttons.append((QRect(r), action))
+            return
         iid = self.hover[1] if (self.hover and self.hover[0] == "item") else self.selected
         d = _item(iid) if iid else None
         if d is None:
@@ -559,7 +702,10 @@ class InventoryWindow(FloatingWindow):
             if d.get("damage"):
                 lines.append(f"Damage {d.get('damage')}")
             if d.get("armor_rating"):
-                lines.append(f"Armour {d.get('armor_rating')} ({d.get('armor_class', 'light')})")
+                lines.append(f"{str(d.get('armor_class', 'light')).title()} armour"
+                             f"  ·  rating {d.get('armor_rating')}")
+            if d.get("ac_bonus"):
+                lines.append(f"Armour Class +{d.get('ac_bonus')}")
             if d.get("kind"):
                 lines.append(f"Kind: {d.get('kind')}")
             for e in d.get("effects", []) or []:
@@ -680,7 +826,11 @@ class InventoryWindow(FloatingWindow):
         source = self._at(self._cells, p)
         if source is not None:
             self._press = (QPoint(p), source)
-            self.selected = source[2]
+            if source[0] == "spell":
+                self.selected_spell = source[2]
+            else:
+                self.selected = source[2]
+                self.selected_spell = None
         return True
 
     @property
@@ -693,7 +843,8 @@ class InventoryWindow(FloatingWindow):
         hits.pointer = (event.x(), event.y())
         if self._press is not None and self._drag is None:
             start, source = self._press
-            if (event.pos() - start).manhattanLength() >= DRAG_START:
+            if (source[0] != "spell"
+                    and (event.pos() - start).manhattanLength() >= DRAG_START):
                 self._drag = source
         return self._press is not None
 
@@ -712,7 +863,10 @@ class InventoryWindow(FloatingWindow):
             self._last_click = (now, source)
             if last_src == source and now - last_t <= DOUBLE_CLICK:
                 iid = source[2]
-                self._queue(lambda session: session.inventory_use(iid))
+                if source[0] == "spell":
+                    self._ready_spell(iid)()
+                else:
+                    self._queue(lambda session: session.inventory_use(iid))
                 self._last_click = (0.0, None)
             return True
         target = self._at(self._targets, event.pos())
