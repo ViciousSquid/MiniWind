@@ -57,9 +57,11 @@ HEAD_SIZE = 128
 
 
 #: Heads drawn at other than :data:`HEAD_SIZE` by nature, as a fraction of it:
-#: a chicken is a small bird. Numbered variants share their head's scale
-#: (``chicken01`` is a chicken). An actor's own ``head_scale`` wins over this.
-HEAD_SCALES = {"chicken": 1.0 / 3.0}
+#: a chicken is a small bird, 50 px of the usual 128. Numbered variants share
+#: their head's scale (``chicken2`` is a chicken). An actor's own
+#: ``head_scale`` wins over this.
+CHICKEN_SIZE = 50
+HEAD_SCALES = {"chicken": CHICKEN_SIZE / HEAD_SIZE}
 
 
 def default_scale(head_id) -> float:

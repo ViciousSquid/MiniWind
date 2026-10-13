@@ -84,8 +84,8 @@ def test_heads_assigned_at_play_start_are_the_one_size():
 
 
 # --- small heads -----------------------------------------------------------
-def test_a_chicken_head_is_a_third_of_the_size():
-    third = int(round(heads.HEAD_SIZE / 3.0))
+def test_a_chicken_head_is_fifty_pixels():
+    third = heads.CHICKEN_SIZE
     assert heads.size_for({"npc_role": "hen", "head": "chicken"}) == third
     assert heads.size_for({"head": "chicken02"}) == third       # its variants too
     assert heads.size_for({}, "chicken") == third               # the head it is given
@@ -124,4 +124,4 @@ def test_every_variant_of_an_animals_head_is_worn(tmp_path, monkeypatch):
     pack = [heads.animal_head("wolf", rng, deck) for _ in range(7)]
     assert sorted(pack.count(h) for h in set(pack)) == [3, 4]
     # Every chicken is small, whichever it is.
-    assert {heads.size_for({"head": h}) for h in flock} == {round(heads.HEAD_SIZE / 3)}
+    assert {heads.size_for({"head": h}) for h in flock} == {heads.CHICKEN_SIZE}

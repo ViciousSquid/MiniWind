@@ -148,7 +148,7 @@ def test_an_animal_without_a_head_wears_its_own_kind_or_the_placeholder():
     for animal in (wolf, bear, cow, sheep):
         assert (animal.properties["sprite_width"],
                 animal.properties["sprite_height"]) == one
-    third = round(heads.HEAD_SIZE / 3)                     # chickens are small
+    third = heads.CHICKEN_SIZE                     # chickens are small
     assert (hen.properties["sprite_width"], hen.properties["sprite_height"]) == (third, third)
 
 
