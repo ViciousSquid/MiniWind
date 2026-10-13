@@ -1001,3 +1001,44 @@ def test_only_lights_near_the_light_focus_light_and_nearest_first():
         None, {'entity_table': table, 'light_focus': (0.0, 0.0, 0.0),
                'light_range': 500.0})
     assert slots.tolist() == [1]
+
+
+def test_the_light_stream_follows_the_player_like_big_world():
+    """Lights near the player are streamed: the whole map is measured only
+    on a cell crossing (or a periodic refresh, for lights that move), and a
+    light on the edge holds on until it is clearly past it (hysteresis)."""
+    from engine.renderer.core import light_stream as ls
+    now = [0.0]
+    stream = ls.LightStream(clock=lambda: now[0])
+    lamps = [make_thing(Light, f'l{i}', pos=(i * 1000.0, 0.0, 0.0)) for i in range(20)]
+    table = _synced(lamps)
+    every = table.light_slots
+
+    lit = stream.select(table, every, (0.0, 0.0, 0.0))
+    assert lit.tolist() == [0, 1, 2]                   # within 2048, nearest first
+    assert stream.gathers == 1
+    # Walking within the same cell: no pass over the whole map.
+    lit = stream.select(table, every, (100.0, 0.0, 100.0))
+    assert stream.gathers == 1 and lit.tolist() == [0, 1, 2]
+    # Into the next cell: gathered again around the new spot.
+    stream.select(table, every, (ls.CELL_SIZE + 10.0, 0.0, 0.0))
+    assert stream.gathers == 2
+    # Far along the road the lights there are the ones lit.
+    lit = stream.select(table, every, (15000.0, 0.0, 0.0))
+    assert lit.tolist() == [15, 14, 16, 13, 17]
+
+    # Hysteresis: lamp 17 lit at 2000 away stays lit a little further out,
+    # but goes once it is past the deactivation range.
+    lit = stream.select(table, every, (15000.0 - 120.0, 0.0, 0.0))
+    assert 17 in lit.tolist()
+    lit = stream.select(table, every, (15000.0 - 400.0, 0.0, 0.0))
+    assert 17 not in lit.tolist()
+
+    # A light that moves in from afar is found by the periodic refresh.
+    lamps[0].pos = [14620.0, 0.0, 0.0]
+    table.pos[0] = lamps[0].pos
+    lit = stream.select(table, every, (15000.0 - 400.0, 0.0, 0.0))
+    assert 0 not in lit.tolist()                       # not a candidate yet
+    now[0] += ls.REFRESH_SECONDS
+    lit = stream.select(table, every, (15000.0 - 400.0, 0.0, 0.0))
+    assert lit.tolist()[0] == 0                        # the nearest now
