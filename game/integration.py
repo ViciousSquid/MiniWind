@@ -269,6 +269,16 @@ def _add_tools_menu_entries(MainWindow):
             lambda _checked=False: _open_world_sim(MainWindow))
         tools._miniwind_world_sim_added = True
 
+    if not getattr(tools, "_miniwind_dungeon_designer_added", False):
+        dungeon_action = tools.addAction("Dungeon Designer…")
+        dungeon_action.setToolTip(
+            "Draw a dungeon or cave on a grid (SOLID / open), or generate one "
+            "with Fio alpha's generators, place the entrance, monsters, chests "
+            "and lights, and save it as a playable map.")
+        dungeon_action.triggered.connect(
+            lambda _checked=False: _open_dungeon_designer(MainWindow))
+        tools._miniwind_dungeon_designer_added = True
+
     if not getattr(tools, "_miniwind_dice_test_added", False):
         dice_action = tools.addAction("Dice Roll Test…")
         dice_action.setToolTip("Roll a tabletop dice expression and print the result in "
@@ -309,6 +319,15 @@ def _open_spell_editor(MainWindow):
             MainWindow.show_toast("Spells saved to game/data/spells.json")
     except Exception as exc:
         _log(f"Spell Editor failed to open: {exc}")
+
+def _open_dungeon_designer(MainWindow):
+    """Open the Dungeon Designer (game/tools/dungeon_designer.py)."""
+    try:
+        from .tools import dungeon_designer
+        dungeon_designer.open_designer(MainWindow)
+    except Exception as exc:
+        _log(f"Dungeon Designer failed to open: {exc}")
+
 
 def _open_world_sim(MainWindow):
     """Open the World Simulation window (actors · history · simulate event)."""
