@@ -140,11 +140,11 @@ def apply_dark(widget):
 
 
 def action_row(QtWidgets, *buttons, label=""):
-    """A right-aligned row of action buttons, to sit directly above its list.
+    """A left-aligned row of action buttons, to sit directly above its list.
 
     Placing them at the top is the point: an empty list must never push its own
-    Add button below the fold. An optional *label* takes the left of the row so
-    the group still names itself."""
+    Add button below the fold. An optional *label* leads the row so the group
+    still names itself; the buttons follow it, and the space is at the end."""
     row = QtWidgets.QHBoxLayout()
     row.setContentsMargins(0, 0, 0, 0)
     row.setSpacing(4)
@@ -152,9 +152,10 @@ def action_row(QtWidgets, *buttons, label=""):
         lbl = QtWidgets.QLabel(label)
         lbl.setStyleSheet("color:#9aa; font-weight:bold;")
         row.addWidget(lbl)
-    row.addStretch(1)
+        row.addSpacing(8)
     for button in buttons:
         row.addWidget(button)
+    row.addStretch(1)
     return row
 
 
