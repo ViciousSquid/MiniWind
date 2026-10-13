@@ -777,7 +777,7 @@ class MiniwindSession:
         self.game.add_xp_listener(self._on_xp)
         # Author-granted starting spells (Game Settings → Player Spells).
         c = self.game.character
-        for sid in self._player_start_spells:
+        for sid in (self._player_start_spells if c.can_use_magic() else ()):
             if rpg_magic.get(sid) and sid not in c.known_spells:
                 c.known_spells.append(sid)
         if c.known_spells and not c.active_spell:
@@ -1802,6 +1802,8 @@ class MiniwindSession:
             title = p.get("title") or (spell.name if spell else spell_id)
             if spell is None:
                 self.notify("The book's script is unreadable")
+            elif not c.can_use_magic():
+                self.notify("The arcane script means nothing to a warrior")
             elif spell_id in c.known_spells:
                 self.notify(f"You already know {spell.name}")
             else:
@@ -4963,6 +4965,9 @@ class MiniwindSession:
         TARGET/TOUCH spells resolve instantly on the aimed creature; SELF spells
         are applied to the caster by ``cast_active_spell``."""
         c = self.game.character
+        if not c.can_use_magic():
+            # A Warrior works no magic: the right hand does nothing.
+            return False
         if c.is_dead or self._cast_cooldown > 0 or not c.active_spell:
             return False
         self._cast_cooldown = 0.7

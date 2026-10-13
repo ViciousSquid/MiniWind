@@ -435,10 +435,14 @@ def _draw_orbs(painter, c, width, height):
     T.bar(painter, x, base_y, w, h,
           c.health / c.max_health if c.max_health else 0, T.HEALTH,
           label=f"{int(c.health)} / {int(c.max_health)}")
-    T.bar(painter, x, base_y - 22, w, h,
-          c.magicka / c.max_magicka if c.max_magicka else 0, T.MAGICKA,
-          label=f"{int(c.magicka)} / {int(c.max_magicka)}")
-    T.bar(painter, x, base_y - 44, w * 0.7, h * 0.7,
+    # No Magicka bar for one who works no magic (a Warrior): stamina moves
+    # down into its place.
+    magical = c.max_magicka > 0 or getattr(c, "can_use_magic", lambda: True)()
+    if magical:
+        T.bar(painter, x, base_y - 22, w, h,
+              c.magicka / c.max_magicka if c.max_magicka else 0, T.MAGICKA,
+              label=f"{int(c.magicka)} / {int(c.max_magicka)}")
+    T.bar(painter, x, base_y - (44 if magical else 22), w * 0.7, h * 0.7,
           c.stamina / c.max_stamina if c.max_stamina else 0, T.STAMINA)
 
 

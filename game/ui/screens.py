@@ -1286,6 +1286,15 @@ _LEVEL_POOLS = (
 )
 
 
+def _pools_for(c):
+    """The pools this character may grow: no Magicka for a Warrior, who
+    works no magic."""
+    can = getattr(c, "can_use_magic", None)
+    if can is not None and not can():
+        return tuple(p for p in _LEVEL_POOLS if p[0] != "magicka")
+    return _LEVEL_POOLS
+
+
 def _levelup_state(session):
     return _sel(session).setdefault("levelup", {"row": 0})
 
@@ -1310,10 +1319,11 @@ def _draw_levelup(painter, session, w, h):
     ty = T.heading(painter, inner, f"Level {c.level + 1}",
                    "Choose one to increase")
     gap = 14
-    card_w = max(90, (inner.width() - 2 * gap) // 3)
+    pools = _pools_for(c)
+    card_w = max(90, (inner.width() - (len(pools) - 1) * gap) // len(pools))
     card_top = ty + 14
     card_h = max(120, inner.bottom() - 96 - card_top)
-    for i, (pool, label, colour, blurb) in enumerate(_LEVEL_POOLS):
+    for i, (pool, label, colour, blurb) in enumerate(pools):
         cx = inner.x() + i * (card_w + gap)
         rect = QRect(cx, card_top, card_w, card_h)
         chosen = st["row"] == i
@@ -1354,13 +1364,13 @@ def _draw_levelup(painter, session, w, h):
         T.text_in(painter, QRect(inner.x(), inner.bottom() - 88, inner.width(), 18),
                   "Your training also raises: " + ",  ".join(trained), size=9,
                   color=T.STAMINA.lighter(140), align=T.ALIGN_CENTER, family="Segoe UI")
-    pool, label, _c, _b = _LEVEL_POOLS[st["row"] % 3]
+    pool, label, _c, _b = pools[st["row"] % len(pools)]
     button(painter, QRect(inner.x() + (inner.width() - 260) // 2,
                           inner.bottom() - 62, 260, 34),
            f"Increase {label.title()}", lambda sess: _handle_levelup(sess, "return"),
            primary=True)
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              "Click, 1/2/3 or ←/→ to choose   Enter confirm", size=9, color=T.DIM,
+              f"Click, 1–{len(pools)} or ←/→ to choose   Enter confirm", size=9, color=T.DIM,
               align=T.ALIGN_CENTER, family="Segoe UI")
 
 
@@ -1373,15 +1383,16 @@ def _levelup_pick(i):
 def _handle_levelup(session, key):
     c = session.game.character
     st = _levelup_state(session)
-    n = len(_LEVEL_POOLS)
+    pools = _pools_for(c)
+    n = len(pools)
     if key in ("left", "a", "up", "w"):
         st["row"] = (st["row"] - 1) % n; return True
     if key in ("right", "d", "down", "s", "tab"):
         st["row"] = (st["row"] + 1) % n; return True
-    if key in ("1", "2", "3"):
+    if key in ("1", "2", "3") and int(key) <= n:
         st["row"] = int(key) - 1; return True
     if key in ("return", "enter", "space"):
-        pool = _LEVEL_POOLS[st["row"] % n][0]
+        pool = pools[st["row"] % n][0]
         res = c.level_up(pool=pool)
         session.notify(f"Welcome to level {res['level']}!  "
                        f"{pool.title()} +{int(res.get('pool_gain', 0))}", 5.0)

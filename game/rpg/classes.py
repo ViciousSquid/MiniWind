@@ -22,10 +22,10 @@ from . import skills as sk
 
 class CharClass:
     __slots__ = ("id", "label", "desc", "specialisation", "favored_attrs",
-                 "major_skills", "starting_spells")
+                 "major_skills", "starting_spells", "magic")
 
     def __init__(self, cid, label, desc, spec, favored_attrs, major_skills,
-                 starting_spells=None):
+                 starting_spells=None, magic=True):
         self.id = cid
         self.label = label
         self.desc = desc
@@ -36,6 +36,9 @@ class CharClass:
         # classes get a basic spell so a fresh mage is never empty-handed even
         # if their race / birthsign granted nothing (see character.new_game).
         self.starting_spells = list(starting_spells or [])
+        # Whether the class can work magic at all. A Warrior cannot: no
+        # magicka, no spells, no casting (see can_use_magic).
+        self.magic = bool(magic)
 
 
 CLASSES: Dict[str, CharClass] = {c.id: c for c in [
@@ -43,7 +46,8 @@ CLASSES: Dict[str, CharClass] = {c.id: c for c in [
               "A front-line fighter: heavy armour, a strong arm, a blade or a mace.",
               sk.COMBAT, [attr.STRENGTH, attr.ENDURANCE],
               [sk.BLADE, sk.BLUNT, sk.HEAVY_ARMOR, sk.BLOCK, sk.ATHLETICS,
-               sk.MARKSMAN, sk.RESTORATION]),
+               sk.MARKSMAN, sk.LIGHT_ARMOR],
+              magic=False),
     CharClass("knight", "Knight",
               "A chivalrous warrior as comfortable at court as in the melee.",
               sk.COMBAT, [attr.STRENGTH, attr.PERSONALITY],
@@ -121,6 +125,14 @@ CREATION_CLASS_IDS: List[str] = ["warrior", "archer", "mage", "healer",
 MAJOR_SKILL_START = 25
 MINOR_SKILL_START = 5
 SPECIALISATION_BONUS = 5   # every skill in your specialisation gets +5
+
+
+def can_use_magic(character) -> bool:
+    """Whether *character*'s class works magic (a Warrior does not)."""
+    try:
+        return bool(get(getattr(character, "class_id", "")).magic)
+    except Exception:
+        return True
 
 
 def get(class_id: str) -> CharClass:

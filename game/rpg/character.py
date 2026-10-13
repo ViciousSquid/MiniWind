@@ -123,6 +123,9 @@ class Character:
         self.recompute_derived(reset_current=True)
 
     # ------------------------------------------------------------------ build
+    def can_use_magic(self) -> bool:
+        return cls.can_use_magic(self)
+
     @classmethod
     def create(cls_, name: str, race_id: str, class_id: str, birthsign_id: str = "none",
                gender: str = "male", custom_class: cls.CharClass = None) -> "Character":
@@ -158,9 +161,11 @@ class Character:
                 skills[sid] = min(100, skills[sid] + int(delta))
         c.skills = skills
 
-        # starting spells from race + birthsign + class
-        for sp in (list(race.starting_spells) + list(sign.spells)
-                   + list(getattr(klass, "starting_spells", []))):
+        # starting spells from race + birthsign + class (none for a class
+        # that works no magic: a Warrior)
+        for sp in ((list(race.starting_spells) + list(sign.spells)
+                    + list(getattr(klass, "starting_spells", [])))
+                   if getattr(klass, "magic", True) else []):
             if sp not in c.known_spells:
                 c.known_spells.append(sp)
         # Safety net: a spellcasting class (Mage, Sorcerer, Healer, Nightblade,
@@ -202,6 +207,12 @@ class Character:
 
         self.max_health = max(1.0, self.max_health)
         self.max_magicka = max(0.0, self.max_magicka)
+        if not self.can_use_magic():
+            # A Warrior has no magicka and no spells, whatever the birthsign.
+            self.max_magicka = 0.0
+            self.magicka = 0.0
+            self.known_spells = []
+            self.active_spell = None
         self.max_stamina = max(1.0, self.max_stamina)
         if reset_current:
             self.health = self.max_health
