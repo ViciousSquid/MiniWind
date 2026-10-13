@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 from PyQt5.QtCore import QPointF, QRect, Qt
 from PyQt5.QtGui import QColor, QImage, QPainter, QRadialGradient
 
@@ -84,13 +85,50 @@ def night_amount(hour: float) -> float:
     return min(1.0, sky_at(hour)[1] / SKY[0][2])
 
 
-def _world_to_screen(glm, proj, view, x, y, z, width, height):
-    clip = proj * view * glm.vec4(float(x), float(y), float(z), 1.0)
-    w = clip.w
-    if w <= 1e-4:
+#: Parsed light settings by their raw values -- see _light_params.
+_PARAMS = {}
+_OFF_STATES = ("off", "false", "0")
+_DEFAULT_RGB = (255, 200, 140)
+
+
+def _parse_params(state, radius, intensity, colour):
+    if state is False or str(state).lower() in _OFF_STATES:
         return None
-    nx, ny = clip.x / w, clip.y / w
-    return ((nx * 0.5 + 0.5) * width, (1.0 - (ny * 0.5 + 0.5)) * height)
+    try:
+        radius = float(radius)
+        intensity = float(intensity)
+    except (TypeError, ValueError):
+        return None
+    if radius <= 0.0 or radius > LOCAL_LIGHT_MAX_RADIUS or intensity <= 0.0:
+        return None
+    try:
+        colour = tuple(int(c) for c in list(colour)[:3])
+    except (TypeError, ValueError):
+        colour = _DEFAULT_RGB
+    return radius, intensity, colour
+
+
+def _light_params(p):
+    """``(radius, intensity, rgb)`` of a lit local light, else None.
+
+    Memoised on the raw property values: a map's lamps share a handful of
+    settings, and parsing them for every lamp every frame (twice, with the
+    minimap) was most of the night overlay's Python time."""
+    state = p.get("state", "on")
+    radius = p.get("radius", 512.0)
+    intensity = p.get("intensity", 1.0)
+    colour = p.get("colour") or p.get("color") or _DEFAULT_RGB
+    try:
+        key = (state, radius, intensity,
+               colour if type(colour) is tuple else tuple(colour))
+        hit = _PARAMS.get(key, _PARAMS)
+    except TypeError:                        # unhashable or not a sequence
+        return _parse_params(state, radius, intensity, colour)
+    if hit is _PARAMS:
+        if len(_PARAMS) > 1024:
+            _PARAMS.clear()
+        hit = _PARAMS[key] = _parse_params(state, radius, intensity, colour)
+    return hit
 
 
 def _local_lights(session):
@@ -101,35 +139,23 @@ def _local_lights(session):
     except Exception:
         lights = ()
     for t in lights:
-        p = t.properties
-        state = p.get("state", "on")
-        if state is False or str(state).lower() in ("off", "false", "0"):
-            continue
-        try:
-            radius = float(p.get("radius", 512.0))
-            intensity = float(p.get("intensity", 1.0))
-        except (TypeError, ValueError):
-            continue
-        if radius <= 0.0 or radius > LOCAL_LIGHT_MAX_RADIUS or intensity <= 0.0:
-            continue
-        colour = p.get("colour") or p.get("color") or (255, 200, 140)
-        try:
-            colour = tuple(int(c) for c in list(colour)[:3])
-        except (TypeError, ValueError):
-            colour = (255, 200, 140)
-        out.append((t.pos, radius, intensity, colour))
+        params = _light_params(t.properties)
+        if params is not None:
+            out.append((t.pos,) + params)
     return out
 
 
 def holes(session, viewport, width, height):
     """``[(x, y, radius_px, strength, (r, g, b))]``: where the dark is lifted,
-    in view pixels, for what is on screen."""
+    in view pixels, for what is on screen.
+
+    Every light's centre and rim go through the camera in one NumPy pass,
+    rather than two matrix products per light per frame."""
     try:
-        import glm
         proj, view = viewport.projection_matrix, viewport.view_matrix
+        m = np.array(proj * view, dtype=np.float64)
     except Exception:
         return []
-    out = []
     margin = 0.25
     sources = list(_local_lights(session))
     try:
@@ -138,23 +164,35 @@ def holes(session, viewport, width, height):
         player = None
     if player is not None:
         sources.append((player, PLAYER_GLOW_RADIUS / LIT_FRACTION, None, None))
-    for pos, radius, intensity, colour in sources:
-        x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
-        centre = _world_to_screen(glm, proj, view, x, y, z, width, height)
-        edge = _world_to_screen(glm, proj, view, x + radius * LIT_FRACTION, y, z, width, height)
-        if centre is None or edge is None:
-            continue
-        r_px = math.hypot(edge[0] - centre[0], edge[1] - centre[1])
-        if r_px < 2.0:
-            continue
-        if (centre[0] + r_px < -width * margin or centre[0] - r_px > width * (1 + margin)
-                or centre[1] + r_px < -height * margin or centre[1] - r_px > height * (1 + margin)):
-            continue
+    if not sources:
+        return []
+    # Each light's centre (rows :n) and a point on its lit rim (rows n:),
+    # through the camera in one product.
+    n = len(sources)
+    pts = np.ones((2 * n, 4), dtype=np.float64)
+    pts[:n, :3] = [src[0][:3] for src in sources]
+    pts[n:, :3] = pts[:n, :3]
+    pts[n:, 0] += np.fromiter((src[1] for src in sources), dtype=np.float64,
+                              count=n) * LIT_FRACTION
+    clip = pts @ m.T
+    cw = clip[:, 3]
+    ahead = cw > 1e-4
+    w = np.where(ahead, cw, 1.0)
+    sx = (clip[:, 0] / w * 0.5 + 0.5) * width
+    sy = (1.0 - (clip[:, 1] / w * 0.5 + 0.5)) * height
+    r_px = np.hypot(sx[n:] - sx[:n], sy[n:] - sy[:n])
+    sx, sy = sx[:n], sy[:n]
+    keep = (ahead[:n] & ahead[n:] & (r_px >= 2.0)
+            & (sx + r_px >= -width * margin) & (sx - r_px <= width * (1 + margin))
+            & (sy + r_px >= -height * margin) & (sy - r_px <= height * (1 + margin)))
+    out = []
+    for i in np.flatnonzero(keep).tolist():
+        _pos, _radius, intensity, colour = sources[i]
         if intensity is None:
             strength = PLAYER_GLOW
         else:
             strength = max(0.0, min(1.0, 0.45 + 0.4 * intensity))
-        out.append((centre[0], centre[1], r_px, strength, colour))
+        out.append((float(sx[i]), float(sy[i]), float(r_px[i]), strength, colour))
     if len(out) > MAX_HOLES:
         cx, cy = width / 2.0, height / 2.0
         out.sort(key=lambda h: (h[0] - cx) ** 2 + (h[1] - cy) ** 2)
