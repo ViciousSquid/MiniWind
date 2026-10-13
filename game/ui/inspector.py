@@ -71,6 +71,35 @@ _MOVE_KEYS = ("w", "a", "s", "d", "up", "down", "left", "right")
 
 _next_colour = 0
 
+#: Plain sans faces for the inspector, first installed wins. A debug window
+#: is read, not admired: never the game's medieval face. Naming "Arial" alone
+#: is not enough -- where it is missing, Qt's fallback can land on one of the
+#: game's own registered fonts (MedievalSharp).
+SANS_FAMILIES = ("Segoe UI", "Arial", "Helvetica", "Liberation Sans",
+                 "DejaVu Sans", "Noto Sans", "Ubuntu", "Cantarell")
+_sans_family = None
+
+
+def _sans() -> str:
+    global _sans_family
+    if _sans_family is None:
+        from PyQt5.QtGui import QFontDatabase
+        installed = {f.lower(): f for f in QFontDatabase().families()}
+        for name in SANS_FAMILIES:
+            if name.lower() in installed:
+                _sans_family = installed[name.lower()]
+                break
+        else:
+            _sans_family = QFontDatabase.systemFont(QFontDatabase.GeneralFont).family()
+    return _sans_family
+
+
+def ui_font(size, bold=False) -> QFont:
+    """The inspector's font: a plain sans face of *size* points."""
+    f = QFont(_sans(), int(size), QFont.Bold if bold else QFont.Normal)
+    f.setStyleHint(QFont.SansSerif)
+    return f
+
 
 def _fmt_hour(h) -> str:
     try:
@@ -252,11 +281,11 @@ class ActorInspectorWindow(FloatingWindow):
         self.thing = thing
         self.colour = COLOURS[_next_colour % len(COLOURS)]
         _next_colour += 1
-        self.font = QFont("Arial", 11)
-        self.bold = QFont("Arial", 12, QFont.Bold)
-        self.title_font = QFont("Arial", 11, QFont.Bold)
+        self.font = ui_font(11)
+        self.bold = ui_font(12, True)
+        self.title_font = ui_font(11, True)
         #: Strength / Endurance / Charisma stand out from the rest of the data.
-        self.stats_font = QFont("Arial", 15, QFont.Bold)
+        self.stats_font = ui_font(15, True)
         self._fm = QFontMetrics(self.font)
         self._rows = []          # [(kind, text, value)] kind: head/row/sched/sched_now
         self._refreshed = 0.0
@@ -902,7 +931,7 @@ def _draw_beacon(painter, glm, proj, view_m, focus, width, height):
         pw, ph = pixmap.width() * scale, pixmap.height() * scale
         painter.drawPixmap(QRectF(centre.x() - pw / 2, centre.y() - ph - 22, pw, ph),
                            pixmap, QRectF(pixmap.rect()))
-    painter.setFont(QFont("Arial", 9, QFont.Bold))
+    painter.setFont(ui_font(9, True))
     fm = QFontMetrics(painter.font())
     text = str(focus.get("label", ""))
     box = QRectF(centre.x() - fm.horizontalAdvance(text) / 2 - 6, centre.y() + 26,
@@ -941,7 +970,7 @@ def draw_pick_hover(painter, viewport, width, height):
         glow.setAlpha(alpha)
         painter.setPen(QPen(glow, pen))
         painter.drawEllipse(centre, radius, radius)
-    font = QFont("Segoe UI", 9)
+    font = ui_font(9)
     font.setBold(True)
     painter.setFont(font)
     fm = QFontMetrics(font)
@@ -1018,6 +1047,6 @@ def draw_world_lines(painter, viewport, width, height):
         painter.setPen(QPen(colour, 2))
         painter.drawEllipse(end, 8, 8)
         painter.drawEllipse(end, 2, 2)
-        painter.setFont(QFont("Arial", 8))
+        painter.setFont(ui_font(8))
         painter.drawText(end + QPointF(12, 4), dest[1])
     painter.restore()
