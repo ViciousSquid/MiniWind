@@ -238,6 +238,68 @@ which is also the `ember_tome` quest item of Thalen's quest *The Ember Tome*.
 The quest arrow points at the book; reading it teaches firebolt, hands over the
 tome and completes the quest. The tool refuses to expand a map twice.
 
+### Geography, biomes and forests
+
+```bash
+python -m game.tools.enliven_world --preview world.png   # once; --force to redo
+```
+
+gives the Vale its lie of the land (the picture is `world_map.png`):
+
+* **Relief** -- rolling hills, ridgelines, desert dunes and four flat-topped
+  mesas, added to the heightmap. It fades to nothing near every site, so towns
+  sit in the valleys with the hills rising between them; anything on changed
+  ground was lifted with it.
+* **Biomes** -- a biome map over the terrain (`engine/terrain_biomes.py`, saved
+  as `biome_map_blob`, drawn by `terrain.frag`): **desert** in the south-west
+  fading through steppe into meadow, **snow** on the Emberpeaks and the high
+  summits, **swamp** round the lakes (an oasis in the desert), and **wheat** --
+  fields round every farm and three great golden plains. Grass follows it: none
+  on sand or snow, reeds in the swamp, dense waist-high wheat in the fields, and
+  never on a road stamped with the terrain paint tool.
+* **Forests** -- about 11 000 trees, by biome: pines and snowy pines in the
+  north-east, willows in the swamps, palms at desert water, dead trees and
+  scrub at the desert's edge, broadleaf elsewhere, and a great forest round
+  Greywood (art: `python -m game.tools.make_tree_art`).
+* **Six shrines**, one per biome, each a named place.
+
+### Caves and the dragon
+
+```bash
+python -m game.tools.make_caves                    # mouths on the overworld + maps
+python -m game.tools.make_caves --maps-only cave06 # just rewrite cave maps
+```
+
+Six caves open in the foothills. Each mouth on the overworld is a rock arch with
+a **LevelChanger** ("[E] Enter ...", no confirmation box: `confirm: false`, its
+text from `prompt`) and a **PlayerStart** `<cave>_exit` outside it. Its map,
+`maps/cave01.json` .. `cave06.json`, is a rock cave with a start named
+`entrance` and a LevelChanger back out to the exit start. The character crosses
+over through the state store like any level change.
+
+**Whisperdeep** (`cave06`) is a dragon's lair: *Vharzul the Ember Wyrm*, five
+times the player's size (`head_scale: 5`, head `dragon.png`) with 3000 hit
+points, in a great hall with gold all over the floor. Close up he bites; further
+off he breathes fire -- a stream of the engine's FIRE Effects, each flame
+animating out of step, burning whoever stands in the cone
+(`game/dragon_fire.py`). Console: `dragonfire 1`..`5` picks the fire setting
+(remembered).
+
+Maps, like textures and sounds, may live in `.fiopak` packages: they are read
+from a package first and from the loose file otherwise.
+
+### The world in motion
+
+* **Roads and travellers** (`game/living/`): traders, pilgrims, adventurers,
+  brigands and wolf packs travel between places along the PathNodes you lay
+  (or straight tracks where there are none). Far away a journey is a sum on
+  the clock; near the player its party walks as real actors. Console: `roads`.
+* **Wildlife roams** its ground when idle (`game/wildlife.py`) -- not sheep or
+  cows -- and only where Big World is simulating.
+* **Held weapons** -- every actor's weapon in hand is drawn beside its head on
+  its wielding side (one in five is left-handed). Fighters carry a blade and a
+  bow and switch by range (`game/held_weapons.py`).
+
 ## The living settlement (vertical slice)
 
 The starter settlement **Millbrook** is authored entirely as data
