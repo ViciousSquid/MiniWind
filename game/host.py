@@ -1040,6 +1040,7 @@ class MiniwindGame:
                 if session.open_screen is None and session.dialogue is None \
                         and not session.game.character.is_dead:
                     hud.draw_bubbles(painter, session, viewport, w, h)
+                    hud.draw_barks(painter, session, viewport, w, h)
                 # The "stay near the guard" ring during a prison escort.
                 hud.draw_escort_ring(painter, session, viewport, w, h)
                 # "!" / "?" over heightened NPCs (a guard coming to arrest

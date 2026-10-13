@@ -297,6 +297,7 @@ def test_no_sound_file_means_silence_not_an_error(session, tmp_path, monkeypatch
     queued = []
     session.logic.game_state = type("GS", (), {"queue_sound": staticmethod(queued.append)})()
     monkeypatch.setattr(runtime, "SOUND_DIR", str(tmp_path))     # empty folder
+    monkeypatch.setattr(runtime, "_ARCHIVED_SOUNDS", set())      # and no archive
     session.merchant_npc = _Merchant()
     session.game.character.gold = 1000
     assert session.buy(screens._merchant_stock(session.merchant_npc)[0]["id"])

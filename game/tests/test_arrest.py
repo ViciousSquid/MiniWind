@@ -88,8 +88,23 @@ class _Session:
     _nearest_of = MiniwindSession._nearest_of
     _dist2d = staticmethod(MiniwindSession._dist2d)
     _player_pos = MiniwindSession._player_pos
+    # A guard on arrest duty still answers a real enemy first (see _decide).
+    _is_combatant = staticmethod(MiniwindSession._is_combatant)
+    _defend_sight = staticmethod(MiniwindSession._defend_sight)
+    _nearest_hostile = MiniwindSession._nearest_hostile
+    _engage = MiniwindSession._engage
+    _world_index = MiniwindSession._world_index
+    _calm_player_brawl = MiniwindSession._calm_player_brawl
+    bark = MiniwindSession.bark
+    flash_head_mark = MiniwindSession.flash_head_mark
+    _head_marked = {}
+    live_barks = MiniwindSession.live_barks
+    _wi_cache = None
+    _actors = ()
 
     def __init__(self, things=(), player_pos=(0.0, 0.0, 0.0), bounty=0):
+        import random
+        self.rng = random.Random(1)
         self._marker_kinds = {}
         self._marker_kinds_token = None
         self.logic = _Logic(things, player_pos)
@@ -276,7 +291,7 @@ def test_a_guard_stopping_the_player_says_one_of_the_arrest_lines(monkeypatch):
     assert len(files) == 12                          # one per arrest, none repeated
     assert set(files) == set(runtime.ARREST_SOUNDS)  # both lines get used
     for name in runtime.ARREST_SOUNDS:               # and the files are in the game
-        assert os.path.isfile(os.path.join(runtime.SOUND_DIR, name))
+        assert runtime.sound_available(name)         # (packed in sounds.fiopak)
 
 
 # ------------------------------------------------------------- head marks

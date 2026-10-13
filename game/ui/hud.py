@@ -11,7 +11,7 @@ import os
 from types import SimpleNamespace
 
 from PyQt5.QtCore import QRect, QRectF, Qt
-from PyQt5.QtGui import QColor, QPixmap, QPolygon, QPen, QConicalGradient
+from PyQt5.QtGui import QColor, QFontMetrics, QPixmap, QPolygon, QPen, QConicalGradient
 from PyQt5.QtCore import QPoint, QPointF
 
 from .. import fio
@@ -234,6 +234,43 @@ def draw_bubbles(painter, session, viewport, width, height):
         sp = _world_to_screen(glm, proj, view, npc.pos[0], head_y, npc.pos[2], width, height)
         if sp is not None:
             _draw_bubble(painter, int(sp[0]), int(sp[1]), kind)
+
+
+def draw_barks(painter, session, viewport, width, height):
+    """What people are saying aloud, in a small plate over their heads: a
+    guard's "Halt!", a traveller's greeting, a brigand's threat."""
+    if viewport is None:
+        return
+    barks = session.live_barks() if hasattr(session, "live_barks") else ()
+    if not barks:
+        return
+    try:
+        import glm
+        proj, view = viewport.projection_matrix, viewport.view_matrix
+    except Exception:
+        return
+    from . import fonts
+    font = fonts.dialogue_font(11)
+    fm = QFontMetrics(font)
+    painter.save()
+    painter.setFont(font)
+    painter.setRenderHint(painter.Antialiasing, True)
+    for thing, text, left in barks[:8]:
+        head_y = thing.pos[1] + float(thing.properties.get("sprite_height", 112)) * 0.5 + 40.0
+        sp = _world_to_screen(glm, proj, view, thing.pos[0], head_y, thing.pos[2],
+                              width, height)
+        if sp is None:
+            continue
+        alpha = int(255 * max(0.0, min(1.0, left / 0.4)))
+        w = min(320, fm.horizontalAdvance(text) + 16)
+        rect = QRect(int(sp[0] - w / 2), int(sp[1] - 26), w, 22)
+        painter.setPen(QPen(QColor(168, 142, 84, alpha), 1))
+        painter.setBrush(QColor(0, 0, 0, int(alpha * 0.72)))
+        painter.drawRoundedRect(rect, 6, 6)
+        painter.setPen(QColor(247, 238, 214, alpha))
+        painter.drawText(rect, int(Qt.AlignCenter),
+                         fm.elidedText(text, Qt.ElideRight, w - 10))
+    painter.restore()
 
 
 #: Mark images, by mark (assets/sprites/marks); loaded on first use.

@@ -70,8 +70,21 @@ class _Session:
     # The decision pass indexes the watch once per pass rather than re-scanning
     # the scene per frightened villager; the stub needs the same predicate.
     _is_guard = staticmethod(MiniwindSession._is_guard)
+    _defend_sight = staticmethod(MiniwindSession._defend_sight)
+    _engage = MiniwindSession._engage
+    _subdued = staticmethod(MiniwindSession._subdued)
+    _break_up = MiniwindSession._break_up
+    bark = MiniwindSession.bark
+    flash_head_mark = MiniwindSession.flash_head_mark
+    _head_marked = {}
+    live_barks = MiniwindSession.live_barks
+
+    def _player_pos(self):
+        return None
 
     def __init__(self, things=(), player=None):
+        import random
+        self.rng = random.Random(1)
         self.things = list(things)
         self._wi_cache = None
         self._actors = []
@@ -290,3 +303,51 @@ def test_a_guard_still_prefers_an_enemy_of_his_own_faction():
     session._decide(guard)
 
     assert guard.properties["_aggro_target"] == id(bandit)
+
+
+# ------------------------------------------------- the watch's priorities
+
+def test_bandits_outrank_an_arrest_in_progress():
+    """A guard sent to arrest the player still fights the bandits chasing them."""
+    bandit = _npc("Cutthroat", (120, 0, 0), faction="bandits")
+    guard = _guard("Watchman", (0, 0, 0), _arrest_state="approach")
+    session = _Session([bandit, guard])
+    session._refresh_actor_cache()
+    session._decide(guard)
+    p = guard.properties
+    assert p["_aggro_target"] == id(bandit)
+    assert p["triggered"] is False and p["sched_state"] == sched.COMBAT
+    assert p["_arrest_state"] == "approach"          # picked up again afterwards
+
+
+def test_a_brawl_is_broken_up_not_fought_to_the_death():
+    bram = _npc("Bram", (0, 0, 0), health=60, max_health=60)
+    wick = _npc("Wick", (60, 0, 0), health=60, max_health=60)
+    _swings_at(wick, bram)
+    _swings_at(bram, wick)
+    guard = _guard("Watchman", (100, 0, 0))
+    session = _Session([bram, wick, guard])
+    session._refresh_actor_cache()
+    session._decide(guard)
+    assert guard.properties["_subduing"] in (id(bram), id(wick))
+    target = bram if guard.properties["_subduing"] == id(bram) else wick
+    target.properties["health"] = 20                  # the fight is knocked out of him
+    session._refresh_actor_cache()
+    session._decide(guard)
+    for t in (bram, wick, guard):
+        assert t.properties["triggered"] is True
+        assert "_aggro_target" not in t.properties
+    assert not bram.properties.get("dead") and not wick.properties.get("dead")
+    assert any(text in runtime.SUBDUED_SHOUTS for _t, text, _l in session.live_barks())
+
+
+def test_a_brawler_already_beaten_is_not_hit_again():
+    bram = _npc("Bram", (0, 0, 0), health=10, max_health=60)
+    wick = _npc("Wick", (60, 0, 0), health=60, max_health=60)
+    _swings_at(wick, bram)
+    guard = _guard("Watchman", (100, 0, 0))
+    session = _Session([bram, wick, guard])
+    session._refresh_actor_cache()
+    session._decide(guard)
+    assert guard.properties["triggered"] is True
+    assert "_aggro_target" not in wick.properties

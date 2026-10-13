@@ -203,6 +203,25 @@ TORCH_DEFAULT_COLOUR = [255, 170, 80]
 REPEL_RADIUS = 520.0
 REPEL_HOURS = 3.0
 REPELLABLE_FACTIONS = frozenset({"bandits", "cultists"})
+#: How long a quest's arrow target / guidance is reused before it is looked
+#: up again (the HUD asks every frame).
+QUEST_LOOKUP_SECONDS = 0.25
+#: How long a guard's "!" shows when he reacts to something.
+MARK_FLASH_SECONDS = 1.6
+#: A brawler at or below this fraction of their health has had enough.
+SUBDUE_FRACTION = 0.45
+#: How long a spoken line hangs over a head, and how near the player it must
+#: be said to be shown.
+BARK_SECONDS = 3.0
+BARK_RADIUS = 1800.0
+STOP_SHOUTS = ("Stop right there!", "Halt! In the name of the law!",
+               "You there! Stop!", "That's far enough, criminal.")
+BREAK_UP_SHOUTS = ("Break it up!", "Oi! Enough of that!", "Stop this at once!",
+                   "Hands off him!")
+SUBDUED_SHOUTS = ("That's enough! Go home, the both of you.",
+                  "Any more of that and it's the cells.", "Settle down. Now.")
+CHARGE_SHOUTS = ("To arms!", "Raiders! With me!", "Not in my town!",
+                 "Steel out, lads!")
 #: How fast an over-encumbered player moves, as a fraction of normal.
 ENCUMBERED_SPEED = 0.33
 #: The light a spell bolt carries with it, in the spell's colour.
@@ -248,6 +267,30 @@ REAPER_MAX = 3
 #: His head and his weapon. He is drawn at the one head size, like everyone.
 REAPER_HEAD = "reaper"
 REAPER_WEAPON = "scythe"
+
+
+_ARCHIVED_SOUNDS = None
+
+
+def sound_available(name: str) -> bool:
+    """Whether an interface sound *name* ships with the game: loose under
+    ``assets/sounds`` or packed in ``assets/sounds.fiopak`` (where the sounds
+    live now; checking only the loose folder silenced every interface sound
+    once they were archived)."""
+    global _ARCHIVED_SOUNDS
+    if os.path.isfile(os.path.join(SOUND_DIR, name)):
+        return True
+    if _ARCHIVED_SOUNDS is None:
+        _ARCHIVED_SOUNDS = set()
+        archive = os.path.join("assets", "sounds.fiopak")
+        if os.path.isfile(archive):
+            try:
+                from engine.audio_archives import list_archive_audio
+                for member in list_archive_audio(archive, "assets/sounds"):
+                    _ARCHIVED_SOUNDS.add(member[len("assets/sounds/"):])
+            except Exception:
+                pass
+    return name in _ARCHIVED_SOUNDS
 
 
 class _PlayerActor:
@@ -629,6 +672,7 @@ class MiniwindSession:
         self._assign_npc_handedness()  # random handedness (left rare) where unset
         self._assign_npc_stats()       # STRENGTH / ENDURANCE / CHARISMA for everyone
         self._wire_quest_givers()      # make quest givers offer their quests
+        self._name_index()             # built now, not on the first quest's frame
         self._sync_engine_health(full=True)
 
     def uninstall(self) -> None:
@@ -1934,8 +1978,16 @@ class MiniwindSession:
         :meth:`set_tracked_quest`), only that quest's arrow is returned, so the
         other quests' arrows are hidden — unless the tracked quest is no longer
         active, in which case all active quests' arrows show again."""
+        import time as _time
+        now = _time.monotonic()
         active = self.game.quests.active_quests()
         tracked = self.tracked_quest_id()
+        log = self.game.quests
+        key = (tracked, tuple((q.id, log.stage_of(q.id)) for q in active))
+        memo = getattr(self, "_arrow_memo", None)
+        if (memo is not None and memo[2] == key
+                and now - memo[0] < QUEST_LOOKUP_SECONDS):
+            return list(memo[1])
         if tracked:
             focused = [q for q in active if q.id == tracked]
             if focused:
@@ -1945,7 +1997,10 @@ class MiniwindSession:
             pos = self._arrow_destination(q)
             if pos is not None:
                 out.append((list(pos), q.id, q.name))
-        return out
+        # The HUD, the map and the quest panel ask every frame; where a quest
+        # points cannot change faster than the things in it walk.
+        self._arrow_memo = (now, out, key)
+        return list(out)
 
     def tracked_quest_id(self) -> str:
         """The quest id the player pinned as active (only its arrow shows), or
@@ -2005,21 +2060,20 @@ class MiniwindSession:
             return None
         ppos = self._player_pos()
         best, best_pos = None, None
-        for t in fio.things(self.logic):
+        living = getattr(self, "living", None)
+        if living is not None:
+            # Someone on the roads (a gang leader with a price on his head)
+            # is somewhere even while he is only a journey on the board.
+            far = living.locate(target)
+            if far is not None and ppos is not None:
+                best, best_pos = self._dist2d(ppos, far), list(far)
+        seen = set()
+        for t, _field in self._name_index().get(target, ()):
+            if id(t) in seen:
+                continue
+            seen.add(id(t))
             p = getattr(t, "properties", {}) or {}
             if p.get("dead"):
-                continue
-            names = {
-                self._slug(p.get("name", "")),
-                self._slug(p.get("display_name", "")),
-                self._slug(p.get("npc_role", "")),
-                self._slug(p.get("monster_type", "")),
-                self._slug(p.get("item_id", "")),
-                self._slug(p.get("place_name", "")),
-                self._slug(self._thing_id(t)),
-            }
-            names.discard("")
-            if target not in names:
                 continue
             pos = getattr(t, "pos", None)
             if pos is None:
@@ -2110,7 +2164,7 @@ class MiniwindSession:
         detail = st.journal if st else q.desc
         complete = log.is_complete(q.id)
         action, progress = self._objective_action(st) if st else ("", "")
-        target_pos = None if complete else self._objective_world_pos(q)
+        target_pos = None if complete else self._objective_pos_memo(q, log.stage_of(q.id))
         distance = None
         if target_pos is not None:
             ppos = self._player_pos()
@@ -2127,6 +2181,22 @@ class MiniwindSession:
             "distance": distance,
             "complete": complete,
         }
+
+    def _objective_pos_memo(self, q, stage):
+        """:meth:`_objective_world_pos`, reused for :data:`QUEST_LOOKUP_SECONDS`
+        per quest and stage (the HUD and the quest panel ask every frame)."""
+        import time as _time
+        now = _time.monotonic()
+        memo = self.__dict__.setdefault("_objective_memo", {})
+        key = (q.id, stage)
+        got = memo.get(key)
+        if got is not None and now - got[0] < QUEST_LOOKUP_SECONDS:
+            return got[1]
+        pos = self._objective_world_pos(q)
+        if len(memo) > 64:
+            memo.clear()
+        memo[key] = (now, pos)
+        return pos
 
     def _objective_action(self, st):
         """Build a short imperative + progress string from a stage's condition.
@@ -2201,20 +2271,67 @@ class MiniwindSession:
         except (TypeError, ValueError):
             return default
 
+    #: Fields a quest target may be named by, and the subset that names an
+    #: actor for a 'kill' objective.
+    _NAME_FIELDS = ("name", "display_name", "npc_role", "monster_type",
+                    "item_id", "place_name")
+    _ACTOR_FIELDS = ("name", "npc_role", "monster_type")
+
+    def _name_index(self):
+        """slug -> [(thing, field)] for every thing in the scene.
+
+        Quest arrows, the quest panel and the map ask "where is the nearest
+        wolf / Elowen / the Old Mill?" every frame. Answering that by walking
+        and re-slugging the whole world (over a thousand things on the shipped
+        map) cost several milliseconds per ask, several times a frame --
+        the stutter felt as soon as a far-off quest became the tracked one.
+        The index is rebuilt only when the scene's thing list changes (the
+        same ``(id, len)`` token the type index uses), so a lookup visits only
+        the handful of things that actually carry the name.
+        """
+        things = fio.things(self.logic)
+        token = (id(things), len(things))
+        cached = getattr(self, "_name_index_cache", None)
+        if cached is not None and cached[0] == token:
+            return cached[1]
+        index: Dict[str, list] = {}
+        slug = self._slug
+        # Slugs per thing are kept between rebuilds, keyed by the raw values
+        # they came from, so a rebuild after a torch light comes or goes only
+        # slugs what actually changed.
+        known = self.__dict__.setdefault("_name_slugs", {})
+        fresh = {}
+        fields = self._NAME_FIELDS
+        for t in list(things):
+            p = getattr(t, "properties", None)
+            if not isinstance(p, dict):
+                continue
+            raw = tuple(p.get(f) for f in fields) + (p.get("id"),)
+            got = known.get(id(t))
+            if got is None or got[0] != raw:
+                pairs = [(slug(v), f) for v, f in zip(raw, fields + ("id",)) if v]
+                got = (raw, pairs)
+            fresh[id(t)] = got
+            for key, field in got[1]:
+                index.setdefault(key, []).append((t, field))
+        self._name_slugs = fresh
+        self._name_index_cache = (token, index)
+        return index
+
     def _nearest_matching_pos(self, target_slug):
         """Nearest alive actor whose type/role/name matches *target_slug*."""
         ppos = self._player_pos()
         best, best_pos = None, None
-        for t in fio.things(self.logic):
+        seen = set()
+        for t, field in self._name_index().get(target_slug, ()):
+            if field not in self._ACTOR_FIELDS or id(t) in seen:
+                continue
+            seen.add(id(t))
             p = t.properties
             if p.get("dead"):
                 continue
             ttype = str(p.get("type", "")).replace("_", "").lower()
             if ttype not in ("npc", "creature", "monster"):
-                continue
-            if target_slug not in (self._slug(p.get("name", "")),
-                                   self._slug(p.get("npc_role", "")),
-                                   self._slug(p.get("monster_type", ""))):
                 continue
             if ppos is None:
                 return list(t.pos)
@@ -2580,13 +2697,14 @@ class MiniwindSession:
 
         # Resolve the prison once, through the same lookup the escort uses so
         # the two can never disagree about where the player is being taken.
+        # A map with no prison still has a watch: the guard still comes for a
+        # wanted player and still takes a fine or a fight -- only the escort
+        # to a cell is off the table (see _arrest_tree).
         prison_pos = self._prison_position()
-        if prison_pos is None:
-            # No prison on this map — clear any stale arrest state and skip.
-            if self._arrest_state:
-                self._clear_arrest()
-            return
 
+        if state == "escorting" and prison_pos is None:
+            self._clear_arrest()
+            return
         if state == "escorting":
             if not self._is_arrest_guard(guard):
                 self._start_arrest_pursuit()
@@ -2639,7 +2757,35 @@ class MiniwindSession:
             self._arrest_state = "approach"
             guard.properties["_arrest_state"] = "approach"
             guard.properties["triggered"] = True
-            guard.properties["awake"]
+            guard.properties["awake"] = False
+            self.flash_head_mark(guard, "!")
+            self.bark(guard, self.rng.choice(STOP_SHOUTS))
+            # The law has it in hand now: whoever the player was fighting
+            # stands down rather than brawling on round the guard.
+            self._calm_player_brawl()
+
+    def _calm_player_brawl(self) -> None:
+        """Townsfolk who were fighting the player stop once a guard steps in.
+        Real enemies (bandits, monsters) do not: they are not the watch's to
+        calm, they are the watch's to fight."""
+        for t in self._actors:
+            p = t.properties
+            if p.get("triggered", True) or p.get("dead"):
+                continue
+            if self._is_guard(t):
+                continue
+            team = p.get("faction") or p.get("team")
+            if factions.is_hostile("player", team) or p.get("_journey_hostile"):
+                continue
+            if p.get("_aggro_target") not in (None, id(self.player_actor)) \
+                    and str(p.get("aggression")) != "hostile":
+                continue
+            p["triggered"] = True
+            p["awake"] = False
+            p.pop("_aggro_target", None)
+            base = p.get("_base_aggression")
+            p["aggression"] = base if base else ("defensive" if p.get("combatant")
+                                                 else "passive")
 
     def nearest_arrest_guard(self, player_pos, radius: float = TALK_RADIUS):
         """Return the guard currently waiting to discuss the player's arrest."""
@@ -2654,6 +2800,21 @@ class MiniwindSession:
         """Build the short guard conversation for the current bounty."""
         bounty = max(1, int(self.game.character.bounty))
         name = guard.properties.get("display_name", "Guard")
+        tree = self._arrest_tree_full(guard, bounty, name)
+        if self._prison_position() is None:
+            # No cell to be taken to: surrendering means paying what you can.
+            for node in tree["nodes"].values():
+                node["responses"] = [
+                    r for r in node["responses"]
+                    if not any(a.get("op") == "begin_escort" for a in r.get("actions", []))]
+                if not any(any(a.get("op") == "pay_bounty" for a in r.get("actions", []))
+                           for r in node["responses"]):
+                    node["responses"].insert(0, {
+                        "text": f"Pay what I owe ({min(bounty, self.game.character.gold)} gold).",
+                        "goto": "END", "actions": [{"op": "pay_bounty"}]})
+        return tree
+
+    def _arrest_tree_full(self, guard, bounty, name):
         if bounty < BOUNTY_FINE_THRESHOLD:
             responses = []
             if self.game.character.gold >= bounty:
@@ -2712,6 +2873,16 @@ class MiniwindSession:
         """Pay a low bounty in gold and end the arrest."""
         amount = max(1, int(self.game.character.bounty))
         if self.game.character.gold < amount:
+            if self._prison_position() is None:
+                # Nowhere to lock you up: the watch takes every coin you have
+                # and lets you go with a warning.
+                taken = int(self.game.character.gold)
+                self.game.add_gold(-taken)
+                self.game.character.bounty = 0
+                self.notify(f"The guard takes all you have ({taken} gold). "
+                            "\"Don't let me see you again.\"", 4.5)
+                self._clear_arrest()
+                return
             self.notify("You cannot afford the fine. You will be escorted to prison.")
             self._begin_escort()
             return
@@ -3121,6 +3292,16 @@ class MiniwindSession:
         # Arrest movement is owned by the runtime, not the normal schedule or
         # MonsterAI. The guard remains visible and walks to the player/prison.
         arrest_state = p.get("_arrest_state")
+        if arrest_state in ("approach", "ready", "escorting") and self._is_combatant(npc):
+            # A real enemy outranks a warrant: a guard on his way to arrest
+            # the player still cuts down the bandits chasing them first, and
+            # picks the arrest up again afterwards.
+            enemy = self._nearest_hostile(npc, self._defend_sight(p))
+            if enemy is not None:
+                if p.get("sched_state") != sched.COMBAT:
+                    self.flash_head_mark(npc, "!")
+                self._engage(npc, enemy)
+                return
         if arrest_state == "pursuit":
             # A pursuing guard is hostile, so the combat AI owns him whenever he
             # can see the player. This only refreshes where he is headed, so he
@@ -3160,28 +3341,52 @@ class MiniwindSession:
         # (b) A defending combatant (e.g. a guard) un-parks into the core AI when
         #     a faction-hostile enemy is near, and re-parks to its post after.
         if combatant:
-            try:
-                defend_sight = max(DEFEND_SIGHT, float(
-                    p.get("sight_range", DEFEND_SIGHT)))
-            except (TypeError, ValueError):
-                defend_sight = DEFEND_SIGHT
+            defend_sight = self._defend_sight(p)
+            subduing = p.get("_subduing")
+            if subduing is not None:
+                target = next((t for t in self._actors if id(t) == subduing), None)
+                if target is None or self._subdued(target):
+                    if target is not None:
+                        self._break_up(npc, target)
+                    else:
+                        p.pop("_subduing", None)
+                    return
             enemy = self._nearest_hostile(npc, defend_sight)
+            brawler = None
             if enemy is None:
                 # Nothing his faction calls an enemy — but a fight happening in
                 # front of a guard is still his business, whoever is in it.
-                enemy = self._fight_to_break_up(npc, defend_sight)
+                brawler = enemy = self._fight_to_break_up(npc, defend_sight)
+            if brawler is not None and self._is_guard(npc) and \
+                    not factions.is_hostile(p.get("faction") or p.get("team"),
+                                            brawler.properties.get("faction")
+                                            or brawler.properties.get("team")):
+                # One of his own townsfolk in a scuffle: he breaks it up --
+                # wades in, and once the fight is knocked out of them, stops.
+                # A watchman does not kill a man for a brawl.
+                opponent_id = brawler.properties.get("_aggro_target")
+                opponent = next((t for t in self._actors if id(t) == opponent_id), None)
+                if self._subdued(brawler) or (opponent is not None
+                                              and self._subdued(opponent)):
+                    # Somebody is already down: the brawl is over.
+                    self._break_up(npc, brawler)
+                    return
+                p["_subduing"] = id(brawler)
+            else:
+                p.pop("_subduing", None)
             if enemy is not None:
                 # Give the core MonsterAI the exact intruder found by the
                 # settlement scan. This avoids waiting for a second perception
                 # pass and makes a returning bandit immediately actionable.
-                p["_aggro_target"] = id(enemy)
-                p["triggered"] = False
-                p["awake"] = True
-                p["sched_state"] = sched.COMBAT
-                p.pop("_flee", None)
+                if p.get("sched_state") != sched.COMBAT and self._is_guard(npc):
+                    self.flash_head_mark(npc, "!")
+                    self.bark(npc, self.rng.choice(
+                        BREAK_UP_SHOUTS if brawler is not None else CHARGE_SHOUTS))
+                self._engage(npc, enemy)
                 return
             elif p.get("sched_state") == sched.COMBAT:
                 p.pop("_aggro_target", None)
+                p.pop("_subduing", None)
                 p["triggered"] = True
                 p["awake"] = False
         else:
@@ -3283,6 +3488,91 @@ class MiniwindSession:
             p.pop("_wander_dest", None)
         else:
             p.pop("_dest", None)
+
+    @staticmethod
+    def _defend_sight(p) -> float:
+        try:
+            return max(DEFEND_SIGHT, float(p.get("sight_range", DEFEND_SIGHT)))
+        except (TypeError, ValueError):
+            return DEFEND_SIGHT
+
+    def _engage(self, npc, enemy) -> None:
+        """Send a combatant at *enemy* through the core combat AI."""
+        p = npc.properties
+        p["_aggro_target"] = id(enemy)
+        p["triggered"] = False
+        p["awake"] = True
+        p["sched_state"] = sched.COMBAT
+        p.pop("_flee", None)
+
+    @staticmethod
+    def _subdued(actor) -> bool:
+        """Whether a brawler has had the fight knocked out of them."""
+        p = actor.properties
+        if p.get("dead"):
+            return True
+        if p.get("health") is None:
+            return False
+        try:
+            hp = float(p.get("health"))
+            top = float(p.get("max_health") or hp or 1)
+        except (TypeError, ValueError):
+            return False
+        return hp <= top * SUBDUE_FRACTION
+
+    def _break_up(self, guard, brawler) -> None:
+        """End a brawl: the brawler and whoever they were fighting stand down,
+        and so does the guard. Nobody dies of it."""
+        calm = [brawler]
+        target_id = brawler.properties.get("_aggro_target")
+        for t in self._actors:
+            if id(t) == target_id or t.properties.get("_aggro_target") == id(brawler):
+                calm.append(t)
+        for t in calm:
+            tp = t.properties
+            if tp.get("dead") or t is self.player_actor:
+                continue
+            tp.pop("_aggro_target", None)
+            if not (str(tp.get("aggression")) == "hostile"
+                    and factions.is_hostile("player", tp.get("faction") or tp.get("team"))):
+                tp["triggered"] = True
+                tp["awake"] = False
+                base = tp.get("_base_aggression")
+                tp["aggression"] = base if base else (
+                    "defensive" if tp.get("combatant") else "passive")
+        gp = guard.properties
+        gp.pop("_aggro_target", None)
+        gp.pop("_subduing", None)
+        gp["triggered"] = True
+        gp["awake"] = False
+        gp["sched_state"] = sched.IDLE
+        self.bark(guard, self.rng.choice(SUBDUED_SHOUTS))
+
+    # ---------------------------------------------------------------- barks
+    def bark(self, thing, text, seconds: float = BARK_SECONDS) -> None:
+        """Have *thing* say *text* aloud for a moment, over its head. Only
+        those near enough to be on screen bother; the HUD draws them."""
+        if thing is None or not text:
+            return
+        ppos = self._player_pos()
+        if ppos is not None and self._dist2d(thing.pos, ppos) > BARK_RADIUS:
+            return
+        import time as _time
+        barks = self.__dict__.setdefault("barks", {})
+        barks[id(thing)] = (thing, str(text), _time.monotonic() + float(seconds))
+
+    def live_barks(self):
+        """``[(thing, text, seconds_left)]`` still being said."""
+        import time as _time
+        now = _time.monotonic()
+        barks = self.__dict__.get("barks") or {}
+        out = []
+        for key, (thing, text, until) in list(barks.items()):
+            if until <= now or thing.properties.get("dead"):
+                barks.pop(key, None)
+                continue
+            out.append((thing, text, until - now))
+        return out
 
     def _decide_distant(self, npc) -> None:
         """The reduced decision path for an actor outside the player's vicinity.
@@ -5168,6 +5458,16 @@ class MiniwindSession:
             props.pop("_head_mark", None)
             self._head_marked.pop(id(npc), None)
 
+    def flash_head_mark(self, npc, mark="!", seconds: float = MARK_FLASH_SECONDS) -> None:
+        """Show *mark* over *npc* for a moment: the guard who has just seen
+        something and is about to do something about it."""
+        if npc is None or mark not in HEAD_MARKS:
+            return
+        import time as _time
+        npc.properties["_head_mark"] = mark
+        npc.properties["_head_mark_until"] = _time.monotonic() + float(seconds)
+        self._head_marked[id(npc)] = npc
+
     def head_mark(self, npc):
         """The mark over *npc* now, or None.
 
@@ -5179,6 +5479,14 @@ class MiniwindSession:
         if props.get("dead"):
             return None
         mark = props.get("_head_mark")
+        until = props.get("_head_mark_until")
+        if until is not None:
+            import time as _time
+            if _time.monotonic() >= float(until):
+                props.pop("_head_mark", None)
+                props.pop("_head_mark_until", None)
+                self._head_marked.pop(id(npc), None)
+                mark = None
         if mark in HEAD_MARKS:
             return mark
         if npc is self._arrest_guard and self._arrest_state in ("approach", "ready"):
@@ -5535,7 +5843,7 @@ class MiniwindSession:
         """
         game_state = getattr(self.logic, "game_state", None)
         queue = getattr(game_state, "queue_sound", None)
-        if queue is None or not os.path.isfile(os.path.join(SOUND_DIR, name)):
+        if queue is None or not sound_available(name):
             return False
         queue({"file": name, "volume": float(volume), "global": True})
         return True
