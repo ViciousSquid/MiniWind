@@ -56,6 +56,18 @@ CAVES = (
      (("gold", 150), ("potion_heal", 2), ("steel_helmet", 1))),
     ("cave06", "Whisperdeep", ("Skeleton", "Shroomling"), 6,
      (("gold", 80), ("potion_magicka", 2), ("potion_heal", 2))),
+    ("cave07", "Rattlebone Warren", ("Skeleton", "Skeleton Archer"), 7,
+     (("gold", 110), ("potion_heal", 2), ("silver_sword", 1))),
+    ("cave08", "Gloomroot Hollow", ("Shroomling", "Giant Spider"), 6,
+     (("gold", 70), ("potion_cure", 2), ("potion_stamina", 2))),
+    ("cave09", "Wrecker's Hole", ("Smuggler", "Bandit"), 6,
+     (("gold", 160), ("crossbow", 1), ("steel_bolt", 20))),
+    ("cave10", "Bearclaw Den", ("Bear", "Wolf"), 5,
+     (("gold", 30), ("fur_cuirass", 1), ("potion_heal", 2))),
+    ("cave11", "The Ashen Deep", ("Ashen Cultist", "Skeleton"), 6,
+     (("gold", 140), ("potion_magicka", 3), ("book_blade", 1))),
+    ("cave12", "Wightfall Barrow", ("Barrow Wight", "Skeleton", "Skeleton Archer"), 7,
+     (("gold", 200), ("kite_shield", 1), ("elven_arrow", 15))),
 )
 
 #: Caves that are a dragon's lair: a great hall carved out of the cave, the
@@ -158,8 +170,19 @@ class CaveMouths:
         self.world["things"] = [t for t in self.world["things"]
                                 if not t.get("properties", {}).get(tag)]
 
-    def find_spots(self, count, seed=5):
-        """*count* cave mouths ``(x, z, ground, downhill (dx, dz))``."""
+    def existing(self):
+        """``{slug: (x, z)}`` of the cave mouths already on the overworld."""
+        out = {}
+        for t in self.world["things"]:
+            p = t.get("properties", {})
+            if t["type"] == "levelchanger" and p.get("_cave"):
+                out[p["_cave"]] = (float(t["pos"][0]), float(t["pos"][2]))
+        return out
+
+    def find_spots(self, count, seed=5, avoid=(), spacing=10000.0):
+        """*count* cave mouths ``(x, z, ground, downhill (dx, dz))``, at
+        least *spacing* from each other and from every ``(x, z)`` in *avoid*
+        (the caves already there)."""
         rng = np.random.default_rng(seed)
         content = np.array([(b["pos"][0], b["pos"][2]) for b in self.world["brushes"]
                             if not ew.Expander._is_tree(b)]
@@ -201,7 +224,8 @@ class CaveMouths:
             z += float(rng.uniform(-60, 60))
             if len(content) and np.min(np.hypot(content[:, 0] - x, content[:, 1] - z)) < 2600:
                 continue
-            if any(math.hypot(x - s[0], z - s[1]) < 10000 for s in spots):
+            if any(math.hypot(x - s[0], z - s[1]) < spacing
+                   for s in list(spots) + [(a[0], a[1]) for a in avoid]):
                 continue
             ux, uz = best[int(k_up[i])][1], best[int(k_up[i])][2]
             spots.append((x, z, self.ground(x, z), (-ux, -uz)))
@@ -504,11 +528,17 @@ def main():
     ap.add_argument("--maps-only", nargs="*", metavar="CAVE",
                     help="only rewrite the cave maps (all, or those named), "
                          "leaving the overworld and its cave mouths alone")
+    ap.add_argument("--add", action="store_true",
+                    help="add the caves the overworld does not have yet, leaving "
+                         "the existing caves, their mouths and their maps alone")
     args = ap.parse_args()
     with open(args.map) as f:
         world = json.load(f)
     if args.maps_only is not None:
         _write_cave_maps(world, args.map, set(args.maps_only))
+        return
+    if args.add:
+        _add_caves(world, args.map)
         return
     mouths = CaveMouths(world)
     mouths._remove_old()
@@ -535,6 +565,46 @@ def main():
     world.setdefault("_miniwind_world", {})["caves"] = [c[0] for c in caves[:len(spots)]]
     ew.dump(world, args.map)
     print(f"wrote {args.map}")
+
+
+def _add_caves(world, path):
+    """Give the overworld the caves in :data:`CAVES` it lacks, as the full
+    run would have, without touching the ones it has (which may have been
+    furnished by hand since)."""
+    mouths = CaveMouths(world)
+    have = mouths.existing()
+    todo = [(k, c) for k, c in enumerate(CAVES) if c[0] not in have]
+    if not todo:
+        print("every cave is already there")
+        return
+    spots = []
+    for spacing in (10000.0, 8000.0, 6500.0, 5000.0):
+        spots = mouths.find_spots(len(todo), avoid=list(have.values()), spacing=spacing)
+        if len(spots) >= len(todo):
+            break
+    if len(spots) < len(todo):
+        print(f"only found {len(spots)} cave mouths for {len(todo)} caves")
+    settings = next(t for t in world["things"] if t["type"] == "miniwindsettings")
+    camera = next((t for t in world["things"] if t["type"] == "logic_command"), None)
+    protos = {}
+    for t in world["things"]:
+        if t["type"] == "creature":
+            protos.setdefault(t["properties"].get("display_name"), t)
+    added = []
+    for (k, (slug, name, monsters, count, loot)), spot in zip(todo, spots):
+        mouths.build(slug, name, spot, k + 1)
+        cave = build_cave_map(slug, name, monsters, count, loot, settings, camera,
+                              protos, path, seed=101 + k * 17)
+        out = os.path.join("maps", f"{slug}.json")
+        with open(out, "w") as f:
+            json.dump(cave, f, indent=1)
+        added.append(slug)
+        print(f"{name}: mouth at {spot[0]:.0f},{spot[2]:.0f},{spot[1]:.0f} -> {out} "
+              f"({len(cave['brushes'])} brushes, {len(cave['things'])} things)")
+    record = world.setdefault("_miniwind_world", {})
+    record["caves"] = sorted(set(record.get("caves") or []) | set(have) | set(added))
+    ew.dump(world, path)
+    print(f"wrote {path}")
 
 
 if __name__ == "__main__":
