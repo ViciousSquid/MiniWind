@@ -82028,6 +82028,1326 @@
                 "top": "Fence2.png"
             },
             "id": "db7ff882-7040-4aea-b1bc-6bae4390d741"
+        },
+        {
+            "pos": [
+                -10606.7,
+                476.1,
+                23216.9
+            ],
+            "size": [
+                40.0,
+                230.0,
+                300.0
+            ],
+            "textures": {
+                "north": "_black.jpg",
+                "south": "_black.jpg",
+                "east": "_black.jpg",
+                "west": "_black.jpg",
+                "top": "_black.jpg",
+                "down": "_black.jpg"
+            },
+            "id": "ac84b0b3-6264-4f07-b395-2c88ec22d257",
+            "_cave": "cave01"
+        },
+        {
+            "pos": [
+                -10422.9,
+                511.1,
+                23132.0
+            ],
+            "size": [
+                110.0,
+                300.0,
+                110.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "203a8644-ea4e-4d3d-a590-b6cd57794e94",
+            "_cave": "cave01"
+        },
+        {
+            "pos": [
+                -10691.6,
+                511.1,
+                23400.7
+            ],
+            "size": [
+                110.0,
+                300.0,
+                110.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "69f83750-40b0-43ec-a256-d7b2742d201c",
+            "_cave": "cave01"
+        },
+        {
+            "pos": [
+                -10571.4,
+                661.1,
+                23252.2
+            ],
+            "size": [
+                130.0,
+                100.0,
+                460.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "34f54c64-9ff5-4242-b4ab-5591233fd0f2",
+            "_cave": "cave01"
+        },
+        {
+            "pos": [
+                -10698.6,
+                511.1,
+                23125.0
+            ],
+            "size": [
+                520.0,
+                340.0,
+                520.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "43f2d220-b1ab-43b9-a729-dc6b7d4e13cd",
+            "_cave": "cave01"
+        },
+        {
+            "pos": [
+                -10290.0,
+                414.3,
+                23809.9
+            ],
+            "size": [
+                62.91313731997864,
+                44.03919612398504,
+                69.2044510519765
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "f50654e1-0a2d-496d-9f42-fd7dc74cffe4",
+            "_cave": "cave01"
+        },
+        {
+            "pos": [
+                -10515.7,
+                414.5,
+                23643.4
+            ],
+            "size": [
+                80.56400086445805,
+                56.39480060512063,
+                88.62040095090387
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "37f3ea8a-8318-4233-b549-6bd413b37aa2",
+            "_cave": "cave01"
+        },
+        {
+            "pos": [
+                -10206.5,
+                424.0,
+                22957.0
+            ],
+            "size": [
+                69.16531641276781,
+                48.415721488937464,
+                76.0818480540446
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "74a634b6-fd80-4930-94b8-46c705c48f67",
+            "_cave": "cave01"
+        },
+        {
+            "pos": [
+                -11083.6,
+                663.6,
+                23148.1
+            ],
+            "size": [
+                81.78601193940801,
+                57.250208357585606,
+                89.96461313334882
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "d540ffa2-4a00-43d4-a08a-84abe02b2b1f",
+            "_cave": "cave01"
+        },
+        {
+            "pos": [
+                -11136.3,
+                597.7,
+                23433.3
+            ],
+            "size": [
+                131.1361253304084,
+                91.79528773128587,
+                144.24973786344924
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "47dd4b84-bec4-45a3-82d1-14f15cab120a",
+            "_cave": "cave01"
+        },
+        {
+            "pos": [
+                -18104.3,
+                375.6,
+                33267.2
+            ],
+            "size": [
+                300.0,
+                230.0,
+                40.0
+            ],
+            "textures": {
+                "north": "_black.jpg",
+                "south": "_black.jpg",
+                "east": "_black.jpg",
+                "west": "_black.jpg",
+                "top": "_black.jpg",
+                "down": "_black.jpg"
+            },
+            "id": "d4f3f679-f219-47ba-9375-d674440ceefd",
+            "_cave": "cave02"
+        },
+        {
+            "pos": [
+                -18294.3,
+                410.6,
+                33197.2
+            ],
+            "size": [
+                110.0,
+                300.0,
+                110.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "88278176-a6e9-4e08-b131-6c60a64acdf0",
+            "_cave": "cave02"
+        },
+        {
+            "pos": [
+                -17914.3,
+                410.6,
+                33197.2
+            ],
+            "size": [
+                110.0,
+                300.0,
+                110.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "b11dd350-fa33-4743-94e9-bb40ebd9974e",
+            "_cave": "cave02"
+        },
+        {
+            "pos": [
+                -18104.3,
+                560.6,
+                33217.2
+            ],
+            "size": [
+                460.0,
+                100.0,
+                130.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "cbede357-9701-4b80-82d1-81985b1affe6",
+            "_cave": "cave02"
+        },
+        {
+            "pos": [
+                -18104.3,
+                410.6,
+                33397.2
+            ],
+            "size": [
+                520.0,
+                340.0,
+                520.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "8a9c137a-5fd1-4b4d-9388-b4eddff374e4",
+            "_cave": "cave02"
+        },
+        {
+            "pos": [
+                -18398.0,
+                366.1,
+                33468.2
+            ],
+            "size": [
+                102.47240480874012,
+                71.73068336611809,
+                112.71964528961415
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "2da63631-7951-4e8a-b318-f925db1fabf3",
+            "_cave": "cave02"
+        },
+        {
+            "pos": [
+                -18407.9,
+                386.1,
+                33403.9
+            ],
+            "size": [
+                115.14190180512712,
+                80.59933126358898,
+                126.65609198563985
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "d308ceab-f601-44b2-aa29-f88c04be1fd1",
+            "_cave": "cave02"
+        },
+        {
+            "pos": [
+                -17701.3,
+                335.7,
+                33443.8
+            ],
+            "size": [
+                88.46736856273249,
+                61.927157993912736,
+                97.31410541900574
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "7a56deca-c815-4b11-aaee-5d412852c614",
+            "_cave": "cave02"
+        },
+        {
+            "pos": [
+                -18474.0,
+                358.4,
+                33472.9
+            ],
+            "size": [
+                63.96321078210488,
+                44.774247547473415,
+                70.35953186031537
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "c58568eb-ef9b-49ce-9eab-6975c1183463",
+            "_cave": "cave02"
+        },
+        {
+            "pos": [
+                -18401.2,
+                274.0,
+                32756.9
+            ],
+            "size": [
+                127.50107841861549,
+                89.25075489303084,
+                140.25118626047706
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "8958cef1-4098-482a-9be9-bed091296fb5",
+            "_cave": "cave02"
+        },
+        {
+            "pos": [
+                -3967.7,
+                413.8,
+                -33216.4
+            ],
+            "size": [
+                300.0,
+                230.0,
+                40.0
+            ],
+            "textures": {
+                "north": "_black.jpg",
+                "south": "_black.jpg",
+                "east": "_black.jpg",
+                "west": "_black.jpg",
+                "top": "_black.jpg",
+                "down": "_black.jpg"
+            },
+            "id": "132ddb85-13a0-4656-bb61-4476ad6ad1f4",
+            "_cave": "cave03"
+        },
+        {
+            "pos": [
+                -3882.9,
+                448.8,
+                -33032.5
+            ],
+            "size": [
+                110.0,
+                300.0,
+                110.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "b9001e1d-7282-475b-9c19-9904fdf364a9",
+            "_cave": "cave03"
+        },
+        {
+            "pos": [
+                -4151.6,
+                448.8,
+                -33301.2
+            ],
+            "size": [
+                110.0,
+                300.0,
+                110.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "d69f1639-718b-4985-ae1d-67e4530e1d5c",
+            "_cave": "cave03"
+        },
+        {
+            "pos": [
+                -4003.1,
+                598.8,
+                -33181.0
+            ],
+            "size": [
+                460.0,
+                100.0,
+                130.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "9b4d8028-2874-49a6-8560-5f1ee34d53c8",
+            "_cave": "cave03"
+        },
+        {
+            "pos": [
+                -3875.8,
+                448.8,
+                -33308.3
+            ],
+            "size": [
+                520.0,
+                340.0,
+                520.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "3f4f2aec-6e28-4747-820f-76f7f7c3b776",
+            "_cave": "cave03"
+        },
+        {
+            "pos": [
+                -4265.9,
+                458.3,
+                -33670.3
+            ],
+            "size": [
+                72.98978402165127,
+                51.09284881515589,
+                80.28876242381641
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "01bfdf55-21ec-441a-80c1-75ef0ba369d5",
+            "_cave": "cave03"
+        },
+        {
+            "pos": [
+                -4476.4,
+                267.3,
+                -32855.7
+            ],
+            "size": [
+                128.4383005523523,
+                89.90681038664661,
+                141.28213060758753
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "110431c0-9c42-4df0-a841-2e741213c40a",
+            "_cave": "cave03"
+        },
+        {
+            "pos": [
+                -4006.2,
+                379.3,
+                -33534.4
+            ],
+            "size": [
+                104.50275640449435,
+                73.15192948314603,
+                114.9530320449438
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "a2eb89c1-890b-409d-acbc-6ea861bf9c96",
+            "_cave": "cave03"
+        },
+        {
+            "pos": [
+                -4356.1,
+                429.5,
+                -33594.7
+            ],
+            "size": [
+                121.1462804192643,
+                84.802396293485,
+                133.26090846119075
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "44b82d72-67f2-44f4-b836-152f8d9b6989",
+            "_cave": "cave03"
+        },
+        {
+            "pos": [
+                -3580.4,
+                254.4,
+                -32981.4
+            ],
+            "size": [
+                108.24659196069595,
+                75.77261437248715,
+                119.07125115676556
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "e6558708-fdc3-408d-9476-c0d58e28d31f",
+            "_cave": "cave03"
+        },
+        {
+            "pos": [
+                12565.1,
+                499.1,
+                -26552.1
+            ],
+            "size": [
+                40.0,
+                230.0,
+                300.0
+            ],
+            "textures": {
+                "north": "_black.jpg",
+                "south": "_black.jpg",
+                "east": "_black.jpg",
+                "west": "_black.jpg",
+                "top": "_black.jpg",
+                "down": "_black.jpg"
+            },
+            "id": "e59b8167-7084-4028-a730-8151e6adb33a",
+            "_cave": "cave04"
+        },
+        {
+            "pos": [
+                12381.3,
+                534.1,
+                -26467.2
+            ],
+            "size": [
+                110.0,
+                300.0,
+                110.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "6c40a674-1e17-4a56-b007-8805c1b635f2",
+            "_cave": "cave04"
+        },
+        {
+            "pos": [
+                12650.0,
+                534.1,
+                -26735.9
+            ],
+            "size": [
+                110.0,
+                300.0,
+                110.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "68d870e7-9754-4f3c-903e-f65da6bdd75e",
+            "_cave": "cave04"
+        },
+        {
+            "pos": [
+                12529.8,
+                684.1,
+                -26587.4
+            ],
+            "size": [
+                130.0,
+                100.0,
+                460.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "ac01b2f6-1ffb-4b1c-a13c-35c37704de38",
+            "_cave": "cave04"
+        },
+        {
+            "pos": [
+                12657.1,
+                534.1,
+                -26460.2
+            ],
+            "size": [
+                520.0,
+                340.0,
+                520.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "76eb6495-a646-4ed9-90fd-ccfce9cc06cc",
+            "_cave": "cave04"
+        },
+        {
+            "pos": [
+                12327.3,
+                396.4,
+                -26895.1
+            ],
+            "size": [
+                136.22193719661794,
+                95.35535603763256,
+                149.84413091627974
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "1ae95e08-a1a6-42ea-856e-7b9ad7113a4c",
+            "_cave": "cave04"
+        },
+        {
+            "pos": [
+                13016.7,
+                592.1,
+                -26797.3
+            ],
+            "size": [
+                126.92873778569985,
+                88.8501164499899,
+                139.62161156426984
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "52c4c5fb-005f-49cd-8597-fb430cc1f22e",
+            "_cave": "cave04"
+        },
+        {
+            "pos": [
+                12933.8,
+                615.6,
+                -26650.1
+            ],
+            "size": [
+                117.61601429464056,
+                82.33121000624838,
+                129.37761572410463
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "920980a0-69ed-4185-a9df-b681c853c473",
+            "_cave": "cave04"
+        },
+        {
+            "pos": [
+                12212.3,
+                369.6,
+                -26874.5
+            ],
+            "size": [
+                89.05194424515571,
+                62.33636097160899,
+                97.9571386696713
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "0acbe09a-729e-4d15-8f28-ce3ac9d887fe",
+            "_cave": "cave04"
+        },
+        {
+            "pos": [
+                13054.1,
+                722.1,
+                -26402.3
+            ],
+            "size": [
+                136.00893348867496,
+                95.20625344207247,
+                149.60982683754247
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "9bd49d4b-239c-4968-81a5-5e81ab56bde3",
+            "_cave": "cave04"
+        },
+        {
+            "pos": [
+                -33793.8,
+                488.6,
+                13917.2
+            ],
+            "size": [
+                40.0,
+                230.0,
+                300.0
+            ],
+            "textures": {
+                "north": "_black.jpg",
+                "south": "_black.jpg",
+                "east": "_black.jpg",
+                "west": "_black.jpg",
+                "top": "_black.jpg",
+                "down": "_black.jpg"
+            },
+            "id": "daafef0b-9e72-4e94-8447-85ed3f7e45ad",
+            "_cave": "cave05"
+        },
+        {
+            "pos": [
+                -33723.8,
+                523.6,
+                13727.2
+            ],
+            "size": [
+                110.0,
+                300.0,
+                110.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "ae1ec755-7aa6-419c-a717-a3cca8a2b30d",
+            "_cave": "cave05"
+        },
+        {
+            "pos": [
+                -33723.8,
+                523.6,
+                14107.2
+            ],
+            "size": [
+                110.0,
+                300.0,
+                110.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "718aa3d1-e9ad-410f-bed2-03982461be9a",
+            "_cave": "cave05"
+        },
+        {
+            "pos": [
+                -33743.8,
+                673.6,
+                13917.2
+            ],
+            "size": [
+                130.0,
+                100.0,
+                460.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "037479c6-e267-4520-9354-1bd3989d07ec",
+            "_cave": "cave05"
+        },
+        {
+            "pos": [
+                -33923.8,
+                523.6,
+                13917.2
+            ],
+            "size": [
+                520.0,
+                340.0,
+                520.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "34614114-8115-4c01-81bd-eb308dc67ad9",
+            "_cave": "cave05"
+        },
+        {
+            "pos": [
+                -33270.2,
+                351.4,
+                14163.6
+            ],
+            "size": [
+                62.0063932071466,
+                43.404475245002615,
+                68.20703252786127
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "b69e4f0b-697b-49f1-b282-a7f3c06fd559",
+            "_cave": "cave05"
+        },
+        {
+            "pos": [
+                -34227.1,
+                543.7,
+                14087.0
+            ],
+            "size": [
+                82.07507665953797,
+                57.452553661676575,
+                90.28258432549177
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "64b45dc6-1832-4797-92dd-a85c2c5705df",
+            "_cave": "cave05"
+        },
+        {
+            "pos": [
+                -33410.6,
+                367.6,
+                14351.3
+            ],
+            "size": [
+                131.37513381768213,
+                91.96259367237748,
+                144.51264719945036
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "a02bcc06-64d7-40ae-a110-cf8c8ceda326",
+            "_cave": "cave05"
+        },
+        {
+            "pos": [
+                -33506.4,
+                388.1,
+                13437.2
+            ],
+            "size": [
+                94.5188790880855,
+                66.16321536165985,
+                103.97076699689406
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "a32a7ed1-433f-47ee-997f-9959faf17900",
+            "_cave": "cave05"
+        },
+        {
+            "pos": [
+                -33349.6,
+                348.3,
+                13895.3
+            ],
+            "size": [
+                65.25423031819346,
+                45.67796122273542,
+                71.77965335001282
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "1c5a124e-aca3-4cae-b6f8-01ad623ab5e4",
+            "_cave": "cave05"
+        },
+        {
+            "pos": [
+                -33774.8,
+                518.2,
+                30888.9
+            ],
+            "size": [
+                40.0,
+                230.0,
+                300.0
+            ],
+            "textures": {
+                "north": "_black.jpg",
+                "south": "_black.jpg",
+                "east": "_black.jpg",
+                "west": "_black.jpg",
+                "top": "_black.jpg",
+                "down": "_black.jpg"
+            },
+            "id": "54654b7f-d4ef-4564-988d-66b856070008",
+            "_cave": "cave06"
+        },
+        {
+            "pos": [
+                -33704.8,
+                553.2,
+                30698.9
+            ],
+            "size": [
+                110.0,
+                300.0,
+                110.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "9fa8dcf6-1c42-494c-9c6d-6b421d8b39f7",
+            "_cave": "cave06"
+        },
+        {
+            "pos": [
+                -33704.8,
+                553.2,
+                31078.9
+            ],
+            "size": [
+                110.0,
+                300.0,
+                110.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "f183fcb8-6478-4d26-af1e-fde6091fd408",
+            "_cave": "cave06"
+        },
+        {
+            "pos": [
+                -33724.8,
+                703.2,
+                30888.9
+            ],
+            "size": [
+                130.0,
+                100.0,
+                460.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "c40ac510-8219-4f9d-bcfd-31cad6f6f9c2",
+            "_cave": "cave06"
+        },
+        {
+            "pos": [
+                -33904.8,
+                553.2,
+                30888.9
+            ],
+            "size": [
+                520.0,
+                340.0,
+                520.0
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "fbfcc94a-a8be-45c0-acc9-1bd6f603293d",
+            "_cave": "cave06"
+        },
+        {
+            "pos": [
+                -33619.0,
+                437.6,
+                30460.9
+            ],
+            "size": [
+                78.72603493607212,
+                55.108224455250486,
+                86.59863842967934
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "5bfe45a6-b1df-4578-b8b5-b22febca8ede",
+            "_cave": "cave06"
+        },
+        {
+            "pos": [
+                -33329.2,
+                358.2,
+                31382.1
+            ],
+            "size": [
+                114.3735173172289,
+                80.06146212206022,
+                125.8108690489518
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "82408e7f-4087-47d2-bf66-d598cc5e3d03",
+            "_cave": "cave06"
+        },
+        {
+            "pos": [
+                -33766.1,
+                439.4,
+                31267.3
+            ],
+            "size": [
+                121.31327550115793,
+                84.91929285081055,
+                133.44460305127373
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "c171d325-2b73-445d-8839-e752991165ba",
+            "_cave": "cave06"
+        },
+        {
+            "pos": [
+                -33285.3,
+                340.5,
+                30918.9
+            ],
+            "size": [
+                111.5960031784586,
+                78.11720222492102,
+                122.75560349630447
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "6855f75e-20c8-4063-b869-da8dee48b565",
+            "_cave": "cave06"
+        },
+        {
+            "pos": [
+                -33737.6,
+                421.7,
+                31288.5
+            ],
+            "size": [
+                85.76792818123542,
+                60.03754972686479,
+                94.34472099935897
+            ],
+            "textures": {
+                "north": "tiledrock.jpg",
+                "south": "tiledrock.jpg",
+                "east": "tiledrock.jpg",
+                "west": "tiledrock.jpg",
+                "top": "Stone_09-512x512.png",
+                "down": "tiledrock.jpg"
+            },
+            "id": "567e2e71-3a08-415b-a067-948219fc2b85",
+            "_cave": "cave06"
         }
     ],
     "things": [
@@ -82088,7 +83408,9 @@
                 "type": "playerstart",
                 "name": "PlayerStart_1",
                 "id": "3e3ac47f-e994-47ee-8f2b-2f4582b36d13",
-                "angle": 0.0
+                "angle": 0.0,
+                "primary": true,
+                "creation_index": 0
             },
             "io_connections": [
                 {
@@ -146766,6 +148088,558 @@
                 "sched_state": "IDLE"
             },
             "io_connections": []
+        },
+        {
+            "type": "levelchanger",
+            "pos": [
+                -10543.1,
+                437.1,
+                23280.5
+            ],
+            "properties": {
+                "type": "levelchanger",
+                "name": "LevelChanger_cave01",
+                "id": "dc0d1e8a-2cd4-438f-9d14-33bd955af8e8",
+                "target_map": "maps/cave01.json",
+                "delay": 0.0,
+                "fade_time": 0.5,
+                "show_radius": false,
+                "radius": 170.0,
+                "usable": true,
+                "destination_spawn": "entrance",
+                "generate_level": false,
+                "prompt": "[E] Enter Wolfmaw Cave",
+                "confirm": false,
+                "_cave": "cave01"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "playerstart",
+            "pos": [
+                -10345.1,
+                470.1,
+                23478.5
+            ],
+            "properties": {
+                "type": "playerstart",
+                "name": "cave01_exit",
+                "id": "4fa6a2dc-a7b4-4334-83b4-4bac33a8e397",
+                "angle": 225.0,
+                "primary": false,
+                "creation_index": 1,
+                "_cave": "cave01"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "light",
+            "pos": [
+                -10472.4,
+                553.1,
+                23351.2
+            ],
+            "properties": {
+                "type": "light",
+                "name": "Light_cave01_mouth",
+                "id": "71ee9a4c-a566-49ca-9004-93f144a599ac",
+                "colour": [
+                    255,
+                    170,
+                    100
+                ],
+                "intensity": 1.6,
+                "radius": 420.0,
+                "state": "on",
+                "show_radius": false,
+                "casts_shadows": false,
+                "parent_mover": "",
+                "parent_offset": [
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                "_cave": "cave01"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "marker",
+            "pos": [
+                -10451.2,
+                445.1,
+                23372.4
+            ],
+            "properties": {
+                "type": "marker",
+                "name": "loc_cave01",
+                "id": "fdd4e8c6-2663-40e1-aad8-4da44b09935c",
+                "marker_kind": "location",
+                "place_name": "Wolfmaw Cave",
+                "discover_radius": 700.0,
+                "_cave": "cave01"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "levelchanger",
+            "pos": [
+                -18104.3,
+                336.6,
+                33177.2
+            ],
+            "properties": {
+                "type": "levelchanger",
+                "name": "LevelChanger_cave02",
+                "id": "a95a1da7-6a1a-434e-afbc-57d9e840f676",
+                "target_map": "maps/cave02.json",
+                "delay": 0.0,
+                "fade_time": 0.5,
+                "show_radius": false,
+                "radius": 170.0,
+                "usable": true,
+                "destination_spawn": "entrance",
+                "generate_level": false,
+                "prompt": "[E] Enter The Bonepit",
+                "confirm": false,
+                "_cave": "cave02"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "playerstart",
+            "pos": [
+                -18104.3,
+                313.4,
+                32897.2
+            ],
+            "properties": {
+                "type": "playerstart",
+                "name": "cave02_exit",
+                "id": "271c1f17-6a3d-4558-a4a4-90dadc5402c0",
+                "angle": 90.0,
+                "primary": false,
+                "creation_index": 2,
+                "_cave": "cave02"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "light",
+            "pos": [
+                -18104.3,
+                452.6,
+                33077.2
+            ],
+            "properties": {
+                "type": "light",
+                "name": "Light_cave02_mouth",
+                "id": "98fbfc7a-163b-4411-984d-68822d6fd1f0",
+                "colour": [
+                    255,
+                    170,
+                    100
+                ],
+                "intensity": 1.6,
+                "radius": 420.0,
+                "state": "on",
+                "show_radius": false,
+                "casts_shadows": false,
+                "parent_mover": "",
+                "parent_offset": [
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                "_cave": "cave02"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "marker",
+            "pos": [
+                -18104.3,
+                344.6,
+                33047.2
+            ],
+            "properties": {
+                "type": "marker",
+                "name": "loc_cave02",
+                "id": "4eddebea-a139-472f-92cd-ce67e64e9a76",
+                "marker_kind": "location",
+                "place_name": "The Bonepit",
+                "discover_radius": 700.0,
+                "_cave": "cave02"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "levelchanger",
+            "pos": [
+                -4031.4,
+                374.8,
+                -33152.7
+            ],
+            "properties": {
+                "type": "levelchanger",
+                "name": "LevelChanger_cave03",
+                "id": "ebe3c3ed-ef63-49a2-b0a0-5d25b77f5000",
+                "target_map": "maps/cave03.json",
+                "delay": 0.0,
+                "fade_time": 0.5,
+                "show_radius": false,
+                "radius": 170.0,
+                "usable": true,
+                "destination_spawn": "entrance",
+                "generate_level": false,
+                "prompt": "[E] Enter Glowcap Grotto",
+                "confirm": false,
+                "_cave": "cave03"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "playerstart",
+            "pos": [
+                -4229.4,
+                327.4,
+                -32954.7
+            ],
+            "properties": {
+                "type": "playerstart",
+                "name": "cave03_exit",
+                "id": "080e30f7-3391-460c-9814-9b423dd5f2a0",
+                "angle": 315.0,
+                "primary": false,
+                "creation_index": 3,
+                "_cave": "cave03"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "light",
+            "pos": [
+                -4102.1,
+                490.8,
+                -33082.0
+            ],
+            "properties": {
+                "type": "light",
+                "name": "Light_cave03_mouth",
+                "id": "60f8a0da-83e0-4c80-9963-a465801d9e2e",
+                "colour": [
+                    255,
+                    170,
+                    100
+                ],
+                "intensity": 1.6,
+                "radius": 420.0,
+                "state": "on",
+                "show_radius": false,
+                "casts_shadows": false,
+                "parent_mover": "",
+                "parent_offset": [
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                "_cave": "cave03"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "marker",
+            "pos": [
+                -4123.3,
+                382.8,
+                -33060.8
+            ],
+            "properties": {
+                "type": "marker",
+                "name": "loc_cave03",
+                "id": "9ad847eb-093a-428f-8cae-106ae24d3574",
+                "marker_kind": "location",
+                "place_name": "Glowcap Grotto",
+                "discover_radius": 700.0,
+                "_cave": "cave03"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "levelchanger",
+            "pos": [
+                12501.5,
+                460.1,
+                -26615.7
+            ],
+            "properties": {
+                "type": "levelchanger",
+                "name": "LevelChanger_cave04",
+                "id": "ee55638a-ac1f-4ef3-b78b-fb723d00a543",
+                "target_map": "maps/cave04.json",
+                "delay": 0.0,
+                "fade_time": 0.5,
+                "show_radius": false,
+                "radius": 170.0,
+                "usable": true,
+                "destination_spawn": "entrance",
+                "generate_level": false,
+                "prompt": "[E] Enter Greenskin Hole",
+                "confirm": false,
+                "_cave": "cave04"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "playerstart",
+            "pos": [
+                12303.5,
+                427.8,
+                -26813.7
+            ],
+            "properties": {
+                "type": "playerstart",
+                "name": "cave04_exit",
+                "id": "ffe368fd-a576-4c3b-8d3d-3416a2905beb",
+                "angle": 45.0,
+                "primary": false,
+                "creation_index": 4,
+                "_cave": "cave04"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "light",
+            "pos": [
+                12430.8,
+                576.1,
+                -26686.4
+            ],
+            "properties": {
+                "type": "light",
+                "name": "Light_cave04_mouth",
+                "id": "e391b6f6-3e63-4713-9b85-39e52bf40c8f",
+                "colour": [
+                    255,
+                    170,
+                    100
+                ],
+                "intensity": 1.6,
+                "radius": 420.0,
+                "state": "on",
+                "show_radius": false,
+                "casts_shadows": false,
+                "parent_mover": "",
+                "parent_offset": [
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                "_cave": "cave04"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "marker",
+            "pos": [
+                12409.6,
+                468.1,
+                -26707.7
+            ],
+            "properties": {
+                "type": "marker",
+                "name": "loc_cave04",
+                "id": "51f526df-a5e8-4dbe-89fb-a96fc444c46a",
+                "marker_kind": "location",
+                "place_name": "Greenskin Hole",
+                "discover_radius": 700.0,
+                "_cave": "cave04"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "levelchanger",
+            "pos": [
+                -33703.8,
+                449.6,
+                13917.2
+            ],
+            "properties": {
+                "type": "levelchanger",
+                "name": "LevelChanger_cave05",
+                "id": "4623d544-9032-445c-9bda-c9ea97afbc93",
+                "target_map": "maps/cave05.json",
+                "delay": 0.0,
+                "fade_time": 0.5,
+                "show_radius": false,
+                "radius": 170.0,
+                "usable": true,
+                "destination_spawn": "entrance",
+                "generate_level": false,
+                "prompt": "[E] Enter Frostfang Cavern",
+                "confirm": false,
+                "_cave": "cave05"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "playerstart",
+            "pos": [
+                -33423.8,
+                413.8,
+                13917.2
+            ],
+            "properties": {
+                "type": "playerstart",
+                "name": "cave05_exit",
+                "id": "07146fb4-96ea-42aa-a470-632249e28bd6",
+                "angle": 180.0,
+                "primary": false,
+                "creation_index": 5,
+                "_cave": "cave05"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "light",
+            "pos": [
+                -33603.8,
+                565.6,
+                13917.2
+            ],
+            "properties": {
+                "type": "light",
+                "name": "Light_cave05_mouth",
+                "id": "5cf9b888-76cf-44be-b9fb-93619c5c3760",
+                "colour": [
+                    255,
+                    170,
+                    100
+                ],
+                "intensity": 1.6,
+                "radius": 420.0,
+                "state": "on",
+                "show_radius": false,
+                "casts_shadows": false,
+                "parent_mover": "",
+                "parent_offset": [
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                "_cave": "cave05"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "marker",
+            "pos": [
+                -33573.8,
+                457.6,
+                13917.2
+            ],
+            "properties": {
+                "type": "marker",
+                "name": "loc_cave05",
+                "id": "f0b454c6-6d5d-416f-9a6c-5d80247136e6",
+                "marker_kind": "location",
+                "place_name": "Frostfang Cavern",
+                "discover_radius": 700.0,
+                "_cave": "cave05"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "levelchanger",
+            "pos": [
+                -33684.8,
+                479.2,
+                30888.9
+            ],
+            "properties": {
+                "type": "levelchanger",
+                "name": "LevelChanger_cave06",
+                "id": "67bf4aca-aa00-4d9d-82ed-7f448bec1209",
+                "target_map": "maps/cave06.json",
+                "delay": 0.0,
+                "fade_time": 0.5,
+                "show_radius": false,
+                "radius": 170.0,
+                "usable": true,
+                "destination_spawn": "entrance",
+                "generate_level": false,
+                "prompt": "[E] Enter Whisperdeep",
+                "confirm": false,
+                "_cave": "cave06"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "playerstart",
+            "pos": [
+                -33404.8,
+                406.3,
+                30888.9
+            ],
+            "properties": {
+                "type": "playerstart",
+                "name": "cave06_exit",
+                "id": "6e034ecd-12c1-4f59-9e17-049655f4a48f",
+                "angle": 180.0,
+                "primary": false,
+                "creation_index": 6,
+                "_cave": "cave06"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "light",
+            "pos": [
+                -33584.8,
+                595.2,
+                30888.9
+            ],
+            "properties": {
+                "type": "light",
+                "name": "Light_cave06_mouth",
+                "id": "110a37d1-32d5-4c55-b01d-04cff19d1b75",
+                "colour": [
+                    255,
+                    170,
+                    100
+                ],
+                "intensity": 1.6,
+                "radius": 420.0,
+                "state": "on",
+                "show_radius": false,
+                "casts_shadows": false,
+                "parent_mover": "",
+                "parent_offset": [
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                "_cave": "cave06"
+            },
+            "io_connections": []
+        },
+        {
+            "type": "marker",
+            "pos": [
+                -33554.8,
+                487.2,
+                30888.9
+            ],
+            "properties": {
+                "type": "marker",
+                "name": "loc_cave06",
+                "id": "bbdcd8b3-f300-42b8-a5fb-144065541f19",
+                "marker_kind": "location",
+                "place_name": "Whisperdeep",
+                "discover_radius": 700.0,
+                "_cave": "cave06"
+            },
+            "io_connections": []
         }
     ],
     "created": "2026-09-16T19:31:20",
@@ -146886,6 +148760,14 @@
             "major_sites": 28,
             "secondary_sites": 120,
             "secondary_target": 120
-        }
+        },
+        "caves": [
+            "cave01",
+            "cave02",
+            "cave03",
+            "cave04",
+            "cave05",
+            "cave06"
+        ]
     }
 }
