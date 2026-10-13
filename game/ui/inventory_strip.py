@@ -161,8 +161,11 @@ class InventoryStrip(FloatingWindow):
             return
         self.selected = max(0, min(self.selected, len(self._rects) - 1))
         worn = set()
+        hands = []
         try:
             worn = {v for v in self.session.game.character.equipment.values() if v}
+            # A weapon is lit by the copy in hand, not every slot of its kind.
+            hands = self.session.strip_hands()
         except Exception:
             pass
         dragged = drag.dragged_id()
@@ -179,7 +182,9 @@ class InventoryStrip(FloatingWindow):
             self._draw_tile(painter, rect, stack, sel, hot, dragged is not None)
             hide = mine and self._press is not None and self._press[1] == i
             if iid and not hide:
-                self._draw_item(painter, rect, iid, stack, iid in worn)
+                held = (hands[i] is not None if _is_weapon(iid) and i < len(hands)
+                        else iid in worn)
+                self._draw_item(painter, rect, iid, stack, held)
             painter.setFont(self.f_number)
             painter.setPen(_EMBER if sel else _NUMBER)
             painter.drawText(QRect(rect.x(), rect.bottom() + 2, rect.width(), NUMBERS),

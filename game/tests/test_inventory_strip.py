@@ -405,3 +405,65 @@ def test_the_console_toggles_torch_shadows_and_saves_it():
         assert window.saved == 5
     finally:
         runtime.set_editor_config(previous)
+
+
+# ------------------------------------------------- a slot per weapon copy
+
+def test_each_copy_of_a_weapon_takes_its_own_slot():
+    s = _session()
+    _give(s, "iron_shortsword", "potion_heal_minor", "potion_heal_minor")
+    assert _ids(s)[:3] == ["iron_shortsword", "potion_heal_minor", None]
+    _give(s, "iron_shortsword")                             # a second one, later
+    assert _ids(s)[:4] == ["iron_shortsword", "potion_heal_minor", "iron_shortsword", None]
+    slots = s.strip_slots()
+    assert slots[0]["qty"] == slots[2]["qty"] == 1          # one blade each
+    assert slots[1]["qty"] == 2                             # potions still stack
+
+
+def test_a_pair_of_the_same_blade_is_dual_wielded_from_its_two_slots():
+    s = _session()
+    _give(s, "iron_shortsword", "iron_shortsword")
+    assert _ids(s)[:2] == ["iron_shortsword", "iron_shortsword"]
+    assert s.select_strip_slot(0) and _hands(s) == ("iron_shortsword", None)
+    assert s.strip_hands()[:2] == ["main", None]
+    assert s.select_strip_slot(1) and _hands(s) == ("iron_shortsword", "iron_shortsword")
+    assert s.strip_hands()[:2] == ["main", "off"]
+    assert s.select_strip_slot(1) and _hands(s) == ("iron_shortsword", None)
+
+
+def test_a_single_blade_never_fills_both_hands_and_a_sold_copy_leaves_its_slot():
+    from ..rpg import inventory as inv
+    s = _session()
+    _give(s, "iron_shortsword", "iron_shortsword")
+    s.select_strip_slot(0)
+    s.select_strip_slot(1)
+    inv.remove_item(s.game.character.inventory, "iron_shortsword", 1)
+    assert _ids(s)[:2] == ["iron_shortsword", None]
+    from ..rpg import equipment
+    assert not equipment.dual_wielding(s.game.character)
+
+
+def test_a_copy_dragged_out_stays_out_and_copies_swap_between_slots():
+    s = _session()
+    _give(s, "iron_shortsword", "iron_shortsword", "potion_heal_minor")
+    assert _ids(s)[:3] == ["iron_shortsword", "iron_shortsword", "potion_heal_minor"]
+    assert s.item_drop(("strip", 1, "iron_shortsword"), ("pack", None))
+    assert _ids(s)[:3] == ["iron_shortsword", None, "potion_heal_minor"]
+    assert _ids(s)[:3] == ["iron_shortsword", None, "potion_heal_minor"]   # not refilled
+    # From the pack onto a slot: the copy without a slot takes it.
+    assert s.item_drop(("pack", None, "iron_shortsword"), ("strip", 5))
+    assert _ids(s).count("iron_shortsword") == 2 and _ids(s)[5] == "iron_shortsword"
+    # Between strip slots the dragged copy moves, the other stays.
+    assert s.item_drop(("strip", 5, "iron_shortsword"), ("strip", 2))
+    assert _ids(s)[:3] == ["iron_shortsword", None, "iron_shortsword"]
+    assert _ids(s)[5] == "potion_heal_minor"
+
+
+def test_saved_and_loaded_the_copies_keep_their_slots():
+    from ..rpg.character import Character
+    s = _session()
+    _give(s, "iron_shortsword", "iron_shortsword")
+    s.strip_slots()
+    s.game.character.strip[1] = None                       # dragged one out
+    s.game.character = Character.from_dict(s.game.character.to_dict())
+    assert _ids(s)[:2] == ["iron_shortsword", None]        # not offered again

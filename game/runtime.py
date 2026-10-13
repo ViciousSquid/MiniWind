@@ -5997,12 +5997,26 @@ class MiniwindSession:
         self.strip_slots()
         return self._strip_size
 
+    @staticmethod
+    def _strip_copies(stack) -> int:
+        """How many strip slots a carried *stack* may take: one per copy of a
+        weapon -- each blade is drawn from a slot of its own, so a pair to
+        dual wield costs two -- and one for anything else (its count shows)."""
+        if not stack:
+            return 0
+        d = rpg_items.get(stack.get("id"))
+        if d is not None and d.category == rpg_items.WEAPON:
+            return max(1, int(stack.get("qty", 1) or 1))
+        return 1
+
     def strip_slots(self) -> List[Optional[Dict]]:
-        """The strip's slots, each the carried stack in it or None.
+        """The strip's slots, each the carried stack in it or None. A weapon
+        carried more than once is in a slot per copy, each shown as one.
 
         Kept honest on every ask, as the quick slots are: a thing no longer
-        carried leaves its slot, and one picked up for the first time takes
-        the first free slot by itself."""
+        carried leaves its slot (a copy sold, the slot of the last one), and
+        one picked up -- or another copy of a weapon -- takes the first free
+        slot by itself."""
         c = getattr(self.game, "character", None)
         if c is None:
             return []
@@ -6016,40 +6030,94 @@ class MiniwindSession:
         seen = getattr(c, "_strip_seen", None)
         if seen is None:
             seen = c._strip_seen = set()
+        #: Copies of each item offered a slot so far (a weapon's can be more
+        #: than one); an id only in *seen* (an older save) counts as one.
+        offered = getattr(c, "_strip_offered", None)
+        if offered is None:
+            offered = c._strip_offered = {}
         carried = {}
         for stack in c.inventory or ():
             if isinstance(stack, dict) and stack.get("id") and int(stack.get("qty", 1) or 0) > 0:
                 carried.setdefault(str(stack["id"]), stack)
+        placed = {}
         for i, iid in enumerate(strip):
-            if iid and iid not in carried:
-                strip[i] = None
-        for iid in carried:
-            if iid in seen:
+            if not iid:
                 continue
+            n = placed.get(iid, 0) + 1
+            if n > self._strip_copies(carried.get(iid)):
+                strip[i] = None
+            else:
+                placed[iid] = n
+        for iid, stack in carried.items():
+            want = self._strip_copies(stack)
+            done = offered.get(iid, 1 if iid in seen else 0)
+            while done < want:
+                done += 1
+                if placed.get(iid, 0) < want and None in strip:
+                    strip[strip.index(None)] = iid
+                    placed[iid] = placed.get(iid, 0) + 1
+            offered[iid] = min(done, want)
             seen.add(iid)
-            if iid not in strip and None in strip:
-                strip[strip.index(None)] = iid
         # Forget what has gone, so it is offered a slot again when it comes back.
         seen.intersection_update(carried)
-        return [carried.get(iid) if iid else None for iid in strip]
+        for iid in [k for k in offered if k not in carried]:
+            del offered[iid]
+        out = []
+        for iid in strip:
+            stack = carried.get(iid) if iid else None
+            if stack is not None and self._strip_copies(stack) > 1:
+                stack = dict(stack, qty=1)       # one copy per slot
+            out.append(stack)
+        return out
 
-    def set_strip_slot(self, index: int, item_id) -> bool:
+    def strip_hands(self) -> List[Optional[str]]:
+        """Per strip slot, the hand its weapon copy is held in: ``"main"``,
+        ``"off"`` or None. Copies of one weapon map to the hands in order --
+        the first slot holding it is the main hand's copy when the main hand
+        holds it, the next the off hand's."""
+        c = self.game.character
+        main = eq.weapon(c)
+        off = eq.offhand_weapon(c)
+        out, seen = [], {}
+        for stack in self.strip_slots():
+            iid = stack.get("id") if stack else None
+            hand = None
+            if iid:
+                copy = seen.get(iid, 0)
+                seen[iid] = copy + 1
+                hands = [h for h, d in (("main", main), ("off", off))
+                         if d is not None and d.id == iid]
+                hand = hands[copy] if copy < len(hands) else None
+            out.append(hand)
+        return out
+
+    def set_strip_slot(self, index: int, item_id, from_index=None) -> bool:
         """Put *item_id* (carried) in strip slot *index*, or empty it with
-        None. Something already in another slot swaps with what was here."""
+        None. Dragged from another strip slot (*from_index*), the two swap.
+        From elsewhere, a copy without a slot yet takes this one; otherwise
+        the slot it was in swaps with this one."""
         self.strip_slots()
-        strip = self.game.character.strip
+        c = self.game.character
+        strip = c.strip
         index = int(index)
         if not 0 <= index < len(strip):
             return False
         if item_id is None:
             strip[index] = None
             return True
-        if not inv.has_item(self.game.character.inventory, item_id, 1):
+        if not inv.has_item(c.inventory, item_id, 1):
             return False
-        if item_id in strip:
+        if from_index is not None and 0 <= int(from_index) < len(strip) \
+                and strip[int(from_index)] == item_id:
+            strip[int(from_index)], strip[index] = strip[index], item_id
+            return True
+        if strip[index] == item_id:
+            return True
+        copies = self._strip_copies(inv.find(c.inventory, item_id))
+        if item_id in strip and strip.count(item_id) >= copies:
             strip[strip.index(item_id)] = strip[index]
         strip[index] = item_id
-        self.game.character._strip_seen.add(item_id)
+        c._strip_seen.add(item_id)
         return True
 
     def select_strip_slot(self, index: int) -> bool:
@@ -6067,11 +6135,14 @@ class MiniwindSession:
         d = rpg_items.get(stack.get("id"))
         if d is None or d.category != rpg_items.WEAPON:
             return False
-        return self.ready_weapon(d.id)
+        copy = sum(1 for st in slots[:index] if st and st.get("id") == d.id)
+        return self.ready_weapon(d.id, copy)
 
-    def ready_weapon(self, item_id) -> bool:
+    def ready_weapon(self, item_id, copy=None) -> bool:
         """Take a carried weapon in hand at once, or put it away if it is
-        already there.
+        already there. *copy* is which copy of it (0, 1 ...) on the strip:
+        a pair of the same blade is two copies, one per hand (see
+        :meth:`strip_hands`); None means whichever is in hand.
 
         The main hand first. With the main hand already holding a weapon, a
         one-handed weapon goes to the off hand (the shield slot) and the two
@@ -6087,8 +6158,13 @@ class MiniwindSession:
         self._cancel_bow_draw()
         main = eq.weapon(c)
         off = eq.offhand_weapon(c)
-        if main is not None and main.id == item_id and not (
-                off is not None and off.id == item_id):
+        hands = [h for h, w in (("main", main), ("off", off))
+                 if w is not None and w.id == item_id]
+        if copy is None:
+            held = hands[0] if hands else None
+        else:
+            held = hands[copy] if 0 <= copy < len(hands) else None
+        if held == "main":
             eq.unequip(c, rpg_items.SLOT_WEAPON)
             if off is not None:
                 # The off hand's weapon moves over: never a hand left empty
@@ -6098,7 +6174,7 @@ class MiniwindSession:
             self.notify(f"Put away {d.name}", 1.5)
             self._announce_ac(before)
             return True
-        if off is not None and off.id == item_id:
+        if held == "off":
             eq.unequip(c, rpg_items.SLOT_SHIELD)
             self.notify(f"Put away {d.name}", 1.5)
             self._announce_ac(before)
@@ -6171,7 +6247,8 @@ class MiniwindSession:
         if tkind == "container":
             return self.store_item_in_container(iid)
         if tkind == "strip":
-            return self.set_strip_slot(int(tkey), iid)
+            return self.set_strip_slot(int(tkey), iid,
+                                       from_index=skey if skind == "strip" else None)
         if skind == "strip":
             if tkind == "pack":
                 return self.set_strip_slot(int(skey), None)
