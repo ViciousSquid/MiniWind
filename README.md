@@ -288,6 +288,29 @@ animating out of step, burning whoever stands in the cone
 Maps, like textures and sounds, may live in `.fiopak` packages: they are read
 from a package first and from the loose file otherwise.
 
+### Dungeon Designer
+
+**Tools ▸ Dungeon Designer…** (or `python -m game.tools.dungeon_designer`)
+draws dungeons on a grid the way Fio's alpha editor did: left-drag paints
+SOLID or open, right-drag the other, Ctrl+click fills. **Generate** uses
+alpha's two generators (`game/tilemap_gen.py`): rooms and corridors, or long
+winding corridors. Place the **Entrance**, **Monsters**, **Chests** and
+**Lights**, pick a cave or dungeon look, and **Save**: the map is built by
+`game/dungeon_map.py` with a PlayerStart `entrance` and a LevelChanger back to
+the map named under *Way out*. The design is kept in the map, so **Load**
+opens it again. To enter it from the overworld, put a LevelChanger there with
+`target_map` = the saved file and `destination_spawn` = `entrance`, and a
+PlayerStart beside it named in the designer's *At start*.
+
+### Maps remember, lairs refill
+
+Each map keeps what happened in it (`game/map_memory.py`, in the state store):
+the dead stay dead, taken pickups stay gone, chests keep what was left.
+Generic hostile creatures and spawner members come back about a day later
+(22-32 game hours), never in front of the player; one-of-a-kind creatures
+(the dragon) and townsfolk never do. Clear a cave and it may be full again
+tomorrow.
+
 ### The world in motion
 
 * **Roads and travellers** (`game/living/`): traders, pilgrims, adventurers,
