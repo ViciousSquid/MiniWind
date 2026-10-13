@@ -38,6 +38,8 @@ SKILL_UPS_PER_LEVEL = 10
 LEVEL_POOLS = ("health", "magicka", "stamina")
 #: How much the chosen pool grows per level.
 LEVEL_POOL_GAIN = 10.0
+#: How many quick-weapon slots there are (keys 1-4).
+QUICK_WEAPON_SLOTS = 4
 #: Experience points (kills, quests) per level: level L needs L times this.
 XP_PER_LEVEL = 100
 
@@ -86,6 +88,14 @@ class Character:
         #: Successful casts per spell id. Practice with one spell makes it
         #: steadier on top of the school skill (see magic.cast_chance).
         self.spell_practice: Dict[str, int] = {}
+        #: The four quick-weapon slots (Baldur's Gate's "Quick Weapons"): an
+        #: item id or None each. Keys 1-4 draw the weapon in that slot; the
+        #: inventory window fills them by drag and drop.
+        self.quick_weapons: List[Optional[str]] = [None] * QUICK_WEAPON_SLOTS
+        #: Weapon ids the slots have already been offered (transient). A weapon
+        #: picked up for the first time drops into a free slot by itself; one
+        #: the player has taken out of the slots stays out.
+        self._quick_seen = set()
 
         # wealth & gear
         self.gold = 25
@@ -423,6 +433,7 @@ class Character:
             "factions": dict(self.factions), "bounty": self.bounty,
             "sign_stat_bonuses": dict(getattr(self, "_sign_stat_bonuses", {})),
             "spell_practice": dict(self.spell_practice),
+            "quick_weapons": list(self.quick_weapons),
         }
 
     @classmethod
@@ -460,6 +471,13 @@ class Character:
         c.head = data.get("head", "")
         c.factions = dict(data.get("factions", {}))
         c.bounty = int(data.get("bounty", 0))
+        quick = data.get("quick_weapons")
+        if isinstance(quick, list):
+            quick = [str(q) if q else None for q in quick[:QUICK_WEAPON_SLOTS]]
+            c.quick_weapons = quick + [None] * (QUICK_WEAPON_SLOTS - len(quick))
+            # Whatever was carried when saved has been offered already.
+            c._quick_seen = {str(s.get("id")) for s in c.inventory
+                             if isinstance(s, dict) and s.get("id")}
         practice = data.get("spell_practice")
         if isinstance(practice, dict):
             c.spell_practice = {str(k): int(v) for k, v in practice.items()}

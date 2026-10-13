@@ -4834,18 +4834,12 @@ class MiniwindSession:
             self.notify(f"Spell: {spell.name if spell else s}")
 
     # -- weapon slots -------------------------------------------------------
-    def weapon_slots(self) -> List[Dict]:
-        """The player's carried weapons, in slot order.
-
-        Slot 1 is the first entry, slot 2 the second, and so on: the same order
-        the loadout popup lists them in, so the number keys and what is on screen
-        can never disagree. One entry per distinct weapon id — a stack of three
-        daggers is one slot, not three.
-        """
+    def _carried_weapons(self) -> List[Dict]:
+        """Every distinct weapon in the pack, in pack order, as slot entries."""
         character = getattr(self.game, "character", None)
         if character is None:
             return []
-        slots, seen = [], set()
+        out, seen = [], set()
         for stack in getattr(character, "inventory", []) or []:
             item_id = stack.get("id")
             if not item_id or item_id in seen:
@@ -4857,27 +4851,88 @@ class MiniwindSession:
             if str(category).lower() != rpg_items.WEAPON:
                 continue
             seen.add(item_id)
-            slots.append({
+            out.append({
                 "id": item_id,
                 "name": stack.get("name") or item_id.replace("_", " ").title(),
                 "stack": stack,
             })
-        return slots
+        return out
+
+    def quick_weapon_slots(self) -> List[Optional[Dict]]:
+        """The four quick-weapon slots, each a slot entry or None.
+
+        Kept honest against the pack every time it is asked: a weapon no
+        longer carried (sold, dropped) leaves its slot, and a weapon picked up
+        for the first time drops into the first free slot by itself — the
+        convenience of the old "every weapon is a slot" — while one the player
+        deliberately took out of the slots stays out.
+        """
+        character = getattr(self.game, "character", None)
+        if character is None:
+            return [None] * 4
+        quick = getattr(character, "quick_weapons", None)
+        if not isinstance(quick, list):
+            quick = character.quick_weapons = [None] * 4
+        seen = getattr(character, "_quick_seen", None)
+        if seen is None:
+            seen = character._quick_seen = set()
+        carried = {e["id"]: e for e in self._carried_weapons()}
+        for i, iid in enumerate(quick):
+            if iid and iid not in carried:
+                quick[i] = None
+        for iid in carried:
+            if iid in seen:
+                continue
+            seen.add(iid)
+            if iid in quick:
+                continue
+            try:
+                quick[quick.index(None)] = iid
+            except ValueError:
+                pass                     # every slot is taken: it waits in the pack
+        return [carried.get(iid) if iid else None for iid in quick]
+
+    def weapon_slots(self) -> List[Dict]:
+        """The filled quick-weapon slots, in slot order (what 1-4 draw)."""
+        return [e for e in self.quick_weapon_slots() if e]
+
+    def set_quick_weapon(self, index: int, item_id) -> bool:
+        """Put *item_id* (a carried weapon) in quick slot *index* (0-3), or
+        empty the slot with None. A weapon already in another slot moves."""
+        character = self.game.character
+        self.quick_weapon_slots()                # sync first
+        quick = character.quick_weapons
+        if not 0 <= int(index) < len(quick):
+            return False
+        if item_id is None:
+            quick[index] = None
+            return True
+        d = rpg_items.get(item_id)
+        if d is None or d.category != rpg_items.WEAPON:
+            return False
+        if not inv.has_item(character.inventory, item_id, 1):
+            return False
+        if item_id in quick:
+            quick[quick.index(item_id)] = quick[index]
+        quick[index] = item_id
+        character._quick_seen.add(item_id)
+        return True
 
     def select_weapon_slot(self, number: int) -> bool:
-        """Equip the weapon in slot *number* (1-based). True if something changed.
+        """Draw the weapon in quick slot *number* (1-4). True if anything changed.
 
         Pressing the slot a weapon is already in puts it away, so the same key
-        both draws and sheathes — which is what the loadout popup's click does,
-        and means you can go unarmed without opening anything.
+        both draws and sheathes and you can go unarmed without opening
+        anything. The weapon in hand changes on the spot.
         """
-        slots = self.weapon_slots()
+        slots = self.quick_weapon_slots()
         index = int(number) - 1
-        if index < 0 or index >= len(slots):
+        if index < 0 or index >= len(slots) or slots[index] is None:
             self.notify(f"Nothing in weapon slot {int(number)}", 1.5)
             return False
         entry = slots[index]
         character = self.game.character
+        self._cancel_bow_draw()
         if eq.equipped_id(character, rpg_items.SLOT_WEAPON) == entry["id"]:
             eq.unequip(character, rpg_items.SLOT_WEAPON)
             self.notify("Unarmed", 1.5)
@@ -4885,6 +4940,83 @@ class MiniwindSession:
         self.game.equip(entry["id"])
         self.notify(f"{entry['name']} ({int(number)})", 1.5)
         return True
+
+    # ------------------------------------------------- inventory window verbs
+    # Called from the game tick with what the inventory window queued
+    # (game/ui/inventory_window.py), so the character only ever changes on
+    # the logic thread.
+    def inventory_move(self, source, target, item_id) -> bool:
+        """Carry out one drag and drop: *source* and *target* are the window's
+        ``(kind, key, ...)`` tuples. Only what fits goes in a slot."""
+        from .ui import inventory_window as iw
+        c = self.game.character
+        d = rpg_items.get(item_id)
+        if d is None or not inv.has_item(c.inventory, item_id, 1):
+            return False
+        kind, key = target[0], target[1]
+        if not iw.fits((kind, key), d):
+            self.notify(iw.why_not((kind, key), d), 2.5)
+            return False
+        if kind == "equip":
+            if self.game.equip(item_id):
+                self.notify(f"Equipped {d.name}", 1.5)
+                return True
+            return False
+        if kind == "quick":
+            # Between quick slots the two weapons swap (set_quick_weapon
+            # moves whatever was there into the slot the dragged one left).
+            return self.set_quick_weapon(int(key), item_id)
+        # Back to the pack: take it off, or out of its quick slot.
+        if source[0] == "equip":
+            self.game.unequip(source[1])
+            self.notify(f"Took off {d.name}", 1.5)
+            return True
+        if source[0] == "quick":
+            self.set_quick_weapon(int(source[1]), None)
+            if eq.equipped_id(c, rpg_items.SLOT_WEAPON) == item_id:
+                eq.unequip(c, rpg_items.SLOT_WEAPON)
+                self._cancel_bow_draw()
+            return True
+        return False
+
+    def inventory_use(self, item_id) -> bool:
+        """Double-click / Use: wear or take off what is worn, draw a weapon,
+        drink a potion, read a book."""
+        c = self.game.character
+        d = rpg_items.get(item_id)
+        if d is None:
+            return False
+        worn = {v: k for k, v in c.equipment.items() if v}
+        if item_id in worn:
+            self.game.unequip(worn[item_id])
+            if worn[item_id] == rpg_items.SLOT_WEAPON:
+                self._cancel_bow_draw()
+            self.notify(f"Took off {d.name}", 1.5)
+            return True
+        if d.category == rpg_items.WEAPON:
+            if item_id not in [e["id"] for e in self.weapon_slots()]:
+                self.inventory_assign_quick(item_id)
+            self._cancel_bow_draw()
+        if d.get("slot") or d.category in (rpg_items.WEAPON, rpg_items.AMMO):
+            if self.game.equip(item_id):
+                self.notify(f"Equipped {d.name}", 1.5)
+                return True
+            return False
+        return bool(self.game.use_item(item_id))
+
+    def inventory_assign_quick(self, item_id) -> bool:
+        """Assign: put a weapon in the first free quick slot."""
+        slots = self.quick_weapon_slots()
+        if any(e and e["id"] == item_id for e in slots):
+            return True
+        for i, e in enumerate(slots):
+            if e is None:
+                if self.set_quick_weapon(i, item_id):
+                    self.notify(f"Quick slot {i + 1}", 1.5)
+                    return True
+                return False
+        self.notify("The quick slots are full: drag it onto one to swap.", 2.5)
+        return False
 
     def use_health_potion(self):
         for pid in ("potion_heal", "potion_heal_minor"):

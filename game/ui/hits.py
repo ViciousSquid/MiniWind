@@ -23,7 +23,7 @@ import threading
 _lock = threading.Lock()
 _building = []          # targets of the frame being painted
 _published = []         # last finished frame: [(QRect, action, label)]
-_clicks = collections.deque(maxlen=16)
+_clicks = collections.deque(maxlen=32)
 
 #: Where the pointer is, in view pixels (None when it has not moved yet).
 pointer = None
@@ -96,6 +96,12 @@ def click(x, y):
         return False
     _clicks.append(action)
     return True
+
+
+def queue(action) -> None:
+    """Queue *action(session)* for the game tick, like a click on a button
+    (for UI that resolves its own hits, such as a drag and drop)."""
+    _clicks.append(action)
 
 
 def run_clicks(session) -> int:

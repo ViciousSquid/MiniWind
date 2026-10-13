@@ -59,7 +59,7 @@ K_QUEST = "q"          # show the current quest (objective + how to complete)
 #: Number keys that draw a carried weapon by slot. '1' is the first weapon in
 #: the pack, '2' the second: the same order the loadout popup shows, so the keys
 #: and the screen can never disagree. Nine is plenty and leaves '0' free.
-WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 10))
+WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 5))   # the four quick-weapon slots
 
 
 # ---------------------------------------------------------------------------
@@ -860,10 +860,10 @@ class MiniwindGame:
             session.toggle_sneak()
         if K_HEAL in just:
             session.use_health_potion()
-        # The loadout popup (weapons + spells) toggles with I and stays open
-        # while you fight — it does not pause the world.
+        # I opens the inventory: the big drag-and-drop window
+        # (game/ui/inventory_window.py), which pauses the world like any screen.
         if K_INVENTORY in just:
-            session.show_loadout = not getattr(session, "show_loadout", False)
+            session.open_screen = "inventory"
         # screens
         elif K_CHARACTER in just:
             session.open_screen = "character"
@@ -1185,6 +1185,17 @@ class MiniwindGame:
 
         if key is None:
             return True  # own the (empty) popup slot: suppress legacy draw
+
+        if cur is None and key == "screen:inventory":
+            # The inventory is its own window: drag and drop, not a painted
+            # screen (game/ui/inventory_window.py).
+            from .ui.inventory_window import InventoryWindow
+            win = InventoryWindow(session)
+            win.place(w, h)
+            wm.add(win)
+            session._overlay_win = win
+            session._overlay_key = key
+            return True
 
         if cur is None:
             click_cb = None
