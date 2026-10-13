@@ -41,7 +41,6 @@ jobs:
             --include-data-dir=editor=editor `
             --include-data-dir=plugins=plugins `
             --include-data-dir=game=game `
-            --include-data-dir=player=player `
             --include-data-dir=maps=maps `
             --include-data-dir=tools=tools `
             --include-data-dir=tests=tests `
