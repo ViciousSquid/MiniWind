@@ -23,9 +23,10 @@ from __future__ import annotations
 
 from typing import Dict
 
-#: Default: one full game-day every 20 real minutes → 24h / 1200s = 0.02 game-h
-#: per real-second. Tunable per map via the MiniwindSettings entity.
-DEFAULT_HOURS_PER_SECOND = 24.0 / (20.0 * 60.0)
+#: Default: one game hour every real minute, so a full game-day takes 24 real
+#: minutes (24h / 1440s). Tunable per map via the MiniwindSettings entity.
+DEFAULT_MINUTES_PER_DAY = 24.0
+DEFAULT_HOURS_PER_SECOND = 24.0 / (DEFAULT_MINUTES_PER_DAY * 60.0)
 
 #: The seven day-names of the week (day 1 = the first). Evocative but readable.
 WEEKDAYS = ["Sundas", "Morndas", "Tirdas", "Middas",

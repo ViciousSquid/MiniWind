@@ -134,15 +134,24 @@ def dim_screen(painter, w, h, alpha=170):
 
 
 def heading(painter, rect, title, subtitle=None):
+    # Titles are in the game's own medieval face (MedievalSharp, bundled in
+    # assets/fonts) rather than whatever display font the OS happens to have,
+    # and sized in pixels so they fit the panel at any DPI. The face has one
+    # upright weight, so it is never asked for bold or italic.
+    from . import fonts
     painter.save()
-    painter.setFont(fancy_font(22, bold=True))   # titles use the RPG display face
+    painter.setFont(fonts.dialogue_font_px(28))
     painter.setPen(GOLD_BRIGHT)
-    painter.drawText(rect.x(), rect.y() + 22, title)
+    fm = painter.fontMetrics()
+    painter.drawText(rect.x(), rect.y() + 24,
+                     fm.elidedText(str(title), Qt.ElideRight, max(1, rect.width())))
     painter.setPen(QPen(GILD, 1))
     painter.drawLine(rect.x(), rect.y() + 32, rect.right(), rect.y() + 32)
     if subtitle:
-        painter.setFont(font(10, italic=True, family="Segoe UI"))
+        painter.setFont(fonts.dialogue_font_px(13))
         painter.setPen(DIM)
-        painter.drawText(rect.x(), rect.y() + 48, subtitle)
+        fm = painter.fontMetrics()
+        painter.drawText(rect.x(), rect.y() + 48,
+                         fm.elidedText(str(subtitle), Qt.ElideRight, max(1, rect.width())))
     painter.restore()
     return rect.y() + (56 if subtitle else 44)

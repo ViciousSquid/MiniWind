@@ -350,6 +350,12 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
     def to_screen(x, z):
         return QPointF(centre.x() + (x - px) * scale, centre.y() + (z - pz) * scale)
 
+    # Dark at night, like the world: the lamps glow through (game/ui/daylight).
+    if image is not None:
+        from . import daylight
+        daylight.draw_map_night(painter, frame, daylight.map_night(session), to_screen,
+                                scale, player=(px, pz), key="minimap")
+
     # People and creatures nearby.
     reach2 = (MINIMAP_SPAN / 2.0) ** 2
     try:
@@ -416,11 +422,17 @@ def map_features(session):
     """What the full map marks, read off the session.
 
     ``{"player": (x, z, angle) | None, "places": [(name, x, z)],
-    "quests": [(name, x, z, quest_id, tracked)]}`` -- the places are the
+    "quests": [(name, x, z, quest_id, tracked)], "night": ...}`` -- the
+    night is :func:`game.ui.daylight.map_night` (None by day); the places are the
     *discovered* location markers (an undiscovered town is not on your map),
     the quests every active quest whose objective has a place in the world.
     """
-    out = {"player": None, "places": [], "quests": []}
+    out = {"player": None, "places": [], "quests": [], "night": None}
+    try:
+        from . import daylight
+        out["night"] = daylight.map_night(session)
+    except Exception:
+        out["night"] = None
     logic = getattr(session, "logic", None)
     player = fio.player(logic)
     if player is not None and getattr(player, "pos", None) is not None:

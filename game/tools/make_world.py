@@ -59,7 +59,7 @@ def build(base_path: str) -> dict:
     # --- game settings + persistent quest store ---
     world["things"].append(_thing("miniwindsettings", at(0, -40), {
         "name": "MiniwindSettings", "start_hour": 8.0, "start_day": 1,
-        "minutes_per_day": 16.0, "show_clock": True, "difficulty": "normal",
+        "minutes_per_day": 24.0, "show_clock": True, "difficulty": "normal",
         "start_scenario": "prompt", "region_name": "The Vale of Miniwind",
         "state_store": "miniwind",
     }))

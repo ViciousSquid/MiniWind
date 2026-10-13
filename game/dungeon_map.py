@@ -306,7 +306,7 @@ def build_map(design: Design, settings: Optional[Dict] = None) -> Dict:
     s = copy.deepcopy(settings) if settings else {
         "type": "miniwindsettings", "pos": [0.0, 400.0, 0.0], "io_connections": [],
         "properties": {"type": "miniwindsettings", "name": "GameSettings_1",
-                       "start_hour": 8.0, "start_day": 1, "minutes_per_day": 20.0,
+                       "start_hour": 8.0, "start_day": 1, "minutes_per_day": 24.0,
                        "show_clock": True, "state_store": "miniwind",
                        "difficulty": "normal", "start_scenario": "prompt",
                        "player_spells": [], "quests": []}}

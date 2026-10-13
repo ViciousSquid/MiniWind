@@ -5,7 +5,13 @@ The screens (:mod:`game.ui.screens`) and the conversation box
 (:mod:`game.ui.dialogue_ui`) are painted with QPainter, not built from widgets,
 so they say where their buttons are while they draw: each paint pass calls
 :func:`begin`, every clickable thing calls :func:`add` with its rectangle and
-what a click on it does, and :func:`end` publishes the set. A screen that adds
+what a click on it does, and :func:`end` publishes the set. The menus hosted
+in floating windows are painted *after* the game's overlay hook has called
+:func:`end` (the view draws its windows over the overlay), so :func:`end`
+publishes the frame's list itself rather than a copy: whatever is added after
+it, until the next :func:`begin`, still lands in the published set. Painting
+and hit-testing both happen on the UI thread, so a click never sees a frame
+half built. A screen that adds
 anything is a screen the mouse can use, so the view shows the cursor for it
 (see :class:`GamePointer`).
 
@@ -30,30 +36,36 @@ pointer = None
 
 
 def begin():
-    """Start a paint pass: forget the previous frame's targets being built."""
-    del _building[:]
+    """Start a paint pass with a fresh list (the last published frame stays
+    published until :func:`end`)."""
+    global _building
+    with _lock:
+        _building = []
 
 
 def add(rect, action, label=None):
     """Make *rect* clickable this frame; *action(session)* runs on a click.
 
     *label* names the target (a button's text, say) for tests and debugging.
+    A target added after :func:`end` (a menu in a floating window, painted
+    after the overlay) joins the published frame.
     """
-    _building.append((rect, action, label))
+    with _lock:
+        _building.append((rect, action, label))
 
 
 def end():
     """Publish this frame's targets for hit-testing."""
     global _published
     with _lock:
-        _published = list(_building)
+        _published = _building
 
 
 def clear():
     """No menu on screen: nothing is clickable."""
-    global _published
-    del _building[:]
+    global _published, _building
     with _lock:
+        _building = []
         _published = []
         _clicks.clear()
 

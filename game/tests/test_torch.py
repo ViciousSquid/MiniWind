@@ -148,3 +148,81 @@ def test_settlement_night_guard_carries_a_torch():
     from .. import data
     kestrel = next(n for n in data.load("settlement")["npcs"] if n["name"] == "Kestrel")
     assert kestrel.get("torch") is True
+
+
+# --- torches carried in the inventory, flicker, shadows --------------------
+def _villager(pos=(0, 272, 0), **props):
+    base = {"type": "npc", "name": "Wren", "npc_role": "villager",
+            "faction": "villagers", "team": "villagers",
+            "home": list(pos), "schedule": [], "sched_state": sched.IDLE,
+            "autonomy": False}
+    base.update(props)
+    return _FakeThing(list(pos), base)
+
+
+def test_a_torch_in_the_inventory_is_held_lit_after_dark_only():
+    wren = _villager(inventory=[items.make("torch")])
+    player = _FakePlayer([9000, 272, 9000])
+    session = _session([wren], player, 23.0)
+    session.tick(0.1)
+    assert len(_torch_lights(session.logic.things)) == 1
+    assert wren.properties["_torch_lit"] == "torch"
+    # ... and drawn in the hand the weapon is not in.
+    session._refresh_actor_cache()
+    session.logic.player.pos = [0, 272, 0]
+    held = [h for h in session.held.overhead() if h[2] == "torch"]
+    assert held and held[0][3] == ("left" if wren.properties.get("handed", "right") == "right"
+                                   else "right")
+    session.clock.set_time(12.0, 1)
+    session.tick(0.1)
+    assert _torch_lights(session.logic.things) == []
+    assert "_torch_lit" not in wren.properties
+
+
+def test_without_a_torch_nobody_lights_one():
+    wren = _villager(inventory=[items.make("bread")] if items.make("bread") else [])
+    session = _session([wren], _FakePlayer([9000, 272, 9000]), 23.0)
+    session.tick(0.1)
+    assert _torch_lights(session.logic.things) == []
+
+
+def test_the_flame_flickers_and_tells_the_renderer(monkeypatch):
+    from .. import runtime
+    touched = []
+    monkeypatch.setattr(runtime, "_journal", lambda obj, *a: touched.append(obj))
+    wren = _villager(inventory=[items.make("torch")])
+    session = _session([wren], _FakePlayer([9000, 272, 9000]), 23.0)
+    seen = set()
+    for _ in range(12):
+        session.tick(0.07)
+        light = _torch_lights(session.logic.things)[0]
+        seen.add(round(light.properties["intensity"], 3))
+    assert len(seen) > 6                                   # it wavers
+    base = light.properties["_torch_base_intensity"]
+    assert all(abs(v - base) <= base * 0.2 for v in seen)  # around its base
+    assert light in touched
+
+
+def test_torch_shadows_follow_the_setting_and_the_near_tier():
+    import configparser
+    from .. import runtime
+    from engine.spatial import TIER_ACTIVE, TIER_NEAR
+    near = _villager(pos=(0, 272, 0), name="Near", inventory=[items.make("torch")])
+    mid = _villager(pos=(50, 272, 0), name="Mid", inventory=[items.make("torch")])
+    session = _session([near, mid], _FakePlayer([9000, 272, 9000]), 23.0)
+    config = configparser.ConfigParser()
+    config.read_dict({"GAME": {"torch_shadows": "False"}})
+    previous = runtime._editor_config
+    runtime.set_editor_config(config)
+    try:
+        near.properties["_sim_tier"] = TIER_NEAR
+        mid.properties["_sim_tier"] = TIER_ACTIVE
+        session._update_torch_lights(0.1)
+        lights = {k: l for k, l in session._torch_lights.items()}
+        assert not any(l.properties["casts_shadows"] for l in lights.values())
+        config.set("GAME", "torch_shadows", "True")
+        session._update_torch_lights(0.1)
+        assert session._torch_lights[id(near)].properties["casts_shadows"] is True
+        assert session._torch_lights[id(mid)].properties["casts_shadows"] is False
+    finally:
+        runtime.set_editor_config(previous)

@@ -101,6 +101,14 @@ class Character:
         #: picked up for the first time drops into a free slot by itself; one
         #: the player has taken out of the slots stays out.
         self._quick_seen = set()
+        #: The inventory strip along the bottom of the screen (I): an item id
+        #: or None per slot, as long as the strip is wide. The ids are carried
+        #: stacks, like the quick slots: the strip shows them, it holds nothing.
+        self.strip: List[Optional[str]] = []
+        #: Item ids the strip has already been offered (transient), so a thing
+        #: picked up for the first time takes a free slot by itself while one
+        #: the player dragged out of the strip stays out.
+        self._strip_seen = set()
 
         # wealth & gear
         self.gold = 25
@@ -450,6 +458,7 @@ class Character:
             "sign_stat_bonuses": dict(getattr(self, "_sign_stat_bonuses", {})),
             "spell_practice": dict(self.spell_practice),
             "quick_weapons": list(self.quick_weapons),
+            "strip": list(self.strip),
             "rolls": dict(self.rolls),
             "read_books": list(self.read_books),
         }
@@ -499,6 +508,11 @@ class Character:
             c.quick_weapons = quick + [None] * (QUICK_WEAPON_SLOTS - len(quick))
             # Whatever was carried when saved has been offered already.
             c._quick_seen = {str(s.get("id")) for s in c.inventory
+                             if isinstance(s, dict) and s.get("id")}
+        strip = data.get("strip")
+        if isinstance(strip, list):
+            c.strip = [str(q) if q else None for q in strip]
+            c._strip_seen = {str(s.get("id")) for s in c.inventory
                              if isinstance(s, dict) and s.get("id")}
         practice = data.get("spell_practice")
         if isinstance(practice, dict):

@@ -603663,7 +603663,7 @@
                 "id": "636bd661-c873-4d4b-bcdb-093343a0d05f",
                 "start_hour": 8.0,
                 "start_day": 1,
-                "minutes_per_day": 20.0,
+                "minutes_per_day": 24.0,
                 "show_clock": true,
                 "state_store": "miniwind",
                 "difficulty": "normal",

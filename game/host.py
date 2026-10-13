@@ -66,6 +66,12 @@ WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 5))   # the four quick-weapon 
 # MiniWind editor-extension providers (registered through the generic EditorAPI
 # so generic Fio editor/engine code stays game-agnostic).
 # ---------------------------------------------------------------------------
+def _dist2(a, b) -> float:
+    """Squared ground-plane distance between two positions."""
+    dx, dz = a[0] - b[0], a[2] - b[2]
+    return dx * dx + dz * dz
+
+
 def _miniwind_kv_suggestions(store=None):
     """Preset keys for Fio's LogicState editor (plugin API 1.5.0).
 
@@ -518,7 +524,7 @@ class MiniwindGame:
                  group="TIME"),
             prop("start_day", "int", "Start day", default=1, min=1, max=100000, group="TIME"),
             prop("minutes_per_day", "float", "Real minutes per game day",
-                 default=20.0, min=0.5, max=1440.0, group="TIME"),
+                 default=24.0, min=0.5, max=1440.0, group="TIME"),
             prop("show_clock", "bool", "Show clock HUD", default=True, group="TIME"),
             prop("state_store", "string", "Quest-state store name", default="miniwind",
                  group="STATE"),
@@ -860,11 +866,12 @@ class MiniwindGame:
             session.toggle_sneak()
         if K_HEAL in just:
             session.use_health_potion()
-        # I opens the inventory: the big drag-and-drop window
-        # (game/ui/inventory_window.py), which pauses the world like any screen.
+        # I shows / hides the inventory strip along the bottom of the screen
+        # (game/ui/inventory_strip.py); the world keeps running.
         if K_INVENTORY in just:
-            session.open_screen = "inventory"
-        # screens
+            session.show_strip = not getattr(session, "show_strip", False)
+        # C opens the character window: paperdoll, pack and sheet, all drag
+        # and drop (game/ui/inventory_window.py); it pauses the world.
         elif K_CHARACTER in just:
             session.open_screen = "character"
         elif K_JOURNAL in just:
@@ -926,8 +933,19 @@ class MiniwindGame:
                 session.start_dialogue(npc, player)
                 self._suppress_interact = True
             return
-        # No NPC to talk to — offer a nearby container to open with the same key.
+        # No NPC to talk to — offer a nearby container to open, or a body to
+        # loot, with the same key (whichever is nearer).
         container = session.nearest_container(player.pos, TALK_RADIUS)
+        corpse = session.nearest_corpse(player.pos, TALK_RADIUS)
+        if corpse is not None and (container is None or _dist2(player.pos, corpse.pos)
+                                   < _dist2(player.pos, container.pos)):
+            prompt = f"[E] Loot {session.corpse_name(corpse)}"
+            ctx.set_prompt(prompt, priority=5)
+            session.interact_prompt = prompt
+            if K_INTERACT in just or ctx.use_pressed:
+                session.loot_corpse(corpse)
+                self._suppress_interact = True
+            return
         if container is not None:
             cname = container.properties.get("display_name", "container")
             prompt = f"[E] to open {cname}"
@@ -1009,14 +1027,16 @@ class MiniwindGame:
             if fio.cutscene_active(session.logic):
                 session.show_loadout = False
                 self._sync_loadout_window(session, viewport, w, h)
+                self._sync_strip_window(session, viewport, w, h, cutscene=True)
                 hud.draw_fade(painter, session, w, h)
                 return
             # The non-modal loadout popup (weapons + spells) lives alongside the
             # modal popups; it stays open while the player fights.
             self._sync_loadout_window(session, viewport, w, h)
+            self._sync_strip_window(session, viewport, w, h)
 
             if not session.needs_char_creation and session.open_screen != "charcreate":
-                hud.draw_time_tint(painter, session, w, h)
+                hud.draw_time_tint(painter, session, w, h, viewport)
                 # Inspector lines (console 'inspect') lie on the world, under
                 # the HUD; their windows float above everything.
                 from .ui import inspector
@@ -1093,6 +1113,9 @@ class MiniwindGame:
             from .ui import screens as _screens
             _screens.close_trade(session)
             return
+        if screen == "container":
+            session.close_container()
+            return
         session.open_screen = None
 
     @staticmethod
@@ -1149,6 +1172,56 @@ class MiniwindGame:
             win.active = False
             wm.remove(win)
             session._loadout_win = None
+
+    #: Screens the inventory strip stays up over, so things can be dragged
+    #: between it and them (game/ui/drag.py).
+    _STRIP_SCREENS = ("character", "inventory", "container")
+
+    @classmethod
+    def _strip_wanted(cls, session, cutscene=False) -> bool:
+        """Whether the inventory strip shows: toggled on with I in free play,
+        and always over the character window or an open chest or body."""
+        if (cutscene or session.needs_char_creation
+                or session.game.character.is_dead or session.dialogue is not None):
+            return False
+        if session.open_screen is None:
+            return bool(getattr(session, "show_strip", False))
+        return session.open_screen in cls._STRIP_SCREENS
+
+    def _sync_strip_window(self, session, viewport, w, h, cutscene=False):
+        """Create / remove the inventory strip on the viewport's window
+        manager, keep it on the bottom edge and above the other windows."""
+        wm = getattr(viewport, "window_manager", None) if viewport is not None else None
+        if wm is None:
+            return
+        try:
+            from .ui.inventory_strip import InventoryStrip
+            from .ui import drag
+        except Exception:
+            return
+        for existing in list(wm.windows):
+            if isinstance(existing, InventoryStrip) and existing.session is not session:
+                existing.active = False
+                wm.remove(existing)
+        win = getattr(session, "_strip_win", None)
+        want = self._strip_wanted(session, cutscene)
+        if want and win is None:
+            win = InventoryStrip(session)
+            wm.add(win)
+            session._strip_win = win
+        elif not want and win is not None:
+            win.active = False
+            wm.remove(win)
+            drag.forget(win)
+            session._strip_win = None
+            win = None
+        if win is not None:
+            win.place(w, h)
+            # Over every other window: it sits on the bottom edge, where a
+            # tall window can reach on a small screen.
+            if not any(getattr(o, "dragging", False) or getattr(o, "mouse_captured", False)
+                       for o in wm.windows):
+                wm.raise_(win)
 
     def _sync_overlay_windows(self, session, viewport, w, h):
         """Create / update / tear down the floating window that hosts the active
@@ -1242,12 +1315,27 @@ class MiniwindGame:
                 # can be clicked rather than swallowed by the window.
                 click_cb = (lambda cx, cy, s=session: screens.handle_click(s, cx, cy))
                 wants_cursor = True
-            win = CallbackWindow(key, title, draw_fn, width=bw, body_height=bh,
+            window_cls = CallbackWindow
+            if key == "screen:container":
+                # Rows drag out to the strip and the character window, and
+                # things drag in (game/ui/container_window.py).
+                from .ui.container_window import ContainerWindow
+                window_cls = ContainerWindow
+                # Chests and searched bodies alike are "Loot"; what it is
+                # heads the screen inside.
+                title = "Loot"
+            win = window_cls(key, title, draw_fn, width=bw, body_height=bh,
                                  x=max(20, (w - bw) // 2),
                                  y=max(20, (h - bh) // 2 - 24),
                                  on_close_cb=on_close,
                                  on_body_click_cb=click_cb,
                                  wants_cursor=wants_cursor)
+            # The title bar in the game's medieval face, not the chrome's Arial.
+            try:
+                from .ui import fonts as _fonts
+                win.title_font = _fonts.dialogue_font_px(13)
+            except Exception:
+                pass
             wm.add(win)
             session._overlay_win = win
             session._overlay_key = key

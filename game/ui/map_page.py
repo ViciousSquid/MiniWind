@@ -3,7 +3,8 @@ The pause menu's MAP page: the whole world, to pan and zoom.
 
 The picture is the minimap's (:data:`game.ui.worldmap.WORLD`), drawn large:
 the discovered places by name, every active quest's objective as a yellow
-diamond (the tracked one brighter), and the player's arrow. It opens on the
+diamond (the tracked one brighter), and the player's arrow -- and, after dark,
+the night over it all, with the lamps of the world glowing through. It opens on the
 player, or on a quest's objective when the journal's *Show on map* asked for
 it, with a ring round that objective.
 
@@ -199,6 +200,7 @@ class MapPage:
         painter.fillPath(window, QColor(24, 30, 26))
         painter.setClipPath(window)
         self._draw_terrain(painter, rect, text_font)
+        self._draw_night(painter, rect)
         self._draw_places(painter, rect, text_font)
         self._draw_quests(painter, rect, text_font)
         self._draw_focus(painter, rect)
@@ -248,6 +250,20 @@ class MapPage:
         src = QRectF((visible.left() - target.left()) * sx, (visible.top() - target.top()) * sy,
                      visible.width() * sx, visible.height() * sy)
         painter.drawImage(visible, image, src)
+
+    def _draw_night(self, painter, rect):
+        """Dark at night, as the world is, with its lamps and torches glowing
+        through; names, quests and the player stay readable above it."""
+        night = (self.features or {}).get("night")
+        world = self.world
+        if not night or world is None or not getattr(world, "ready", False):
+            return
+        from . import daylight
+        player = self.features.get("player")
+        daylight.draw_map_night(painter, rect, night,
+                                lambda x, z: self.to_screen(rect, x, z),
+                                self._scale(rect),
+                                player=(player[0], player[1]) if player else None)
 
     def _draw_places(self, painter, rect, text_font):
         painter.setFont(text_font(11))

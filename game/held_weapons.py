@@ -150,11 +150,17 @@ class HeldWeapons:
             x, y, z = float(t.pos[0]), float(t.pos[1]), float(t.pos[2])
             if (x - ppos[0]) ** 2 + (z - ppos[2]) ** 2 > r2:
                 continue
-            weapon = p.get("_active_weapon") or p.get("equipped_weapon") or ""
-            if not weapon:
-                continue
-            attacking = bool(p.get("is_shooting") or p.get("_bow_charge") is not None)
             size = float(p.get("sprite_width", 128) or 128)
-            out.append(((x, y, z), float(p.get("_facing", 0.0)), weapon,
-                        str(p.get("handed", "right")), attacking, size))
+            handed = str(p.get("handed", "right"))
+            facing = float(p.get("_facing", 0.0))
+            weapon = p.get("_active_weapon") or p.get("equipped_weapon") or ""
+            if weapon:
+                attacking = bool(p.get("is_shooting") or p.get("_bow_charge") is not None)
+                out.append(((x, y, z), facing, weapon, handed, attacking, size))
+            # A lit torch (the runtime marks who holds one: game/runtime.py,
+            # _update_torch_lights) is held in the other hand.
+            torch = p.get("_torch_lit")
+            if torch:
+                off = "left" if handed == "right" else "right"
+                out.append(((x, y, z), facing, torch, off, False, size))
         return out
