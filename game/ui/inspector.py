@@ -250,6 +250,10 @@ class ActorInspectorWindow(FloatingWindow):
         self._rows = []          # [(kind, text, value)] kind: head/row/sched/sched_now
         self._refreshed = 0.0
         self._links = []         # [(QRectF, action)] of the last paint
+        #: Whether this window holds the world paused (its own pause request,
+        #: so several inspectors and the menus never fight over it). Off: the
+        #: world runs while you watch.
+        self.paused = False
 
     # -- data ----------------------------------------------------------------
     def _logic(self):
@@ -276,6 +280,8 @@ class ActorInspectorWindow(FloatingWindow):
         def row(label, value):
             rows.append(("row", label, "" if value is None else str(value)))
 
+        rows.append(("pause", "\u23f8 World paused \u2014 click to run" if self.paused
+                     else "\u25b6 World running \u2014 click to pause", ""))
         focus = focused_place(logic)
         if focus is not None and focus["window"] is self:
             rows.append(("back", f"\u25c0 Back to player   (showing {focus['label']})", ""))
@@ -439,7 +445,24 @@ class ActorInspectorWindow(FloatingWindow):
                 return True
         return False
 
+    def _pause_owner(self):
+        return f"inspector:{id(self)}"
+
+    def toggle_pause(self):
+        """Hold the world still while reading this window, or let it run."""
+        self.set_paused(not self.paused)
+
+    def set_paused(self, paused: bool):
+        logic = self._logic()
+        runtime = getattr(logic, "session_runtime", None)
+        if runtime is not None:
+            runtime.set_world_paused(self._pause_owner(), bool(paused))
+        self.paused = bool(paused)
+        self._rows = []              # redraw the toggle's label now
+
     def on_close(self):
+        if self.paused:
+            self.set_paused(False)
         # Closing the window that is showing a place snaps the camera home.
         focus = focused_place(self._logic())
         if focus is not None and focus["window"] is self:
@@ -458,6 +481,11 @@ class ActorInspectorWindow(FloatingWindow):
             if kind == "stats":
                 self._draw_stats(painter, x + 14, ty, value)
                 ty += self.STATS_H
+                continue
+            if kind == "pause":
+                self._link(painter, x + 8, base, text, self.toggle_pause,
+                           active=self.paused)
+                ty += self.LINE_H
                 continue
             if kind == "back":
                 logic = self._logic()
@@ -643,6 +671,25 @@ def draw_pick_hover(painter, viewport, width, height):
     painter.restore()
 
 
+def _draw_leader(painter, win, actor_pt, colour):
+    """A line from the inspector window to its actor: from the point of the
+    window's outline nearest the actor, so it stays attached wherever the
+    window is dragged (read off the live window rect every frame)."""
+    rect = win._full_rect()
+    x = min(max(actor_pt.x(), rect.left()), rect.right())
+    y = min(max(actor_pt.y(), rect.top()), rect.bottom())
+    anchor = QPointF(x, y)
+    if rect.contains(int(actor_pt.x()), int(actor_pt.y())):
+        return                       # the window sits over its actor
+    faint = QColor(colour)
+    faint.setAlpha(200)
+    painter.setPen(QPen(faint, 1.6))
+    painter.drawLine(anchor, actor_pt)
+    painter.setBrush(faint)
+    painter.drawEllipse(anchor, 3.5, 3.5)
+    painter.setBrush(Qt.NoBrush)
+
+
 def draw_world_lines(painter, viewport, width, height):
     """For every open inspector: a ring round its actor and a line to where it
     is heading, ending in a ring there; and the beacon on a place a link is
@@ -670,6 +717,7 @@ def draw_world_lines(painter, viewport, width, height):
         if start is None:
             continue
         colour = QColor(win.colour)
+        _draw_leader(painter, win, start, colour)
         painter.setPen(QPen(colour, 2))
         painter.drawEllipse(start, 18, 18)
         dest = destination(session, logic, thing)
