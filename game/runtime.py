@@ -189,7 +189,7 @@ DICE_TYPES = ("d4", "d6", "d8", "d10", "d12", "d20")
 
 #: Probability an NPC/creature with no authored handedness is left-handed. Left
 #: handedness is deliberately rare, so most actors wield on the right.
-LEFT_HANDED_CHANCE = 0.12
+LEFT_HANDED_CHANCE = 0.2
 
 #: A carried torch floats a warm dynamic light on its holder. Height above the
 #: holder's feet, and the fallback light params a torch item may override.
@@ -507,6 +507,8 @@ class MiniwindSession:
         #: Every NPC / creature archer mid-draw: they draw a bow by the
         #: player's own rules (game/npc_archery.py).
         self.archery = npc_archery.NpcArchery(self)
+        from .held_weapons import HeldWeapons
+        self.held = HeldWeapons(self)
         #: Spell bolts in flight that carry a light: Fio tag -> Light, and
         #: where each lit bolt was last published (tag -> (x, y, z)).
         self._bolt_lights = {}
@@ -667,6 +669,7 @@ class MiniwindSession:
         MonsterAI.install_shot_hook(self.archery.shot_hook)
         self.spawn_creature_points()   # materialise CreatureSpawn points once
         self._assign_npc_handedness()  # random handedness (left rare) where unset
+        self._arm_fighters()           # a bow for the swordsman, a blade for the archer
         self._assign_npc_stats()       # STRENGTH / ENDURANCE / CHARISMA for everyone
         self._wire_quest_givers()      # make quest givers offer their quests
         self._name_index()             # built now, not on the first quest's frame
@@ -900,6 +903,19 @@ class MiniwindSession:
             except (TypeError, ValueError):
                 pass
 
+    def _arm_fighters(self) -> None:
+        from .held_weapons import arm_fighters
+        try:
+            arm_fighters(fio.things(self.logic), self.rng,
+                         lambda iid: rpg_items.make(iid, 1))
+        except Exception as exc:
+            print(f"[MiniWind] arming fighters failed: {exc}")
+
+    def overhead_actor_weapons(self):
+        """What every actor near the player holds, for the viewport (see
+        game/held_weapons.py)."""
+        return self.held.overhead()
+
     def _assign_npc_handedness(self) -> None:
         """Give every NPC/creature a handedness where none was authored.
 
@@ -958,6 +974,7 @@ class MiniwindSession:
         self._ease_zoom(delta)
         self._update_bow_draw(delta)
         self.archery.update(delta)
+        self.held.update()
         self._update_bolt_lights()
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
             # Fio does not publish an empty store, so the last arrow to land

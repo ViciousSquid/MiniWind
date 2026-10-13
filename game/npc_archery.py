@@ -117,6 +117,13 @@ class NpcArchery:
         if not isinstance(props, dict):
             return False
         distance = math.sqrt(max(0.0, float(distance_sq)))
+        # The weapon for this range is the one in hand from now on: drawn
+        # beside the head, and what the next shot is fought with.
+        try:
+            from .held_weapons import choose_in_hand
+            choose_in_hand(props, distance, MELEE_BAND)
+        except Exception:
+            pass
         if not is_bow_shot(props, distance):
             return False
         if id(thing) in self.drawing:

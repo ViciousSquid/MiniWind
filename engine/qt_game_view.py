@@ -1173,6 +1173,29 @@ class QtGameView(QOpenGLWidget):
                 time.perf_counter(), attacking=shooting,
                 weapon_kind=self._weapon_kind(weapon_id, sess),
                 handed=handed)
+        # Everyone else nearby holds their weapon too, through the same path:
+        # ``overhead_actor_weapons() -> [(pos, facing, weapon_id, handed,
+        # attacking, size)]``.
+        others = getattr(sess, "overhead_actor_weapons", None)
+        if others is None:
+            return
+        try:
+            held_list = others() or ()
+        except Exception as exc:
+            debug_log("Error", f"overhead_actor_weapons failed: {exc}")
+            return
+        now = time.perf_counter()
+        player_size = max(1.0, float(self.overhead_sprite_size))
+        for a_pos, a_facing, a_weapon, a_handed, a_attacking, a_size in held_list:
+            path = self._weapon_asset_path(a_weapon)
+            if not path:
+                continue
+            self._overhead_sprite_renderer.draw_weapon(
+                self.projection_matrix, self.view_matrix, a_pos, a_facing, path,
+                now, attacking=a_attacking,
+                weapon_kind=self._weapon_kind(a_weapon, sess),
+                size=player_size * 0.55 * (a_size / player_size),
+                handed=a_handed)
 
     @staticmethod
     def _weapon_asset_path(weapon_id):
