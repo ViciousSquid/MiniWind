@@ -47,11 +47,12 @@ COLOURS = (QColor(80, 200, 255), QColor(255, 170, 60), QColor(160, 255, 120),
 REFRESH_SECONDS = 0.25
 
 _TEXT = QColor(220, 220, 220)
-_MUTED = QColor(150, 150, 160)
+_MUTED = QColor(178, 180, 192)
 _HEAD = QColor(240, 200, 120)
 #: Strength, Endurance and Charisma letters in the inspector.
 _STAT_COLOURS = (QColor(230, 120, 100), QColor(120, 200, 120), QColor(150, 170, 255))
 _HILITE = QColor(90, 130, 128, 120)
+_STRIPE = QColor(255, 255, 255, 14)
 _LINK = QColor(120, 190, 255)
 _LINK_HOT = QColor(190, 230, 255)
 
@@ -231,21 +232,25 @@ class ActorInspectorWindow(FloatingWindow):
     """Live debug panel for one actor; see the module docstring."""
 
     wants_cursor = True
-    LINE_H = 14
+    #: Row height, the extra space above a section heading, and the label
+    #: column's width: roomy enough to read at a glance.
+    LINE_H = 24
+    HEAD_GAP = 10
+    LABEL_W = 180
 
     def __init__(self, view, thing, x=60, y=60):
         global _next_colour
-        super().__init__(f"Inspect: {_name(thing)}", x=x, y=y, width=380,
-                         body_height=200)
+        super().__init__(f"Inspect: {_name(thing)}", x=x, y=y, width=560,
+                         body_height=320)
         self.view = view
         self.thing = thing
         self.colour = COLOURS[_next_colour % len(COLOURS)]
         _next_colour += 1
-        self.font = QFont("Arial", 8)
-        self.bold = QFont("Arial", 8, QFont.Bold)
-        self.title_font = QFont("Arial", 9, QFont.Bold)
+        self.font = QFont("Arial", 11)
+        self.bold = QFont("Arial", 12, QFont.Bold)
+        self.title_font = QFont("Arial", 11, QFont.Bold)
         #: Strength / Endurance / Charisma stand out from the rest of the data.
-        self.stats_font = QFont("Arial", 11, QFont.Bold)
+        self.stats_font = QFont("Arial", 15, QFont.Bold)
         self._fm = QFontMetrics(self.font)
         self._rows = []          # [(kind, text, value)] kind: head/row/sched/sched_now
         self._refreshed = 0.0
@@ -367,10 +372,12 @@ class ActorInspectorWindow(FloatingWindow):
 
     # -- window --------------------------------------------------------------
     #: Height of the larger S / E / C row.
-    STATS_H = 24
+    STATS_H = 34
 
     def _row_h(self, kind):
-        return self.STATS_H if kind == "stats" else self.LINE_H
+        if kind == "stats":
+            return self.STATS_H
+        return self.LINE_H + self.HEAD_GAP if kind == "head" else self.LINE_H
 
     def content_height(self):
         self.refresh()
@@ -474,10 +481,20 @@ class ActorInspectorWindow(FloatingWindow):
         self._links = []
         focus = focused_place(self._logic())
         mine = focus["key"] if focus is not None and focus["window"] is self else None
-        ty = y + 6
-        label_w = 112
+        ty = y + 8
+        label_w = self.LABEL_W
+        stripe = False
         for kind, text, value in self._rows:
-            base = ty + self.LINE_H - 3
+            if kind == "head":
+                ty += self.HEAD_GAP          # air above each section
+                stripe = False
+            elif kind == "row":
+                # Every other data row faintly shaded, so a label's value is
+                # easy to follow across the gap.
+                if stripe:
+                    painter.fillRect(QRectF(x + 6, ty, w - 12, self.LINE_H), _STRIPE)
+                stripe = not stripe
+            base = ty + self.LINE_H - 6
             if kind == "stats":
                 self._draw_stats(painter, x + 14, ty, value)
                 ty += self.STATS_H
@@ -714,10 +731,11 @@ def _draw_leader(painter, win, actor_pt, colour):
         return                       # the window sits over its actor
     faint = QColor(colour)
     faint.setAlpha(200)
-    painter.setPen(QPen(faint, 1.6))
+    painter.setPen(QPen(faint, 5.0, Qt.SolidLine, Qt.RoundCap))
     painter.drawLine(anchor, actor_pt)
+    painter.setPen(Qt.NoPen)
     painter.setBrush(faint)
-    painter.drawEllipse(anchor, 3.5, 3.5)
+    painter.drawEllipse(anchor, 6.0, 6.0)
     painter.setBrush(Qt.NoBrush)
 
 
