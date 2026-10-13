@@ -17,6 +17,7 @@ game's state store, so it holds across saves and visits.
 from __future__ import annotations
 
 import math
+import random
 
 from engine.change_journal import touch
 
@@ -53,6 +54,8 @@ class DragonFire:
         self.breathers = [t for t in things
                           if isinstance(getattr(t, "properties", None), dict)
                           and t.properties.get("breathes_fire")]
+        for t in self.flames:
+            self._desync(t)
         setting = self.session.store.get(STORE_KEY, None)
         try:
             if setting not in (None, "false"):
@@ -100,6 +103,9 @@ class DragonFire:
                 if fighting and dist <= BREATH_RANGE and state["cool"] <= 0.0:
                     state["t"] = 0.0
                     state["dir"] = math.atan2(dx, dz)
+                    state["lap"] = {}
+                    for t in self.flames:
+                        self._desync(t)
                     s.notify(f"{p.get('display_name', 'The dragon')} breathes fire!", 1.5)
                 continue
             # Breathing: the flames follow the player, a little behind.
@@ -141,7 +147,14 @@ class DragonFire:
         for k, t in enumerate(self.flames):
             # Evenly spaced along the jet, all moving outward, wrapping back to
             # the mouth: a continuous stream.
-            d = (travelled + k * span / n) % span
+            raw = travelled + k * span / n
+            lap = int(raw // span)
+            if state.setdefault("lap", {}).get(k) != lap:
+                # Re-emitted from the mouth: a fresh puff, out of step with
+                # the rest.
+                state["lap"][k] = lap
+                self._desync(t)
+            d = raw % span
             if d > travelled:
                 d = travelled * (k / max(1, n))
             wobble = math.sin(k * 2.39 + state["t"] * 7.0)
@@ -152,6 +165,23 @@ class DragonFire:
             t.properties["height"] = 90.0 * grow
             touch(t)
         self._parked = False
+
+    def _desync(self, t):
+        """Start this flame's fire animation at its own random point (and give
+        it its own seed), so the jet never flickers in lockstep."""
+        t.properties["effect_seed"] = random.getrandbits(31) or 1
+        t._effect_animation_phase = random.random()
+        runtime = getattr(self.session.logic, "session_runtime", None)
+        store = getattr(runtime, "effect_store", None)
+        if store is not None:
+            try:
+                row = store.index_of(t)
+                if row >= 0:
+                    store.phase[row] = random.random()
+                    store.generation += 1
+            except Exception:
+                pass
+        touch(t)
 
     def _park(self):
         if self._parked:
