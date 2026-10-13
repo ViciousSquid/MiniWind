@@ -197,33 +197,55 @@ def random_guard_head(rng: Optional[_random.Random] = None) -> str:
     return (rng or _random).choice(GUARD_HEAD_IDS)
 
 
-def animal_head(role, rng: Optional[_random.Random] = None) -> str:
-    """The head id an animal of *role* wears.
+def animal_heads(role) -> list:
+    """Every head an animal of *role* may wear, sorted.
 
-    Its own head: ``assets/sprites/heads/<role>.png``, or one of its numbered
-    variants (``<role>01.png``, ``<role>02.png``, ...) picked at random; then
-    the same under the role's :data:`ANIMAL_HEAD_ALIASES` name (a hen wears
-    ``chicken.png``). Until one has been drawn, :data:`PLACEHOLDER_HEAD`.
-    """
+    Its own art: ``<role>.png`` and its numbered variants (``<role>2.png``,
+    ``<role>01.png``, ...); failing that, the same under the role's
+    :data:`ANIMAL_HEAD_ALIASES` name (a hen wears the chickens). Empty until
+    any has been drawn."""
     kind = str(role or "").strip().lower()
     if not kind:
-        return PLACEHOLDER_HEAD
-    folder = os.path.join(_repo_root(), HEAD_DIR)
+        return []
     try:
-        names = os.listdir(folder)
+        names = os.listdir(os.path.join(_repo_root(), HEAD_DIR))
     except OSError:
         names = []
     for name in (kind, ANIMAL_HEAD_ALIASES.get(kind)):
         if not name:
             continue
-        if os.path.isfile(os.path.join(folder, f"{name}.png")):
-            return name
-        variants = sorted(
+        found = sorted(
             f[:-4] for f in names
-            if f.endswith(".png") and f.startswith(name) and f[len(name):-4].isdigit())
-        if variants:
-            return (rng or _random).choice(variants)
-    return PLACEHOLDER_HEAD
+            if f.endswith(".png") and f.startswith(name)
+            and (len(f) == len(name) + 4 or f[len(name):-4].isdigit()))
+        if found:
+            return found
+    return []
+
+
+def animal_head(role, rng: Optional[_random.Random] = None, deck=None) -> str:
+    """The head id an animal of *role* wears: one of :func:`animal_heads`,
+    or :data:`PLACEHOLDER_HEAD` until any is drawn.
+
+    With a *deck* (a dict kept across one pass over the world) the heads are
+    dealt rather than drawn: each role's set is shuffled, dealt out, then
+    reshuffled, so a flock wears its variants in even numbers instead of
+    however a run of coin flips falls."""
+    rng = rng or _random
+    kind = str(role or "").strip().lower()
+    if deck is None:
+        pool = animal_heads(kind)
+        return rng.choice(pool) if pool else PLACEHOLDER_HEAD
+    entry = deck.get(kind)
+    if entry is None:
+        entry = deck[kind] = (animal_heads(kind), [])
+    pool, hand = entry
+    if not pool:
+        return PLACEHOLDER_HEAD
+    if not hand:
+        hand.extend(pool)
+        rng.shuffle(hand)
+    return hand.pop()
 
 
 def name_is_guard(name) -> bool:

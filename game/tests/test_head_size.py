@@ -105,3 +105,23 @@ def test_a_hen_wears_the_chicken_head(tmp_path, monkeypatch):
     assert heads.animal_head("hen") == "chicken"
     (folder / "hen.png").write_bytes(b"")                       # its own art wins
     assert heads.animal_head("hen") == "hen"
+
+
+def test_every_variant_of_an_animals_head_is_worn(tmp_path, monkeypatch):
+    import random
+    folder = tmp_path / heads.HEAD_DIR
+    folder.mkdir(parents=True)
+    monkeypatch.setattr(heads, "_repo_root", lambda: str(tmp_path))
+    for name in ("chicken", "chicken2", "chicken3", "wolf01", "wolf02", "wolfsbane"):
+        (folder / f"{name}.png").write_bytes(b"")
+    assert heads.animal_heads("hen") == ["chicken", "chicken2", "chicken3"]
+    assert heads.animal_heads("wolf") == ["wolf01", "wolf02"]     # not wolfsbane
+    # Dealt across a flock, the variants come out in even numbers.
+    deck, rng = {}, random.Random(4)
+    flock = [heads.animal_head("hen", rng, deck) for _ in range(30)]
+    assert sorted(set(flock)) == ["chicken", "chicken2", "chicken3"]
+    assert {flock.count(h) for h in set(flock)} == {10}
+    pack = [heads.animal_head("wolf", rng, deck) for _ in range(7)]
+    assert sorted(pack.count(h) for h in set(pack)) == [3, 4]
+    # Every chicken is small, whichever it is.
+    assert {heads.size_for({"head": h}) for h in flock} == {round(heads.HEAD_SIZE / 3)}

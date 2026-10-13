@@ -873,6 +873,7 @@ class MiniwindSession:
         player_head = str(getattr(self.game.character, "head", "") or "")
         things = fio.things(self.logic)
         changed = False
+        deck = {}           # animal heads are dealt, so a flock is mixed evenly
         for t in things:
             p = getattr(t, "properties", None)
             if not isinstance(p, dict):
@@ -890,7 +891,7 @@ class MiniwindSession:
             if heads.is_any_head(cur) and cur != player_head and not stand_in:
                 head = cur
             elif role in heads.ANIMAL_ROLES:
-                head = heads.animal_head(role, self.rng)
+                head = heads.animal_head(role, self.rng, deck)
             elif heads.name_is_guard(p.get("name") or p.get("display_name")):
                 head = heads.random_guard_head(self.rng)
             else:
