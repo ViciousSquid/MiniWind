@@ -30,7 +30,7 @@ import math
 import time
 
 from PyQt5.QtCore import QPoint, QRect, QRectF, Qt
-from PyQt5.QtGui import (QBrush, QColor, QFont, QLinearGradient, QPainterPath,
+from PyQt5.QtGui import (QBrush, QColor, QLinearGradient, QPainterPath,
                          QPen, QPixmap)
 
 from engine.floating_windows import FloatingWindow
@@ -159,10 +159,17 @@ class InventoryWindow(FloatingWindow):
         self._icons = {}
         self._doll = {}
         from . import fonts
-        self.f_body = QFont(fonts.game_family("Georgia"), 10)
-        self.f_small = QFont(fonts.game_family("Georgia"), 8)
-        self.f_count = QFont("Segoe UI", 9)
-        self.f_count.setBold(True)
+        # One typeface throughout, the conversation's own (MedievalSharp,
+        # game/ui/fonts.py): it has a single upright weight, so nothing here
+        # asks it for bold or italic.
+        self.f_body = fonts.dialogue_font(11)
+        self.f_small = fonts.dialogue_font(9)
+        self.f_count = fonts.dialogue_font(10)
+        self.f_title = fonts.dialogue_font(16)
+        self.f_name = fonts.dialogue_font(15)
+        self.f_button = fonts.dialogue_font(12)
+        # The window's own title bar too, rather than the chrome's Arial.
+        self.title_font = fonts.dialogue_font(10)
 
     # ------------------------------------------------------------ the model
     def _character(self):
@@ -254,7 +261,7 @@ class InventoryWindow(FloatingWindow):
         painter.fillRect(bar, QColor(26, 25, 24, 230))
         painter.setPen(QPen(_SLOT_EDGE, 1))
         painter.drawLine(bar.bottomLeft(), bar.bottomRight())
-        painter.setFont(T.fancy_font(15, bold=True))
+        painter.setFont(self.f_title)
         painter.setPen(_GOLD)
         painter.drawText(bar.adjusted(12, 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft, title)
         return QRect(rect.x() + 10, bar.bottom() + 8, rect.width() - 20,
@@ -529,7 +536,7 @@ class InventoryWindow(FloatingWindow):
                 prefix = items.RARITY_INFO[items.rarity_of(stack)]["prefix"]
             except Exception:
                 rgb, prefix = (232, 228, 240), ""
-            painter.setFont(T.fancy_font(14, bold=True))
+            painter.setFont(self.f_name)
             painter.setPen(QColor(*rgb))
             painter.drawText(QRect(inner.x(), inner.y(), inner.width(), 26),
                              Qt.AlignLeft | Qt.AlignVCenter, prefix + d.name)
@@ -587,9 +594,9 @@ class InventoryWindow(FloatingWindow):
             painter.setBrush(QColor(96, 70, 34, 240) if hot else QColor(40, 37, 33, 240))
             painter.setPen(QPen(_GOLD if enabled else QColor(70, 66, 60), 1.4))
             painter.drawRoundedRect(r, 5, 5)
-            painter.setFont(T.fancy_font(12, bold=True))
+            painter.setFont(self.f_button)
             painter.setPen(_GOLD if enabled else QColor(90, 86, 80))
-            painter.drawText(r, Qt.AlignCenter, label.upper())
+            painter.drawText(r, Qt.AlignCenter, label)
             if enabled:
                 self._buttons.append((QRect(r), action))
 
