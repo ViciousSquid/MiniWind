@@ -372,7 +372,10 @@ class Creature(Monster):
         # monster gameplay: loot table, respawn, and an idle roam radius so wild
         # creatures drift around their spawn instead of standing stock-still.
         p.setdefault("respawn", False)
-        p.setdefault("roam", aggression != "hostile")
+        # Wild beasts wander their ground (game/wildlife.py); sheep and cows
+        # stay in their fields.
+        p.setdefault("roam", faction == "wildlife" and role not in ("sheep", "cow")
+                     or aggression != "hostile")
         p.setdefault("roam_radius", 300.0)
         # Creatures have no schedule/dialogue by default, but the fields exist so
         # a boss/quest creature can be given them without a new entity type.

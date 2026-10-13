@@ -510,6 +510,8 @@ class MiniwindSession:
         from .held_weapons import HeldWeapons
         self.held = HeldWeapons(self)
         from .dragon_fire import DragonFire
+        from .wildlife import Wildlife
+        self.wildlife = Wildlife(self)
         self.dragon_fire = DragonFire(self)
         #: Spell bolts in flight that carry a light: Fio tag -> Light, and
         #: where each lit bolt was last published (tag -> (x, y, z)).
@@ -979,6 +981,7 @@ class MiniwindSession:
         self.archery.update(delta)
         self.held.update()
         self.dragon_fire.update(delta)
+        self.wildlife.update(delta)
         self._update_bolt_lights()
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
             # Fio does not publish an empty store, so the last arrow to land
