@@ -241,8 +241,13 @@ def _draw_bars(p, f, c):
 def _draw_identity(p, f, c):
     """Level, race and class, gold, and the level-up prompt, under the bars."""
     from ..rpg import classes, races
-    x = f.bars[0][1].left() + 0.45 * f.R
     y = f.text_y
+    # Clear of the ring at this height: without a magicka bar the text sits
+    # higher, where the ring reaches further right.
+    top, bottom = y - 12.0, y + 20.0          # both lines of text
+    dy = 0.0 if top <= f.cy <= bottom else min(abs(top - f.cy), abs(bottom - f.cy))
+    x = max(f.bars[0][1].left() + 0.45 * f.R,
+            f.cx + math.sqrt(max(0.0, f.R * f.R - dy * dy)) + 8.0)
     sub = (f"Level {c.level}  ·  {races.get(c.race_id).label} "
            f"{classes.get(c.class_id).label}  ·  ⦿ {c.gold} gold")
     T.text(p, x, y, sub, size=9, color=T.PARCH, family="Segoe UI")
