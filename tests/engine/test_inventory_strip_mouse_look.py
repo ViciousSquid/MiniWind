@@ -37,8 +37,10 @@ def test_inventory_strip_alone_keeps_mouse_look_captured():
     assert not _window_wants_cursor(_View(_Window("strip")))
 
 
-@pytest.mark.parametrize("key", ["screen:character", "screen:trade"])
-def test_character_sheet_and_trade_release_cursor(key):
+@pytest.mark.parametrize("key", [
+    "screen:character", "screen:trade", "debug:tools",
+])
+def test_character_sheet_trade_and_debug_tools_release_cursor(key):
     assert _window_wants_cursor(_View(_Window(key)))
 
 
@@ -113,3 +115,12 @@ def test_closing_trade_screen_releases_pointer_ownership(monkeypatch):
     assert pointer.wants_pointer()
     session.open_screen = None  # Leave/close the trade window.
     assert not pointer.wants_pointer()
+
+
+def test_closing_debug_tools_recaptures_cursor():
+    window = _Window("debug:tools")
+    view = _View(window)
+
+    assert _window_wants_cursor(view)
+    window.active = False  # DebugToolsWindow close button was pressed.
+    assert not _window_wants_cursor(view)
