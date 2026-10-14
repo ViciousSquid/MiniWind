@@ -65,7 +65,8 @@ def layout(width, height, magical=True):
     gap = 0.07 * R
     y = cy - 0.84 * R
     bars = []
-    rows = [("health", 0.34 * R), ("stamina", 0.32 * R), ("magicka", 0.32 * R)]
+    # Magicka is a slim strip under the two main bars.
+    rows = [("health", 0.34 * R), ("stamina", 0.32 * R), ("magicka", 0.13 * R)]
     for name, h in rows if magical else [row for row in rows if row[0] != "magicka"]:
         bars.append((name, QRectF(bar_x, y, bar_w, h)))
         y += h + gap
@@ -236,8 +237,9 @@ def _draw_bars(p, f, c):
     _bar(p, rects["stamina"], c.stamina / c.max_stamina if c.max_stamina else 0.0,
          _FILLS["stamina"], value=f"{int(c.stamina)} / {int(c.max_stamina)}")
     if "magicka" in rects:
+        # Too slim for numbers; the fill says it.
         _bar(p, rects["magicka"], c.magicka / c.max_magicka if c.max_magicka else 0.0,
-             _FILLS["magicka"], value=f"{int(c.magicka)} / {int(c.max_magicka)}")
+             _FILLS["magicka"])
 
 
 def _draw_identity(p, f, c):
