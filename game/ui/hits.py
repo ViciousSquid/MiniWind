@@ -148,12 +148,17 @@ class GamePointer:
         if session is None:
             return False
         if session.game.character.is_dead:
-            # The death screen's "Restore last autosave".
+            # The death screen's "Restore last autosave"; there is no live
+            # player to look around, so its action button keeps the pointer.
             from . import death_screen
             return death_screen.has_button()
-        menu_up = (session.needs_char_creation or session.open_screen is not None
-                   or session.dialogue is not None)
-        return bool(menu_up and has_targets())
+        # During free play, only C's character sheet (paper doll) releases
+        # the captured mouse. The quickbar, dialogue and other game screens
+        # must not leave a visible pointer over the world.
+        character_sheet = getattr(session, "open_screen", None) == "character"
+        # Initial character creation happens before normal play controls exist.
+        needs_creation = bool(getattr(session, "needs_char_creation", False))
+        return bool((character_sheet or needs_creation) and has_targets())
 
     def pointer_move(self, event):
         global pointer
