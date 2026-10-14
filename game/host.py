@@ -845,14 +845,12 @@ class MiniwindGame:
             session.persist()
             return
 
-        # Debug Tools is non-modal: its rewind/teleport buttons queue actions
-        # through game.ui.hits while the world keeps running. Drain that queue
-        # on the normal play path too, not only above while a screen pauses it.
+        # Normal play: simulate the world, then resolve queued UI actions before
+        # this tick's remaining gameplay input. Debug Tools is non-modal, so its
+        # rewind/teleport clicks must also be drained on this path.
+        session.tick(ctx.delta)
         from .ui import hits
         hits.run_clicks(session)
-
-        # Normal play: simulate the world, then handle combat/interaction input.
-        session.tick(ctx.delta)
         self._handle_gameplay_input(session, just, ctx)
         self._handle_interaction(logic, ctx, session, just)
         session.persist()
