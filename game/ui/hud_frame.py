@@ -1,13 +1,13 @@
 """
-The top-left status frame: a bronze ring holding the minimap, two small fins
-on its lower left, and the name, health and magicka bars running out from
+The top-left status frame: a bronze ring holding the minimap, four small fins
+fanned round its lower left, and the name, health and magicka bars running out from
 behind the ring to the right.
 
 Everything is drawn with QPainter -- no artwork asset -- in three layers:
 
 .. code-block:: text
 
-    back    the two fins                         cached pixmap
+    back    the four fins                        cached pixmap
     bars    name, health, magicka (+ stamina)    live, every frame
     map     the minimap, clipped to the circle   game.ui.worldmap
     ring    the bronze ring and its "N"          cached pixmap
@@ -86,10 +86,10 @@ def _circle(cx, cy, radius):
 # ------------------------------------------------------------------ layers
 
 def _paint_back(p, f):
-    """Two small fins on the ring's lower left, behind it."""
+    """Four small fins fanned round the ring's lower left, behind it."""
     cx, cy, R = f.cx, f.cy, f.R
     lean = math.radians(5.0)
-    for deg in (150.0, 172.0):
+    for deg in (128.0, 150.0, 172.0, 194.0):
         a0, a1 = math.radians(deg - 5.0), math.radians(deg + 5.0)
         inner, outer = 0.94 * R, 1.17 * R
         blade = QPainterPath()
