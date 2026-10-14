@@ -1,13 +1,13 @@
 """
-The top-left status frame: a bronze ring holding the minimap, a finned bronze
-crescent behind it, and the name, health and magicka bars running out from
+The top-left status frame: a bronze ring holding the minimap, two small fins
+on its lower left, and the name, health and magicka bars running out from
 behind the ring to the right.
 
 Everything is drawn with QPainter -- no artwork asset -- in three layers:
 
 .. code-block:: text
 
-    back    the fins and the crescent            cached pixmap
+    back    the two fins                         cached pixmap
     bars    name, health, magicka (+ stamina)    live, every frame
     map     the minimap, clipped to the circle   game.ui.worldmap
     ring    the bronze ring and its "N"          cached pixmap
@@ -53,7 +53,7 @@ def layout(width, height):
     is the baseline of the first line written under the bars.
     """
     R = max(70.0, min(118.0, height * 0.13))
-    cx = MARGIN + 1.8 * R
+    cx = MARGIN + 1.22 * R
     cy = MARGIN + R
     bar_x = cx + 0.55 * R
     bar_w = max(190.0, min(280.0, 2.4 * R))
@@ -86,34 +86,21 @@ def _circle(cx, cy, radius):
 # ------------------------------------------------------------------ layers
 
 def _paint_back(p, f):
-    """The fins and the bronze crescent, behind everything."""
+    """Two small fins on the ring's lower left, behind it."""
     cx, cy, R = f.cx, f.cy, f.R
-    hole = _circle(cx, cy, 0.96 * R)
-    bx, by, br = cx - 0.36 * R, cy + 0.30 * R, 1.22 * R
-
-    # Fins: blades fanned round the lower left of the bronze crescent.
-    for k, deg in enumerate((118, 140, 162, 184, 206)):
-        a0, a1 = math.radians(deg - 5.5), math.radians(deg + 5.5)
-        inner, outer = br - 0.06 * R, br + (0.24 - 0.025 * abs(k - 2)) * R
-        lean = math.radians(4.0)
+    lean = math.radians(5.0)
+    for deg in (150.0, 172.0):
+        a0, a1 = math.radians(deg - 5.0), math.radians(deg + 5.0)
+        inner, outer = 0.94 * R, 1.17 * R
         blade = QPainterPath()
-        blade.moveTo(bx + math.cos(a0) * inner, by + math.sin(a0) * inner)
-        blade.lineTo(bx + math.cos(a0 + lean) * outer, by + math.sin(a0 + lean) * outer)
-        blade.lineTo(bx + math.cos(a1 + lean) * outer, by + math.sin(a1 + lean) * outer)
-        blade.lineTo(bx + math.cos(a1) * inner, by + math.sin(a1) * inner)
+        blade.moveTo(cx + math.cos(a0) * inner, cy + math.sin(a0) * inner)
+        blade.lineTo(cx + math.cos(a0 + lean) * outer, cy + math.sin(a0 + lean) * outer)
+        blade.lineTo(cx + math.cos(a1 + lean) * outer, cy + math.sin(a1 + lean) * outer)
+        blade.lineTo(cx + math.cos(a1) * inner, cy + math.sin(a1) * inner)
         blade.closeSubpath()
-        p.setBrush(QBrush(_bronze_linear(bx - br, by - br, bx, by + br)))
+        p.setBrush(QBrush(_bronze_linear(cx - 1.2 * R, cy - 0.4 * R, cx - 0.6 * R, cy + R)))
         p.setPen(QPen(_BRONZE_EDGE, 1.4))
         p.drawPath(blade)
-
-    bronze = _circle(bx, by, br).subtracted(hole)
-    p.setBrush(QBrush(_bronze_linear(bx - br, by - br, bx + br * 0.4, by + br)))
-    p.setPen(QPen(_BRONZE_EDGE, 1.6))
-    p.drawPath(bronze)
-    # A groove following the crescent's outer edge.
-    p.setBrush(Qt.NoBrush)
-    p.setPen(QPen(QColor(255, 222, 170, 90), 1.2))
-    p.drawPath(_circle(bx, by, br - 0.05 * R).subtracted(hole))
 
 
 def _paint_ring(p, f):
