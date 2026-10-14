@@ -152,13 +152,14 @@ class GamePointer:
             # player to look around, so its action button keeps the pointer.
             from . import death_screen
             return death_screen.has_button()
-        # During free play, only C's character sheet (paper doll) releases
-        # the captured mouse. The quickbar, dialogue and other game screens
-        # must not leave a visible pointer over the world.
-        character_sheet = getattr(session, "open_screen", None) == "character"
+        # During free play, only the character sheet (C) and an active
+        # merchant trade screen release the captured mouse. The quickbar,
+        # dialogue and other game screens keep normal mouse-look captured.
+        open_screen = getattr(session, "open_screen", None)
+        interactive_screen = open_screen in ("character", "trade")
         # Initial character creation happens before normal play controls exist.
         needs_creation = bool(getattr(session, "needs_char_creation", False))
-        return bool((character_sheet or needs_creation) and has_targets())
+        return bool((interactive_screen or needs_creation) and has_targets())
 
     def pointer_move(self, event):
         global pointer
