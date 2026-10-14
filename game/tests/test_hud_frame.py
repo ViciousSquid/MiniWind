@@ -52,7 +52,7 @@ def test_the_minimap_fills_the_ring(size):
 def test_bars_come_out_from_behind_the_ring_in_order():
     f = hud_frame.layout(1280, 720)
     names = [name for name, _rect in f.bars]
-    assert names == ["health", "magicka", "stamina"]
+    assert names == ["health", "stamina", "magicka"]
     for _name, rect in f.bars:
         assert rect.left() < f.cx + f.R, "a bar does not start behind the ring"
         assert rect.right() > f.cx + f.R
@@ -61,11 +61,11 @@ def test_bars_come_out_from_behind_the_ring_in_order():
 
 
 def test_one_who_works_no_magic_has_no_magicka_bar():
-    """A Warrior's stamina sits straight under health, with no gap."""
+    """Health and stamina always lead; a Warrior simply has no third bar."""
     mage = hud_frame.layout(1280, 720, magical=True)
     warrior = hud_frame.layout(1280, 720, magical=False)
     assert [n for n, _r in warrior.bars] == ["health", "stamina"]
-    assert dict(warrior.bars)["stamina"].top() == dict(mage.bars)["magicka"].top()
+    assert dict(warrior.bars)["stamina"] == dict(mage.bars)["stamina"]
     assert warrior.text_y < mage.text_y
 
     class _Warrior(_Character):

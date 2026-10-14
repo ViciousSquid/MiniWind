@@ -1,14 +1,15 @@
 """
 The top-left status frame: a bronze ring holding the minimap, four small fins
 fanned round its lower left, and the health, magicka and stamina bars running
-out from behind the ring to the right.
+out from behind the ring to the right: health and stamina always, magicka
+under them for anyone who works magic.
 
 Everything is drawn with QPainter -- no artwork asset -- in three layers:
 
 .. code-block:: text
 
     back    the four fins                        cached pixmap
-    bars    health, magicka, stamina             live, every frame
+    bars    health, stamina, magicka             live, every frame
     map     the minimap, clipped to the circle   game.ui.worldmap
     ring    the bronze ring and its "N"          cached pixmap
 
@@ -48,8 +49,9 @@ _CACHE = {}
 def layout(width, height, magical=True):
     """The frame's geometry for a ``width`` x ``height`` view.
 
-    A character who works no magic (a Warrior) has no magicka bar at all, so
-    with *magical* False stamina sits directly under health.
+    Health and stamina are always the first two bars; magicka comes under
+    them, and a character who works no magic (a Warrior) has no magicka bar at
+    all, so with *magical* False there are only the two.
 
     ``cx, cy`` is the ring's centre, ``R`` its outer radius, ``r`` the
     minimap's radius; ``bars`` is ``[(name, QRectF)]`` top to bottom; ``text_y``
@@ -63,7 +65,7 @@ def layout(width, height, magical=True):
     gap = 0.07 * R
     y = cy - 0.84 * R
     bars = []
-    rows = [("health", 0.34 * R), ("magicka", 0.32 * R), ("stamina", 0.32 * R)]
+    rows = [("health", 0.34 * R), ("stamina", 0.32 * R), ("magicka", 0.32 * R)]
     for name, h in rows if magical else [row for row in rows if row[0] != "magicka"]:
         bars.append((name, QRectF(bar_x, y, bar_w, h)))
         y += h + gap
@@ -231,11 +233,11 @@ def _draw_bars(p, f, c):
     rects = dict(f.bars)
     _bar(p, rects["health"], c.health / c.max_health if c.max_health else 0.0,
          _FILLS["health"], value=f"{int(c.health)} / {int(c.max_health)}")
+    _bar(p, rects["stamina"], c.stamina / c.max_stamina if c.max_stamina else 0.0,
+         _FILLS["stamina"], value=f"{int(c.stamina)} / {int(c.max_stamina)}")
     if "magicka" in rects:
         _bar(p, rects["magicka"], c.magicka / c.max_magicka if c.max_magicka else 0.0,
              _FILLS["magicka"], value=f"{int(c.magicka)} / {int(c.max_magicka)}")
-    _bar(p, rects["stamina"], c.stamina / c.max_stamina if c.max_stamina else 0.0,
-         _FILLS["stamina"], value=f"{int(c.stamina)} / {int(c.max_stamina)}")
 
 
 def _draw_identity(p, f, c):
