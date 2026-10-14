@@ -110,8 +110,13 @@ def _game_pointer_open(view) -> bool:
 
 
 def _window_wants_cursor(view) -> bool:
-    """Whether an open floating window asks for a free cursor in play
-    (``FloatingWindow.wants_cursor``), so it can be dragged and closed."""
+    """Whether a floating UI window needs a free cursor during play.
+
+    The inventory strip remains visible during normal play, but it is a HUD
+    quickbar, not a request to release the first-person mouse-look cursor.
+    Menus, inventory/dialogue panels and other interactive windows still
+    request a free cursor through wants_cursor.
+    """
     manager = getattr(view, 'floating_windows', None)
     if (manager is None or not getattr(view, 'play_mode', False)
             or getattr(view, 'console_overlay_active', False)
@@ -119,26 +124,11 @@ def _window_wants_cursor(view) -> bool:
             or getattr(view, 'pause_menu', None) is not None
             or _play_menu_open(view)):
         return False
-    return any(getattr(w, 'active', False) and getattr(w, 'wants_cursor', False)
-               for w in manager.windows)
-
-
-def _window_cursor_claim_is_inventory_strip(view) -> bool:
-    """True when the always-visible inventory strip is the only cursor owner.
-
-    The strip needs a free cursor for clicks and drag/drop, but that must not
-    disable player look for the entire play session. Other cursor-owning
-    windows (menus and dialogs) still suspend look as before.
-    """
-    manager = getattr(view, 'floating_windows', None)
-    if manager is None or not getattr(view, 'play_mode', False):
-        return False
-    claimants = [
-        w for w in manager.windows
-        if getattr(w, 'active', False) and getattr(w, 'wants_cursor', False)
-    ]
-    return bool(claimants) and all(
-        getattr(w, 'key', None) == 'strip' for w in claimants
+    return any(
+        getattr(w, 'active', False)
+        and getattr(w, 'wants_cursor', False)
+        and getattr(w, 'key', None) != 'strip'
+        for w in manager.windows
     )
 
 
@@ -4318,23 +4308,10 @@ class QtGameView(QOpenGLWidget):
             self.game_pointer.pointer_move(event)
             return
         if _window_wants_cursor(self):
-            # A free cursor for a window: no recentering.
+            # A free cursor for a real UI window: no mouse-look or recentering.
             pointer = self.game_pointer
             if pointer is not None:
                 pointer.pointer_move(event)
-            # main keeps the RPG inventory strip visible during free play. It
-            # owns a free cursor for slot clicks and drag/drop, but must not
-            # swallow all mouse-look input simply because it is on screen.
-            # With the strip as the sole cursor claimant, forward relative
-            # pointer movement to LogicThread while leaving the cursor free.
-            if (self.logic_thread is not None
-                    and _window_cursor_claim_is_inventory_strip(self)):
-                cp = event.pos()
-                dx = cp.x() - self.last_mouse_pos.x()
-                dy = cp.y() - self.last_mouse_pos.y()
-                if dx or dy:
-                    self.game_state.set_mouse_delta(float(dx), float(dy))
-                self.last_mouse_pos = cp
             return
         if self.sysmon.handle_mouse_move(event, self.play_mode, self.width(), self.height()):
             self.update()
