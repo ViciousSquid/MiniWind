@@ -1,13 +1,13 @@
 """
-The top-left status frame: a bronze ring holding the minimap, a blue crescent
-and a finned bronze crescent behind it, and the name, health and magicka bars
-running out from behind the ring to the right.
+The top-left status frame: a bronze ring holding the minimap, a finned bronze
+crescent behind it, and the name, health and magicka bars running out from
+behind the ring to the right.
 
 Everything is drawn with QPainter -- no artwork asset -- in three layers:
 
 .. code-block:: text
 
-    back    the fins and both crescents          cached pixmap
+    back    the fins and the crescent            cached pixmap
     bars    name, health, magicka (+ stamina)    live, every frame
     map     the minimap, clipped to the circle   game.ui.worldmap
     ring    the bronze ring and its "N"          cached pixmap
@@ -86,7 +86,7 @@ def _circle(cx, cy, radius):
 # ------------------------------------------------------------------ layers
 
 def _paint_back(p, f):
-    """The fins, the bronze crescent and the blue one, behind everything."""
+    """The fins and the bronze crescent, behind everything."""
     cx, cy, R = f.cx, f.cy, f.R
     hole = _circle(cx, cy, 0.96 * R)
     bx, by, br = cx - 0.36 * R, cy + 0.30 * R, 1.22 * R
@@ -114,24 +114,6 @@ def _paint_back(p, f):
     p.setBrush(Qt.NoBrush)
     p.setPen(QPen(QColor(255, 222, 170, 90), 1.2))
     p.drawPath(_circle(bx, by, br - 0.05 * R).subtracted(hole))
-
-    ux, uy, ur = cx - 0.22 * R, cy + 0.20 * R, 1.10 * R
-    blue = _circle(ux, uy, ur).subtracted(hole)
-    g = QRadialGradient(QPointF(ux - 0.3 * R, uy + 0.2 * R), ur * 1.25)
-    g.setColorAt(0.0, QColor(120, 205, 235))
-    g.setColorAt(0.55, QColor(46, 132, 180))
-    g.setColorAt(1.0, QColor(14, 56, 92))
-    p.setBrush(QBrush(g))
-    p.setPen(QPen(QColor(150, 98, 44), 2.2))
-    p.drawPath(blue)
-    # Leather grain: a few faint stitched arcs across the crescent.
-    p.setBrush(Qt.NoBrush)
-    for k, (dr, alpha) in enumerate(((0.05, 70), (0.10, 45), (0.15, 30))):
-        pen = QPen(QColor(210, 240, 255, alpha), 1.0)
-        if k == 0:
-            pen.setStyle(Qt.DashLine)
-        p.setPen(pen)
-        p.drawPath(_circle(ux, uy, ur - dr * R).subtracted(_circle(cx, cy, R * 1.02)))
 
 
 def _paint_ring(p, f):
