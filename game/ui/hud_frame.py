@@ -1,14 +1,14 @@
 """
 The top-left status frame: a bronze ring holding the minimap, four small fins
-fanned round its lower left, and the name, health and magicka bars running out from
-behind the ring to the right.
+fanned round its lower left, and the health, magicka and stamina bars running
+out from behind the ring to the right.
 
 Everything is drawn with QPainter -- no artwork asset -- in three layers:
 
 .. code-block:: text
 
     back    the four fins                        cached pixmap
-    bars    name, health, magicka (+ stamina)    live, every frame
+    bars    health, magicka, stamina             live, every frame
     map     the minimap, clipped to the circle   game.ui.worldmap
     ring    the bronze ring and its "N"          cached pixmap
 
@@ -60,8 +60,8 @@ def layout(width, height):
     gap = 0.07 * R
     y = cy - 0.84 * R
     bars = []
-    for name, h in (("name", 0.34 * R), ("health", 0.32 * R),
-                    ("magicka", 0.32 * R), ("stamina", 0.13 * R)):
+    for name, h in (("health", 0.34 * R), ("magicka", 0.32 * R),
+                    ("stamina", 0.32 * R)):
         bars.append((name, QRectF(bar_x, y, bar_w, h)))
         y += h + gap
     return SimpleNamespace(cx=cx, cy=cy, R=R, r=INNER * R, bars=bars,
@@ -171,13 +171,13 @@ def _layers(f, dpr):
 
 #: Fill gradients (top, middle, bottom) per bar.
 _FILLS = {
-    "health": ((176, 255, 96), (78, 196, 40), (26, 104, 18)),
-    "magicka": ((132, 232, 255), (38, 160, 228), (14, 78, 150)),
-    "stamina": ((255, 226, 140), (214, 160, 52), (120, 82, 18)),
+    "health": ((255, 128, 112), (210, 42, 34), (112, 12, 10)),
+    "magicka": ((176, 255, 96), (78, 196, 40), (26, 104, 18)),
+    "stamina": ((132, 232, 255), (38, 160, 228), (14, 78, 150)),
 }
 
 
-def _bar(p, rect, frac, fill, text="", text_x=None, value=""):
+def _bar(p, rect, frac, fill, value=""):
     """One bronze-framed glass bar, *frac* full of the *fill* gradient."""
     rad = rect.height() / 2.4
     p.setPen(QPen(_BRONZE_EDGE, 1.2))
@@ -209,46 +209,28 @@ def _bar(p, rect, frac, fill, text="", text_x=None, value=""):
     p.setBrush(QBrush(gloss))
     p.drawRoundedRect(QRectF(inner.left() + 2, inner.top() + 1, inner.width() - 4,
                              inner.height() * 0.5), irad, irad)
-    if text or value:
-        left = inner.left() + 8 if text_x is None else max(inner.left() + 8, text_x)
-        area = QRectF(left, inner.top(), inner.right() - left - 8, inner.height())
+    if value:
+        area = inner.adjusted(8, 0, -8, 0)
+        p.setFont(T.font(max(7, int(rect.height() * 0.36)), bold=True, family="Segoe UI"))
         p.setPen(QColor(0, 0, 0, 170))
-        if text:
-            p.setFont(T.font(max(8, int(rect.height() * 0.46))))
-            p.drawText(area.translated(1, 1), int(Qt.AlignVCenter | Qt.AlignLeft), text)
-            p.setPen(QColor(244, 242, 236))
-            p.drawText(area, int(Qt.AlignVCenter | Qt.AlignLeft), text)
-        if value:
-            p.setFont(T.font(max(7, int(rect.height() * 0.36)), bold=True, family="Segoe UI"))
-            p.setPen(QColor(0, 0, 0, 170))
-            p.drawText(area.translated(1, 1), int(Qt.AlignVCenter | Qt.AlignRight), value)
-            p.setPen(QColor(250, 250, 250))
-            p.drawText(area, int(Qt.AlignVCenter | Qt.AlignRight), value)
-
-
-def _clear_of_ring(f, rect):
-    """The x a bar's label starts at so the ring does not cover it."""
-    dy = rect.center().y() - f.cy
-    return f.cx + math.sqrt(max(0.0, f.R * f.R - dy * dy)) + 6.0
+        p.drawText(area.translated(1, 1), int(Qt.AlignVCenter | Qt.AlignRight), value)
+        p.setPen(QColor(250, 250, 250))
+        p.drawText(area, int(Qt.AlignVCenter | Qt.AlignRight), value)
 
 
 def _draw_bars(p, f, c):
     rects = dict(f.bars)
-    name = rects["name"]
-    _bar(p, name, 0.0, None, text=c.name, text_x=_clear_of_ring(f, name))
     _bar(p, rects["health"], c.health / c.max_health if c.max_health else 0.0,
          _FILLS["health"], value=f"{int(c.health)} / {int(c.max_health)}")
-    # One who works no magic (a Warrior) has stamina in the magicka bar's
-    # place, as the old bars did, and no separate stamina strip.
+    # One who works no magic (a Warrior) keeps an empty magicka bar.
     magical = c.max_magicka > 0 or getattr(c, "can_use_magic", lambda: True)()
-    stamina = c.stamina / c.max_stamina if c.max_stamina else 0.0
     if magical:
         _bar(p, rects["magicka"], c.magicka / c.max_magicka if c.max_magicka else 0.0,
              _FILLS["magicka"], value=f"{int(c.magicka)} / {int(c.max_magicka)}")
-        _bar(p, rects["stamina"], stamina, _FILLS["stamina"])
     else:
-        _bar(p, rects["magicka"], stamina, _FILLS["stamina"],
-             value=f"{int(c.stamina)} / {int(c.max_stamina)}")
+        _bar(p, rects["magicka"], 0.0, None)
+    _bar(p, rects["stamina"], c.stamina / c.max_stamina if c.max_stamina else 0.0,
+         _FILLS["stamina"], value=f"{int(c.stamina)} / {int(c.max_stamina)}")
 
 
 def _draw_identity(p, f, c):

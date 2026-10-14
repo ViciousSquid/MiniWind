@@ -52,7 +52,7 @@ def test_the_minimap_fills_the_ring(size):
 def test_bars_come_out_from_behind_the_ring_in_order():
     f = hud_frame.layout(1280, 720)
     names = [name for name, _rect in f.bars]
-    assert names == ["name", "health", "magicka", "stamina"]
+    assert names == ["health", "magicka", "stamina"]
     for _name, rect in f.bars:
         assert rect.left() < f.cx + f.R, "a bar does not start behind the ring"
         assert rect.right() > f.cx + f.R
