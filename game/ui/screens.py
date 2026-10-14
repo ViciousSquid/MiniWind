@@ -12,7 +12,7 @@ they need nothing beyond a QPainter and the session. Selection lives in
 from __future__ import annotations
 
 from PyQt5.QtCore import QRect, Qt
-from PyQt5.QtGui import QColor, QPen
+from PyQt5.QtGui import QColor, QFontMetrics, QPen
 
 from . import drag, fonts, hits, trade_anim
 from . import theme as T
@@ -57,7 +57,7 @@ _PANEL_OVERRIDE = None
 
 #: Suggested floating-window body size (px) per screen.
 _SCREEN_BODY_SIZE = {
-    "charcreate": (780, 540),
+    "charcreate": (1000, 700),
     "inventory": (720, 500),
     "character": (720, 520),
     "journal": (700, 470),
@@ -317,8 +317,16 @@ def _draw_fortune(painter, inner, ty, s):
     T.text(painter, inner.x(), ty + 36, "Three six-sided dice for each. Keep what fate "
            "gives you, or tempt it again.", size=10, color=T.DIM, family="Georgia")
     die = 54
+    gap = 14
     row_h = die + 18
     top = ty + 52
+    # Columns from the text as it is actually drawn: the label font is the
+    # game's display face, much wider than a fixed offset allowed for, and
+    # the dice were landing on top of the labels.
+    label_w = max(QFontMetrics(T.font(14, bold=True)).horizontalAdvance(label)
+                  for _a, label in _cha.ROLLED)
+    dice_x = inner.x() + label_w + 24
+    total_w = QFontMetrics(T.font(20, bold=True)).horizontalAdvance("18")
     all_settled = True
     for r, (attr_id, label) in enumerate(_cha.ROLLED):
         y = top + r * row_h
@@ -328,7 +336,7 @@ def _draw_fortune(painter, inner, ty, s):
         for k, value in enumerate(dice):
             idx = r * 3 + k
             local = elapsed - idx * _ROLL_STAGGER
-            cx = inner.x() + 170 + k * (die + 14) + die // 2
+            cx = dice_x + k * (die + gap) + die // 2
             cy = y + die // 2
             if local < _ROLL_TUMBLE:
                 all_settled = False
@@ -339,14 +347,14 @@ def _draw_fortune(painter, inner, ty, s):
                 shown, angle, dy = int(value), 0.0, 0.0
             hud._draw_dice_image(painter, hud._dice_face_image(shown), cx, int(cy + dy),
                                  die, angle, 255)
-        tx = inner.x() + 170 + 3 * (die + 14) + 16
+        tx = dice_x + 3 * (die + gap) + 8
         if all_settled or elapsed - (r * 3 + 2) * _ROLL_STAGGER >= _ROLL_TUMBLE:
             total = sum(int(d) for d in dice)
             delta = _cha.delta_for(total)
             colour = (T.STAMINA.lighter(140) if delta > 0 else
                       T.HEALTH.lighter(140) if delta < 0 else T.PARCH)
             T.text(painter, tx, cy + 4, f"{total}", size=20, color=T.GOLD_BRIGHT, bold=True)
-            T.text(painter, tx + 44, cy + 2,
+            T.text(painter, tx + total_w + 14, cy + 2,
                    f"{'+' if delta >= 0 else ''}{delta} {attr.label(attr_id)}  ·  "
                    f"{bios.band(total)}", size=11, color=colour, family="Georgia")
     # The bio, once the dice are down.

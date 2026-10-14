@@ -63,9 +63,10 @@ def draw(painter, session, width, height):
     # the dialogue box or a menu window, so they are suppressed while one is open.
     menu_open = session.open_screen is not None or session.dialogue is not None
 
-    _draw_orbs(painter, c, width, height)
+    # Name, health, magicka and the minimap, in the bronze frame top left.
+    from . import hud_frame
+    hud_frame.draw(painter, session, c, width, height)
     _draw_clock(painter, session, width)
-    _draw_topleft(painter, session, c)
     _draw_active(painter, session, c, width, height)
     if not menu_open:
         _draw_quest_tracker(painter, session, width)
@@ -455,26 +456,6 @@ def _draw_bubble(painter, cx, cy, kind):
         _paint_bubble(painter, cx, cy, kind)
 
 
-def _draw_orbs(painter, c, width, height):
-    """Three stat bars stacked bottom-left."""
-    x = 20
-    w = 240
-    h = 16
-    base_y = height - 28
-    T.bar(painter, x, base_y, w, h,
-          c.health / c.max_health if c.max_health else 0, T.HEALTH,
-          label=f"{int(c.health)} / {int(c.max_health)}")
-    # No Magicka bar for one who works no magic (a Warrior): stamina moves
-    # down into its place.
-    magical = c.max_magicka > 0 or getattr(c, "can_use_magic", lambda: True)()
-    if magical:
-        T.bar(painter, x, base_y - 22, w, h,
-              c.magicka / c.max_magicka if c.max_magicka else 0, T.MAGICKA,
-              label=f"{int(c.magicka)} / {int(c.max_magicka)}")
-    T.bar(painter, x, base_y - (44 if magical else 22), w * 0.7, h * 0.7,
-          c.stamina / c.max_stamina if c.max_stamina else 0, T.STAMINA)
-
-
 def _draw_clock(painter, session, width):
     if not session.show_clock:
         return
@@ -554,17 +535,6 @@ def _paint_clock(painter, cx, cy, radius, h_int, m_int, day_line):
     painter.restore()
 
 
-def _draw_topleft(painter, session, c):
-    """Name, level, gold under the stat area — a compact identity chip."""
-    x, y = 20, 16
-    T.text(painter, x, y + 14, c.name, size=14, color=T.GOLD_BRIGHT, bold=True)
-    from ..rpg import races, classes
-    sub = f"Level {c.level}  ·  {races.get(c.race_id).label} {classes.get(c.class_id).label}"
-    T.text(painter, x, y + 32, sub, size=9, color=T.DIM, family="Segoe UI")
-    T.text(painter, x, y + 50, f"⦿ {c.gold} gold", size=10, color=T.GOLD, family="Segoe UI")
-    if c.can_level_up:
-        T.text(painter, x, y + 68, "Level up! (press L)", size=9,
-               color=QColor(120, 220, 130), bold=True, family="Segoe UI")
 
 
 def _weapon_icon_pixmap(weapon_def, size=26):
@@ -921,11 +891,35 @@ def _prepare_dice_animation(animation, result):
     return visuals
 
 
+#: ``(face cacheKey, size) -> scaled QPixmap``. Bounded by the six faces times
+#: the handful of sizes the screens draw dice at.
+_DICE_SCALED_CACHE = {}
+
+
+def _scaled_dice_image(image, size):
+    """*image* scaled to *size*, built once and kept.
+
+    Scaling per draw made a new pixmap for every die of every frame, and on
+    the GL paint engine each one is a texture uploaded, drawn once and freed.
+    The next die's upload then reused the freed texture name, which the engine
+    still took for the texture it had just configured, so it skipped setting
+    the new one's filtering: an incomplete texture, sampled as an opaque black
+    square. Only the first die after a text draw (a different texture) came
+    out. A kept pixmap keeps its texture, so there is nothing to recycle.
+    """
+    key = (image.cacheKey(), int(size))
+    scaled = _DICE_SCALED_CACHE.get(key)
+    if scaled is None:
+        scaled = image.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        _DICE_SCALED_CACHE[key] = scaled
+    return scaled
+
+
 def _draw_dice_image(painter, image, center_x, center_y, size, angle, alpha):
     """Draw a scaled, independently rotated dice image."""
     if image is None or image.isNull():
         return
-    scaled = image.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    scaled = _scaled_dice_image(image, size)
     painter.save()
     painter.setOpacity(max(0.0, min(1.0, alpha / 255.0)))
     painter.translate(center_x, center_y)

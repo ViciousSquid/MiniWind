@@ -8,9 +8,10 @@ over it from its brushes. That takes a few seconds for a big world, so it runs
 on a background thread, in strips, and is cached on disk per map (``cache/``),
 so a map is only ever painted once. Until it is ready the minimap says so.
 
-:func:`draw_minimap` paints the square minimap in the top-right corner of the
-play view, under the clock: north up (the overhead camera's north), about
-:data:`MINIMAP_SPAN` world units across, with the player's arrow, the people
+:func:`draw_minimap` paints the round minimap inside the bronze ring of the
+top-left status frame (:mod:`game.ui.hud_frame`): north up (the overhead
+camera's north), about :data:`MINIMAP_SPAN` world units across, with the
+player's arrow, the people
 and creatures nearby (red: hostile to the player, green: friendly, grey:
 anyone else), and the tracked quest's target as a yellow diamond, pinned to
 the edge when it is off the map.
@@ -287,9 +288,11 @@ def _map_brushes(path):
 # --------------------------------------------------------------------- minimap
 
 def minimap_rect(width, height):
-    """``(x, y, size)`` of the minimap: top-right, under the clock."""
-    size = int(max(140, min(230, height * 0.24)))
-    return width - size - 16, 126, size
+    """``(x, y, size)`` of the square the round minimap fills: the inside of
+    the status frame's ring, top left (see :func:`game.ui.hud_frame.layout`)."""
+    from .hud_frame import layout
+    f = layout(width, height)
+    return f.cx - f.r, f.cy - f.r, f.r * 2.0
 
 
 def _relation_colour(session, thing):
@@ -310,7 +313,10 @@ def _relation_colour(session, thing):
 
 
 def draw_minimap(painter, session, viewport, width, height, world=None):
-    """Paint the square minimap (see the module docstring)."""
+    """Paint the round minimap (see the module docstring).
+
+    Only the disc: the ring round it, and its north mark, belong to the frame,
+    which draws them over the map's edge."""
     from PyQt5.QtCore import QPointF, QRectF, Qt
     from PyQt5.QtGui import QBrush, QColor, QPainterPath, QPen, QPolygonF
     from . import theme as T
@@ -331,7 +337,7 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
     painter.setRenderHint(painter.SmoothPixmapTransform, True)
     frame = QRectF(x0, y0, size, size)
     window = QPainterPath()
-    window.addRect(frame)
+    window.addEllipse(frame)
     painter.fillPath(window, QColor(20, 24, 20, 230))
     painter.setClipPath(window)
 
@@ -382,9 +388,9 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
         p = to_screen(pos[0], pos[2])
         dx, dy = p.x() - centre.x(), p.y() - centre.y()
         limit = radius - 9
-        reach = max(abs(dx), abs(dy))
+        reach = math.hypot(dx, dy)
         if reach > limit:
-            # Along the line to it, stopped at the square's inner edge.
+            # Along the line to it, stopped just inside the circle's edge.
             p = QPointF(centre.x() + dx / reach * limit, centre.y() + dy / reach * limit)
         diamond = QPolygonF([p + QPointF(0, -7), p + QPointF(6, 0),
                              p + QPointF(0, 7), p + QPointF(-6, 0)])
@@ -404,15 +410,6 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
     painter.drawPolygon(QPolygonF([tip, left, centre, right]))
 
     painter.setClipping(False)
-    painter.setBrush(Qt.NoBrush)
-    painter.setPen(QPen(T.GILD, 2.5))
-    painter.drawRect(frame)
-    painter.setPen(QPen(QColor(90, 74, 44), 1))
-    painter.drawRect(frame.adjusted(4, 4, -4, -4))
-    # North.
-    painter.setFont(T.font(10, bold=True))
-    painter.setPen(T.GOLD_BRIGHT)
-    painter.drawText(QRectF(centre.x() - 10, y0 - 2, 20, 16), int(Qt.AlignCenter), "N")
     painter.restore()
 
 

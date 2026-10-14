@@ -1093,19 +1093,19 @@ class MiniwindGame:
                 from .ui import inspector, path_debug
                 inspector.draw_world_lines(painter, viewport, w, h)
                 path_debug.draw(painter, session, viewport, w, h)   # console 'paths'
+                # The world's map picture for the minimap, which the HUD's
+                # status frame draws (painted once, in the background, then
+                # cached per map).
+                from .ui import worldmap
+                if not getattr(session, "_worldmap_requested", False):
+                    session._worldmap_requested = True
+                    worldmap.ensure_for(logic, viewport)
                 hud.draw(painter, session, w, h)
                 hud.draw_bow_charge(painter, session, viewport, w, h)
                 hud.draw_npc_bow_charges(painter, session, viewport, w, h)
                 # The armed pick's highlight goes over the HUD, so its name
                 # label is never hidden under a toast.
                 inspector.draw_pick_hover(painter, viewport, w, h)
-                # The minimap, from the world's map picture (painted once,
-                # in the background, then cached per map).
-                from .ui import worldmap
-                if not getattr(session, "_worldmap_requested", False):
-                    session._worldmap_requested = True
-                    worldmap.ensure_for(logic, viewport)
-                worldmap.draw_minimap(painter, session, viewport, w, h)
                 self._serve_map_request(session, viewport)
                 self._serve_autosave(session, viewport)
                 # Speech bubbles over nearby NPCs (only during free play, not
@@ -1359,6 +1359,9 @@ class MiniwindGame:
                 screen = session.open_screen
                 title = self._SCREEN_TITLES.get(screen, str(screen).title())
                 bw, bh = screens.window_body_size(screen)
+                # Never larger than the view it opens in.
+                bw = min(bw, max(320, w - 40))
+                bh = min(bh, max(240, h - 100))
                 draw_fn = (lambda p, x, y, ww, hh, s=session:
                            screens.draw_in_rect(p, s, x, y, ww, hh))
                 on_close = (lambda s=session, sc=session.open_screen:
