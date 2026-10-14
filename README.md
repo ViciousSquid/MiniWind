@@ -1,523 +1,264 @@
 
 # <img src="https://github.com/user-attachments/assets/83dc0282-4d1f-4c2c-90f9-7fdd571cabc3f" width="200">
 
+# Miniwind — a first-party fantasy RPG for Fio
 
-# A small living fantasy RPG, powered by [Fio](https://github.com/ViciousSquid/Fio)
+**Miniwind** is a complete, top-down, open-world fantasy role-playing game built
+on Fio, set in its own world, the **Vale of Miniwind**. It draws on the broad
+well of fantasy RPGs — the learn-by-doing progression of the Elder Scrolls, the
+grounded factions and reputation of *Gothic*, the coloured loot rarity of
+*Diablo*-style ARPGs, and the attributes-and-skills backbone of tabletop D&D —
+recast as its own setting rather than a copy of any one of them.
 
-> # Early alpha work-in-progress
+Fio is treated here as the **engine powering a total conversion** — a first-party
+title, not an optional plugin. It ships enabled and is the canonical
+demonstration that Fio can drive an entire RPG.
 
-MiniWind (working title) is a **dedicated evolutionary branch of Fio**: a miniature, top-down,
-moddable fantasy RPG that demonstrates Fio's technology through a complete game
-and a specialised RPG editor.
+> **No guns.** Miniwind is a sword-and-sorcery world. The engine's combat was
+> extended so creatures and NPCs fight with **melee**, **bows & arrows** or
+> **magic** — never firearms.
 
-> **Fio technology → MiniWind branch → small living RPG → easily-moddable game data**
-
-MiniWind is **not a Fio plugin** and **not a separate engine**. It is the native
-game layer of this branch. It reuses Fio's renderer, terrain, entities, spatial
-grid, save/load, UUID persistence, top-down camera, billboard rendering,
-lighting, collision and the team-aware Monster AI — and adds the RPG on top as an
-integrated `game/` layer, not a plugin.
-
-The generic Fio **plugin system remains** for genuinely optional gameplay;
-MiniWind simply no longer travels through it — it is built in and always on.
-**World management is Fio's**: cell streaming, residency, dormant entities,
-per-cell persistence and simulation tiers all come from Fio's core Big World
-plugin (`plugins/bigworld/`). MiniWind adds game meaning to those primitives; it
-does not reimplement them. See [ARCHITECTURE.md §7](ARCHITECTURE.md).
-
-## Author causality, not stories
-
-MiniWind is an **emergent storytelling** game. There is no scenario code: the
-game ships small, composable systems, and the stories are what happens when
-they interact. Every notable act runs through one general-purpose pipeline:
-
-```
-EVENT → PERCEPTION → INTERPRETATION → STATE CHANGE → BEHAVIOUR
-```
-
-Stab a townsperson and nothing is scripted, yet all of this can follow:
-
-```
-crime → witness → the witness walks to a guard → a charge is laid → a bounty →
-arrest → the player resists → combat → death → the dead man's brother finds out →
-he comes for you → the story of it spreads through the town by foot traffic
-```
-
-Every step is a general rule, which is why the *un*happy paths work too:
-
-* murder the only witness before they reach a guard and there is no bounty
-* do it at 2am, out of everyone's sight, and nobody ever knows
-* sneak, and you shrink everyone's effective sight range against you
-* lie low: hearsay decays daily, so a story can be outlived as well as outrun
-* a rumour that reaches a guard three days later still lands the charge
-
-The systems live in `game/sim/` and are all pure Python (no Qt, no engine):
-
-| Module | What it is |
-|--------|------------|
-| `events.py` | the world event bus — every notable act, as data, with a bounded causal history |
-| `perception.py` | who could have seen or heard it (distance, sight range, sleep, darkness, stealth) |
-| `knowledge.py` | what each actor *believes*: facts with a certainty and a source (witnessed / heard / told), plus rumour propagation and daily decay |
-| `ownership.py` | who owns a thing; what counts as theft; stolen goods stay branded |
-| `crime.py` | crime severity and reporting — a bounty is what other people *do about it*, not a tax on the act |
-| `appraisal.py` | how one actor interprets one fact — and a plain-English **reason** for it |
-| `production.py` | objects that make other objects on a clock |
-| `director.py` | the glue that runs the whole chain, and the explanation trail the editor inspects |
-
-Nothing in there knows what a farmer, a bounty or a bucket of milk is. Add a row
-to `EVENT_KINDS` or a new NPC and the entire chain applies to it for free.
-
-### Systemic objects: the cow, not the milk quest
-
-Millbrook ships with livestock. A cow is an ordinary Creature with two extra
-data fields — `produces: milk`, `produce_every_hours: 8` — and an `owner`. That
-is the whole authoring. From it:
-
-* the cow yields a **bucket of milk**, an ordinary item, owned by the farmer
-* taking it is a **theft**, which needs a witness, which produces a bounty when
-  word reaches the watch, and a farmer who remembers you took it
-* it can be carried, traded, given, dropped, sold and stolen back
-* kill the cow and the milk stops
-
-There is no milk quest, no milk code and no special case for milk anywhere in
-the game.
-
-| RPG feature | Reuses (Fio technology) | Adds (MiniWind game layer) |
-|-------------|-------------------------|----------------------------|
-| NPCs & creatures | `editor.things.Monster`, `engine.monster_ai.MonsterAI`, billboards, `team` | distinct **NPC** (social) and **Creature** (monster) entities, plus Item / Trigger / Spawn Point / Marker |
-| Combat & targeting | team-aware `MonsterAI` (chase, melee, projectiles, death) | a `logic._faction_hostile` predicate + per-entity `sight_range`; faction / combat-capability / flee kept as separate axes |
-| Factions | monster `team` string | `factions.relationship()` matrix (data-driven) |
-| World time | — (engine ticks in real seconds) | `GameClock` |
-| Schedules & autonomy | movement uses the existing position/grid path | low-frequency decision tick, `schedule.evaluate()`, local wander, bounded civilian flee-to-refuge |
-| World markers | named entities + UUID persistence | authorable `Marker` entity referenced by name |
-| Inventory / items | serialized for free via `properties` | `inventory` model + data-driven item DB |
-| Dialogue | `LogicState` registry for state | `DialogueRunner` + an Aurora-style **dialogue tree** editor |
-| Perception & witnesses | per-entity `sight_range`, the top-down positions | `sim.perception`: sight vs hearing, sleep, darkness, stealth |
-| Memory & knowledge | the persistent KV store, `disposition`'s per-NPC identity | `sim.knowledge`: beliefs with certainty + source, rumour spread, decay |
-| Crime & bounty | `character.bounty`, the guard arrest/escort flow | `sim.crime`: a charge only exists once a witness reaches the law |
-| Ownership & theft | ordinary item stacks and `properties` | `sim.ownership`: an `owner` field, and everything that follows from it |
-| Production | the item DB + the `ItemPickup` entity | `sim.production`: a cow, a hen, a well — objects that make objects |
-| Combat visuals | sprite billboards + projectile system | per-role attack sprite, arrows / magic bolts, red damage flash, speech bubbles |
-| Save / load | Fio's UUID-matched serializer + `.fiosave` | nothing new — state lives in `properties`/KV |
-| Editor UI | `register_property_tab`, typed property schemas, right-click placement | sectioned property panels, composable Inventory/Schedule/Dialogue/Loot/Quest components, creation **wizards**, "Add MiniWind Entity" submenu |
-| Top-down view | overhead camera (default) + `render.overlay` | HUD, dialogue box, character/inventory screens |
-
-## Requirements
-
-MiniWind's supported baseline is **CPython 3.14**.
-
-Install the exact runtime dependency set with:
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-The repository uses **pygame-ce** (imported in Python as `pygame`) rather than the legacy `pygame` distribution.
-
-## Running it
+## Play it
 
 ```bash
 python main.py
 ```
 
-After the splash, the **launcher** asks which half of MiniWind you came for:
-
-```
-                   ▓▓  MiniWind
-        ────────────────────────────────────────
-           Mode          Fullscreen ▾
-           Resolution    1280 × 720 ▾      (Windowed only)
-           The game takes over the whole screen.
-           ☑ Vertical sync
-           ☑ High DPI scaling
-        ────────────────────────────────────────
-         Reset to defaults      [ PLAY ]   [ EDIT ]
-         version 2.2.0.…                       Quit
-```
-
-* **PLAY** drops straight into the game with the editor UI hidden, presented
-  the way the display mode says — the existing kiosk mode.
-* **EDIT** opens the editor exactly as it always did.
-
-**Mode and resolution are the game's, not the editor's.** Play mode is presented
-in the editor's own main window, so its size, position and frame are snapshotted
-on the way in and restored exactly on the way out — and never written to the
-editor's saved layout. Setting the game to 1280 × 720 does not resize the
-editor, and quitting straight from play no longer reopens the editor at the
-game's resolution. Vertical sync and high-DPI scaling are unavoidably
-application-wide: Qt is told about both once, before it starts.
-
-Everything the launcher changes is written straight back to `settings.ini` —
-the same keys Settings ▸ Display and Settings ▸ Kiosk use — so the launcher and
-the Settings window never disagree, and a choice made here is still there next
-launch. **Reset to defaults** puts all four back. Every dimension in the
-launcher is a multiple of the application font, so it scales with the OS display
-scale and with the editor's own font-size setting rather than shrinking on a 4K
-panel.
-
-Turn the launcher off with `[Startup] show_launcher = False` (or the checkbox in
-Settings ▸ Kiosk) to go straight to the editor as before.
-
-The editor bootstrap (`editor/__init__.py`) installs the native game host
-(`game.install()`); the engine drives its play lifecycle and per-tick hook
-through the manager's generic built-in-game surface. Open a MiniWind map (below)
-and press **Play**.
-
-### Escape always gets you out
-
-Play mode started **from the editor** is a preview, and **Escape** ends it —
-after asking *"Exit Play mode?"*, so a stray press cannot throw the session
-away. It gets there even when the game has a screen up: Escape goes to the game
-only when the game will actually close something with it, which character
-creation and the level-up screen deliberately will not. Escape also dismisses
-the play console whatever has focus, so clicking the viewport behind it no
-longer leaves it stranded on screen.
-
-A game the **player** launched — the launcher's PLAY button, or an imported
-`.fiopak` — is untouched: Escape there raises the pause menu, as it always has.
-
-### Mouse control
-
-**Settings ▸ GAME ▸ Mouse control** keeps the pointer on screen for the whole
-session instead of hiding and centre-locking it. The head turns to face the
-pointer, and arrows, spell bolts and every other projectile launch at it, so the
-cursor is the crosshair — a creature merely standing in front no longer steals a
-shot meant for one behind it.
-
-How the head follows depends on the camera. Overhead, the pointer lands on the
-ground the player is standing on, so the head faces it exactly. In first person
-there is no such point, so the pointer *steers*: held near the middle of the
-screen it leaves the view alone (which is what keeps close aiming usable) and
-pushed toward an edge it turns the view, faster the further out it is.
-
-Off by default — the classic hidden, centre-locked mouse look.
-
-### The reaper
-
-One NPC death in four is attended. Death fades in a random way off from the
-body, glides over to it, takes it with a single stroke of his scythe, pauses a
-moment and fades out again — perhaps four seconds in all. It is theatre and
-nothing else: he does no damage, cannot be attacked or spoken to, the combat AI
-never sees him, and he leaves nothing behind. Deaths are caught by watching the
-`dead` flag rather than by hooking every kill path, so a townsperson cut down by
-a wolf is as likely to be visited as one the player kills.
-
-The fade is a `sprite_opacity` uniform on the sprite shader (and its twin on the
-overhead ground quads), so it costs nothing for the solid actors around him.
-
-### Farm tools
-
-**Scythe**, **pitchfork**, **shovel** and **bucket** are ordinary items — carried,
-bought, sold, equipped and swung. They go through no special path: they are
-weapon definitions in `game/data/items.json` with their own icons, so trading,
-damage, two-handedness and the overhead weapon overlay all pick them up for
-free. Thalen the blacksmith forges the edged ones, Elowen's shop keeps the pail,
-and Bram the farmer will part with his own. The scythe is what the reaper
-carries.
-
-## The Vale of MiniWind (the shipped world)
-
-`maps/village_walled_source.json` is the game's one map and loads at startup.
-Millbrook sits at its centre; the rest of the Vale has been spread out over a
-world about 82 000 units square (40 x 40 terrain chunks) by
+The launcher offers **Play** or **Edit**. Play drops you into character creation
+and then into the Vale; the map it opens is set by `[Startup] default_map` in
+`settings.ini`. The starter world can be regenerated with:
 
 ```bash
-python -m game.tools.expand_world --preview vale.png
+python -m game.tools.make_world       # -> maps/Miniwind.json (starter slice)
 ```
 
-which moved every outlying site (Hollin's Cross, Mirrormere and its shore
-villages, the Old Mill, Greywood, the barrows and camps...) further from the
-village *with the ground it stands on*, raised a mountain wall around the edge
-and the Emberpeaks to the far north-east (a heightmap overlay kept clear of
-every site), and added open-country landmarks, wildlife and groves. Every lake
-and pond is a sculpted depression filled by a single water brush whose edges
-lie under dry bank. High in
-the Emberpeaks, up a cairn-marked pass beyond Frostcap Tor, the **Emberpeak
-Shrine** holds the old altar and the **Ember Tome** -- the firebolt spellbook,
-which is also the `ember_tome` quest item of Thalen's quest *The Ember Tome*.
-The quest arrow points at the book; reading it teaches firebolt, hands over the
-tome and completes the quest. The tool refuses to expand a map twice.
+Talk to the townsfolk for work, buy gear from the smith and the trader, then
+clear the bandits from the Old Mill, cull the wolves troubling the flocks, or
+brave the barrows and caves of the Vale. What the town knows about you is a
+consequence of what it saw — see *The reactive simulation* below.
 
-### Geography, biomes and forests
+### Controls (top-down)
 
-```bash
-python -m game.tools.enliven_world --preview world.png   # once; --force to redo
-```
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| **WASD** | Move | **E** | Talk / interact (nearest NPC or object) |
+| **F** | Attack | **R** | Cast the active spell |
+| **X** | Cycle active spell | **B** (hold) | Block |
+| **V** | Toggle sneak | **H** | Quick-drink a healing potion |
+| **I** | Inventory & equipment | **C** | Character sheet |
+| **J** | Quest journal | **P** | Spellbook |
+| **M** | Map | **Q** | Current quest (objective + how to complete) |
+| **L** | Level up (when available) | **1–9** | Weapon quick slots (taken in hand at once) |
+| **Esc** | Close / back | | |
 
-gives the Vale its lie of the land (the picture is `world_map.png`):
+Gameplay rolls (attacks, casts, loot) animate on their own; there is no manual
+die-roll key.
 
-* **Relief** -- rolling hills, ridgelines, desert dunes and four flat-topped
-  mesas, added to the heightmap. It fades to nothing near every site, so towns
-  sit in the valleys with the hills rising between them; anything on changed
-  ground was lifted with it.
-* **Biomes** -- a biome map over the terrain (`engine/terrain_biomes.py`, saved
-  as `biome_map_blob`, drawn by `terrain.frag`): **desert** in the south-west
-  fading through steppe into meadow, **snow** on the Emberpeaks and the high
-  summits, **swamp** round the lakes (an oasis in the desert), and **wheat** --
-  fields round every farm and three great golden plains. Grass follows it: none
-  on sand or snow, reeds in the swamp, dense waist-high wheat in the fields, and
-  never on a road stamped with the terrain paint tool.
-* **Forests** -- about 11 000 trees, by biome: pines and snowy pines in the
-  north-east, willows in the swamps, palms at desert water, dead trees and
-  scrub at the desert's edge, broadleaf elsewhere, and a great forest round
-  Greywood (art: `python -m game.tools.make_tree_art`).
-* **Six shrines**, one per biome, each a named place.
+## What's in the game
 
-### Caves and the dragon
+| System | Summary |
+|--------|---------|
+| **Character creation** | 10 races (each with attribute/skill bonuses, resistances and a daily power), 13 classes, 10 birthsigns, or your own custom class. |
+| **8 attributes** | Strength, Endurance, Agility, Speed, Intelligence, Willpower, Personality, Luck — driving every derived stat and roll. |
+| **20 skills, leveled by use** | Blade, Blunt, Marksman, Block, Heavy/Light Armor, Destruction, Restoration, Alteration, Conjuration, Illusion, Mysticism, Alchemy, Sneak, Security, Mercantile, Speechcraft, Acrobatics, Athletics, Light Fingers. Doing raises them; raising *major* skills levels you up. |
+| **Derived pools** | Health, Magicka and Stamina, recomputed from attributes; passive magicka/stamina regen. |
+| **Combat** | Melee (charge weapons, dual wield, off-hand strikes), archery with a real draw for NPCs and player alike, spells; hit chance, criticals, sneak attacks, blocking, armour mitigation and elemental resistance — all through the engine-native dice service. |
+| **Magic** | 30+ spells across six schools, magicka cost that falls with skill, self/touch/target/projectile delivery, summons and bound weapons. |
+| **Items & equipment** | Weapons, armour (heavy/light by slot & material), ammunition, potions, ingredients, books (plain-text, fiopak-packable), keys and gold; encumbrance from Strength. |
+| **Loot rarity** | Dropped gear can roll **Fine / Rare / Fabled** tiers — worth more, tinted in the UI, and hitting/protecting harder. |
+| **Quests & journal** | Multi-stage quests authored as human-readable `.quest` files in `quests/`, with a journal, and quest state stored in the persistent KV store (visible to map logic). |
+| **Guilds & reputation** | Joinable guilds with rank ladders, reputation-driven promotion, NPC disposition, persuasion, and a crime bounty that exists only once somebody who knows tells the law. |
+| **Economy** | Merchants with stock, gold and overnight restock; buy/sell prices set by Mercantile + Personality; stolen goods stay marked. |
+| **World** | A game clock with day/night, Radiant-AI-lite NPC schedules (home → work → sleep), roads with real traffic that materialises near the player, wildlife that roams, and lairs that refill. |
+| **Save / load** | The whole character (stats, skills, inventory, equipment, spells, guild standing) plus quests, the clock, each map's memory and the event history round-trip through Fio's stock save system — no new format. Autosaves run every few minutes of play and on discovery, as delta saves. |
 
-```bash
-python -m game.tools.make_caves                    # mouths on the overworld + maps
-python -m game.tools.make_caves --maps-only cave06 # just rewrite cave maps
-```
+## The reactive simulation — author causality, not stories
 
-Six caves open in the foothills. Each mouth on the overworld is a rock arch with
-a **LevelChanger** ("[E] Enter ...", no confirmation box: `confirm: false`, its
-text from `prompt`) and a **PlayerStart** `<cave>_exit` outside it. Its map,
-`maps/cave01.json` .. `cave06.json`, is a rock cave with a start named
-`entrance` and a LevelChanger back out to the exit start. The character crosses
-over through the state store like any level change.
+`game/sim/` provides the small, composable mechanisms whose *interactions*
+produce the stories. The pipeline is deliberately one-directional and
+scenario-free:
 
-**Whisperdeep** (`cave06`) is a dragon's lair: *Vharzul the Ember Wyrm*, five
-times the player's size (`head_scale: 5`, head `dragon.png`) with 3000 hit
-points, in a great hall with gold all over the floor. Close up he bites; further
-off he breathes fire -- a stream of the engine's FIRE Effects, each flame
-animating out of step, burning whoever stands in the cone
-(`game/dragon_fire.py`). Console: `dragonfire 1`..`5` picks the fire setting
-(remembered).
+    session emits a WorldEvent
+        → perception picks the witnesses (sight / sound / asleep / distance)
+            → knowledge stores a Fact per witness (certainty, source)
+                → appraisal turns each Fact into a ranked Intent + a reason
+                    → the session's decision tick honours the top Intent
 
-Maps, like textures and sounds, may live in `.fiopak` packages: they are read
-from a package first and from the loose file otherwise.
+* **Ownership** — any object or stack may carry an `owner`. Taking something
+  owned is a theft event; a cow's milk inherits the farmer as owner, so it is
+  stealable with no code and no "milk quest".
+* **Perception** — an act is not a fact. Sight needs an awake observer in range
+  (dimmed at night, shrunk by a sneaking actor's stealth); sound needs only
+  loudness. The victim always knows; nobody is a witness to their own deed.
+* **Knowledge** — facts carry `certainty` and `source` (`witnessed` / `heard` /
+  `told`). Gossip passes them on at decayed certainty, so news travels at
+  walking pace, can be outrun, and fades with the days.
+* **Appraisal** — the same fact means different things to different people:
+  the victim's kin FIGHTs, a baker who saw it REPORTs, a guard ARRESTs, a
+  coward flees, a rival shrugs. Every intent carries its reason in plain
+  English, which is what the Live Simulation Inspector shows.
+* **Crime** — a bounty is what *other people do about it*. No witness, no
+  bounty — until the body is found or the rumour reaches a guard. Reporting is
+  deduplicated per event: ten witnesses, one bounty.
+* **Production** — objects that make other objects on a clock, whose yields
+  inherit the producer's owner.
 
-### Dungeon Designer
+Everything here is pure Python — no Qt, no engine imports — and headlessly
+tested. The **director** owns the bus and drives the chain; parked, distant
+actors are simulated coarsely (gossip, reports, production in hour-long
+catch-up passes), and truly dormant ones not at all.
 
-**Tools ▸ Dungeon Designer…** (or `python -m game.tools.dungeon_designer`)
-draws dungeons on a grid the way Fio's alpha editor did: left-drag paints
-SOLID or open, right-drag the other, Ctrl+click fills. **Generate** uses
-alpha's two generators (`game/tilemap_gen.py`): rooms and corridors, or long
-winding corridors. Place the **Entrance**, **Monsters**, **Chests** and
-**Lights**, pick a cave or dungeon look, and **Save**: the map is built by
-`game/dungeon_map.py` with a PlayerStart `entrance` and a LevelChanger back to
-the map named under *Way out*. The design is kept in the map, so **Load**
-opens it again. To enter it from the overworld, put a LevelChanger there with
-`target_map` = the saved file and `destination_spawn` = `entrance`, and a
-PlayerStart beside it named in the designer's *At start*.
+## The living world — computed, not simulated, until it matters
 
-### Books
+Big World keeps only the region round the player resident; everything beyond is
+parked, and a parked actor does not move. So the off-screen world is *data*:
 
-Books are read open over the game, two parchment pages at a time, in the
-medieval face (`game/ui/book_window.py`): double-click one in the pack (or
-Use), click a page or press ←/→ to turn, Esc to close. Their texts are plain
-files, `assets/books/<id>.txt` — a `Title:` / `Author:` header, then
-paragraphs separated by blank lines, `[page]` for a forced page break — named
-by a book item's `"book"` in `game/data/items.json` (`game/books.py`). Pack the
-folder into `books.fiopak` (`python tools/make_fiopak.py assets/books
-assets/books.fiopak`) and they are read from there; a loose file still
-overrides. The shipped texts are examples to replace.
+* **Journeys** (`game/living/journeys.py`) — travellers on the road network are
+  records: who, why, which road, since when, how fast. Position is a function
+  of the clock and costs nothing between queries. Encounters between distant
+  hostile parties resolve with weighted dice.
+* **Materialisation** (`game/living/world.py`) — when a journey's computed
+  position enters the live region, its party becomes real actors with names,
+  faces, gear, dialogue and wares; the engine's AI takes over from there. When
+  it drifts back out, progress, wounds and purse are written back to the
+  journey and the actors are removed.
+* **Roads** (`game/living/roads.py`) — the graph is built per session from the
+  map's own PathNodes and location markers, with auto-linking for orphans.
+* **Wildlife** roams its home while idle (near tiers only), **navigation**
+  routes walkers round walls with A* over the engine's collision grid (no
+  navmesh), and **map memory** remembers each map's deaths, taken pickups and
+  containers, and repopulates cleared lairs about a day later — never in sight
+  of the player.
 
-### Maps remember, lairs refill
+## Authoring in the editor (no code, no hand-edited JSON)
 
-Each map keeps what happened in it (`game/map_memory.py`, in the state store):
-the dead stay dead, taken pickups stay gone, chests keep what was left.
-Generic hostile creatures and spawner members come back about a day later
-(22-32 game hours), never in front of the player; one-of-a-kind creatures
-(the dragon) and townsfolk never do. Clear a cave and it may be full again
-tomorrow.
+Select an entity and use its **Property Manager** tabs:
 
-### The world in motion
+* **Creature / NPC → Inventory** — add/remove item stacks, edit quantities & values.
+* **Creature / NPC → Dialogue** — build branching conversations as nodes:
+  `-> NODE` picks the next node, `| if …` gates an option, `| do …` runs
+  actions (`start_quest`, `give`, `take`, `set`, `open_trade`, `persuade`,
+  `join_guild`).
+* **Quests** — the **Quest Editor** is a first-class card-based popup over the
+  `.quest` files in `quests/`; the Quest Wizard builds the quest *and* its
+  supporting map logic (a location Marker, a dialogue branch on the giver).
+  Legacy `properties['quests']` lists are migrated on first open.
+* **Simulation** — the **Live Simulation Inspector** shows what an actor knows,
+  what it intends and *why* (running on the same live director the game runs),
+  plus a causal event history and a Simulate Event injector.
+* **Ownership & production** — per-object tabs for owner fields and producer
+  fields; there is no per-object code.
 
-* **Roads and travellers** (`game/living/`): traders, pilgrims, adventurers,
-  brigands and wolf packs travel between places along the PathNodes you lay
-  (or straight tracks where there are none). Far away a journey is a sum on
-  the clock; near the player its party walks as real actors. Console: `roads`.
-* **Wildlife roams** its ground when idle (`game/wildlife.py`) -- not sheep or
-  cows -- and only where Big World is simulating.
-* **Held weapons** -- every actor's weapon in hand is drawn beside its head on
-  its wielding side (one in five is left-handed). Fighters carry a blade and a
-  bow and switch by range (`game/held_weapons.py`).
-
-## The living settlement (vertical slice)
-
-The starter settlement **Millbrook** is authored entirely as data
-(`game/data/settlement.json`) and materialised into a loadable map:
-
-```bash
-python -m game.tools.make_settlement   # -> maps/village.json
-```
-
-It contains six **interconnected** townsfolk with distinct roles (blacksmith,
-merchant, farmer, guard, beggar, villager), each with a persistent identity, a
-home, a job, a bed, authored **relationships** (Thalen and Elowen are siblings;
-Bram is Mara's brother; Kestrel courts Mara; Wick owes Thalen coin) and a daily
-schedule anchored to authored **markers**; a guard who walks a real patrol
-circuit; and a bandit/wolf threat east of town. In play:
-
-```
-Morning → NPCs wake → walk to work → merchant & blacksmith open → farmer works →
-guard patrols the square → player talks/trades → a hostile threatens → guard fights →
-combat ends → NPCs resume their lives → evening → they go home → night → they sleep
-```
-
-Actions leave a mark: an NPC's death — by the player's hand or a bandit's — is
-recorded as a persistent flag in the quest store, so survivors mourn their kin
-in dialogue and the town "remembers" the loss through save/load.
-
-High-level decisions run at a low frequency (`DECISION_INTERVAL`) or on events
-(hour change, combat start/end); only movement runs per tick. Off-screen NPCs
-resolve their state from the game clock rather than being simulated — the design
-stays faithful to Fio's low-power brief (Snapdragon 8CX class).
-
-## Moddable game data
-
-Game **rules** live in code (`game/rpg/`); game **content** lives as
-human-editable JSON under `game/data/`:
-
-```
-game/data/
-    bestiary.json     creature & NPC role templates
-    factions.json     cross-faction relationships
-    schedules.json    per-role daily schedules
-    items.json        the item database
-    settlement.json   the starter settlement (markers + NPCs)
-```
-
-Every file is readable, diffable and version-controllable. To extend the world,
-edit a file — or ship a **mod**: drop files of the same names under
-`game/data/mods/<modname>/` and their entries merge over the base (a dict updates
-by id, a list is appended). No code change, no SDK.
-
-## The editor: construct the simulation, don't script it
-
-Every system above is exposed for authoring **and observation**, live, during
-Play — so a designer builds rules and watches what they produce rather than
-writing what should happen.
-
-* **NPC inspector** — the existing Properties tabs cover identity, role, faction,
-  personality, courage, disposition and relationships (Appearance is a collapsed
-  section inside Properties); the new **Simulation** tab adds what this actor
-  *knows*, its ranked intents, and the plain-English reason behind the one it is
-  acting on.
-* **Object inspector** — an **Ownership & Production** tab on items, containers
-  and creatures: who owns it, and what it makes.
-* **Live Simulation Inspector** — click-to-inspect in play now shows a **Why**
-  section and a **Knowledge** section. The explanation is produced by the
-  decision itself, so it can never drift out of step with the behaviour.
-* **World Event / History view** — *Tools ▸ World Simulation* (Ctrl+Shift+W):
-  every significant event, expandable into the consequences it caused, with
-  unreported crimes flagged.
-* **Simulate Event** — inject an act (who, to whom, with what) and watch the
-  world answer. It goes through the same pipeline the game uses, so what follows
-  is the simulation reacting, not a preview of it.
-* **Full inspection/editing during Play Mode** — every panel is live, and an
-  NPC's knowledge can be edited while the game runs ("tell it about event #12",
-  "wipe its memory") to see the behaviour change immediately.
-
-From the debug console, the same surface is scriptable:
-
-```
-sim events            the world history, with the consequence each event caused
-sim crimes            crimes nobody has reported to the watch yet
-sim actors            every actor's current intent and the reason for it
-sim why <name>        why that actor is doing what it is doing
-sim knows <name>      what it believes, and how sure it is
-sim tell <name> <id>  hand it a belief and watch what it decides
-sim emit <kind> [actor] [target] [item]     inject an event
-```
+Content is moddable without touching Python: `game/data/*.json` (bestiary,
+factions, items, schedules, settlement) is the base, and a folder under
+`game/data/mods/<name>/` with files of the same names merges over it — add a
+creature, retune an item, drop in a second village.
 
 ## Architecture
 
 ```
-game/                     the integrated MiniWind game layer (built-in, not a plugin)
-    __init__.py           GAME instance + install() bootstrap
-    host.py               MiniwindGame — the native game host (registration, tick, overlay)
-    integration.py        editor-side wiring: the native "MiniWind" menu
-    sim/                  the reactive simulation: events, perception, knowledge,
-                          ownership, crime, appraisal, production, director
-    sim_editor.py         the editor's window onto it: per-entity Simulation and
-                          Ownership & Production tabs, and the World Simulation
-                          window (actors · history · Simulate Event)
-    entities.py           NPC, GameSettings, Marker entities
-    runtime.py            MiniwindSession: clock + low-frequency AI + combat + dialogue
-    factions/schedule/... game-facing modules (load their content from game/data)
-    rpg/                   engine-agnostic RPG core (character, skills, magic, quests, combat…)
-    ui/                    HUD, dialogue box, character/inventory/journal screens
-    data/                  editable game content (+ mods overlay)
-    tools/                 expand_world, make_settlement, make_world, make_sprites
-    tests/                 headless tests (no Qt/OpenGL)
-
-engine/                   generic Fio technology (renderer, terrain, monster AI, save/load…)
-editor/                   the Fio editor, presented as the MiniWind RPG Editor
-plugins/                  the generic plugin system, for optional gameplay
+game/
+  __init__.py       GAME instance + install() + show_launcher — the native bootstrap (no PLUGIN)
+  host.py           native game host: entity/IO registration, input, render.overlay HUD wiring
+  runtime.py        MiniwindSession: the play session — clock, NPC AI, player combat/cast/interact verbs
+  integration.py    editor-side wiring: the native "MiniWind" menu
+  entities.py       the NPC/creature entities + GameSettings + Marker (reads the bestiary)
+  fio.py            the only module that spells out Fio's logic-thread runtime chain
+  combat_loadout.py what an actor can fight with, and which it should use now
+  combat_styles.py teaches the engine's loadout which items are weapons
+  held_weapons.py   who holds what, which way they face; arms fighters with a second weapon
+  dual_wield.py     off-hand strikes ride the AI's shot hook
+  warrior_fist.py   innate charged weapon for the Warrior
+  npc_archery.py    NPCs draw bows by the player's own draw rules
+  dragon_fire.py    breath weapon built from the engine's FIRE Effect pool
+  facing.py         one heading convention (_facing) shared by everything that turns an actor
+  faction_ai.py     MiniWind's factions as an engine HostilityModel
+  world_index.py    vectorised "who is near whom", reading Big World's tier stamps
+  navigation.py     A* over the engine collision grid (no navmesh)
+  wildlife.py       idle roaming for near-tier creatures
+  map_memory.py     what each map remembers; how lairs refill
+  mental_state.py   read-only actor snapshot for the debug inspector
+  death_causes.py   "Stabbed to death by Kestrel the Guard"
+  quest_editor.py   card-based Quest Editor + Quest Wizard (quests/ .quest files)
+  sim_editor.py     the Live Simulation Inspector windows
+  editor_ui.py      Property-Manager Inventory / Dialogue / Quests tabs (Qt)
+  editor_wizards.py creation wizards composed from the same authoring components
+  dungeon_map.py    a dungeon grid -> the playable map built from it
+  diceroll.py       headless dice service (d4–d20, modifiers, history)
+  autosave.py       timed + on-discovery delta autosaves
+  rewind.py         debug time-travel over a short world history
+  books.py          the library (plain-text books, fiopak-packable)
+  music.py          shuffled soundtrack at Fio's music volume
+  console.py        MiniWind's debug-console commands
+  rpg/              engine-agnostic rules: attributes, skills, races, classes,
+                    birthsigns, character, items, equipment, combat, magic,
+                    quests, guilds, loot, bestiary, disposition, needs, daily
+                    powers, bios, heads, gib/gore — and authoring.py, the
+                    dialogue condition/action grammar
+  sim/              the reactive simulation: events, perception, knowledge,
+                    appraisal, ownership, crime, production, director
+  living/           the off-screen world: journeys, roads, materialisation
+  ui/               Qt overlays: hud, screens (creation/inventory/sheet/journal/
+                    spells/trade/levelup/map), dialogue, launcher, theme, book window
+  data/             editable content: bestiary/factions/schedules/items/settlement
+                    JSON (+ mods/ overlay). Rules stay in code, content lives here.
+  tools/            world builders (make_world, expand_world, enliven_world,
+                    populate_world, make_settlement, make_caves, dungeon_designer)
+                    and asset makers (sprites, icons, spellbooks, tree art)
+  tests/            ~65 headless test modules (pytest)
 ```
 
-### Ownership: Fio underneath, MiniWind on top
+MiniWind is a **built-in game**, not a plugin: `host.py` defines `MiniwindGame`
+(no `FioPlugin` base, no discovery, no enable/disable, no `api_version`), and
+`__init__.install()` registers it on the manager's generic built-in-game surface.
 
-The dependency runs one way. `engine/`, `editor/`, `plugins/` and `player/`
-never import `game/`; `main.py` installs the game at startup, and the game
-reaches the engine through duck-typed hooks it sets on the logic thread
-(`game_session`, `player_fire_handler`, `_player_damage_filter`,
-`blood_stain_sprites`) and the plugin API.
+The **rules live in `rpg/`** as pure data + functions; **state lives on the
+`Character` and on entity `properties` dicts**, so Fio's UUID-matched serializer
+persists the world for free. The Fio-facing files are a thin seam (reached
+through `fio.py`); the Qt UI is isolated in `ui/`. Everything in `rpg/` and
+`sim/` runs headless — see the tests.
 
-| Concern | Owner |
-|---|---|
-| World streaming / residency, dormant entities, per-cell persistence | Fio — `plugins/bigworld` |
-| Entity persistence, UUID identity | Fio |
-| Typed state | Fio — `LogicState` |
-| Legacy string-facing game state | MiniWind — `GlobalStore` boundary |
-| Rendering visibility / culling | Fio — `engine/render_cull.py`, renderer |
-| Simulation relevance | Fio — Big World tiers (`_sim_tier` stamps) |
-| Qt / editor event routing | Fio |
-| Gameplay meaning of routed input (fire buttons, keys) | MiniWind |
-| RPG rules, quests, dialogue, factions | MiniWind — `game/` |
-| Branding / UI identity | MiniWind |
-| Mobile player runtime | Fio — `player/`, untouched |
+### The seams MiniWind hooks into Fio
 
-The simulation tiers Big World stamps, and what MiniWind does with them:
+| Seam | Used by |
+|------|---------|
+| `register_builtin_game` | `__init__.install()` |
+| `player_fire_handler` | attack / cast on the fire buttons |
+| `_player_damage_filter` | armour/resistance mitigation before health |
+| MonsterAI `_shot_hook` | `npc_archery`, `dual_wield` |
+| MonsterAI steer hook | `navigation` (and chase routing) |
+| `HostilityModel` | `faction_ai` |
+| combat-loadout item-style resolver | `combat_styles.register()` |
+| `render.overlay` | HUD, dialogue box, screens (`host.py`) |
+| `gameplay_paused` | world freezes while a menu is open |
+| Big World `_sim_tier` stamps | `world_index`, director tick lists |
+| console-command surface | `console.py` |
+| property-tab / KV-suggestion / wizard surfaces | `editor_ui`, `quest_editor`, `sim_editor`, `editor_wizards` |
+| stock savegame + UUID overlay | character, quests, clock, map memory, event history |
 
-| Tier | Where | What runs |
-|---|---|---|
-| `TIER_NEAR` | player vicinity | everything: AI, perception, schedules, movement, combat, needs, animation |
-| `TIER_ACTIVE` | near world | decisions staggered across passes; still moves every tick, so nothing on screen stutters |
-| `TIER_DISTANT` | distant world | schedules and needs on the clock, one coarse collision-checked step per pass, no perception |
-| `TIER_DORMANT` | streamed out | nothing; the state persists and resumes when the region becomes relevant |
+## A total conversion
 
-The Big World plugin is **required**: MiniWind does not start without
-`plugins/bigworld/`, and it cannot be disabled from the Plugins menu or
-`settings.ini`. Streaming is still per map — a map opts in by carrying Big
-World's `BigWorldSettings` entity, and a map without one keeps the whole world
-resident and pays nothing for the plugin being loaded. MiniWind's own actor index
-(`game/world_index.py`) is a query accelerator for perception and combat that
-reads those tiers; it is built only for casts large enough to benefit.
+This branch turns Fio from a general-purpose FPS/level editor into a dedicated
+**fantasy RPG game and editor**:
+
+* **MiniWind is the built-in game** — installed natively at startup, not a
+  plugin you switch on. The generic plugin system stays for optional gameplay.
+* **No guns anywhere** — all combat is melee, archery or magic; the fire
+  buttons are handed to MiniWind, which swings, looses arrows or casts.
+* **The world pauses in menus** — opening character creation, the inventory,
+  the journal, etc. freezes the monsters, combat, sounds and clock until you
+  close it.
+* **World streaming, residency and simulation tiers** come from Fio's core
+  Big World plugin; a map opts in with its `BigWorldSettings` entity.
 
 ## Tests
 
 ```bash
-python -m pytest game/tests -q            # MiniWind's headless game tests
-python -m pytest -q                       # everything: Fio + MiniWind
-# 2898 passed, 49 skipped with PyQt5 installed (offscreen Qt, no GPU).
+python -m pytest game/tests -q     # everything, headless
+python -m pytest game/tests -q -m "not slow"
 ```
 
-Covers the **reactive simulation** end to end (`game/tests/test_sim.py`) — that
-a stabbing produces crime → witness → report → bounty without any of it being
-scripted, that murdering the only witness buries the crime, that news travels by
-foot traffic and lands the charge late, that a coward, a guard, a grieving
-brother and the victim's rival each read the *same* murder differently, that
-milking someone else's cow is a theft with no milk quest in sight, and that the
-inspector's explanation matches the behaviour it caused — plus factions, game
-time, schedules, inventory, dialogue, the session's
-schedule movement / combat override / dialogue item-grant / persist-restore, the
-living-settlement simulation (townsfolk work by day and sleep at night, walking
-to their markers), the guard's authored **patrol circuit** and its recovery back
-to patrol after a threat passes, faction-aware combat with separated
-combat-capability and bounded civilian flee-to-refuge, **persistent settlement
-consequences** (an NPC's death is recorded and survives save/load; a slain guard
-leaves the town "unprotected"), **authored NPC relationships** and dialogue that
-reflects a relative's death, speech-bubble cues, the editor authoring wiring
-(grouped schemas + creation wizards), and the world placeables (item pickup,
-quest trigger, creature spawn) — all headless, like the engine's own tests.
-
-World management, relevance and culling are covered by Fio's own suites
-(`plugins/bigworld/tests`, `tests/`). `tests/integration/test_miniwind_boundaries.py`
-pins the ownership above: that Fio's packages never import the game, that there
-is no parallel streaming layer or `LogicKeyValueStore`, that the fire buttons go
-through the engine's shot path, and that Fio 2.4.1's geometry and editor
-features survived the merge.
+All headless — no Qt/OpenGL, no display — running under the same tier markers
+as the engine's own suite. The reactive simulation, the arrest flow, journeys
+and the living settlement all have dedicated end-to-end modules
+(`test_sim.py`, `test_arrest.py`, `test_settlement.py`, …).
