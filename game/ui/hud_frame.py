@@ -308,6 +308,12 @@ def draw(painter, session, c, width, height):
     painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
     painter.drawPixmap(0, 0, back)
     _draw_bars(painter, f, c)
+    # The well the map sits in. The bars run in behind the ring, so this is
+    # what keeps their ends out of the circle when there is no map to cover
+    # them (outside Play, or before the map picture is ready).
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(14, 18, 16))
+    painter.drawEllipse(QPointF(f.cx, f.cy), f.r + 1.0, f.r + 1.0)
     painter.restore()
 
     from . import worldmap
