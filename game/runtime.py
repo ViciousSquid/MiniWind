@@ -4973,10 +4973,14 @@ class MiniwindSession:
         if not self._blocked_by_wall(nx, y, nz):
             npc.pos = [nx, y, nz]
             return True
-        if not self._blocked_by_wall(nx, y, pos[2]):
+        # Only count a slide if that axis actually changes position. When an
+        # NPC heads straight into a wall, one of these candidates can be its
+        # current position; treating that no-op as success clears _blocked_ticks
+        # every frame, so the Navigator never gets called.
+        if abs(nx - pos[0]) > 1e-6 and not self._blocked_by_wall(nx, y, pos[2]):
             npc.pos = [nx, y, pos[2]]
             return True
-        if not self._blocked_by_wall(pos[0], y, nz):
+        if abs(nz - pos[2]) > 1e-6 and not self._blocked_by_wall(pos[0], y, nz):
             npc.pos = [pos[0], y, nz]
             return True
         return False

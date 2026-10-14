@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from .. import runtime
 from ..runtime import MiniwindSession
+from ..navigation import Navigator
 from .fio_logic import FioLogic
 
 
@@ -65,6 +66,8 @@ class _Walker:
 
     def __init__(self, walls=()):
         self.logic = _Logic(walls)
+        # Exercise the same wall-routing layer that MiniwindSession installs.
+        self.nav = Navigator(self._blocked_by_wall)
 
 
 #: A wall straight across the NPC's path north, with a gap nowhere near it.
@@ -77,24 +80,41 @@ def test_an_npc_walks_when_nothing_is_in_the_way():
     assert npc.pos[2] > 0.0
 
 
-def test_an_npc_cannot_walk_through_a_wall():
-    """The reported bug, in one assertion."""
+def test_an_npc_routes_around_a_wall_without_clipping_through_it():
+    """A directly blocked step must activate navigation and find the wall's end."""
     npc = _NPC()
     walker = _Walker(_WALL_ACROSS_PATH)
-    for _ in range(200):
+    margin = runtime.NPC_WALL_MARGIN
+    for _ in range(300):
         walker._move(npc, 0.1)
-    assert npc.pos[2] < 200.0, "the NPC ended up past the wall"
+        x, z = npc.pos[0], npc.pos[2]
+        overlaps_x = x + margin > -400.0 and x - margin < 400.0
+        overlaps_z = z + margin > 200.0 and z - margin < 260.0
+        assert not (overlaps_x and overlaps_z), "the NPC clipped through the wall"
+    assert npc.pos[2] > 260.0, "the NPC never made it around the wall"
 
 
-def test_a_blocked_npc_slides_along_the_wall_rather_than_sticking():
-    """Sliding is what carries an actor along a wall to the doorway."""
-    # Heading diagonally into a wall that only blocks its northward progress.
+def test_a_blocked_npc_slides_or_routes_along_the_wall_without_clipping():
+    """An oblique approach may slide first, then pass the wall's end."""
     npc = _NPC(pos=(0.0, 0.0, 0.0), dest=(1000.0, 0.0, 1000.0))
     walker = _Walker(_WALL_ACROSS_PATH)
-    for _ in range(60):
+    margin = runtime.NPC_WALL_MARGIN
+    for _ in range(100):
         walker._move(npc, 0.1)
-    assert npc.pos[0] > 100.0, "it should have slid east along the wall"
-    assert npc.pos[2] < 200.0, "and not passed through it"
+        x, z = npc.pos[0], npc.pos[2]
+        overlaps_x = x + margin > -400.0 and x - margin < 400.0
+        overlaps_z = z + margin > 200.0 and z - margin < 260.0
+        assert not (overlaps_x and overlaps_z), "the NPC clipped through the wall"
+    assert npc.pos[0] > 100.0, "it should make progress along the wall"
+
+
+def test_a_blocked_axis_fallback_does_not_count_a_no_op_as_movement():
+    # The NPC is just outside the wall's collision margin. The next northward
+    # step is blocked, while the attempted X-axis slide leaves X unchanged.
+    npc = _NPC(pos=(0.0, 0.0, 170.0), dest=(0.0, 0.0, 1000.0))
+    walker = _Walker(_WALL_ACROSS_PATH)
+    assert walker._step_to(npc, 0.0, 179.0) is False
+    assert npc.pos == [0.0, 0.0, 170.0]
 
 
 def test_an_npc_finds_its_way_through_a_gap():
