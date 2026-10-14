@@ -60,6 +60,24 @@ def test_bars_come_out_from_behind_the_ring_in_order():
     assert tops == sorted(tops)
 
 
+def test_one_who_works_no_magic_has_no_magicka_bar():
+    """A Warrior's stamina sits straight under health, with no gap."""
+    mage = hud_frame.layout(1280, 720, magical=True)
+    warrior = hud_frame.layout(1280, 720, magical=False)
+    assert [n for n, _r in warrior.bars] == ["health", "stamina"]
+    assert dict(warrior.bars)["stamina"].top() == dict(mage.bars)["magicka"].top()
+    assert warrior.text_y < mage.text_y
+
+    class _Warrior(_Character):
+        max_magicka = magicka = 0
+
+        def can_use_magic(self):
+            return False
+
+    assert not hud_frame._magical(_Warrior())
+    assert hud_frame._magical(_Character())
+
+
 def test_the_frame_paints_and_keeps_its_static_layers(qt_app):
     hud_frame._CACHE.clear()
     image = QtGui.QImage(1280, 720, QtGui.QImage.Format_ARGB32_Premultiplied)

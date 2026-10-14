@@ -45,8 +45,11 @@ _BRONZE_EDGE = QColor(34, 18, 6)
 _CACHE = {}
 
 
-def layout(width, height):
+def layout(width, height, magical=True):
     """The frame's geometry for a ``width`` x ``height`` view.
+
+    A character who works no magic (a Warrior) has no magicka bar at all, so
+    with *magical* False stamina sits directly under health.
 
     ``cx, cy`` is the ring's centre, ``R`` its outer radius, ``r`` the
     minimap's radius; ``bars`` is ``[(name, QRectF)]`` top to bottom; ``text_y``
@@ -60,8 +63,8 @@ def layout(width, height):
     gap = 0.07 * R
     y = cy - 0.84 * R
     bars = []
-    for name, h in (("health", 0.34 * R), ("magicka", 0.32 * R),
-                    ("stamina", 0.32 * R)):
+    rows = [("health", 0.34 * R), ("magicka", 0.32 * R), ("stamina", 0.32 * R)]
+    for name, h in rows if magical else [row for row in rows if row[0] != "magicka"]:
         bars.append((name, QRectF(bar_x, y, bar_w, h)))
         y += h + gap
     return SimpleNamespace(cx=cx, cy=cy, R=R, r=INNER * R, bars=bars,
@@ -218,17 +221,19 @@ def _bar(p, rect, frac, fill, value=""):
         p.drawText(area, int(Qt.AlignVCenter | Qt.AlignRight), value)
 
 
+def _magical(c):
+    """Whether *c* works magic: a Warrior has no magicka and no bar for it."""
+    can = getattr(c, "can_use_magic", None)
+    return bool(can()) if callable(can) else c.max_magicka > 0
+
+
 def _draw_bars(p, f, c):
     rects = dict(f.bars)
     _bar(p, rects["health"], c.health / c.max_health if c.max_health else 0.0,
          _FILLS["health"], value=f"{int(c.health)} / {int(c.max_health)}")
-    # One who works no magic (a Warrior) keeps an empty magicka bar.
-    magical = c.max_magicka > 0 or getattr(c, "can_use_magic", lambda: True)()
-    if magical:
+    if "magicka" in rects:
         _bar(p, rects["magicka"], c.magicka / c.max_magicka if c.max_magicka else 0.0,
              _FILLS["magicka"], value=f"{int(c.magicka)} / {int(c.max_magicka)}")
-    else:
-        _bar(p, rects["magicka"], 0.0, None)
     _bar(p, rects["stamina"], c.stamina / c.max_stamina if c.max_stamina else 0.0,
          _FILLS["stamina"], value=f"{int(c.stamina)} / {int(c.max_stamina)}")
 
@@ -250,7 +255,7 @@ def _draw_identity(p, f, c):
 
 def draw(painter, session, c, width, height):
     """Paint the whole frame, the minimap inside its ring included."""
-    f = layout(width, height)
+    f = layout(width, height, magical=_magical(c))
     device = painter.device()
     dpr = float(device.devicePixelRatioF()) if device is not None else 1.0
     back, ring = _layers(f, dpr)
