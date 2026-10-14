@@ -866,11 +866,35 @@ def _prepare_dice_animation(animation, result):
     return visuals
 
 
+#: ``(face cacheKey, size) -> scaled QPixmap``. Bounded by the six faces times
+#: the handful of sizes the screens draw dice at.
+_DICE_SCALED_CACHE = {}
+
+
+def _scaled_dice_image(image, size):
+    """*image* scaled to *size*, built once and kept.
+
+    Scaling per draw made a new pixmap for every die of every frame, and on
+    the GL paint engine each one is a texture uploaded, drawn once and freed.
+    The next die's upload then reused the freed texture name, which the engine
+    still took for the texture it had just configured, so it skipped setting
+    the new one's filtering: an incomplete texture, sampled as an opaque black
+    square. Only the first die after a text draw (a different texture) came
+    out. A kept pixmap keeps its texture, so there is nothing to recycle.
+    """
+    key = (image.cacheKey(), int(size))
+    scaled = _DICE_SCALED_CACHE.get(key)
+    if scaled is None:
+        scaled = image.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        _DICE_SCALED_CACHE[key] = scaled
+    return scaled
+
+
 def _draw_dice_image(painter, image, center_x, center_y, size, angle, alpha):
     """Draw a scaled, independently rotated dice image."""
     if image is None or image.isNull():
         return
-    scaled = image.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    scaled = _scaled_dice_image(image, size)
     painter.save()
     painter.setOpacity(max(0.0, min(1.0, alpha / 255.0)))
     painter.translate(center_x, center_y)

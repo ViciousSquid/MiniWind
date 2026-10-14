@@ -1305,6 +1305,9 @@ class MiniwindGame:
                 screen = session.open_screen
                 title = self._SCREEN_TITLES.get(screen, str(screen).title())
                 bw, bh = screens.window_body_size(screen)
+                # Never larger than the view it opens in.
+                bw = min(bw, max(320, w - 40))
+                bh = min(bh, max(240, h - 100))
                 draw_fn = (lambda p, x, y, ww, hh, s=session:
                            screens.draw_in_rect(p, s, x, y, ww, hh))
                 on_close = (lambda s=session, sc=session.open_screen:
