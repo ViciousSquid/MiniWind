@@ -110,12 +110,11 @@ def _game_pointer_open(view) -> bool:
 
 
 def _window_wants_cursor(view) -> bool:
-    """Whether a floating UI window needs a free cursor during play.
+    """Whether the RPG character sheet has released the mouse during play.
 
-    The inventory strip remains visible during normal play, but it is a HUD
-    quickbar, not a request to release the first-person mouse-look cursor.
-    Menus, inventory/dialogue panels and other interactive windows still
-    request a free cursor through wants_cursor.
+    The always-visible inventory strip and other gameplay overlays do not
+    release the captured mouse. C opens the character sheet (paper doll),
+    whose own window has the key screen:character.
     """
     manager = getattr(view, 'floating_windows', None)
     if (manager is None or not getattr(view, 'play_mode', False)
@@ -127,7 +126,7 @@ def _window_wants_cursor(view) -> bool:
     return any(
         getattr(w, 'active', False)
         and getattr(w, 'wants_cursor', False)
-        and getattr(w, 'key', None) != 'strip'
+        and getattr(w, 'key', None) == 'screen:character'
         for w in manager.windows
     )
 
