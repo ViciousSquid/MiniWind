@@ -110,11 +110,11 @@ def _game_pointer_open(view) -> bool:
 
 
 def _window_wants_cursor(view) -> bool:
-    """Whether the RPG character sheet has released the mouse during play.
+    """Whether the character sheet or merchant trade window owns the mouse.
 
     The always-visible inventory strip and other gameplay overlays do not
-    release the captured mouse. C opens the character sheet (paper doll),
-    whose own window has the key screen:character.
+    release the captured mouse. The paper doll and trading window are
+    interactive UI states that need a free pointer.
     """
     manager = getattr(view, 'floating_windows', None)
     if (manager is None or not getattr(view, 'play_mode', False)
@@ -126,7 +126,7 @@ def _window_wants_cursor(view) -> bool:
     return any(
         getattr(w, 'active', False)
         and getattr(w, 'wants_cursor', False)
-        and getattr(w, 'key', None) == 'screen:character'
+        and getattr(w, 'key', None) in ('screen:character', 'screen:trade')
         for w in manager.windows
     )
 
