@@ -110,8 +110,12 @@ def _game_pointer_open(view) -> bool:
 
 
 def _window_wants_cursor(view) -> bool:
-    """Whether an open floating window asks for a free cursor in play
-    (``FloatingWindow.wants_cursor``), so it can be dragged and closed."""
+    """Whether a gameplay window needs a free mouse cursor.
+
+    The always-visible inventory strip and ordinary overlays do not release
+    the captured mouse. The character sheet, merchant trade window, and Debug
+    Tools window explicitly require a pointer for their interactive controls.
+    """
     manager = getattr(view, 'floating_windows', None)
     if (manager is None or not getattr(view, 'play_mode', False)
             or getattr(view, 'console_overlay_active', False)
@@ -119,8 +123,14 @@ def _window_wants_cursor(view) -> bool:
             or getattr(view, 'pause_menu', None) is not None
             or _play_menu_open(view)):
         return False
-    return any(getattr(w, 'active', False) and getattr(w, 'wants_cursor', False)
-               for w in manager.windows)
+    return any(
+        getattr(w, 'active', False)
+        and getattr(w, 'wants_cursor', False)
+        and getattr(w, 'key', None) in (
+            'screen:character', 'screen:trade', 'debug:tools'
+        )
+        for w in manager.windows
+    )
 
 
 def perspective_projection(fov, aspect, near, far):
@@ -393,6 +403,9 @@ class QtGameView(QOpenGLWidget):
         #: to it instead of the camera and the fire buttons.
         self.game_pointer = None
         self._game_pointer_shown = False
+        #: Set by a game layer that paints its own death screen (through the
+        #: render.overlay hook), so the stock "DIED" screen stays off.
+        self.game_death_screen = False
         #: Set by a game layer that draws its own HUD through the
         #: render.overlay hook, every frame of its play session, so the stock
         #: HUD does not overlap it. Each session starts with the stock HUD.
@@ -1134,7 +1147,8 @@ class QtGameView(QOpenGLWidget):
         # A game session (``logic.game_session``) may drive the player's pose,
         # hurt flash and held weapon through duck-typed hooks:
         # ``overhead_pose() -> (armed, attacking)``, ``overhead_player_flash()
-        # -> seconds``, ``overhead_player_weapon() -> (weapon_id, handed)`` and
+        # -> seconds``, ``overhead_player_weapon() -> (weapon_id, handed)`` (or
+        # a list of ``(weapon_id, handed[, attacking])``, one per hand) and
         # ``overhead_weapon_kind(weapon_id) -> "melee" | "bow" | "staff"``.
         sess = getattr(lt, "game_session", None)
         pose = getattr(sess, "overhead_pose", None)
@@ -1160,17 +1174,31 @@ class QtGameView(QOpenGLWidget):
         held = getattr(sess, "overhead_player_weapon", None)
         if held is None:
             return
+        # ``(weapon_id, handed)`` for one hand, or a list of
+        # ``(weapon_id, handed[, attacking[, facing_offset]])`` -- one per
+        # hand that holds something (a second weapon, a torch) -- each
+        # animated on its own, and turned by its offset (radians) from the
+        # head's facing, so a game can let a weapon trail a turn.
         try:
-            weapon_id, handed = held()
+            in_hands = held()
+            if in_hands and isinstance(in_hands[0], str):
+                in_hands = [in_hands]
         except Exception as exc:
             debug_log("Error", f"overhead_player_weapon failed: {exc}")
             return
-        weapon_path = self._weapon_asset_path(weapon_id)
-        if weapon_path:
+        now = time.perf_counter()
+        for entry in in_hands or ():
+            weapon_id, handed = entry[0], entry[1]
+            weapon_path = self._weapon_asset_path(weapon_id)
+            if not weapon_path:
+                continue
+            facing = self._overhead_sprite_ctrl.facing
+            if len(entry) > 3:
+                facing += float(entry[3] or 0.0)
             self._overhead_sprite_renderer.draw_weapon(
                 self.projection_matrix, self.view_matrix, gpos,
-                self._overhead_sprite_ctrl.facing, weapon_path,
-                time.perf_counter(), attacking=shooting,
+                facing, weapon_path,
+                now, attacking=bool(entry[2]) if len(entry) > 2 else shooting,
                 weapon_kind=self._weapon_kind(weapon_id, sess),
                 handed=handed)
         # Everyone else nearby holds their weapon too, through the same path:
@@ -2052,6 +2080,13 @@ class QtGameView(QOpenGLWidget):
         self._render_config["entity_refs"] = render_state.entity_refs
         self._render_config["visible_thing_slots"] = render_state.visible_thing_slots
         self._render_config["thing_hidden"] = render_state.thing_hidden
+        # In play only the lights near the player light (nearest first), so a
+        # map may hold more lights than the shaders have room for.
+        _focus = None
+        if self.play_mode and render_state is not None:
+            _fp = render_state.player_pos
+            _focus = (float(_fp.x), float(_fp.y), float(_fp.z))
+        self._render_config["light_focus"] = _focus
 
         _splitscreen = (
             self.play_mode
@@ -2271,7 +2306,8 @@ class QtGameView(QOpenGLWidget):
                 self._draw_hud_splitscreen(painter, render_state)
             else:
                 self._draw_hud(painter, render_state)
-        if self.play_mode and render_state and render_state.player_dead:
+        if (self.play_mode and render_state and render_state.player_dead
+                and not getattr(self, 'game_death_screen', False)):
             self._draw_death_screen(painter)
         if (self.play_mode and self._cached_level_complete_ui
                 and not self._cached_level_complete_ui.get('immediate')):
@@ -4273,7 +4309,7 @@ class QtGameView(QOpenGLWidget):
             self.game_pointer.pointer_move(event)
             return
         if _window_wants_cursor(self):
-            # A free cursor for a window: no mouse-look, no recentring.
+            # A free cursor for a real UI window: no mouse-look or recentering.
             pointer = self.game_pointer
             if pointer is not None:
                 pointer.pointer_move(event)

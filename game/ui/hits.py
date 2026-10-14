@@ -147,9 +147,19 @@ class GamePointer:
         session = self._session()
         if session is None:
             return False
-        menu_up = (session.needs_char_creation or session.open_screen is not None
-                   or session.dialogue is not None)
-        return bool(menu_up and has_targets())
+        if session.game.character.is_dead:
+            # The death screen's "Restore last autosave"; there is no live
+            # player to look around, so its action button keeps the pointer.
+            from . import death_screen
+            return death_screen.has_button()
+        # During free play, only the character sheet (C) and an active
+        # merchant trade screen release the captured mouse. The quickbar,
+        # dialogue and other game screens keep normal mouse-look captured.
+        open_screen = getattr(session, "open_screen", None)
+        interactive_screen = open_screen in ("character", "trade")
+        # Initial character creation happens before normal play controls exist.
+        needs_creation = bool(getattr(session, "needs_char_creation", False))
+        return bool((interactive_screen or needs_creation) and has_targets())
 
     def pointer_move(self, event):
         global pointer
@@ -159,6 +169,13 @@ class GamePointer:
     def pointer_press(self, event):
         from PyQt5.QtCore import Qt
         if event.button() != Qt.LeftButton:
+            return True
+        session = self._session()
+        if session is not None and session.game.character.is_dead:
+            # The tick is not running: the death screen acts here.
+            from . import death_screen
+            death_screen.press(self.view, event.x(), event.y())
+            self.view.update()
             return True
         click(event.x(), event.y())
         self.view.update()

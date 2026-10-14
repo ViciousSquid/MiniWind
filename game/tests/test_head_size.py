@@ -81,3 +81,47 @@ def test_heads_assigned_at_play_start_are_the_one_size():
     assert heads.is_any_head(rolled.properties["head"])
     for thing in (authored, rolled):
         assert _size(thing) == (heads.HEAD_SIZE, heads.HEAD_SIZE)
+
+
+# --- small heads -----------------------------------------------------------
+def test_a_chicken_head_is_fifty_pixels():
+    third = heads.CHICKEN_SIZE
+    assert heads.size_for({"npc_role": "hen", "head": "chicken"}) == third
+    assert heads.size_for({"head": "chicken02"}) == third       # its variants too
+    assert heads.size_for({}, "chicken") == third               # the head it is given
+
+
+def test_an_authored_head_scale_still_wins():
+    assert heads.size_for({"head": "chicken", "head_scale": 2.0}) == heads.HEAD_SIZE * 2
+    assert heads.size_for({"head": "head03"}) == heads.HEAD_SIZE
+
+
+def test_a_hen_wears_the_chicken_head(tmp_path, monkeypatch):
+    folder = tmp_path / heads.HEAD_DIR
+    folder.mkdir(parents=True)
+    monkeypatch.setattr(heads, "_repo_root", lambda: str(tmp_path))
+    assert heads.animal_head("hen") == heads.PLACEHOLDER_HEAD     # not drawn yet
+    (folder / "chicken.png").write_bytes(b"")
+    assert heads.animal_head("hen") == "chicken"
+    (folder / "hen.png").write_bytes(b"")                       # its own art wins
+    assert heads.animal_head("hen") == "hen"
+
+
+def test_every_variant_of_an_animals_head_is_worn(tmp_path, monkeypatch):
+    import random
+    folder = tmp_path / heads.HEAD_DIR
+    folder.mkdir(parents=True)
+    monkeypatch.setattr(heads, "_repo_root", lambda: str(tmp_path))
+    for name in ("chicken", "chicken2", "chicken3", "wolf01", "wolf02", "wolfsbane"):
+        (folder / f"{name}.png").write_bytes(b"")
+    assert heads.animal_heads("hen") == ["chicken", "chicken2", "chicken3"]
+    assert heads.animal_heads("wolf") == ["wolf01", "wolf02"]     # not wolfsbane
+    # Dealt across a flock, the variants come out in even numbers.
+    deck, rng = {}, random.Random(4)
+    flock = [heads.animal_head("hen", rng, deck) for _ in range(30)]
+    assert sorted(set(flock)) == ["chicken", "chicken2", "chicken3"]
+    assert {flock.count(h) for h in set(flock)} == {10}
+    pack = [heads.animal_head("wolf", rng, deck) for _ in range(7)]
+    assert sorted(pack.count(h) for h in set(pack)) == [3, 4]
+    # Every chicken is small, whichever it is.
+    assert {heads.size_for({"head": h}) for h in flock} == {heads.CHICKEN_SIZE}

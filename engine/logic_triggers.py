@@ -617,7 +617,10 @@ class LogicTriggers:
             if due_ids:
                 self._poll_triggers(trigger_ids=due_ids)
 
-    def _apply_player_damage(self, damage, damage_kind="physical"):
+    def _apply_player_damage(self, damage, damage_kind="physical", source=None,
+                             cause=None):
+        # Who or what dealt it, for the game (LogicPlayer.last_damage).
+        self.logic.player_runtime.last_damage = (source, cause, damage_kind)
         # A game's damage filter (LogicThread._player_damage_filter) mitigates
         # first: ``filter(damage, damage_kind) -> damage``.
         filt = self.logic._player_damage_filter
@@ -720,7 +723,7 @@ class LogicTriggers:
             # Only the player has damage/health semantics at present.
             if activator_type == 'player':
                 damage = _trigger_damage(brush)
-                self._apply_player_damage(damage)
+                self._apply_player_damage(damage, source=brush, cause="trigger")
                 self.hurt_trigger_timers[trigger_id] = self.HURT_INTERVAL
 
         elif action == 'target':
@@ -771,7 +774,7 @@ class LogicTriggers:
             self.hurt_trigger_timers[trigger_id] -= float(poll_interval)
             if self.hurt_trigger_timers[trigger_id] <= 0:
                 damage = _trigger_damage(brush)
-                self._apply_player_damage(damage)
+                self._apply_player_damage(damage, source=brush, cause="trigger")
                 self.hurt_trigger_timers[trigger_id] = self.HURT_INTERVAL
 
 

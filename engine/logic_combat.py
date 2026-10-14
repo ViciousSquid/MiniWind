@@ -702,7 +702,8 @@ class LogicCombat:
                 dz = pz - float(player_pos[2])
                 if dx * dx + dy * dy + dz * dz < player_radius_sq:
                     damage = float(projectiles.damage[i])
-                    logic.trigger_runtime._apply_player_damage(damage)
+                    logic.trigger_runtime._apply_player_damage(
+                        damage, source=owner_id, cause="projectile")
                     if logic.monster_ai.monster_debug_active:
                         debug_log(
                             "MonsterAI",
@@ -866,7 +867,8 @@ class LogicCombat:
                 and not logic.player_runtime.player_dead
             ):
                 damage = float(projectiles.damage[i])
-                logic.trigger_runtime._apply_player_damage(damage)
+                logic.trigger_runtime._apply_player_damage(
+                    damage, source=int(projectiles.owner_id[i]), cause="projectile")
                 if logic.monster_ai.monster_debug_active:
                     debug_log(
                         "MonsterAI",

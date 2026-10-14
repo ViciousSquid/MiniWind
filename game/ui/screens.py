@@ -714,9 +714,10 @@ def _draw_character(painter, session, w, h):
                   f"{bio['title']}  ·  STR {rolls.get('strength', '?')}  "
                   f"END {rolls.get('endurance', '?')}  CHA {rolls.get('personality', '?')}",
                   size=10, color=T.GOLD_BRIGHT, align=T.ALIGN_RIGHT, family="Georgia")
-    prog = c.xp_progress
-    T.bar(painter, inner.x(), ty + 14, 260, 10, prog / 10.0, T.XP,
-          label=f"Level progress {prog}/10")
+    need = max(1, int(c.xp_needed))
+    T.bar(painter, inner.x(), ty + 14, 260, 10, min(1.0, c.xp / need), T.XP,
+          label=f"XP {c.xp} / {need}  ({max(0, need - c.xp)} to level {c.level + 1})"
+                f"  ·  skill rises {c.xp_progress}/10")
 
     # attributes column
     ax = inner.x()
@@ -1166,8 +1167,14 @@ def _draw_trade(painter, session, w, h):
             nm = (d.name if d else iid)
             if not buying and isinstance(entry, dict) and entry.get("qty", 1) > 1:
                 nm += f" ×{entry['qty']}"
+            left = session.stock_left(entry) if buying else None
+            if left == 0:
+                nm += "  (sold out)"
+            elif left is not None:
+                nm += f" ×{left}"
+            colour = T.GOLD_BRIGHT if selected else T.INK
             T.text(painter, cx + 8, ry + 12, nm, size=10,
-                   color=T.GOLD_BRIGHT if selected else T.INK, family="Segoe UI")
+                   color=T.DIM if left == 0 else colour, family="Segoe UI")
             T.text_in(painter, QRect(cx, ry - 2, col_w - 8, 20), f"{price}g", size=9,
                       color=T.GOLD, align=T.ALIGN_RIGHT, family="Segoe UI")
         # Where a new row would appear: a card with no row to land on (an
@@ -1183,10 +1190,13 @@ def _draw_trade(painter, session, w, h):
         buying = st["side"] == 0
         price = session._price(d.value if d else 0, buying, npc=npc)
         name_ = d.name if d else "item"
-        can = (c.gold >= price) if buying else True
+        sold_out = buying and session.stock_left(entry) == 0
+        can = (c.gold >= price and not sold_out) if buying else True
         label = (f"Buy {name_} for {price}g" if buying
                  else f"Sell {name_} for {price}g")
-        if buying and not can:
+        if sold_out:
+            label = f"{name_}: sold out until tomorrow"
+        elif buying and not can:
             label = f"{name_}: {price}g (not enough gold)"
     by = inner.bottom() - 58
     button(painter, QRect(inner.x() + (inner.width() - 360) // 2, by, 360, 34),
@@ -1232,6 +1242,7 @@ def _merchant_stock(npc):
                      "book_marksman", "book_blade"],
         "blacksmith": ["iron_longsword", "iron_mace", "steel_longsword", "iron_shield",
                        "iron_cuirass", "iron_helmet", "short_bow", "iron_arrow",
+                       "crossbow", "iron_bolt",
                        "chain_shirt", "chain_coif", "scale_mail", "kite_shield",
                        "plate_helm", "plate_armour", "tower_shield", "buckler"],
         "armourer": ["leather_cuirass", "hide_armour", "studded_leather",

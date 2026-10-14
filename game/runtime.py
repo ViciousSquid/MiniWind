@@ -39,6 +39,7 @@ from .rpg import combat as rpg_combat
 from .rpg import equipment as eq
 from .rpg import items as rpg_items
 from . import warrior_fist
+from . import held_weapons
 from .rpg import magic as rpg_magic
 from .rpg import guilds
 from .rpg import disposition as disp
@@ -126,10 +127,13 @@ NPC_BLOCKED_GIVE_UP_TICKS = 60
 #: How close the player must be to talk. Comfortably larger than a billboard so
 #: walking up to an NPC (whose speech bubble is showing) and pressing E works.
 TALK_RADIUS = 140.0
-#: The inventory strip's width in slots, unless ``inventory_strip_size``
-#: (console, saved as GAME/inventory_strip_size) says otherwise.
-STRIP_DEFAULT_SIZE = 9
-STRIP_MAX_SIZE = 30
+#: The inventory strip's width in slots: always nine, one per number key.
+STRIP_SIZE = 9
+#: Slots in the pack (the player's inventory) before a satchel's: each one
+#: holds a stack, or a single weapon (a pair to dual wield takes two).
+PACK_SLOTS = 20
+#: How far from the player something dropped lands (world units).
+DROP_DISTANCE = (45.0, 75.0)
 #: How near a talkable NPC must be for its speech bubble to appear. Kept a short
 #: step beyond the interaction range so a bubble means "you are close enough to
 #: talk", rather than floating over every NPC across the settlement — the cue
@@ -255,15 +259,18 @@ WISP_COLOURS = [
 # talked to, is invisible to the simulation and leaves nothing behind. See
 # _maybe_send_the_reaper.
 # ---------------------------------------------------------------------------
-#: How often a fresh corpse is visited at all.
-REAPER_CHANCE = 0.25
-#: He appears this far off, on a random bearing, rather than on top of the body.
-REAPER_ARRIVE_DIST = (240.0, 460.0)
+#: How often a fallen NPC is visited at all: one death in eight.
+REAPER_CHANCE = 1.0 / 8.0
+#: He appears this far off -- beyond the edge of the overhead view -- on the
+#: far side of the body from the player, and walks in.
+REAPER_ARRIVE_DIST = (1150.0, 1400.0)
+#: The most of him that is ever seen: he is never more than a shade.
+REAPER_MAX_OPACITY = 0.7
 #: Seconds to fade in on arrival, and to fade out on leaving.
 REAPER_FADE_IN = 1.0
 REAPER_FADE_OUT = 0.9
 #: He glides — no pathfinding, no collision, no gravity.
-REAPER_SPEED = 165.0
+REAPER_SPEED = 180.0
 #: How close he comes before he swings.
 REAPER_REACH = 70.0
 #: The stroke of the scythe, and the very short pause after it before he goes.
@@ -350,10 +357,32 @@ class StateStore:
     def __init__(self, globals_store, store_name: str = "miniwind"):
         self._g = globals_store
         self._name = store_name
+        # The registry Fio's GlobalStore reads, resolved once: the quest log,
+        # the HUD and the dialogue read this store dozens of times a frame,
+        # and GlobalStore.get looks the registry up (an import) on each.
+        self._registry = None
+        try:
+            from plugins.api import GlobalStore
+            if type(globals_store) is GlobalStore:
+                self._registry = globals_store._registry()
+        except Exception:
+            self._registry = None
 
     def get(self, key, default="false"):
         if self._g is None:
             return default
+        registry = self._registry
+        if registry is not None:
+            # GlobalStore.get, read straight from the registry it would use.
+            data = registry.get(self._name)
+            if data is None:
+                return default
+            key = str(key)
+            if key not in data:
+                return default
+            value = data[key]
+            if value is None or type(value) is str:
+                return value
         try:
             return self._g.get(key, default, store=self._name)
         except Exception:
@@ -441,6 +470,9 @@ class MiniwindSession:
         #: harvest — see game.rpg.daily) exactly once per day.
         self._last_day = None
         self._attack_cooldown = 0.0
+        #: The off hand's own swing timer, when dual wielding: each hand
+        #: strikes on its own button and its own rhythm.
+        self._offhand_cooldown = 0.0
         self._cast_cooldown = 0.0
         #: Live combat actors (NPCs/creatures), refreshed once per decision pass
         #: so per-NPC threat lookups iterate a short cached list instead of
@@ -462,6 +494,10 @@ class MiniwindSession:
         #: its identity — both are caught by the cheap ``(id, len)`` token).
         self._type_index: Dict[str, list] = {}
         self._type_index_token = None
+
+        #: Says when an autosave is due; the host makes it (game/autosave.py).
+        from .autosave import Autosaver
+        self.autosave = Autosaver(self)
 
         # transient UI state (driven by plugin/input, read by overlays)
         self.interact_prompt = ""       # e.g. "Press E to talk to Thalen"
@@ -505,6 +541,11 @@ class MiniwindSession:
         self._offscreen_tick = 0
         #: id(actor) -> (x, z, y) where it was last stood on the ground.
         self._grounded = {}
+        #: Routes round walls for every walker (game/navigation.py).
+        from .navigation import Navigator
+        self.nav = Navigator(self._blocked_by_wall)
+        #: type name -> (bucket, len, frozenset of ids); see _type_ids.
+        self._type_id_cache = {}
         #: The camera height the wheel asked for (None: never zoomed).
         self.zoom_height = None
         #: How far the bow is drawn (0..1) while left mouse is held, else
@@ -558,6 +599,7 @@ class MiniwindSession:
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
         self._attack_anim_time = 0.0   # player stab animation remaining (seconds)
+        self._offhand_anim_time = 0.0  # the off hand's, when dual wielding
 
         # ------------------------------------------------------------------
         # The reactive simulation (game.sim). Everything notable the player or
@@ -636,9 +678,12 @@ class MiniwindSession:
         self.dialogue_npc = None
         self.merchant_npc = None
         self.show_loadout = False
-        #: The inventory strip along the bottom of the screen, toggled with I
-        #: (game/ui/inventory_strip.py).
-        self.show_strip = False
+        #: The inventory strip along the bottom of the screen
+        #: (game/ui/inventory_strip.py): always up in free play. Kept for
+        #: saves and tools that still ask.
+        self.show_strip = True
+        #: Its selected slot (a click or a number key picks it).
+        self.strip_selected = 0
         self._remove_wisp()
         self._banish_reapers()
         self.notifications = []
@@ -692,6 +737,9 @@ class MiniwindSession:
         # the engine's instant hit-scan (game/npc_archery.py).
         from engine.monster_ai import MonsterAI
         MonsterAI.install_shot_hook(self.archery.shot_hook)
+        # Chasers route round walls rather than pressing into them
+        # (game/navigation.py); schedule walking uses the same routes.
+        MonsterAI.install_steer_hook(self.nav.steer_many)
         self.memory.load(self._map_key)
         self.spawn_creature_points()   # materialise CreatureSpawn points once
         self.memory.apply()            # the dead stay dead; lairs refill after a day
@@ -733,6 +781,11 @@ class MiniwindSession:
             self.logic.player_fire_handler = None
         fio.set_jump_enabled(self.logic, True)
         fio.set_projectile_split(self.logic, None)
+        try:
+            from engine.monster_ai import MonsterAI
+            MonsterAI.clear_steer_hook(self.nav.steer_many)
+        except Exception:
+            pass
         self.arrows_in_flight = ()
         from . import faction_ai
         faction_ai.uninstall(self.logic)
@@ -763,6 +816,8 @@ class MiniwindSession:
         c.damage(final)
         if final > 0:
             self._player_flash = HIT_FLASH_TIME   # brief red flash on the head
+            # Who or what did it, as the engine recorded (for the death screen).
+            c._last_harm = getattr(fio.player_runtime(self.logic), "last_damage", None)
         self.add_floater(f"-{int(round(final))}", kind="hurt")
         return final
 
@@ -849,6 +904,7 @@ class MiniwindSession:
         player_head = str(getattr(self.game.character, "head", "") or "")
         things = fio.things(self.logic)
         changed = False
+        deck = {}           # animal heads are dealt, so a flock is mixed evenly
         for t in things:
             p = getattr(t, "properties", None)
             if not isinstance(p, dict):
@@ -860,16 +916,19 @@ class MiniwindSession:
             # Respect a head explicitly set in the editor (regular, guard, or
             # browsed) unless it is the player's. Otherwise roll one.
             role = str(p.get("npc_role", "") or "").lower()
-            if heads.is_any_head(cur) and cur != player_head:
+            # An animal still on the stand-in (from a save made before its art
+            # was drawn) looks again, so new art reaches it.
+            stand_in = cur == heads.PLACEHOLDER_HEAD and role in heads.ANIMAL_ROLES
+            if heads.is_any_head(cur) and cur != player_head and not stand_in:
                 head = cur
             elif role in heads.ANIMAL_ROLES:
-                head = heads.animal_head(role, self.rng)
+                head = heads.animal_head(role, self.rng, deck)
             elif heads.name_is_guard(p.get("name") or p.get("display_name")):
                 head = heads.random_guard_head(self.rng)
             else:
                 head = heads.random_head(self.rng, exclude={player_head})
             path = heads.any_head_path(head)
-            size = heads.size_for(p)         # every head the same size, bar giants
+            size = heads.size_for(p, head)   # one size, bar giants and chickens
             if (p.get("head") != head or p.get("custom_idle") != path
                     or p.get("sprite_width") != size
                     or p.get("sprite_height") != size):
@@ -1009,6 +1068,8 @@ class MiniwindSession:
         self.dragon_fire.update(delta)
         self.wildlife.update(delta)
         self.memory.update(delta)
+        self._check_pack()
+        self.autosave.tick(delta)
         self.rewind.tick(delta)
         self._update_bolt_lights()
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
@@ -1023,6 +1084,8 @@ class MiniwindSession:
         self._update_encumbrance()
         if self._attack_cooldown > 0:
             self._attack_cooldown -= delta
+        if self._offhand_cooldown > 0:
+            self._offhand_cooldown -= delta
         if self._cast_cooldown > 0:
             self._cast_cooldown -= delta
         if self._player_flash > 0:
@@ -1143,6 +1206,8 @@ class MiniwindSession:
         # Decay player stab animation
         if self._attack_anim_time > 0:
             self._attack_anim_time = max(0.0, self._attack_anim_time - delta)
+        if self._offhand_anim_time > 0:
+            self._offhand_anim_time = max(0.0, self._offhand_anim_time - delta)
 
         # Detect NPC/creature attacks by watching the engine's is_shooting flag.
         # When it flips from False -> True we start a 0.2 s stab animation.
@@ -1152,15 +1217,17 @@ class MiniwindSession:
         # animation is a purely visual 0.2 s decay; running it for an actor
         # outside the camera's reach changes nothing anyone sees.
         for t in self._live_actors():
-            if tier_of(t) > TIER_ACTIVE:
-                continue
             tp = t.properties
+            if tp.get("_sim_tier", TIER_NEAR) > TIER_ACTIVE:
+                continue
             was = tp.get("_was_shooting", False)
             now = tp.get("is_shooting", False)
             if now and not was:
                 tp["_attack_anim"] = 0.2
             if tp.get("_attack_anim", 0.0) > 0:
                 tp["_attack_anim"] = max(0.0, tp["_attack_anim"] - delta)
+            if tp.get("_offhand_anim", 0.0) > 0:
+                tp["_offhand_anim"] = max(0.0, tp["_offhand_anim"] - delta)
             tp["_was_shooting"] = now
 
         # keep the engine's health pool in step with the character
@@ -1313,7 +1380,14 @@ class MiniwindSession:
             bpos = [float(body.pos[0]), float(body.pos[1]), float(body.pos[2])]
         except (TypeError, ValueError, IndexError):
             return None
-        bearing = self.rng.uniform(0.0, 2.0 * math.pi)
+        # From beyond the edge of the view: on the far side of the body from
+        # the player (give or take), and far enough out to be off screen.
+        ppos = self._player_pos()
+        if ppos is not None and (bpos[0] - ppos[0] or bpos[2] - ppos[2]):
+            away = math.atan2(bpos[0] - ppos[0], bpos[2] - ppos[2])
+            bearing = away + self.rng.uniform(-0.9, 0.9)
+        else:
+            bearing = self.rng.uniform(0.0, 2.0 * math.pi)
         distance = self.rng.uniform(*REAPER_ARRIVE_DIST)
         pos = [bpos[0] + math.sin(bearing) * distance,
                bpos[1],
@@ -1345,6 +1419,7 @@ class MiniwindSession:
             })
         except Exception:
             return None
+        reaper._respawn_fade_alpha = 0.0      # unseen until he fades in
         return reaper
 
     def _update_reapers(self, delta: float) -> None:
@@ -1382,14 +1457,15 @@ class MiniwindSession:
             return self._reaper_phase(visit, "leave")
 
         if phase == "arrive":
-            props["_opacity"] = min(1.0, visit["t"] / REAPER_FADE_IN)
-            self._reaper_face_body(visit)
+            # Fading in as he starts toward the body, still off screen.
+            self._set_reaper_opacity(reaper, visit["t"] / REAPER_FADE_IN)
+            self._reaper_glide(visit, delta)
             if visit["t"] >= REAPER_FADE_IN:
                 return self._reaper_phase(visit, "approach")
             return True
 
         if phase == "approach":
-            props["_opacity"] = 1.0
+            self._set_reaper_opacity(reaper, 1.0)
             arrived = self._reaper_glide(visit, delta)
             if arrived or visit["t"] >= REAPER_APPROACH_TIMEOUT:
                 return self._reaper_phase(visit, "reap")
@@ -1418,11 +1494,23 @@ class MiniwindSession:
                 return self._reaper_phase(visit, "leave")
             return True
 
-        # leave
+        # leave: he turns from the body and walks off, fading to nothing.
         props["is_shooting"] = False
         props.pop("_attack_anim", None)
-        props["_opacity"] = max(0.0, 1.0 - visit["t"] / REAPER_FADE_OUT)
+        self._set_reaper_opacity(reaper, 1.0 - visit["t"] / REAPER_FADE_OUT)
+        self._reaper_walk_off(visit, delta)
         return visit["t"] < REAPER_FADE_OUT
+
+    @staticmethod
+    def _set_reaper_opacity(reaper, fraction: float) -> None:
+        """Show *reaper* at *fraction* of his full presence, which is itself
+        at most REAPER_MAX_OPACITY. Drawn through the engine's per-entity
+        render alpha, and journalled so the renderer re-reads it."""
+        alpha = REAPER_MAX_OPACITY * max(0.0, min(1.0, float(fraction)))
+        reaper.properties["_opacity"] = alpha
+        if getattr(reaper, "_respawn_fade_alpha", None) != alpha:
+            reaper._respawn_fade_alpha = alpha
+            _journal(reaper)
 
     def _reaper_phase(self, visit, phase: str) -> bool:
         """Move a visit into *phase*, restarting its clock. Always still alive."""
@@ -1456,13 +1544,26 @@ class MiniwindSession:
         if distance <= REAPER_REACH:
             return True
         step = min(distance - REAPER_REACH, REAPER_SPEED * max(0.0, delta))
-        reaper.pos[0] += dx / distance * step
-        reaper.pos[2] += dz / distance * step
-        # Ride at the body's height rather than the ground he set out from, so
-        # he does not walk through the floor of a room on another storey.
-        reaper.pos[1] = float(body.pos[1])
+        # A new list, not an in-place edit: assigning pos is what tells the
+        # renderer he moved. Ride at the body's height rather than the ground
+        # he set out from, so he does not walk through another storey's floor.
+        reaper.pos = [float(reaper.pos[0]) + dx / distance * step,
+                      float(body.pos[1]),
+                      float(reaper.pos[2]) + dz / distance * step]
         face_heading(reaper.properties, dx, dz)
         return distance - step <= REAPER_REACH
+
+    def _reaper_walk_off(self, visit, delta: float) -> None:
+        """Leaving: glide away from the body, the way he came."""
+        reaper, body = visit["thing"], visit["body"]
+        dx = float(reaper.pos[0]) - float(body.pos[0])
+        dz = float(reaper.pos[2]) - float(body.pos[2])
+        distance = math.hypot(dx, dz) or 1.0
+        step = REAPER_SPEED * max(0.0, delta)
+        reaper.pos = [float(reaper.pos[0]) + dx / distance * step,
+                      float(reaper.pos[1]),
+                      float(reaper.pos[2]) + dz / distance * step]
+        face_heading(reaper.properties, dx, dz)
 
     def _despawn_reaper(self, visit) -> None:
         """Take one reaper out of the scene."""
@@ -1623,6 +1724,9 @@ class MiniwindSession:
             # Light entity plus a renderer light slot, so distant holders simply
             # do not carry a lit one. It relights the moment they come near.
             tdef = None if tiers[i] > TIER_ACTIVE else self._npc_torch_def(p, night)
+            if tdef is not None and held_weapons.two_handed(
+                    p.get("_active_weapon") or p.get("equipped_weapon")):
+                tdef = None          # a bow takes both hands: no torch with it
             if tdef is not None:
                 desired[id(npc)] = (list(npc.pos), tdef, shadows and tiers[i] == TIER_NEAR)
                 if p.get("_torch_lit") != tdef.id:
@@ -1660,11 +1764,16 @@ class MiniwindSession:
                 lp[2] = pos[2]
             lprops = light.properties
             lprops["casts_shadows"] = bool(cast)
-            phase = float(lprops.setdefault("_torch_phase", (hash(str(key)) % 6283) / 1000.0))
-            k_int, k_rad = self._torch_flicker(t, phase)
+            phase = lprops.get("_torch_phase")
+            if phase is None:
+                phase = lprops["_torch_phase"] = (hash(str(key)) % 6283) / 1000.0
+            k_int, k_rad = self._torch_flicker(t, float(phase))
             base = float(lprops.get("_torch_base_intensity", TORCH_DEFAULT_INTENSITY))
-            base_r = float(lprops.setdefault("_torch_base_radius",
-                                             lprops.get("radius", TORCH_DEFAULT_RADIUS)))
+            base_r = lprops.get("_torch_base_radius")
+            if base_r is None:
+                base_r = lprops["_torch_base_radius"] = lprops.get(
+                    "radius", TORCH_DEFAULT_RADIUS)
+            base_r = float(base_r)
             lprops["intensity"] = base * k_int
             lprops["radius"] = base_r * k_rad
             # The renderer copies a light's intensity, radius and shadow flag
@@ -1833,11 +1942,25 @@ class MiniwindSession:
             p = it.properties
             if p.get("dead"):
                 continue
-            if self._dist2d(ppos, it.pos) <= float(p.get("pickup_radius", 60.0)):
+            radius = float(p.get("pickup_radius", 60.0))
+            near = self._dist2d(ppos, it.pos) <= radius
+            if p.get("_await_away"):
+                # Just dropped: not picked straight back up while the player
+                # still stands on it; walking off and back takes it.
+                if self._dist2d(ppos, it.pos) > radius * 1.4:
+                    p.pop("_await_away", None)
+                continue
+            if near:
                 iid = p.get("item_id", "gold")
                 qty = int(p.get("quantity", 1))
-                stack = rpg_items.make(iid, qty) or inv.make_item(iid, qty=qty)
+                kept = p.get("_stack")
+                stack = (dict(kept, qty=qty) if isinstance(kept, dict)
+                         else rpg_items.make(iid, qty) or inv.make_item(iid, qty=qty))
                 name = stack.get("name", iid)
+                if not self.pack_has_room(iid, qty):
+                    self._pack_full_note()
+                    p["_await_away"] = True   # walk off and back to try again
+                    continue
                 # Taking an *owned* item is a theft, with everything that
                 # follows: witnesses, a report, a bounty, an owner who
                 # remembers. Taking an unowned one is just picking it up. One
@@ -1941,6 +2064,7 @@ class MiniwindSession:
                 p["_discovered"] = True
                 self.store.set(f"visited.{self._slug(name)}", "1")
                 self.notify(f"{name} discovered", 4.0)
+                self.autosave.discovered(name)
 
     @staticmethod
     def _slug(text) -> str:
@@ -2588,6 +2712,7 @@ class MiniwindSession:
         (a menu or character creation is open). No clock, NPC or combat sim."""
         self._announce_skill_raises()
         self._age_lists(delta)
+        self._check_pack()          # a satchel sold over the counter
 
     def _read_world_bounds(self):
         """``(min_x, max_x, min_z, max_z)`` the player may walk in: the
@@ -2742,9 +2867,17 @@ class MiniwindSession:
         the persistent KV store, so it survives save/load and dialogue can read
         it — the town remembers who is gone.
         """
-        # PERF: only NPCs matter here — walk the cached "npc" bucket instead of
-        # re-scanning + normalising every thing in the scene each tick.
-        for t in self._things_of_type("npc"):
+        # PERF: only dead NPCs matter here. With the index that is its corpse
+        # rows (a few) rather than every NPC; without it, the "npc" bucket.
+        wi = self._world_index()
+        if wi is None:
+            pool = self._things_of_type("npc")
+        else:
+            npc_ids = self._type_ids("npc")
+            actors = wi.actors
+            pool = [actors[i] for i in np.flatnonzero(wi.dead[:wi.n]).tolist()
+                    if id(actors[i]) in npc_ids]
+        for t in pool:
             tp = t.properties
             if not tp.get("dead"):
                 continue
@@ -2756,6 +2889,7 @@ class MiniwindSession:
                 continue          # already recorded before a save/load
             tp["_death_noted"] = True
             self._on_npc_death(t)
+            # Death may come for a fallen NPC (never for a creature).
             self._maybe_send_the_reaper(t)
 
     def _on_npc_death(self, npc) -> None:
@@ -4202,6 +4336,9 @@ class MiniwindSession:
             if target is not None:
                 fights.append((t, target))
         self._actors = actors
+        #: (the list above, id -> actor over it), for per-tick passes that
+        #: resolve an ``_aggro_target`` id without building their own map.
+        self._actors_by_id = (actors, by_id)
         self._dead_actors = dead
         self._fights = fights
         # The watch, indexed once. A frightened villager looks for the nearest
@@ -4361,18 +4498,29 @@ class MiniwindSession:
         wi = self._world_index()
         if wi is None:
             return self.npcs()
-        # The index's alive mask already excludes the dead and whatever Big
-        # World has parked (nothing below would touch a parked NPC anyway), so
-        # only the resident rows are visited, and NPC-ness is one set lookup.
-        bucket = self._type_buckets().get("npc", ())
-        cached = getattr(self, "_npc_id_cache", None)
+        return self._live_of_type(wi, "npc")
+
+    def _type_ids(self, type_name) -> frozenset:
+        """``id()`` of every thing in the *type_name* bucket, cached until the
+        bucket changes, so membership is one set lookup per actor rather than a
+        set built per tick."""
+        bucket = self._type_buckets().get(type_name, ())
+        cache = self._type_id_cache
+        cached = cache.get(type_name)
         if cached is None or cached[0] is not bucket or cached[1] != len(bucket):
-            cached = self._npc_id_cache = (bucket, len(bucket),
-                                           frozenset(id(t) for t in bucket))
-        npc_ids = cached[2]
+            cached = cache[type_name] = (bucket, len(bucket),
+                                         frozenset(id(t) for t in bucket))
+        return cached[2]
+
+    def _live_of_type(self, wi, type_name) -> List:
+        """The index's alive rows of one type, in row order.
+
+        The alive mask already excludes the dead and whatever Big World has
+        parked, so only the resident rows are visited."""
+        ids = self._type_ids(type_name)
         actors = wi.actors
         return [actors[i] for i in np.flatnonzero(wi.alive[:wi.n]).tolist()
-                if id(actors[i]) in npc_ids]
+                if id(actors[i]) in ids]
 
     def _rally_mask(self, wi):
         """Per-row boolean: this actor has rallied. Built once per tick, so the
@@ -4572,6 +4720,16 @@ class MiniwindSession:
         speed = float(p.get("move_speed", NPC_WALK_SPEED)) or NPC_WALK_SPEED
         if p.get("sched_state") == sched.FLEE:
             speed *= FLEE_SPEED_MULTIPLIER   # a fright doubles the step
+        # Round a wall rather than into it: once a step has been blocked (or a
+        # route is being followed) head for the next corner of a route.
+        nav = getattr(self, "nav", None)
+        key = id(npc)
+        if nav is not None and (p.get("_blocked_ticks") or nav.has_route(key)):
+            way = nav.steer(key, pos, dest)
+            wx, wz = way[0] - pos[0], way[2] - pos[2]
+            wd = math.hypot(wx, wz)
+            if wd > 1e-3:
+                dx, dz, dist = wx, wz, wd
         step = min(speed * delta, dist)
         nx = pos[0] + dx / dist * step
         nz = pos[2] + dz / dist * step
@@ -4661,7 +4819,7 @@ class MiniwindSession:
             return True
         if not self.bow_in_hand():
             return False
-        if eq.ammo(c) is None:
+        if eq.ammo_for(c, eq.weapon(c)) is None:
             self.notify("Out of arrows!")
             return False
         return True
@@ -4754,7 +4912,10 @@ class MiniwindSession:
         left in the air.
         """
         logic = self.logic
-        actors = fio.monster_things(logic)
+        # The index's rows are this tick's resident actors (and corpses): a
+        # parked actor is hidden and still, and is grounded when it comes back.
+        wi = self._world_index()
+        actors = wi.actors if wi is not None else fio.monster_things(logic)
         if not actors:
             return
         seen = self._grounded
@@ -4812,13 +4973,55 @@ class MiniwindSession:
         if not self._blocked_by_wall(nx, y, nz):
             npc.pos = [nx, y, nz]
             return True
-        if not self._blocked_by_wall(nx, y, pos[2]):
+        # Only count a slide if that axis actually changes position. When an
+        # NPC heads straight into a wall, one of these candidates can be its
+        # current position; treating that no-op as success clears _blocked_ticks
+        # every frame, so the Navigator never gets called.
+        if abs(nx - pos[0]) > 1e-6 and not self._blocked_by_wall(nx, y, pos[2]):
             npc.pos = [nx, y, pos[2]]
             return True
-        if not self._blocked_by_wall(pos[0], y, nz):
+        if abs(nz - pos[2]) > 1e-6 and not self._blocked_by_wall(pos[0], y, nz):
             npc.pos = [pos[0], y, nz]
             return True
         return False
+
+    # ============================================================== teleport
+    def cave_entrances(self):
+        """``[(name, (x, y, z))]`` for every cave mouth in the loaded world,
+        in cave order: where the cave's exit start stands, just outside it."""
+        things = fio.things(self.logic)
+        token = (id(things), len(things))
+        cached = self.__dict__.get("_cave_entrances")
+        if cached is not None and cached[0] == token:
+            return cached[1]
+        names, starts = {}, {}
+        for t in things:
+            p = getattr(t, "properties", None) or {}
+            slug = p.get("_cave")
+            if not slug:
+                continue
+            ttype = str(p.get("type", "")).replace("_", "").lower()
+            if ttype == "marker" and p.get("place_name"):
+                names[slug] = str(p["place_name"])
+            elif ttype == "playerstart" or str(p.get("name", "")) == f"{slug}_exit":
+                starts[slug] = (float(t.pos[0]), float(t.pos[1]), float(t.pos[2]))
+        out = [(names.get(slug, slug), starts[slug]) for slug in sorted(starts)]
+        self._cave_entrances = (token, out)
+        return out
+
+    def teleport_player(self, pos) -> bool:
+        """Put the player at *pos* (x, y, z) at once, standing still."""
+        import glm
+        player = fio.player(self.logic)
+        if player is None:
+            return False
+        player.pos = glm.vec3(float(pos[0]), float(pos[1]), float(pos[2]))
+        player.velocity = glm.vec3(0, 0, 0)
+        portals = getattr(self.logic, "portal_runtime", None)
+        if portals is not None and hasattr(portals, "note_player_teleported"):
+            portals.note_player_teleported()
+        self._cancel_bow_draw()
+        return True
 
     # ========================================================= player combat
     def _player_pos(self):
@@ -4872,13 +5075,20 @@ class MiniwindSession:
             return None
         fwd = self._player_forward()
         best, best_d = None, reach
-        for t in fio.things(self.logic):
-            if not self._attackable(t):
+        px, pz = ppos[0], ppos[2]
+        reach2 = reach * reach
+        # Only actors can be attackable, and the HUD asks this every frame:
+        # walk the resident actors, not the whole scene, and measure before
+        # asking who they are.
+        for t in self._live_actors():
+            pos = t.pos
+            dx = pos[0] - px
+            dz = pos[2] - pz
+            d2 = dx * dx + dz * dz
+            if d2 > reach2 or not self._attackable(t):
                 continue
-            dx = t.pos[0] - ppos[0]
-            dz = t.pos[2] - ppos[2]
-            dist = math.hypot(dx, dz)
-            if dist < 1e-3 or dist > reach:
+            dist = math.sqrt(d2)
+            if dist < 1e-3:
                 continue
             # frontal cone (horizontal only — see docstring)
             dot = (fwd[0] * dx + fwd[2] * dz) / dist
@@ -4894,48 +5104,70 @@ class MiniwindSession:
     def fire_player_weapon(self, logic, mode: str) -> bool:
         """The engine's fire buttons, given MiniWind meaning.
 
-        Primary fire uses the equipped weapon -- a bow looses an arrow, a staff
-        channels its spell, a blade swings. Secondary fire casts the active
-        spell. Returns True: MiniWind always owns the shot, so Fio's hitscan
-        weapon path never runs underneath it.
+        One button per hand. Primary fire (left) uses the main hand -- a bow
+        looses an arrow, a crossbow a bolt, a staff channels its spell, a blade
+        swings. Secondary fire (right) uses the off hand: the weapon in the
+        shield slot when there is one, else it casts the active spell (which a
+        Warrior cannot). Returns True: MiniWind always owns the shot, so Fio's
+        hitscan weapon path never runs underneath it.
         """
-        if getattr(self.game.character, "is_dead", False):
+        c = self.game.character
+        if getattr(c, "is_dead", False):
             return True
         if mode == "secondary":
-            self.do_cast()
+            if eq.offhand_weapon(c) is not None:
+                self.do_attack("off")
+            else:
+                self.do_cast()
         else:
             self.do_attack()
         return True
 
-    def do_attack(self) -> bool:
-        """Player swings a melee weapon / looses an arrow / casts if staff."""
+    def do_attack(self, hand: str = "main") -> bool:
+        """Strike with the weapon in *hand* ("main", or "off" when dual
+        wielding): swing a blade, loose an arrow or a crossbow bolt, or
+        channel a staff.
+
+        Each hand is its own attack -- its own cooldown, hit roll and damage.
+        A lone weapon's swing at a close, faced target always connects; a dual
+        wielder's two blades each roll to hit, so an unpractised fighter can
+        land one and miss with the other."""
         c = self.game.character
-        if c.is_dead or self._attack_cooldown > 0:
+        off = hand == "off"
+        cooldown = self._offhand_cooldown if off else self._attack_cooldown
+        if c.is_dead or cooldown > 0:
             return False
-        w = eq.weapon(c)
+        w = eq.hand_weapon(c, hand)
+        if off and w is None:
+            return False
         kind = w.get("kind", rpg_items.KIND_MELEE) if w else rpg_items.KIND_MELEE
         speed = float(w.get("speed", 1.0)) if w else 1.2
         reach = MELEE_REACH
-        if kind == rpg_items.KIND_BOW:
+        if kind in rpg_items.RANGED_KINDS:
             reach = BOW_REACH
         elif kind == rpg_items.KIND_STAFF:
             # a staff channels its bound spell
             return self._staff_attack(w)
-        self._attack_cooldown = max(0.25, 1.0 / max(0.4, speed))
-        self._attack_anim_time = 0.2   # quick forward stab, independent of cooldown
+        wait = max(0.25, 1.0 / max(0.4, speed))
+        if off:
+            self._offhand_cooldown = wait
+            self._offhand_anim_time = 0.2
+        else:
+            self._attack_cooldown = wait
+            self._attack_anim_time = 0.2   # quick forward stab, independent of cooldown
         if c.stamina < 4:
             self.notify("Too exhausted to attack")
             return False
 
-        if kind == rpg_items.KIND_BOW:
-            # A bow looses a real, physical arrow (see
-            # _spawn_player_arrow_projectile) rather than resolving instantly —
-            # it flies, can miss by sailing past a moving target, gets stopped
-            # by walls, and lands (and its damage is rolled) only once it
-            # actually strikes something.
-            if not self.game.fire_arrow():
-                return False   # out of arrows — fire_arrow already notified
-            self._spawn_player_arrow_projectile()
+        if kind in rpg_items.RANGED_KINDS:
+            # A bow (from the keyboard) or a crossbow looses a real, physical
+            # shot (see _spawn_player_arrow_projectile) rather than resolving
+            # instantly: it flies, can miss by sailing past a moving target,
+            # gets stopped by walls, and lands (and its damage is rolled) only
+            # once it actually strikes something. A crossbow needs no draw.
+            if not self.game.fire_arrow(hand=hand):
+                return False   # out of ammunition: fire_arrow already said so
+            self._spawn_player_arrow_projectile(hand=hand)
             return True
 
         # Melee gets a more forgiving cone than ranged weapons: close-quarters
@@ -4947,11 +5179,20 @@ class MiniwindSession:
             c.spend_stamina(4.0)
             return True
         # Target acquisition already confirmed "near + facing" on the ground
-        # plane, so a melee swing is guaranteed to connect — no separate miss
-        # roll to be foiled by camera pitch or anything else.
-        res = self.game.attack_creature(target.properties, guaranteed=True)
+        # plane, so a lone weapon's swing is guaranteed to connect. Two weapons
+        # are two attacks, and each rolls to hit for itself.
+        res = self.game.attack_creature(target.properties, hand=hand,
+                                        guaranteed=not eq.dual_wielding(c))
         self._land_player_hit(target, res)
         return True
+
+    def attack_with_both(self) -> bool:
+        """The attack key: strike with the main hand, then -- dual wielding --
+        with the off hand as well, each a separate attack."""
+        struck = self.do_attack()
+        if eq.offhand_weapon(self.game.character) is not None:
+            struck = self.do_attack("off") or struck
+        return struck
 
     def _land_player_hit(self, target, res, heavy=False) -> None:
         """What a landed (or missed) melee blow does: the number over the
@@ -4967,7 +5208,7 @@ class MiniwindSession:
         else:
             self.add_floater("miss", kind="miss")
 
-    def _spawn_player_arrow_projectile(self, max_dist=BOW_MAX_RANGE) -> None:
+    def _spawn_player_arrow_projectile(self, max_dist=BOW_MAX_RANGE, hand="main") -> None:
         """Loose a physical arrow the way the player is facing, to fly up to
         *max_dist*. Travels and collides through the same engine
         projectile pipeline a spell bolt uses, but — unlike a spell bolt —
@@ -4980,7 +5221,10 @@ class MiniwindSession:
         if lt is None or ppos is None:
             return
         max_dist = float(max_dist)
-        sprite = arrow_sprite(eq.equipped_id(self.game.character, "ammo"))
+        c = self.game.character
+        shot = eq.ammo_for(c, eq.hand_weapon(c, hand))
+        sprite = arrow_sprite(shot.id if shot is not None else
+                              eq.equipped_id(c, "ammo"))
 
         start = [ppos[0], ppos[1] + 48.0, ppos[2]]
         aim = self._projectile_aim_point(start)
@@ -4992,7 +5236,7 @@ class MiniwindSession:
         game = self.game
 
         def _on_hit(hit_monster):
-            res = game.resolve_arrow_hit(hit_monster.properties)
+            res = game.resolve_arrow_hit(hit_monster.properties, hand=hand)
             _journal(hit_monster)
             if res.get("hit"):
                 tag = "sneak" if res.get("sneak") else ("crit" if res.get("crit") else "dmg")
@@ -5293,10 +5537,38 @@ class MiniwindSession:
             self._rebuild_entity_caches()
 
     def overhead_player_weapon(self):
-        """``(weapon_id, handed)`` for the viewport's overhead weapon overlay."""
+        """What the player holds, for the viewport's overhead overlay:
+        ``[(item_id, side, attacking)]``, one per hand.
+
+        The weapon on the wielding side; on the other side the second weapon
+        when dual wielding, else a lit torch. Each hand animates its own
+        attacks."""
         c = self.game.character
-        return (eq.equipped_id(c, "weapon") or "",
-                str(getattr(c, "handed", "right") or "right"))
+        handed = str(getattr(c, "handed", "right") or "right")
+        other = "left" if handed == "right" else "right"
+        # Each hand trails a turn on its own spring (game/weapon_sway.py): the
+        # fourth field is that hand's offset from the head's facing.
+        import time as _time
+        sway = self.__dict__.get("_weapon_sway")
+        if sway is None:
+            from .weapon_sway import WeaponSway
+            sway = self._weapon_sway = WeaponSway()
+        player = fio.player(self.logic)
+        facing = float(getattr(player, "angle", 0.0) or 0.0)
+        now = _time.perf_counter()
+        held = [(eq.equipped_id(c, "weapon") or "", handed,
+                 self._attack_anim_time > 0.0
+                 or getattr(self, "_cast_cooldown", 0.0) > 0.05,
+                 sway.offset("main", facing, now))]
+        off_lag = sway.offset("off", facing, now)
+        off = eq.offhand_weapon(c)
+        if off is not None:
+            held.append((off.id, other, self._offhand_anim_time > 0.0, off_lag))
+        else:
+            torch = self._player_torch_def()
+            if torch is not None:
+                held.append((torch.id, other, False, off_lag))
+        return held
 
     @staticmethod
     def overhead_weapon_kind(weapon_id) -> str:
@@ -5318,6 +5590,7 @@ class MiniwindSession:
         c = self.game.character
         armed = bool(eq.equipped_id(c, "weapon")) or bool(c.active_spell)
         attacking = (getattr(self, "_attack_anim_time", 0.0) > 0.0
+                     or getattr(self, "_offhand_anim_time", 0.0) > 0.0
                      or getattr(self, "_cast_cooldown", 0.0) > 0.05)
         return armed, attacking
 
@@ -5632,6 +5905,15 @@ class MiniwindSession:
                 if item_id not in [e["id"] for e in self.weapon_slots()]:
                     self.inventory_assign_quick(item_id)
                 self._cancel_bow_draw()
+            if key == rpg_items.SLOT_SHIELD and d.category == rpg_items.WEAPON:
+                # A second weapon in the off hand: dual wielding.
+                self._cancel_bow_draw()
+                if self.game.equip(item_id, rpg_items.SLOT_SHIELD):
+                    self.notify(f"{d.name} in your off hand", 1.5)
+                    return True
+                if eq.equipped_id(c, rpg_items.SLOT_WEAPON) == item_id:
+                    self.notify(f"You carry only one {d.name}", 2.5)
+                return False
             if self.game.equip(item_id):
                 self.notify(f"Equipped {d.name}", 1.5)
                 return True
@@ -5642,6 +5924,9 @@ class MiniwindSession:
             return self.set_quick_weapon(int(key), item_id)
         # Back to the pack: take it off, or out of its quick slot.
         if source[0] == "equip":
+            if not self.pack_has_room(item_id, 1):
+                self._pack_full_note()
+                return False
             if source[1] == rpg_items.SLOT_WEAPON:
                 self._cancel_bow_draw()
             self.game.unequip(source[1])
@@ -5673,6 +5958,9 @@ class MiniwindSession:
             return False
         worn = {v: k for k, v in c.equipment.items() if v}
         if item_id in worn:
+            if not self.pack_has_room(item_id, 1):
+                self._pack_full_note()
+                return False
             self.game.unequip(worn[item_id])
             if worn[item_id] == rpg_items.SLOT_WEAPON:
                 self._cancel_bow_draw()
@@ -5724,34 +6012,181 @@ class MiniwindSession:
     # ------------------------------------------------------ inventory strip
     # The Minecraft-style bar along the bottom of the screen (I, and
     # game/ui/inventory_strip.py). Its slots hold carried item ids, like the
-    # quick-weapon slots; ``inventory_strip_size`` (console) sets how many.
+    # quick-weapon slots: nine of them, one per number key.
     def strip_size(self) -> int:
-        n = getattr(self, "_strip_size", None)
-        if n is None:
-            n = STRIP_DEFAULT_SIZE
-            try:
-                config = self._editor_config()
-                if config is not None:
-                    n = config.getint("GAME", "inventory_strip_size",
-                                      fallback=STRIP_DEFAULT_SIZE)
-            except (AttributeError, TypeError, ValueError):
-                n = STRIP_DEFAULT_SIZE
-            n = self._strip_size = max(1, min(STRIP_MAX_SIZE, int(n)))
-        return n
+        return STRIP_SIZE
 
-    def set_strip_size(self, n) -> int:
-        """Make the strip *n* slots wide (clamped). Things in slots that go
-        stay in the pack. Returns the size set."""
-        self._strip_size = max(1, min(STRIP_MAX_SIZE, int(n)))
-        self.strip_slots()
-        return self._strip_size
+    # ------------------------------------------------------------- the pack
+    # The player's inventory: PACK_SLOTS slots, more with a satchel. A slot
+    # holds a stack -- or one weapon, so a pair of the same blade takes two.
+    # What is worn or in hand is on the body, not in the pack.
+    def pack_capacity(self) -> int:
+        """Slots in the pack: :data:`PACK_SLOTS`, plus the best satchel's
+        (an item's ``pack_slots``; carrying two does not double it)."""
+        bonus = 0
+        for stack in self.game.character.inventory or ():
+            d = rpg_items.get(stack.get("id")) if isinstance(stack, dict) else None
+            if d is not None and int(stack.get("qty", 1) or 0) > 0:
+                bonus = max(bonus, int(d.get("pack_slots") or 0))
+        return PACK_SLOTS + bonus
+
+    def pack_stacks(self) -> List[Dict]:
+        """What the pack holds, slot by slot, in the order things came: every
+        carried stack not worn, and each copy of a weapon not in hand on its
+        own (as a stack of one). Coin is in the purse."""
+        c = self.game.character
+        worn = [v for v in (c.equipment or {}).values() if v]
+        out = []
+        for stack in c.inventory or ():
+            if not isinstance(stack, dict):
+                continue
+            iid = stack.get("id")
+            qty = int(stack.get("qty", 1) or 0)
+            if not iid or qty <= 0 or iid == rpg_items.GOLD:
+                continue
+            d = rpg_items.get(iid)
+            if d is not None and d.category == rpg_items.WEAPON:
+                if d.get("innate"):
+                    continue                     # fists are not carried
+                loose = qty - worn.count(iid)
+                if loose == 1 and qty == 1:
+                    out.append(stack)
+                else:
+                    out.extend(dict(stack, qty=1) for _ in range(max(0, loose)))
+            elif iid not in worn:
+                out.append(stack)
+        return out
+
+    def pack_used(self) -> int:
+        return len(self.pack_stacks())
+
+    def pack_has_room(self, item_id, qty: int = 1, freed: int = 0) -> bool:
+        """Whether *qty* of *item_id* fit in the pack (with *freed* slots
+        about to be emptied): a weapon needs a slot per copy, anything else
+        a slot unless it joins a stack already there."""
+        if item_id == rpg_items.GOLD:
+            return True
+        d = rpg_items.get(item_id)
+        if d is not None and d.category == rpg_items.WEAPON:
+            need = max(1, int(qty))
+        else:
+            need = 0 if any(st.get("id") == item_id for st in self.pack_stacks()) else 1
+        return self.pack_used() - int(freed) + need <= self.pack_capacity()
+
+    def _pack_full_note(self) -> None:
+        import time as _time
+        now = _time.monotonic()
+        if now - getattr(self, "_pack_full_at", -10.0) > 2.0:
+            self._pack_full_at = now
+            self.notify("Your pack is full", 2.0)
+
+    def _check_pack(self) -> None:
+        """Keep the pack within its slots.
+
+        When it loses slots (a satchel sold, stored or dropped) what no
+        longer fits falls to the floor, from the last slot back; so does
+        anything that arrives in a full pack some way that could not ask
+        first (a quest reward). A pack already over-full -- from before
+        packs had a size -- is left as it is, but cannot grow."""
+        c = getattr(self.game, "character", None)
+        if c is None:
+            return
+        cap, used = self.pack_capacity(), self.pack_used()
+        seen = getattr(self, "_pack_seen", None)
+        self._pack_seen = (cap, used)
+        if seen is None or used <= cap:
+            return
+        was_cap, was_used = seen
+        limit = cap if cap < was_cap else max(cap, min(was_used, used))
+        if used <= limit:
+            return
+        for stack in self.pack_stacks()[limit:][::-1]:
+            self.drop_item(stack.get("id"), int(stack.get("qty", 1) or 1), quiet=True)
+        self.notify("Your pack can't hold everything: some of it fell to the floor", 3.0)
+        self._pack_seen = (cap, self.pack_used())
+
+    def drop_item(self, item_id, qty=None, quiet=False) -> bool:
+        """Put carried *item_id* on the floor beside the player: one copy of
+        a weapon, else the whole stack (or *qty* of it). Taken off the body
+        first if that was the last of it. It can be picked up again once the
+        player has stepped away and comes back."""
+        c = self.game.character
+        stack = inv.find(c.inventory, item_id)
+        d = rpg_items.get(item_id)
+        if stack is None or warrior_fist.innate(item_id):
+            return False
+        have = int(stack.get("qty", 1) or 0)
+        if qty is None:
+            qty = 1 if (d is not None and d.category == rpg_items.WEAPON) else have
+        qty = max(1, min(int(qty), have))
+        before = eq.armour_class(c)
+        left = have - qty
+        if left <= 0:
+            self._forget_in_slots(item_id)
+        else:
+            # Fewer copies than hands holding it: the off hand lets go first.
+            for slot in (rpg_items.SLOT_SHIELD, rpg_items.SLOT_WEAPON):
+                if list((c.equipment or {}).values()).count(item_id) > left \
+                        and c.equipment.get(slot) == item_id:
+                    if slot == rpg_items.SLOT_WEAPON:
+                        self._cancel_bow_draw()
+                    self.game.unequip(slot)
+        kept = {k: v for k, v in stack.items() if k != "qty"}
+        removed = inv.remove_item(c.inventory, item_id, qty)
+        if removed <= 0:
+            return False
+        self._place_dropped(item_id, removed, kept)
+        self._announce_ac(before)
+        if not quiet:
+            name = stack.get("name") or (d.name if d else item_id)
+            self.notify(f"Dropped {name}" + (f" ({removed})" if removed > 1 else ""), 1.5)
+        return True
+
+    def _place_dropped(self, item_id, qty, stack) -> None:
+        """An ordinary Item pickup on the ground beside the player."""
+        ppos = self._player_pos()
+        if ppos is None:
+            return
+        try:
+            from .entities import ItemPickup
+        except Exception:
+            return
+        ang = self.rng.uniform(0.0, math.tau)
+        dist = self.rng.uniform(*DROP_DISTANCE)
+        pos = [ppos[0] + math.cos(ang) * dist, ppos[1], ppos[2] + math.sin(ang) * dist]
+        item = ItemPickup(pos)
+        d = rpg_items.get(item_id)
+        item.properties.update({
+            "item_id": item_id,
+            "quantity": int(qty),
+            "display_name": stack.get("name") or (d.name if d else item_id),
+            "_stack": dict(stack),
+            "_await_away": True,
+            "_dropped": True,
+        })
+        fio.things(self.logic).append(item)
+        self._type_index_token = None      # force the type index to rebuild
+
+    @staticmethod
+    def _strip_copies(stack) -> int:
+        """How many strip slots a carried *stack* may take: one per copy of a
+        weapon -- each blade is drawn from a slot of its own, so a pair to
+        dual wield costs two -- and one for anything else (its count shows)."""
+        if not stack:
+            return 0
+        d = rpg_items.get(stack.get("id"))
+        if d is not None and d.category == rpg_items.WEAPON:
+            return max(1, int(stack.get("qty", 1) or 1))
+        return 1
 
     def strip_slots(self) -> List[Optional[Dict]]:
-        """The strip's slots, each the carried stack in it or None.
+        """The strip's slots, each the carried stack in it or None. A weapon
+        carried more than once is in a slot per copy, each shown as one.
 
         Kept honest on every ask, as the quick slots are: a thing no longer
-        carried leaves its slot, and one picked up for the first time takes
-        the first free slot by itself."""
+        carried leaves its slot (a copy sold, the slot of the last one), and
+        one picked up -- or another copy of a weapon -- takes the first free
+        slot by itself."""
         c = getattr(self.game, "character", None)
         if c is None:
             return []
@@ -5765,40 +6200,167 @@ class MiniwindSession:
         seen = getattr(c, "_strip_seen", None)
         if seen is None:
             seen = c._strip_seen = set()
+        #: Copies of each item offered a slot so far (a weapon's can be more
+        #: than one); an id only in *seen* (an older save) counts as one.
+        offered = getattr(c, "_strip_offered", None)
+        if offered is None:
+            offered = c._strip_offered = {}
         carried = {}
         for stack in c.inventory or ():
             if isinstance(stack, dict) and stack.get("id") and int(stack.get("qty", 1) or 0) > 0:
                 carried.setdefault(str(stack["id"]), stack)
+        placed = {}
         for i, iid in enumerate(strip):
-            if iid and iid not in carried:
-                strip[i] = None
-        for iid in carried:
-            if iid in seen:
+            if not iid:
                 continue
+            n = placed.get(iid, 0) + 1
+            if n > self._strip_copies(carried.get(iid)):
+                strip[i] = None
+            else:
+                placed[iid] = n
+        for iid, stack in carried.items():
+            want = self._strip_copies(stack)
+            done = offered.get(iid, 1 if iid in seen else 0)
+            while done < want:
+                done += 1
+                if placed.get(iid, 0) < want and None in strip:
+                    strip[strip.index(None)] = iid
+                    placed[iid] = placed.get(iid, 0) + 1
+            offered[iid] = min(done, want)
             seen.add(iid)
-            if iid not in strip and None in strip:
-                strip[strip.index(None)] = iid
         # Forget what has gone, so it is offered a slot again when it comes back.
         seen.intersection_update(carried)
-        return [carried.get(iid) if iid else None for iid in strip]
+        for iid in [k for k in offered if k not in carried]:
+            del offered[iid]
+        out = []
+        for iid in strip:
+            stack = carried.get(iid) if iid else None
+            if stack is not None and self._strip_copies(stack) > 1:
+                stack = dict(stack, qty=1)       # one copy per slot
+            out.append(stack)
+        return out
 
-    def set_strip_slot(self, index: int, item_id) -> bool:
+    def strip_hands(self) -> List[Optional[str]]:
+        """Per strip slot, the hand its weapon copy is held in: ``"main"``,
+        ``"off"`` or None. Copies of one weapon map to the hands in order --
+        the first slot holding it is the main hand's copy when the main hand
+        holds it, the next the off hand's."""
+        c = self.game.character
+        main = eq.weapon(c)
+        off = eq.offhand_weapon(c)
+        out, seen = [], {}
+        for stack in self.strip_slots():
+            iid = stack.get("id") if stack else None
+            hand = None
+            if iid:
+                copy = seen.get(iid, 0)
+                seen[iid] = copy + 1
+                hands = [h for h, d in (("main", main), ("off", off))
+                         if d is not None and d.id == iid]
+                hand = hands[copy] if copy < len(hands) else None
+            out.append(hand)
+        return out
+
+    def set_strip_slot(self, index: int, item_id, from_index=None) -> bool:
         """Put *item_id* (carried) in strip slot *index*, or empty it with
-        None. Something already in another slot swaps with what was here."""
+        None. Dragged from another strip slot (*from_index*), the two swap.
+        From elsewhere, a copy without a slot yet takes this one; otherwise
+        the slot it was in swaps with this one."""
         self.strip_slots()
-        strip = self.game.character.strip
+        c = self.game.character
+        strip = c.strip
         index = int(index)
         if not 0 <= index < len(strip):
             return False
         if item_id is None:
             strip[index] = None
             return True
-        if not inv.has_item(self.game.character.inventory, item_id, 1):
+        if not inv.has_item(c.inventory, item_id, 1):
             return False
-        if item_id in strip:
+        if from_index is not None and 0 <= int(from_index) < len(strip) \
+                and strip[int(from_index)] == item_id:
+            strip[int(from_index)], strip[index] = strip[index], item_id
+            return True
+        if strip[index] == item_id:
+            return True
+        copies = self._strip_copies(inv.find(c.inventory, item_id))
+        if item_id in strip and strip.count(item_id) >= copies:
             strip[strip.index(item_id)] = strip[index]
         strip[index] = item_id
-        self.game.character._strip_seen.add(item_id)
+        c._strip_seen.add(item_id)
+        return True
+
+    def select_strip_slot(self, index: int) -> bool:
+        """A strip slot picked, by a click or its number key: selected, and a
+        weapon in it taken in hand at once (see :meth:`ready_weapon`).
+        True if anything changed in hand."""
+        slots = self.strip_slots()
+        index = int(index)
+        if not 0 <= index < len(slots):
+            return False
+        self.strip_selected = index
+        stack = slots[index]
+        if not stack:
+            return False
+        d = rpg_items.get(stack.get("id"))
+        if d is None or d.category != rpg_items.WEAPON:
+            return False
+        copy = sum(1 for st in slots[:index] if st and st.get("id") == d.id)
+        return self.ready_weapon(d.id, copy)
+
+    def ready_weapon(self, item_id, copy=None) -> bool:
+        """Take a carried weapon in hand at once, or put it away if it is
+        already there. *copy* is which copy of it (0, 1 ...) on the strip:
+        a pair of the same blade is two copies, one per hand (see
+        :meth:`strip_hands`); None means whichever is in hand.
+
+        The main hand first. With the main hand already holding a weapon, a
+        one-handed weapon goes to the off hand (the shield slot) and the two
+        are dual wielded. A bow or a two-handed weapon can't be held in the
+        off hand, so it takes the main hand -- and both. Neither can anything
+        go beside a two-hander: the new weapon replaces it instead."""
+        c = self.game.character
+        d = rpg_items.get(item_id)
+        if d is None or d.category != rpg_items.WEAPON \
+                or not inv.has_item(c.inventory, item_id, 1):
+            return False
+        before = eq.armour_class(c)
+        self._cancel_bow_draw()
+        main = eq.weapon(c)
+        off = eq.offhand_weapon(c)
+        hands = [h for h, w in (("main", main), ("off", off))
+                 if w is not None and w.id == item_id]
+        if copy is None:
+            held = hands[0] if hands else None
+        else:
+            held = hands[copy] if 0 <= copy < len(hands) else None
+        if held is not None and not self.pack_has_room(item_id, 1):
+            self._pack_full_note()          # nowhere to put it away
+            return False
+        if held == "main":
+            eq.unequip(c, rpg_items.SLOT_WEAPON)
+            if off is not None:
+                # The off hand's weapon moves over: never a hand left empty
+                # beside a held blade.
+                eq.unequip(c, rpg_items.SLOT_SHIELD)
+                self.game.equip(off.id)
+            self.notify(f"Put away {d.name}", 1.5)
+            self._announce_ac(before)
+            return True
+        if held == "off":
+            eq.unequip(c, rpg_items.SLOT_SHIELD)
+            self.notify(f"Put away {d.name}", 1.5)
+            self._announce_ac(before)
+            return True
+        main_free = main is None or bool(main.get("innate"))
+        if (not main_free and eq.can_dual_wield(d) and not eq.is_two_handed(main)
+                and self.game.equip(item_id, rpg_items.SLOT_SHIELD)):
+            self.notify(f"{d.name} in your off hand", 1.5)
+        elif self.game.equip(item_id):
+            self.notify(f"{d.name} in hand", 1.5)
+        else:
+            return False
+        self._announce_ac(before)
         return True
 
     def _forget_in_slots(self, item_id) -> None:
@@ -5858,7 +6420,8 @@ class MiniwindSession:
         if tkind == "container":
             return self.store_item_in_container(iid)
         if tkind == "strip":
-            return self.set_strip_slot(int(tkey), iid)
+            return self.set_strip_slot(int(tkey), iid,
+                                       from_index=skey if skind == "strip" else None)
         if skind == "strip":
             if tkind == "pack":
                 return self.set_strip_slot(int(skey), None)
@@ -5890,10 +6453,28 @@ class MiniwindSession:
 
     # -- overhead speech bubbles -------------------------------------------
     def _quest_ids_in_dialogue(self, tree) -> List[str]:
-        """Quest ids a dialogue tree can start (for the '!' available-quest cue)."""
-        out = []
+        """Quest ids a dialogue tree can start (for the '!' available-quest cue).
+
+        Asked for every NPC near the player every frame (the speech bubbles),
+        so the walk is kept per tree object: a tree is authored data, and the
+        cache holds the tree itself, so an id is never mistaken for a new one."""
         if not isinstance(tree, dict):
-            return out
+            return []
+        memo = self.__dict__.setdefault("_dialogue_quest_ids", {})
+        nodes = tree.get("nodes")
+        size = len(nodes) if isinstance(nodes, dict) else 0
+        hit = memo.get(id(tree))
+        if hit is not None and hit[0] is tree and hit[1] == size:
+            return hit[2]
+        if len(memo) > 512:
+            memo.clear()
+        out = self._walk_quest_ids(tree)
+        memo[id(tree)] = (tree, size, out)
+        return out
+
+    @staticmethod
+    def _walk_quest_ids(tree) -> List[str]:
+        out = []
         for node in (tree.get("nodes", {}) or {}).values():
             actions = list(node.get("on_enter", []) or [])
             for r in node.get("responses", []) or []:
@@ -5994,22 +6575,47 @@ class MiniwindSession:
         instead of a speech bubble."""
         out = []
         r2 = radius * radius
+        px, pz = player_pos[0], player_pos[2]
         for npc in self.npcs():
+            # Distance first: the HUD asks every frame, and only the few NPCs
+            # in reach are worth reading a dialogue tree for.
+            dx = npc.pos[0] - px
+            dz = npc.pos[2] - pz
+            d = dx * dx + dz * dz
+            if d > r2:
+                continue
             kind = self.bubble_kind(npc)
             if kind is None or self.head_mark(npc) is not None:
                 continue
-            dx = npc.pos[0] - player_pos[0]
-            dz = npc.pos[2] - player_pos[2]
-            d = dx * dx + dz * dz
-            if d <= r2:
-                out.append((d, npc, kind))
+            out.append((d, npc, kind))
         out.sort(key=lambda t: t[0])
         return [(npc, kind) for _d, npc, kind in out]
 
     # -- dialogue -----------------------------------------------------------
+    def _actors_near(self, pos, radius: float):
+        """The actors within *radius* (XZ) of *pos*, as candidates: one index
+        query rather than a walk of every actor. Positions are this tick's
+        snapshot, so callers re-measure the few that come back.
+
+        Logic thread only (the index is rebuilt there); None without an index,
+        when callers fall back to their full scans."""
+        wi = self._world_index()
+        if wi is None:
+            return None
+        actors = wi.actors
+        return [actors[i] for i in wi.rows_near(float(pos[0]), float(pos[2]),
+                                                radius).tolist()]
+
     def nearest_talkable(self, player_pos, radius: float = TALK_RADIUS):
         best, best_d = None, radius * radius
-        for npc in self.npcs():
+        near = self._actors_near(player_pos, radius)
+        if near is None:
+            pool = self.npcs()
+        else:
+            npc_ids = self._type_ids("npc")
+            pool = [t for t in near
+                    if id(t) in npc_ids and not t.properties.get("dead", False)]
+        for npc in pool:
             if not npc.properties.get("dialogue") and not npc.properties.get("merchant"):
                 continue
             if str(npc.properties.get("aggression")) == "hostile":
@@ -6200,10 +6806,14 @@ class MiniwindSession:
     def nearest_container(self, player_pos, radius: float = TALK_RADIUS):
         """The nearest usable container within its own use radius."""
         best, best_d = None, None
+        px, pz = player_pos[0], player_pos[2]
         for c in self._things_of_type("container"):
             r = float(c.properties.get("use_radius", radius))
-            d = self._dist2d(player_pos, c.pos)
-            if d <= r and (best_d is None or d < best_d):
+            pos = c.pos
+            dx = px - pos[0]
+            dz = pz - pos[2]
+            d = dx * dx + dz * dz          # squared: compared, never shown
+            if r >= 0.0 and d <= r * r and (best_d is None or d < best_d):
                 best, best_d = c, d
         return best
 
@@ -6212,9 +6822,12 @@ class MiniwindSession:
         """The nearest dead NPC or creature within *radius* with anything on
         it to take (or a loot table not yet rolled), else None."""
         best, best_d = None, radius * radius
-        buckets = self._type_buckets()
-        for t in _chain(buckets.get("npc", ()), buckets.get("creature", ()),
-                        buckets.get("monster", ())):
+        pool = self._actors_near(player_pos, radius)
+        if pool is None:
+            buckets = self._type_buckets()
+            pool = _chain(buckets.get("npc", ()), buckets.get("creature", ()),
+                          buckets.get("monster", ()))
+        for t in pool:
             p = t.properties
             if not p.get("dead") or p.get("hidden"):
                 continue
@@ -6301,6 +6914,10 @@ class MiniwindSession:
         items = self.container_inventory()
         if not (0 <= index < len(items)):
             return False
+        if items[index].get("id") != rpg_items.GOLD and not self.pack_has_room(
+                items[index].get("id"), int(items[index].get("qty", 1) or 1)):
+            self._pack_full_note()
+            return False
         stack = items.pop(index)
         name = stack.get("name", stack.get("id", ""))
         # A chest with an owner makes emptying it a theft, exactly like a world
@@ -6356,15 +6973,53 @@ class MiniwindSession:
         return self.dialogue.view() if self.dialogue is not None else None
 
     # -- merchant trade -----------------------------------------------------
+    @staticmethod
+    def stock_entry(npc, item_id):
+        """*npc*'s own stock row for *item_id* (a dict), or None.
+
+        A row with a ``qty`` is limited: buying takes one, at none it is sold
+        out, and the daily resolution fills it back to its ``restock`` count
+        (game/rpg/daily.py). A row without one -- or a plain item id -- is an
+        endless supply, as all stock used to be."""
+        stock = getattr(npc, "properties", {}).get("stock") if npc is not None else None
+        if not isinstance(stock, list):
+            return None
+        for entry in stock:
+            if isinstance(entry, dict) and entry.get("id") == item_id:
+                return entry
+        return None
+
+    @staticmethod
+    def stock_left(entry):
+        """How many of a stock row are left, or None for an endless one."""
+        if not isinstance(entry, dict) or "qty" not in entry:
+            return None
+        try:
+            return max(0, int(entry.get("qty") or 0))
+        except (TypeError, ValueError):
+            return 0
+
     def buy(self, item_id: str) -> bool:
         c = self.game.character
         d = rpg_items.get(item_id)
         if not d:
             return False
+        entry = self.stock_entry(self.merchant_npc, item_id)
+        left = self.stock_left(entry)
+        if left == 0:
+            self.notify(f"{d.name}: sold out until tomorrow")
+            return False
         price = self._price(d.value, buying=True, npc=self.merchant_npc)
         if c.gold < price:
             self.notify("Not enough gold")
             return False
+        if not self.pack_has_room(item_id, 1):
+            self._pack_full_note()
+            return False
+        if left is not None:
+            # The full shelf, remembered the first time one is sold.
+            entry.setdefault("restock", left)
+            entry["qty"] = left - 1
         c.gold -= price
         self.game.pick_up(item_id, 1)
         c.use_skill("mercantile", 0.5)
@@ -6424,6 +7079,32 @@ class MiniwindSession:
         if buying:
             return max(1, int(base_value * (2.0 - factor) * like * face))
         return max(1, int(base_value * factor * 0.8 / like * face))
+
+    # -- the death screen -----------------------------------------------------
+    _death_message = None
+
+    def death_message(self):
+        """How the player died, in one line ("Stabbed to death by Kestrel
+        the Guard"), from the last hit that hurt them (game/death_causes.py);
+        chosen once per death. None while the player lives."""
+        c = self.game.character
+        if not c.is_dead:
+            self._death_message = None
+            return None
+        if self._death_message is None:
+            from . import death_causes
+            source, cause, kind = (getattr(c, "_last_harm", None) or (None, None, None))
+            thing, trap = None, ""
+            if isinstance(source, dict):
+                trap = str(source.get("name") or "")          # a hurt trigger's brush
+            elif isinstance(source, int):
+                # A projectile's owner, by id(): looked up once, at death.
+                thing = next((t for t in fio.things(self.logic) if id(t) == source), None)
+            elif source is not None:
+                thing = source
+            self._death_message = death_causes.describe(
+                thing, cause, kind, rng=self.rng, trap_name=trap)
+        return self._death_message
 
     # -- persistence --------------------------------------------------------
     _last_persist = 0.0

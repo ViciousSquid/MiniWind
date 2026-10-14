@@ -85,6 +85,19 @@ def plan_draw(distance: float, level: int, roll: float, extra: float) -> float:
     return min(1.0, need)
 
 
+#: A crossbow shoots at once rather than drawing, then takes this long to
+#: wind back; its bolt does this fraction of a full bow draw's damage.
+CROSSBOW_RELOAD_SECONDS = 1.4
+CROSSBOW_DAMAGE = 0.85
+
+
+def is_crossbow(props) -> bool:
+    """Whether the ranged weapon in *props*' hand is a crossbow."""
+    from .rpg import items
+    d = items.get(props.get("_active_weapon") or props.get("equipped_weapon") or "")
+    return d is not None and d.get("kind") == items.KIND_CROSSBOW
+
+
 def is_bow_shot(props, distance: float) -> bool:
     """Whether an actor fights this shot with a bow.
 
@@ -124,21 +137,35 @@ class NpcArchery:
             choose_in_hand(props, distance, MELEE_BAND)
         except Exception:
             pass
+        session = self.session
         if not is_bow_shot(props, distance):
+            # A melee blow: the engine lands the main hand's; a second
+            # weapon strikes after it, on its own roll (game/dual_wield.py).
+            try:
+                from .dual_wield import offhand_strike
+                offhand_strike(session, thing, aggro_monster, session.rng)
+            except Exception as exc:
+                print(f"[MiniWind] off-hand strike failed: {exc}")
             return False
         if id(thing) in self.drawing:
             return True               # already drawing: this shot is that one
-        session = self.session
         now = getattr(session, "_archery_clock", 0.0)
         if now < float(props.get("_bow_ready_at", 0.0) or 0.0):
             return True               # still nocking the next arrow
+        target = aggro_monster if aggro_monster is not None else "player"
+        if is_crossbow(props):
+            # A crossbow needs no draw: it shoots now, then winds back.
+            target_pos = self._target_pos(target)
+            if target_pos is not None:
+                self._loose(thing, {"charge": 1.0, "plan": 1.0, "target": target,
+                                    "crossbow": True}, target_pos)
+            return True
         rng = session.rng
         try:
             level = int(props.get("creature_level", 1) or 1)
         except (TypeError, ValueError):
             level = 1
         plan = plan_draw(distance, level, rng.random(), rng.random())
-        target = aggro_monster if aggro_monster is not None else "player"
         self.drawing[id(thing)] = (thing, {"charge": 0.0, "plan": plan,
                                            "target": target})
         props["_bow_charge"] = 0.0
@@ -198,9 +225,11 @@ class NpcArchery:
         session = self.session
         logic = session.logic
         p = thing.properties
+        crossbow = bool(draw.get("crossbow"))
         self.drawing.pop(id(thing), None)
         p.pop("_bow_charge", None)
-        p["_bow_ready_at"] = session._archery_clock + NOCK_SECONDS
+        p["_bow_ready_at"] = session._archery_clock + (
+            CROSSBOW_RELOAD_SECONDS if crossbow else NOCK_SECONDS)
         p["_attack_anim"] = 0.2
         charge = draw["charge"]
         start = [float(thing.pos[0]), float(thing.pos[1]) + 48.0, float(thing.pos[2])]
@@ -217,6 +246,8 @@ class NpcArchery:
         except (TypeError, ValueError):
             base = 12.0
         damage = damage_for(base, charge)
+        if crossbow:
+            damage = max(1.0, damage * CROSSBOW_DAMAGE)   # a little under a bow
         max_dist = range_for(charge)
         ai = getattr(logic, "monster_ai", None)
 
@@ -232,4 +263,4 @@ class NpcArchery:
         tag = fio.projectile_tag(logic, row)
         if tag:
             from .ui.arrows import arrow_sprite
-            session._arrow_tags[tag] = arrow_sprite("iron_arrow")
+            session._arrow_tags[tag] = arrow_sprite("iron_bolt" if crossbow else "iron_arrow")

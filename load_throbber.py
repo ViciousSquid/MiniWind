@@ -5,8 +5,9 @@ parsing the JSON, building the scene, refreshing every panel and painting the
 first frames. None of that can yield to an animation in the same process --
 most of it is Qt work that must run on the GUI thread, and the JSON parser
 holds the GIL -- so the throbber runs as its own small process: a frameless,
-always-on-top strip, five pixels tall, laid over the editor window, with
-orange and green stripes scrolling across it.
+always-on-top window centred over the editor: "Loading..." in the game's
+medieval face, over a strip five pixels tall with orange and green stripes
+scrolling across it.
 
 The editor side is :class:`LoadThrobber`. The child is started through
 ``main.py --fio-load-throbber`` (the same executable in a packaged build) and
@@ -24,6 +25,19 @@ import threading
 
 #: Height of the throbber strip, in pixels.
 HEIGHT = 5
+#: The "Loading..." line above the strip: its height, its pixel size, and the
+#: gap between it and the strip.
+TEXT_HEIGHT = 44
+TEXT_PX = 30
+TEXT_GAP = 8
+#: The whole throbber window: the text, the gap, the strip.
+TOTAL_HEIGHT = TEXT_HEIGHT + TEXT_GAP + HEIGHT
+TEXT = "Loading..."
+#: The game's medieval face, registered from its file (the child process has
+#: nothing else loaded); Georgia stands in where the file is missing.
+FONT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "assets", "fonts", "MedievalSharp-Regular.ttf")
+FONT_FALLBACK = "Georgia"
 #: Flag ``main.py`` dispatches on to run the throbber instead of the editor.
 CHILD_FLAG = "--fio-load-throbber"
 
@@ -49,6 +63,22 @@ def stripe_colour(x, offset, width=STRIPE_WIDTH):
     return ORANGE if int((x - offset) // width) % 2 == 0 else GREEN
 
 
+def _medieval_font():
+    from PyQt5.QtGui import QFont, QFontDatabase
+    family = FONT_FALLBACK
+    try:
+        if os.path.isfile(FONT_FILE):
+            font_id = QFontDatabase.addApplicationFont(FONT_FILE)
+            families = QFontDatabase.applicationFontFamilies(font_id) if font_id >= 0 else []
+            if families:
+                family = families[0]
+    except Exception:
+        pass
+    font = QFont(family)
+    font.setPixelSize(TEXT_PX)
+    return font
+
+
 def _make_widget(caption):
     from PyQt5.QtCore import QElapsedTimer, QRectF, Qt, QTimer
     from PyQt5.QtGui import QColor, QPainter, QPainterPath
@@ -59,7 +89,10 @@ def _make_widget(caption):
             super().__init__(None, Qt.Tool | Qt.FramelessWindowHint
                              | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus)
             self.setAttribute(Qt.WA_ShowWithoutActivating)
-            self.setWindowTitle(caption)     # no room to draw it at 5 px
+            # Only the text and the strip are drawn: the editor shows round them.
+            self.setAttribute(Qt.WA_TranslucentBackground)
+            self.setWindowTitle(caption)
+            self.text_font = _medieval_font()
             self.offset = 0.0
             self._clock = QElapsedTimer()
             self._clock.start()
@@ -74,7 +107,16 @@ def _make_widget(caption):
         def paintEvent(self, _event):
             p = QPainter(self)
             p.setRenderHint(QPainter.Antialiasing)
-            bar = QRectF(0, 0, self.width(), self.height())
+            p.setRenderHint(QPainter.TextAntialiasing)
+            # "Loading..." centred above the strip, with a soft shadow so it
+            # reads over whatever the editor shows behind it.
+            text_box = QRectF(0, 0, self.width(), TEXT_HEIGHT)
+            p.setFont(self.text_font)
+            p.setPen(QColor(0, 0, 0, 200))
+            p.drawText(text_box.translated(2, 2), int(Qt.AlignCenter), TEXT)
+            p.setPen(QColor(255, 214, 130))
+            p.drawText(text_box, int(Qt.AlignCenter), TEXT)
+            bar = QRectF(0, self.height() - HEIGHT, self.width(), HEIGHT)
             p.fillRect(bar, QColor(*TRACK))
             # Slanted stripes, drawn as parallelograms scrolling to the right.
             slant = bar.height()
@@ -203,7 +245,8 @@ class LoadThrobber:
 
 
 def throbber_geometry(frame):
-    """The throbber's rectangle over an editor window *frame* (x, y, w, h)."""
+    """The throbber's rectangle over an editor window *frame* (x, y, w, h):
+    the text and the strip together, centred on the window both ways."""
     fx, fy, fw, fh = frame
     w = max(240, min(520, int(fw * 0.4)))
-    return (fx + (fw - w) // 2, fy + int(fh * 0.62), w, HEIGHT)
+    return (fx + (fw - w) // 2, fy + (fh - TOTAL_HEIGHT) // 2, w, TOTAL_HEIGHT)

@@ -36,6 +36,20 @@ _NAV_NAMES = (list("abcdefghijklmnopqrstuvwxyz") + [str(d) for d in range(0, 10)
               ["up", "down", "left", "right", "return", "enter", "escape",
                "space", "tab", "shift", "backspace"])
 
+
+def _names_by_code():
+    by_code = {}
+    for name in _NAV_NAMES:
+        code = key_code(name)
+        if code is not None:
+            by_code.setdefault(code, []).append(name)
+    return {code: tuple(names) for code, names in by_code.items()}
+
+
+#: Qt key code -> the names above it answers to, resolved once rather than
+#: re-resolving every name every tick.
+_NAV_BY_CODE = _names_by_code()
+
 # action bindings (single-press unless noted)
 K_ATTACK = "f"
 K_CAST = "r"
@@ -56,10 +70,13 @@ K_MAP = "m"
 # through MiniwindSession.request_roll and animate on their own, so there is
 # nothing a roll key adds.
 K_QUEST = "q"          # show the current quest (objective + how to complete)
-#: Number keys that draw a carried weapon by slot. '1' is the first weapon in
-#: the pack, '2' the second: the same order the loadout popup shows, so the keys
-#: and the screen can never disagree. Nine is plenty and leaves '0' free.
-WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 5))   # the four quick-weapon slots
+#: Number keys that pick a slot on the inventory strip: '1' the first, and so
+#: on, as numbered under the slots. A weapon there is taken in hand at once.
+#: Nine is plenty and leaves '0' free.
+WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 10))
+#: How long E stays ignored after it opened a screen, when the held-key
+#: snapshot never showed it down (a very quick tap), seconds.
+INTERACT_GRACE_SECONDS = 0.4
 
 
 # ---------------------------------------------------------------------------
@@ -803,8 +820,14 @@ class MiniwindGame:
         # close it immediately (the container "flash"). Suppress the interact key
         # inside screens/dialogue until it has been released at least once after
         # opening.
-        if getattr(self, "_suppress_interact", False) and not ctx.key_down(K_INTERACT):
-            self._suppress_interact = False
+        #
+        # "Released" means seen held and then let go: the held-key snapshot is
+        # published by the UI thread once a frame, so while frames are slow
+        # several logic ticks can pass before it shows E down at all -- and
+        # lifting the suppression on the first of those let the late edge
+        # through. A tap so quick the snapshot never shows it gets a short
+        # grace period instead.
+        self._update_interact_hold(ctx)
 
         if world_paused:
             session.tick_ui(ctx.delta)   # ages toasts/floaters only, no world sim
@@ -822,24 +845,51 @@ class MiniwindGame:
             session.persist()
             return
 
-        # Normal play: simulate the world, then handle combat/interaction input.
+        # Normal play: simulate the world, then resolve queued UI actions before
+        # this tick's remaining gameplay input. Debug Tools is non-modal, so its
+        # rewind/teleport clicks must also be drained on this path.
         session.tick(ctx.delta)
+        from .ui import hits
+        hits.run_clicks(session)
         self._handle_gameplay_input(session, just, ctx)
         self._handle_interaction(logic, ctx, session, just)
         session.persist()
 
     # -- input helpers ------------------------------------------------------
+    def _hold_interact(self):
+        """E just opened a screen or conversation: keep that same press from
+        reaching it (see :meth:`on_tick`)."""
+        self._suppress_interact = True
+        self._suppress_seen_down = False
+        self._suppress_since = time.monotonic()
+
+    def _update_interact_hold(self, ctx, now=None):
+        """Lift :meth:`_hold_interact` once E has been seen held and let go,
+        or after :data:`INTERACT_GRACE_SECONDS` if it was never seen held."""
+        if not getattr(self, "_suppress_interact", False):
+            return
+        if ctx.key_down(K_INTERACT):
+            self._suppress_seen_down = True
+            return
+        now = time.monotonic() if now is None else now
+        if (getattr(self, "_suppress_seen_down", False)
+                or now - getattr(self, "_suppress_since", 0.0) > INTERACT_GRACE_SECONDS):
+            self._suppress_interact = False
+
     def _just_pressed(self, ctx):
         """Set of key *names* newly pressed this tick."""
         keys = ctx.keys or frozenset()
         prev = getattr(self, "_prev_keys", frozenset())
-        new_codes = set(keys) - set(prev)
-        self._prev_keys = frozenset(keys)
+        keys = frozenset(keys)
+        self._prev_keys = keys
+        new_codes = keys - prev
+        if not new_codes:
+            return set()
         names = set()
-        for name in _NAV_NAMES:
-            code = key_code(name)
-            if code is not None and code in new_codes:
-                names.add(name)
+        for code in new_codes:
+            found = _NAV_BY_CODE.get(code)
+            if found:
+                names.update(found)
         return names
 
     def _handle_gameplay_input(self, session, just, ctx):
@@ -850,26 +900,27 @@ class MiniwindGame:
         # so there is nothing to poll here. Keyboard equivalents follow.
         # edge actions
         if K_ATTACK in just or "space" in just:
-            session.do_attack()
+            # Both hands, one after the other, when dual wielding.
+            session.attack_with_both()
         if K_CAST in just:
             session.do_cast()
         if K_NEXT_SPELL in just:
             session.next_spell()
-        # Weapon slots: 1 draws the first weapon you carry, 2 the second, and so
-        # on, in the order the loadout popup lists them. Pressing the slot you
-        # already hold sheathes it.
+        # Number keys pick a slot on the inventory strip; a weapon in it is
+        # taken in hand at once -- the main hand, or the off hand when the
+        # main hand is full -- and pressing it again puts it away.
         for slot in WEAPON_SLOT_KEYS:
             if slot in just:
-                session.select_weapon_slot(int(slot))
+                session.select_strip_slot(int(slot) - 1)
                 break
         if K_SNEAK in just:
             session.toggle_sneak()
         if K_HEAL in just:
             session.use_health_potion()
-        # I shows / hides the inventory strip along the bottom of the screen
-        # (game/ui/inventory_strip.py); the world keeps running.
+        # The inventory strip along the bottom is always up; I opens the
+        # inventory window (game/ui/inventory_window.py).
         if K_INVENTORY in just:
-            session.show_strip = not getattr(session, "show_strip", False)
+            session.open_screen = "inventory"
         # C opens the character window: paperdoll, pack and sheet, all drag
         # and drop (game/ui/inventory_window.py); it pauses the world.
         elif K_CHARACTER in just:
@@ -915,7 +966,7 @@ class MiniwindGame:
             session.interact_prompt = prompt
             if K_INTERACT in just or ctx.use_pressed:
                 session.start_dialogue(arrest_guard, player)
-                self._suppress_interact = True
+                self._hold_interact()
             return
 
         npc = session.nearest_talkable(player.pos, TALK_RADIUS)
@@ -931,7 +982,7 @@ class MiniwindGame:
             # honoured where a host wires it up).
             if K_INTERACT in just or ctx.use_pressed:
                 session.start_dialogue(npc, player)
-                self._suppress_interact = True
+                self._hold_interact()
             return
         # No NPC to talk to — offer a nearby container to open, or a body to
         # loot, with the same key (whichever is nearer).
@@ -944,7 +995,7 @@ class MiniwindGame:
             session.interact_prompt = prompt
             if K_INTERACT in just or ctx.use_pressed:
                 session.loot_corpse(corpse)
-                self._suppress_interact = True
+                self._hold_interact()
             return
         if container is not None:
             cname = container.properties.get("display_name", "container")
@@ -953,7 +1004,7 @@ class MiniwindGame:
             session.interact_prompt = prompt
             if K_INTERACT in just or ctx.use_pressed:
                 session.open_container(container)
-                self._suppress_interact = True
+                self._hold_interact()
 
     # -------------------------------------------------------------- overlay
     def _on_overlay(self, ev):
@@ -1039,8 +1090,9 @@ class MiniwindGame:
                 hud.draw_time_tint(painter, session, w, h, viewport)
                 # Inspector lines (console 'inspect') lie on the world, under
                 # the HUD; their windows float above everything.
-                from .ui import inspector
+                from .ui import inspector, path_debug
                 inspector.draw_world_lines(painter, viewport, w, h)
+                path_debug.draw(painter, session, viewport, w, h)   # console 'paths'
                 # The world's map picture for the minimap, which the HUD's
                 # status frame draws (painted once, in the background, then
                 # cached per map).
@@ -1055,6 +1107,7 @@ class MiniwindGame:
                 # label is never hidden under a toast.
                 inspector.draw_pick_hover(painter, viewport, w, h)
                 self._serve_map_request(session, viewport)
+                self._serve_autosave(session, viewport)
                 # Speech bubbles over nearby NPCs (only during free play, not
                 # while a menu or conversation is open).
                 if session.open_screen is None and session.dialogue is None \
@@ -1072,7 +1125,8 @@ class MiniwindGame:
                 if session.open_screen is not None:
                     screens.draw(painter, session, w, h)
             if session.game.character.is_dead:
-                self._draw_death(painter, w, h)
+                from .ui import death_screen
+                death_screen.draw(painter, viewport, w, h)
             # The fade-to-black transition (e.g. paying off a bounty) sits on
             # top of everything else, including dialogue and the death screen.
             hud.draw_fade(painter, session, w, h)
@@ -1179,13 +1233,13 @@ class MiniwindGame:
 
     @classmethod
     def _strip_wanted(cls, session, cutscene=False) -> bool:
-        """Whether the inventory strip shows: toggled on with I in free play,
-        and always over the character window or an open chest or body."""
+        """Whether the inventory strip shows: always in free play, and over
+        the character window or an open chest or body."""
         if (cutscene or session.needs_char_creation
                 or session.game.character.is_dead or session.dialogue is not None):
             return False
         if session.open_screen is None:
-            return bool(getattr(session, "show_strip", False))
+            return True                  # always up in free play
         return session.open_screen in cls._STRIP_SCREENS
 
     def _sync_strip_window(self, session, viewport, w, h, cutscene=False):
@@ -1348,12 +1402,22 @@ class MiniwindGame:
             cur.set_body_size(bw, bh)
         return True
 
-    def _draw_death(self, painter, w, h):
-        from PyQt5.QtCore import QRect
-        from .ui import theme as T
-        T.dim_screen(painter, w, h, alpha=180)
-        T.text_in(painter, QRect(0, h // 2 - 30, w, 60), "You have died",
-                  size=28, color=T.HEALTH.lighter(130), align=T.ALIGN_CENTER, bold=True)
+    @staticmethod
+    def _serve_autosave(session, viewport):
+        """Make the autosave the game tick says is due (game/autosave.py).
+
+        Here, on the UI thread, because the engine's save takes the logic
+        thread's tick lock; deferred out of the paint pass like the map."""
+        saver = getattr(session, "autosave", None)
+        if saver is None or not saver.ready():
+            return
+        menu = getattr(viewport, "play_menu", None)
+        actions = getattr(menu, "actions", None)
+        if actions is None or not hasattr(actions, "autosave"):
+            return
+        reason = saver.take()
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(0, lambda: actions.autosave(reason))
 
     # --------------------------------------------------------------- helpers
     @staticmethod

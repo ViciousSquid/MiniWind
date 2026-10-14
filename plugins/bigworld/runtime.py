@@ -984,7 +984,9 @@ class BigWorldSession:
         """
         if self._base_level is None:
             self._capture_base()
-        live = normalize_streaming_state(self._live_level())
+        # Serialized just now, and written straight out: no deep copy needed
+        # (the base, which must stay detached, keeps its own).
+        live = normalize_streaming_state(self._live_level(), deep=False)
         self.registry = build_cell_delta_registry(
             self._base_level, live, self.manager.cell_size)
         return self.registry

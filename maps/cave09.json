@@ -1,0 +1,2436 @@
+{
+ "version": 3,
+ "brushes": [
+  {
+   "pos": [
+    0.0,
+    -16.0,
+    0.0
+   ],
+   "size": [
+    4096.0,
+    32.0,
+    4608.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "cave.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "7c695efd-664e-4ef0-8401-acfd3710d09b"
+  },
+  {
+   "pos": [
+    0.0,
+    160.0,
+    -1984.0
+   ],
+   "size": [
+    4096.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "df3cbc39-9b36-43e5-906e-4c57c120f1c5"
+  },
+  {
+   "pos": [
+    0.0,
+    192.0,
+    -1856.0
+   ],
+   "size": [
+    4096.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "5cd97af2-7f8f-4505-b50f-58ba6750f3ab"
+  },
+  {
+   "pos": [
+    0.0,
+    224.0,
+    -1728.0
+   ],
+   "size": [
+    4096.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "7df9a7b4-3bac-4875-9c0f-4288e3c0c6cd"
+  },
+  {
+   "pos": [
+    -896.0,
+    176.0,
+    -1600.0
+   ],
+   "size": [
+    2304.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "4a8fd60c-feff-4a47-b284-6722ba02049c"
+  },
+  {
+   "pos": [
+    1536.0,
+    208.0,
+    -1600.0
+   ],
+   "size": [
+    1024.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "e845e90f-1234-4f8e-872e-242db6be7d1d"
+  },
+  {
+   "pos": [
+    -960.0,
+    208.0,
+    -1472.0
+   ],
+   "size": [
+    2176.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "070d141f-c92d-4052-a282-eb96831393c4"
+  },
+  {
+   "pos": [
+    1664.0,
+    176.0,
+    -1472.0
+   ],
+   "size": [
+    768.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "87bc63e2-b550-4f24-bdbc-ec4b433e16d2"
+  },
+  {
+   "pos": [
+    -960.0,
+    160.0,
+    -1344.0
+   ],
+   "size": [
+    2176.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "17cf1850-652a-4dfe-890e-83534f8e415c"
+  },
+  {
+   "pos": [
+    1664.0,
+    208.0,
+    -1344.0
+   ],
+   "size": [
+    768.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "978f849e-111a-4ad7-9f75-ba06c74e1e0d"
+  },
+  {
+   "pos": [
+    -1024.0,
+    192.0,
+    -1216.0
+   ],
+   "size": [
+    2048.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "d9fc1a3e-5d0a-4cc0-80f3-c9623118e034"
+  },
+  {
+   "pos": [
+    1664.0,
+    160.0,
+    -1216.0
+   ],
+   "size": [
+    768.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "28547403-0a7b-49b0-8c32-c1c4fa85eb54"
+  },
+  {
+   "pos": [
+    -1088.0,
+    224.0,
+    -1088.0
+   ],
+   "size": [
+    1920.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "e566e936-6c0f-4e78-a681-7621980812c5"
+  },
+  {
+   "pos": [
+    1600.0,
+    224.0,
+    -1088.0
+   ],
+   "size": [
+    896.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "23aa753a-c351-48b1-a75a-c843281e4a58"
+  },
+  {
+   "pos": [
+    -1152.0,
+    176.0,
+    -960.0
+   ],
+   "size": [
+    1792.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "203d7b72-14b0-4f1e-8389-5413cd8c68b2"
+  },
+  {
+   "pos": [
+    704.0,
+    176.0,
+    -960.0
+   ],
+   "size": [
+    384.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "07713aa2-c165-4b48-b2b0-1ab2d860624e"
+  },
+  {
+   "pos": [
+    1600.0,
+    176.0,
+    -960.0
+   ],
+   "size": [
+    896.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "bdbf3db5-1090-464f-b9a6-9fd978b48f41"
+  },
+  {
+   "pos": [
+    -1216.0,
+    208.0,
+    -832.0
+   ],
+   "size": [
+    1664.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "1538998b-8956-4b43-9d1a-ed773d714169"
+  },
+  {
+   "pos": [
+    704.0,
+    176.0,
+    -832.0
+   ],
+   "size": [
+    128.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "1116036d-3597-4621-87bb-cce0b30929dc"
+  },
+  {
+   "pos": [
+    1600.0,
+    208.0,
+    -832.0
+   ],
+   "size": [
+    896.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "3265dd80-15c6-4f5f-941e-2b1fc1264e0b"
+  },
+  {
+   "pos": [
+    -1280.0,
+    160.0,
+    -704.0
+   ],
+   "size": [
+    1536.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "2e21231c-6970-4022-95cb-b4d64b3383f2"
+  },
+  {
+   "pos": [
+    1664.0,
+    208.0,
+    -704.0
+   ],
+   "size": [
+    768.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "62a3c0a0-9e8b-40dc-a235-da0fc85007b7"
+  },
+  {
+   "pos": [
+    -1344.0,
+    192.0,
+    -576.0
+   ],
+   "size": [
+    1408.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "67040243-0b87-46f1-81c5-aeb12683b451"
+  },
+  {
+   "pos": [
+    1728.0,
+    208.0,
+    -576.0
+   ],
+   "size": [
+    640.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "376882ee-7bc7-4216-be79-a0b60e770cc5"
+  },
+  {
+   "pos": [
+    -1792.0,
+    224.0,
+    -448.0
+   ],
+   "size": [
+    512.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "1720dcfd-b3e1-4a28-b6db-36a4999fc2c1"
+  },
+  {
+   "pos": [
+    -960.0,
+    192.0,
+    -448.0
+   ],
+   "size": [
+    640.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "eaae2b99-c7d3-458d-bfbc-5c80868adc21"
+  },
+  {
+   "pos": [
+    1792.0,
+    208.0,
+    -448.0
+   ],
+   "size": [
+    512.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "b3597673-d96d-4e05-9d40-561dc83eeff8"
+  },
+  {
+   "pos": [
+    -1856.0,
+    176.0,
+    -320.0
+   ],
+   "size": [
+    384.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "2e099072-d462-4691-9097-2659a1410760"
+  },
+  {
+   "pos": [
+    -960.0,
+    192.0,
+    -320.0
+   ],
+   "size": [
+    384.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "d189fc5e-ed65-4560-a46e-7e33e395ed40"
+  },
+  {
+   "pos": [
+    1792.0,
+    160.0,
+    -320.0
+   ],
+   "size": [
+    512.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "7d618a68-9a88-4c83-b31d-58d9e1084c94"
+  },
+  {
+   "pos": [
+    -1856.0,
+    208.0,
+    -192.0
+   ],
+   "size": [
+    384.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "04c74869-60d1-443f-9fe7-6487ac29abd1"
+  },
+  {
+   "pos": [
+    -960.0,
+    224.0,
+    -192.0
+   ],
+   "size": [
+    384.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "2cb576ba-c338-4094-957d-efd58122ccbf"
+  },
+  {
+   "pos": [
+    1728.0,
+    224.0,
+    -192.0
+   ],
+   "size": [
+    640.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "584446f5-b5a3-4b25-8a8a-4286c30be22d"
+  },
+  {
+   "pos": [
+    -1856.0,
+    160.0,
+    -64.0
+   ],
+   "size": [
+    384.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "8d272ac8-bac7-4eaa-b9fe-093c6a41bd30"
+  },
+  {
+   "pos": [
+    -1024.0,
+    208.0,
+    -64.0
+   ],
+   "size": [
+    512.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "cf67de94-6d17-4cfb-a0d8-808691cb011d"
+  },
+  {
+   "pos": [
+    1728.0,
+    176.0,
+    -64.0
+   ],
+   "size": [
+    640.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "7526cadc-d0fb-4fef-bc49-6cb0a5aae87a"
+  },
+  {
+   "pos": [
+    -1856.0,
+    192.0,
+    64.0
+   ],
+   "size": [
+    384.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "608aa3b8-3a9d-47c8-a17e-8fc5c74bef06"
+  },
+  {
+   "pos": [
+    -1024.0,
+    160.0,
+    64.0
+   ],
+   "size": [
+    512.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "bf47c532-28de-4f4f-a729-066f5a2b1034"
+  },
+  {
+   "pos": [
+    1728.0,
+    208.0,
+    64.0
+   ],
+   "size": [
+    640.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "3b52e846-6451-43c9-bd79-e7053f43de85"
+  },
+  {
+   "pos": [
+    -1856.0,
+    224.0,
+    192.0
+   ],
+   "size": [
+    384.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "fa125a3f-b942-4d60-b9ad-e18706c3ba70"
+  },
+  {
+   "pos": [
+    -1024.0,
+    160.0,
+    192.0
+   ],
+   "size": [
+    256.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "c53ddcb8-a8bf-4d02-af23-e06b2feea113"
+  },
+  {
+   "pos": [
+    1728.0,
+    160.0,
+    192.0
+   ],
+   "size": [
+    640.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "4eb27637-8191-4c7d-bd2e-55dce5eadfc4"
+  },
+  {
+   "pos": [
+    -1792.0,
+    176.0,
+    320.0
+   ],
+   "size": [
+    512.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "b386bbfb-f026-4815-a298-0533c230201b"
+  },
+  {
+   "pos": [
+    1856.0,
+    208.0,
+    320.0
+   ],
+   "size": [
+    384.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "96b693d3-0961-4ba3-91a3-2d0294121ec7"
+  },
+  {
+   "pos": [
+    -1728.0,
+    208.0,
+    448.0
+   ],
+   "size": [
+    640.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "f2de75af-74cd-4118-9c44-8000c7a061c3"
+  },
+  {
+   "pos": [
+    1920.0,
+    208.0,
+    448.0
+   ],
+   "size": [
+    256.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "734e3052-29b2-446f-a0ad-72d1d786c9b3"
+  },
+  {
+   "pos": [
+    -1664.0,
+    160.0,
+    576.0
+   ],
+   "size": [
+    768.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "cc204215-fb47-49ac-9de2-d9207abbdfbf"
+  },
+  {
+   "pos": [
+    1920.0,
+    160.0,
+    576.0
+   ],
+   "size": [
+    256.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "23f24506-b21d-4159-b545-df6a435bb0b4"
+  },
+  {
+   "pos": [
+    -1664.0,
+    192.0,
+    704.0
+   ],
+   "size": [
+    768.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "be735220-144f-4757-a2f7-44d38704347e"
+  },
+  {
+   "pos": [
+    1856.0,
+    224.0,
+    704.0
+   ],
+   "size": [
+    384.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "3f4fd556-c0ee-4d8c-9542-ddd3d9d69a82"
+  },
+  {
+   "pos": [
+    -1600.0,
+    224.0,
+    832.0
+   ],
+   "size": [
+    896.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "f912b8da-f5f0-47c2-85c8-ec2d59da953c"
+  },
+  {
+   "pos": [
+    1856.0,
+    176.0,
+    832.0
+   ],
+   "size": [
+    384.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "afde97b2-0e35-4c30-a4ea-351dab77a0f8"
+  },
+  {
+   "pos": [
+    -1600.0,
+    176.0,
+    960.0
+   ],
+   "size": [
+    896.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "34d14d38-0224-4648-bc5d-b337f751c7c5"
+  },
+  {
+   "pos": [
+    1856.0,
+    208.0,
+    960.0
+   ],
+   "size": [
+    384.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "87091a99-91cf-4179-a145-536b7aa97687"
+  },
+  {
+   "pos": [
+    -1600.0,
+    208.0,
+    1088.0
+   ],
+   "size": [
+    896.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "7a31c19d-1577-4d77-85d0-6703d9601f6c"
+  },
+  {
+   "pos": [
+    192.0,
+    224.0,
+    1088.0
+   ],
+   "size": [
+    128.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "138089ee-0d72-4060-b094-6e0dc908ec42"
+  },
+  {
+   "pos": [
+    1792.0,
+    192.0,
+    1088.0
+   ],
+   "size": [
+    512.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "a7e996ff-b481-4b43-9acb-a6929f2129e3"
+  },
+  {
+   "pos": [
+    -1600.0,
+    160.0,
+    1216.0
+   ],
+   "size": [
+    896.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "8f99ed54-3eba-464b-ac90-d0e222a8537f"
+  },
+  {
+   "pos": [
+    -768.0,
+    192.0,
+    1216.0
+   ],
+   "size": [
+    256.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "0a3471cc-052a-43e2-a4e2-753f443cf510"
+  },
+  {
+   "pos": [
+    320.0,
+    224.0,
+    1216.0
+   ],
+   "size": [
+    128.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "56e79168-0fe8-461b-a344-ef56315b19c8"
+  },
+  {
+   "pos": [
+    1728.0,
+    176.0,
+    1216.0
+   ],
+   "size": [
+    640.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "de9e4b36-e271-4ceb-8a4f-33774eaf413a"
+  },
+  {
+   "pos": [
+    -1280.0,
+    192.0,
+    1344.0
+   ],
+   "size": [
+    1536.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "8ca99842-c307-4001-ab3e-d0983784a8cf"
+  },
+  {
+   "pos": [
+    1728.0,
+    208.0,
+    1344.0
+   ],
+   "size": [
+    640.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "ad8b475d-8c73-4276-a0ca-bff5f7fc20e5"
+  },
+  {
+   "pos": [
+    -1088.0,
+    224.0,
+    1472.0
+   ],
+   "size": [
+    1920.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "a60c8c1a-6170-4990-be07-bdb378225dbe"
+  },
+  {
+   "pos": [
+    1728.0,
+    160.0,
+    1472.0
+   ],
+   "size": [
+    640.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "069e04f9-6372-4a14-8dec-ab8b84a7ee28"
+  },
+  {
+   "pos": [
+    -1088.0,
+    176.0,
+    1600.0
+   ],
+   "size": [
+    1920.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "9db15868-e607-4892-bc5a-f585bb19b10b"
+  },
+  {
+   "pos": [
+    320.0,
+    160.0,
+    1600.0
+   ],
+   "size": [
+    128.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "da75d235-0992-4d6d-869a-da6b97ce5453"
+  },
+  {
+   "pos": [
+    1664.0,
+    224.0,
+    1600.0
+   ],
+   "size": [
+    768.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "4cb7a299-0244-49c2-8e7d-c1c8cb5ac917"
+  },
+  {
+   "pos": [
+    -1088.0,
+    208.0,
+    1728.0
+   ],
+   "size": [
+    1920.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "3eff0fb1-addc-4e1b-8661-1b21295d37e0"
+  },
+  {
+   "pos": [
+    512.0,
+    192.0,
+    1728.0
+   ],
+   "size": [
+    512.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "55840bc0-f04b-4785-8bca-8a3538ab71b7"
+  },
+  {
+   "pos": [
+    1600.0,
+    208.0,
+    1728.0
+   ],
+   "size": [
+    896.0,
+    416.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "91e64a54-fda3-4cad-aec1-68bfc451def5"
+  },
+  {
+   "pos": [
+    -1088.0,
+    160.0,
+    1856.0
+   ],
+   "size": [
+    1920.0,
+    320.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "7e4f83cd-d0cf-4990-9937-4ca4123c3cf5"
+  },
+  {
+   "pos": [
+    1152.0,
+    224.0,
+    1856.0
+   ],
+   "size": [
+    1792.0,
+    448.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "0a2feb2d-6ad7-40e3-8aa4-ed65e30649bd"
+  },
+  {
+   "pos": [
+    -1088.0,
+    192.0,
+    1984.0
+   ],
+   "size": [
+    1920.0,
+    384.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "ef64048f-2f9d-4fb3-8eaf-93fb1b4a5bca"
+  },
+  {
+   "pos": [
+    1152.0,
+    176.0,
+    1984.0
+   ],
+   "size": [
+    1792.0,
+    352.0,
+    128.0
+   ],
+   "textures": {
+    "north": "tiledrock.jpg",
+    "south": "tiledrock.jpg",
+    "east": "tiledrock.jpg",
+    "west": "tiledrock.jpg",
+    "top": "Stone_09-512x512.png",
+    "down": "tiledrock.jpg"
+   },
+   "id": "a89f405a-eb0e-4a5f-b290-3e1bd77058a1"
+  },
+  {
+   "pos": [
+    64.0,
+    140.0,
+    2048.0
+   ],
+   "size": [
+    384.0,
+    280.0,
+    32.0
+   ],
+   "textures": {
+    "north": "_black.jpg",
+    "south": "_black.jpg",
+    "east": "_black.jpg",
+    "west": "_black.jpg",
+    "top": "_black.jpg",
+    "down": "_black.jpg"
+   },
+   "id": "c52c70dc-2d3c-40d8-8196-528cec7c2a1e"
+  }
+ ],
+ "things": [
+  {
+   "type": "levelchanger",
+   "pos": [
+    64.0,
+    64.0,
+    1932.8
+   ],
+   "properties": {
+    "type": "levelchanger",
+    "name": "LevelChanger_cave09_out",
+    "id": "0c846dce-4b54-4eea-aaf6-cdd19a532181",
+    "target_map": "maps/village_walled_source.json",
+    "delay": 0.0,
+    "fade_time": 0.5,
+    "show_radius": false,
+    "radius": 170.0,
+    "usable": true,
+    "destination_spawn": "cave09_exit",
+    "generate_level": false,
+    "prompt": "[E] Leave Wrecker's Hole",
+    "confirm": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "playerstart",
+   "pos": [
+    64.0,
+    72.0,
+    1472.0
+   ],
+   "properties": {
+    "type": "playerstart",
+    "name": "entrance",
+    "id": "07d57cfa-791f-4418-b4bd-0448ae00e9fa",
+    "angle": 90.0,
+    "primary": true,
+    "creation_index": 0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    64.0,
+    220.0,
+    1728.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_daylight",
+    "id": "7ba73ffa-5a3d-499c-937a-74697f49bb32",
+    "colour": [
+     200,
+     215,
+     255
+    ],
+    "intensity": 1.4,
+    "radius": 700.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    -64.0,
+    200.0,
+    1216.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_0",
+    "id": "abf24acc-bc37-4e81-9bb8-c1cbf29955fb",
+    "colour": [
+     255,
+     150,
+     80
+    ],
+    "intensity": 1.8,
+    "radius": 620.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    576.0,
+    200.0,
+    1472.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_1",
+    "id": "c5181647-c521-484e-9579-eb19d3d629ba",
+    "colour": [
+     120,
+     200,
+     255
+    ],
+    "intensity": 1.8,
+    "radius": 620.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    64.0,
+    200.0,
+    448.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_2",
+    "id": "44e85fa8-cfe2-4641-a557-30b2376da308",
+    "colour": [
+     255,
+     150,
+     80
+    ],
+    "intensity": 1.8,
+    "radius": 620.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    -576.0,
+    200.0,
+    832.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_3",
+    "id": "d09e8767-1247-4e0a-a0f3-76d6b2e224ce",
+    "colour": [
+     120,
+     200,
+     255
+    ],
+    "intensity": 1.8,
+    "radius": 620.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    832.0,
+    200.0,
+    832.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_4",
+    "id": "d601ca11-1a1c-43c0-b11f-4f70127f0769",
+    "colour": [
+     255,
+     150,
+     80
+    ],
+    "intensity": 1.8,
+    "radius": 620.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    -448.0,
+    200.0,
+    64.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_5",
+    "id": "73a12dec-5d92-47c9-934e-cd77b3782656",
+    "colour": [
+     120,
+     200,
+     255
+    ],
+    "intensity": 1.8,
+    "radius": 620.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    320.0,
+    200.0,
+    -192.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_6",
+    "id": "e21db043-1a28-4490-9854-5349c79be4da",
+    "colour": [
+     255,
+     150,
+     80
+    ],
+    "intensity": 1.8,
+    "radius": 620.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    -1088.0,
+    200.0,
+    448.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_7",
+    "id": "7108cd9e-ed62-4ff8-81fc-bcfcd700665b",
+    "colour": [
+     120,
+     200,
+     255
+    ],
+    "intensity": 1.8,
+    "radius": 620.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "creature",
+   "pos": [
+    1344.0,
+    40.0,
+    448.0
+   ],
+   "properties": {
+    "name": "Smuggler_cave09_0",
+    "display_name": "Smuggler",
+    "npc_role": "bandit",
+    "faction": "bandits",
+    "team": "bandits",
+    "aggression": "hostile",
+    "attack_style": "melee",
+    "combatant": true,
+    "health": 55,
+    "max_health": 55,
+    "damage": 10,
+    "creature_level": 1,
+    "xp_value": 14,
+    "loot": "bandit",
+    "move_speed": 90.0,
+    "sight_range": 1024,
+    "monster_type": "human",
+    "sprite_width": 120,
+    "sprite_height": 120,
+    "portrait": "assets/portraits/miniwind/bandit.png",
+    "persistent": true,
+    "spells": [],
+    "head": "pirate01",
+    "custom_idle": "assets/sprites/heads/pirate01.png",
+    "custom_shoot": "assets/sprites/heads/pirate01.png",
+    "equipped_weapon": "iron_shortsword",
+    "respawn": false,
+    "roam": false,
+    "roam_radius": 300.0,
+    "home": [
+     1344.0,
+     40.0,
+     448.0
+    ],
+    "inventory": [
+     {
+      "description": "For coaxing open stubborn locks.",
+      "id": "lockpick",
+      "name": "Lockpick",
+      "qty": 1,
+      "type": "misc",
+      "value": 5,
+      "weight": 0.0
+     }
+    ],
+    "triggered": false,
+    "wake_on_sight": true,
+    "type": "creature",
+    "id": "5eaa53a3-754e-4e7c-a325-a009f76535a8",
+    "monster_id": 0,
+    "awake": false,
+    "patrol": false,
+    "patrol_target": "",
+    "patrol_mode": "loop",
+    "variant": "<None>",
+    "entity_type": "creature",
+    "courage": 0.3
+   },
+   "io_connections": []
+  },
+  {
+   "type": "creature",
+   "pos": [
+    448.0,
+    40.0,
+    -192.0
+   ],
+   "properties": {
+    "type": "creature",
+    "name": "Bandit_cave09_1",
+    "id": "6e40ddd7-170f-484e-b9e5-ac151579890e",
+    "display_name": "Bandit",
+    "npc_role": "bandit",
+    "aggression": "hostile",
+    "sight_range": 520,
+    "custom_idle": "assets/sprites/heads/head07.png",
+    "custom_shoot": "assets/sprites/heads/head07.png",
+    "portrait": "assets/portraits/miniwind/bandit.png",
+    "monster_type": "human",
+    "sprite_width": 120,
+    "sprite_height": 120,
+    "monster_id": 0,
+    "health": 89,
+    "damage": 22,
+    "triggered": false,
+    "wake_on_sight": true,
+    "awake": false,
+    "patrol": false,
+    "patrol_target": "",
+    "patrol_mode": "loop",
+    "variant": "<None>",
+    "entity_type": "creature",
+    "faction": "bandits",
+    "team": "bandits",
+    "attack_style": "melee",
+    "loot": "bandit",
+    "creature_level": 3,
+    "xp_value": 25,
+    "move_speed": 90.0,
+    "combatant": true,
+    "inventory": [],
+    "persistent": true,
+    "respawn": false,
+    "roam": false,
+    "roam_radius": 300.0,
+    "home": [
+     448.0,
+     40.0,
+     -192.0
+    ],
+    "sight": 512,
+    "can_hear": false,
+    "non_hostile": false,
+    "max_health": 100,
+    "courage": 0.3,
+    "spells": [],
+    "head": "head07",
+    "equipped_weapon": "iron_shortsword",
+    "hidden": false,
+    "handed": "left",
+    "dead": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "creature",
+   "pos": [
+    832.0,
+    40.0,
+    320.0
+   ],
+   "properties": {
+    "name": "Smuggler_cave09_2",
+    "display_name": "Smuggler",
+    "npc_role": "bandit",
+    "faction": "bandits",
+    "team": "bandits",
+    "aggression": "hostile",
+    "attack_style": "melee",
+    "combatant": true,
+    "health": 55,
+    "max_health": 55,
+    "damage": 10,
+    "creature_level": 1,
+    "xp_value": 14,
+    "loot": "bandit",
+    "move_speed": 90.0,
+    "sight_range": 1024,
+    "monster_type": "human",
+    "sprite_width": 120,
+    "sprite_height": 120,
+    "portrait": "assets/portraits/miniwind/bandit.png",
+    "persistent": true,
+    "spells": [],
+    "head": "pirate01",
+    "custom_idle": "assets/sprites/heads/pirate01.png",
+    "custom_shoot": "assets/sprites/heads/pirate01.png",
+    "equipped_weapon": "iron_shortsword",
+    "respawn": false,
+    "roam": false,
+    "roam_radius": 300.0,
+    "home": [
+     832.0,
+     40.0,
+     320.0
+    ],
+    "inventory": [
+     {
+      "description": "For coaxing open stubborn locks.",
+      "id": "lockpick",
+      "name": "Lockpick",
+      "qty": 1,
+      "type": "misc",
+      "value": 5,
+      "weight": 0.0
+     }
+    ],
+    "triggered": false,
+    "wake_on_sight": true,
+    "type": "creature",
+    "id": "898b5bf9-765d-4148-8459-5e65f2f6667f",
+    "monster_id": 0,
+    "awake": false,
+    "patrol": false,
+    "patrol_target": "",
+    "patrol_mode": "loop",
+    "variant": "<None>",
+    "entity_type": "creature",
+    "courage": 0.3
+   },
+   "io_connections": []
+  },
+  {
+   "type": "creature",
+   "pos": [
+    -704.0,
+    40.0,
+    832.0
+   ],
+   "properties": {
+    "type": "creature",
+    "name": "Bandit_cave09_3",
+    "id": "4afbcec5-3544-4642-a8b8-91403a984708",
+    "display_name": "Bandit",
+    "npc_role": "bandit",
+    "aggression": "hostile",
+    "sight_range": 520,
+    "custom_idle": "assets/sprites/heads/head07.png",
+    "custom_shoot": "assets/sprites/heads/head07.png",
+    "portrait": "assets/portraits/miniwind/bandit.png",
+    "monster_type": "human",
+    "sprite_width": 120,
+    "sprite_height": 120,
+    "monster_id": 0,
+    "health": 89,
+    "damage": 22,
+    "triggered": false,
+    "wake_on_sight": true,
+    "awake": false,
+    "patrol": false,
+    "patrol_target": "",
+    "patrol_mode": "loop",
+    "variant": "<None>",
+    "entity_type": "creature",
+    "faction": "bandits",
+    "team": "bandits",
+    "attack_style": "melee",
+    "loot": "bandit",
+    "creature_level": 3,
+    "xp_value": 25,
+    "move_speed": 90.0,
+    "combatant": true,
+    "inventory": [],
+    "persistent": true,
+    "respawn": false,
+    "roam": false,
+    "roam_radius": 300.0,
+    "home": [
+     -704.0,
+     40.0,
+     832.0
+    ],
+    "sight": 512,
+    "can_hear": false,
+    "non_hostile": false,
+    "max_health": 100,
+    "courage": 0.3,
+    "spells": [],
+    "head": "head07",
+    "equipped_weapon": "iron_shortsword",
+    "hidden": false,
+    "handed": "left",
+    "dead": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "creature",
+   "pos": [
+    -576.0,
+    40.0,
+    704.0
+   ],
+   "properties": {
+    "name": "Smuggler_cave09_4",
+    "display_name": "Smuggler",
+    "npc_role": "bandit",
+    "faction": "bandits",
+    "team": "bandits",
+    "aggression": "hostile",
+    "attack_style": "melee",
+    "combatant": true,
+    "health": 55,
+    "max_health": 55,
+    "damage": 10,
+    "creature_level": 1,
+    "xp_value": 14,
+    "loot": "bandit",
+    "move_speed": 90.0,
+    "sight_range": 1024,
+    "monster_type": "human",
+    "sprite_width": 120,
+    "sprite_height": 120,
+    "portrait": "assets/portraits/miniwind/bandit.png",
+    "persistent": true,
+    "spells": [],
+    "head": "pirate01",
+    "custom_idle": "assets/sprites/heads/pirate01.png",
+    "custom_shoot": "assets/sprites/heads/pirate01.png",
+    "equipped_weapon": "iron_shortsword",
+    "respawn": false,
+    "roam": false,
+    "roam_radius": 300.0,
+    "home": [
+     -576.0,
+     40.0,
+     704.0
+    ],
+    "inventory": [
+     {
+      "description": "For coaxing open stubborn locks.",
+      "id": "lockpick",
+      "name": "Lockpick",
+      "qty": 1,
+      "type": "misc",
+      "value": 5,
+      "weight": 0.0
+     }
+    ],
+    "triggered": false,
+    "wake_on_sight": true,
+    "type": "creature",
+    "id": "650136fe-a8e9-4fdc-ab5b-cfd70eb1b4c3",
+    "monster_id": 0,
+    "awake": false,
+    "patrol": false,
+    "patrol_target": "",
+    "patrol_mode": "loop",
+    "variant": "<None>",
+    "entity_type": "creature",
+    "courage": 0.3
+   },
+   "io_connections": []
+  },
+  {
+   "type": "creature",
+   "pos": [
+    832.0,
+    40.0,
+    576.0
+   ],
+   "properties": {
+    "type": "creature",
+    "name": "Bandit_cave09_5",
+    "id": "1ed6c92c-1983-4055-ac37-d10ddce36e94",
+    "display_name": "Bandit",
+    "npc_role": "bandit",
+    "aggression": "hostile",
+    "sight_range": 520,
+    "custom_idle": "assets/sprites/heads/head07.png",
+    "custom_shoot": "assets/sprites/heads/head07.png",
+    "portrait": "assets/portraits/miniwind/bandit.png",
+    "monster_type": "human",
+    "sprite_width": 120,
+    "sprite_height": 120,
+    "monster_id": 0,
+    "health": 89,
+    "damage": 22,
+    "triggered": false,
+    "wake_on_sight": true,
+    "awake": false,
+    "patrol": false,
+    "patrol_target": "",
+    "patrol_mode": "loop",
+    "variant": "<None>",
+    "entity_type": "creature",
+    "faction": "bandits",
+    "team": "bandits",
+    "attack_style": "melee",
+    "loot": "bandit",
+    "creature_level": 3,
+    "xp_value": 25,
+    "move_speed": 90.0,
+    "combatant": true,
+    "inventory": [],
+    "persistent": true,
+    "respawn": false,
+    "roam": false,
+    "roam_radius": 300.0,
+    "home": [
+     832.0,
+     40.0,
+     576.0
+    ],
+    "sight": 512,
+    "can_hear": false,
+    "non_hostile": false,
+    "max_health": 100,
+    "courage": 0.3,
+    "spells": [],
+    "head": "head07",
+    "equipped_weapon": "iron_shortsword",
+    "hidden": false,
+    "handed": "left",
+    "dead": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    960.0,
+    48.0,
+    -1472.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave09",
+    "id": "ca6cb503-ef85-4b0d-b54c-ca04a22642e2",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 160,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "crossbow",
+      "name": "Crossbow",
+      "qty": 1,
+      "type": "weapon",
+      "value": 70,
+      "weight": 10.0,
+      "description": "A stocked crossbow, cranked and loosed with one hand. It hits a little softer than a drawn bow but needs no draw, and leaves the other hand free."
+     },
+     {
+      "id": "steel_bolt",
+      "name": "Steel Bolt",
+      "qty": 20,
+      "type": "ammo",
+      "value": 2,
+      "weight": 0.1,
+      "description": "A steel-headed crossbow bolt."
+     }
+    ],
+    "use_radius": 128.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "light",
+   "pos": [
+    960.0,
+    160.0,
+    -1472.0
+   ],
+   "properties": {
+    "type": "light",
+    "name": "Light_hoard",
+    "id": "b655caa7-aec1-4911-a6af-97fe7bed4dde",
+    "colour": [
+     255,
+     210,
+     120
+    ],
+    "intensity": 2.0,
+    "radius": 520.0,
+    "state": "on",
+    "show_radius": false,
+    "casts_shadows": false,
+    "parent_mover": "",
+    "parent_offset": [
+     0.0,
+     0.0,
+     0.0
+    ]
+   },
+   "io_connections": []
+  },
+  {
+   "type": "miniwindsettings",
+   "pos": [
+    0.0,
+    400.0,
+    0.0
+   ],
+   "properties": {
+    "type": "miniwindsettings",
+    "name": "GameSettings_1",
+    "id": "f4aaab79-8fb9-4ce5-8875-1a728952a3d4",
+    "start_hour": 8.0,
+    "start_day": 1,
+    "minutes_per_day": 24.0,
+    "show_clock": true,
+    "state_store": "miniwind",
+    "difficulty": "normal",
+    "start_scenario": "prompt",
+    "region_name": "Wrecker's Hole",
+    "player_spells": [],
+    "quests": []
+   },
+   "io_connections": []
+  },
+  {
+   "type": "logic_command",
+   "pos": [
+    0.0,
+    420.0,
+    64.0
+   ],
+   "properties": {
+    "type": "logic_command",
+    "name": "LogicCommand_1",
+    "id": "f936017d-36c3-408f-9f9d-15962b947072",
+    "command": "cam topdown",
+    "disabled": false
+   },
+   "io_connections": []
+  }
+ ],
+ "created": "make_caves",
+ "terrain_data": {
+  "enabled": false
+ },
+ "_miniwind_cave": {
+  "name": "Wrecker's Hole",
+  "overworld": "maps/village_walled_source.json"
+ }
+}

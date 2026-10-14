@@ -23,7 +23,7 @@ from __future__ import annotations
 import math
 
 from engine.monster_constants import MONSTER_SIGHT_RANGE
-from engine.spatial import TIER_DISTANT
+from engine.spatial import TIER_DISTANT, TIER_NEAR
 
 from .facing import face_heading
 
@@ -41,12 +41,29 @@ ARRIVE = 24.0
 BLOCKED_GIVE_UP = 12
 
 
-def roams(props) -> bool:
-    role = str(props.get("npc_role", "") or "").lower()
-    if role in STAY_PUT:
+def _roams(role, team, roam) -> bool:
+    if str(role or "").lower() in STAY_PUT:
         return False
-    team = str(props.get("faction") or props.get("team") or "").lower()
-    return team == "wildlife" or bool(props.get("roam"))
+    return str(team or "").lower() == "wildlife" or bool(roam)
+
+
+#: roams() answers by the raw values it reads: asked for every live creature
+#: every tick, and a world has a handful of distinct (role, team) pairs.
+_ROAMS = {}
+
+
+def roams(props) -> bool:
+    key = (props.get("npc_role", ""), props.get("faction") or props.get("team"),
+           props.get("roam"))
+    try:
+        return _ROAMS[key]
+    except KeyError:
+        if len(_ROAMS) > 1024:
+            _ROAMS.clear()
+        found = _ROAMS[key] = _roams(*key)
+        return found
+    except TypeError:                    # an unhashable value: just answer
+        return _roams(*key)
 
 
 class Wildlife:
@@ -56,25 +73,25 @@ class Wildlife:
     def _creatures(self):
         s = self.session
         wi = s._world_index()
-        bucket = s._type_buckets().get("creature", ())
         if wi is None:
-            return [t for t in bucket if not t.properties.get("dead")]
-        ids = {id(t) for t in bucket}
-        actors = wi.actors
-        import numpy as np
-        return [actors[i] for i in np.flatnonzero(wi.alive[:wi.n]).tolist()
-                if id(actors[i]) in ids]
+            return [t for t in s._type_buckets().get("creature", ())
+                    if not t.properties.get("dead")]
+        return s._live_of_type(wi, "creature")
 
     def update(self, delta: float) -> None:
         s = self.session
-        ppos = s._player_pos()
+        ppos = None
         rng = s.rng
         for t in self._creatures():
             p = t.properties
+            # The tier first: a dict read that turns away everything distant
+            # before the string work in roams().
+            if p.get("_sim_tier", TIER_NEAR) >= TIER_DISTANT:
+                continue
             if p.get("dead") or p.get("hidden") or not roams(p):
                 continue
-            if s._tier_of(t) >= TIER_DISTANT:
-                continue
+            if ppos is None:
+                ppos = s._player_pos() or ()
             if not self._idle(t, p, ppos):
                 p.pop("_roam_dest", None)
                 continue
@@ -114,7 +131,7 @@ class Wildlife:
             return False
         if p.get("is_shooting"):
             return False
-        if str(p.get("aggression")) == "hostile" and ppos is not None:
+        if str(p.get("aggression")) == "hostile" and ppos:
             sight = max(float(p.get("sight_range", MONSTER_SIGHT_RANGE) or 0.0),
                         float(MONSTER_SIGHT_RANGE))
             dx, dz = t.pos[0] - ppos[0], t.pos[2] - ppos[2]

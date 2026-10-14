@@ -404,6 +404,7 @@ def apply_effects_to_character(character, effects: List[Dict]) -> None:
             character.stamina = min(character.max_stamina, character.stamina + mag)
         elif kind == "damage_health":
             character.damage(mag)
+            character._last_harm = (None, "poison", "poison")   # for the death screen
         else:
             # buffs/utility (shield, night_eye, invisibility, feather, ...) just
             # live as timed effects the HUD/gameplay reads.

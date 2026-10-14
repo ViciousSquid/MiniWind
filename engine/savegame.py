@@ -361,18 +361,22 @@ def _restore_moving_brushes(logic, saved) -> None:
         moved(brush)
 
 
-def _build_full_snapshot(logic, *, map_name: str = "") -> dict:
+def _build_full_snapshot(logic, *, map_name: str = "", with_level: bool = True) -> dict:
     """Capture the live play session on *logic*, the active runtime host, as a dict.
 
     Call while a play session is active. The returned dict is JSON-serialisable
     and self-contained (it embeds the whole level), so it can be written to disk
-    and loaded in a fresh session, or applied back in the same one.
+    and loaded in a fresh session, or applied back in the same one. Without
+    *with_level* the level is left out (a Big World save carries cell deltas
+    instead, and serializing a whole streamed world only to drop it is most of
+    a save's cost).
     """
     level = {}
-    try:
-        level = logic.editor_state.get_level_data()
-    except Exception:
-        level = {}
+    if with_level:
+        try:
+            level = logic.editor_state.get_level_data()
+        except Exception:
+            level = {}
 
     monster_states: Dict[str, Any] = {}
     try:
@@ -601,7 +605,8 @@ def build_snapshot(logic, *, map_name: str = "",
     *base_world* carries the base-world identity. This is selected automatically
     for streaming maps; ordinary maps never reach it.
     """
-    full = _build_full_snapshot(logic, map_name=map_name)
+    full = _build_full_snapshot(logic, map_name=map_name,
+                                with_level=world_mode != WORLD_MODE_BIGWORLD)
 
     if world_mode == WORLD_MODE_BIGWORLD:
         base_map = base_world or _base_map_identity(base_level or {}, map_name)

@@ -44,11 +44,11 @@ def test_the_strip_is_five_pixels_tall_and_moves(qt_app):
     widget.deleteLater()
 
 
-def test_the_strip_sits_centred_over_the_editor():
+def test_the_throbber_sits_dead_centre_over_the_editor():
     x, y, w, h = lt.throbber_geometry((100, 50, 1400, 900))
-    assert h == 5
+    assert h == lt.TOTAL_HEIGHT                     # "Loading..." and the strip
     assert x + w / 2 == pytest.approx(100 + 1400 / 2, abs=1)
-    assert 50 < y < 50 + 900
+    assert y + h / 2 == pytest.approx(50 + 900 / 2, abs=1)
 
 
 def test_the_child_runs_main_py_from_source_and_the_exe_when_packaged(monkeypatch):
@@ -119,7 +119,7 @@ def test_a_big_level_shows_the_throbber_until_the_load_is_painted(
     (throbber,) = fake_throbber
     assert throbber.started and not throbber.stopped
     assert throbber.caption == "Loading big.json…"
-    assert throbber.geometry[3] == lt.HEIGHT
+    assert throbber.geometry[3] == lt.TOTAL_HEIGHT
 
     qt_app.processEvents()                     # the next turn of the event loop
     assert throbber.stopped

@@ -132,6 +132,24 @@ def roll(table_id: str, player_level: int = 1, rng=None, luck: int = 40, dice=No
 # ---------------------------------------------------------------------------
 # Standard tables
 # ---------------------------------------------------------------------------
+#: What any slain enemy may be carrying, whatever its own table says: now and
+#: then a healing potion, there for the looting. Not added to a body whose own
+#: table already offers a healing potion (its odds were set on purpose).
+ENEMY_POTION_TABLE = "enemy_potion"
+ENEMY_POTION_CHANCE = 0.2
+HEALING_POTIONS = frozenset({"potion_heal_minor", "potion_heal", "potion_heal_major"})
+
+register(LootTable(ENEMY_POTION_TABLE, [
+    LootEntry("potion_heal_minor", ENEMY_POTION_CHANCE),
+]))
+
+
+def offers_healing(table_id) -> bool:
+    """Whether the loot table *table_id* already has a healing potion in it."""
+    t = get(table_id)
+    return t is not None and any(e.item_id in HEALING_POTIONS for e in t.entries)
+
+
 register(LootTable("wolf", [
     LootEntry("ingr_wolf_pelt", 0.8, (1, 2)),
     LootEntry("potion_heal_minor", 0.1),
@@ -142,6 +160,8 @@ register(LootTable("bandit", [
     LootEntry("steel_longsword", 0.15, min_level=4),
     LootEntry("short_bow", 0.2),
     LootEntry("iron_arrow", 0.5, (3, 12)),
+    LootEntry("crossbow", 0.08),
+    LootEntry("iron_bolt", 0.25, (3, 10)),
     LootEntry("leather_cuirass", 0.25),
     LootEntry("iron_helmet", 0.15),
     LootEntry("hide_armour", 0.15),

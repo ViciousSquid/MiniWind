@@ -332,6 +332,14 @@ DEFAULT_GRASS_ENABLED = True
 # MAIN TERRAIN CLASS
 # ============================================================================
 
+def _encode_heightmap(heightmap) -> str:
+    """The heightmap as text for a map file: a plain ``.npy``, base64."""
+    import base64, io
+    buf = io.BytesIO()
+    np.save(buf, heightmap)
+    return base64.b64encode(buf.getvalue()).decode('ascii')
+
+
 #: Highest grass density, in tufts per square world unit. A 256-unit chunk holds
 #: about 15.7k tufts at this density, inside ``GRASS_MAX_PER_CHUNK``.
 GRASS_MAX_DENSITY = 0.24
@@ -2190,6 +2198,13 @@ class Terrain:
         """Invalidate the dense sculpt grid; call after any sculpt change."""
         self._sculpt_version = getattr(self, '_sculpt_version', 0) + 1
 
+    def _note_sculpt_keys(self, keys) -> None:
+        """Record which offsets a brush stroke changed, so the serialised
+        list can be patched instead of rebuilt (see :meth:`_sculpt_list`)."""
+        changed = getattr(self, '_sculpt_changed', None)
+        if changed is not None:
+            changed.update(keys)
+
     def _dense_sculpt(self):
         """``(min_gx, min_gz, grid)`` for the sculpt offsets, or None.
 
@@ -2268,6 +2283,7 @@ class Terrain:
 
     def apply_sculpt_at(self, world_x: float, world_z: float, radius: float, strength: float):
         """Raise/lower terrain in a circular area. Negative strength lowers."""
+        touched = []
         res = self.sculpt_grid_resolution
         grid_radius = int(math.ceil(radius / res)) + 1
         center_gx = world_x / res
@@ -2287,6 +2303,8 @@ class Terrain:
                 key = (gx, gz)
                 current = self.sculpt_offsets.get(key, 0.0)
                 self.sculpt_offsets[key] = current + strength * falloff
+                touched.append(key)
+        self._note_sculpt_keys(touched)
         self._mark_sculpt_region_dirty(world_x, world_z, radius)
 
     def smooth_sculpt_at(self, world_x: float, world_z: float, radius: float, strength: float):
@@ -2316,10 +2334,13 @@ class Terrain:
                 current = self.sculpt_offsets.get((gx, gz), 0.0)
                 new_offsets[(gx, gz)] = current + (avg - current) * strength * falloff
         self.sculpt_offsets.update(new_offsets)
+        self._note_sculpt_keys(new_offsets)
         self._mark_sculpt_region_dirty(world_x, world_z, radius)
 
     def flatten_sculpt_at(self, world_x: float, world_z: float, radius: float, strength: float):
         """Push sculpt offsets toward zero (flattening the deformation)."""
+        touched = []
+        removed = False
         res = self.sculpt_grid_resolution
         grid_radius = int(math.ceil(radius / res)) + 1
         center_gx = int(math.floor(world_x / res))
@@ -2342,6 +2363,12 @@ class Terrain:
                 # Clean up near-zero entries
                 if abs(self.sculpt_offsets[key]) < 0.01:
                     del self.sculpt_offsets[key]
+                    removed = True
+                touched.append(key)
+        if removed:
+            self._sculpt_changed = None           # an entry went: list rebuilt whole
+        else:
+            self._note_sculpt_keys(touched)
         self._mark_sculpt_region_dirty(world_x, world_z, radius)
 
     def clear_sculpt(self):
@@ -2936,9 +2963,13 @@ class Terrain:
             'appearance': self.appearance.to_dict(),
             'custom_biome': self.biome.to_dict()
         }
-        # Sculpt offsets — serialise sparse dict as list of [gx, gz, offset]
+        # Sculpt offsets — serialise sparse dict as list of [gx, gz, offset].
+        # The editor snapshots the terrain after every sculpt and stamp click
+        # (state, undo); a sculpted world holds hundreds of thousands of
+        # offsets, and rebuilding the list each time cost over half a second
+        # a click. It is rebuilt only when the offsets have changed.
         if self.sculpt_offsets:
-            data['sculpt_offsets'] = [[gx, gz, val] for (gx, gz), val in self.sculpt_offsets.items()]
+            data['sculpt_offsets'] = self._sculpt_list()
             data['sculpt_grid_resolution'] = self.sculpt_grid_resolution
         if self.csg_subtractions:
             data['csg_subtractions'] = [list(cut) for cut in self.csg_subtractions]
@@ -2950,15 +2981,65 @@ class Terrain:
         # Heightmap settings (image data is NOT saved — only the path is
         # stored by the editor so the user can re-load it)
         if self.heightmap_data is not None:
-            import base64, io
-            buf = io.BytesIO()
-            np.save(buf, self.heightmap_data)
-            data['heightmap_blob'] = base64.b64encode(buf.getvalue()).decode('ascii')
+            data['heightmap_blob'] = self._array_blob('heightmap', self.heightmap_data,
+                                                      _encode_heightmap)
             data['heightmap_strength'] = self.heightmap_strength
             data['heightmap_blend'] = self.heightmap_blend
         if self.biome_map is not None:
-            data['biome_map_blob'] = terrain_biomes.encode(self.biome_map)
+            # Compressing the biome map took most of a second, every time.
+            data['biome_map_blob'] = self._array_blob('biome', self.biome_map,
+                                                      terrain_biomes.encode)
         return data
+
+    def _sculpt_list(self):
+        """The sculpt offsets as ``[[gx, gz, offset], ...]``, kept until they
+        change (every change goes through :meth:`_touch_sculpt`).
+
+        After a brush stroke only the cells it touched are new: the list is
+        copied (shallowly -- a snapshot handed out earlier is never changed)
+        and those rows replaced or appended, rather than the whole of a
+        sculpted world's offsets rebuilt."""
+        offsets = self.sculpt_offsets
+        version = getattr(self, '_sculpt_version', 0)
+        key = (id(offsets), version)
+        cached = getattr(self, '_sculpt_list_cache', None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        changed = getattr(self, '_sculpt_changed', None)
+        if (cached is not None and changed is not None and cached[0][0] == id(offsets)
+                and all(k in offsets for k in changed)):
+            rows = list(cached[1])
+            index = cached[2]
+            for k in changed:
+                row = [k[0], k[1], offsets[k]]
+                at = index.get(k)
+                if at is None:
+                    index[k] = len(rows)
+                    rows.append(row)
+                else:
+                    rows[at] = row
+        else:
+            rows = [[gx, gz, val] for (gx, gz), val in offsets.items()]
+            index = {k: i for i, k in enumerate(offsets)}
+        if len(rows) != len(offsets):            # anything unforeseen: start again
+            rows = [[gx, gz, val] for (gx, gz), val in offsets.items()]
+            index = {k: i for i, k in enumerate(offsets)}
+        self._sculpt_list_cache = (key, rows, index)
+        self._sculpt_changed = set()
+        return rows
+
+    def _array_blob(self, name, array, encode):
+        """*array* encoded for the map file by *encode*, kept until its
+        contents change (a checksum of its bytes, which is cheap next to
+        compressing them, says whether they have)."""
+        import zlib
+        arr = np.ascontiguousarray(array)
+        key = (arr.shape, str(arr.dtype), zlib.crc32(arr.data))
+        caches = self.__dict__.setdefault('_blob_cache', {})
+        cached = caches.get(name)
+        if cached is None or cached[0] != key:
+            cached = caches[name] = (key, encode(array))
+        return cached[1]
     
     @staticmethod
     def _decode_heightmap_blob(blob) -> Optional[np.ndarray]:

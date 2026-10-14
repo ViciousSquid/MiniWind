@@ -30,7 +30,7 @@ class _EditorState(_Proxy):
 
 class _PlayerRuntime(_Proxy):
     _DEFAULTS = {"player": None, "player_health": 100, "player_max_health": 100,
-                 "god_mode": False, "player_dead": False}
+                 "god_mode": False, "player_dead": False, "last_damage": None}
 
     def __getattr__(self, name):
         if name in self._DEFAULTS:

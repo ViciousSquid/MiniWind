@@ -15,6 +15,7 @@ from . import combat_loadout
 KIND_STYLES = {
     "melee": combat_loadout.MELEE,
     "bow": combat_loadout.BOW,
+    "crossbow": combat_loadout.BOW,      # shot from range, like a bow
     "staff": combat_loadout.MAGIC,
 }
 

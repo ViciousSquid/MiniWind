@@ -209,6 +209,21 @@
     "material": "elven",
     "slot": "weapon"
   },
+  "crossbow": {
+    "name": "Crossbow",
+    "category": "weapon",
+    "value": 70,
+    "weight": 10.0,
+    "desc": "A stocked crossbow, cranked and loosed with one hand. It hits a little softer than a drawn bow but needs no draw, and leaves the other hand free.",
+    "kind": "crossbow",
+    "skill": "marksman",
+    "damage": 10,
+    "reach": 1700,
+    "speed": 0.8,
+    "ammo_type": "bolt",
+    "material": "wood",
+    "slot": "weapon"
+  },
   "apprentice_staff": {
     "name": "Apprentice's Staff",
     "category": "weapon",
@@ -291,7 +306,8 @@
     "desc": "A plain iron-tipped arrow.",
     "damage": 6,
     "slot": "ammo",
-    "material": "iron"
+    "material": "iron",
+    "ammo_type": "arrow"
   },
   "steel_arrow": {
     "name": "Steel Arrow",
@@ -301,7 +317,8 @@
     "desc": "A sharp steel arrow.",
     "damage": 10,
     "slot": "ammo",
-    "material": "steel"
+    "material": "steel",
+    "ammo_type": "arrow"
   },
   "elven_arrow": {
     "name": "Elven Arrow",
@@ -311,7 +328,30 @@
     "desc": "A keen elven arrow that flies true.",
     "damage": 16,
     "slot": "ammo",
-    "material": "elven"
+    "material": "elven",
+    "ammo_type": "arrow"
+  },
+  "iron_bolt": {
+    "name": "Iron Bolt",
+    "category": "ammo",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "A short, heavy iron-headed crossbow bolt.",
+    "damage": 5,
+    "slot": "ammo",
+    "material": "iron",
+    "ammo_type": "bolt"
+  },
+  "steel_bolt": {
+    "name": "Steel Bolt",
+    "category": "ammo",
+    "value": 2,
+    "weight": 0.1,
+    "desc": "A steel-headed crossbow bolt.",
+    "damage": 9,
+    "slot": "ammo",
+    "material": "steel",
+    "ammo_type": "bolt"
   },
   "iron_helmet": {
     "name": "Iron Helmet",
@@ -694,6 +734,14 @@
     "value": 5,
     "weight": 0.0,
     "desc": "For coaxing open stubborn locks."
+  },
+  "satchel": {
+    "name": "Satchel",
+    "category": "misc",
+    "value": 60,
+    "weight": 1.0,
+    "desc": "A sturdy leather satchel. While you carry it your pack has 4 more slots (a second one adds nothing).",
+    "pack_slots": 4
   },
   "repair_hammer": {
     "name": "Repair Hammer",

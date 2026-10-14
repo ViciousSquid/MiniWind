@@ -5,8 +5,9 @@ Opened with **C**. Three panels side by side:
 
 * **Equipment** — a paperdoll of the player (their own head over a body
   silhouette) ringed by the worn slots: head, amulet, chest, hands, ring,
-  shield, legs, feet and the torch hand; below it the four **Quick Weapons**
-  (what keys 1-4 draw — the one in hand is lit) and the **Quiver**.
+  shield (or a second one-handed weapon: dual wielding), legs, feet and the
+  torch hand; below it the four **Quick Weapons**
+  (the one in hand is lit) and the **Quiver**. Keys 1-9 pick the strip.
 * **Pack** — everything else carried, as a grid of large icons with the stack
   count in the corner, filtered by category tabs along the top (All, Weapons,
   Armour, Potions, Food & Herbs, Other).
@@ -52,6 +53,9 @@ _NO = QColor(210, 80, 70)
 _INK = QColor(232, 226, 210)
 _DIM = QColor(150, 145, 132)
 _GOLD = QColor(240, 200, 110)
+#: A weapon dragged over the shield slot: the off hand, dual wielding.
+_OFF_HAND = QColor(110, 190, 230)
+_OFF_HAND_FILL = QColor(44, 70, 86)
 
 #: The worn slots around the paperdoll: (slot id, label, x, y) with x, y the
 #: slot's centre as fractions of the paperdoll panel.
@@ -64,7 +68,7 @@ PAPERDOLL = (
     ("ring", "Ring", 0.86, 0.33),
     ("shield", "Shield", 0.86, 0.56),
     ("light", "Torch", 0.86, 0.79),
-    ("weapon", "Main Hand", 0.30, 0.93),
+    ("weapon", "Weapon", 0.30, 0.93),
     ("feet", "Feet", 0.70, 0.93),
 )
 
@@ -83,7 +87,7 @@ SPELLS_TAB = ("Spells", "spells")
 CELL = 58
 GAP = 6
 GRID_COLS = 6
-GRID_ROWS = 6
+GRID_ROWS = 4                   # 24 cells: the pack's 20 slots and a satchel's 4
 DOUBLE_CLICK = 0.35
 DRAG_START = 5
 
@@ -148,6 +152,10 @@ def fits(target, item_def) -> bool:
     if kind == "quick":
         return item_def.category == "weapon"
     if kind == "equip":
+        if key == "shield" and item_def.category == "weapon":
+            # The off hand: a second one-handed weapon is dual wielding.
+            from ..rpg import equipment
+            return equipment.can_dual_wield(item_def)
         return slot_of(item_def) == key
     return False
 
@@ -157,6 +165,12 @@ def why_not(target, item_def) -> str:
     name = item_def.name if item_def is not None else "That"
     if kind == "quick":
         return f"{name} isn't a weapon: only weapons go in a quick slot."
+    if kind == "equip" and key == "shield" and item_def is not None \
+            and item_def.category == "weapon":
+        from ..rpg import equipment
+        if equipment.is_two_handed(item_def):
+            return f"{name} needs both hands."
+        return f"{name} can't be held in the off hand."
     if kind == "equip":
         where = {"ammo": "the quiver"}.get(key, f"the {key} slot")
         return f"{name} doesn't go in {where}."
@@ -228,21 +242,21 @@ class InventoryWindow(FloatingWindow):
             return [None] * 4
 
     def _pack(self):
-        """Carried stacks that are neither worn nor in a quick slot, filtered
-        by the open tab."""
+        """What the pack holds (each copy of a weapon in a slot of its own,
+        nothing worn or in hand), filtered by the open tab."""
         c = self._character()
         if c is None:
             return []
-        worn = set(v for v in self._equipment().values() if v)
-        quick = set(e["id"] for e in self._quick() if e)
         cats = self._tabs()[min(self.tab, len(self._tabs()) - 1)][1]
         if cats == "spells":
             return []
+        try:
+            stacks = list(self.session.pack_stacks())
+        except Exception:
+            stacks = []
         out = []
-        for stack in list(getattr(c, "inventory", []) or []):
+        for stack in stacks:
             iid = stack.get("id")
-            if not iid or iid in worn or iid in quick:
-                continue
             d = _item(iid)
             cat = d.category if d is not None else str(stack.get("type", "misc"))
             if cats is not None and cat not in cats:
@@ -298,29 +312,43 @@ class InventoryWindow(FloatingWindow):
         right = QRect(mid.right() + 12, y + 10, x + w - mid.right() - 22, h - 20)
         self._draw_equipment(painter, left)
         self._draw_pack(painter, mid)
-        # Details / Character tabs over the right-hand panel.
-        tab_w = (right.width() - 6) // 2
-        for k, (key, label) in enumerate(self.VIEWS):
-            r = QRect(right.x() + k * (tab_w + 6), right.y(), tab_w, 26)
-            on = key == self.view
-            painter.setBrush(QColor(96, 70, 34, 240) if on else
-                             (QColor(60, 52, 40, 240) if hits.hovered(r) else QColor(40, 37, 33, 240)))
-            painter.setPen(QPen(_GOLD if on else _SLOT_EDGE, 1.2))
-            painter.drawRoundedRect(r, 5, 5)
-            painter.setFont(self.f_button)
-            painter.setPen(_GOLD if on else _INK)
-            _fit(painter, r, Qt.AlignCenter, label)
-            self._buttons.append((QRect(r), self._set_view(key)))
-        panel = QRect(right.x(), right.y() + 32, right.width(), right.height() - 32)
+        # The right-hand panel is tabbed: the item under the pointer
+        # (Details), or the character's health, armour, XP and attributes.
+        tab_h = 28
+        panel = QRect(right.x(), right.y() + tab_h, right.width(), right.height() - tab_h)
         if self.view == "character":
             self._draw_character_sheet(painter, panel)
         else:
             self._draw_details(painter, panel)
+        self._draw_view_tabs(painter, right.x() + 8, right.y(), right.width() - 16, tab_h)
         self._draw_dragged(painter)
         # Its slots and pack take drops from the strip and the container
         # screen too (game/ui/drag.py).
         drag.set_zones(self, self._targets)
         painter.restore()
+
+    def _draw_view_tabs(self, painter, x, y, w, h):
+        """File-folder tabs along the top of the right-hand panel: the one
+        open joins the panel below it, the others sit behind."""
+        tab_w = (w - 4 * (len(self.VIEWS) - 1)) // len(self.VIEWS)
+        for k, (key, label) in enumerate(self.VIEWS):
+            r = QRect(x + k * (tab_w + 4), y + (0 if key == self.view else 4),
+                      tab_w, h - (0 if key == self.view else 4))
+            on = key == self.view
+            hot = hits.hovered(r)
+            painter.save()
+            # Rounded on top only: draw it taller and clip off the bottom.
+            painter.setClipRect(QRect(r.x() - 2, r.y() - 2, r.width() + 4,
+                                      r.height() + (3 if on else 2)))
+            painter.setBrush(QColor(58, 56, 52, 250) if on else
+                             QColor(54, 48, 40, 240) if hot else QColor(32, 30, 28, 240))
+            painter.setPen(QPen(_GOLD if on else _SLOT_EDGE, 1.2))
+            painter.drawRoundedRect(r.adjusted(0, 0, 0, 10), 6, 6)
+            painter.restore()
+            painter.setFont(self.f_button)
+            painter.setPen(_GOLD if on else (_INK if hot else _DIM))
+            _fit(painter, r, Qt.AlignCenter, label)
+            self._buttons.append((QRect(r), self._set_view(key)))
 
     def _panel(self, painter, rect, title):
         path = QPainterPath()
@@ -342,19 +370,34 @@ class InventoryWindow(FloatingWindow):
         return QRect(rect.x() + 10, bar.bottom() + 8, rect.width() - 20,
                      rect.bottom() - bar.bottom() - 16)
 
+    def _locked_cell(self, painter, rect):
+        """A pack slot the player does not have: a satchel adds them."""
+        painter.setBrush(QColor(14, 13, 12, 200))
+        painter.setPen(QPen(QColor(44, 40, 36), 1, Qt.DashLine))
+        painter.drawRoundedRect(rect, 4, 4)
+
     def _slot_box(self, painter, rect, iid, target=None, source=None, label=None,
-                  lit=False, number=None):
-        """One item slot: a sunken frame, its icon and count, its drop state."""
+                  lit=False, number=None, stack=None):
+        """One item slot: a sunken frame, its icon and count, its drop state.
+        *stack* is what the slot shows when it is not the whole carried stack
+        (one copy of a weapon carried twice)."""
         dragging = self._drag or (drag.current["source"] if drag.current else None)
         drag_def = _item(dragging[2]) if dragging else None
         border = _SLOT_EDGE
+        fill = _SLOT
         if dragging and target is not None:
-            border = _OK if fits(target, drag_def) else QColor(70, 60, 55)
+            ok = fits(target, drag_def)
+            border = _OK if ok else QColor(70, 60, 55)
+            if ok and target == ("equip", "shield") and drag_def is not None \
+                    and drag_def.category == "weapon":
+                # The off hand takes a second weapon (dual wielding): lit as
+                # a drop too, in its own tint, so it reads as the other hand.
+                border, fill = _OFF_HAND, _OFF_HAND_FILL
         elif lit:
             border = _GOLD
         if iid and (iid == self.selected):
             border = _SLOT_HOT
-        painter.setBrush(_SLOT)
+        painter.setBrush(fill)
         painter.setPen(QPen(border, 2 if (lit or dragging) else 1.4))
         painter.drawRoundedRect(rect, 4, 4)
         if hits.hovered(rect):
@@ -375,7 +418,7 @@ class InventoryWindow(FloatingWindow):
                 painter.setPen(_INK)
                 painter.drawText(rect.adjusted(3, 3, -3, -3), Qt.AlignCenter | Qt.TextWordWrap,
                                  d.name if d else iid)
-            stack = self._stack(iid)
+            stack = stack if stack is not None else self._stack(iid)
             qty = int(stack.get("qty", 1)) if stack else 1
             if qty > 1:
                 painter.setFont(self.f_count)
@@ -599,6 +642,11 @@ class InventoryWindow(FloatingWindow):
             self._draw_spell_grid(painter, inner)
             return
         pack = self._pack()
+        try:
+            cap, used = self.session.pack_capacity(), self.session.pack_used()
+        except Exception:
+            cap, used = GRID_COLS * GRID_ROWS, len(pack)
+        everything = tabs[self.tab][1] is None
         per_page = GRID_COLS * GRID_ROWS
         pages = max(1, int(math.ceil(len(pack) / float(per_page))))
         self.page = min(self.page, pages - 1)
@@ -609,8 +657,17 @@ class InventoryWindow(FloatingWindow):
             col, row = i % GRID_COLS, i // GRID_COLS
             r = QRect(grid.x() + col * (CELL + GAP), gy + row * (CELL + GAP), CELL, CELL)
             iid = shown[i]["id"] if i < len(shown) else None
+            if not iid and everything and self.page * per_page + i >= cap:
+                self._locked_cell(painter, r)    # a slot only a satchel gives
+                continue
             self._slot_box(painter, r, iid, target=("pack", None),
-                           source=("pack", None, iid) if iid else None)
+                           source=("pack", None, iid) if iid else None,
+                           stack=shown[i] if iid else None)
+        # How full the pack is, under the grid.
+        painter.setFont(self.f_small)
+        painter.setPen(_NO if used >= cap else _DIM)
+        _fit(painter, QRect(grid.x(), grid.bottom() + 4, grid.width() - 4, 16),
+             Qt.AlignRight | Qt.AlignVCenter, f"{used} / {cap} slots")
         # The whole grid takes a drop, not just its cells.
         self._targets.append((QRect(grid), ("pack", None)))
         # Page arrows.
@@ -624,12 +681,12 @@ class InventoryWindow(FloatingWindow):
             painter.setFont(self.f_small)
             painter.setPen(_DIM)
             _fit(painter, QRect(grid.x(), grid.bottom() + 4, grid.width(), 16),
-                             Qt.AlignCenter, f"page {self.page + 1} of {pages}")
+                             Qt.AlignLeft | Qt.AlignVCenter, f"page {self.page + 1} of {pages}")
         painter.setFont(self.f_small)
         painter.setPen(_DIM)
         _fit(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
                          Qt.AlignCenter,
-                         "Drag to equip or slot  ·  double-click to use  ·  keys 1-4 draw")
+                         "Drag to equip  ·  out of the window to drop  ·  double-click to use")
 
     def _draw_spell_grid(self, painter, inner):
         """The Spells tab: every spell known, as an orb in its colour with its
@@ -734,8 +791,10 @@ class InventoryWindow(FloatingWindow):
             painter.setPen(_DIM)
             painter.drawText(inner.adjusted(0, 10, 0, 0), Qt.AlignTop | Qt.TextWordWrap,
                              "Point at an item to see what it is.\n\n"
-                             "Drag it onto your body to wear it, into a quick slot to "
-                             "carry it to hand, or back to the pack to put it away.")
+                             "Drag it onto your body to wear it, back to the pack to "
+                             "put it away, or out of the window to drop it on the floor."
+                             "\n\nThe Character tab shows your health, armour, "
+                             "experience and attributes.")
         else:
             stack = self._stack(iid) or {}
             try:
@@ -903,19 +962,31 @@ class InventoryWindow(FloatingWindow):
                          f" · deflects {int(round(eq.deflect_chance(c) * 100))}%"
                          if hasattr(eq, "deflect_chance") else "")
         yy += 54
-        # Level progress.
-        prog = int(getattr(c, "xp_progress", 0) or 0)
+        # Experience: what is earned toward the next level, and what is left.
+        # Either track fills a level: experience, or ten major-skill rises.
+        from ..rpg import character as rpg_character
+        xp = int(getattr(c, "xp", 0) or 0)
+        need = int(getattr(c, "xp_needed", 0) or rpg_character.xp_to_next(c.level))
         bar = QRect(x, yy, w, 10)
         painter.setBrush(_SLOT)
         painter.setPen(QPen(_SLOT_EDGE, 1))
         painter.drawRect(bar)
-        painter.fillRect(QRect(bar.x() + 1, bar.y() + 1, int((bar.width() - 1) * prog / 10.0),
+        painter.fillRect(QRect(bar.x() + 1, bar.y() + 1,
+                               int((bar.width() - 1) * min(1.0, xp / max(1, need))),
                                bar.height() - 1), QColor(200, 170, 70))
         painter.setFont(self.f_small)
-        painter.setPen(_DIM)
+        painter.setPen(_INK)
+        left = max(0, need - xp)
         _fit(painter, QRect(x, yy + 11, w, 14), Qt.AlignLeft | Qt.AlignVCenter,
-                         f"Level progress {prog}/10")
-        yy += 30
+             f"XP {xp} / {need}")
+        painter.setPen(_GOLD if left == 0 else _DIM)
+        _fit(painter, QRect(x, yy + 11, w, 14), Qt.AlignRight | Qt.AlignVCenter,
+             "Ready to level up" if left == 0 else f"{left} to level {c.level + 1}")
+        prog = int(getattr(c, "xp_progress", 0) or 0)
+        painter.setPen(_DIM)
+        _fit(painter, QRect(x, yy + 25, w, 14), Qt.AlignLeft | Qt.AlignVCenter,
+             f"Skill rises {prog} / {rpg_character.SKILL_UPS_PER_LEVEL}")
+        yy += 44
         # Attributes, two columns.
         painter.setFont(self.f_body)
         painter.setPen(_GOLD)
@@ -1070,6 +1141,9 @@ class InventoryWindow(FloatingWindow):
             target = drag.target_at(event.x(), event.y(), exclude=self)
             if target is not None:
                 self._queue(lambda session: session.item_drop(dragged, target))
+            elif dragged[0] != "spell" and not drag.over_window(event.x(), event.y()):
+                # Out over the world: on the floor.
+                self._queue(lambda session: session.drop_item(iid))
             return True
         if target[:1] == dragged[:1] and target[1] == dragged[1]:
             return True

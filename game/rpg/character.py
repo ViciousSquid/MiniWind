@@ -101,14 +101,17 @@ class Character:
         #: picked up for the first time drops into a free slot by itself; one
         #: the player has taken out of the slots stays out.
         self._quick_seen = set()
-        #: The inventory strip along the bottom of the screen (I): an item id
-        #: or None per slot, as long as the strip is wide. The ids are carried
+        #: The inventory strip along the bottom of the screen: an item id or
+        #: None per slot, as long as the strip is wide. The ids are carried
         #: stacks, like the quick slots: the strip shows them, it holds nothing.
+        #: A weapon carried twice is in two slots, one per copy.
         self.strip: List[Optional[str]] = []
         #: Item ids the strip has already been offered (transient), so a thing
         #: picked up for the first time takes a free slot by itself while one
         #: the player dragged out of the strip stays out.
         self._strip_seen = set()
+        #: How many copies of each the strip has offered a slot (transient).
+        self._strip_offered = {}
 
         # wealth & gear
         self.gold = 25
@@ -514,6 +517,10 @@ class Character:
             c.strip = [str(q) if q else None for q in strip]
             c._strip_seen = {str(s.get("id")) for s in c.inventory
                              if isinstance(s, dict) and s.get("id")}
+            # Every copy carried (a weapon takes a slot per copy) was offered.
+            c._strip_offered = {str(s.get("id")): int(s.get("qty", 1) or 1)
+                                for s in c.inventory
+                                if isinstance(s, dict) and s.get("id")}
         practice = data.get("spell_practice")
         if isinstance(practice, dict):
             c.spell_practice = {str(k): int(v) for k, v in practice.items()}

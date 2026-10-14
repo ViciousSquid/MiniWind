@@ -53,7 +53,8 @@ def hit_chance(character, weapon_skill: int, target_agility: int = 30,
 def player_attack(character, target_props: Dict, *, sneaking: bool = False,
                   draw: float = 1.0, rng: Optional[random.Random] = None,
                   dice: Optional[DiceRoller] = None,
-                  guaranteed_hit: bool = False, power: float = 1.0) -> Dict:
+                  guaranteed_hit: bool = False, power: float = 1.0,
+                  hand: str = "main") -> Dict:
     """Resolve a player attack against a creature's ``properties`` dict.
 
     Returns a result dict::
@@ -69,9 +70,13 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     and staves still roll normally). The caller sets this when the target was
     already confirmed to be in melee range and squarely faced — camera pitch
     plays no part in that check, so a close, faced target should never whiff.
+
+    ``hand`` is which weapon strikes: ``"main"`` or ``"off"`` (the second
+    weapon of a dual wielder). Each hand is its own attack, with its own
+    weapon, hit roll and damage.
     """
     rng = rng or random
-    w = eq.weapon(character)
+    w = eq.hand_weapon(character, hand)
     kind = w.get("kind", items.KIND_MELEE) if w else items.KIND_MELEE
     skill_id = w.get("skill", sk.BLADE) if w else sk.BLADE
     if w is None:
@@ -80,7 +85,7 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         base = 2.0
         kind = items.KIND_MELEE
     else:
-        base = float(w.get("damage", 5)) * eq.rarity_stat(character, items.SLOT_WEAPON)
+        base = float(w.get("damage", 5)) * eq.rarity_stat(character, eq.hand_slot(hand))
 
     skill = character.skill(skill_id)
     target_agi = int(target_props.get("agility", 24))
@@ -89,8 +94,9 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     result = {"hit": False, "damage": 0.0, "crit": False, "sneak": False,
               "skill": skill_id, "difficulty": 1.0, "killed": False, "kind": kind}
 
-    # Bows need ammo; a staff spends magicka handled by the caller.
-    if kind == items.KIND_BOW and eq.ammo(character) is None:
+    # Bows and crossbows need ammo; a staff spends magicka handled by the caller.
+    shot = eq.ammo_for(character, w) if kind in items.RANGED_KINDS else None
+    if kind in items.RANGED_KINDS and shot is None:
         result["no_ammo"] = True
         return result
 
@@ -120,9 +126,10 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         # A gathered blow (a warrior's charged fist) multiplies it.
         dmg *= max(0.1, float(power))
     elif kind == items.KIND_BOW:
-        arrow = eq.ammo(character)
-        dmg += float(arrow.get("damage", 0)) if arrow else 0.0
+        dmg += float(shot.get("damage", 0)) if shot else 0.0
         dmg *= 0.5 + 0.5 * max(0.1, min(1.0, draw))   # a fuller draw hits harder
+    elif kind == items.KIND_CROSSBOW:
+        dmg += float(shot.get("damage", 0)) if shot else 0.0   # no draw: always full
     elif kind == items.KIND_STAFF:
         dmg *= 0.7 + character.skill(sk.DESTRUCTION) / 100.0
 
@@ -183,7 +190,7 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
 
     # Block: a shield + Block skill soaks a fraction of a physical blow.
     if blocking and damage_kind == "physical":
-        shield = eq.equipped_def(character, items.SLOT_SHIELD)
+        shield = eq.shield(character)
         block_skill = character.skill(sk.BLOCK)
         block_frac = min(0.75, (0.2 if shield else 0.05) + block_skill / 200.0)
         blocked = dmg * block_frac

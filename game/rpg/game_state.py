@@ -185,8 +185,8 @@ class GameState:
             return self.equip(item_id)
         return False
 
-    def equip(self, item_id: str) -> bool:
-        if eq.equip(self.character, item_id):
+    def equip(self, item_id: str, slot: Optional[str] = None) -> bool:
+        if eq.equip(self.character, item_id, slot):
             self.message(f"Equipped {items.get(item_id).name}")
             return True
         return False
@@ -258,7 +258,7 @@ class GameState:
 
     def attack_creature(self, target_props: Dict, distance: float = 0.0,
                         draw: float = 1.0, guaranteed: bool = False,
-                        power: float = 1.0) -> Dict:
+                        power: float = 1.0, hand: str = "main") -> Dict:
         """Resolve a melee attack on a creature. Returns the combat result.
 
         Spends stamina, applies damage to the target's ``health`` property,
@@ -275,14 +275,14 @@ class GameState:
         char = self.character
         res = combat.player_attack(char, target_props, sneaking=self.sneaking,
                                    draw=draw, rng=self.rng, dice=self.dice,
-                                   guaranteed_hit=guaranteed, power=power)
+                                   guaranteed_hit=guaranteed, power=power, hand=hand)
         if res.get("no_ammo"):
-            self.message("Out of arrows!")
+            self.message(out_of_ammo_text(eq.hand_weapon(char, hand)))
             return res
         char.spend_stamina(6.0)
         return self._apply_hit(target_props, res)
 
-    def fire_arrow(self, draw: float = 1.0) -> bool:
+    def fire_arrow(self, draw: float = 1.0, hand: str = "main") -> bool:
         """Loose a nocked arrow right now: spends stamina and consumes the
         arrow from inventory. Returns False (and messages "Out of arrows!")
         if there's nothing nocked.
@@ -295,17 +295,20 @@ class GameState:
         was loosed, rather than resolving instantly on release.
         """
         char = self.character
-        if eq.ammo(char) is None:
-            self.message("Out of arrows!")
+        weapon = eq.hand_weapon(char, hand)
+        a = eq.ammo_for(char, weapon)
+        if a is None:
+            self.message(out_of_ammo_text(weapon))
             return False
-        a = eq.ammo(char)
         inv.remove_item(char.inventory, a.id, 1)
-        if inv.quantity(char.inventory, a.id) <= 0:
+        if inv.quantity(char.inventory, a.id) <= 0 and eq.equipped_id(
+                char, items.SLOT_AMMO) == a.id:
             eq.unequip(char, items.SLOT_AMMO)
         char.spend_stamina(6.0)
         return True
 
-    def resolve_arrow_hit(self, target_props: Dict, draw: float = 1.0) -> Dict:
+    def resolve_arrow_hit(self, target_props: Dict, draw: float = 1.0,
+                          hand: str = "main") -> Dict:
         """Resolve an already-fired arrow's impact on a creature.
 
         Mirrors :meth:`attack_creature` but assumes :meth:`fire_arrow` already
@@ -314,7 +317,7 @@ class GameState:
         """
         char = self.character
         res = combat.player_attack(char, target_props, sneaking=self.sneaking,
-                                   draw=draw, rng=self.rng, dice=self.dice)
+                                   draw=draw, rng=self.rng, dice=self.dice, hand=hand)
         return self._apply_hit(target_props, res)
 
     def _apply_hit(self, target_props: Dict, res: Dict) -> Dict:
@@ -432,11 +435,19 @@ class GameState:
         role = str(target_props.get("npc_role") or target_props.get("monster_role") or "").lower()
         creature = bestiary.get(role)
         table = target_props.get("loot") or (creature.loot if creature else "")
-        if not table:
+        luck = self.character.attrs.get("luck", 40)
+        stacks, gold = [], 0
+        if table:
+            stacks, gold = loot_mod.roll(table, self.character.level, self.rng,
+                                         luck, dice=self.dice)
+        # Now and then an enemy carries a healing potion, whatever it is.
+        if _is_enemy(target_props) and not loot_mod.offers_healing(table):
+            potions, _ = loot_mod.roll(loot_mod.ENEMY_POTION_TABLE,
+                                       self.character.level, self.rng, luck,
+                                       dice=self.dice)
+            stacks += potions
+        if not stacks and not gold and not table:
             return True
-        stacks, gold = loot_mod.roll(table, self.character.level, self.rng,
-                                     self.character.attrs.get("luck", 40),
-                                     dice=self.dice)
         carried = target_props.get("inventory")
         if isinstance(carried, str):
             # Authored shorthand ("id:qty, id"): expand it rather than lose it.
@@ -527,3 +538,21 @@ class GameState:
             return True
         except Exception:
             return False
+
+
+def _is_enemy(props: Dict) -> bool:
+    """Whether the actor with *props* was the player's enemy: hostile by
+    temperament, or of a faction at war with the player."""
+    if str(props.get("aggression", "")).lower() == "hostile":
+        return True
+    from . import factions
+    team = props.get("faction") or props.get("team") or ""
+    try:
+        return bool(team) and factions.is_hostile("player", team)
+    except Exception:
+        return False
+
+
+def out_of_ammo_text(weapon) -> str:
+    """What running dry sounds like for *weapon*: arrows, or crossbow bolts."""
+    return "Out of bolts!" if eq.ammo_type(weapon) == "bolt" else "Out of arrows!"

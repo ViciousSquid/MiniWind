@@ -53,6 +53,10 @@ ALL_SLOTS = (SLOT_WEAPON, SLOT_AMMO, SLOT_SHIELD, SLOT_HEAD, SLOT_CHEST,
 KIND_MELEE = "melee"
 KIND_BOW = "bow"
 KIND_STAFF = "staff"
+#: A one-handed ranged weapon that shoots bolts (``ammo_type: "bolt"``).
+KIND_CROSSBOW = "crossbow"
+#: Ranged kinds: they shoot ammunition rather than swing.
+RANGED_KINDS = (KIND_BOW, KIND_CROSSBOW)
 
 
 class ItemDef:

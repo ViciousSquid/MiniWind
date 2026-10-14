@@ -181,6 +181,10 @@ def draw_npc_bow_charges(painter, session, viewport, width, height):
         _draw_charge_pie(painter, centre, head_r, max(0.0, min(1.0, float(charge))))
 
 
+#: The interact prompt's size, in points.
+PROMPT_FONT_PT = 16
+
+
 def _draw_interact_prompt(painter, session, width, height):
     """The 'Press E to talk to …' prompt, centred low on screen. MiniWind draws
     it itself because it suppresses the engine's default HUD."""
@@ -188,11 +192,11 @@ def _draw_interact_prompt(painter, session, width, height):
     if not text or session.dialogue is not None or session.open_screen is not None:
         return
     painter.save()
-    f = painter.font()
-    f.setPointSize(13)
-    f.setBold(True)
-    painter.setFont(f)
-    rect = QRect(0, int(height * 0.72), width, 30)
+    # The game's medieval face (MedievalSharp; Georgia where it is missing).
+    # It has one upright weight, so it is not asked for bold.
+    from . import fonts
+    painter.setFont(fonts.dialogue_font(PROMPT_FONT_PT))
+    rect = QRect(0, int(height * 0.72), width, 34)
     # soft shadow for legibility over any terrain
     painter.setPen(QColor(0, 0, 0, 200))
     painter.drawText(rect.translated(1, 1), Qt.AlignCenter, text)
@@ -403,28 +407,53 @@ def draw_fade(painter, session, width, height):
     painter.restore()
 
 
-def _draw_bubble(painter, cx, cy, kind):
+#: Speech bubble size (px): its body, corner radius, and the tail under it.
+BUBBLE_W, BUBBLE_H = 42, 34
+BUBBLE_RADIUS = 10
+BUBBLE_TAIL_W, BUBBLE_TAIL_H = 7, 11
+BUBBLE_FONT_PT = 19
+
+
+def _paint_bubble(painter, cx, cy, kind):
     painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
     quest = (kind == "quest")
     glyph = "!" if quest else "…"
     fill = QColor(250, 210, 90) if quest else QColor(235, 235, 240)
     edge = QColor(120, 90, 20) if quest else QColor(60, 60, 70)
     text_col = QColor(60, 40, 0) if quest else QColor(40, 40, 50)
-    bw, bh = 26, 22
-    rect = QRect(cx - bw // 2, cy - bh, bw, bh)
-    painter.setPen(edge)
+    rect = QRect(cx - BUBBLE_W // 2, cy - BUBBLE_H, BUBBLE_W, BUBBLE_H)
+    painter.setPen(QPen(edge, 1.5))
     painter.setBrush(fill)
-    painter.drawRoundedRect(rect, 7, 7)
+    painter.drawRoundedRect(rect, BUBBLE_RADIUS, BUBBLE_RADIUS)
     # little tail pointing down at the head
-    tail = QPolygon([QPoint(cx - 4, cy - 1), QPoint(cx + 4, cy - 1), QPoint(cx, cy + 7)])
+    tail = QPolygon([QPoint(cx - BUBBLE_TAIL_W, cy - 1), QPoint(cx + BUBBLE_TAIL_W, cy - 1),
+                     QPoint(cx, cy + BUBBLE_TAIL_H)])
     painter.drawPolygon(tail)
+    # cover the tail's top edge so body and tail read as one shape
+    painter.setPen(Qt.NoPen)
+    painter.drawRect(QRect(cx - BUBBLE_TAIL_W + 1, cy - 3, BUBBLE_TAIL_W * 2 - 1, 3))
     painter.setPen(text_col)
     f = painter.font()
     f.setBold(True)
-    f.setPointSize(12)
+    f.setPointSize(BUBBLE_FONT_PT)
     painter.setFont(f)
     painter.drawText(rect, Qt.AlignCenter, glyph)
     painter.restore()
+
+
+def _draw_bubble(painter, cx, cy, kind):
+    # The same two pictures over every NPC, every frame: painted once each.
+    pad = 2
+    w = BUBBLE_W + pad * 2
+    h = BUBBLE_H + BUBBLE_TAIL_H + pad * 2
+    ox, oy = w // 2, BUBBLE_H + pad
+    pm = T.sprite(painter, ("bubble", kind, painter.font().key()), w, h,
+                  lambda p: _paint_bubble(p, ox, oy, kind))
+    if pm is not None:
+        painter.drawPixmap(cx - ox, cy - oy, pm)
+    else:
+        _paint_bubble(painter, cx, cy, kind)
 
 
 def _draw_clock(painter, session, width):
@@ -434,10 +463,25 @@ def _draw_clock(painter, session, width):
     hour = clock.hour
     h_int = int(hour)
     m_int = int((hour - h_int) * 60.0)
+    day_name = getattr(clock, "day_name", "")
+    day_line = f"{day_name} · Day {clock.day}" if day_name else f"Day {clock.day}"
 
     radius = 34
     cx = width - radius - 16
     cy = radius + 16
+    # The face changes once a game minute: painted then, blitted between.
+    left, top = cx - radius - 20, cy - radius - 2
+    w, h = radius * 2 + 40, radius * 2 + 2 + 3 + 34
+    pm = T.sprite(painter, ("clock", h_int, m_int, day_line), w, h,
+                  lambda p: _paint_clock(p, radius + 20, radius + 2, radius,
+                                         h_int, m_int, day_line))
+    if pm is not None:
+        painter.drawPixmap(left, top, pm)
+    else:
+        _paint_clock(painter, cx, cy, radius, h_int, m_int, day_line)
+
+
+def _paint_clock(painter, cx, cy, radius, h_int, m_int, day_line):
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
 
@@ -459,8 +503,8 @@ def _draw_clock(painter, session, width):
         painter.setPen(QPen(T.GOLD_BRIGHT if i % 3 == 0 else T.GILD, pen_w))
         painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
 
-    # hour hand
-    h_angle = math.radians((hour % 12) * 30 - 90)
+    # hour hand (to the minute: it turns half a degree a minute)
+    h_angle = math.radians(((h_int % 12) + m_int / 60.0) * 30 - 90)
     h_len = radius * 0.5
     painter.setPen(QPen(T.GOLD_BRIGHT, 3, Qt.SolidLine, Qt.RoundCap))
     painter.drawLine(QPointF(cx, cy),
@@ -485,8 +529,6 @@ def _draw_clock(painter, session, width):
     T.text_in(painter, QRect(box.x(), box.y(), box.width(), 16),
               f"{h_int:02d}:{m_int:02d}", size=13, color=T.GOLD_BRIGHT,
               align=T.ALIGN_CENTER, bold=True)
-    day_name = getattr(clock, "day_name", "")
-    day_line = f"{day_name} · Day {clock.day}" if day_name else f"Day {clock.day}"
     T.text_in(painter, QRect(box.x(), box.y() + 16, box.width(), 14),
               day_line, size=9, color=T.DIM, align=T.ALIGN_CENTER,
               family="Segoe UI")
@@ -510,12 +552,14 @@ def _draw_active(painter, session, c, width, height):
     the equipped weapon and readied spell read at a glance."""
     w = eq.weapon(c)
     wname = w.name if w else "Unarmed"
-    a = eq.ammo(c)
-    if w and w.get("kind") == rpg_items.KIND_BOW and a:
+    a = eq.ammo_for(c, w) if w and w.get("kind") in rpg_items.RANGED_KINDS else None
+    if a:
         from ..rpg import inventory as inv
         wname += f"  ({inv.quantity(c.inventory, a.id)} {a.name.split()[0].lower()})"
     spell = rpg_magic.get(c.active_spell) if c.active_spell else None
     sname = spell.name if spell else "—"
+    # Dual wielding, the right mouse is the second weapon, not the spell.
+    off = eq.offhand_weapon(c)
 
     x = width - 250
     y = height - 64
@@ -531,7 +575,18 @@ def _draw_active(painter, session, c, width, height):
            color=T.GOLD_BRIGHT if w else T.DIM, family="Segoe UI")
     T.text(painter, x + 210, y + 21, "L", size=8, color=T.DIM, family="Segoe UI")
 
-    # Spell row: element-coloured swatch + name (right mouse hint).
+    # Spell row: element-coloured swatch + name (right mouse hint); the
+    # second weapon instead, when the off hand holds one.
+    if off is not None:
+        tx = x + 14
+        opm = _weapon_icon_pixmap(off, 22)
+        if opm is not None and not opm.isNull():
+            painter.drawPixmap(x + 12, y + 29, opm)
+            tx = x + 40
+        T.text(painter, tx, y + 44, off.name, size=10, color=T.GOLD_BRIGHT,
+               family="Segoe UI")
+        T.text(painter, x + 210, y + 44, "R", size=8, color=T.DIM, family="Segoe UI")
+        return
     scol = T.MAGICKA.lighter(140) if spell else T.DIM
     if spell is not None:
         col = spell.color

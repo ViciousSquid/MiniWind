@@ -126,25 +126,30 @@ def test_a_loaded_character_keeps_its_head_and_npcs_avoid_it():
 def test_an_animal_without_a_head_wears_its_own_kind_or_the_placeholder():
     hen = _actor("Hen", kind="creature", role="hen")
     wolf = _actor("Wolf", kind="creature", role="wolf")
+    bear = _actor("Bear", kind="creature", role="bear")
     cow = _actor("Cow", kind="creature", role="cow")
     sheep = _actor("Sheep", head="sheep02", kind="creature", role="sheep")
-    s = _session([hen, wolf, cow, sheep])
+    s = _session([hen, wolf, bear, cow, sheep])
 
     s.begin_new_character("Tester", "imperial", "warrior", "none", "male",
                           head="head13")
 
-    # No hen or wolf head has been drawn yet: the placeholder, never a person's.
-    assert hen.properties["head"] == heads.PLACEHOLDER_HEAD
-    assert wolf.properties["head"] == heads.PLACEHOLDER_HEAD
-    assert hen.properties["custom_idle"] == "assets/sprites/heads/placeholder.png"
+    # Hens wear the chickens and wolves the wolves -- never a person's.
+    assert hen.properties["head"] in ("chicken", "chicken2", "chicken3")
+    assert wolf.properties["head"] in ("wolf01", "wolf02")
+    # No bear head has been drawn yet: the placeholder.
+    assert bear.properties["head"] == heads.PLACEHOLDER_HEAD
+    assert bear.properties["custom_idle"] == "assets/sprites/heads/placeholder.png"
     # Cows have their own heads (cow01, cow02).
     assert cow.properties["head"] in ("cow01", "cow02")
     # A head set in the map is kept.
     assert sheep.properties["head"] == "sheep02"
-    for animal in (hen, wolf, cow, sheep):
+    one = (heads.HEAD_SIZE, heads.HEAD_SIZE)
+    for animal in (wolf, bear, cow, sheep):
         assert (animal.properties["sprite_width"],
-                animal.properties["sprite_height"]) == (heads.HEAD_SIZE,
-                                                        heads.HEAD_SIZE)
+                animal.properties["sprite_height"]) == one
+    third = heads.CHICKEN_SIZE                     # chickens are small
+    assert (hen.properties["sprite_width"], hen.properties["sprite_height"]) == (third, third)
 
 
 def test_the_placeholder_head_ships_and_is_never_the_players():

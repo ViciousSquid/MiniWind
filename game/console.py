@@ -13,7 +13,6 @@ session is running, and the editor window) plus the raw argument string.
     quest | quests    list / start / advance / complete / reset quests
     sim               inspect and drive the reactive simulation
     inspect | mind    pause and click an actor for its live mental state
-    inventory_strip_size N   how many slots the inventory strip (I) has
     torch_shadows [on|off]   torches near you cast shadows (toggles)
 """
 
@@ -435,55 +434,6 @@ def cmd_resurrect(ctx, args):
     return None
 
 
-def cmd_inventory_strip_size(ctx, args):
-    """inventory_strip_size N -- how many slots the inventory strip (I) has.
-
-    Applies to the running game at once and is saved (GAME /
-    inventory_strip_size in settings.ini), so it holds for later sessions.
-    With no number, says the current size."""
-    from .runtime import STRIP_DEFAULT_SIZE, STRIP_MAX_SIZE
-    session = getattr(ctx.logic_thread, "_miniwind", None)
-    config = getattr(ctx.main_window, "config", None)
-    text = str(args or "").strip()
-    if not text:
-        if session is not None:
-            current = session.strip_size()
-        else:
-            try:
-                current = config.getint("GAME", "inventory_strip_size",
-                                        fallback=STRIP_DEFAULT_SIZE)
-            except (AttributeError, TypeError, ValueError):
-                current = STRIP_DEFAULT_SIZE
-        debug_log("Info", f"inventory_strip_size: {current} slots. "
-                          f"Use inventory_strip_size 1..{STRIP_MAX_SIZE}.")
-        return None
-    try:
-        size = int(text.split()[0])
-    except ValueError:
-        size = 0
-    if not 1 <= size <= STRIP_MAX_SIZE:
-        debug_log("Error", f"inventory_strip_size: pick 1..{STRIP_MAX_SIZE}.")
-        return None
-    if session is not None:
-        session.set_strip_size(size)
-    if config is not None:
-        try:
-            if not config.has_section("GAME"):
-                config.add_section("GAME")
-            config.set("GAME", "inventory_strip_size", str(size))
-            save = getattr(ctx.main_window, "save_config", None)
-            if save is not None:
-                save()
-        except Exception as exc:
-            debug_log("Error", f"inventory_strip_size: could not save the setting ({exc}).")
-    msg = f"Inventory strip: {size} slots."
-    debug_log("Info", msg)
-    toast = getattr(ctx.main_window, "show_toast", None)
-    if toast is not None:
-        toast(msg)
-    return None
-
-
 def cmd_torch_shadows(ctx, args):
     """torch_shadows [on|off] -- whether carried torches near you (the NEAR
     simulation distance) cast shadows. With no argument it toggles.
@@ -549,6 +499,25 @@ def cmd_roads(ctx, args):
     return None
 
 
+def cmd_paths(ctx, args):
+    """paths [on|off] -- draw where every nearby actor is walking: cyan for a
+    route round walls, yellow for a straight walk, red for a chase."""
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    if session is None:
+        debug_log("Error", "paths: enter Play Mode first.")
+        return None
+    want = (args[0].lower() if args else "")
+    if want in ("on", "1", "true"):
+        session.show_paths = True
+    elif want in ("off", "0", "false"):
+        session.show_paths = False
+    else:
+        session.show_paths = not getattr(session, "show_paths", False)
+    debug_log("Info", "Pathfinding lines " + ("on: cyan = route round walls, "
+              "yellow = straight walk, red = chase" if session.show_paths else "off"))
+    return None
+
+
 #: (names, handler, help) for every command this module provides.
 COMMANDS = (
     (("diceroll", "dice"), cmd_diceroll,
@@ -560,16 +529,16 @@ COMMANDS = (
      " — Reactive simulation (Play Mode)"),
     (("inspect", "mind"), cmd_inspect,
      "— Pause and click an actor: schedule, destination, AI state (Play Mode)"),
+    (("paths", "pathfinding"), cmd_paths,
+     "[on|off] — Draw every nearby actor's path: routes, walks, chases (Play Mode)"),
     (("roads", "travellers"), cmd_roads,
      "— List the parties on the roads: who, where from/to, where now (Play Mode)"),
-    (("debugtools",), cmd_debugtools,
-     "— Time controls: rewind, play/pause, speed 0.25/0.5/1/2 (Play Mode)"),
+    (("debugtools", "debug"), cmd_debugtools,
+     "— Time controls (rewind, play/pause, speed) and teleport to any cave (Play Mode)"),
     (("resurrect",), cmd_resurrect,
      "— Click an NPC or monster to restore it to life and full health (Play Mode)"),
     (("dragonfire",), cmd_dragonfire,
      "1..5 — Which FIRE setting the dragon breathes (remembered)"),
-    (("inventory_strip_size",), cmd_inventory_strip_size,
-     "N — How many slots the inventory strip (I) has (saved)"),
     (("torch_shadows",), cmd_torch_shadows,
      "[on|off] — Torches near you cast shadows; no argument toggles (saved)"),
     (("pause", "freeze"), cmd_pause,

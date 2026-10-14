@@ -1,5 +1,5 @@
 """
-The inventory strip (I) and dragging things between it, the character
+The inventory strip (always up) and dragging things between it, the character
 window (C), chests and bodies.
 
 Run:  python -m pytest game/tests/test_inventory_strip.py -q
@@ -82,16 +82,6 @@ def test_from_the_pack_onto_a_slot():
     assert _ids(s)[6] == "iron_shortsword"
 
 
-def test_the_strip_resizes_and_what_falls_off_stays_carried():
-    s = _session()
-    _give(s, "iron_shortsword", "potion_heal_minor", "ingr_wolf_pelt")
-    assert s.set_strip_size(2) == 2
-    assert _ids(s) == ["iron_shortsword", "potion_heal_minor"]
-    assert any(st["id"] == "ingr_wolf_pelt" for st in s.game.character.inventory)
-    assert s.set_strip_size(500) == 30
-    assert len(_ids(s)) == 30
-
-
 def test_a_chest_or_body_trades_with_the_strip():
     from ..rpg import items
     chest = _Thing("Chest", type="container",
@@ -135,60 +125,89 @@ def test_the_strip_survives_a_save():
 
 # ---------------------------------------------------------------- the keys
 
-def test_i_toggles_the_strip_and_c_opens_the_character_window():
-    from ..host import MiniwindGame, K_INVENTORY, K_CHARACTER
+class _Ctx:
+    def key_down(self, _k):
+        return False
 
-    class _Ctx:
-        def key_down(self, _k):
-            return False
+
+def test_the_strip_is_always_up_i_opens_the_inventory_c_the_character_window():
+    from ..host import MiniwindGame, K_INVENTORY, K_CHARACTER
 
     s = _session()
     s.needs_char_creation = False
     game = MiniwindGame.__new__(MiniwindGame)
+    assert MiniwindGame._strip_wanted(s)              # free play: always up
     game._handle_gameplay_input(s, {K_INVENTORY}, _Ctx())
-    assert s.show_strip and s.open_screen is None
-    assert MiniwindGame._strip_wanted(s)
-    game._handle_gameplay_input(s, {K_INVENTORY}, _Ctx())
-    assert not s.show_strip and not MiniwindGame._strip_wanted(s)
+    assert s.open_screen == "inventory"
+    s.open_screen = None
     game._handle_gameplay_input(s, {K_CHARACTER}, _Ctx())
     assert s.open_screen == "character"
     assert MiniwindGame._strip_wanted(s)              # up over the C window
 
 
-# ----------------------------------------------------------------- console
+# ------------------------------------------------- weapons in hand at once
 
-def test_the_console_sets_and_saves_the_strip_size():
-    import configparser
-    from plugins.api import EditorAPI
-    from plugins.manager import PluginManager
-    from .. import console
+def _hands(s):
+    eq = s.game.character.equipment
+    return eq.get("weapon"), eq.get("shield")
 
-    class _Window:
-        def __init__(self):
-            self.config = configparser.ConfigParser()
-            self.saved = 0
-            self.toasts = []
 
-        def save_config(self):
-            self.saved += 1
-
-        def show_toast(self, text):
-            self.toasts.append(text)
-
-    mgr = PluginManager()
-    console.register(EditorAPI(mgr, None))
+def test_a_number_key_takes_the_weapon_in_its_slot_in_hand():
+    from ..host import MiniwindGame
     s = _session()
-    logic = type("L", (), {"_miniwind": s})()
-    window = _Window()
-    handled, _ = mgr.dispatch_console_command("inventory_strip_size", "12", logic,
-                                              main_window=window, play_mode=True)
-    assert handled
-    assert s.strip_size() == 12
-    assert window.config.get("GAME", "inventory_strip_size") == "12"
-    assert window.saved == 1
-    mgr.dispatch_console_command("inventory_strip_size", "0", logic,
-                                 main_window=window, play_mode=True)
-    assert s.strip_size() == 12                       # out of range: refused
+    s.needs_char_creation = False
+    _give(s, "potion_heal_minor", "iron_shortsword")
+    game = MiniwindGame.__new__(MiniwindGame)
+    game._handle_gameplay_input(s, {"2"}, _Ctx())
+    assert s.strip_selected == 1
+    assert _hands(s) == ("iron_shortsword", None)
+    game._handle_gameplay_input(s, {"1"}, _Ctx())      # a potion: selected only
+    assert s.strip_selected == 0 and _hands(s) == ("iron_shortsword", None)
+    game._handle_gameplay_input(s, {"2"}, _Ctx())      # again: put away
+    assert _hands(s) == (None, None)
+
+
+def test_with_the_main_hand_full_a_one_handed_weapon_goes_to_the_off_hand():
+    s = _session()
+    _give(s, "iron_shortsword", "iron_dagger", "iron_mace")
+    assert s.select_strip_slot(0) and _hands(s) == ("iron_shortsword", None)
+    assert s.select_strip_slot(1) and _hands(s) == ("iron_shortsword", "iron_dagger")
+    from ..rpg import equipment
+    assert equipment.dual_wielding(s.game.character)
+    assert s.select_strip_slot(2) and _hands(s) == ("iron_shortsword", "iron_mace")
+    assert s.select_strip_slot(2) and _hands(s) == ("iron_shortsword", None)
+    # Putting the main weapon away hands it the off hand's.
+    s.select_strip_slot(1)
+    assert s.select_strip_slot(0) and _hands(s) == ("iron_dagger", None)
+
+
+def test_bows_and_two_handers_never_go_to_the_off_hand():
+    s = _session()
+    _give(s, "iron_shortsword", "short_bow", "scythe", "iron_dagger")
+    s.select_strip_slot(0)
+    assert s.select_strip_slot(1) and _hands(s) == ("short_bow", None)
+    assert s.select_strip_slot(3) and _hands(s) == ("iron_dagger", None)   # beside a bow: no
+    assert s.select_strip_slot(2) and _hands(s) == ("scythe", None)
+
+
+def test_a_click_on_a_weapon_in_the_strip_takes_it_in_hand(qt_app):
+    from PyQt5.QtCore import QEvent, QPoint, Qt
+    from PyQt5.QtGui import QMouseEvent
+    from ..ui import hits
+    from ..ui.inventory_strip import InventoryStrip
+    s = _session()
+    _give(s, "iron_shortsword")
+    strip = InventoryStrip(s)
+    strip.place(1280, 720)
+    strip._slots = list(s.strip_slots())
+    strip._layout()
+    p = strip._rects[0].center()
+    for kind in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+        ev = QMouseEvent(kind, QPoint(p), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+        (strip.handle_mouse_press if kind == QEvent.MouseButtonPress
+         else strip.handle_mouse_release)(ev)
+    hits.run_clicks(s)
+    assert _hands(s) == ("iron_shortsword", None)
 
 
 # ------------------------------------------------------------- the mouse
@@ -340,3 +359,65 @@ def test_the_console_toggles_torch_shadows_and_saves_it():
         assert window.saved == 5
     finally:
         runtime.set_editor_config(previous)
+
+
+# ------------------------------------------------- a slot per weapon copy
+
+def test_each_copy_of_a_weapon_takes_its_own_slot():
+    s = _session()
+    _give(s, "iron_shortsword", "potion_heal_minor", "potion_heal_minor")
+    assert _ids(s)[:3] == ["iron_shortsword", "potion_heal_minor", None]
+    _give(s, "iron_shortsword")                             # a second one, later
+    assert _ids(s)[:4] == ["iron_shortsword", "potion_heal_minor", "iron_shortsword", None]
+    slots = s.strip_slots()
+    assert slots[0]["qty"] == slots[2]["qty"] == 1          # one blade each
+    assert slots[1]["qty"] == 2                             # potions still stack
+
+
+def test_a_pair_of_the_same_blade_is_dual_wielded_from_its_two_slots():
+    s = _session()
+    _give(s, "iron_shortsword", "iron_shortsword")
+    assert _ids(s)[:2] == ["iron_shortsword", "iron_shortsword"]
+    assert s.select_strip_slot(0) and _hands(s) == ("iron_shortsword", None)
+    assert s.strip_hands()[:2] == ["main", None]
+    assert s.select_strip_slot(1) and _hands(s) == ("iron_shortsword", "iron_shortsword")
+    assert s.strip_hands()[:2] == ["main", "off"]
+    assert s.select_strip_slot(1) and _hands(s) == ("iron_shortsword", None)
+
+
+def test_a_single_blade_never_fills_both_hands_and_a_sold_copy_leaves_its_slot():
+    from ..rpg import inventory as inv
+    s = _session()
+    _give(s, "iron_shortsword", "iron_shortsword")
+    s.select_strip_slot(0)
+    s.select_strip_slot(1)
+    inv.remove_item(s.game.character.inventory, "iron_shortsword", 1)
+    assert _ids(s)[:2] == ["iron_shortsword", None]
+    from ..rpg import equipment
+    assert not equipment.dual_wielding(s.game.character)
+
+
+def test_a_copy_dragged_out_stays_out_and_copies_swap_between_slots():
+    s = _session()
+    _give(s, "iron_shortsword", "iron_shortsword", "potion_heal_minor")
+    assert _ids(s)[:3] == ["iron_shortsword", "iron_shortsword", "potion_heal_minor"]
+    assert s.item_drop(("strip", 1, "iron_shortsword"), ("pack", None))
+    assert _ids(s)[:3] == ["iron_shortsword", None, "potion_heal_minor"]
+    assert _ids(s)[:3] == ["iron_shortsword", None, "potion_heal_minor"]   # not refilled
+    # From the pack onto a slot: the copy without a slot takes it.
+    assert s.item_drop(("pack", None, "iron_shortsword"), ("strip", 5))
+    assert _ids(s).count("iron_shortsword") == 2 and _ids(s)[5] == "iron_shortsword"
+    # Between strip slots the dragged copy moves, the other stays.
+    assert s.item_drop(("strip", 5, "iron_shortsword"), ("strip", 2))
+    assert _ids(s)[:3] == ["iron_shortsword", None, "iron_shortsword"]
+    assert _ids(s)[5] == "potion_heal_minor"
+
+
+def test_saved_and_loaded_the_copies_keep_their_slots():
+    from ..rpg.character import Character
+    s = _session()
+    _give(s, "iron_shortsword", "iron_shortsword")
+    s.strip_slots()
+    s.game.character.strip[1] = None                       # dragged one out
+    s.game.character = Character.from_dict(s.game.character.to_dict())
+    assert _ids(s)[:2] == ["iron_shortsword", None]        # not offered again

@@ -46,6 +46,20 @@ def forget(owner) -> None:
         current = None
 
 
+def over_window(x, y) -> bool:
+    """Whether (x, y) is over any open item window (the strip, the character
+    window, a chest): let go anywhere else, a dragged item is dropped on
+    the floor."""
+    point = QPoint(int(x), int(y))
+    for owner in list(_zones):
+        if not getattr(owner, "active", True):
+            continue
+        rect = getattr(owner, "window_rect", None)
+        if rect is not None and rect.contains(point):
+            return True
+    return False
+
+
 def target_at(x, y, exclude=None):
     """The drop target under (x, y) in any window but *exclude*, or None."""
     point = QPoint(int(x), int(y))

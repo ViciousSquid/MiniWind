@@ -47,11 +47,18 @@ COLOURS = (QColor(80, 200, 255), QColor(255, 170, 60), QColor(160, 255, 120),
 REFRESH_SECONDS = 0.25
 
 _TEXT = QColor(220, 220, 220)
-_MUTED = QColor(150, 150, 160)
+_MUTED = QColor(178, 180, 192)
 _HEAD = QColor(240, 200, 120)
 #: Strength, Endurance and Charisma letters in the inspector.
 _STAT_COLOURS = (QColor(230, 120, 100), QColor(120, 200, 120), QColor(150, 170, 255))
 _HILITE = QColor(90, 130, 128, 120)
+_STRIPE = QColor(255, 255, 255, 14)
+_TAB = QColor(40, 44, 54)
+_TAB_HOT = QColor(58, 64, 78)
+_TAB_ON = QColor(70, 96, 130)
+
+#: The inspector's tabs, in order.
+TABS = ("Overview", "Schedule", "Anchors", "Navigation", "Inventory")
 _LINK = QColor(120, 190, 255)
 _LINK_HOT = QColor(190, 230, 255)
 
@@ -63,6 +70,35 @@ _focus = None
 _MOVE_KEYS = ("w", "a", "s", "d", "up", "down", "left", "right")
 
 _next_colour = 0
+
+#: Plain sans faces for the inspector, first installed wins. A debug window
+#: is read, not admired: never the game's medieval face. Naming "Arial" alone
+#: is not enough -- where it is missing, Qt's fallback can land on one of the
+#: game's own registered fonts (MedievalSharp).
+SANS_FAMILIES = ("Segoe UI", "Arial", "Helvetica", "Liberation Sans",
+                 "DejaVu Sans", "Noto Sans", "Ubuntu", "Cantarell")
+_sans_family = None
+
+
+def _sans() -> str:
+    global _sans_family
+    if _sans_family is None:
+        from PyQt5.QtGui import QFontDatabase
+        installed = {f.lower(): f for f in QFontDatabase().families()}
+        for name in SANS_FAMILIES:
+            if name.lower() in installed:
+                _sans_family = installed[name.lower()]
+                break
+        else:
+            _sans_family = QFontDatabase.systemFont(QFontDatabase.GeneralFont).family()
+    return _sans_family
+
+
+def ui_font(size, bold=False) -> QFont:
+    """The inspector's font: a plain sans face of *size* points."""
+    f = QFont(_sans(), int(size), QFont.Bold if bold else QFont.Normal)
+    f.setStyleHint(QFont.SansSerif)
+    return f
 
 
 def _fmt_hour(h) -> str:
@@ -231,21 +267,25 @@ class ActorInspectorWindow(FloatingWindow):
     """Live debug panel for one actor; see the module docstring."""
 
     wants_cursor = True
-    LINE_H = 14
+    #: Row height, the extra space above a section heading, and the label
+    #: column's width: roomy enough to read at a glance.
+    LINE_H = 24
+    HEAD_GAP = 10
+    LABEL_W = 180
 
     def __init__(self, view, thing, x=60, y=60):
         global _next_colour
-        super().__init__(f"Inspect: {_name(thing)}", x=x, y=y, width=380,
-                         body_height=200)
+        super().__init__(f"Inspect: {_name(thing)}", x=x, y=y, width=560,
+                         body_height=320)
         self.view = view
         self.thing = thing
         self.colour = COLOURS[_next_colour % len(COLOURS)]
         _next_colour += 1
-        self.font = QFont("Arial", 8)
-        self.bold = QFont("Arial", 8, QFont.Bold)
-        self.title_font = QFont("Arial", 9, QFont.Bold)
+        self.font = ui_font(11)
+        self.bold = ui_font(12, True)
+        self.title_font = ui_font(11, True)
         #: Strength / Endurance / Charisma stand out from the rest of the data.
-        self.stats_font = QFont("Arial", 11, QFont.Bold)
+        self.stats_font = ui_font(15, True)
         self._fm = QFontMetrics(self.font)
         self._rows = []          # [(kind, text, value)] kind: head/row/sched/sched_now
         self._refreshed = 0.0
@@ -254,6 +294,8 @@ class ActorInspectorWindow(FloatingWindow):
         #: so several inspectors and the menus never fight over it). Off: the
         #: world runs while you watch.
         self.paused = False
+        #: The tab shown (see TABS).
+        self.tab = TABS[0]
 
     # -- data ----------------------------------------------------------------
     def _logic(self):
@@ -285,6 +327,16 @@ class ActorInspectorWindow(FloatingWindow):
         focus = focused_place(logic)
         if focus is not None and focus["window"] is self:
             rows.append(("back", f"\u25c0 Back to player   (showing {focus['label']})", ""))
+        rows.append(("tabs", "", None))
+        builder = {"Schedule": self._rows_schedule, "Anchors": self._rows_anchors,
+                   "Navigation": self._rows_navigation,
+                   "Inventory": self._rows_inventory}.get(self.tab)
+        if builder is not None:
+            try:
+                builder(rows, head, row, thing, logic, session, props)
+            except Exception as exc:
+                row("(unavailable)", str(exc))
+            return rows
         head("Actor")
         if all(props.get(k) is not None for k in ("strength", "endurance", "charisma")):
             # The three rolled stats, larger than the rest (see draw_body).
@@ -320,22 +372,6 @@ class ActorInspectorWindow(FloatingWindow):
         else:
             row("Heading to", "nowhere (standing)")
 
-        schedule = props.get("schedule") or []
-        if schedule:
-            head("Schedule" + (f"   (now {_fmt_hour(session.clock.hour)})"
-                               if session is not None else ""))
-            current = None
-            if session is not None:
-                try:
-                    current = session._schedule_entry(thing)
-                except Exception:
-                    current = None
-            for entry in sorted(schedule, key=lambda e: float(e.get("hour", 0))):
-                text = "{}  {:<14}".format(_fmt_hour(entry.get("hour", 0)),
-                                           str(entry.get("state", "?")))
-                rows.append(("sched_now" if entry is current else "sched", text,
-                             str(entry.get("location", "") or "")))
-
         snap = None
         try:
             from .. import mental_state
@@ -365,12 +401,168 @@ class ActorInspectorWindow(FloatingWindow):
                                  f"{pri:.0f}" if isinstance(pri, (int, float)) else str(pri)))
         return rows
 
+
+    # -- the other tabs ----------------------------------------------------------
+    def _rows_schedule(self, rows, head, row, thing, logic, session, props):
+        schedule = props.get("schedule") or []
+        if schedule:
+            head("Schedule" + (f"   (now {_fmt_hour(session.clock.hour)})"
+                               if session is not None else ""))
+            current = None
+            if session is not None:
+                try:
+                    current = session._schedule_entry(thing)
+                except Exception:
+                    current = None
+            for entry in sorted(schedule, key=lambda e: float(e.get("hour", 0))):
+                text = "{}  {:<14}".format(_fmt_hour(entry.get("hour", 0)),
+                                           str(entry.get("state", "?")))
+                rows.append(("sched_now" if entry is current else "sched", text,
+                             str(entry.get("location", "") or "")))
+        if not schedule:
+            row("Schedule", "none: it keeps to where it stands")
+
+    def _rows_anchors(self, rows, head, row, thing, logic, session, props):
+        """Every place the actor is tied to, each with a button that swings
+        the camera to it (and back again on a second click)."""
+        head("Anchors")
+        seen = set()
+
+        def anchor(label, key, place):
+            if place is None:
+                return
+            pos = place[0]
+            rows.append(("anchor", label, (key, pos, place[1] if len(place) > 1 else None,
+                                           place[2] if len(place) > 2 else label)))
+
+        for key, label in (("home", "Home"), ("work", "Workplace")):
+            seen.add(key)
+            anchor(label, key, resolve_place(session, thing, key))
+        for entry in props.get("schedule") or []:
+            loc = str(entry.get("location", "") or "")
+            if not loc or loc.lower() in seen or loc.lower() in ("market",):
+                continue
+            seen.add(loc.lower())
+            anchor(f"Schedule: {loc}", loc, resolve_place(session, thing, loc))
+        names = list(props.get("patrol_markers") or [])
+        for i, nm in enumerate(names):
+            ent = session._find_named(str(nm)) if session is not None else None
+            if ent is not None:
+                anchor(f"Patrol {i + 1}: {nm}", f"patrol:{nm}",
+                       (list(ent.pos), ent, f"patrol {nm}"))
+        dest = destination(session, logic, thing)
+        if dest is not None:
+            anchor("Heading to", "@dest", (dest[0], None, f"heading to ({dest[1]})"))
+        if not any(r[0] == "anchor" for r in rows):
+            row("Anchors", "none: no home, workplace or patrol")
+
+    def _rows_navigation(self, rows, head, row, thing, logic, session, props):
+        """How it gets about: simulation tier, parking, its walk and route."""
+        from engine.spatial import TIER_NEAR
+        tiers = {0: "near (full)", 1: "active", 2: "distant (coarse)", 3: "dormant"}
+        head("Simulation")
+        tier = props.get("_sim_tier", TIER_NEAR)
+        row("Tier", tiers.get(int(tier) if tier is not None else 0, str(tier)))
+        row("Parked by Big World", "yes" if (props.get("_bw_parked_hidden")
+                                            or props.get("_bw_parked_disabled")) else "no")
+        row("Driven by", "combat AI" if props.get("triggered") is False else "its schedule")
+        if props.get("away_on_journey"):
+            row("Journey", "away on the roads")
+        head("Walking")
+        dest = props.get("_dest")
+        if isinstance(dest, (list, tuple)) and len(dest) == 3:
+            dx, dz = dest[0] - thing.pos[0], dest[2] - thing.pos[2]
+            row("Walking to", f"{_fmt_pos(dest)}  ({math.hypot(dx, dz):.0f} away)")
+        else:
+            row("Walking to", "nowhere")
+        try:
+            speed = float(props.get("move_speed", 0) or 0)
+        except (TypeError, ValueError):
+            speed = 0.0
+        row("Move speed", f"{speed:.0f}" if speed else "default")
+        row("Fleeing", "yes" if props.get("_flee") or
+            str(props.get("sched_state", "")).upper() == "FLEE" else "no")
+        row("Blocked steps", props.get("_blocked_ticks", 0) or 0)
+        aggro = props.get("_aggro_target")
+        target = _actor_by_id(logic, aggro) if aggro is not None else None
+        if target is not None:
+            tdx, tdz = target.pos[0] - thing.pos[0], target.pos[2] - thing.pos[2]
+            row("Chasing", f"{_name(target)}  ({math.hypot(tdx, tdz):.0f} away)")
+        elif aggro is not None:
+            row("Chasing", "someone no longer there")
+        head("Route")
+        nav = getattr(session, "nav", None) if session is not None else None
+        route = getattr(nav, "_routes", {}).get(id(thing)) if nav is not None else None
+        if route is None:
+            row("Route", "straight: nothing in the way")
+        else:
+            row("Route", f"round a wall, {len(route.points)} corner(s) left")
+            nx, nz = route.points[0]
+            row("Next corner", f"{nx:.0f}, {nz:.0f}  "
+                f"({math.hypot(nx - thing.pos[0], nz - thing.pos[2]):.0f} away)")
+            row("Planned", f"{max(0.0, time.monotonic() - route.made):.1f} s ago")
+            rows.append(("anchor", "Show route goal",
+                         ("@route", [route.goal[0], thing.pos[1], route.goal[1]], None,
+                          "route goal")))
+
+    def _rows_inventory(self, rows, head, row, thing, logic, session, props):
+        """What it carries, with icons; what it holds; a merchant's shop."""
+        from ..rpg import items as rpg_items
+        head("In hand")
+        weapon = props.get("_active_weapon") or props.get("equipped_weapon")
+        rows.append(("item", "Weapon", (weapon or "", None, "")))
+        off = props.get("offhand_weapon")
+        if off:
+            rows.append(("item", "Off hand", (off, None, "")))
+        if props.get("_torch_lit"):
+            rows.append(("item", "Torch", (props.get("_torch_lit"), None, "lit")))
+        head("Carrying")
+        carried = props.get("inventory")
+        stacks = []
+        if isinstance(carried, list):
+            stacks = [st if isinstance(st, dict) else {"id": str(st), "qty": 1}
+                      for st in carried if st]
+        elif isinstance(carried, str) and carried.strip():
+            for part in carried.split(","):
+                iid, _, qty = part.strip().partition(":")
+                if iid:
+                    stacks.append({"id": iid, "qty": int(qty or 1)})
+        if not stacks:
+            row("Carrying", "nothing")
+        for st in stacks:
+            iid = str(st.get("id") or "")
+            d = rpg_items.get(iid)
+            name = st.get("name") or (d.name if d else iid)
+            rows.append(("item", name, (iid, st, f"\u00d7{int(st.get('qty', 1) or 1)}")))
+        if props.get("loot_rolled"):
+            row("Loot", "rolled onto the body")
+        if props.get("merchant"):
+            head("Shop")
+            row("Purse", f"{props.get('merchant_gold', 0)} / "
+                         f"{props.get('merchant_gold_base', props.get('merchant_gold', 0))} gold")
+            for entry in props.get("stock") or []:
+                iid = entry.get("id") if isinstance(entry, dict) else str(entry)
+                d = rpg_items.get(iid)
+                left = ""
+                if isinstance(entry, dict) and "qty" in entry:
+                    left = f"{entry.get('qty')}/{entry.get('restock', entry.get('qty'))}"
+                rows.append(("item", d.name if d else iid, (iid, None, left or "\u221e")))
+
     # -- window --------------------------------------------------------------
     #: Height of the larger S / E / C row.
-    STATS_H = 24
+    STATS_H = 34
+    #: The tab strip, and an inventory row (it carries a 26 px icon).
+    TAB_H = 28
+    ITEM_H = 32
 
     def _row_h(self, kind):
-        return self.STATS_H if kind == "stats" else self.LINE_H
+        if kind == "stats":
+            return self.STATS_H
+        if kind == "tabs":
+            return self.TAB_H + 6
+        if kind == "item":
+            return self.ITEM_H
+        return self.LINE_H + self.HEAD_GAP if kind == "head" else self.LINE_H
 
     def content_height(self):
         self.refresh()
@@ -468,16 +660,83 @@ class ActorInspectorWindow(FloatingWindow):
         if focus is not None and focus["window"] is self:
             clear_focus(self._logic(), glide=False)
 
+    def _set_tab(self, name):
+        def action():
+            self.tab = name
+            self._refreshed = 0.0           # rebuild the rows for the new tab now
+        return action
+
+    def _button(self, painter, rect, text, action, active=False):
+        """A small clickable button (a tab, a Focus) that runs *action*."""
+        from . import hits
+        hot = False
+        if hits.pointer is not None:
+            hot = rect.contains(QPointF(hits.pointer[0], hits.pointer[1]))
+        painter.setPen(QPen(_LINK_HOT if (hot or active) else QColor(90, 96, 110), 1))
+        painter.setBrush(_TAB_ON if active else (_TAB_HOT if hot else _TAB))
+        painter.drawRoundedRect(rect, 4, 4)
+        painter.setBrush(Qt.NoBrush)
+        painter.setFont(self.bold if active else self.font)
+        painter.setPen(_TEXT if active else _MUTED if not hot else _TEXT)
+        painter.drawText(rect, int(Qt.AlignCenter), text)
+        self._links.append((QRectF(rect), action))
+
+    def _draw_tabs(self, painter, x, y, w):
+        gap = 4
+        tw = (w - gap * (len(TABS) - 1)) / len(TABS)
+        for i, name in enumerate(TABS):
+            rect = QRectF(x + i * (tw + gap), y, tw, self.TAB_H)
+            self._button(painter, rect, name, self._set_tab(name), active=(name == self.tab))
+
+    def _draw_item(self, painter, x, ty, w, text, value):
+        """One inventory row: the item's icon, its name, its count."""
+        iid, stack, count = value
+        icon = None
+        if iid:
+            try:
+                from .. import item_icons
+                icon = item_icons.icon_pixmap(iid, stack, 26)
+            except Exception:
+                icon = None
+        if icon is not None and not icon.isNull():
+            painter.drawPixmap(int(x + 14), int(ty + 3), icon)
+        painter.setFont(self.font)
+        painter.setPen(_TEXT if iid else _MUTED)
+        name = text
+        try:
+            from ..rpg import items as rpg_items
+            d = rpg_items.get(iid) if iid else None
+            if text in ("Weapon", "Off hand", "Torch"):
+                name = f"{text}: {d.name if d else (iid or 'none')}"
+        except Exception:
+            pass
+        base = ty + self.ITEM_H - 10
+        painter.drawText(x + 50, base, self._fm.elidedText(name, Qt.ElideRight, w - 130))
+        if count:
+            painter.setPen(_MUTED)
+            painter.drawText(QRectF(x, ty, w - 14, self.ITEM_H),
+                             int(Qt.AlignRight | Qt.AlignVCenter), str(count))
+
     def draw_body(self, painter, x, y, w):
         self.refresh()
         painter.save()
         self._links = []
         focus = focused_place(self._logic())
         mine = focus["key"] if focus is not None and focus["window"] is self else None
-        ty = y + 6
-        label_w = 112
+        ty = y + 8
+        label_w = self.LABEL_W
+        stripe = False
         for kind, text, value in self._rows:
-            base = ty + self.LINE_H - 3
+            if kind == "head":
+                ty += self.HEAD_GAP          # air above each section
+                stripe = False
+            elif kind == "row":
+                # Every other data row faintly shaded, so a label's value is
+                # easy to follow across the gap.
+                if stripe:
+                    painter.fillRect(QRectF(x + 6, ty, w - 12, self.LINE_H), _STRIPE)
+                stripe = not stripe
+            base = ty + self.LINE_H - 6
             if kind == "stats":
                 self._draw_stats(painter, x + 14, ty, value)
                 ty += self.STATS_H
@@ -485,6 +744,29 @@ class ActorInspectorWindow(FloatingWindow):
             if kind == "pause":
                 self._link(painter, x + 8, base, text, self.toggle_pause,
                            active=self.paused)
+                ty += self.LINE_H
+                continue
+            if kind == "tabs":
+                self._draw_tabs(painter, x + 6, ty + 2, w - 12)
+                ty += self.TAB_H + 6
+                continue
+            if kind == "item":
+                self._draw_item(painter, x, ty, w, text, value)
+                ty += self.ITEM_H
+                continue
+            if kind == "anchor":
+                key, pos, entity, label = value
+                painter.setFont(self.font)
+                painter.setPen(_MUTED)
+                painter.drawText(x + 14, base, self._fm.elidedText(text, Qt.ElideRight,
+                                                                    label_w - 8))
+                painter.setPen(_TEXT)
+                painter.drawText(x + 14 + label_w, base, _fmt_pos(pos))
+                self._button(painter, QRectF(x + w - 98, ty + 2, 86, self.LINE_H - 4),
+                             "\u25ce Focus",
+                             (lambda k=key, p=pos, e=entity, l=label:
+                              show_place(self, k, p, l, e)),
+                             active=(mine == key))
                 ty += self.LINE_H
                 continue
             if kind == "back":
@@ -649,7 +931,7 @@ def _draw_beacon(painter, glm, proj, view_m, focus, width, height):
         pw, ph = pixmap.width() * scale, pixmap.height() * scale
         painter.drawPixmap(QRectF(centre.x() - pw / 2, centre.y() - ph - 22, pw, ph),
                            pixmap, QRectF(pixmap.rect()))
-    painter.setFont(QFont("Arial", 9, QFont.Bold))
+    painter.setFont(ui_font(9, True))
     fm = QFontMetrics(painter.font())
     text = str(focus.get("label", ""))
     box = QRectF(centre.x() - fm.horizontalAdvance(text) / 2 - 6, centre.y() + 26,
@@ -688,7 +970,7 @@ def draw_pick_hover(painter, viewport, width, height):
         glow.setAlpha(alpha)
         painter.setPen(QPen(glow, pen))
         painter.drawEllipse(centre, radius, radius)
-    font = QFont("Segoe UI", 9)
+    font = ui_font(9)
     font.setBold(True)
     painter.setFont(font)
     fm = QFontMetrics(font)
@@ -714,10 +996,11 @@ def _draw_leader(painter, win, actor_pt, colour):
         return                       # the window sits over its actor
     faint = QColor(colour)
     faint.setAlpha(200)
-    painter.setPen(QPen(faint, 1.6))
+    painter.setPen(QPen(faint, 5.0, Qt.SolidLine, Qt.RoundCap))
     painter.drawLine(anchor, actor_pt)
+    painter.setPen(Qt.NoPen)
     painter.setBrush(faint)
-    painter.drawEllipse(anchor, 3.5, 3.5)
+    painter.drawEllipse(anchor, 6.0, 6.0)
     painter.setBrush(Qt.NoBrush)
 
 
@@ -764,6 +1047,6 @@ def draw_world_lines(painter, viewport, width, height):
         painter.setPen(QPen(colour, 2))
         painter.drawEllipse(end, 8, 8)
         painter.drawEllipse(end, 2, 2)
-        painter.setFont(QFont("Arial", 8))
+        painter.setFont(ui_font(8))
         painter.drawText(end + QPointF(12, 4), dest[1])
     painter.restore()

@@ -12,6 +12,11 @@ player is (the character, inventory, quests, clock and everything the
 villagers remember) lives in MiniWind's key/value store instead, so every slot
 also carries a copy of that store under the ``"miniwind"`` key, and loading a
 slot puts it back before the session that reads it starts.
+
+Every save is a *delta* save: MiniWind ships one world, so a save holds only
+what differs from it (Big World's per-cell deltas on the overworld; a diff
+against the map file in a cave). The autosave (:mod:`game.autosave`) is one
+more slot, written the same way and offered on the death screen.
 """
 
 from __future__ import annotations
@@ -117,18 +122,48 @@ class PauseActions:
         return [read_slot_header(self.slot_path(slot))
                 for slot in range(1, SLOT_COUNT + 1)]
 
-    def pause_menu_save_slot(self, slot):
-        """Write the live play session, and MiniWind's store, into *slot*."""
+    def _delta_base(self):
+        """The map as shipped, for a delta save to diff against, or None when
+        Big World keeps the deltas itself (the overworld) -- or the map
+        cannot be read, when the save is written whole. Read once per map
+        file, not on every autosave."""
+        logic = self._logic()
+        try:
+            bw = logic.plugins.services.get("bigworld")
+            if (bw is not None and bw.logic is logic and bw.streaming
+                    and bw._started):
+                return None
+        except Exception:
+            pass
+        path = getattr(self.window, 'file_path', None)
+        if not path or not os.path.exists(path):
+            return None
+        key = (path, os.path.getmtime(path))
+        cached = getattr(self, '_base_cache', None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        base = self._console()._base_level()
+        self._base_cache = (key, base)
+        return base
+
+    def save_named(self, name, *, extra=None):
+        """Write the live session and MiniWind's store to ``saves/<name>``
+        as a delta save. *extra* keys go into the file too. True on success,
+        else the reason it failed (a string)."""
         session = self._session()
+        logic = self._logic()
+        console = self._console()
+        if logic is None or console is None or not self._playing():
+            return "not playing"
         if session is not None:
             # Flush the character and clock into the store first.
             session.persist(force=True)
-        path = self.slot_path(slot)
-        before = os.path.getmtime(path) if os.path.exists(path) else None
-        self._console().cmd_save(slot_name(slot))
-        if not os.path.exists(path) or os.path.getmtime(path) == before:
-            self._toast(f"Could not save to slot {slot}.", error=True)
-            return False
+        path = console._resolve_save_path(name)
+        ok, msg = logic.session_runtime.save_session(
+            path, map_name=console._current_map_name(), save_mode='delta',
+            base_level=self._delta_base())
+        if not ok:
+            return msg
         store = getattr(getattr(session, 'store', None), '_name', DEFAULT_STORE)
         try:
             from engine.fileio import write_json_atomic
@@ -136,33 +171,44 @@ class PauseActions:
                 data = json.load(fh)
             data[SAVE_KEY] = {'store': store,
                               'values': _global_store().all(store=store)}
+            data.update(extra or {})
             write_json_atomic(path, data)
         except Exception as exc:
-            self._toast(f"Slot {slot}: the character was not saved ({exc}).",
-                        error=True)
+            return f"the character was not saved ({exc})"
+        return True
+
+    def pause_menu_save_slot(self, slot):
+        """Write the live play session, and MiniWind's store, into *slot*."""
+        done = self.save_named(slot_name(slot))
+        if done is not True:
+            self._toast(f"Could not save to slot {slot}: {done}.", error=True)
             return False
         self._toast(f"Saved to slot {slot}.")
         return True
 
     def pause_menu_load_slot(self, slot):
-        """Restore *slot*: its map, then its character and world.
+        """Restore *slot*: its map, then its character and world."""
+        return self.load_named(slot_name(slot), f"slot {slot}")
+
+    def load_named(self, name, label):
+        """Restore ``saves/<name>``: its map, then its character and world.
 
         The running session is stopped first (it writes itself into the store
-        as it ends), the slot's store replaces that, and the console's load
+        as it ends), the save's store replaces that, and the console's load
         then reloads the save's map, starts play on it (the new session reads
         the character back from the store) and lays the saved world over it.
         """
-        path = self.slot_path(slot)
+        path = self._console()._resolve_save_path(name)
         if not os.path.exists(path):
-            self._toast(f"Slot {slot} is empty.", error=True)
+            self._toast(f"{label.capitalize()} is empty.", error=True)
             return False
         try:
             with open(path, 'r', encoding='utf-8') as fh:
                 block = json.load(fh).get(SAVE_KEY)
         except Exception as exc:
-            self._toast(f"Slot {slot} cannot be read ({exc}).", error=True)
+            self._toast(f"{label.capitalize()} cannot be read ({exc}).", error=True)
             return False
-        with self._busy(f"Loading slot {slot}", "Stopping the game"):
+        with self._busy(f"Loading {label}", "Stopping the game"):
             if isinstance(block, dict) and isinstance(block.get('values'), dict):
                 if self._playing():
                     self.window._exit_play_mode()
@@ -170,8 +216,41 @@ class PauseActions:
                                     block['values'])
             # Without a MiniWind block (a console save) the world alone is
             # restored, onto the running session as the console would.
-            self._console().cmd_load(slot_name(slot))
+            self._console().cmd_load(name)
         return True
+
+    # ------------------------------------------------------------ autosave
+    def autosave(self, reason=""):
+        """Write the autosave (game/autosave.py); a quiet note on the HUD."""
+        from ..autosave import AUTOSAVE_NAME
+        done = self.save_named(AUTOSAVE_NAME, extra={'autosave_reason': str(reason)})
+        session = self._session()
+        if done is True:
+            if session is not None:
+                session.notify("Autosaved", 1.5)
+            return True
+        if session is not None:
+            session.notify(f"Autosave failed: {done}", 3.0)
+        return False
+
+    def autosave_info(self):
+        """``{'map', 'saved_at', 'summary', 'age'}`` of the autosave (*age* in
+        seconds since it was written), or None when there is none."""
+        from ..autosave import AUTOSAVE_NAME
+        console = self._console()
+        if console is None:
+            return None
+        path = console._resolve_save_path(AUTOSAVE_NAME)
+        info = read_slot_header(path)
+        if info is not None:
+            import time
+            info['age'] = max(0.0, time.time() - os.path.getmtime(path))
+        return info
+
+    def restore_autosave(self):
+        """Back to the last autosave (the death screen's choice)."""
+        from ..autosave import AUTOSAVE_NAME
+        return self.load_named(AUTOSAVE_NAME, "the last autosave")
 
     @staticmethod
     def _replace_store(store, values):

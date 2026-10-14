@@ -1,20 +1,24 @@
 """
 The inventory strip: a Minecraft-style bar of item slots along the bottom of
-the screen, shown and hidden with **I**.
+the screen, always shown in free play.
 
 Each slot holds something carried (the slots are kept on the character,
 ``Character.strip``, and synced by ``MiniwindSession.strip_slots``): its icon,
 its count, a gold edge when it is worn or in hand. One slot is *selected* —
 raised and lit, its name shown above the bar.
 
-* click a slot to select it, double-click to use or equip what is in it;
-* drag a slot onto another to rearrange (the two swap);
+* click a slot (or press its number key) to select it; a weapon in it is
+  taken in hand at once -- the main hand, or the off hand when the main hand
+  is full -- and clicked again is put away. Double-click anything else to
+  use or wear it;
+* drag a slot onto another to rearrange (the two swap); out over the world,
+  it is dropped on the floor;
 * drag between the strip and the character window (C), a chest or a body:
   out of the strip into the pack takes it off the strip, onto the body wears
   it, into a container stores it; from any of them onto a slot puts it there
   (taking it first, from a chest or a body).
 
-How many slots: the console's ``inventory_strip_size N``.
+Always nine slots, one per number key.
 
 The strip is a :class:`FloatingWindow` without chrome so the view routes the
 mouse to it like any window; it does not pause the world. As everywhere in
@@ -80,6 +84,17 @@ def height_needed() -> int:
     return CELL + 2 * PAD + NUMBERS + BOTTOM + 34
 
 
+def _is_weapon(iid) -> bool:
+    if not iid:
+        return False
+    try:
+        from ..rpg import items
+        d = items.get(iid)
+    except Exception:
+        return False
+    return d is not None and d.category == items.WEAPON
+
+
 def _bar_rect(rects):
     a, b = rects[0], rects[-1]
     return QRect(a.x() - PAD, a.y() - PAD, b.right() - a.x() + 1 + 2 * PAD,
@@ -97,7 +112,6 @@ class InventoryStrip(FloatingWindow):
         self.window_rect = QRect(0, 0, 0, 0)
         self.session = session
         self.key = "strip"
-        self.selected = 0
         self._rects = []           # slot rects, as last laid out
         self._slots = []           # the stacks in them (or None)
         self._view = (0, 0)
@@ -108,6 +122,16 @@ class InventoryStrip(FloatingWindow):
         self.f_count = fonts.dialogue_font_px(14)
         self.f_name = fonts.dialogue_font_px(16)
         self.f_number = fonts.dialogue_font_px(11)
+
+    @property
+    def selected(self) -> int:
+        """The selected slot: kept on the session, so the number keys (read
+        on the tick) and a click here pick the same one."""
+        return int(getattr(self.session, "strip_selected", 0) or 0)
+
+    @selected.setter
+    def selected(self, index) -> None:
+        self.session.strip_selected = int(index)
 
     # ------------------------------------------------------------ geometry
     def place(self, view_w, view_h):
@@ -138,8 +162,11 @@ class InventoryStrip(FloatingWindow):
             return
         self.selected = max(0, min(self.selected, len(self._rects) - 1))
         worn = set()
+        hands = []
         try:
             worn = {v for v in self.session.game.character.equipment.values() if v}
+            # A weapon is lit by the copy in hand, not every slot of its kind.
+            hands = self.session.strip_hands()
         except Exception:
             pass
         dragged = drag.dragged_id()
@@ -156,7 +183,9 @@ class InventoryStrip(FloatingWindow):
             self._draw_tile(painter, rect, stack, sel, hot, dragged is not None)
             hide = mine and self._press is not None and self._press[1] == i
             if iid and not hide:
-                self._draw_item(painter, rect, iid, stack, iid in worn)
+                held = (hands[i] is not None if _is_weapon(iid) and i < len(hands)
+                        else iid in worn)
+                self._draw_item(painter, rect, iid, stack, held)
             painter.setFont(self.f_number)
             painter.setPen(_EMBER if sel else _NUMBER)
             painter.drawText(QRect(rect.x(), rect.bottom() + 2, rect.width(), NUMBERS),
@@ -340,6 +369,11 @@ class InventoryStrip(FloatingWindow):
         stack = self._slots[i] if i < len(self._slots) else None
         iid = stack.get("id") if stack else None
         if not self._dragging:
+            if _is_weapon(iid):
+                # A weapon goes in hand on the click itself.
+                hits.queue(lambda session: session.select_strip_slot(i))
+                self._last_click = (0.0, None)
+                return True
             now = time.monotonic()
             last_t, last_i = self._last_click
             self._last_click = (now, i)
@@ -353,6 +387,10 @@ class InventoryStrip(FloatingWindow):
         mine = self._slot_at(event.pos())
         target = ("strip", mine) if mine is not None else drag.target_at(
             event.x(), event.y(), exclude=self)
+        if target is None and iid and not drag.over_window(event.x(), event.y()):
+            # Out over the world: on the floor (one copy of a weapon).
+            hits.queue(lambda session: session.drop_item(iid))
+            return True
         if target is None or target == ("strip", i) or not iid:
             return True
         if target[0] == "strip":

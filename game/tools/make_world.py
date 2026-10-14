@@ -167,9 +167,12 @@ def build(base_path: str) -> dict:
     world["things"].append(_npc("Elowen", "merchant", at(60, 140),
                                 home=at(100, 180), work_location=at(60, 140),
                                 merchant=True, merchant_gold=300,
-                                stock=["potion_heal_minor", "potion_heal", "potion_magicka",
-                                       "potion_stamina", "potion_cure", "lockpick", "torch",
-                                       "book_marksman", "book_blade"],
+                                # Healing potions on the shelf, a day's worth:
+                                # bought down, refilled overnight (rpg/daily.py).
+                                stock=[{"id": "potion_heal", "qty": 5, "restock": 5},
+                                       {"id": "potion_heal_minor", "qty": 10, "restock": 10},
+                                       "potion_magicka", "potion_stamina", "potion_cure",
+                                       "lockpick", "torch", "book_marksman", "book_blade"],
                                 dialogue=elowen_dialogue, disposition_base=50))
 
     # Grunn — Fighters Guild, barrow quest + join.
