@@ -73,7 +73,7 @@ def test_the_frame_paints_and_keeps_its_static_layers(qt_app):
     assert len(hud_frame._CACHE) == 1, "the static layers were rebuilt per frame"
     f = hud_frame.layout(1280, 720)
     # The ring is opaque bronze; nothing was drawn at the far right.
-    ring = QtGui.QColor(image.pixel(int(f.cx - (f.R + f.r) / 2.0), int(f.cy)))
-    well = QtGui.QColor(image.pixel(int(f.cx), int(f.cy)))
+    ring = QtGui.QColor.fromRgba(image.pixel(int(f.cx - (f.R + f.r) / 2.0), int(f.cy)))
+    well = QtGui.QColor.fromRgba(image.pixel(int(f.cx), int(f.cy)))
     assert ring.alpha() == 255 and well.alpha() == 255
-    assert QtGui.QColor(image.pixel(1270, 700)).alpha() == 0
+    assert QtGui.QColor.fromRgba(image.pixel(1270, 700)).alpha() == 0
