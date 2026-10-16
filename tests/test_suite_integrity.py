@@ -26,7 +26,7 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 #: The roots pytest.ini lists in `testpaths`.
-TEST_ROOTS = ("tests", "plugins", "player")
+TEST_ROOTS = ("tests", "plugins", "game/tests")
 
 #: Directories pytest.ini excludes via `norecursedirs`.
 SKIP_DIRS = {".git", "build", "dist", "__pycache__", "assets", "maps"}
@@ -192,7 +192,7 @@ LEGACY_SELECTION_NAMES = frozenset({
     "selected_index",
 })
 
-PRODUCTION_SOURCE_ROOTS = ("editor", "engine", "plugins", "player")
+PRODUCTION_SOURCE_ROOTS = ("editor", "engine", "plugins")
 
 
 def _production_python_files():

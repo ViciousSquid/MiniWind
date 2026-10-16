@@ -281,41 +281,6 @@ def test_the_monster_ai_module_does_not_require_the_editor_package():
 
 
 # ---------------------------------------------------------------------------
-# The player's documented camera math was missing
-# ---------------------------------------------------------------------------
-
-def test_the_players_matrix_helpers_provide_the_camera_math_they_document():
-    """``player.render.glmath`` documents "a view/projection matrix"...
-
-    ...and shipped only the 2D overlay half, so the player's own 3D pass had
-    nothing to build a camera from.
-
-    The invariant: the helpers agree with the engine's conventions - Y up, a
-    perspective divide row, and yaw -90 looking down -Z.
-    """
-    numpy = pytest.importorskip("numpy")
-    from player.render import glmath
-
-    projection = glmath.perspective(math.radians(70.0), 16.0 / 9.0, 1.0, 1000.0)
-    assert projection.shape == (4, 4)
-    assert projection[3, 2] == -1.0, (
-        "row 3 of the projection is %s; a perspective matrix needs the -1 that "
-        "performs the divide" % (projection[3],))
-    assert projection[3, 3] == 0.0
-
-    eye = [10.0, 5.0, 3.0]
-    view = glmath.look_at(eye, [10.0, 5.0, -100.0])
-    origin = view @ numpy.array(eye + [1.0], dtype=numpy.float32)
-    assert numpy.allclose(origin[:3], [0, 0, 0], atol=1e-4), (
-        "the eye point maps to %s in view space, not the origin" % (origin[:3],))
-
-    front = glmath.front_from_angles(-90.0, 0.0)
-    assert numpy.allclose(front, [0.0, 0.0, -1.0], atol=1e-5), (
-        "yaw -90 should look down -Z (the engine default); it points %s"
-        % (front,))
-
-
-# ---------------------------------------------------------------------------
 # A test that needed a GPU to parse a text file
 # ---------------------------------------------------------------------------
 

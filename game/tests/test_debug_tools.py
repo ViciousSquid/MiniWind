@@ -8,6 +8,8 @@ import pytest
 
 pytest.importorskip("PyQt5")
 
+pytestmark = pytest.mark.qt
+
 from game import host as game_host
 from game import music
 from game.ui import hits, inspector

@@ -226,3 +226,26 @@ def test_crossfire_skips_a_monster_killed_earlier_in_the_tick():
         assert got is expected, (trial, got and got.name, expected and expected.name)
         checked += 1
     assert checked > 20
+
+
+@pytest.mark.parametrize("stale", [(), (1,), (1, 2), (1, 2, 3, 4)])
+@pytest.mark.parametrize("scalar", [False, True])
+def test_crossfire_keeps_row_ties_and_skips_stale_hits(stale, scalar, monkeypatch):
+    from engine.monster_table import MonsterTable
+    monkeypatch.setattr(MonsterTable, 'CROSSFIRE_SCALAR_MAX_ROWS', 8 if scalar else 0)
+    ai, logic = _world(5, dense=True, teams=True, count=5)
+    monsters = logic.world_runtime.monster_things
+    for row, monster in enumerate(monsters):
+        monster.pos = [(-200, 200, 200, 400, 600)[row], 0, 0]
+        monster.properties.update(team='shooter' if row == 0 else 'enemy',
+                                  dead=False, hidden=False)
+    table = ai.table
+    table.gather(monsters)
+    start, end = (0., 64., 0.), (1000., 64., 0.)
+    assert table.crossfire(0, start, end) is monsters[1]
+    for row in stale:
+        monsters[row].properties['dead' if row % 2 else 'hidden'] = True
+    expected = next((m for row, m in enumerate(monsters[1:], 1)
+                     if row not in stale), None)
+    assert table.crossfire(0, start, end) is expected
+    assert table.crossfire(0, start, end) is expected

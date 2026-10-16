@@ -8,6 +8,8 @@ import pytest
 
 pytest.importorskip("PyQt5", reason="Prop is an editor-tier Thing")
 
+pytestmark = pytest.mark.qt
+
 from engine.change_journal import JOURNAL                 # noqa: E402
 from engine.prop_entity import Prop                       # noqa: E402
 

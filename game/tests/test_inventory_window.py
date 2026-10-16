@@ -14,6 +14,8 @@ import pytest
 
 pytest.importorskip("PyQt5")
 
+pytestmark = pytest.mark.qt
+
 from ..rpg import items
 from ..rpg import equipment as eq
 from ..rpg.game_state import GameState
@@ -150,9 +152,12 @@ def test_heavy_armour_spends_your_agility_bonus():
 def test_medium_armour_lets_two_points_of_agility_through():
     s = _session("chain_shirt")
     c = s.game.character
-    c.attrs["agility"] = 90
     eq.equip(c, "chain_shirt")
-    assert eq.armour_class(c) == eq.BASE_AC + int(eq.armor_rating(c) // eq.RATING_PER_AC) + 2
+    assert eq.armor_class_worn(c) == eq.MEDIUM
+    c.attrs["agility"] = 40
+    without_agility = eq.armour_class(c)
+    c.attrs["agility"] = 90
+    assert eq.armour_class(c) == without_agility + 2
 
 
 def test_a_ring_of_protection_adds_to_armour_class():

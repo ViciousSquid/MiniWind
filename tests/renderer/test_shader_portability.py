@@ -13,8 +13,8 @@ Two layers of guard:
   like a GLSL built-in, or use an identifier that later GLSL versions (or
   GLSL ES) reserve - ``patch``, ``sample``, ``centroid`` and friends.
 * When ``glslangValidator`` (the Khronos reference compiler) is installed,
-  every shader is compiled with it as desktop GLSL 3.30 and, through the
-  player's translator, as GLSL ES 3.00. It reproduces the Intel error above.
+  every shader is compiled as desktop GLSL 3.30, including light-UBO variants.
+  It reproduces the Intel error above.
 """
 
 import os
@@ -128,13 +128,6 @@ def _variants(name, src):
     ubo = shaders.light_ubo_source(src)
     if ubo != src:
         out['desktop+light-ubo'] = ubo
-    try:
-        from player import gles_shaders
-    except Exception:           # the player package is optional here
-        return out
-    stage = 'vertex' if name.endswith('.vert') else 'fragment'
-    for key in list(out):
-        out[key + ' (GLSL ES)'] = gles_shaders.translate(out[key], stage)
     return out
 
 

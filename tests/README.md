@@ -2,7 +2,7 @@
 
 One suite, four tiers, selected by marker. Everything is run with `pytest` from
 the repository root; `pytest.ini` already points it at the three roots that hold
-tests (`tests/`, `plugins/`, `player/`), so no path arguments are needed.
+tests (`tests/`, `plugins/`, `game/tests/`), so no path arguments are needed.
 
 ```bash
 pip install -r requirements.txt pytest
@@ -87,9 +87,10 @@ handful of tests that use real threads and real time.
 | `tests/performance/` | Work-per-frame guards and the renderer benchmark |
 | `tests/helpers/` | Shared factories and fakes (not collected) |
 
-The plugin and player packages keep their own tests next to the code
-(`plugins/*/tests/`, `player/tests/`) because both are exported as
-self-contained packages; `pytest.ini` includes them in every run.
+The plugins and first-party game keep their own tests next to the code
+(`plugins/*/tests/`, `game/tests/`); `pytest.ini` includes them in every run.
+The standalone `player` package has been removed. Export tests inspect the ZIP
+format directly, and mounted-package tests exercise `engine.asset_archives`.
 
 ## Conventions
 

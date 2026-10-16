@@ -30,6 +30,8 @@ Nothing here decides behaviour; :meth:`engine.monster_ai.MonsterAI.update` does.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 #: What each row did this tick (``mode`` column; Debug Tables names them).
@@ -77,6 +79,9 @@ _COLUMNS = (
 
 class MonsterTable:
     """Dense columns over the live monster list, rebuilt as it changes."""
+
+    # The crossover is measured by test_crossfire_threshold_benchmark.py.
+    CROSSFIRE_SCALAR_MAX_ROWS = 16
 
     __slots__ = tuple(name for name, *_ in _COLUMNS) + (
         'count', 'generation', 'monsters', 'props', 'row_of', 'slot_of_id',
@@ -230,6 +235,8 @@ class MonsterTable:
         tick.)
         """
         n = self.count
+        if n <= self.CROSSFIRE_SCALAR_MAX_ROWS:
+            return self._crossfire_scalar(shooter, ray_start, ray_end, radius)
         start = np.asarray(ray_start, dtype=np.float64)
         direction = np.asarray(ray_end, dtype=np.float64) - start
         length = float(np.sqrt(direction @ direction))
@@ -250,7 +257,7 @@ class MonsterTable:
         rows = np.flatnonzero(candidates)
         if not len(rows):
             return None
-        centre = self.pos[rows].copy()
+        centre = self.pos[rows]   # advanced indexing already makes a copy
         centre[:, 1] += 64.0
         oc = start - centre
         b = 2.0 * (oc @ direction)
@@ -259,12 +266,68 @@ class MonsterTable:
         t = np.full(len(rows), np.inf)
         hit = disc >= 0.0
         t[hit] = (-b[hit] - np.sqrt(disc[hit])) / 2.0
-        entered = np.flatnonzero((t > 0.0) & (t < length))
-        # Nearest entry first, earliest row on a tie; almost always the first
-        # candidate is still alive and the loop runs once.
-        for i in entered[np.lexsort((rows[entered], t[entered]))]:
+        t[~((t > 0.0) & (t < length))] = np.inf
+        # Only the nearest entry is needed, not a sorted list of every hit.
+        # rows is ascending, so argmin also preserves the earliest-row tie.
+        # Re-select only when a prior shot killed or hid the cached candidate.
+        i = int(np.argmin(t))
+        if not np.isfinite(t[i]):
+            return None
+        row = int(rows[i])
+        p = props[row]
+        if not (p.get('dead', False) or p.get('hidden', False)):
+            return self.monsters[row]
+        # A stale live mask is unusual. Sort once in that case rather than
+        # repeatedly scanning the distances when many rows died this tick.
+        for i in np.argsort(t, kind='stable'):
+            if not np.isfinite(t[i]):
+                break
             row = int(rows[i])
             p = props[row]
+            if p.get('dead', False) or p.get('hidden', False):
+                live[row] = False
+                continue
+            return self.monsters[row]
+        return None
+
+    def _crossfire_scalar(self, shooter, ray_start, ray_end, radius):
+        """Avoid NumPy dispatch and temporary arrays for a handful of rows."""
+        sx, sy, sz = map(float, ray_start)
+        dx = float(ray_end[0]) - sx
+        dy = float(ray_end[1]) - sy
+        dz = float(ray_end[2]) - sz
+        length = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if length < 1.0 or not self.count:
+            return None
+        dx, dy, dz = dx / length, dy / length, dz / length
+        live = self._live
+        if live is None:
+            live = self._live = np.fromiter(
+                (not (p.get('dead', False) or p.get('hidden', False))
+                 for p in self.props), dtype=bool, count=self.count)
+        team = self.team
+        shooter_team = int(team[shooter])
+        hits = []
+        for row in range(self.count):
+            if row == shooter or not live[row]:
+                continue
+            if shooter_team >= 0 and team[row] == shooter_team:
+                continue
+            centre = self.pos[row]
+            x = sx - float(centre[0])
+            y = sy - (float(centre[1]) + 64.0)
+            z = sz - float(centre[2])
+            b = 2.0 * (x * dx + y * dy + z * dz)
+            c = x * x + y * y + z * z - radius * radius
+            disc = b * b - 4.0 * c
+            if disc >= 0.0:
+                t = (-b - math.sqrt(disc)) / 2.0
+                if 0.0 < t < length:
+                    hits.append((t, row))
+        # At most a handful of hits; tuple order also settles ties by row.
+        hits.sort()
+        for _, row in hits:
+            p = self.props[row]
             if p.get('dead', False) or p.get('hidden', False):
                 live[row] = False
                 continue

@@ -311,39 +311,6 @@ def test_play_tells_the_logic_thread_where_a_played_package_is(main_window, tmp_
     window._exit_play_mode()
 
 
-def test_an_exported_packages_cutscene_plays_from_the_package(main_window, tmp_path):
-    """Export a map whose LogicCamera names a cutscene, play the package on an
-    editor that has no such cutscene, and the cutscene still resolves."""
-    from editor.package_exporter import PackageExporter
-
-    project = tmp_path / "project"
-    cutscene = {"version": 2, "name": "intro", "actors": [],
-                "camera": [{"time": 0.0, "pos": [0, 0, 0], "yaw": 0, "pitch": 0}]}
-    _write_map(project / "cutscenes" / "intro.json", cutscene)
-    level = json.loads(json.dumps(PLAYABLE))
-    level["things"].append({"type": "logic_camera", "pos": [0, 0, 0], "properties": {
-        "type": "logic_camera", "cutscene_file": "cutscenes/intro.json"}})
-    current = _write_map(project / "maps" / "start.json", level)
-    pak = tmp_path / "game.fiopak"
-    ok, errors = PackageExporter(None, str(project)).export(
-        str(pak), {"title": "T"}, current)
-    assert ok and errors == [], errors
-
-    window = main_window
-    window.config["Kiosk"] = {"launch_in_editor": "true"}
-    window.play_package_from_path(str(pak))
-    window.enter_play_mode()
-    try:
-        runtime = window.view_3d.logic_thread.cutscene_runtime
-        found = runtime._cutscene_file_path("cutscenes/intro.json")
-        assert found is not None
-        assert found.startswith(os.path.realpath(window._package_temp_dir))
-        assert runtime._load_cutscene_file("cutscenes/intro.json")["name"] == "intro"
-    finally:
-        window._exit_play_mode()
-        window._discard_package_temp_dir()
-
-
 def test_the_cutscene_lookup_prefers_the_played_package(main_window, tmp_path,
                                                         monkeypatch):
     logic = main_window.view_3d.logic_thread

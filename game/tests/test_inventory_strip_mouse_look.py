@@ -6,6 +6,8 @@ import pytest
 
 pytest.importorskip("PyQt5", reason="QtGameView requires PyQt5")
 
+pytestmark = pytest.mark.qt
+
 from engine.qt_game_view import _window_wants_cursor
 from game.ui import hits
 
@@ -71,7 +73,7 @@ def test_console_suppresses_floating_window_cursor_claims():
     assert not _window_wants_cursor(view)
 
 
-def test_game_pointer_is_requested_only_for_character_sheet(monkeypatch):
+def test_game_pointer_is_requested_only_for_character_sheet(monkeypatch, main_window):
     monkeypatch.setattr(hits, "has_targets", lambda: True)
 
     def pointer_for(*, screen=None, dialogue=None, needs_creation=False):
@@ -83,10 +85,8 @@ def test_game_pointer_is_requested_only_for_character_sheet(monkeypatch):
             dialogue=dialogue,
             needs_char_creation=needs_creation,
         )
-        view = types.SimpleNamespace(
-            logic_thread=types.SimpleNamespace(_miniwind=session),
-            update=lambda: None,
-        )
+        view = main_window.view_3d
+        monkeypatch.setattr(view.logic_thread, '_miniwind', session, raising=False)
         return hits.GamePointer(view).wants_pointer()
 
     assert pointer_for(screen="character")
@@ -98,7 +98,7 @@ def test_game_pointer_is_requested_only_for_character_sheet(monkeypatch):
     assert pointer_for(needs_creation=True)
 
 
-def test_closing_trade_screen_releases_pointer_ownership(monkeypatch):
+def test_closing_trade_screen_releases_pointer_ownership(monkeypatch, main_window):
     monkeypatch.setattr(hits, "has_targets", lambda: True)
     session = types.SimpleNamespace(
         game=types.SimpleNamespace(character=types.SimpleNamespace(is_dead=False)),
@@ -106,10 +106,8 @@ def test_closing_trade_screen_releases_pointer_ownership(monkeypatch):
         dialogue=None,
         needs_char_creation=False,
     )
-    view = types.SimpleNamespace(
-        logic_thread=types.SimpleNamespace(_miniwind=session),
-        update=lambda: None,
-    )
+    view = main_window.view_3d
+    monkeypatch.setattr(view.logic_thread, '_miniwind', session, raising=False)
     pointer = hits.GamePointer(view)
 
     assert pointer.wants_pointer()
