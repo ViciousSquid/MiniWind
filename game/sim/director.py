@@ -216,6 +216,7 @@ class Director:
         # The victim always knows, witnesses or not — unless the event was
         # their death, which is the one thing nobody gets to remember.
         if (target_thing is not None and event.target
+                and event.data.get("victim_knows", True)
                 and event.target != event.actor
                 and not _props(target_thing).get("dead")):
             fact = knowledge.fact_from_event(event, 1.0, knowledge.SOURCE_WITNESSED)

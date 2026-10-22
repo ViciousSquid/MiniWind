@@ -91,6 +91,18 @@ class LogicCamera:
             )
         return self._camera_mode_overhead
 
+    @property
+    def overhead_angle(self) -> float:
+        """Elevation above the ground plane: 90 is straight down."""
+        return 90.0 - float(self.overhead_tilt)
+
+    def set_overhead_angle(self, degrees) -> float:
+        angle = float(degrees)
+        if not math.isfinite(angle) or not 1.0 <= angle <= 90.0:
+            raise ValueError("overheadangle must be between 1 and 90 degrees")
+        self.overhead_tilt = 90.0 - angle
+        return angle
+
     def effective_overhead_height(self) -> float:
         """Return the camera height after applying an optional ceiling."""
         height = float(self.overhead_height)

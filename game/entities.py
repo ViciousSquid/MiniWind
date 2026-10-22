@@ -610,7 +610,9 @@ def _init_container(self):
     # editor's Contents tab, separate from the player's inventory.
     p.setdefault("inventory", [])
     p.setdefault("use_radius", 120.0)
-    p.setdefault("locked", False)          # reserved: a future key/lockpick gate
+    p.setdefault("locked", False)
+    p.setdefault("lock_difficulty", "novice")
+    p.setdefault("lock_key", "")
     p["custom_idle"] = container_sprite(p.get("container_kind", "chest"))
 
 

@@ -72,6 +72,12 @@ class LogicPlayer:
         if not player:
             return
 
+        from .game_input import modal_input_active
+        modal = modal_input_active(logic)
+        if modal:
+            keys = frozenset()
+            mouse_dx = mouse_dy = 0
+
         sensitivity = 0.002
         player.angle -= mouse_dx * sensitivity
         player.pitch -= mouse_dy * sensitivity
@@ -80,7 +86,7 @@ class LogicPlayer:
         # Pointer aiming with an overhead camera: the view publishes the
         # heading under the pointer each frame; None leaves yaw to mouse look.
         aim_yaw = logic.game_state.get_aim_yaw()
-        if aim_yaw is not None:
+        if aim_yaw is not None and not modal:
             player.angle = aim_yaw
 
         move_dir = glm.vec3(0)

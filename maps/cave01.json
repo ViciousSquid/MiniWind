@@ -2322,7 +2322,7 @@
     "name": "Chest_cave01",
     "id": "b941c205-88ca-456f-afde-e0be500f599d",
     "container_kind": "chest",
-    "display_name": "Chest",
+    "display_name": "Wolfmaw Lockbox",
     "inventory": [
      {
       "id": "gold",
@@ -2362,8 +2362,9 @@
      }
     ],
     "use_radius": 128.0,
-    "locked": false,
-    "custom_idle": "assets/sprites/miniwind/container_chest.png"
+    "locked": true,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "lock_difficulty": "novice"
    },
    "io_connections": []
   },
@@ -2434,6 +2435,26 @@
     "id": "4b8a49af-b576-4fee-b751-bd77fa5c8bb2",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "spellbook",
+   "pos": [
+    220.0,
+    48.0,
+    1350.0
+   ],
+   "properties": {
+    "type": "spellbook",
+    "name": "Knock_Primer",
+    "id": "52e67f30-3d0e-5c33-8e27-8770adaf1f24",
+    "title": "The Patient Locksmith",
+    "spell": "knock",
+    "cover": "green",
+    "pickup_radius": 70.0,
+    "respawn": false,
+    "custom_idle": "assets/sprites/miniwind/spellbook_green.png"
    },
    "io_connections": []
   }

@@ -622,6 +622,14 @@ class LogicThread(threading.Thread):
         keys = self.game_state.get_keys()
         mouse_dx, mouse_dy = self.game_state.consume_mouse_delta()
         use_key = self.game_state.consume_use_key()
+        # A game can own player controls without freezing the world (e.g.
+        # picking a lock while patrols and physics keep running).
+        from .game_input import modal_input_active
+        modal = modal_input_active(self)
+        if modal:
+            keys = frozenset()
+            mouse_dx = mouse_dy = 0
+            use_key = False
 
         # Player movement/physics live in LogicPlayer; this method retains
         # authoritative tick ordering and the existing consumed-input surface.
@@ -665,10 +673,11 @@ class LogicThread(threading.Thread):
         
         # Weapon slot keys, then shooting with whatever is now in hand.
         for slot in self.game_state.consume_weapon_slots():
-            self.combat_runtime.select_slot(slot)
-        if self.game_state.consume_shot():
+            if not modal:
+                self.combat_runtime.select_slot(slot)
+        if self.game_state.consume_shot() and not modal:
             self.combat_runtime._handle_shooting()
-        if self.game_state.consume_secondary_shot():
+        if self.game_state.consume_secondary_shot() and not modal:
             self.combat_runtime._handle_shooting(secondary=True)
             
         combat_runtime = self.combat_runtime

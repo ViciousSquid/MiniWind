@@ -18,6 +18,7 @@ test cannot pass because the thing it watches would not have moved anyway.
 import copy
 import threading
 import time
+from types import SimpleNamespace
 
 import glm
 import numpy as np
@@ -141,6 +142,28 @@ def test_an_unpaused_tick_moves_the_player(playing):
     playing.game_state.set_keys({KEY_W})
     _ticks(playing, 20)
     assert glm.distance(playing.player_runtime.player.pos, start) > 1.0
+
+
+def test_live_modal_controls_stay_out_of_movement_look_and_weapons(playing, monkeypatch):
+    """A real-time game menu owns controls while engine/world work continues."""
+    playing.game_session = SimpleNamespace(modal_input_active=lambda: True)
+    player = playing.player_runtime.player
+    playing.game_state.set_keys({KEY_W, 0x20})  # walk + jump / tension
+    playing.game_state.set_mouse_delta(80.0, 30.0)
+    playing.game_state.set_aim(yaw=2.0)
+    playing.game_state.queue_shot()
+    playing.game_state.queue_secondary_shot()
+    start, angle = glm.vec3(player.pos), player.angle
+    timers = []
+    monkeypatch.setattr(playing.timing_runtime, "update_logic_timers", lambda dt: timers.append(dt))
+    _ticks(playing, 4)
+    assert timers == [TICK] * 4
+    assert player.pos.x == start.x and player.pos.z == start.z
+    assert player.angle == angle
+    assert not playing.combat_runtime.muzzle_flash_active
+    assert not playing.game_state.consume_shot()
+    assert not playing.game_state.consume_secondary_shot()
+    assert not playing.session_runtime.world_paused
 
 
 def test_a_paused_tick_does_not_move_the_player(playing):

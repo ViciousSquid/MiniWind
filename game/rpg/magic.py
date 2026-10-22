@@ -147,6 +147,10 @@ register(Spell("cure_disease_spell", "Cure Disease", sk.RESTORATION, 30, SELF,
                [{"kind": "cure_disease", "magnitude": 1, "duration": 0}],
                "Purge disease from your body.", element="magic"))
 # Alteration
+register(Spell("knock", "Knock", sk.ALTERATION, 45, TOUCH,
+               [{"kind": "knock", "magnitude": 1, "duration": 0}],
+               "Open a nearby locked container. Frees even a lock jammed by a sheared pick.",
+               color=[133, 203, 187]))
 register(Spell("sp_shield", "Shield", sk.ALTERATION, 20, SELF,
                [{"kind": "shield", "magnitude": 20, "duration": 30}],
                "A protective ward.", element="magic"))

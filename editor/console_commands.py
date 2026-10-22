@@ -113,6 +113,7 @@ class ConsoleCommandHandler:
 
             'cam': self.cmd_cam,
             'camera': self.cmd_cam,
+            'overheadangle': self.cmd_overheadangle,
 
             'noclip': self.cmd_noclip,
             'god': self.cmd_god,
@@ -1025,6 +1026,7 @@ entity to drive them from the I/O system.</i><br>
 <b style="color:orange;">phys_reset</b> — Restore physics defaults<br>
 <b style="color:orange;">setpos</b>{sep}<b style="color:orange;">teleport</b> x y z<br>
 <b style="color:orange;">cam</b>{sep}<b style="color:orange;">camera</b> [overhead|fp] [seconds] — Tween between overhead &amp; first person (e.g. 'cam 2')<br>
+<b style="color:orange;">overheadangle</b> [1–90] — Overhead elevation in degrees; 90 = straight down, 45 = angled view. No value shows the current angle.<br>
 <b style="color:cyan;">=== Portals ===</b><br>
 <b style="color:orange;">portal_list</b> — List all portals and their links<br>
 <b style="color:orange;">portal_create</b> &lt;name1&gt; &lt;name2&gt; [x y z] — Create a linked portal pair<br>
@@ -2112,6 +2114,25 @@ entity to drive them from the I/O system.</i><br>
         else:
             self.main_window.show_toast(f"Camera → {new_mode}")
             debug_log("Info", f"Camera switched to {new_mode}")
+
+    def cmd_overheadangle(self, args):
+        """overheadangle [degrees]: live elevation, default 90 (straight down)."""
+        if not self._require_play_mode("overheadangle"):
+            return
+        view = self.main_window.view_3d
+        camera = view.logic_thread.camera
+        value = (args or "").strip()
+        if not value:
+            debug_log("Info", f"overheadangle = {camera.overhead_angle:g}° (default 90°)")
+            return
+        try:
+            angle = camera.set_overhead_angle(value)
+        except (TypeError, ValueError, OverflowError):
+            debug_log("Warning", "Usage: overheadangle [1–90] (90 = straight down)")
+            return
+        view.update()
+        self.main_window.show_toast(f"Overhead angle: {angle:g}°")
+        debug_log("Info", f"overheadangle = {angle:g}°")
 
     def cmd_noclip(self, args):
         if not self._require_play_mode("noclip"):
