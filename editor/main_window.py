@@ -3641,9 +3641,16 @@ class MainWindow(QMainWindow):
                 self.view_3d.return_camera_to_player()
                 return
 
+            # With the player dead, a game's death menu takes the keys it uses.
+            if (self.view_3d.death_menu is not None
+                    and self.view_3d.game_state.published('player_dead', False)
+                    and self.view_3d.handle_pause_menu_key(event)):
+                return
+
             if event.key() == Qt.Key_Escape:
                 # Esc pauses (the pause menu's Exit leaves Play); with the
-                # player dead there is nothing to pause, and Esc leaves.
+                # player dead there is nothing to pause, and Esc leaves --
+                # unless a game's death menu (above) took it.
                 if not self.view_3d.handle_pause_menu_key(event):
                     self.leave_play_mode_from_escape()
                 return

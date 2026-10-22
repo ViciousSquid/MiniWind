@@ -18,6 +18,8 @@ So the objects say when they change. There are two kinds of change:
   being triggered). Whoever writes such a value calls :func:`touch`.
 * :data:`VISIBILITY` -- only the live ``hidden`` flag, written by a streaming
   layer that parks the object; ``touch(obj, VISIBILITY)``.
+* :data:`FACING` -- only an actor's heading (its transient ``_facing``), which
+  turns a top-down head sprite; ``touch(obj, FACING)``.
 
 Editor transactions still go through
 :meth:`editor.editor_state.EditorState.mark_world_changed`; this journal is
@@ -48,6 +50,10 @@ STATE = 2
 #: row's textures, class and materials again cost ~180 ms per 10 000 rows, per
 #: render buffer.
 VISIBILITY = 4
+#: Only an actor's heading (``properties['_facing']``) changed. Like
+#: VISIBILITY, one warm value the tables re-read without resolving the row:
+#: whoever turns an actor near the player says so every tick it turns.
+FACING = 8
 
 #: Pending entries a subscriber may accumulate before it is told to refresh
 #: every row instead. This only bounds the memory of a subscriber that stopped

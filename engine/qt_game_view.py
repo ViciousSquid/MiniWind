@@ -406,6 +406,11 @@ class QtGameView(QOpenGLWidget):
         #: Set by a game layer that paints its own death screen (through the
         #: render.overlay hook), so the stock "DIED" screen stays off.
         self.game_death_screen = False
+        #: A game layer's death screen menu, asked first about every key
+        #: while the player is dead. Duck-typed: ``handle_key(event) -> bool``
+        #: (True when it used the key). With one installed, Esc on death no
+        #: longer leaves Play: the menu says what happens next.
+        self.death_menu = None
         #: Set by a game layer that draws its own HUD through the
         #: render.overlay hook, every frame of its play session, so the stock
         #: HUD does not overlap it. Each session starts with the stock HUD.
@@ -3157,8 +3162,9 @@ class QtGameView(QOpenGLWidget):
     def handle_pause_menu_key(self, event) -> bool:
         """Pause-menu keys in Play. True when the key was used.
 
-        Esc opens the menu -- unless the player is dead, when it leaves Play
-        as before -- and goes back a page (closing it from the first).
+        Esc opens the menu -- unless the player is dead, when a game's
+        :attr:`death_menu` takes the keys it uses, or else Esc leaves Play as
+        before -- and goes back a page (closing it from the first).
         Up/Down or W/S choose, Left/Right or A/D move a slider, Enter, Space
         or E activates. Every other key is swallowed while the menu is open.
         """
@@ -3167,6 +3173,13 @@ class QtGameView(QOpenGLWidget):
             self.play_menu.handle_key(event)
             return True
         menu = self.pause_menu
+        if (menu is None and self.death_menu is not None
+                and self.game_state.published('player_dead', False)):
+            try:
+                if self.death_menu.handle_key(event):
+                    return True
+            except Exception as exc:
+                debug_log("Error", f"death_menu.handle_key failed: {exc}")
         if menu is None:
             if key == Qt.Key_Escape and not event.isAutoRepeat() \
                     and not self.game_state.published('player_dead', False):

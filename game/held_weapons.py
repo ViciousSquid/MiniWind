@@ -32,10 +32,14 @@ SIDEARMS = ("iron_dagger", "iron_shortsword")
 #: Fighters with a one-handed blade in hand who carry a second for the other
 #: hand, by faction and by role (the larger chance wins), and how often that
 #: second weapon is a twin of the first.
-DUAL_WIELD_FACTIONS = {"bandits": 0.3, "mercenaries": 0.3, "adventurers": 0.25,
-                       "guards": 0.12}
-DUAL_WIELD_ROLES = {"bandit": 0.3, "mercenary": 0.3, "adventurer": 0.25,
-                    "duelist": 0.9, "guard": 0.12}
+DUAL_WIELD_FACTIONS = {"bandits": 0.45, "mercenaries": 0.45, "adventurers": 0.4,
+                       "guards": 0.25}
+DUAL_WIELD_ROLES = {"bandit": 0.45, "mercenary": 0.45, "adventurer": 0.4,
+                    "duelist": 0.9, "guard": 0.25, "warrior": 0.4,
+                    "thief": 0.5, "pirate": 0.5, "assassin": 0.6}
+#: Any other armed fighter with a one-handed blade, of no faction or role
+#: above, still sometimes carries a second.
+DUAL_WIELD_ANY = 0.15
 TWIN_CHANCE = 0.5
 
 #: Held weapons are drawn for actors within this distance of the player.
@@ -106,7 +110,8 @@ def _arm_off_hand(p, role, team, equipped, rng, make_stack) -> bool:
             or main.get("kind") != items.KIND_MELEE:
         return False
     chance = max(DUAL_WIELD_FACTIONS.get(team, 0.0),
-                 max((c for r, c in DUAL_WIELD_ROLES.items() if r in role), default=0.0))
+                 max((c for r, c in DUAL_WIELD_ROLES.items() if r in role), default=0.0),
+                 DUAL_WIELD_ANY)
     if chance <= 0.0 or rng.random() >= chance:
         return False
     off = equipped if rng.random() < TWIN_CHANCE else SIDEARMS[int(rng.random() * len(SIDEARMS))]
@@ -133,13 +138,28 @@ class HeldWeapons:
     def __init__(self, session):
         self.session = session
         self._last = {}               # id(actor) -> (x, z)
+        #: id(actor) -> the heading last told to the renderer, so a head
+        #: sprite turns with its actor (engine.change_journal.FACING).
+        self._published = {}
+        #: id(actor) -> its weapons' springs (game/weapon_sway.py): an NPC's
+        #: blades trail and overshoot a turn just as the player's do.
+        self._sway = {}
+        self._clock = None
 
     def update(self) -> None:
-        """Facing for every actor near the player."""
+        """Facing for every actor near the player, eased into each turn and
+        handed on to the renderer, which turns the actor's head with it."""
+        import time
+        from engine.change_journal import FACING, touch
+        from .facing import face_heading
         s = self.session
         ppos = s._player_pos()
         if ppos is None:
             return
+        now = time.perf_counter()
+        delta = None if self._clock is None else max(0.0, min(0.1, now - self._clock))
+        self._clock = now
+        published = {}
         r2 = DRAW_RADIUS * DRAW_RADIUS
         actors = s._actors
         cached = getattr(s, "_actors_by_id", None)
@@ -167,10 +187,22 @@ class HeldWeapons:
                 px, pz = self._last.get(key, (x, z))
                 fx, fz = x - px, z - pz
                 if fx * fx + fz * fz < TURN_MIN_STEP * TURN_MIN_STEP:
-                    continue
+                    fx = fz = 0.0
             if fx or fz:
-                p["_facing"] = math.atan2(fx, fz)
+                face_heading(p, fx, fz, delta)
+            # Whoever turned it (this, the schedule mover, a bow's aim), the
+            # head sprite turns too.
+            facing = p.get("_facing")
+            if facing is not None:
+                published[key] = facing
+                if self._published.get(key) != facing:
+                    touch(t, FACING)
         self._last = last
+        self._published = published
+        # overhead() (UI thread) adds springs; drop those of actors gone out
+        # of range, from a copy of the keys.
+        for key in [k for k in list(self._sway) if k not in last]:
+            self._sway.pop(key, None)
 
     def overhead(self):
         """``[(pos, facing, weapon_id, handed, attacking, size)]`` for the
@@ -181,6 +213,9 @@ class HeldWeapons:
             return []
         r2 = DRAW_RADIUS * DRAW_RADIUS
         out = []
+        import time
+        from .weapon_sway import WeaponSway
+        now = time.perf_counter()
         for t in s._actors:
             p = t.properties
             if p.get("dead") or p.get("hidden") or p.get("_bw_parked_hidden") \
@@ -196,8 +231,14 @@ class HeldWeapons:
             facing = float(p.get("_facing", 0.0))
             weapon = p.get("_active_weapon") or p.get("equipped_weapon") or ""
             attacking = bool(p.get("is_shooting") or p.get("_bow_charge") is not None)
+            # Each hand trails a turn on its own spring, as the player's do.
+            sway = self._sway.get(id(t))
+            if sway is None:
+                sway = self._sway[id(t)] = WeaponSway()
+            main_facing = facing + sway.offset("main", facing, now)
+            off_facing = facing + sway.offset("off", facing, now)
             if weapon:
-                out.append(((x, y, z), facing, weapon, handed, attacking, size))
+                out.append(((x, y, z), main_facing, weapon, handed, attacking, size))
             # The other hand: a lit torch (the runtime marks who holds one:
             # game/runtime.py, _update_torch_lights), else a second weapon.
             # A two-handed weapon in hand (a bow) leaves neither.
@@ -205,7 +246,7 @@ class HeldWeapons:
             if off_item and not two_handed(weapon):
                 other = "left" if handed == "right" else "right"
                 striking = bool(p.get("_offhand_anim", 0.0)) and not p.get("_torch_lit")
-                out.append(((x, y, z), facing, off_item, other, striking, size))
+                out.append(((x, y, z), off_facing, off_item, other, striking, size))
         return out
 
 
