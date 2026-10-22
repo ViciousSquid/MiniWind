@@ -586,11 +586,12 @@ class MiniwindSession:
         #: ``((x, y, z), (vx, vy, vz), sprite)`` per arrow in flight, as last
         #: published for the renderer (read by game/ui/arrows.py).
         self.arrows_in_flight = ()
-        #: ``(start, end, loosed_at)`` of each arrow's flight so far -- from
-        #: where it was loosed to where it is, or to what it hit -- drawn as a
-        #: fading dotted line for a moment after it is loosed (game/ui/arrows.py).
+        #: ``(start, end, loosed_at, reached_at)`` of each arrow's flight so
+        #: far -- from where it was loosed to where it is (reached at
+        #: *reached_at*), or to what it hit -- drawn as a dotted trail behind
+        #: it, each dot fading as the arrow leaves it (game/ui/arrows.py).
         self.arrow_paths = ()
-        #: projectile tag -> ``[start, end, loosed_at]``: the traces behind
+        #: projectile tag -> ``[start, end, loosed_at, reached_at]``: the traces behind
         #: :attr:`arrow_paths`, each end following its arrow until it lands.
         self._arrow_traces = {}
         #: Arrows are loosed from the combat AI's thread as well as the tick.
@@ -5289,7 +5290,8 @@ class MiniwindSession:
         import time as _time
         start = tuple(float(v) for v in start)
         with self._arrow_trace_lock:
-            self._arrow_traces[int(tag)] = [start, start, _time.perf_counter()]
+            now = _time.perf_counter()
+            self._arrow_traces[int(tag)] = [start, start, now, now]
             self._publish_arrow_paths()
 
     def _publish_arrow_paths(self) -> None:
@@ -5300,11 +5302,11 @@ class MiniwindSession:
         from .ui.arrows import PATH_FADE_SECONDS, MAX_PATHS
         now = _time.perf_counter()
         traces = self._arrow_traces
-        for tag in [t for t, tr in traces.items() if now - tr[2] >= PATH_FADE_SECONDS]:
+        for tag in [t for t, tr in traces.items() if now - tr[3] >= PATH_FADE_SECONDS]:
             del traces[tag]
         while len(traces) > MAX_PATHS:
             del traces[next(iter(traces))]
-        self.arrow_paths = tuple((tr[0], tr[1], tr[2]) for tr in traces.values())
+        self.arrow_paths = tuple(tuple(tr) for tr in traces.values())
 
     def _split_projectiles(self, store, count):
         """Which projectiles Fio draws: all but the arrows, which the game
@@ -5334,11 +5336,14 @@ class MiniwindSession:
         # has hit something (or spent its range) the line ends where it was.
         traces = self._arrow_traces
         if traces:
+            import time as _time
+            now = _time.perf_counter()
             with self._arrow_trace_lock:
                 for r in rows:
                     trace = traces.get(int(tags[r]))
                     if trace is not None:
                         trace[1] = tuple(store.pos[r].tolist())
+                        trace[3] = now
                 self._publish_arrow_paths()
         live = set(int(t) for t in tags[rows])
         for tag in [t for t in arrows if t not in live]:

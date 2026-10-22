@@ -8,10 +8,11 @@ split``, see ``MiniwindSession._split_projectiles``) and draws each here, in
 the 3D pass (Fio's ``render.post_scene`` hook): the ammo's own art, lying flat
 for the top-down camera, its head pointing along the arrow's flight.
 
-The moment an arrow is loosed its flight is traced behind it as a dark red
-dotted line -- from the bow to where the arrow is, then to whatever it hit --
-fading out over :data:`PATH_FADE_SECONDS` (:func:`draw_paths`; the traces are
-kept by ``MiniwindSession.trace_arrow``).
+A loosed arrow leaves a trail: a dark red dotted line behind it, from the
+bow to where the arrow is, ending at whatever it hit. Each dot fades out over
+:data:`PATH_FADE_SECONDS` from the moment the arrow passed it, so the tail
+dissolves first (:func:`draw_paths`; the traces are kept by
+``MiniwindSession.trace_arrow``).
 """
 
 from __future__ import annotations
@@ -88,7 +89,8 @@ def draw_arrows(projection, view, arrows) -> int:
 
 
 # --------------------------------------------------------------- flight paths
-#: How long a loosed arrow's dotted path takes to fade away (seconds).
+#: How long each dot of an arrow's trail takes to fade, from the moment the
+#: arrow passed it (seconds).
 PATH_FADE_SECONDS = 2.0
 #: World distance between the dots, and each dot's size.
 PATH_DOT_SPACING = 28.0
@@ -142,8 +144,9 @@ def _dot(renderer) -> int:
 
 
 def draw_paths(projection, view, paths, now=None) -> int:
-    """Draw each arrow path still fading (``(start, end, loosed_at)``) as
-    dark red dots; returns how many paths were drawn."""
+    """Draw each arrow's trail (``(start, end, loosed_at, reached_at)``) as
+    dark red dots, each faded by how long ago the arrow passed it; returns
+    how many trails were drawn."""
     if not paths:
         return 0
     renderer = _arrow_renderer()
@@ -154,12 +157,18 @@ def draw_paths(projection, view, paths, now=None) -> int:
         return 0
     now = time.perf_counter() if now is None else now
     drawn = 0
-    for start, end, loosed in paths:
-        age = now - loosed
-        if age < 0.0 or age >= PATH_FADE_SECONDS:
+    for start, end, loosed, reached in paths:
+        if now - reached >= PATH_FADE_SECONDS:
             continue
-        opacity = PATH_ALPHA * (1.0 - age / PATH_FADE_SECONDS)
-        for dot in path_dots(start, end):
+        dots = path_dots(start, end)
+        last = max(1, len(dots) - 1)
+        for i, dot in enumerate(dots):
+            # The arrow flies at a steady speed: it passed dot i at this time.
+            passed = loosed + (reached - loosed) * (i / last)
+            age = max(0.0, now - passed)
+            if age >= PATH_FADE_SECONDS:
+                continue
+            opacity = PATH_ALPHA * (1.0 - age / PATH_FADE_SECONDS)
             renderer._draw_texture(projection, view, dot, 0.0, tex, PATH_DOT_SIZE,
                                    0.0, depth_write=False, opacity=opacity)
         drawn += 1
