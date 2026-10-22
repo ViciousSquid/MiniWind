@@ -239,6 +239,9 @@ class QtGameView(QOpenGLWidget):
 
         self.mouselook_active = False
         self.last_mouse_pos = QPoint()
+        # Where the last cursor re-centre was sent, until an event shows it
+        # has landed (see recentre_cursor).
+        self._pending_warp_pos = None
 
 
 
@@ -3362,9 +3365,7 @@ class QtGameView(QOpenGLWidget):
             self.splitscreen_mode = False
             self._last_player_start_pos = player_start_pos
             self._last_player_start_angle = player_start_angle
-            center_pos = self.mapToGlobal(self.rect().center())
-            QCursor.setPos(center_pos)
-            self.last_mouse_pos = self.mapFromGlobal(center_pos)
+            self.recentre_cursor()
             QApplication.setOverrideCursor(Qt.BlankCursor)
 
             # Convert editor angle (0° = east) to game angle (0° = north).
@@ -4306,6 +4307,7 @@ class QtGameView(QOpenGLWidget):
         if not self.play_mode and event.button() == Qt.RightButton:
             self.mouselook_active = True
             self.last_mouse_pos = event.pos()
+            self._pending_warp_pos = None
             self.setCursor(Qt.BlankCursor)
         super().mousePressEvent(event)
 
@@ -4360,12 +4362,9 @@ class QtGameView(QOpenGLWidget):
                                    drag=bool(event.buttons() & Qt.LeftButton))
             return
         if self.mouselook_active:
-            dx, dy = event.x() - self.last_mouse_pos.x(), event.y() - self.last_mouse_pos.y()
+            dx, dy = self._mouselook_delta(event.pos())
             if self.logic_thread:
                 self.game_state.set_mouse_delta(float(dx), float(dy))
-            center = self.mapToGlobal(self.rect().center())
-            QCursor.setPos(center)
-            self.last_mouse_pos = self.mapFromGlobal(center)
             return
         if self.play_mode:
             if self.console_overlay_active:
@@ -4373,14 +4372,10 @@ class QtGameView(QOpenGLWidget):
             if self._actor_pick is not None:
                 self._update_actor_pick_hover(event.x(), event.y())
                 return
-            cp = event.pos()
-            dx, dy = cp.x() - self.last_mouse_pos.x(), cp.y() - self.last_mouse_pos.y()
+            dx, dy = self._mouselook_delta(event.pos())
             if dx == 0 and dy == 0:
                 return
             self.game_state.set_mouse_delta(float(dx), float(dy))
-            center = self.mapToGlobal(self.rect().center())
-            QCursor.setPos(center)
-            self.last_mouse_pos = self.mapFromGlobal(center)
             return
         if (self.terrain_sculpt_painting and self.terrain_sculpt_active
                 and self.terrain_sculpt_mode != 'stamp'):
@@ -4616,9 +4611,49 @@ class QtGameView(QOpenGLWidget):
         while QApplication.overrideCursor() is not None:
             QApplication.restoreOverrideCursor()
         QApplication.setOverrideCursor(Qt.BlankCursor)
-        center = self.mapToGlobal(self.rect().center())
-        QCursor.setPos(center)
-        self.last_mouse_pos = self.mapFromGlobal(center)
+        self.recentre_cursor()
+
+    # Mouse look lets the cursor wander this far from the view centre (as a
+    # fraction of the view's smaller side) before warping it back.
+    _RECENTRE_FRACTION = 0.25
+
+    def recentre_cursor(self, from_pos=None):
+        """Warp the cursor to the view centre for mouse look.
+
+        The warp does not land at once everywhere: on macOS, mouse events
+        queued before it still report positions near the old spot.  Measuring
+        those against the centre stacks their deltas up into runaway
+        sensitivity, so mouse look measures each event from the previous one
+        (*from_pos*, the cursor's last known spot) and remembers the warp
+        target so the first event after the warp lands is measured from the
+        centre instead.
+        """
+        if from_pos is None:
+            from_pos = self.mapFromGlobal(QCursor.pos())
+        center = self.rect().center()
+        self.last_mouse_pos = QPoint(from_pos)
+        self._pending_warp_pos = center
+        QCursor.setPos(self.mapToGlobal(center))
+
+    def _mouselook_delta(self, pos):
+        """Return the mouse-look (dx, dy) of a move to *pos*; re-centre if due."""
+        dx, dy = pos.x() - self.last_mouse_pos.x(), pos.y() - self.last_mouse_pos.y()
+        warp = self._pending_warp_pos
+        if warp is not None:
+            wx, wy = pos.x() - warp.x(), pos.y() - warp.y()
+            # A warp is only sent once the cursor is well away from the
+            # centre, so an event nearer the centre than the previous event
+            # is the first one after the warp landed.
+            if abs(wx) + abs(wy) <= abs(dx) + abs(dy):
+                dx, dy = wx, wy
+                self._pending_warp_pos = None
+        self.last_mouse_pos = QPoint(pos)
+        if self._pending_warp_pos is None:
+            center = self.rect().center()
+            limit = min(self.width(), self.height()) * self._RECENTRE_FRACTION
+            if abs(pos.x() - center.x()) > limit or abs(pos.y() - center.y()) > limit:
+                self.recentre_cursor(pos)
+        return dx, dy
 
     def _show_pick_cursor(self):
         while QApplication.overrideCursor() is not None:

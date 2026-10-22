@@ -21,7 +21,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtWidgets import QShortcut
 from PyQt5.QtCore import Qt, QByteArray, QTimer, QPropertyAnimation, QEasingCurve, pyqtSignal, QSize
-from PyQt5.QtGui import QKeySequence, QPixmap, QCursor, QColor, QIcon
+from PyQt5.QtGui import QKeySequence, QPixmap, QColor, QIcon
 
 from editor.things import Light, Prop, update_all_counters_from_entities
 from editor.SettingsWindow import SettingsWindow
@@ -2654,9 +2654,7 @@ class MainWindow(QMainWindow):
                 self.view_3d.setCursor(Qt.ArrowCursor)
             else:
                 # Hide cursor to resume play
-                center_pos = self.view_3d.mapToGlobal(self.view_3d.rect().center())
-                QCursor.setPos(center_pos)
-                self.view_3d.last_mouse_pos = self.view_3d.mapFromGlobal(center_pos)
+                self.view_3d.recentre_cursor()
                 QApplication.setOverrideCursor(Qt.BlankCursor)
         
         self.view_3d.update()
@@ -5410,9 +5408,7 @@ class MainWindow(QMainWindow):
 
         # If keeping play mode, recapture mouse for seamless FPS control
         if keep_play_mode and self.view_3d.play_mode:
-            center_pos = self.view_3d.mapToGlobal(self.view_3d.rect().center())
-            QCursor.setPos(center_pos)
-            self.view_3d.last_mouse_pos = self.view_3d.mapFromGlobal(center_pos)
+            self.view_3d.recentre_cursor()
             QApplication.setOverrideCursor(Qt.BlankCursor)
             self.view_3d.setFocus()
 
