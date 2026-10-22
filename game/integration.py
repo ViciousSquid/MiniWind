@@ -660,9 +660,12 @@ def install_play_menu(view):
     # Character creation, trading and conversations take the mouse.
     from .ui.hits import GamePointer
     view.game_pointer = GamePointer(view)
-    # The game paints its own death screen, with the way back to the last
-    # autosave (game/ui/death_screen.py); the engine's stays off.
+    # The game paints its own death screen, with its menu of ways back -- the
+    # last autosave, a saved game, a new game (game/ui/death_screen.py); the
+    # engine's stays off, and Esc on it no longer leaves for the editor.
     view.game_death_screen = True
+    from .ui.death_screen import DeathMenu
+    view.death_menu = DeathMenu(view)
     install_wheel_zoom(view)
     install_bow_draw(view)
     _use_game_fonts_for_loading()

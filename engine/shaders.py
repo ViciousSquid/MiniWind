@@ -464,6 +464,9 @@ uniform vec3 sprite_pos_world;
 uniform vec2 sprite_size;
 uniform bool use_fixed_facing;
 layout (location = 3) in float sprite_fixed_yaw;
+// (heading, on) for a top-down head actor. Unset, a generic attribute reads
+// (0, 0): no spin, so every other billboard and draw path is unaffected.
+layout (location = 6) in vec2 sprite_spin;
 void main() {
     TexCoords = aPos + 0.5;
     vec3 cameraRight = vec3(view[0][0], view[1][0], view[2][0]);
@@ -472,6 +475,25 @@ void main() {
         float yaw = sprite_fixed_yaw;
         cameraRight = vec3(cos(yaw), 0.0, -sin(yaw));
         cameraUp = vec3(0.0, 1.0, 0.0);
+    } else if (sprite_spin.y > 0.5) {
+        // Head art faces down its image: seen from above, turn the billboard
+        // in the screen plane until the image's bottom points along the
+        // actor's heading (forward = (sin a, 0, cos a)), as the player's own
+        // head does. Eased in with how far the camera looks down, so a first
+        // person view keeps its heads upright.
+        vec3 spinView = vec3(view[0][2], view[1][2], view[2][2]);
+        float spinAmount = smoothstep(0.35, 0.8, spinView.y);
+        vec3 heading = vec3(sin(sprite_spin.x), 0.0, cos(sprite_spin.x));
+        vec2 f = vec2(dot(heading, cameraRight), dot(heading, cameraUp));
+        if (spinAmount > 0.0 && dot(f, f) > 1e-6) {
+            f = normalize(f);
+            // The turn that takes the image's down (0, -1) onto f.
+            float turn = atan(f.x, -f.y) * spinAmount;
+            vec3 right = cos(turn) * cameraRight + sin(turn) * cameraUp;
+            vec3 up = -sin(turn) * cameraRight + cos(turn) * cameraUp;
+            cameraRight = right;
+            cameraUp = up;
+        }
     }
     vec3 worldPos = sprite_pos_world
                   + cameraRight * aPos.x * sprite_size.x

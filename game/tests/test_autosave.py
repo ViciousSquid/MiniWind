@@ -100,10 +100,92 @@ def test_the_death_screen_restores_the_autosave_on_a_click(qt_app, monkeypatch, 
     death_screen.draw(p, view, 800, 600)
     p.end()
     assert death_screen.has_button()
-    centre = death_screen._button.center()
+    centre = death_screen.button("restore").center()
     assert not death_screen.press(view, 5, 5)
     assert death_screen.press(view, centre.x(), centre.y())
     assert restored == [True]
+
+
+def _dead_view(tmp_path, autosave=True):
+    """A stand-in view for the death screen: a dead player, the pause menu's
+    actions and (with *autosave*) an autosave on disk."""
+    import json
+    calls = []
+
+    class _Actions:
+        window = NS(console_handler=NS(
+            _resolve_save_path=lambda n: str(tmp_path / f"{n}.fiosave")))
+
+        def autosave_info(self):
+            return {"summary": "Aldric, level 3", "map": "", "saved_at": ""}
+
+        def restore_autosave(self):
+            calls.append("restore")
+
+        def pause_menu_new_game(self):
+            calls.append("new")
+
+        def pause_menu_quit(self):
+            calls.append("quit")
+
+    class _Menu:
+        actions = _Actions()
+
+        def open_load(self):
+            calls.append("load")
+
+    if autosave:
+        (tmp_path / "autosave.fiosave").write_text(json.dumps({}))
+    session = NS(game=NS(character=NS(is_dead=True)), death_message=lambda: None)
+    view = NS(play_menu=_Menu(), logic_thread=NS(_miniwind=session),
+              update=lambda: None)
+    return view, calls
+
+
+def _paint_death_screen(view):
+    from PyQt5.QtGui import QImage, QPainter
+    from ..ui import death_screen
+    img = QImage(800, 600, QImage.Format_ARGB32_Premultiplied)
+    p = QPainter(img)
+    death_screen.draw(p, view, 800, 600)
+    p.end()
+
+
+def test_dying_offers_load_and_a_new_game_not_the_editor(qt_app, monkeypatch, tmp_path):
+    from PyQt5.QtCore import QTimer
+    from ..ui import death_screen
+    monkeypatch.setattr(QTimer, "singleShot", staticmethod(lambda _ms, fn: fn()))
+    view, calls = _dead_view(tmp_path, autosave=False)
+    _paint_death_screen(view)
+    # No autosave yet: still a way back, through a saved game or a new one.
+    assert [k for k, _ in death_screen._buttons] == ["load", "new", "quit"]
+    for key in ("load", "new"):
+        centre = death_screen.button(key).center()
+        assert death_screen.press(view, centre.x(), centre.y())
+    assert calls == ["load", "new"]
+
+
+def test_the_death_menu_answers_the_keyboard_and_swallows_escape(qt_app, monkeypatch, tmp_path):
+    from PyQt5.QtCore import QEvent, QTimer, Qt
+    from PyQt5.QtGui import QKeyEvent
+    from ..ui import death_screen
+    monkeypatch.setattr(QTimer, "singleShot", staticmethod(lambda _ms, fn: fn()))
+    view, calls = _dead_view(tmp_path)
+    _paint_death_screen(view)
+    assert [k for k, _ in death_screen._buttons] == ["restore", "load", "new", "quit"]
+    menu = death_screen.DeathMenu(view)
+    key = lambda code: QKeyEvent(QEvent.KeyPress, code, Qt.NoModifier)
+    # Escape is taken (so the view never leaves Play for the editor) and does nothing.
+    assert menu.handle_key(key(Qt.Key_Escape)) and calls == []
+    death_screen._selected = 0
+    assert menu.handle_key(key(Qt.Key_Down))
+    assert menu.handle_key(key(Qt.Key_Down))
+    assert menu.handle_key(key(Qt.Key_Return))
+    assert calls == ["new"]
+    assert not menu.handle_key(key(Qt.Key_F12))     # the view's own keys pass
+    # A living player's keys are none of its business.
+    view.logic_thread._miniwind.game.character.is_dead = False
+    assert not menu.handle_key(key(Qt.Key_Escape))
 
 
 # ------------------------------------------------------------ cause of death

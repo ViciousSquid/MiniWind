@@ -187,6 +187,33 @@ def test_the_root_page_offers_its_options_in_order(app):
     assert _labels(menu) == ["RESUME", "MAP", "GAME", "OPTIONS", "EDITOR", "QUIT"]
 
 
+def test_the_death_screen_opens_straight_onto_load_and_backs_out_to_it(app):
+    menu = _menu([{"map": "Miniwind", "saved_at": "", "summary": ""}, None, None])
+    menu.open_load()
+    assert menu.active and menu.page == "load"
+    # Back (Escape or BACK) closes the menu, revealing the death screen again,
+    # rather than offering RESUME on a dead player.
+    menu.handle_key(_key(QtCore.Qt.Key_Escape))
+    assert not menu.active
+    menu.open_load()
+    _select(menu, "SLOT 1")
+    menu.activate()
+    assert menu.page == "confirm"
+    menu.back()                                   # NO: back to the slots
+    assert menu.page == "load"
+    _select(menu, "SLOT 1")
+    menu.activate()
+    _select(menu, "YES")
+    menu.activate()
+    assert not menu.active
+    assert menu.editor.calls == [("load", 1)]
+    # An ordinary Escape menu afterwards still backs out to its GAME row.
+    menu.open()
+    _choose(menu, "LOAD GAME")
+    menu.back()
+    assert menu.active and menu.page == "root" and menu.expanded
+
+
 def test_new_load_and_save_live_in_the_game_dropdown(app):
     menu = _menu()
     menu.open()

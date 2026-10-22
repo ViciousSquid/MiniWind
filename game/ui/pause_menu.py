@@ -112,6 +112,9 @@ class PauseMenu:
         #: Whether MAP was opened straight from play (M, Show on map): then
         #: leaving it resumes the game rather than showing the menu.
         self._map_direct = False
+        #: Whether LOAD GAME was opened straight from the death screen: then
+        #: backing out of it closes the menu, back to that screen.
+        self._load_direct = False
         #: Whether the GAME dropdown is open, and its highlighted entry.
         self.expanded = False
         self.sub_index = 0
@@ -139,6 +142,7 @@ class PauseMenu:
         self.sub_index = 0
         self._pending = None
         self._slot_cache = None
+        self._load_direct = False
         self._set_world_paused(True)
         # Drop any key still held when Escape was pressed, so the player is not
         # walking into a wall the moment the menu closes.
@@ -155,6 +159,7 @@ class PauseMenu:
         self.page = 'root'
         self.expanded = False
         self._pending = None
+        self._load_direct = False
         self._background = None
         self._hit_rects = []
         self._drop_rects = []
@@ -398,6 +403,14 @@ class PauseMenu:
         self.map.open(focus)
         self.view.update()
 
+    def open_load(self):
+        """Open straight onto the LOAD GAME page (the death screen's *Load
+        game*); backing out of it closes the menu again."""
+        if not self.active:
+            self.open()
+        self.activate_game_item('load')
+        self._load_direct = True
+
     def _leave_map(self):
         """Back from MAP: to the game when it was opened from play, else to
         the root row on MAP."""
@@ -442,6 +455,9 @@ class PauseMenu:
 
     def _to_game_item(self, item_key):
         """Back to the root row with the GAME dropdown open on *item_key*."""
+        if self._load_direct:
+            self.close()
+            return
         self.page = 'root'
         self.toggle_dropdown(True)
         keys = [key for key, _ in self.GAME_ITEMS]

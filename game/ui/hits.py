@@ -148,8 +148,8 @@ class GamePointer:
         if session is None:
             return False
         if session.game.character.is_dead:
-            # The death screen's "Restore last autosave"; there is no live
-            # player to look around, so its action button keeps the pointer.
+            # The death screen's menu (restore, load, new game); there is no
+            # live player to look around, so its buttons keep the pointer.
             from . import death_screen
             return death_screen.has_button()
         # During free play, only the character sheet (C) and an active

@@ -175,7 +175,8 @@ class InstancingMixin:
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._sprite_instance_vbo)
         stride = self.SPRITE_INSTANCE_FLOATS * 4
         for location, size, offset in (
-            (1, 3, 0), (2, 2, 12), (3, 1, 20), (4, 1, 24), (5, 1, 28)
+            (1, 3, 0), (2, 2, 12), (3, 1, 20), (4, 1, 24), (5, 1, 28),
+            (6, 2, 32)
         ):
             gl.glVertexAttribPointer(location, size, gl.GL_FLOAT, gl.GL_FALSE,
                                      stride, ctypes.c_void_p(offset))
@@ -201,7 +202,8 @@ class InstancingMixin:
         # The raw entry point, as for brush runs: an integer offset into the
         # bound buffer needs none of the wrapper's array handling.
         for location, size, offset in (
-            (1, 3, 0), (2, 2, 12), (3, 1, 20), (4, 1, 24), (5, 1, 28)
+            (1, 3, 0), (2, 2, 12), (3, 1, 20), (4, 1, 24), (5, 1, 28),
+            (6, 2, 32)
         ):
             _raw_vertex_attrib_pointer(location, size, gl.GL_FLOAT, gl.GL_FALSE,
                                        stride, ctypes.c_void_p(origin + offset))

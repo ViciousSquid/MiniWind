@@ -78,7 +78,8 @@ from itertools import chain
 import glm
 import numpy as np
 
-from .change_journal import JOURNAL, OVERFLOW, STATE, VISIBILITY, is_tracked
+from .change_journal import (JOURNAL, FACING, MOVED, OVERFLOW, STATE,
+                             VISIBILITY, is_tracked)
 from .portal_transform import basis_from_rotation
 from .render_table import _can_adopt
 
@@ -530,6 +531,39 @@ def _carry_sprite_yaw(thing):
         return -10000.0
 
 
+#: No spin: the billboard keeps the camera's up, as every billboard did.
+_NO_SPIN = (0.0, 0.0)
+
+
+def _is_head_art(props) -> bool:
+    """Whether an actor is drawn as top-down head art, whose front is the
+    bottom of the image: it turns to its heading in an overhead view."""
+    if 'is_head' in props:
+        return bool(props['is_head'])
+    idle = str(props.get('custom_idle', '') or '').replace('\\', '/')
+    return ('/heads/' in idle or idle.startswith('heads/')) \
+        and not idle.endswith('/dead.png')
+
+
+def _sprite_spin(thing):
+    """``(heading, 1)`` for a living head actor with a heading, else no spin.
+
+    The heading is the transient ``_facing`` every system that turns an actor
+    writes (radians, forward ``(sin a, 0, cos a)``); the sprite shader turns
+    the billboard so the art's front points along it when seen from above.
+    """
+    props = _props_of(thing)
+    if props.get('dead') or not _is_head_art(props):
+        return _NO_SPIN
+    facing = props.get('_facing')
+    if facing is None:
+        return _NO_SPIN
+    try:
+        return (float(facing), 1.0)
+    except (TypeError, ValueError):
+        return _NO_SPIN
+
+
 def _render_alpha(thing):
     """Return the runtime render opacity for an entity."""
     try:
@@ -599,6 +633,10 @@ _COLUMNS = (
     #: Locked world-facing yaw for a carried billboard; -10000 means an
     #: ordinary camera-facing billboard.
     ('sprite_fixed_yaw', (), np.float32, -10000.0),
+    #: ``(heading, on)`` for a top-down head actor: seen from above, its
+    #: billboard turns so the art's front points along the heading. ``on`` 0
+    #: leaves an ordinary camera-up billboard.
+    ('sprite_spin', (2,), np.float32, 0.0),
     #: Interned sprite recipe id; :data:`SPRITE_NONE` for a row that draws none.
     ('sprite_key_id', (), np.int32, SPRITE_NONE),
     #: Interned model recipe id; -1 means no model.
@@ -892,6 +930,7 @@ class EntityTable:
         moved_values = []
         state = []
         shown = []
+        turned = []
         positions = positions or {}
         for oid, flags in changes.items():
             slot = slot_of.get(oid)
@@ -902,7 +941,9 @@ class EntityTable:
                 continue
             if flags & VISIBILITY:
                 shown.append(slot)
-            if flags & ~VISIBILITY:
+            if flags & FACING:
+                turned.append(slot)
+            if flags & MOVED:
                 moved.append(slot)
                 payload = positions.get(oid)
                 if payload is not None:
@@ -933,6 +974,12 @@ class EntityTable:
             self.rows_read += len(shown)
             self.hidden[shown] = [
                 bool(_props_of(things[s]).get('hidden', False)) for s in shown]
+        if turned:
+            # An actor turned: its heading alone, for a head sprite's spin.
+            turned = [s for s in turned if self.class_bits[s] & ENT_MONSTER]
+            if turned:
+                self.rows_read += len(turned)
+                self.sprite_spin[turned] = [_sprite_spin(things[s]) for s in turned]
         if state:
             self.refresh_rows(things, state, effect_store=effect_store)
             # I/O can retarget or rename a portal; links are resolved by name.
@@ -1256,6 +1303,8 @@ class EntityTable:
         self.render_alpha[slot] = _render_alpha(thing)
         carry_yaw = _carry_sprite_yaw(thing)
         self.sprite_fixed_yaw[slot] = carry_yaw
+        self.sprite_spin[slot] = (_sprite_spin(thing) if self.class_bits[slot] & ENT_MONSTER
+                                  else _NO_SPIN)
         self.sprite_key_id[slot] = self.intern_sprite(sprite_candidates(thing))
 
         if self.class_bits[slot] & ENT_EFFECT:

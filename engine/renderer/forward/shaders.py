@@ -286,10 +286,11 @@ layout (location = 10) in vec4 iPayload;
 
     #: Per-instance attributes: centre, world size, optional locked yaw, opacity.
     #: Per-instance attributes: centre (3), world size (2), locked yaw,
-    #: opacity, and the texture-array layer the entity pass samples.  Eight
-    #: floats; a pass that does not use a column still writes it, because the
-    #: staging array is shared and a stale value is somebody else's sprite.
-    SPRITE_INSTANCE_FLOATS = 8
+    #: opacity, the texture-array layer the entity pass samples, and a head
+    #: actor's spin (heading, on).  Ten floats; a pass that does not use a
+    #: column still writes it, because the staging array is shared and a
+    #: stale value is somebody else's sprite.
+    SPRITE_INSTANCE_FLOATS = 10
 
     def _compile_instanced_sprite_shader(self):
         """Compile the billboard shader with its centre and size per instance.

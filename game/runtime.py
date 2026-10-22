@@ -20,6 +20,7 @@ import collections
 import contextlib
 import json
 import math
+import threading
 import os
 import random
 from itertools import chain as _chain
@@ -113,8 +114,14 @@ ZOOM_EASE_SECONDS = 0.12
 #: to cover it.
 ZOOM_REACH_MARGIN = 256.0
 #: How far an actor moves across the ground before its height is worked out
-#: again; standing still costs nothing.
+#: again.
 GROUND_RECHECK_DIST = 4.0
+#: Every actor, animals included, has its ground worked out again at least
+#: this often (ticks) even standing still -- staggered, so a tick asks for a
+#: sliver of the cast. A grazing sheep, terrain that streamed in or was
+#: sculpted under it, a head sprite that changed size: none of those move it,
+#: and any of them left it floating.
+GROUND_RECHECK_TICKS = 60
 #: How close a walking NPC may come to a wall. Close to the player's own half
 #: width (TILE_SIZE/2 = 25) rather than the combat AI's much fatter monster
 #: margin, so a villager fits through any doorway the player does.
@@ -579,6 +586,16 @@ class MiniwindSession:
         #: ``((x, y, z), (vx, vy, vz), sprite)`` per arrow in flight, as last
         #: published for the renderer (read by game/ui/arrows.py).
         self.arrows_in_flight = ()
+        #: ``(start, end, loosed_at, reached_at)`` of each arrow's flight so
+        #: far -- from where it was loosed to where it is (reached at
+        #: *reached_at*), or to what it hit -- drawn as a dotted trail behind
+        #: it, each dot fading as the arrow leaves it (game/ui/arrows.py).
+        self.arrow_paths = ()
+        #: projectile tag -> ``[start, end, loosed_at, reached_at]``: the traces behind
+        #: :attr:`arrow_paths`, each end following its arrow until it lands.
+        self._arrow_traces = {}
+        #: Arrows are loosed from the combat AI's thread as well as the tick.
+        self._arrow_trace_lock = threading.Lock()
         self._proximity_accum = 0.0
         #: Guards currently running the player down (see _start_arrest_pursuit).
         self._arrest_pursuers = []
@@ -4907,9 +4924,12 @@ class MiniwindSession:
         nor :meth:`_move` changes an actor's height on terrain: an actor kept
         the height it was placed or spawned at, so one that walked downhill,
         or stood where the ground was sculpted after it was placed, floated.
-        Each actor's feet are put on :func:`fio.ground_height` -- the terrain
-        or a floor on it -- whenever it has moved since last time. Flyers are
-        left in the air.
+        Each actor's feet are put on :func:`fio.ground_height` -- a ray cast
+        down from just above its feet onto the terrain or a floor on it --
+        whenever it has moved or changed size since last time, and every
+        :data:`GROUND_RECHECK_TICKS` regardless. Where nothing is found yet
+        (terrain not streamed in) it is asked again next tick. Flyers are left
+        in the air.
         """
         logic = self.logic
         # The index's rows are this tick's resident actors (and corpses): a
@@ -4920,6 +4940,8 @@ class MiniwindSession:
             return
         seen = self._grounded
         near = GROUND_RECHECK_DIST
+        tick = self._ground_tick = getattr(self, "_ground_tick", 0) + 1
+        period = GROUND_RECHECK_TICKS
         with fio.monster_lock(logic) or contextlib.nullcontext():
             for t in actors:
                 p = t.properties
@@ -4927,18 +4949,22 @@ class MiniwindSession:
                     continue
                 pos = t.pos
                 x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
-                last = seen.get(id(t))
-                if (last is not None and abs(last[0] - x) < near
-                        and abs(last[1] - z) < near and abs(last[2] - y) < 0.5):
-                    continue
                 half = float(p.get("sprite_height", 128) or 128) * 0.5
+                key = id(t)
+                last = seen.get(key)
+                if (last is not None and abs(last[0] - x) < near
+                        and abs(last[1] - z) < near and abs(last[2] - y) < 0.5
+                        and last[3] == half and (tick + (key >> 4)) % period):
+                    continue
                 ground = fio.ground_height(logic, x, z,
                                            below=y - half + GROUND_STEP_UP)
-                if ground is not None:
-                    y = ground + half
-                    if abs(y - float(pos[1])) > 0.5:
-                        t.pos = [pos[0], y, pos[2]]
-                seen[id(t)] = (x, z, y)
+                if ground is None:
+                    seen.pop(key, None)       # nothing under it yet: ask again
+                    continue
+                y = ground + half
+                if abs(y - float(pos[1])) > 0.5:
+                    t.pos = [pos[0], y, pos[2]]
+                seen[key] = (x, z, y, half)
 
     def _blocked_by_wall(self, x, y, z) -> bool:
         """Whether an NPC-sized body at (x, y, z) would be inside a solid brush.
@@ -5255,6 +5281,32 @@ class MiniwindSession:
         tag = fio.projectile_tag(lt, row)
         if tag:
             self._arrow_tags[tag] = sprite
+            self.trace_arrow(tag, start)
+
+    def trace_arrow(self, tag, start) -> None:
+        """Start tracing the arrow *tag*, loosed from *start*: a dotted line
+        from there to wherever the arrow gets -- what it hits, or its range --
+        that fades as it flies (game/ui/arrows.py)."""
+        import time as _time
+        start = tuple(float(v) for v in start)
+        with self._arrow_trace_lock:
+            now = _time.perf_counter()
+            self._arrow_traces[int(tag)] = [start, start, now, now]
+            self._publish_arrow_paths()
+
+    def _publish_arrow_paths(self) -> None:
+        """Drop faded traces and hand the rest to the renderer, as a new tuple
+        (it reads the last one from its own thread). Caller holds
+        ``_arrow_trace_lock``."""
+        import time as _time
+        from .ui.arrows import PATH_FADE_SECONDS, MAX_PATHS
+        now = _time.perf_counter()
+        traces = self._arrow_traces
+        for tag in [t for t, tr in traces.items() if now - tr[3] >= PATH_FADE_SECONDS]:
+            del traces[tag]
+        while len(traces) > MAX_PATHS:
+            del traces[next(iter(traces))]
+        self.arrow_paths = tuple(tuple(tr) for tr in traces.values())
 
     def _split_projectiles(self, store, count):
         """Which projectiles Fio draws: all but the arrows, which the game
@@ -5280,6 +5332,19 @@ class MiniwindSession:
             (tuple(store.pos[r].tolist()), tuple(store.vel[r].tolist()),
              arrows[int(tags[r])])
             for r in rows)
+        # Each traced arrow's line runs on to where the arrow now is; once it
+        # has hit something (or spent its range) the line ends where it was.
+        traces = self._arrow_traces
+        if traces:
+            import time as _time
+            now = _time.perf_counter()
+            with self._arrow_trace_lock:
+                for r in rows:
+                    trace = traces.get(int(tags[r]))
+                    if trace is not None:
+                        trace[1] = tuple(store.pos[r].tolist())
+                        trace[3] = now
+                self._publish_arrow_paths()
         live = set(int(t) for t in tags[rows])
         for tag in [t for t in arrows if t not in live]:
             del arrows[tag]
