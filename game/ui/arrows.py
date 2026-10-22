@@ -95,9 +95,10 @@ PATH_FADE_SECONDS = 2.0
 #: World distance between the dots, and each dot's size.
 PATH_DOT_SPACING = 28.0
 PATH_DOT_SIZE = 9.0
-#: The dots' colour (dark red) and their opacity when just loosed.
+#: The dots' colour (dark red) and their opacity when fresh: faint, a hint
+#: of the flight rather than a solid line.
 PATH_COLOUR = (120, 8, 8)
-PATH_ALPHA = 0.85
+PATH_ALPHA = 0.3
 #: Most paths kept at once (a volley of arrows).
 MAX_PATHS = 48
 
