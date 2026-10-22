@@ -70,6 +70,7 @@ class _Session:
     # The decision pass indexes the watch once per pass rather than re-scanning
     # the scene per frightened villager; the stub needs the same predicate.
     _is_guard = staticmethod(MiniwindSession._is_guard)
+    _natively_hostile = staticmethod(MiniwindSession._natively_hostile)
     _defend_sight = staticmethod(MiniwindSession._defend_sight)
     _engage = MiniwindSession._engage
     _subdued = staticmethod(MiniwindSession._subdued)

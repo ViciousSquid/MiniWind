@@ -100,6 +100,8 @@ def test_reading_the_book_hands_over_the_item_and_finishes_the_quest():
     book = _book()
     player = _FakePlayer([book.pos[0], book.pos[1], book.pos[2] + 20.0])
     s = _session([book], player)
+    s.game.character.class_id = "mage"
+    assert s.game.character.can_use_magic()
     s.game.start_quest("ember_tome")
     gold = s.game.character.gold
     s._tick_spellbooks()
@@ -116,6 +118,8 @@ def test_a_book_without_a_quest_item_only_teaches():
     book = _book()
     book.properties["quest_item"] = ""
     s = _session([book], _FakePlayer(list(book.pos)))
+    s.game.character.class_id = "mage"
+    assert s.game.character.can_use_magic()
     s._tick_spellbooks()
     assert "firebolt" in s.game.character.known_spells
     assert s.game.character.inventory == [] or \

@@ -1,8 +1,8 @@
 """The headless boundary, enforced.
 
 Fio's core is meant to be dependency-light: the geometry, the spatial index, the
-I/O and logic systems, the plugin API and Big World all run in the standalone
-player, where neither the editor package nor PyQt5 nor PyOpenGL exists.  That
+I/O and logic systems, the plugin API and Big World support headless workflows
+where neither PyQt5 nor PyOpenGL is available. That
 property is easy to lose by accident — one convenience import of a Qt-backed
 logger is enough, and it was exactly how ``engine.monster_ai`` came to require
 PyQt5 (see ``test_fixed_defects``).
@@ -10,7 +10,7 @@ PyQt5 (see ``test_fixed_defects``).
 So the boundary is asserted rather than assumed.  Each module below is imported
 in a fresh interpreter with the heavy packages made unimportable; a module that
 has grown a dependency fails here, by name, instead of turning up later as a
-crash in the player.
+crash in a headless task.
 """
 
 import subprocess
@@ -35,14 +35,12 @@ DEPENDENCY_LIGHT_MODULES = [
     "engine.monster_ai",
     "engine.monster_constants",
     "engine.threaded_game_state",
-    # The Prop domain.  The standalone player runs the same PropSession the
-    # editor's logic thread does, so both of these have to stay Qt-free.
+    # The Prop domain remains usable by headless simulation tasks.
     "engine.prop_entity",
     "engine.prop_runtime",
     # The player entity itself.  It carried an unused ``from PyQt5.QtCore
     # import Qt`` that made the whole module editor-tier by accident; nothing
-    # in it needs Qt, and the standalone player is meant to run this code
-    # rather than reimplement it.
+    # in it needs Qt, including the headless physics and movement tests.
     "engine.player",
     # The plugin surface
     "plugins.api",
@@ -56,10 +54,8 @@ DEPENDENCY_LIGHT_MODULES = [
     "plugins.bigworld.streaming",
     # The editor's Qt-free logic layers
     "editor.component_edit",
-    # The player
-    "player.render.glmath",
-    "player.render.scene",
-    "player.fiopak",
+    # Data archives are mounted by the engine; no standalone player package.
+    "engine.asset_archives",
 ]
 
 BLOCKED = ("PyQt5", "OpenGL")

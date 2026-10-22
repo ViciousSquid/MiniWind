@@ -13,6 +13,7 @@ import os
 import pytest
 
 from engine.items import ITEM_IDS
+from engine import asset_archives
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MAPS = sorted(glob.glob(os.path.join(ROOT, "maps", "*.json")))
@@ -45,7 +46,9 @@ def test_maps_are_shipped():
 
 
 @pytest.mark.parametrize("path", MAPS, ids=os.path.basename)
-def test_referenced_files_exist(path):
+def test_referenced_files_exist(path, monkeypatch):
+    monkeypatch.chdir(ROOT)
+    asset_archives.refresh()
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
     # Authored paths may use either separator; the loaders normalise both.
@@ -54,7 +57,7 @@ def test_referenced_files_exist(path):
         value for value in references
         if value.startswith(REFERENCE_ROOTS)
         and os.path.splitext(value)[1]
-        and not os.path.isfile(os.path.join(ROOT, *value.split("/")))
+        and not asset_archives.exists(value)
     )
     assert not missing, f"{os.path.basename(path)} references missing files: {missing}"
 

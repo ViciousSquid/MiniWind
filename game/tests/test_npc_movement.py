@@ -128,7 +128,9 @@ def test_an_npc_finds_its_way_through_a_gap():
 
 def test_an_npc_jammed_in_a_corner_gives_up_on_its_destination():
     """Better a new errand than grinding into a brush for the rest of the day."""
-    box = [(-1000.0, 1000.0, 60.0, 400.0), (60.0, 1000.0, -1000.0, 1000.0)]
+    # Enclose all four sides: an open corner can now be escaped by A*.
+    box = [(-1000.0, 1000.0, 60.0, 400.0), (60.0, 1000.0, -1000.0, 1000.0),
+           (-1000.0, 1000.0, -400.0, -60.0), (-1000.0, -60.0, -1000.0, 1000.0)]
     npc = _NPC(pos=(0.0, 0.0, 0.0), dest=(1000.0, 0.0, 1000.0))
     walker = _Walker(box)
     for _ in range(runtime.NPC_BLOCKED_GIVE_UP_TICKS + 5):

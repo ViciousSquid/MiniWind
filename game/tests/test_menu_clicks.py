@@ -199,9 +199,11 @@ def test_the_cursor_is_wanted_only_while_a_menu_has_targets(session):
     hits.clear()
     assert not pointer.wants_pointer()               # free play: mouse-look
     session.open_screen = "charcreate"
+    session.needs_char_creation = True
     _paint(session)
     assert pointer.wants_pointer()
     session.open_screen = None
+    session.needs_char_creation = False
     assert not pointer.wants_pointer()
 
 
