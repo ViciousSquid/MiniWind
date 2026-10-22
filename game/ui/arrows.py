@@ -8,9 +8,10 @@ split``, see ``MiniwindSession._split_projectiles``) and draws each here, in
 the 3D pass (Fio's ``render.post_scene`` hook): the ammo's own art, lying flat
 for the top-down camera, its head pointing along the arrow's flight.
 
-The moment an arrow is loosed its whole flight -- a straight line out to its
-range -- is drawn as a dark red dotted line, fading out over
-:data:`PATH_FADE_SECONDS` (:func:`add_path`, :func:`draw_paths`).
+The moment an arrow is loosed its flight is traced behind it as a dark red
+dotted line -- from the bow to where the arrow is, then to whatever it hit --
+fading out over :data:`PATH_FADE_SECONDS` (:func:`draw_paths`; the traces are
+kept by ``MiniwindSession.trace_arrow``).
 """
 
 from __future__ import annotations
@@ -97,21 +98,6 @@ PATH_COLOUR = (120, 8, 8)
 PATH_ALPHA = 0.85
 #: Most paths kept at once (a volley of arrows).
 MAX_PATHS = 48
-
-
-def add_path(paths, start, vel, max_dist, now=None):
-    """*paths* plus the flight of an arrow loosed from *start* along *vel*
-    out to *max_dist*, with spent ones dropped. Returns a new tuple (the
-    renderer reads the old one from another thread)."""
-    now = time.perf_counter() if now is None else now
-    vx, vy, vz = (float(v) for v in vel)
-    speed = math.sqrt(vx * vx + vy * vy + vz * vz) or 1.0
-    d = float(max_dist) / speed
-    sx, sy, sz = (float(v) for v in start)
-    path = ((sx, sy, sz), (sx + vx * d, sy + vy * d, sz + vz * d), now)
-    live = [p for p in paths if now - p[2] < PATH_FADE_SECONDS]
-    live.append(path)
-    return tuple(live[-MAX_PATHS:])
 
 
 def path_dots(start, end, spacing=PATH_DOT_SPACING):

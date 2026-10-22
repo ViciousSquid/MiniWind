@@ -20,6 +20,7 @@ import collections
 import contextlib
 import json
 import math
+import threading
 import os
 import random
 from itertools import chain as _chain
@@ -585,9 +586,15 @@ class MiniwindSession:
         #: ``((x, y, z), (vx, vy, vz), sprite)`` per arrow in flight, as last
         #: published for the renderer (read by game/ui/arrows.py).
         self.arrows_in_flight = ()
-        #: ``(start, end, loosed_at)`` of each arrow's whole flight, drawn as a
+        #: ``(start, end, loosed_at)`` of each arrow's flight so far -- from
+        #: where it was loosed to where it is, or to what it hit -- drawn as a
         #: fading dotted line for a moment after it is loosed (game/ui/arrows.py).
         self.arrow_paths = ()
+        #: projectile tag -> ``[start, end, loosed_at]``: the traces behind
+        #: :attr:`arrow_paths`, each end following its arrow until it lands.
+        self._arrow_traces = {}
+        #: Arrows are loosed from the combat AI's thread as well as the tick.
+        self._arrow_trace_lock = threading.Lock()
         self._proximity_accum = 0.0
         #: Guards currently running the player down (see _start_arrest_pursuit).
         self._arrest_pursuers = []
@@ -5273,13 +5280,31 @@ class MiniwindSession:
         tag = fio.projectile_tag(lt, row)
         if tag:
             self._arrow_tags[tag] = sprite
-            self.trace_arrow(start, vel, max_dist)
+            self.trace_arrow(tag, start)
 
-    def trace_arrow(self, start, vel, max_dist) -> None:
-        """Show a loosed arrow's whole flight -- straight from *start* along
-        *vel* to its range -- as a dotted line that fades (game/ui/arrows.py)."""
-        from .ui.arrows import add_path
-        self.arrow_paths = add_path(self.arrow_paths, start, vel, max_dist)
+    def trace_arrow(self, tag, start) -> None:
+        """Start tracing the arrow *tag*, loosed from *start*: a dotted line
+        from there to wherever the arrow gets -- what it hits, or its range --
+        that fades as it flies (game/ui/arrows.py)."""
+        import time as _time
+        start = tuple(float(v) for v in start)
+        with self._arrow_trace_lock:
+            self._arrow_traces[int(tag)] = [start, start, _time.perf_counter()]
+            self._publish_arrow_paths()
+
+    def _publish_arrow_paths(self) -> None:
+        """Drop faded traces and hand the rest to the renderer, as a new tuple
+        (it reads the last one from its own thread). Caller holds
+        ``_arrow_trace_lock``."""
+        import time as _time
+        from .ui.arrows import PATH_FADE_SECONDS, MAX_PATHS
+        now = _time.perf_counter()
+        traces = self._arrow_traces
+        for tag in [t for t, tr in traces.items() if now - tr[2] >= PATH_FADE_SECONDS]:
+            del traces[tag]
+        while len(traces) > MAX_PATHS:
+            del traces[next(iter(traces))]
+        self.arrow_paths = tuple((tr[0], tr[1], tr[2]) for tr in traces.values())
 
     def _split_projectiles(self, store, count):
         """Which projectiles Fio draws: all but the arrows, which the game
@@ -5305,6 +5330,16 @@ class MiniwindSession:
             (tuple(store.pos[r].tolist()), tuple(store.vel[r].tolist()),
              arrows[int(tags[r])])
             for r in rows)
+        # Each traced arrow's line runs on to where the arrow now is; once it
+        # has hit something (or spent its range) the line ends where it was.
+        traces = self._arrow_traces
+        if traces:
+            with self._arrow_trace_lock:
+                for r in rows:
+                    trace = traces.get(int(tags[r]))
+                    if trace is not None:
+                        trace[1] = tuple(store.pos[r].tolist())
+                self._publish_arrow_paths()
         live = set(int(t) for t in tags[rows])
         for tag in [t for t in arrows if t not in live]:
             del arrows[tag]
