@@ -728,16 +728,22 @@ class MiniwindGame:
         host.on("render.post_scene", self._on_post_scene)
 
     def _on_post_scene(self, ev):
-        """Draw the arrows in flight, in the 3D pass (game/ui/arrows.py)."""
+        """Draw the arrows in flight and their fading flight paths, in the 3D
+        pass (game/ui/arrows.py)."""
         if not ev.get("play_mode"):
             return
         host = getattr(self, "_host", None)
         session = getattr(getattr(host, "logic", None), "_miniwind", None)
         arrows = getattr(session, "arrows_in_flight", ()) if session else ()
-        if not arrows:
+        paths = getattr(session, "arrow_paths", ()) if session else ()
+        if not arrows and not paths:
             return
         from .ui import arrows as arrow_art
-        arrow_art.draw_arrows(ev.get("projection"), ev.get("view"), arrows)
+        if paths:
+            # Each loosed arrow's flight, a dark red dotted line fading out.
+            arrow_art.draw_paths(ev.get("projection"), ev.get("view"), paths)
+        if arrows:
+            arrow_art.draw_arrows(ev.get("projection"), ev.get("view"), arrows)
 
     # ------------------------------------------------------------- lifecycle
     def on_play_start(self, logic):

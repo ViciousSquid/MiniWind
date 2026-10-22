@@ -113,8 +113,14 @@ ZOOM_EASE_SECONDS = 0.12
 #: to cover it.
 ZOOM_REACH_MARGIN = 256.0
 #: How far an actor moves across the ground before its height is worked out
-#: again; standing still costs nothing.
+#: again.
 GROUND_RECHECK_DIST = 4.0
+#: Every actor, animals included, has its ground worked out again at least
+#: this often (ticks) even standing still -- staggered, so a tick asks for a
+#: sliver of the cast. A grazing sheep, terrain that streamed in or was
+#: sculpted under it, a head sprite that changed size: none of those move it,
+#: and any of them left it floating.
+GROUND_RECHECK_TICKS = 60
 #: How close a walking NPC may come to a wall. Close to the player's own half
 #: width (TILE_SIZE/2 = 25) rather than the combat AI's much fatter monster
 #: margin, so a villager fits through any doorway the player does.
@@ -579,6 +585,9 @@ class MiniwindSession:
         #: ``((x, y, z), (vx, vy, vz), sprite)`` per arrow in flight, as last
         #: published for the renderer (read by game/ui/arrows.py).
         self.arrows_in_flight = ()
+        #: ``(start, end, loosed_at)`` of each arrow's whole flight, drawn as a
+        #: fading dotted line for a moment after it is loosed (game/ui/arrows.py).
+        self.arrow_paths = ()
         self._proximity_accum = 0.0
         #: Guards currently running the player down (see _start_arrest_pursuit).
         self._arrest_pursuers = []
@@ -4907,9 +4916,12 @@ class MiniwindSession:
         nor :meth:`_move` changes an actor's height on terrain: an actor kept
         the height it was placed or spawned at, so one that walked downhill,
         or stood where the ground was sculpted after it was placed, floated.
-        Each actor's feet are put on :func:`fio.ground_height` -- the terrain
-        or a floor on it -- whenever it has moved since last time. Flyers are
-        left in the air.
+        Each actor's feet are put on :func:`fio.ground_height` -- a ray cast
+        down from just above its feet onto the terrain or a floor on it --
+        whenever it has moved or changed size since last time, and every
+        :data:`GROUND_RECHECK_TICKS` regardless. Where nothing is found yet
+        (terrain not streamed in) it is asked again next tick. Flyers are left
+        in the air.
         """
         logic = self.logic
         # The index's rows are this tick's resident actors (and corpses): a
@@ -4920,6 +4932,8 @@ class MiniwindSession:
             return
         seen = self._grounded
         near = GROUND_RECHECK_DIST
+        tick = self._ground_tick = getattr(self, "_ground_tick", 0) + 1
+        period = GROUND_RECHECK_TICKS
         with fio.monster_lock(logic) or contextlib.nullcontext():
             for t in actors:
                 p = t.properties
@@ -4927,18 +4941,22 @@ class MiniwindSession:
                     continue
                 pos = t.pos
                 x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
-                last = seen.get(id(t))
-                if (last is not None and abs(last[0] - x) < near
-                        and abs(last[1] - z) < near and abs(last[2] - y) < 0.5):
-                    continue
                 half = float(p.get("sprite_height", 128) or 128) * 0.5
+                key = id(t)
+                last = seen.get(key)
+                if (last is not None and abs(last[0] - x) < near
+                        and abs(last[1] - z) < near and abs(last[2] - y) < 0.5
+                        and last[3] == half and (tick + (key >> 4)) % period):
+                    continue
                 ground = fio.ground_height(logic, x, z,
                                            below=y - half + GROUND_STEP_UP)
-                if ground is not None:
-                    y = ground + half
-                    if abs(y - float(pos[1])) > 0.5:
-                        t.pos = [pos[0], y, pos[2]]
-                seen[id(t)] = (x, z, y)
+                if ground is None:
+                    seen.pop(key, None)       # nothing under it yet: ask again
+                    continue
+                y = ground + half
+                if abs(y - float(pos[1])) > 0.5:
+                    t.pos = [pos[0], y, pos[2]]
+                seen[key] = (x, z, y, half)
 
     def _blocked_by_wall(self, x, y, z) -> bool:
         """Whether an NPC-sized body at (x, y, z) would be inside a solid brush.
@@ -5255,6 +5273,13 @@ class MiniwindSession:
         tag = fio.projectile_tag(lt, row)
         if tag:
             self._arrow_tags[tag] = sprite
+            self.trace_arrow(start, vel, max_dist)
+
+    def trace_arrow(self, start, vel, max_dist) -> None:
+        """Show a loosed arrow's whole flight -- straight from *start* along
+        *vel* to its range -- as a dotted line that fades (game/ui/arrows.py)."""
+        from .ui.arrows import add_path
+        self.arrow_paths = add_path(self.arrow_paths, start, vel, max_dist)
 
     def _split_projectiles(self, store, count):
         """Which projectiles Fio draws: all but the arrows, which the game

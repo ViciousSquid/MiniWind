@@ -264,3 +264,6 @@ class NpcArchery:
         if tag:
             from .ui.arrows import arrow_sprite
             session._arrow_tags[tag] = arrow_sprite("iron_bolt" if crossbow else "iron_arrow")
+            trace = getattr(session, "trace_arrow", None)
+            if trace is not None:
+                trace(start, vel, max_dist)
