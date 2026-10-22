@@ -381,6 +381,14 @@ class MiniwindGame:
                  help="Drives the sprite (chest / barrel / crate / sack / urn)."),
             prop("use_radius", "float", "Use radius", default=120.0, group="CONTAINER",
                  help="How close the player must be to open it with E."),
+            prop("locked", "bool", "Locked", default=False, group="LOCK",
+                 help="Requires lockpicking or the matching key."),
+            prop("lock_difficulty", "enum", "Difficulty", default="novice", group="LOCK",
+                 choices=["novice", "apprentice", "adept", "expert", "master"],
+                 help="More difficult locks have more pins and narrower sweet spots."),
+            prop("lock_key", "string", "Key item id", default="", group="LOCK",
+                 help="A carried item with this id opens the lock without being consumed. "
+                      "A sheared pick jams the lock; only the Knock spell can open it."),
         ] + _ownership_props(factions, " — emptying it is burglary."))
 
         # NPC — a social/quest actor, organised into Aurora-style sections.
@@ -814,7 +822,7 @@ class MiniwindGame:
         # 'inspect', the Escape menu) hold their own requests, so the game's
         # own freeze below follows the engine's verdict over all of them.
         fio.set_world_paused(logic, SCREEN_PAUSE, bool(
-            session.needs_char_creation or session.open_screen is not None
+            session.needs_char_creation or session.open_screen not in (None, "lockpicking")
             or session.dialogue is not None))
         world_paused = fio.world_paused(logic)
 
@@ -837,6 +845,11 @@ class MiniwindGame:
 
         if world_paused:
             session.tick_ui(ctx.delta)   # ages toasts/floaters only, no world sim
+            if session.open_screen == "lockpicking":
+                # An external pause owner (e.g. the pause menu) freezes the
+                # minigame too; its own screen never owns a world pause.
+                session.persist()
+                return
             # Clicks on the open menu, queued by the UI thread (game/ui/hits).
             from .ui import hits
             hits.run_clicks(session)
@@ -854,9 +867,17 @@ class MiniwindGame:
         # Normal play: simulate the world, then resolve queued UI actions before
         # this tick's remaining gameplay input. Debug Tools is non-modal, so its
         # rewind/teleport clicks must also be drained on this path.
+        was_lockpicking = session.open_screen == "lockpicking"
         session.tick(ctx.delta)
         from .ui import hits
         hits.run_clicks(session)
+        if was_lockpicking or session.open_screen == "lockpicking":
+            if session.open_screen == "lockpicking":
+                menu_just = just - {K_INTERACT} if getattr(self, "_suppress_interact", False) else just
+                self._handle_screen_input(session, menu_just, ctx)
+                session.tick_lockpicking(ctx.delta)
+            session.persist()
+            return
         self._handle_gameplay_input(session, just, ctx)
         self._handle_interaction(logic, ctx, session, just)
         session.persist()
@@ -944,6 +965,10 @@ class MiniwindGame:
 
     def _handle_screen_input(self, session, just, ctx):
         from .ui import screens
+        if session.open_screen == "lockpicking":
+            from .ui.lockpicking import handle_input
+            handle_input(session, just, ctx)
+            return
         for name in just:
             if screens.handle_key(session, name):
                 # one meaningful key per tick is enough; keep it simple
@@ -1005,7 +1030,10 @@ class MiniwindGame:
             return
         if container is not None:
             cname = container.properties.get("display_name", "container")
-            prompt = f"[E] to open {cname}"
+            p = container.properties
+            label = "Jammed · requires Knock" if p.get("lock_jammed") else (
+                f"Locked · {str(p.get('lock_difficulty', 'novice')).title()}" if p.get("locked") else "Open")
+            prompt = f"[E] {label}: {cname}"
             ctx.set_prompt(prompt, priority=5)
             session.interact_prompt = prompt
             if K_INTERACT in just or ctx.use_pressed:
@@ -1156,6 +1184,7 @@ class MiniwindGame:
         "character": "Character", "journal": "Quest Journal",
         "spells": "Spellbook", "levelup": "Level Up", "trade": "Trade",
         "quest": "Current Quest",
+        "lockpicking": "Lockpicking",
     }
 
     def _close_overlay_screen(self, session, screen):
@@ -1175,6 +1204,9 @@ class MiniwindGame:
             return
         if screen == "container":
             session.close_container()
+            return
+        if screen == "lockpicking":
+            session.close_lockpicking()
             return
         session.open_screen = None
 
@@ -1379,6 +1411,9 @@ class MiniwindGame:
                 click_cb = (lambda cx, cy, s=session: screens.handle_click(s, cx, cy))
                 wants_cursor = True
             window_cls = CallbackWindow
+            if key == "screen:lockpicking":
+                from .ui.lockpicking import LockpickWindow
+                window_cls = LockpickWindow
             if key == "screen:container":
                 # Rows drag out to the strip and the character window, and
                 # things drag in (game/ui/container_window.py).
@@ -1393,6 +1428,8 @@ class MiniwindGame:
                                  on_close_cb=on_close,
                                  on_body_click_cb=click_cb,
                                  wants_cursor=wants_cursor)
+            if key == "screen:lockpicking":
+                win.session = session
             # The title bar in the game's medieval face, not the chrome's Arial.
             try:
                 from .ui import fonts as _fonts

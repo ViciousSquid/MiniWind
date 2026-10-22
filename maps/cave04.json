@@ -2262,7 +2262,7 @@
     "name": "Chest_cave04",
     "id": "c5b4cb55-2445-428a-b2dc-deeb3ac0eeb7",
     "container_kind": "chest",
-    "display_name": "Chest",
+    "display_name": "Ironbound Strongbox",
     "inventory": [
      {
       "id": "gold",
@@ -2302,8 +2302,9 @@
      }
     ],
     "use_radius": 128.0,
-    "locked": false,
-    "custom_idle": "assets/sprites/miniwind/container_chest.png"
+    "locked": true,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "lock_difficulty": "expert"
    },
    "io_connections": []
   },

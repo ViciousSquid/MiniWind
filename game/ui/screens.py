@@ -66,6 +66,7 @@ _SCREEN_BODY_SIZE = {
     "trade": (760, 520),
     "container": (760, 500),
     "quest": (880, 540),
+    "lockpicking": (820, 560),
 }
 
 
@@ -1562,18 +1563,30 @@ def _handle_container(session, key):
     return True
 
 
+def _draw_lockpicking(painter, session, w, h):
+    from .lockpicking import draw
+    draw(painter, session, *_panel_rect(w, h))
+
+
+def _handle_lockpicking(session, key):
+    from .lockpicking import handle_key
+    return handle_key(session, key)
+
+
 # dispatch tables
 _DRAW = {
     "charcreate": _draw_charcreate, "inventory": _draw_inventory,
     "character": _draw_character, "journal": _draw_journal,
     "spells": _draw_spells, "trade": _draw_trade, "levelup": _draw_levelup,
     "container": _draw_container, "quest": _draw_quest,
+    "lockpicking": _draw_lockpicking,
 }
 _HANDLE = {
     "charcreate": _handle_charcreate, "inventory": _handle_inventory,
     "character": _handle_character, "journal": _handle_journal,
     "spells": _handle_spells, "trade": _handle_trade, "levelup": _handle_levelup,
     "container": _handle_container, "quest": _handle_quest,
+    "lockpicking": _handle_lockpicking,
     "book": lambda session, key: _handle_book(session, key),
 }
 

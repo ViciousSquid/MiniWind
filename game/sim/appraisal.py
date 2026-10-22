@@ -210,9 +210,10 @@ def appraise(observer_props: Dict, observer_key: str, fact: Dict,
                       f"{offender_name} attacked me and I am no fighter "
                       f"(courage {courage:.2f})", fact)
 
-    if victim_is_self and "property" in tags and kind == "theft":
+    if victim_is_self and "property" in tags and kind in ("theft", "lockpick"):
         return Intent(CONFRONT, offender, offender_name,
-                      f"{offender_name} took what is mine", fact)
+                      (f"{offender_name} tampered with my lock" if kind == "lockpick"
+                       else f"{offender_name} took what is mine"), fact)
 
     # -- 2. it happened to someone I care about --------------------------
     if "grave" in tags and tie:
