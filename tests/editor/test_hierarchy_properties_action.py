@@ -91,6 +91,23 @@ def test_nothing_happens_without_an_object(hierarchy):
     assert not window.properties_dock.isVisible()
 
 
+def test_selecting_a_hierarchy_item_does_not_delete_it(hierarchy):
+    from PyQt5 import sip
+    from PyQt5.QtCore import Qt
+    panel, window, thing, _brush = hierarchy
+    item = next(panel.tree.topLevelItem(i).child(j)
+                for i in range(panel.tree.topLevelItemCount())
+                for j in range(panel.tree.topLevelItem(i).childCount())
+                if panel.tree.topLevelItem(i).child(j).data(0, Qt.UserRole) == ('thing', 0))
+    item.setSelected(True)
+    assert window.state.selected_objects == [thing]
+    assert not sip.isdeleted(item), 'selection must not rebuild the tree inside its signal'
+    panel.tree.clearSelection()
+    assert not sip.isdeleted(item)
+    item.setSelected(True)
+    assert window.state.selected_objects == [thing]
+
+
 # ---------------------------------------------------------------------------
 # Placement in the menu
 # ---------------------------------------------------------------------------

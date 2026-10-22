@@ -121,8 +121,9 @@ def _ensure_index() -> Dict[str, str]:
 
 def refresh() -> None:
     """Forget the index (a test, or an archive written while running)."""
-    global _signature, _checked
+    global _index, _signature, _checked
     with _lock:
+        _index = {}
         _signature = ()
         _checked = 0.0
 
@@ -193,10 +194,13 @@ def pack(source_dir: str, archive_path: str) -> int:
     """Write every file under *source_dir* into *archive_path* with its
     project-relative path. Returns how many files were packed."""
     n = 0
+    destination = os.path.realpath(archive_path)
     with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as z:
         for dirpath, _dirs, files in os.walk(source_dir):
             for name in sorted(files):
                 full = os.path.join(dirpath, name)
+                if os.path.realpath(full) == destination:
+                    continue
                 rel = normalise(full)
                 if not _safe(rel):
                     continue

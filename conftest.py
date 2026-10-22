@@ -21,6 +21,7 @@ import ast
 import os
 import random
 import sys
+import threading
 
 import pytest
 
@@ -436,7 +437,7 @@ def _restore_repo_settings_ini():
 
 
 @pytest.fixture(autouse=True)
-def _qt_tests_get_an_application(request):
+def _qt_tests_get_an_application(request, _restore_repo_settings_ini):
     """Give every ``qt``-marked test the session ``QApplication``.
 
     Building a QWidget with no QApplication is a hard abort in Qt, not an
@@ -444,8 +445,39 @@ def _qt_tests_get_an_application(request):
     ``qt_app`` passed only when an earlier test had happened to create one,
     and took the whole process down when run on its own.
     """
-    if request.node.get_closest_marker("qt") is not None:
-        request.getfixturevalue("qt_app")
+    app = None
+    before = set()
+    before_threads = {id(t) for t in threading.enumerate()}
+    if (request.node.get_closest_marker("qt") is not None
+            or request.node.get_closest_marker("gl") is not None):
+        app = request.getfixturevalue("qt_app")
+        before = {id(w) for w in app.topLevelWidgets()}
+    yield
+    if app is not None:
+        # Some local fixtures close a dirty editor (which cancels Close), or
+        # post deleteLater without delivering DeferredDelete. Retained windows
+        # keep logic threads and Qt callbacks alive into unrelated tests.
+        from PyQt5 import sip
+        from PyQt5.QtCore import Qt
+        for widget in app.topLevelWidgets():
+            if (id(widget) in before or sip.isdeleted(widget)
+                    or widget.windowType() == Qt.Desktop):
+                continue
+            if hasattr(widget, 'unsaved_changes'):
+                widget.unsaved_changes = False
+            widget.close()
+            if not sip.isdeleted(widget):
+                widget.deleteLater()
+        # A fixture can replace view.logic_thread with a fake/another thread;
+        # closeEvent then cannot find the original thread it started.
+        module = sys.modules.get('engine.logic_thread')
+        logic_type = getattr(module, 'LogicThread', ())
+        for thread in threading.enumerate():
+            if id(thread) not in before_threads and isinstance(thread, logic_type):
+                thread.stop()
+                thread.join(timeout=5.0)
+                assert not thread.is_alive(), 'test left a logic thread running'
+        _flush_deferred_deletes(app)
 
 
 @pytest.fixture

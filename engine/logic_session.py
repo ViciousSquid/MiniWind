@@ -434,6 +434,8 @@ class LogicSession:
         """Drop every reference held only for the finished play session."""
         logic = self.logic
         logic.world_runtime.release_session_indexes()
+        # The damage source can be an entity from the map being released.
+        logic.player_runtime.last_damage = None
         logic.collision_runtime._collision_brushes_cache = []
         logic.collision_runtime._collision_rows = None
         logic.collision_runtime._model_collision_brushes = []
