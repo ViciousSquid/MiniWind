@@ -966,7 +966,8 @@ class EntityTable:
                         effect_store.pos[store_indices[valid]] = self.pos[
                             effect_slots[valid]
                         ]
-        fallback = [slot for slot in moved if slot not in set(moved_slots)]
+        moved_slot_set = set(moved_slots)
+        fallback = [slot for slot in moved if slot not in moved_slot_set]
         if fallback:
             self._read_positions(things, fallback)
         if shown:

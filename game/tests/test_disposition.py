@@ -183,6 +183,21 @@ def _find(things, name):
     return next((t for t in things if t.properties.get("name") == name), None)
 
 
+def test_repeated_assaults_preserve_the_aggression_restored_by_the_watch():
+    session, things = _settlement_session()
+    victim = _find(things, "Elowen")
+    victim.properties.update(faction="villagers", team="villagers",
+                             aggression="passive")
+    session._provoke(victim)
+    session._provoke(victim)
+    assert victim.properties["aggression"] == "hostile"
+    assert victim.properties["_base_aggression"] == "passive"
+    session._refresh_actor_cache()
+    session._calm_player_brawl()
+    assert victim.properties["aggression"] == "passive"
+    assert victim.properties["triggered"] is True
+
+
 def test_assault_is_remembered_and_survives_save_load():
     g = _FakeGlobals()
     world = _build_world()                 # one world = stable entity UUIDs

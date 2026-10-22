@@ -5043,74 +5043,20 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.show_toast(f"Failed to restart: {e}", is_error=True)
 
-    def _safe_extract_zip(self, zip_path, dest_dir):
-        """Extract a zip file safely, rejecting any member that would escape dest_dir."""
-        import zipfile
-        import os
-
-        from player.fiopak import MAX_ASSET_ENTRY_BYTES, MAX_TOTAL_ASSET_BYTES
-
-        dest_dir = os.path.realpath(dest_dir)
-        with zipfile.ZipFile(zip_path, 'r') as zf:
-            members = zf.infolist()
-            # A package is shareable input: hold extraction to the same budget
-            # the player's reader enforces, so a small archive cannot inflate
-            # into gigabytes on disk. zipfile never yields more than an
-            # entry's declared size, so the declared sizes are binding.
-            if len(members) > self.MAX_PACKAGE_ENTRIES:
-                raise ValueError(f"Package has too many files ({len(members)})")
-            total = 0
-            for member in members:
-                target_path = os.path.realpath(os.path.join(dest_dir, member.filename))
-                if not target_path.startswith(dest_dir + os.sep) and target_path != dest_dir:
-                    raise ValueError(f"Zip slip attempt detected: {member.filename}")
-                if member.file_size > MAX_ASSET_ENTRY_BYTES:
-                    raise ValueError(f"Package file too large: {member.filename}")
-                total += member.file_size
-                if total > MAX_TOTAL_ASSET_BYTES:
-                    raise ValueError("Package expands past the size limit")
-            zf.extractall(dest_dir)
-
-    #: Upper bound on files in one extracted .fiopak.
-    MAX_PACKAGE_ENTRIES = 20000
-
-
     def play_game_package(self):
         """Pick a .fiopak and launch it in kiosk mode."""
         packages_dir = os.path.join(self.root_dir, "packages")
         start_dir = packages_dir if os.path.exists(packages_dir) else self.root_dir
-
-        filePath, _ = QFileDialog.getOpenFileName(
+        file_path, _ = QFileDialog.getOpenFileName(
             self, "Select Game Package", start_dir, "Game Packages (*.fiopak)"
         )
-        if filePath:
-            self.play_package_from_path(filePath)
+        if file_path:
+            self.play_package_from_path(file_path)
 
     def _extract_package(self, file_path):
-        """Validate a .fiopak, extract it, and return ``(temp_dir, map_path)``.
-
-        The package is opened with the player's reader first, so the editor
-        accepts exactly what the player accepts (no bundled plugin code) and
-        starts on the map the manifest names rather than whichever ``.json``
-        the extraction happens to list first.
-        """
-        import tempfile
-        import shutil
-        from player.fiopak import FioPackage
-
-        with FioPackage.open(file_path) as package:
-            start_map = package.start_map_path()
-
-        temp_dir = tempfile.mkdtemp(prefix="fio_package_")
-        try:
-            self._safe_extract_zip(file_path, temp_dir)
-            map_path = os.path.join(temp_dir, *start_map.split('/'))
-            if not os.path.isfile(map_path):
-                raise FileNotFoundError(f"Start map '{start_map}' missing from package")
-        except Exception:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            raise
-        return temp_dir, map_path
+        """Validate and extract a data package without the standalone player."""
+        from engine.game_package import extract_package
+        return extract_package(file_path)
 
     def _discard_package_temp_dir(self):
         temp_dir = getattr(self, '_package_temp_dir', None)
@@ -5138,6 +5084,7 @@ class MainWindow(QMainWindow):
 
             with open(map_path, 'r', encoding='utf-8') as f:
                 level_data = json.load(f)
+            self.state.validate_level_data(level_data)
 
             # Never point file_path at the package (or its extraction):
             # save_level() writes that path, and writing a map over the

@@ -3155,7 +3155,7 @@ class MiniwindSession:
         return factions.is_hostile("player", team) or team in ("wildlife", "monsters")
 
     @staticmethod
-    def _provoke(p) -> None:
+    def _remember_aggression(p) -> None:
         """Remember an actor's own aggression before it turns hostile, so it
         can be restored when the fight is called off."""
         if str(p.get("aggression")) != "hostile":
@@ -3636,7 +3636,7 @@ class MiniwindSession:
         self._set_rally(npc, False)
         if offender is self.player_actor:
             # The engine MonsterAI hunts the player when an actor is hostile.
-            self._provoke(p)
+            self._remember_aggression(p)
             p["aggression"] = "hostile"
             p["wake_on_sight"] = True
         else:
@@ -5762,7 +5762,7 @@ class MiniwindSession:
         self.director.emit("attack", actor=self.player_actor, target=target,
                            observers=self._sim_observers(),
                            crime=self._sim_is_crime_against(target))
-        self._provoke(tp)
+        self._remember_aggression(tp)
         tp["aggression"] = "hostile"
         tp["triggered"] = False
         tp["awake"] = True

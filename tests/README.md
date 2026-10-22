@@ -5,7 +5,7 @@ the repository root; `pytest.ini` already points it at the three roots that hold
 tests (`tests/`, `plugins/`, `game/tests/`), so no path arguments are needed.
 
 ```bash
-pip install -r requirements.txt pytest
+pip install -r requirements.txt pytest pyflakes
 python -m pytest                     # everything except the benchmarks
 ```
 

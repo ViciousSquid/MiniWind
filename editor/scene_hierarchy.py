@@ -500,6 +500,10 @@ class SceneHierarchy(QWidget):
         return terrain_data is not None
 
     def refresh_list(self):
+        # A selection signal is still using these items. Rebuilding here
+        # deletes them while Qt (or a tree iterator) still holds a pointer.
+        if getattr(self, '_handling_selection', False):
+            return
         self.tree.blockSignals(True)
         self.tree.clear()
         
@@ -1012,6 +1016,13 @@ class SceneHierarchy(QWidget):
         self.main_window.show_properties_panel()
 
     def handle_selection_change(self):
+        self._handling_selection = True
+        try:
+            self._publish_selection()
+        finally:
+            self._handling_selection = False
+
+    def _publish_selection(self):
         selected_items = self.tree.selectedItems()
         if not selected_items:
             self.main_window.set_selected_objects([])
