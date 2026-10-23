@@ -38,8 +38,9 @@ setting click breaks one pick**: its tip visibly snaps off, turns and falls,
 the handle jolts, a snap sounds, and a red message names the failure. The
 pick may snap at its tip, split along its shaft, buckle, or fracture into two
 falling pieces. Break points and flight paths vary; consecutive breaks use
-different styles. The lockpick count updates immediately. The last broken pick remains visible
-until you leave; there is no invisible retry or automatic success roll.
+different styles. The lockpick count updates immediately. The last broken
+pick remains visible until you leave; there is no invisible retry or automatic
+success roll.
 
 Higher **Security** widens the setting window and protects more already-set
 tumblers after a break. Harder locks have more tumblers and shorter pauses.

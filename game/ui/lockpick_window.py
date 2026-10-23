@@ -223,6 +223,7 @@ class LockpickWindow(CallbackWindow):
             return super().handle_mouse_move(event, view_w, view_h)
         field, xs, _buttons = self._geometry()
         point = QPointF(event.pos())
+        hits.pointer = (event.x(), event.y())
         if not field.adjusted(-18, -12, 18, 16).contains(point):
             self._last_point = None
             self._stroke = 0.0
@@ -236,11 +237,11 @@ class LockpickWindow(CallbackWindow):
         elif self._last_point is not None:
             dy = self._last_point.y() - point.y()
             if dy < 0:
-                self._stroke = 0.0
-                if dy < -3:
+                self._stroke = min(0.0, self._stroke) + dy
+                if self._stroke <= -4:
                     self._armed = True
             else:
-                self._stroke += dy
+                self._stroke = max(0.0, self._stroke) + dy
             if self._armed and self._stroke >= max(8.0, field.height() * 0.05):
                 hits.queue(_queued(self.attempt, "lift"))
                 self._armed = False

@@ -85,6 +85,34 @@ def test_break_animation_prevents_repeat_breaks_and_requires_a_fresh_lift():
     assert attempt.lift() and not attempt.broken
 
 
+@pytest.mark.parametrize("seed", [1, 5, 22])
+def test_breaks_vary_the_style_and_flight_without_consecutive_repeats(seed):
+    attempt = Lockpick(20, 0, random.Random(seed))
+    styles, flights = [], []
+    for _ in range(24):
+        assert attempt.set_pin() == "broken"
+        styles.append(attempt.break_style)
+        flights.append(tuple(attempt.break_motion.values()))
+        attempt.update(attempt.BREAK_DURATION)
+        attempt.lift()
+        attempt.update(2)  # let this pin drop, then deliberately miss again
+    assert set(styles) == set(Lockpick.BREAK_STYLES)
+    assert all(a != b for a, b in zip(styles, styles[1:]))
+    assert len(set(flights)) == len(flights)
+
+
+def test_break_style_history_carries_between_closed_lockpick_windows():
+    session, chest = _locked(picks=12)
+    previous = None
+    for _ in range(12):
+        session.open_container(chest)
+        session.lockpick_action("set")
+        assert session.lockpicking.break_style != previous
+        previous = session.lockpicking.break_style
+        session.cancel_lockpicking()
+    assert session.lockpick_count() == 0 and chest.properties["locked"]
+
+
 def test_locked_contents_cannot_be_taken_or_stored_without_unlocking():
     session, chest = _locked(picks=0)
     assert not session.open_container(chest)
@@ -275,6 +303,18 @@ def test_mouse_motion_and_clicks_reach_the_tumblers_through_the_window_manager(q
     session.open_container(chest)
     hits.run_clicks(session)
     assert session.lockpicking.pins[0].phase == "rest"
+    host._sync_overlay_windows(session, SimpleNamespace(window_manager=wm), 1280, 800)
+    assert win.attempt is session.lockpicking
+    move(xs[0], field.bottom() - 10)
+    move(xs[0], field.bottom() - 40)
+    assert session.lockpicking.pins[0].phase == "rise"
+    session.tick_lockpicking(2)
+    # Smooth small downward events must rearm the next upward stroke too.
+    for offset in range(1, 7):
+        move(xs[0], field.bottom() - 40 + offset)
+    for offset in range(1, 11):
+        move(xs[0], field.bottom() - 34 - offset * 2)
+    assert session.lockpicking.pins[0].phase == "rise"
     hits.clear()
 
 
@@ -302,4 +342,41 @@ def test_breakage_is_drawn_and_last_pick_buttons_are_disabled(qt_app):
     falling = frame()
     assert intact != snapped and snapped != falling
     assert [lab for _, lab in hits.targets()] == ["Leave [Esc]"]
+    hits.clear()
+
+
+def test_all_fracture_styles_draw_distinct_stable_falling_pieces(qt_app):
+    from PyQt5.QtCore import QRect
+    from PyQt5.QtGui import QImage, QPainter
+    from ..ui import hits
+    from ..ui.lockpick_window import draw_lock
+    session, chest = _locked(picks=30)
+    session.rng = random.Random(5)
+    session.open_container(chest)
+    seen = {}
+
+    def lock_field():
+        image = QImage(620, 520, QImage.Format_ARGB32)
+        image.fill(0)
+        painter = QPainter(image)
+        draw_lock(painter, session, 0, 0, 620, 520)
+        painter.end()
+        # Compare the object itself, excluding changing counts and messages.
+        return image.copy(QRect(60, 90, 500, 260))
+
+    for _ in range(24):
+        session.lockpick_action("set")
+        attempt = session.lockpicking
+        session.tick_lockpicking(0.4)
+        image = lock_field()
+        assert lock_field() == image  # painting never resamples flight or spin
+        if attempt.break_style not in seen:
+            assert all(other != image for other in seen.values())
+            seen[attempt.break_style] = image
+        session.tick_lockpicking(1)
+        session.lockpick_action("lift")
+        session.tick_lockpicking(2)
+        if len(seen) == len(Lockpick.BREAK_STYLES):
+            break
+    assert set(seen) == set(Lockpick.BREAK_STYLES)
     hits.clear()
