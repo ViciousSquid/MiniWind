@@ -53,7 +53,6 @@ from .rpg import quests as _quests
 from .rpg.gametime import DEFAULT_MINUTES_PER_DAY, GameClock
 from .world_index import WorldIndex
 from .law import SettlementLaw
-from .container_locks import ContainerLocks
 from .sim.law import Writs
 from . import sim
 from .sim import appraisal as sim_appraisal
@@ -64,6 +63,7 @@ from .sim import production as sim_prod
 from .sim.director import Director, PLAYER_KEY, actor_key
 from .rpg.dialogue import DialogueRunner
 from .rpg import inventory as inv
+from .rpg import skills as sk
 from .rpg.game_state import GameState
 from .diceroll_anim import SHAKE_DURATION, ROLL_DURATION, FADE_DURATION
 from . import npc_archery
@@ -426,7 +426,7 @@ class StateStore:
             pass
 
 
-class MiniwindSession(SettlementLaw, ContainerLocks):
+class MiniwindSession(SettlementLaw):
     """Owns the clock, the player character, NPC AI and dialogue state."""
 
     def __init__(self, logic, cfg: Dict = None, globals_store=None):
@@ -518,9 +518,9 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
         self.dialogue_npc = None
         self.dialogue_options = []      # for merchant/persuade extra options
         self.container_thing = None     # the world Container the player has open
-        self.lockpicking = None
-        self.lockpick_target = None
-        self.open_screen = None         # None | 'inventory' | 'character' | 'journal' | 'spells' | 'charcreate' | 'map' | 'levelup' | 'container' | 'lockpick'
+        self.lockpick_attempt = None
+        self.lockpick_thing = None
+        self.open_screen = None         # None | 'inventory' | 'character' | 'journal' | 'spells' | 'charcreate' | 'map' | 'levelup' | 'container'
         #: The full map was asked for (M, a quest's *Show on map*): "player"
         #: or (x, z, label); the host opens the pause menu's MAP page on it.
         self.map_request = None
@@ -697,7 +697,6 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
             self.store.clear()
         except Exception:
             pass
-        self.cancel_lockpicking()
         self.rng = random.Random()
         self._clear_arrest()
         self._arrest_region = ""
@@ -849,6 +848,10 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
             return 0.0
         c.damage(final)
         if final > 0:
+            # A lethal hit can stop engine ticks before the next UI update.
+            # Release the lock UI here too, so it cannot cover the death flow.
+            if self.open_screen == "lockpicking":
+                self.close_lockpicking()
             self._player_flash = HIT_FLASH_TIME   # brief red flash on the head
             # Who or what did it, as the engine recorded (for the death screen).
             c._last_harm = getattr(fio.player_runtime(self.logic), "last_damage", None)
@@ -5210,6 +5213,8 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
         hitscan weapon path never runs underneath it.
         """
         c = self.game.character
+        if self.modal_input_active():
+            return True
         if getattr(c, "is_dead", False):
             return True
         if mode == "secondary":
@@ -5463,6 +5468,11 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
         if spell is not None and any(e.get("kind") == "resurrect"
                                      for e in (spell.effects or [])):
             return self._do_resurrect(spell)
+        knock = spell is not None and any(e.get("kind") == "knock" for e in spell.effects)
+        knock_target = self.nearest_knock_target() if knock else None
+        if knock and knock_target is None:
+            self.notify("Knock needs a locked or jammed container within reach.", 3.0)
+            return False
         res = self.game.cast_active_spell()
         if not res.cast:
             if res.reason == "not enough magicka":
@@ -5478,6 +5488,17 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
                     self.notify("The spell fizzles")
             return False
         if spell is None:
+            return True
+        if knock_target is not None:
+            p = knock_target.properties
+            jammed = p.get("lock_jammed")
+            p["lock_jammed"] = False
+            p["locked"] = False
+            p.pop("lockpick_state", None)
+            if self.lockpick_thing is knock_target:
+                self.close_lockpicking(save_progress=False)
+            self.notify("Knock clears the sheared pick and opens the lock." if jammed
+                        else "Knock opens the lock.", 4.0)
             return True
         # A "wisp" effect conjures the wandering companion light (a SELF spell).
         if any(e.get("kind") == "wisp" for e in (spell.effects or [])):
@@ -6957,6 +6978,21 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
         self.dialogue_npc = None
 
     # -- containers ---------------------------------------------------------
+    def nearest_knock_target(self):
+        pos = self._player_pos()
+        if pos is None:
+            return None
+        best, best_d = None, float("inf")
+        for thing in self._things_of_type("container"):
+            p = thing.properties
+            if p.get("hidden") or not (p.get("locked") or p.get("lock_jammed")):
+                continue
+            radius = min(TALK_RADIUS, max(0.0, float(p.get("use_radius", TALK_RADIUS))))
+            d = (pos[0] - thing.pos[0]) ** 2 + (pos[2] - thing.pos[2]) ** 2
+            if d <= radius * radius and d < best_d:
+                best, best_d = thing, d
+        return best
+
     def nearest_container(self, player_pos, radius: float = TALK_RADIUS):
         """The nearest usable container within its own use radius."""
         best, best_d = None, None
@@ -7036,9 +7072,17 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
         if thing is None:
             return False
         p = thing.properties
+        if p.get("lock_jammed"):
+            self.notify("A sheared pick has jammed this lock. Only the Knock spell can open it.", 5.0)
+            return False
         if p.get("locked") and not p.get("dead"):
-            return self.open_locked_container(thing)
-        self.cancel_lockpicking()
+            key = str(p.get("lock_key") or p.get("key_id") or "")
+            if key and inv.has_item(self.game.character.inventory, key):
+                p["locked"] = False
+                p.pop("lockpick_state", None)
+                self.notify("Unlocked with your key")
+            else:
+                return self.start_lockpicking(thing)
         inv_list = p.get("inventory")
         if not isinstance(inv_list, list):
             # Accept authored shorthand ("id:qty, ...") the spawner also accepts.
@@ -7048,9 +7092,157 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
         self.open_screen = "container"
         return True
 
+    def start_lockpicking(self, thing) -> bool:
+        from .rpg.lockpicking import LockpickAttempt
+        if not inv.has_item(self.game.character.inventory, "lockpick"):
+            self.notify("Locked. You need a lockpick or its key.", 3.0)
+            return False
+        self.close_lockpicking()
+        self.container_thing = None
+        self._blocking = False
+        self._cancel_bow_draw()
+        self._bow_input.clear()
+        self.lockpick_thing = thing
+        p = thing.properties
+        seed = p.get("id") or f"{p.get('name', '')}:{list(thing.pos)}"
+        # Older work maps authored difficulty as 1..100, newer maps as a tier.
+        difficulty = p.get("lock_difficulty", "novice")
+        if isinstance(difficulty, (int, float)):
+            difficulty = ("novice" if difficulty <= 20 else
+                          "apprentice" if difficulty <= 40 else
+                          "adept" if difficulty <= 60 else
+                          "expert" if difficulty <= 80 else "master")
+        self.lockpick_attempt = LockpickAttempt(
+            difficulty, self.game.character.skill(sk.SECURITY),
+            seed, p.get("lockpick_state"))
+        self._lockpick_health = self.game.character.health
+        self._lockpick_witness_timer = 0.0
+        self.open_screen = "lockpicking"
+        return True
+
+    def lockpick_action(self, action, value=0.0):
+        attempt = self.lockpick_attempt
+        if self.open_screen != "lockpicking" or attempt is None:
+            return
+        if action == "cancel":
+            self.close_lockpicking()
+            return
+        if action == "move":
+            attempt.move(value)
+        elif action == "mouse":
+            attempt.move(value, mouse=True)
+        elif action == "assist":
+            attempt.assisted = not attempt.assisted
+        elif action in ("tension", "tension_on", "tension_off"):
+            available = inv.has_item(self.game.character.inventory, "lockpick")
+            enabled = (not attempt.tension if action == "tension" else action == "tension_on")
+            attempt.set_tension(available and enabled)
+            if enabled and not available:
+                attempt.message = "No lockpicks left. Find another pick or the key."
+        self._save_lockpick_progress()
+
+    def _save_lockpick_progress(self):
+        if self.lockpick_thing is not None and self.lockpick_attempt is not None:
+            self.lockpick_thing.properties["lockpick_state"] = self.lockpick_attempt.snapshot()
+
+    def tick_lockpicking(self, delta):
+        from .rpg.lockpicking import shear_chance
+        a, thing = self.lockpick_attempt, self.lockpick_thing
+        if self.open_screen != "lockpicking" or a is None or thing is None:
+            return
+        p = thing.properties
+        if p.get("lock_jammed") or thing not in fio.things(self.logic):
+            self.close_lockpicking()
+            return
+        if (self.game.character.is_dead or self.game.character.health < self._lockpick_health
+                or self._player_pos() is None
+                or self._dist2d(self._player_pos(), thing.pos) > float(p.get("use_radius", TALK_RADIUS))):
+            self.close_lockpicking()
+            self.notify("Lockpicking interrupted", 3.0)
+            return
+        if not p.get("locked"):
+            self.close_lockpicking(save_progress=False)
+            return
+        self._lockpick_witness_timer -= max(0.0, delta)
+        if self._lockpick_witness_timer <= 0:
+            self._lockpick_witness_timer = 0.35
+            if self._check_lockpick_witnesses(thing):
+                return
+        if not inv.has_item(self.game.character.inventory, "lockpick"):
+            a.set_tension(False)
+        event = a.tick(delta)
+        self._save_lockpick_progress()
+        if event == "pick_broke":
+            inv.remove_item(self.game.character.inventory, "lockpick", 1)
+            if not inv.has_item(self.game.character.inventory, "lockpick"):
+                self._forget_in_slots("lockpick")
+            chance = shear_chance(a.security)
+            if chance and self.game.rng.random() < chance:
+                p["lock_jammed"] = True
+                p["locked"] = True
+                self.close_lockpicking()
+                self.notify("The pick sheared off. Only the Knock spell can open this container now.", 7.0)
+            else:
+                self.notify("Lockpick snapped. Your set pins are still latched.", 3.0)
+        elif event == "unlocked":
+            p["locked"] = False
+            p.pop("lockpick_state", None)
+            self.game.character.use_skill(sk.SECURITY, 1.0 + a.lock.pins * 0.5)
+            self.close_lockpicking(save_progress=False)
+            self.notify("Lock opened · Security practised", 3.0)
+            self.open_container(thing)
+
+    def _check_lockpick_witnesses(self, thing):
+        """Ongoing, sight-only crime: a patrol can arrive after picking starts.
+
+        An absent owner never learns magically. Witnesses use ordinary crime
+        knowledge/reporting; sleeping people and people behind walls see none.
+        """
+        from .sim import perception
+        p = thing.properties
+        if not sim_own.is_theft(p, PLAYER_KEY, "player"):
+            return False
+        player = self.player_actor
+        observers = []
+        grid = getattr(getattr(self.logic, "session_runtime", None), "spatial_grid", None)
+        for npc in self._sim_observers():
+            if npc is player or npc.properties.get("type") != "npc":
+                continue
+            seen = perception.can_perceive(npc, player.pos, 0.0, self.clock.hour, player.properties)
+            if seen is None or seen.mode != "sight":
+                continue
+            if grid is not None:
+                import glm
+                eye = glm.vec3(*npc.pos) + glm.vec3(0, 48, 0)
+                target = glm.vec3(*player.pos) + glm.vec3(0, 36, 0)
+                if not grid.has_line_of_sight(eye, target):
+                    continue
+            observers.append(npc)
+        if not observers:
+            return False
+        self.director.emit("lockpick", actor=player, target=sim_own.owner_of(p),
+                           observers=observers, pos=list(player.pos), victim_knows=False,
+                           target_name=sim_own.owner_name_of(p) or "someone",
+                           container=p.get("id") or p.get("name", ""))
+        self.director.resolve_reports(observers)
+        self.close_lockpicking()
+        name = observers[0].properties.get("display_name") or "Someone"
+        self.notify(f"{name} caught you picking the lock!", 5.0)
+        return True
+
+    def close_lockpicking(self, save_progress=True):
+        if save_progress:
+            self._save_lockpick_progress()
+        self.lockpick_attempt = None
+        self.lockpick_thing = None
+        if self.open_screen == "lockpicking":
+            self.open_screen = None
+
     def container_inventory(self) -> list:
         t = self.container_thing
-        if t is None or (t.properties.get("locked") and not t.properties.get("dead")):
+        if t is None:
+            return []
+        if t.properties.get("lock_jammed") or t.properties.get("locked"):
             return []
         inv_list = t.properties.get("inventory")
         if not isinstance(inv_list, list):
@@ -7104,7 +7296,7 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
         """Move one stack from the player's inventory into the open container."""
         if self.container_thing is None:
             return False
-        if self.container_thing.properties.get("locked"):
+        if self.container_thing.properties.get("lock_jammed") or self.container_thing.properties.get("locked"):
             return False
         pinv = self.game.character.inventory
         if not (0 <= index < len(pinv)):
@@ -7294,7 +7486,6 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
     def restore(self) -> None:
         # The event history first, so anything that reads it during the rest of
         # the restore sees the world's past rather than an empty log.
-        self.cancel_lockpicking()
         self.director.restore()
         self.law.restore()
         self._clear_arrest()

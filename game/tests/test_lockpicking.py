@@ -1,382 +1,384 @@
-"""Authored locks, mouse-lifted tumblers, visible breakage, and ownership."""
-
-import copy
-import random
+"""Lock progress, real resource losses and the Knock-only jam exception."""
+import json
 from types import SimpleNamespace
 
 import pytest
 
-from ..rpg import inventory as inv, items
-from ..rpg.lockpicking import Lockpick
-from ..sim import ownership
-from .test_corpse_loot import _Thing, _session
+from ..rpg.lockpicking import LOCKS, LockpickAttempt, shear_chance
+from ..rpg import inventory as inv, items, magic, skills
+from .test_corpse_loot import _Thing, _Logic
+from .test_sim import _FakeGlobals
 
 
-def _locked(picks=3, **props):
-    chest = _Thing("Ironbound chest", (40, 0, 0), type="container", locked=True,
-                   inventory=[items.make("potion_heal_minor", 2)], **props)
-    session = _session(chest)
-    session.game.character.inventory = [items.make("lockpick", picks)] if picks else []
-    return session, chest
+def _locked(**props):
+    return _Thing("Old lockbox", (40, 0, 0), type="container", locked=True,
+                  inventory=[items.make("gold", 30)], **props)
 
 
-def _set_current(session):
-    session.lockpick_action("lift")
-    session.tick_lockpicking(session.lockpicking.pins[session.lockpicking.selected].rise + 1e-5)
-    session.lockpick_action("set")
+def _picking(chest=None, skill=25, picks=3):
+    chest = chest or _locked()
+    from ..runtime import MiniwindSession
+    s = MiniwindSession(_Logic([chest]), cfg={}, globals_store=_FakeGlobals())
+    s.game.dice = None
+    s.needs_char_creation = False
+    s.game.character.skills[skills.SECURITY] = skill
+    s.game.character.inventory = [items.make("lockpick", picks)] if picks else []
+    s.open_container(chest)
+    return s, chest
 
 
-@pytest.mark.parametrize("level,count", [(0, 1), (20, 1), (25, 2), (60, 3), (80, 4), (200, 5)])
-def test_difficulty_controls_the_number_of_tumblers(level, count):
-    attempt = Lockpick(level, 20, random.Random(3))
-    assert len(attempt.pins) == count
+def _set_pin(a):
+    a.set_tension(True)
+    for _ in range(100):
+        a.angle = a.target
+        event = a.tick(.02)
+        if event:
+            return event
+    pytest.fail("A tracked pin never latched")
 
 
-def test_top_contact_is_the_setting_window_and_a_missed_pin_falls():
-    attempt = Lockpick(20, 0, random.Random(3))
-    assert attempt.lift()
-    pin = attempt.pins[0]
-    assert attempt.update(pin.rise / 2) == 0
-    assert 0 < pin.height < 1 and not attempt.can_set
-    assert attempt.update(pin.rise / 2 + 1e-5) == 1
-    assert pin.height == 1 and attempt.can_set
-    assert "Click" in attempt.message
-    assert attempt.update(pin.hold + 1e-4) == 0
-    assert pin.phase == "fall" and not attempt.can_set
-    attempt.update(1)
-    assert pin.phase == "rest" and not attempt.broken
-    assert attempt.set_pin() == "broken"  # missing alone never breaks a pick
+@pytest.mark.parametrize("difficulty", LOCKS)
+@pytest.mark.parametrize("skill", [0, 15, 100])
+def test_any_lock_can_be_opened_by_control_without_a_random_success_roll(difficulty, skill):
+    a = LockpickAttempt(difficulty, skill, "test")
+    for pin in range(a.lock.pins):
+        assert _set_pin(a) == ("unlocked" if pin == a.lock.pins - 1 else "pin_set")
+        assert a.pins_set == pin + 1
+        assert not a.tension
+    assert a.complete
 
 
-def test_security_and_a_slow_stroke_give_a_longer_contact_pause():
-    novice = Lockpick(80, 0, random.Random(3))
-    skilled = Lockpick(80, 70, random.Random(3))
-    novice.lift()
-    skilled.lift()
-    assert skilled.pins[0].hold > novice.pins[0].hold
-    quick_hold = novice.pins[0].hold
-    for _ in range(2):
-        novice.update(2)
-        novice.lift()
-    assert novice.pins[0].hold > quick_hold
+def test_binding_requires_tracking_on_a_master_lock_at_low_skill():
+    a = LockpickAttempt("master", 0, "hard")
+    a.angle = a.target
+    a.set_tension(True)
+    for _ in range(100):
+        a.tick(.02)
+    assert a.pins_set == 0
+    assert 0 < a.turn < 1
+    assert not a.aligned
+    expert = LockpickAttempt("master", 100, "hard")
+    assert expert.tolerance > a.tolerance * 3
+    assert shear_chance(15) == 0
+    assert shear_chance(0) == .25
 
 
-@pytest.mark.parametrize("security,retained", [(0, 0), (30, 1), (60, 2), (80, 3)])
-def test_skill_protects_set_tumblers_when_a_pick_snaps(security, retained):
-    attempt = Lockpick(80, security, random.Random(3))
-    for i in range(3):
-        attempt.select(i)
-        attempt.lift()
-        attempt.update(attempt.pins[i].rise + 1e-5)
-        assert attempt.set_pin() == "set"
-    attempt.select(3)
-    assert attempt.set_pin() == "broken"
-    assert sum(p.latched for p in attempt.pins) == retained
+def test_release_recovers_strain_and_never_resets_pins_or_partial_turn():
+    a = LockpickAttempt(seed="stable")
+    _set_pin(a)
+    a.angle = a.target
+    a.set_tension(True)
+    a.tick(.1)
+    partial = a.turn
+    a.angle = 80 if a.target < 0 else -80
+    for _ in range(25):
+        assert a.tick(.1) is None
+    assert a.strain > 0
+    a.set_tension(False)
+    for _ in range(30):
+        a.tick(.1)
+    assert a.strain == 0
+    assert a.pins_set == 1 and a.turn == partial
+    restored = LockpickAttempt(seed="stable", saved=json.loads(json.dumps(a.snapshot())))
+    assert restored.pins_set == 1 and restored.turn == partial
+    assert restored.targets == a.targets
+    assert not restored.tension
 
 
-def test_break_animation_prevents_repeat_breaks_and_requires_a_fresh_lift():
-    attempt = Lockpick(20, 0, random.Random(3))
-    assert attempt.set_pin() == "broken"
-    assert attempt.breaking
-    assert attempt.set_pin() is None and not attempt.lift()
-    attempt.update(attempt.BREAK_DURATION + 1)
-    assert attempt.broken and not attempt.breaking
-    assert attempt.set_pin() is None
-    assert attempt.lift() and not attempt.broken
-
-
-@pytest.mark.parametrize("seed", [1, 5, 22])
-def test_breaks_vary_the_style_and_flight_without_consecutive_repeats(seed):
-    attempt = Lockpick(20, 0, random.Random(seed))
-    styles, flights = [], []
-    for _ in range(24):
-        assert attempt.set_pin() == "broken"
-        styles.append(attempt.break_style)
-        flights.append(tuple(attempt.break_motion.values()))
-        attempt.update(attempt.BREAK_DURATION)
-        attempt.lift()
-        attempt.update(2)  # let this pin drop, then deliberately miss again
-    assert set(styles) == set(Lockpick.BREAK_STYLES)
-    assert all(a != b for a, b in zip(styles, styles[1:]))
-    assert len(set(flights)) == len(flights)
-
-
-def test_break_style_history_carries_between_closed_lockpick_windows():
-    session, chest = _locked(picks=12)
-    previous = None
-    for _ in range(12):
-        session.open_container(chest)
-        session.lockpick_action("set")
-        assert session.lockpicking.break_style != previous
-        previous = session.lockpicking.break_style
-        session.cancel_lockpicking()
-    assert session.lockpick_count() == 0 and chest.properties["locked"]
-
-
-def test_locked_contents_cannot_be_taken_or_stored_without_unlocking():
-    session, chest = _locked(picks=0)
-    assert not session.open_container(chest)
-    assert session.open_screen is None
-    session.container_thing = chest  # a stale/direct loot call cannot bypass the lock
-    assert not session.container_inventory()
-    assert not session.take_from_container(0)
-    assert not session.store_in_container(0)
-    assert chest.properties["inventory"]
-
-
-def test_a_key_opens_a_key_only_lock_without_being_consumed():
-    session, chest = _locked(picks=0, pickable=False, key_id="iron_shortsword")
-    assert not session.open_container(chest)
-    inv.add_item(session.game.character.inventory, items.make("iron_shortsword"))
-    assert session.open_container(chest)
-    assert session.open_screen == "container" and not chest.properties["locked"]
-    assert inv.has_item(session.game.character.inventory, "iron_shortsword")
-    assert session.lockpicking is None
-
-
-def test_key_cannot_unlock_a_container_out_of_reach():
-    session, chest = _locked(key_id="lockpick")
-    chest.pos = [400, 0, 0]
-    assert not session.open_container(chest)
-    assert chest.properties["locked"]
-
-
-def test_a_complete_mouse_timing_attempt_unlocks_and_trains_security_once():
-    session, chest = _locked(lock_difficulty=40)
-    xp = dict(session.game.character._skill_xp)
-    assert session.open_container(chest)
-    assert session.open_screen == "lockpick" and session.container_thing is None
-    _set_current(session)
-    assert session.open_screen == "lockpick" and chest.properties["locked"]
-    session.lockpick_action("select", 1)
-    _set_current(session)
-    assert session.open_screen == "container" and not chest.properties["locked"]
-    assert session.container_inventory() == chest.properties["inventory"]
-    assert session.lockpick_count() == 3 and session.lockpicking is None
-    assert session.game.character._skill_xp != xp
-    trained = dict(session.game.character._skill_xp)
-    session.open_container(chest)
-    session.lockpick_action("set")
-    assert session.game.character._skill_xp == trained
-
-
-def test_last_pick_break_stays_visible_until_the_player_leaves(monkeypatch):
-    session, chest = _locked(picks=1)
-    sounds = []
-    monkeypatch.setattr(session, "play_ui_sound", lambda name, volume=1: sounds.append(name))
-    session.open_container(chest)
-    session.lockpick_action("set")
-    attempt = session.lockpicking
-    assert attempt.breaking and session.lockpick_count() == 0
-    assert "Last lockpick broken" in attempt.message
-    assert "lock_break.wav" in sounds
-    for _ in range(3):
-        session.tick_lockpicking(1)
-        session.lockpick_action("set")
-    assert session.open_screen == "lockpick" and session.lockpicking is attempt
-    assert chest.properties["locked"]
-    assert not attempt.breaking and attempt.broken
-    session.cancel_lockpicking()
-    assert session.open_screen is None
-
-
-@pytest.mark.parametrize("invalidate", ["distance", "removed", "death"])
-def test_invalid_target_or_dead_player_cancels_without_spending_a_pick(invalidate):
-    session, chest = _locked()
-    session.open_container(chest)
-    if invalidate == "distance":
-        chest.pos = [1000, 0, 0]
-    elif invalidate == "removed":
-        session.logic.things.remove(chest)
-    else:
-        session.game.character.health = 0
-    session.tick_lockpicking(0.1)
-    assert session.lockpicking is None and session.open_screen is None
-    assert session.lockpick_count() == 3 and chest.properties["locked"]
-
-
-def test_unlocking_and_looking_are_free_but_taking_owned_contents_is_theft():
-    from .test_law import _scene
-    chest = _Thing("Wick's chest", (40, 0, 0), type="container", locked=True,
-                   lock_difficulty=20, owner="wick",
-                   inventory=[items.make("potion_heal_minor", 2)])
-    session, witness, guard = _scene(chest)
-    guard.pos = [200, 0, 0]
-    inv.add_item(session.game.character.inventory, items.make("lockpick", 2))
-    session.open_container(chest)
-    _set_current(session)
-    assert not session.director.bus.history
-    assert session.law.total == 0
-    session.container_inventory()
-    assert not session.director.bus.history
-    value = chest.properties["inventory"][0]["value"] * 2
-    assert session.take_from_container(0)
-    assert session.director.bus.history[-1].kind == "theft"
-    assert session.director.bus.history[-1].data["value"] == value
-    assert any(ownership.is_stolen(s) for s in session.game.character.inventory)
-    assert any(n["text"] == "Someone witnessed your crime." for n in session.notifications)
-    session.director.resolve_reports(session._sim_actors())
-    assert session.law.total == 25 + value
-
-
-@pytest.mark.parametrize("owner", [None, "None", " none ", "(None)", "player"])
-def test_none_and_player_owned_contents_are_free_to_take_even_in_front_of_a_guard(owner):
-    from .test_law import _scene
-    chest = _Thing("Supply chest", (40, 0, 0), type="container", owner=owner,
-                   owner_faction="guards", inventory=[items.make("potion_heal_minor")])
-    session, witness, guard = _scene(chest)
-    guard.pos = [100, 0, 0]
-    session.open_container(chest)
-    assert session.take_from_container(0)
-    assert session.director.bus.history[-1].kind == "pickup"
-    session.director.resolve_reports(session._sim_actors())
-    assert session.law.total == 0
-    assert not any(ownership.is_stolen(s) for s in session.game.character.inventory)
-
-
-def test_unlocked_state_survives_the_existing_save_overlay():
-    from engine.savegame import compute_delta_level, _overlay_entities
-    session, chest = _locked(lock_difficulty=20, owner="wick", id="chest-uuid")
-    base = {"things": [{"pos": list(chest.pos), "properties": copy.deepcopy(chest.properties)}]}
-    session.open_container(chest)
-    _set_current(session)
-    live = {"things": [{"pos": list(chest.pos), "properties": copy.deepcopy(chest.properties)}]}
-    delta = compute_delta_level(base, live)
-    restored = _Thing("Chest", type="container", locked=True, id="chest-uuid")
-    logic = SimpleNamespace(editor_state=SimpleNamespace(things=[restored], brushes=[]),
-                            prop_runtime=None)
-    _overlay_entities(logic, delta, complete=True)
-    assert restored.properties["locked"] is False
-    assert restored.properties["owner"] == "wick"
-    assert restored.properties["inventory"] == chest.properties["inventory"]
-
-
-def test_mouse_motion_and_clicks_reach_the_tumblers_through_the_window_manager(qt_app):
-    from PyQt5.QtCore import QEvent, QPointF, Qt
-    from PyQt5.QtGui import QMouseEvent, QPainter, QPixmap
-    from engine.floating_windows import WindowManager
-    from ..host import MiniwindGame
-    from ..ui import hits, screens
-    from ..ui.lockpick_window import LockpickWindow
-    session, chest = _locked(lock_difficulty=40)
-    session.open_container(chest)
-    wm = WindowManager()
-    host = MiniwindGame.__new__(MiniwindGame)
-    host._sync_overlay_windows(session, SimpleNamespace(window_manager=wm), 1280, 800)
-    win = session._overlay_win
-    assert isinstance(win, LockpickWindow) and win.wants_cursor
-    assert "Medieval" in win.title_font.family()
-    pixmap = QPixmap(1280, 800)
-    painter = QPainter(pixmap)
-    hits.begin()
-    wm.draw_all(painter)
-    hits.end()
-    painter.end()
-    assert screens.animating(session)
-    assert {"Lift tumbler", "Set tumbler", "Leave [Esc]"} <= {lab for _, lab in hits.targets()}
-    field, xs, _ = win._geometry()
-
-    def move(x, y):
-        event = QMouseEvent(QEvent.MouseMove, QPointF(x, y), Qt.NoButton, Qt.NoButton, Qt.NoModifier)
-        assert wm.handle_mouse_move(event, 1280, 800)
-        hits.run_clicks(session)
-
-    move(xs[1], field.bottom() - 10)
-    move(xs[1], field.bottom() - 40)
-    assert session.lockpicking.selected == 1
-    assert session.lockpicking.pins[1].phase == "rise"
-    # The modal tick advances pins while the world clock stays paused.
-    hour = session.clock.hour
-    host._handle_screen_input(session, frozenset(),
-                              SimpleNamespace(delta=session.lockpicking.pins[1].rise + 1e-5))
-    assert session.lockpicking.can_set and session.clock.hour == hour
-    event = QMouseEvent(QEvent.MouseButtonPress, QPointF(xs[1], field.bottom() - 40),
-                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
-    assert wm.handle_mouse_press(event)
-    hits.run_clicks(session)
-    assert session.lockpicking.pins[1].latched
-    # A stale window's mouse callback cannot affect a newly started attempt.
-    move(xs[0], field.bottom() - 10)
-    wm.handle_mouse_move(QMouseEvent(QEvent.MouseMove, QPointF(xs[0], field.bottom() - 40),
-                                    Qt.NoButton, Qt.NoButton, Qt.NoModifier), 1280, 800)
-    session.cancel_lockpicking()
-    session.open_container(chest)
-    hits.run_clicks(session)
-    assert session.lockpicking.pins[0].phase == "rest"
-    host._sync_overlay_windows(session, SimpleNamespace(window_manager=wm), 1280, 800)
-    assert win.attempt is session.lockpicking
-    move(xs[0], field.bottom() - 10)
-    move(xs[0], field.bottom() - 40)
-    assert session.lockpicking.pins[0].phase == "rise"
-    session.tick_lockpicking(2)
-    # Smooth small downward events must rearm the next upward stroke too.
-    for offset in range(1, 7):
-        move(xs[0], field.bottom() - 40 + offset)
-    for offset in range(1, 11):
-        move(xs[0], field.bottom() - 34 - offset * 2)
-    assert session.lockpicking.pins[0].phase == "rise"
-    hits.clear()
-
-
-def test_breakage_is_drawn_and_last_pick_buttons_are_disabled(qt_app):
-    from PyQt5.QtGui import QImage, QPainter
-    from ..ui import hits
-    from ..ui.lockpick_window import draw_lock
-    session, chest = _locked(picks=1)
-    session.open_container(chest)
-
-    def frame():
-        image = QImage(620, 520, QImage.Format_ARGB32)
-        image.fill(0)
-        painter = QPainter(image)
-        hits.begin()
-        draw_lock(painter, session, 0, 0, 620, 520)
-        hits.end()
-        painter.end()
-        return image
-
-    intact = frame()
-    session.lockpick_action("set")
-    snapped = frame()
-    session.tick_lockpicking(0.4)
-    falling = frame()
-    assert intact != snapped and snapped != falling
-    assert [lab for _, lab in hits.targets()] == ["Leave [Esc]"]
-    hits.clear()
-
-
-def test_all_fracture_styles_draw_distinct_stable_falling_pieces(qt_app):
-    from PyQt5.QtCore import QRect
-    from PyQt5.QtGui import QImage, QPainter
-    from ..ui import hits
-    from ..ui.lockpick_window import draw_lock
-    session, chest = _locked(picks=30)
-    session.rng = random.Random(5)
-    session.open_container(chest)
-    seen = {}
-
-    def lock_field():
-        image = QImage(620, 520, QImage.Format_ARGB32)
-        image.fill(0)
-        painter = QPainter(image)
-        draw_lock(painter, session, 0, 0, 620, 520)
-        painter.end()
-        # Compare the object itself, excluding changing counts and messages.
-        return image.copy(QRect(60, 90, 500, 260))
-
-    for _ in range(24):
-        session.lockpick_action("set")
-        attempt = session.lockpicking
-        session.tick_lockpicking(0.4)
-        image = lock_field()
-        assert lock_field() == image  # painting never resamples flight or spin
-        if attempt.break_style not in seen:
-            assert all(other != image for other in seen.values())
-            seen[attempt.break_style] = image
-        session.tick_lockpicking(1)
-        session.lockpick_action("lift")
-        session.tick_lockpicking(2)
-        if len(seen) == len(Lockpick.BREAK_STYLES):
+def test_breaks_only_after_sustained_overload_and_never_from_a_stalled_frame():
+    a = LockpickAttempt(seed="break")
+    a.angle = 80 if a.target < 0 else -80
+    a.set_tension(True)
+    assert a.tick(120) is None
+    assert a.strain == 0
+    for _ in range(100):
+        event = a.tick(.1)
+        if event:
             break
-    assert set(seen) == set(Lockpick.BREAK_STYLES)
-    hits.clear()
+    assert event == "pick_broke"
+    assert not a.tension
+    assert a.feedback_time > 0
+    assert a.tick(.1) is None
+
+
+def test_mouse_resistance_is_stronger_when_binding_and_freely_releases():
+    a = LockpickAttempt(seed="mouse")
+    a.angle = -70
+    a.set_tension(False)
+    a.move(10, mouse=True)
+    free = a.angle + 70
+    a.angle = -70 if a.target > 0 else 70
+    before = a.angle
+    a.set_tension(True)
+    a.move(10, mouse=True)
+    assert 0 < a.angle - before < free
+    a.set_tension(False)
+    before = a.angle
+    a.move(-10, mouse=True)
+    assert a.angle == before - 10
+
+
+@pytest.mark.parametrize("saved", [None, [], {"signature": "wrong"}, {"angle": "bad"}])
+def test_unrelated_or_bad_saved_progress_does_not_poison_a_lock(saved):
+    a = LockpickAttempt(seed="save", saved=saved)
+    assert a.pins_set == 0 and a.angle == 0
+
+
+def test_locked_inventory_is_inaccessible_until_the_minigame_is_won():
+    s, chest = _picking()
+    assert s.open_screen == "lockpicking"
+    assert s.container_inventory() == []
+    assert not s.take_from_container(0)
+    before_xp = dict(s.game.character._skill_xp)
+    for _ in range(500):
+        a = s.lockpick_attempt
+        if a is None:
+            break
+        a.angle = a.target
+        a.set_tension(True)
+        s.tick_lockpicking(.05)
+    assert not chest.properties["locked"]
+    assert s.open_screen == "container"
+    assert "lockpick_state" not in chest.properties
+    assert s.game.character._skill_xp != before_xp
+    assert s.take_from_container(0)
+    xp = dict(s.game.character._skill_xp)
+    s.close_container()
+    s.open_container(chest)
+    assert s.game.character._skill_xp == xp
+
+
+def test_cancel_and_reopen_keeps_pins_and_does_not_spend_a_pick():
+    s, chest = _picking()
+    _set_pin(s.lockpick_attempt)
+    angle = s.lockpick_attempt.angle
+    s.close_lockpicking()
+    # Simulate a save/load: only ordinary public entity properties survive.
+    restored = _Thing("Old lockbox", (40, 0, 0))
+    restored.properties = json.loads(json.dumps(chest.properties))
+    s.logic.things.append(restored)
+    s.open_container(restored)
+    assert s.lockpick_attempt.pins_set == 1
+    assert s.lockpick_attempt.angle == angle
+    assert inv.quantity(s.game.character.inventory, "lockpick") == 3
+
+
+def _snap(s):
+    a = s.lockpick_attempt
+    a.angle = 80 if a.target < 0 else -80
+    a.strain = .999
+    a.binding_time = 1
+    a.set_tension(True)
+    s.tick_lockpicking(.1)
+
+
+def test_snap_consumes_exactly_one_pick_and_preserves_pins():
+    s, _ = _picking(skill=15)
+    _set_pin(s.lockpick_attempt)
+    _snap(s)
+    assert inv.quantity(s.game.character.inventory, "lockpick") == 2
+    assert s.lockpick_attempt.pins_set == 1
+    assert not s.lockpick_attempt.tension
+    s.tick_lockpicking(.1)
+    assert inv.quantity(s.game.character.inventory, "lockpick") == 2
+
+
+def test_last_pick_break_disables_tension_and_the_player_can_leave():
+    s, _ = _picking(skill=15, picks=1)
+    _snap(s)
+    s.lockpick_action("tension_on")
+    assert not s.lockpick_attempt.tension
+    s.lockpick_action("cancel")
+    assert s.open_screen is None
+
+
+def test_low_skill_snap_can_shear_and_a_key_cannot_bypass_the_saved_jam(monkeypatch):
+    s, chest = _picking(skill=0)
+    monkeypatch.setattr(s.game.rng, "random", lambda: 0)
+    _snap(s)
+    assert chest.properties["lock_jammed"]
+    assert s.open_screen is None
+    chest.properties["lock_key"] = "old_key"
+    inv.add_item(s.game.character.inventory, inv.make_item("old_key"))
+    assert not s.open_container(chest)
+    restored = _Thing("Old lockbox", (40, 0, 0))
+    restored.properties = json.loads(json.dumps(chest.properties))
+    assert not s.open_container(restored)
+    # Even a direct inventory action cannot bypass the lock.
+    s.container_thing = restored
+    assert not s.take_from_container(0)
+    assert not s.store_in_container(0)
+
+
+def test_a_non_shearing_snap_does_not_jam_and_can_be_retried(monkeypatch):
+    s, chest = _picking(skill=0)
+    monkeypatch.setattr(s.game.rng, "random", lambda: .99)
+    _snap(s)
+    assert not chest.properties.get("lock_jammed")
+    s.lockpick_action("tension_on")
+    assert s.lockpick_attempt.tension
+
+
+def test_matching_key_opens_a_normal_lock_without_consumption_or_security_xp():
+    s, chest = _picking(picks=0)
+    assert s.open_screen != "lockpicking"
+    chest.properties["lock_key"] = "old_key"
+    inv.add_item(s.game.character.inventory, inv.make_item("old_key"))
+    xp = dict(s.game.character._skill_xp)
+    assert s.open_container(chest)
+    assert s.open_screen == "container"
+    assert inv.has_item(s.game.character.inventory, "old_key")
+    assert s.game.character._skill_xp == xp
+
+
+def _knock(s):
+    c = s.game.character
+    c.class_id = "mage"
+    c.known_spells = ["knock"]
+    c.active_spell = "knock"
+    c.magicka = 500
+    c.max_magicka = 500
+    c.skills[skills.ALTERATION] = 100
+    return c
+
+
+def test_knock_uses_the_spell_pipeline_to_clear_jams_without_stealing_the_contents(monkeypatch):
+    s, chest = _picking()
+    s.close_lockpicking()
+    chest.properties["lock_jammed"] = True
+    c = _knock(s)
+    monkeypatch.setattr(magic, "cast_check", lambda *a, **kw: (True, {}))
+    assert s.do_cast()
+    assert c.magicka < 500
+    assert not chest.properties["locked"] and not chest.properties["lock_jammed"]
+    assert "lockpick_state" not in chest.properties
+    assert len(chest.properties["inventory"]) == 1
+    assert s.open_container(chest)
+
+
+@pytest.mark.parametrize("reason", ["unknown", "magicka", "fizzle", "range"])
+def test_unsuccessful_knock_never_clears_a_jam(reason, monkeypatch):
+    s, chest = _picking()
+    s.close_lockpicking()
+    chest.properties["lock_jammed"] = True
+    c = _knock(s)
+    if reason == "unknown":
+        c.known_spells = []
+    elif reason == "magicka":
+        c.magicka = 0
+    elif reason == "range":
+        chest.pos = [5000, 0, 0]
+    else:
+        monkeypatch.setattr(magic, "cast_check", lambda *a, **kw: (False, {}))
+    assert not s.do_cast()
+    assert chest.properties["lock_jammed"] and chest.properties["locked"]
+
+
+def test_damage_and_leaving_reach_interrupt_without_losing_progress():
+    s, _ = _picking()
+    _set_pin(s.lockpick_attempt)
+    s.game.character.health -= 1
+    s.tick_lockpicking(.05)
+    assert s.open_screen is None
+    s, chest = _picking()
+    chest.pos = [5000, 0, 0]
+    s.tick_lockpicking(.05)
+    assert s.open_screen is None
+
+
+def test_a_patrol_arriving_later_sees_picking_and_reports_it_once():
+    s, chest = _picking(_locked(owner="absent_owner"))
+    s.tick_lockpicking(.1)
+    assert s.open_screen == "lockpicking"
+    guard = _Thing("Watchman", (50, 0, 0), type="npc", npc_role="guard", faction="guards", sight_range=500)
+    s.logic.things.append(guard)
+    s._type_index_token = None
+    s.tick_lockpicking(.4)
+    assert s.open_screen is None
+    assert s.game.character.bounty == 25
+    assert len(s.director.bus.recent(kind="lockpick")) == 1
+
+
+@pytest.mark.parametrize("hidden_by", ["sleep", "wall", "distance", "ownership"])
+def test_unseen_or_lawful_lockpicking_has_no_witness_bounty(hidden_by):
+    chest = _locked(owner="player" if hidden_by == "ownership" else "absent_owner")
+    s, _ = _picking(chest)
+    guard = _Thing("Watchman", (50, 0, 0), type="npc", faction="guards", sight_range=500)
+    s.logic.things.append(guard)
+    s._type_index_token = None
+    if hidden_by == "sleep":
+        guard.properties["sched_state"] = "SLEEPING"
+    elif hidden_by == "wall":
+        s.logic.session_runtime = SimpleNamespace(spatial_grid=SimpleNamespace(has_line_of_sight=lambda *a: False))
+    elif hidden_by == "distance":
+        guard.pos = [5000, 0, 0]
+    s.tick_lockpicking(.1)
+    assert s.open_screen == "lockpicking"
+    assert s.game.character.bounty == 0
+
+
+@pytest.mark.parametrize("state", ["jammed", "unlocked", "partial"])
+def test_map_departure_and_return_remember_the_lock_without_resetting_loot(state):
+    from ..map_memory import MapMemory
+    chest = _locked(id="persistent-lock")
+    original = json.loads(json.dumps(chest.properties))
+    s, _ = _picking(chest)
+    s.memory.load("test-cave")
+    if state == "jammed":
+        chest.properties["lock_jammed"] = True
+    elif state == "unlocked":
+        chest.properties["locked"] = False
+        s.close_lockpicking()
+    else:
+        _set_pin(s.lockpick_attempt)
+        s.close_lockpicking()
+    chest.properties["inventory"] = []
+    s.memory.save()
+    fresh = _Thing("Old lockbox", (40, 0, 0))
+    fresh.properties = original
+    s.logic.things = [fresh]
+    memory = MapMemory(s)
+    memory.load("test-cave")
+    memory.apply()
+    assert fresh.properties["inventory"] == []
+    if state == "jammed":
+        assert fresh.properties["lock_jammed"]
+        assert not s.open_container(fresh)
+    elif state == "unlocked":
+        assert not fresh.properties["locked"]
+    else:
+        assert fresh.properties["lockpick_state"]["pins_set"] == 1
+
+
+def test_mouse_fire_never_attacks_or_casts_while_picking(monkeypatch):
+    s, _ = _picking()
+    monkeypatch.setattr(s, "do_attack", lambda *a: pytest.fail("attack leaked"))
+    monkeypatch.setattr(s, "do_cast", lambda *a: pytest.fail("cast leaked"))
+    assert s.fire_player_weapon(s.logic, "primary")
+    assert s.fire_player_weapon(s.logic, "secondary")
+
+
+def test_starting_to_pick_lowers_a_charged_weapon_and_discards_queued_release(monkeypatch):
+    s, chest = _picking()
+    s.close_lockpicking()
+    s.bow_charge = .9
+    s._blocking = True
+    s._bow_input.append("release")
+    monkeypatch.setattr(s, "_loose_drawn_arrow", lambda *a: pytest.fail("arrow leaked"))
+    assert s.open_container(chest)
+    s._update_bow_draw(.1)
+    assert s.bow_charge is None
+    assert not s._bow_input
+    assert not s._blocking
+
+
+def test_a_lethal_hit_closes_the_lock_ui_before_engine_ticks_stop(monkeypatch):
+    from .. import runtime
+    s, chest = _picking()
+    _set_pin(s.lockpick_attempt)
+    monkeypatch.setattr(runtime.rpg_combat, "resolve_incoming",
+                        lambda *a, **kw: {"final": 999, "armor_class": "none"})
+    s._mitigate_incoming(999)
+    assert s.game.character.is_dead
+    assert s.open_screen is None
+    assert chest.properties["lockpick_state"]["pins_set"] == 1

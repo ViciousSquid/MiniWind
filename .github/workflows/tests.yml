@@ -19,9 +19,9 @@ concurrency:
 # Each tier is independent so a graphical failure cannot hide a core failure.
 jobs:
   no_gpu:
-    name: No-GPU fast core (no Qt)
+    name: No-GPU core (no Qt, including slow tests)
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -55,16 +55,16 @@ jobs:
           print("NumPy:", numpy.__version__)
           print("pygame-ce:", pygame.version.ver)
           PY
-      - name: Run fast core tests that do not need Qt or a GPU
+      - name: Run all core tests that do not need Qt or a GPU
         env:
           FIO_HEADLESS_TIER: '1'
-        run: python -m pytest -m "not qt and not gl and not benchmark and not slow" -q
+        run: python -m pytest -m "not qt and not gl and not benchmark" -q
 
   # The editor, the logic thread and everything reached through editor.things
   # live in this tier. It ran only on manual dispatch, and 35 failures built up
   # in it unseen; it runs on every push now.
   qt_no_gpu:
-    name: Qt / no-GPU suite (offscreen)
+    name: Complete no-GPU suite (Qt offscreen)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -84,12 +84,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest
+          python -m pip install pytest pyflakes
           python -m pip install -r requirements.txt
-      - name: Run the complete Qt suite without a GPU or a display
+      - name: Run every non-GL test with the full dependency set
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -m "qt and not gl and not benchmark" -q
+        run: python -m pytest -m "not gl and not benchmark" -q
 
   opengl:
     name: Renderer (OpenGL, software rasteriser)
@@ -107,7 +107,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest
+          python -m pip install pytest pyflakes
           python -m pip install -r requirements.txt
       - name: Verify pinned dependency baseline
         run: |
@@ -149,7 +149,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest
+          python -m pip install pytest pyflakes
           python -m pip install -r requirements.txt
       - name: Measure and report
         env:

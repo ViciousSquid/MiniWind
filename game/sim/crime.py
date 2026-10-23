@@ -30,6 +30,7 @@ CRIME_BOUNTY: Dict[str, int] = {
     "death": 1000,
     "theft": 25,
     "trespass": 5,
+    "lockpick": 25,
 }
 
 #: How much a crime costs the offender in the victim's own eyes. These map onto
@@ -39,6 +40,7 @@ CRIME_MEMORY = {
     "attack": "assaulted",
     "theft": "robbed",
     "death": "kin_slain",
+    "lockpick": "robbed",
 }
 
 #: Factions whose members will act on a crime themselves rather than needing to

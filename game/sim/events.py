@@ -59,6 +59,9 @@ EVENT_KINDS: Dict[str, Dict] = {
     "trespass": dict(
         tags=("crime", "property"), loudness=60.0, severity=0.2,
         phrase="{actor} trespassed in {target}'s property"),
+    "lockpick": dict(
+        tags=("crime", "property", "notable"), loudness=0.0, severity=0.4,
+        phrase="{actor} picked the lock on {target}'s container"),
     "arrest": dict(
         tags=("notable",), loudness=500.0, severity=0.4,
         phrase="{actor} arrested {target}"),

@@ -54,6 +54,16 @@ consequence of what it saw — see *The reactive simulation* below.
 Gameplay rolls (attacks, casts, loot) animate on their own; there is no manual
 die-roll key.
 
+In the gameplay console, `overheadangle` shows the current camera elevation.
+Try `overheadangle 60` or `overheadangle 45` for an angled view;
+`overheadangle 90` restores straight down (the default). Values from 1 to 90
+degrees are accepted, and saves preserve the angle.
+
+Locked containers open a real-time [lockpicking minigame](docs/lockpicking.md).
+Lift the active pin by dragging, then hold the right button or toggle Space
+to apply tension. Patrols can catch you. Snapped picks can jam a lock at very
+low Security; only the **Knock** spell can open a jammed container.
+
 The physical key below **Esc** opens and closes the console in play and in the
 editor, including **§** on ISO Mac keyboards and **` / ~** on US keyboards.
 
@@ -68,6 +78,7 @@ editor, including **§** on ISO Mac keyboards and **` / ~** on US keyboards.
 | **Combat** | Melee (charge weapons, dual wield, off-hand strikes), archery with a real draw for NPCs and player alike, spells; hit chance, criticals, sneak attacks, blocking, armour mitigation and elemental resistance — all through the engine-native dice service. |
 | **Magic** | 30+ spells across six schools, magicka cost that falls with skill, self/touch/target/projectile delivery, summons and bound weapons. |
 | **Items & equipment** | Weapons, armour (heavy/light by slot & material), ammunition, potions, ingredients, books (plain-text, fiopak-packable), keys and gold; encumbrance from Strength. |
+| **Lockpicking** | Individual latched pins, mouse resistance, tension/strain, snapping and shearing; five lock difficulties, Security progression and the Knock spell. The world keeps running during an attempt. |
 | **Loot rarity** | Dropped gear can roll **Fine / Rare / Fabled** tiers — worth more, tinted in the UI, and hitting/protecting harder. |
 | **Quests & journal** | Multi-stage quests authored as human-readable `.quest` files in `quests/`, with a journal, and quest state stored in the persistent KV store (visible to map logic). |
 | **Guilds & reputation** | Joinable guilds with rank ladders, reputation-driven promotion, NPC disposition, persuasion, and a crime bounty that exists only once somebody who knows tells the law. |
@@ -115,7 +126,7 @@ catch-up passes), and truly dormant ones not at all.
 
 [Player guide: Crime & the Settlement Watch](docs/CRIME_AND_THE_WATCH.md)
 
-[Player and editor guide: Locks & Containers](docs/LOCKS_AND_CONTAINERS.md)
+[Player and editor guide: Locks & Containers](docs/lockpicking.md)
 
 An observed player crime immediately shows **“Someone witnessed your crime.”**
 Hearing a disturbance alone does not identify its culprit. Witnesses walk to the

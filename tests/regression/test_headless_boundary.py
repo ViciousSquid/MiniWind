@@ -56,6 +56,7 @@ DEPENDENCY_LIGHT_MODULES = [
     "editor.component_edit",
     # Data archives are mounted by the engine; no standalone player package.
     "engine.asset_archives",
+    "engine.game_package",
 ]
 
 BLOCKED = ("PyQt5", "OpenGL")

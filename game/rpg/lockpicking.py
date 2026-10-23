@@ -1,161 +1,177 @@
-"""Mouse-lifted tumblers. Catch each pin during its pause at the top.
+"""Deterministic, engine-free pin-and-tension lockpicking.
 
-Pure rules: inventory, drawing and rewards belong to the session and UI.
+Aim, find the binding point, then follow it as the plug turns. Pins latch
+individually. Only sustained forcing can break a pick; neither missed clicks
+nor random rolls decide a successful set. Snap consequences belong to the host.
 """
 
+from __future__ import annotations
 
-def difficulty(value=25):
+from dataclasses import dataclass
+import hashlib
+import math
+import random
+
+
+@dataclass(frozen=True)
+class Lock:
+    pins: int
+    tolerance: float
+    drift: float
+    seconds: float
+
+
+LOCKS = {
+    "novice": Lock(3, 14.0, 4.0, 0.85),
+    "apprentice": Lock(3, 11.0, 8.0, 1.0),
+    "adept": Lock(4, 8.0, 14.0, 1.2),
+    "expert": Lock(4, 5.0, 22.0, 1.4),
+    "master": Lock(5, 3.5, 30.0, 1.6),
+}
+ANGLE_LIMIT = 80.0
+SHEAR_SKILL_LIMIT = 15
+
+
+def _number(value, default=0.0):
     try:
-        return max(1, min(100, int(value)))
+        number = float(value)
+        return number if math.isfinite(number) else default
     except (TypeError, ValueError):
-        return 25
+        return default
 
 
-def label(value):
-    value = difficulty(value)
-    return ("Simple" if value <= 20 else "Common" if value <= 40 else
-            "Sturdy" if value <= 60 else "Intricate" if value <= 80 else "Masterwork")
+def _clamp(value, low, high):
+    return max(low, min(high, value))
 
 
-class Tumbler:
-    def __init__(self, spring):
-        self.spring = spring
-        self.height = 0.0
-        self.phase = "rest"
-        self.timer = 0.0
-        self.latched = False
-        self.strokes = 0
-        self.rise = 0.2
-        self.hold = 0.2
+def shear_chance(security):
+    """Only an inexperienced character can leave a snapped tip in the lock."""
+    return 0.25 * _clamp((SHEAR_SKILL_LIMIT - _number(security)) /
+                         SHEAR_SKILL_LIMIT, 0.0, 1.0)
 
 
-class Lockpick:
-    BREAK_DURATION = 0.85
-    BREAK_STYLES = ("tip", "shaft", "buckle", "shatter")
-
-    def __init__(self, level, security, rng, last_break_style=None):
-        self.difficulty = difficulty(level)
-        self.security = max(0, min(100, int(security)))
-        self.rng = rng
-        self.pins = [Tumbler(rng.uniform(0.8, 1.2))
-                     for _ in range((self.difficulty + 19) // 20)]
-        self.selected = 0
-        self.pick_height = 0.1
-        self.opened = False
-        self.break_elapsed = None
-        self.break_index = 0
-        self.break_height = 0.1
-        self.break_pin_height = None
-        self.break_style = None
-        self.break_motion = None
-        self._last_break_style = last_break_style
-        self.message = "Lift a tumbler and feel for the pause at the top."
-
-    def select(self, index, height=None):
-        if self.breaking:
-            return
-        self.selected = max(0, min(len(self.pins) - 1, int(index)))
-        if height is not None:
-            self.pick_height = max(0.0, min(1.0, float(height)))
+class LockpickAttempt:
+    def __init__(self, difficulty="novice", security=5, seed="", saved=None):
+        self.difficulty = difficulty if difficulty in LOCKS else "novice"
+        self.lock = LOCKS[self.difficulty]
+        self.security = _clamp(_number(security), 0.0, 100.0)
+        identity = f"{seed}:{self.difficulty}"
+        self.signature = hashlib.sha256(identity.encode()).hexdigest()
+        rng = random.Random(self.signature)
+        self.targets = tuple(rng.uniform(-44, 44) for _ in range(self.lock.pins))
+        self.directions = tuple(rng.choice((-1, 1)) for _ in self.targets)
+        self.pins_set = 0
+        self.turn = 0.0
+        self.angle = 0.0
+        self.assisted = False
+        if isinstance(saved, dict) and saved.get("signature") == self.signature:
+            self.pins_set = int(_clamp(_number(saved.get("pins_set")), 0, self.lock.pins - 1))
+            self.turn = _clamp(_number(saved.get("turn")), 0.0, 0.999)
+            self.angle = _clamp(_number(saved.get("angle")), -ANGLE_LIMIT, ANGLE_LIMIT)
+            self.assisted = saved.get("assisted") is True
+        self.tension = False
+        self.strain = 0.0
+        self.binding_time = 0.0
+        self.feedback_time = 0.0
+        self.elapsed = 0.0
+        self.last_event = None
+        self.message = "Find the sweet spot, then apply tension."
 
     @property
-    def can_set(self):
-        return self.pins[self.selected].phase == "hold"
+    def complete(self):
+        return self.pins_set >= self.lock.pins
 
     @property
-    def broken(self):
-        return self.break_elapsed is not None
+    def tolerance(self):
+        return (self.lock.tolerance + self.security * 0.08) * (1.6 if self.assisted else 1.0)
 
     @property
-    def breaking(self):
-        return self.broken and self.break_elapsed < self.BREAK_DURATION
+    def target(self):
+        i = min(self.pins_set, self.lock.pins - 1)
+        drift = self.lock.drift * (1.0 - self.security * 0.004)
+        return self.targets[i] + self.directions[i] * drift * math.sin(self.turn * math.pi / 2)
 
-    def lift(self):
-        pin = self.pins[self.selected]
-        if self.opened or self.breaking or pin.latched or pin.phase in ("rise", "hold"):
-            return False
-        self.break_elapsed = None
-        pin.strokes += 1
-        slow = (pin.strokes + self.selected) % 3 == 0
-        pin.rise = (0.24 if slow else 0.14) * pin.spring
-        pin.hold = max(0.07, (0.23 - self.difficulty * 0.0013) *
-                       (1.6 if slow else 0.8) * pin.spring + self.security * 0.002)
-        pin.phase, pin.timer, pin.height = "rise", 0.0, 0.0
-        self.message = "Feel for the pause at the top."
-        return True
+    @property
+    def distance(self):
+        return abs(self.angle - self.target)
 
-    def update(self, seconds):
-        """Return the number of top contacts, each heard as a single click."""
-        seconds = max(0.0, float(seconds))
-        if self.broken:
-            self.break_elapsed = min(self.BREAK_DURATION, self.break_elapsed + seconds)
-        contacts = 0
-        for pin in self.pins:
-            remaining = seconds
-            while remaining > 1e-8 and pin.phase in ("rise", "hold", "fall"):
-                duration = {"rise": pin.rise, "hold": pin.hold,
-                            "fall": 0.18 * pin.spring}[pin.phase]
-                step = min(remaining, max(0.0, duration - pin.timer))
-                remaining -= step
-                pin.timer += step
-                fraction = min(1.0, pin.timer / duration)
-                pin.height = (fraction * (2.0 - fraction) if pin.phase == "rise"
-                              else 1.0 if pin.phase == "hold" else 1.0 - fraction ** 2)
-                if pin.timer >= duration - 1e-8:
-                    pin.timer = 0.0
-                    if pin.phase == "rise":
-                        pin.phase = "hold"
-                        contacts += 1
-                        if pin is self.pins[self.selected]:
-                            self.message = "There! Click to set the tumbler."
-                    elif pin.phase == "hold":
-                        pin.phase = "fall"
-                        if pin is self.pins[self.selected]:
-                            self.message = "It slipped. Lift it again."
-                    else:
-                        pin.phase, pin.height = "rest", 0.0
-        return contacts
+    @property
+    def aligned(self):
+        return self.distance <= self.tolerance
 
-    def set_pin(self):
-        pin = self.pins[self.selected]
-        if self.opened or self.broken or pin.latched:
+    @property
+    def resistance(self):
+        if not self.tension or self.complete:
+            return 0.0
+        return _clamp((self.distance / self.tolerance - 0.6) / 1.8, 0.0, 1.0)
+
+    @property
+    def cue(self):
+        if self.strain >= 0.65:
+            return "OVERLOAD — release tension!"
+        if self.tension and not self.aligned:
+            return "Binding — ease off and reposition"
+        if self.aligned:
+            return "Sweet spot — follow the turning plug"
+        if self.distance < self.tolerance * 2.5:
+            return "Getting closer"
+        return "Search along the rim"
+
+    def move(self, degrees, mouse=False):
+        """Mouse motion meets spring resistance, but can always escape binding."""
+        delta = _clamp(_number(degrees), -160.0, 160.0)
+        if mouse:
+            delta *= 1.0 - 0.72 * self.resistance
+        self.angle = _clamp(self.angle + delta, -ANGLE_LIMIT, ANGLE_LIMIT)
+
+    def set_tension(self, enabled):
+        self.tension = bool(enabled) and not self.complete
+        if not self.tension:
+            self.binding_time = 0.0
+
+    def snapshot(self):
+        return {"signature": self.signature, "pins_set": self.pins_set,
+                "turn": self.turn, "angle": self.angle, "assisted": self.assisted}
+
+    def tick(self, delta):
+        """Return ``pin_set``, ``unlocked``, ``pick_broke`` or None.
+
+        Cap one tick at 100ms: a stalled frame never destroys a pick. Release
+        tension to recover strain. Progress never rolls back when binding.
+        """
+        dt = _clamp(_number(delta), 0.0, 0.1)
+        self.elapsed += dt
+        self.feedback_time = max(0.0, self.feedback_time - dt)
+        if self.complete:
             return None
-        if self.can_set:
-            pin.latched, pin.phase, pin.height = True, "set", 1.0
-            if all(p.latched for p in self.pins):
-                self.opened = True
-                return "opened"
-            self.message = "Tumbler set. Move the pick to the next one."
-            return "set"
-        self.break_pin_height = pin.height if pin.phase in ("rise", "hold") else None
-        # Security protects already-set tumblers when a pick snaps.
-        settled = [p for p in self.pins if p.latched]
-        lose = (len(settled) if self.security < 25 else 2 if self.security < 50
-                else 1 if self.security < 75 else 0)
-        for prior in settled[-lose:] if lose else ():
-            prior.latched = False
-        for prior in self.pins:
-            if not prior.latched:
-                prior.phase, prior.height, prior.timer = "rest", 0.0, 0.0
-        self.break_elapsed = 0.0
-        self.break_index, self.break_height = self.selected, self.pick_height
-        self._fracture()
-        self.message = "Lockpick broken. Lift a tumbler with a new pick."
-        return "broken"
-
-    def _fracture(self):
-        """Sample once, never during painting; consecutive breaks differ."""
-        self.break_style = self.rng.choice([style for style in self.BREAK_STYLES
-                                           if style != self._last_break_style])
-        self._last_break_style = self.break_style
-        split, spin, drift, fall = {
-            "tip": ((0.78, 0.88), (35, 75), (16, 38), (45, 68)),
-            "shaft": ((0.48, 0.62), (-130, -75), (-38, -12), (60, 85)),
-            "buckle": ((0.62, 0.75), (-70, -35), (20, 40), (50, 80)),
-            "shatter": ((0.42, 0.56), (70, 130), (-20, 20), (55, 75)),
-        }[self.break_style]
-        self.break_motion = {
-            "split": self.rng.uniform(*split), "spin": self.rng.uniform(*spin),
-            "drift": self.rng.uniform(*drift), "fall": self.rng.uniform(*fall),
-            "recoil": self.rng.uniform(7, 14), "second_split": self.rng.uniform(0.78, 0.87),
-        }
+        if not self.tension:
+            self.strain = max(0.0, self.strain - dt * 0.7)
+            return None
+        if self.aligned:
+            self.binding_time = 0.0
+            self.strain = max(0.0, self.strain - dt * 0.35)
+            self.turn = min(1.0, self.turn + dt / self.lock.seconds)
+            if self.turn >= 1.0:
+                self.pins_set += 1
+                self.turn = 0.0
+                self.set_tension(False)
+                self.feedback_time = 0.35
+                self.message = "Pin set. Release, reposition, then tension again."
+                self.last_event = "unlocked" if self.complete else "pin_set"
+                return self.last_event
+        else:
+            self.binding_time += dt
+            if self.binding_time > 0.65:
+                rate = (0.24 - self.security * 0.001) * (0.6 if self.assisted else 1.0)
+                self.strain = min(1.0, self.strain + dt * rate)
+            if self.strain >= 1.0:
+                self.strain = 0.0
+                self.set_tension(False)
+                self.feedback_time = 0.8
+                self.message = "Pick snapped. Set pins are still latched."
+                self.last_event = "pick_broke"
+                # Kick the pick away from the binding point, without warping
+                # the OS pointer or introducing random control wobble.
+                self.move(-12 if self.angle < self.target else 12)
+                return "pick_broke"
+        return None

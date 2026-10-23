@@ -229,6 +229,7 @@ class Director:
         # The victim always knows, witnesses or not — unless the event was
         # their death, which is the one thing nobody gets to remember.
         if (target_thing is not None and event.target
+                and event.data.get("victim_knows", True)
                 and event.target != event.actor
                 and not _props(target_thing).get("dead")):
             victim_percept = next((pc for pc in percepts if pc.observer is target_thing), None)

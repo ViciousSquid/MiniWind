@@ -11,7 +11,7 @@ and the clock across level changes and saves):
   stay dead: a fresh corpse lies where it fell, an older one has been
   cleared away.
 * **Taken** -- pickups the player picked up (a gold pile does not come back).
-* **Containers** -- what is left in every chest and barrel.
+* **Containers** -- contents, unlocked/jammed locks and latched pin progress.
 
 **Repopulation.** Generic hostile creatures -- a wolf, a skeleton, a
 bandit, anything whose kind appears more than once in the map, and every
@@ -66,7 +66,7 @@ class MapMemory:
     def __init__(self, session):
         self.session = session
         self.key = ""
-        self.record = {"dead": {}, "taken": [], "containers": {}}
+        self.record = {"dead": {}, "taken": [], "containers": {}, "locks": {}}
         self._originals: Dict[str, Dict] = {}     # memory key -> (props, pos)
         self._known_dead = set()
         self._accum = 0.0
@@ -106,7 +106,8 @@ class MapMemory:
                 if isinstance(rec, dict):
                     self.record = {"dead": dict(rec.get("dead") or {}),
                                    "taken": list(rec.get("taken") or []),
-                                   "containers": dict(rec.get("containers") or {})}
+                                   "containers": dict(rec.get("containers") or {}),
+                                   "locks": dict(rec.get("locks") or {})}
             except ValueError:
                 pass
 
@@ -160,9 +161,19 @@ class MapMemory:
                 p["dead"] = True
                 p["hidden"] = True
                 changed = True
-            elif kind == "container" and str(p.get("id")) in conts:
-                p["inventory"] = copy.deepcopy(conts[str(p.get("id"))])
-                changed = True
+            elif kind == "container":
+                cid = str(p.get("id"))
+                if cid in conts:
+                    p["inventory"] = copy.deepcopy(conts[cid])
+                    changed = True
+                lock = self.record["locks"].get(cid)
+                if isinstance(lock, dict):
+                    for field in ("locked", "lock_jammed", "lockpick_state"):
+                        if field in lock:
+                            p[field] = copy.deepcopy(lock[field])
+                        else:
+                            p.pop(field, None)
+                    changed = True
         if changed:
             fio.rebuild_entity_caches(self.session.logic)
         # Anyone already dead in the file counts as known (not a new death).
@@ -261,6 +272,10 @@ class MapMemory:
             cid = str(t.properties.get("id") or "")
             if cid:
                 self.record["containers"][cid] = t.properties.get("inventory") or []
+                self.record["locks"][cid] = {
+                    field: copy.deepcopy(t.properties[field])
+                    for field in ("locked", "lock_jammed", "lockpick_state")
+                    if field in t.properties}
         self.session.store.set(STORE_PREFIX + self.key, json.dumps(self.record,
                                                                    separators=(",", ":")))
         self._dirty = False

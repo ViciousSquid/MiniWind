@@ -2431,7 +2431,7 @@
     "name": "Chest_cave12",
     "id": "67f6ea5c-cc82-4241-80ee-35644ca6024b",
     "container_kind": "chest",
-    "display_name": "Chest",
+    "display_name": "Frostbound Strongbox",
     "inventory": [
      {
       "id": "gold",
@@ -2462,8 +2462,9 @@
      }
     ],
     "use_radius": 128.0,
-    "locked": false,
-    "custom_idle": "assets/sprites/miniwind/container_chest.png"
+    "locked": true,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "lock_difficulty": "master"
    },
    "io_connections": []
   },

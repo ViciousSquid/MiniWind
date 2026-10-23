@@ -65,8 +65,8 @@ _SCREEN_BODY_SIZE = {
     "levelup": (640, 470),
     "trade": (760, 520),
     "container": (760, 500),
-    "lockpick": (620, 520),
     "quest": (880, 540),
+    "lockpicking": (820, 560),
 }
 
 
@@ -297,8 +297,6 @@ def _roll_settled(s) -> bool:
 def animating(session) -> bool:
     """Whether the open screen has something moving (dice still tumbling), so
     the view keeps repainting it while the world is paused."""
-    if getattr(session, "open_screen", None) == "lockpick":
-        return True
     if getattr(session, "open_screen", None) != "charcreate":
         return False
     s = _cc(session)
@@ -1565,23 +1563,14 @@ def _handle_container(session, key):
     return True
 
 
-def _draw_lockpick(painter, session, w, h):
-    from .lockpick_window import draw_lock
-    x, y, bw, bh = _panel_rect(w, h, 0.8, 0.9)
-    draw_lock(painter, session, x, y, bw, bh)
+def _draw_lockpicking(painter, session, w, h):
+    from .lockpicking import draw
+    draw(painter, session, *_panel_rect(w, h))
 
 
-def _handle_lockpick(session, key):
-    if key in ("escape", "esc", "e"):
-        session.cancel_lockpicking()
-    elif session.lockpicking is not None:
-        if key in ("left", "right"):
-            session.lockpick_action("select", session.lockpicking.selected + (1 if key == "right" else -1))
-        elif key == "up":
-            session.lockpick_action("lift")
-        elif key in ("space", "enter", "return"):
-            session.lockpick_action("set")
-    return True
+def _handle_lockpicking(session, key):
+    from .lockpicking import handle_key
+    return handle_key(session, key)
 
 
 # dispatch tables
@@ -1590,14 +1579,14 @@ _DRAW = {
     "character": _draw_character, "journal": _draw_journal,
     "spells": _draw_spells, "trade": _draw_trade, "levelup": _draw_levelup,
     "container": _draw_container, "quest": _draw_quest,
-    "lockpick": _draw_lockpick,
+    "lockpicking": _draw_lockpicking,
 }
 _HANDLE = {
     "charcreate": _handle_charcreate, "inventory": _handle_inventory,
     "character": _handle_character, "journal": _handle_journal,
     "spells": _handle_spells, "trade": _handle_trade, "levelup": _handle_levelup,
     "container": _handle_container, "quest": _handle_quest,
-    "lockpick": _handle_lockpick,
+    "lockpicking": _handle_lockpicking,
     "book": lambda session, key: _handle_book(session, key),
 }
 

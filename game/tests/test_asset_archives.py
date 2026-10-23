@@ -83,3 +83,20 @@ def test_packages_mount_from_the_project_root_too_in_name_order(project):
     assert [os.path.basename(a) for a in aa.archives()] == ["pak0.fiopak", "pak1.fiopak",
                                                             "zz_mod.fiopak"]
     assert aa.read("assets/textures/x.png") == b"mod"
+
+
+def test_refresh_removes_members_when_the_last_archive_disappears(project):
+    path = project / "pak0.fiopak"
+    _archive(path, {"assets/textures/x.png": b"packed"})
+    assert aa.in_archive("assets/textures/x.png")
+    path.unlink()
+    aa.refresh()
+    assert aa.members("assets/textures") == []
+    assert not aa.exists("assets/textures/x.png")
+
+
+def test_pack_does_not_include_its_own_output(project):
+    (project / "assets" / "textures" / "sand.png").write_bytes(b"sand")
+    assert aa.pack("assets", "assets/all.fiopak") == 1
+    with zipfile.ZipFile(project / "assets" / "all.fiopak") as archive:
+        assert archive.namelist() == ["assets/textures/sand.png"]

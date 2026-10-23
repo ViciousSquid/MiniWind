@@ -611,9 +611,8 @@ def _init_container(self):
     p.setdefault("inventory", [])
     p.setdefault("use_radius", 120.0)
     p.setdefault("locked", False)
-    p.setdefault("lock_difficulty", 25)
-    p.setdefault("key_id", "")
-    p.setdefault("pickable", True)
+    p.setdefault("lock_difficulty", "novice")
+    p.setdefault("lock_key", "")
     p["custom_idle"] = container_sprite(p.get("container_kind", "chest"))
 
 
