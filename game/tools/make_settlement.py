@@ -124,6 +124,8 @@ def build(settlement: dict, base: dict) -> dict:
         kind = m.get("kind", "idle")
         world["things"].append(_thing("marker", m["pos"], {
             "name": mid, "marker_kind": kind, "hidden_in_game": True,
+            "law_region": m.get("law_region", ""),
+            "radius": m.get("radius", 2200.0),
             "custom_idle": marker_sprite(kind)}))
 
     # --- NPCs (persistent identity, home/work/bed, role schedule, dialogue) ---
@@ -133,6 +135,7 @@ def build(settlement: dict, base: dict) -> dict:
             "name": npc["name"],
             "display_name": npc.get("display_name", npc["name"]),
             "npc_role": npc.get("role", "villager"),
+            "law_region": npc.get("law_region", ""),
             "home": home_pos,
             "work_location": npc.get("work", ""),   # a marker name -> resolved live
             "schedule": _npc_schedule(npc, markers),

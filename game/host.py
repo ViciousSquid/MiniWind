@@ -371,6 +371,12 @@ class MiniwindGame:
             prop("discover_radius", "float", "Discover radius", default=200.0,
                  group="LOCATION",
                  help="How close the player must come to discover this location."),
+            prop("law_region", "string", "Watch jurisdiction", default="", group="LAW",
+                 help="On a location marker, names the local watch's jurisdiction. "
+                      "Leave blank to use the map's region."),
+            prop("radius", "float", "Jurisdiction radius", default=2200.0,
+                 min=1.0, max=1000000.0, group="LAW",
+                 help="Radius around a location with a watch jurisdiction, in world units."),
         ])
 
         api.register_properties("container", [
@@ -385,6 +391,9 @@ class MiniwindGame:
 
         # NPC — a social/quest actor, organised into Aurora-style sections.
         api.register_properties("npc", [
+            prop("law_region", "string", "Watch jurisdiction", default="", group="LAW",
+                 help="For guards: which jurisdiction's writs they enforce and collect. "
+                      "Blank uses the jurisdiction at their position."),
             prop("display_name", "string", "Name", default="Villager",
                  group="IDENTITY", help="Name shown when talking / on the nameplate."),
             prop("npc_role", "enum", "Role", default="villager", choices=npc_roles,

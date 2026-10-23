@@ -124,13 +124,17 @@ class Director:
                  hostile: Optional[Callable[[str, str], bool]] = None,
                  disposition: Optional[Callable[[Dict, str], int]] = None,
                  on_bounty: Optional[Callable[[int, WorldEvent, str], None]] = None,
-                 on_message: Optional[Callable[[str], None]] = None):
+                 on_message: Optional[Callable[[str], None]] = None,
+                 on_witness=None, sight_test=None, region_for=None):
         self.store = store
         self.clock = clock
         self.rng = rng
         self.bus = bus if bus is not None else EventBus()
         self.on_bounty = on_bounty
         self.on_message = on_message
+        self.on_witness = on_witness
+        self.sight_test = sight_test
+        self.region_for = region_for
         self.ctx = appraisal.Context(hostile=hostile, disposition=disposition,
                                      store=store)
         #: actor key -> ranked intents (recomputed when their knowledge changes)
@@ -170,6 +174,8 @@ class Director:
         tkey = actor_key(target)
         if pos is None:
             pos = _pos(actor) or _pos(target) or (0.0, 0.0, 0.0)
+        if self.region_for is not None and "law_region" not in data:
+            data["law_region"] = self.region_for(pos)
         aprops = _props(actor)
         if aprops and "actor_faction" not in data:
             data["actor_faction"] = str(aprops.get("faction")
@@ -179,7 +185,10 @@ class Director:
             target=tkey, target_name=actor_name(target, tkey or ""),
             pos=pos, day=day, hour=hour, data=data)
         self.bus.emit(event)
-        self.dispatch(event, observers, actor_thing=actor, target_thing=target)
+        percepts = self.dispatch(event, observers, actor_thing=actor, target_thing=target)
+        if (event.is_crime and event.actor == PLAYER_KEY and percepts
+                and self.on_witness is not None):
+            self.on_witness(event, any(pc.mode == "sight" for pc in percepts))
         return event
 
     # ------------------------------------------------- perception → knowledge
@@ -192,7 +201,7 @@ class Director:
         asymmetry is what lets a theft be discovered later."""
         _day, hour = self._now()
         percepts = perception.witnesses(event, observers or (), hour=hour,
-                                        actor_thing=actor_thing)
+                                        actor_thing=actor_thing, sight_test=self.sight_test)
         learned = 0
         for pc in percepts:
             key = actor_key(pc.observer)
@@ -200,6 +209,8 @@ class Director:
                 continue
             fact = knowledge.fact_from_event(
                 event, pc.clarity, knowledge.source_for(pc.mode))
+            # A scream tells you where trouble is, not the culprit's name.
+            fact["identified"] = pc.mode == "sight" and pc.clarity >= 0.3
             if event.kind == "theft":
                 fact["value"] = int(event.data.get("value", 0) or 0)
             if knowledge.learn(self.store, key, fact):
@@ -211,6 +222,8 @@ class Director:
                 # "wake the town" step, just hearing at reduced range.
                 pc.observer.properties["_woken_by"] = event.id
                 pc.observer.properties["awake"] = True
+                pc.observer.properties["asleep"] = False
+                pc.observer.properties["sched_state"] = "AWAKENED"
                 event.note(f"{actor_name(pc.observer)} was woken by the noise")
 
         # The victim always knows, witnesses or not — unless the event was
@@ -218,7 +231,9 @@ class Director:
         if (target_thing is not None and event.target
                 and event.target != event.actor
                 and not _props(target_thing).get("dead")):
+            victim_percept = next((pc for pc in percepts if pc.observer is target_thing), None)
             fact = knowledge.fact_from_event(event, 1.0, knowledge.SOURCE_WITNESSED)
+            fact["identified"] = bool(victim_percept and victim_percept.mode == "sight")
             if event.kind == "theft":
                 fact["value"] = int(event.data.get("value", 0) or 0)
             if knowledge.learn(self.store, event.target, fact):
@@ -239,7 +254,7 @@ class Director:
         yours moves your opinion of them. It is done here rather than at the
         moment of the crime precisely so that opinion only changes for people
         who actually find out."""
-        if fact.get("actor") != PLAYER_KEY:
+        if fact.get("actor") != PLAYER_KEY or not fact.get("identified", True):
             return
         mem = crime.memory_event(fact.get("kind", ""))
         if not mem:
@@ -388,7 +403,9 @@ class Director:
         charge. A witness killed on the way to the guard reports nothing."""
         if self.store is None:
             return 0
-        lawful = [a for a in actors if crime.is_lawful(_props(a))]
+        living = [a for a in actors if not _props(a).get("dead")]
+        actors = [a for a in living if not perception._is_asleep(_props(a))]
+        lawful = [a for a in living if crime.is_lawful(_props(a))]
         charges = 0
 
         # (1) an ordinary witness passes a crime on to a nearby lawful actor
@@ -406,6 +423,12 @@ class Director:
                     continue
                 if perception.dist2d(_pos(witness), _pos(officer)) > TELL_RADIUS:
                     continue
+                if self.sight_test is not None and not self.sight_test(witness, _pos(officer)):
+                    continue
+                # A messenger at arm's length can wake the night watch; they
+                # still have to make the journey rather than report remotely.
+                if perception._is_asleep(_props(officer)):
+                    officer.properties.update(asleep=False, awake=True, sched_state="AWAKENED")
                 for f in crimes:
                     if knowledge.tell(self.store, wkey, okey, f):
                         self._dirty.add(okey)
@@ -418,6 +441,8 @@ class Director:
 
         # (2) a lawful actor who knows about an unreported crime lays the charge
         for officer in lawful:
+            if perception._is_asleep(_props(officer)):
+                continue
             okey = actor_key(officer)
             if not okey:
                 continue
@@ -430,8 +455,16 @@ class Director:
                 charges += 1
                 ev = self.bus.get(f.get("e", 0))
                 if f.get("actor") == PLAYER_KEY and self.on_bounty is not None:
+                    # The bounded history may have shed an old crime. Testimony
+                    # still carries the scene's jurisdiction and charge value.
+                    reported_event = ev or WorldEvent(
+                        f.get("kind", ""), actor=f.get("actor", ""),
+                        pos=f.get("pos"), day=f.get("day", 0), hour=f.get("hour", 0),
+                        data={"law_region": f.get("law_region", ""),
+                              "crime": f.get("crime", True)})
+                    reported_event.id = int(f.get("e", 0))
                     try:
-                        self.on_bounty(amount, ev, okey)
+                        self.on_bounty(amount, reported_event, okey)
                     except Exception:
                         pass
                 if ev is not None:

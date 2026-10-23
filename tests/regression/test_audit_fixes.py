@@ -287,7 +287,7 @@ def test_no_other_key_handling_was_altered():
     """Only the guard moved: the rest of both handlers is untouched."""
     press = _key_handler_source("keyPressEvent")
     for marker in ("_is_play_console_visible()", "Qt.Key_Escape",
-                   "self.keys_pressed", "Qt.Key_QuoteLeft"):
+                   "self.keys_pressed", "is_console_key(event)"):
         assert marker in press, f"unrelated play-mode handling lost: {marker}"
     release = _key_handler_source("keyReleaseEvent")
     assert "Consume the event completely in play mode" in release

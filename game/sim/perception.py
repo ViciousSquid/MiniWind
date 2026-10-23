@@ -84,7 +84,7 @@ def dist2d(a, b) -> float:
     """Planar distance — MiniWind is top-down, so height never blocks a look."""
     if a is None or b is None:
         return float("inf")
-    return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
+    return math.hypot(float(a[0]) - float(b[0]), float(a[2]) - float(b[2]))
 
 
 def is_night(hour: float) -> bool:
@@ -128,7 +128,7 @@ def stealth_factor(actor_props: Optional[Dict]) -> float:
 
 
 def can_perceive(observer, event_pos, loudness: float, hour: float = 12.0,
-                 actor_props: Optional[Dict] = None) -> Optional[Percept]:
+                 actor_props: Optional[Dict] = None, visible: bool = True) -> Optional[Percept]:
     """Return this observer's :class:`Percept` of an event, or ``None``.
 
     Sight is tried first (it is clearer); hearing catches what sight misses,
@@ -142,7 +142,7 @@ def can_perceive(observer, event_pos, loudness: float, hour: float = 12.0,
         return None
 
     asleep = _is_asleep(props)
-    if not asleep:
+    if not asleep and visible:
         srange = sight_range(props, hour) * stealth_factor(actor_props)
         if srange > 0.0 and d <= srange:
             clarity = SIGHT_CLARITY * _falloff(d, srange)
@@ -172,7 +172,8 @@ def _is_asleep(props: Dict) -> bool:
 
 
 def witnesses(event, observers: Iterable, hour: float = 12.0,
-              actor_thing=None, actor_props: Optional[Dict] = None) -> List[Percept]:
+              actor_thing=None, actor_props: Optional[Dict] = None,
+              sight_test=None) -> List[Percept]:
     """Every observer that perceived *event*, excluding the actor themselves.
 
     ``event`` needs only ``pos`` and ``loudness`` — a :class:`WorldEvent`, or
@@ -187,6 +188,9 @@ def witnesses(event, observers: Iterable, hour: float = 12.0,
         if obs is actor_thing:
             continue
         p = can_perceive(obs, pos, loud, hour, actor_props)
+        if p is not None and p.mode == "sight" and sight_test is not None:
+            if not sight_test(obs, pos):
+                p = can_perceive(obs, pos, loud, hour, actor_props, visible=False)
         if p is not None:
             out.append(p)
     out.sort(key=lambda pc: -pc.clarity)

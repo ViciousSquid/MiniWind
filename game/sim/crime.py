@@ -111,6 +111,11 @@ def already_reported(store, event_id: int) -> bool:
         "1", "true", "yes")
 
 
+def settled(store, event_id: int) -> bool:
+    return store is not None and str(store.get(
+        f"crime.{event_id}.settled", "0")) == "1"
+
+
 def mark_reported(store, event_id: int, reporter: str = "") -> None:
     if store is None or not event_id:
         return
@@ -127,6 +132,8 @@ def can_report(fact: Dict, witness_props: Optional[Dict],
     nobody turns themselves in, which is why a corrupt guard who commits the
     crime himself walks away from it."""
     if not isinstance(fact, dict):
+        return False
+    if not fact.get("identified", True):
         return False
     if witness_key and fact.get("actor") == witness_key:
         return False

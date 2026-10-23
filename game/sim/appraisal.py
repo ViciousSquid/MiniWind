@@ -37,6 +37,7 @@ CONFRONT = "CONFRONT"
 MOURN = "MOURN"
 WARM = "WARM"
 IGNORE = "IGNORE"
+INVESTIGATE = "INVESTIGATE"
 
 #: Priority bands, deliberately sharing the scale used by
 #: :mod:`game.mental_state` so a sim intent and a schedule task can be ranked
@@ -47,6 +48,7 @@ PRIORITY = {
     ARREST: 95,
     CONFRONT: 80,
     REPORT: 75,
+    INVESTIGATE: 70,
     MOURN: 45,
     WARM: 15,
     IGNORE: 0,
@@ -87,7 +89,7 @@ class Intent:
         verb = {
             FIGHT: "Attack", FLEE: "Flee from", ARREST: "Arrest",
             CONFRONT: "Confront", REPORT: "Report", MOURN: "Mourn",
-            WARM: "Warm to", IGNORE: "Ignore",
+            WARM: "Warm to", IGNORE: "Ignore", INVESTIGATE: "Investigate",
         }.get(self.reaction, self.reaction.title())
         return f"{verb} {self.target_name}".strip() if self.target_name else verb
 
@@ -197,6 +199,16 @@ def appraise(observer_props: Dict, observer_key: str, fact: Dict,
     courage = _courage(observer_props)
     combatant = is_combatant(observer_props)
     lawful = crime_mod.is_lawful(observer_props)
+    if is_offence and not fact.get("identified", True):
+        if crime_mod.settled(ctx.store, fact.get("e", 0)):
+            return None
+        if lawful:
+            return Intent(INVESTIGATE, "", "a disturbance",
+                          "An account of trouble, but no identified culprit", fact)
+        if not fact.get("reported"):
+            return Intent(REPORT, "", "a disturbance",
+                          "Tell the watch where the disturbance happened", fact)
+        return None
     hostile_faction = ctx.hostile(_faction(observer_props),
                                   str(fact.get("actor_faction", "")))
 
@@ -230,7 +242,8 @@ def appraise(observer_props: Dict, observer_key: str, fact: Dict,
                           f"them", fact)
 
     # -- 3. it is a crime and I am the law -------------------------------
-    if is_offence and lawful and certainty >= crime_mod.REPORT_CERTAINTY:
+    unresolved = not crime_mod.settled(ctx.store, fact.get("e", 0))
+    if is_offence and unresolved and lawful and certainty >= crime_mod.REPORT_CERTAINTY:
         grave = "grave" in tags
         return Intent(ARREST, offender, offender_name,
                       f"I {'saw' if fact.get('source') == 'witnessed' else 'know'} "
@@ -238,7 +251,7 @@ def appraise(observer_props: Dict, observer_key: str, fact: Dict,
                       f"that is my duty", fact)
 
     # -- 4. it is a crime and I am not the law ---------------------------
-    if is_offence and not fact.get("reported"):
+    if is_offence and unresolved and not fact.get("reported"):
         if courage < 0.2 and "violence" in tags:
             return Intent(FLEE, offender, offender_name,
                           f"{offender_name} is violent and I want no part of it",

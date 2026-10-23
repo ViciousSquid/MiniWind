@@ -201,8 +201,15 @@ class MapPage:
         painter.setClipPath(window)
         self._draw_terrain(painter, rect, text_font)
         self._draw_night(painter, rect)
+        from .law_marks import draw_search
+        draw_search(painter, self.features.get("law"),
+                    lambda x, z: self.to_screen(rect, x, z), self._scale(rect))
+        status = self.features.get("law") or {}
+        if status.get("phase") == "search" and status.get("show_radius", True):
+            self.menu.view.update()  # the rim's Searching label keeps orbiting while paused
         self._draw_places(painter, rect, text_font)
         self._draw_quests(painter, rect, text_font)
+        self._draw_witnesses(painter, rect, text_font)
         self._draw_focus(painter, rect)
         self._draw_player(painter, rect)
         painter.setClipping(False)
@@ -223,6 +230,29 @@ class MapPage:
                          int(Qt.AlignCenter),
                          "Drag  pan      Wheel  zoom      Space  you      Esc  back")
         painter.restore()
+
+    def _draw_witnesses(self, painter, rect, text_font):
+        from .law_marks import draw_witness
+        from . import fonts
+        witnesses = self.features.get("witnesses", [])
+        if not witnesses:
+            return
+        painter.setFont(fonts.dialogue_font(10))
+        for witness in witnesses:
+            point = self.to_screen(rect, witness["x"], witness["z"])
+            if not rect.adjusted(12, 12, -12, -36).contains(point):
+                continue
+            draw_witness(painter, point, witness)
+            label = witness["name"] + (" · reporting" if witness.get("reporting") else " · witness")
+            painter.setPen(QColor(18, 16, 14))
+            painter.drawText(QPointF(point.x() + 13, point.y() + 5), label)
+            painter.setPen(_INK)
+            painter.drawText(QPointF(point.x() + 12, point.y() + 4), label)
+        legend = QRectF(rect.left() + 12, rect.bottom() - 35, min(490, rect.width() - 24), 25)
+        painter.fillRect(legend, QColor(20, 18, 20, 230))
+        painter.setPen(_INK)
+        painter.drawText(legend, int(Qt.AlignCenter),
+                         "Eye: identified you    ?: uncertain    Red + arrow: reporting")
 
     def _draw_terrain(self, painter, rect, text_font):
         world = self.world
