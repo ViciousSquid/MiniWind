@@ -3613,7 +3613,7 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
                            item_name=item.properties["display_name"])
 
     # -- turning intents into behaviour --------------------------------------
-    def _apply_sim_intent(self, npc) -> bool:
+    def _apply_sim_intent(self, npc, *, fresh_assault=False) -> bool:
         """Let what this NPC *knows* override its daily schedule.
 
         Returns True when the intent claimed this decision tick. Every branch
@@ -3650,8 +3650,8 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
             # The watch owns its criminal response, including self-defence.
             # Replaying an old assault fact through ordinary combat would
             # restart a chase after escape or even after accepting payment.
-            if (offender is self.player_actor and self._is_guard(npc)
-                    and sim_crime.is_crime(intent.fact)):
+            if (not fresh_assault and offender is self.player_actor
+                    and self._is_guard(npc) and sim_crime.is_crime(intent.fact)):
                 return False
             return self._sim_engage(npc, offender)
 
@@ -5845,7 +5845,7 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
             intent = self.director.top_intent(target)
             if intent is not None and intent.reaction in (
                     sim_appraisal.FIGHT, sim_appraisal.FLEE, sim_appraisal.ARREST):
-                self._apply_sim_intent(target)
+                self._apply_sim_intent(target, fresh_assault=True)
             elif self._natively_hostile(tp):
                 self._sim_engage(target, self.player_actor)
         self._alert_followers(target)
