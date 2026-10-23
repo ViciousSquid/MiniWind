@@ -102,6 +102,9 @@ NPC_WALK_SPEED = 90.0
 #: as soon as no hostile is within FLEE_SIGHT — so the sprint lasts exactly as
 #: long as the fright does, and they go back to a walk on their own.
 FLEE_SPEED_MULTIPLIER = 2.0
+#: A provoked fighter remembers its opponent well beyond initial perception.
+#: Only retaliation applies this limit; ordinary detection stays at 1024.
+RETALIATION_PURSUIT_RANGE = 3200.0
 ARRIVE_RADIUS = 48.0
 #: How high an actor steps up onto a brush (a kerb, a floor, a low step);
 #: anything taller over it is a roof or a wall, not its ground.
@@ -3653,6 +3656,15 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
             return self._sim_engage(npc, offender)
 
         if intent.reaction == sim_appraisal.FLEE:
+            # Park the combat AI before giving the schedule mover a refuge.
+            # A victim who first fought can still panic after being wounded.
+            p["triggered"] = True
+            p["awake"] = False
+            p.pop("_aggro_target", None)
+            p.pop("_pursuit_range", None)
+            base = p.pop("_base_aggression", None)
+            if base is not None:
+                p["aggression"] = base
             p["sched_state"] = sched.FLEE
             p["_flee"] = True
             self._set_rally(npc, False)
@@ -3688,6 +3700,8 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
             self._remember_aggression(p)
             p["aggression"] = "hostile"
             p["wake_on_sight"] = True
+            p["_pursuit_range"] = RETALIATION_PURSUIT_RANGE
+            p.pop("_aggro_target", None)
         else:
             p["_aggro_target"] = id(offender)
         return True
@@ -5808,8 +5822,12 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
                 target.properties["faction"] = "player"
 
     def _provoke(self, target):
-        """A struck NPC turns hostile and fights back, and any nearby
-        follow_player companion joins in against that same target."""
+        """Record the assault and act on the victim's own fight-or-flight intent.
+
+        The director decides whether courage, combat capability and wounds
+        produce retaliation or flight. Nearby player companions may still
+        defend the player against a surviving target.
+        """
         tp = target.properties
         tp["_hit_flash"] = HIT_FLASH_TIME    # red flash on a landed player hit
         # The strike is emitted as a world event rather than being punished on
@@ -5820,11 +5838,16 @@ class MiniwindSession(SettlementLaw, ContainerLocks):
         self.director.emit("attack", actor=self.player_actor, target=target,
                            observers=self._sim_observers(),
                            crime=self._sim_is_crime_against(target))
-        self._remember_aggression(tp)
-        tp["aggression"] = "hostile"
-        tp["triggered"] = False
-        tp["awake"] = True
-        tp["wake_on_sight"] = True
+        if not tp.get("dead"):
+            # The event made the victim's belief dirty; the director now
+            # returns its current considered response rather than a forced
+            # hostility flag. A second blow can change FIGHT into FLEE.
+            intent = self.director.top_intent(target)
+            if intent is not None and intent.reaction in (
+                    sim_appraisal.FIGHT, sim_appraisal.FLEE, sim_appraisal.ARREST):
+                self._apply_sim_intent(target)
+            elif self._natively_hostile(tp):
+                self._sim_engage(target, self.player_actor)
         self._alert_followers(target)
 
     def _alert_followers(self, target) -> None:
