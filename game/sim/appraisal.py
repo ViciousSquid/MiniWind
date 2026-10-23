@@ -57,6 +57,10 @@ PRIORITY = {
 #: Courage at or above this makes an actor stand rather than run when the
 #: threat is personal. Below it they flee. Modified by how grave the deed was.
 STAND_COURAGE = 0.5
+#: Under a quarter of maximum health, most victims choose self-preservation
+#: even if they initially stood and fought; the exceptionally brave stay.
+FLIGHT_HEALTH_FRACTION = 0.25
+WOUNDED_STAND_COURAGE = 0.9
 
 #: Relationship labels that make somebody's death personal. Anything not listed
 #: is still weighed through disposition, so an authored "rival" or "debtor"
@@ -214,6 +218,16 @@ def appraise(observer_props: Dict, observer_key: str, fact: Dict,
 
     # -- 1. it happened to me -------------------------------------------
     if victim_is_self and "violence" in tags:
+        try:
+            hp = float(observer_props.get("health"))
+            maximum = float(observer_props.get("max_health"))
+            badly_wounded = maximum > 0 and hp > 0 and hp / maximum <= FLIGHT_HEALTH_FRACTION
+        except (TypeError, ValueError, ZeroDivisionError):
+            badly_wounded = False
+        if badly_wounded and courage < WOUNDED_STAND_COURAGE:
+            return Intent(FLEE, offender, offender_name,
+                          f"{offender_name} wounded me badly; I must survive "
+                          f"(courage {courage:.2f})", fact)
         if combatant or courage >= STAND_COURAGE:
             return Intent(FIGHT, offender, offender_name,
                           f"{offender_name} attacked me and I will not run "
