@@ -685,3 +685,23 @@ def test_a_monster_removed_from_the_world_leaves_its_state_behind_harmlessly(
     assert logic.damage_applied == [5], (
         "the removed monster 'b' still attacked: damage log %s"
         % (logic.damage_applied,))
+
+# Provoked actors retain engagement beyond *detection* range. Both execution
+# paths must agree, and an unprovoked actor must keep the old acquisition limit.
+@pytest.mark.parametrize("dense", [False, True])
+@pytest.mark.parametrize("provoked", [False, True])
+def test_retaliation_extends_pursuit_without_extending_perception(
+        monster_factory, ai_world, flat_ground, dense, provoked):
+    monster = monster_factory("pursuer", (1800, 96, 0), awake=True)
+    if provoked:
+        monster.properties["_pursuit_range"] = 3200.0
+    ai, _logic = ai_world(brushes=flat_ground, things=[monster])
+    ai.DENSE_UPDATE = dense
+    old_x = monster.pos[0]
+    ai.update(TICK)
+    assert (monster.pos[0] < old_x) is provoked
+    if provoked:
+        monster.pos = [3500, 96, 0]
+        ai.update(TICK)
+        assert monster.pos[0] == pytest.approx(3500)
+        assert _state(ai, monster)["in_sight"] is False
