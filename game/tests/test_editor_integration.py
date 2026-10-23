@@ -47,6 +47,18 @@ def test_schemas_are_grouped_into_sections():
     assert "LOOT" in [s.group for s in creature if getattr(s, "group", "")]
 
 
+def test_container_locks_are_authored_alongside_existing_ownership():
+    schema = {p.name: p for p in _mgr().property_schema_for("container")}
+    assert schema["locked"].type == "bool" and schema["locked"].default is False
+    assert schema["lock_difficulty"].type == "int"
+    assert schema["lock_difficulty"].default == 25
+    assert schema["key_id"].type == "string"
+    assert schema["pickable"].default is True
+    assert all(schema[name].group == "LOCK" for name in
+               ("locked", "lock_difficulty", "key_id", "pickable"))
+    assert schema["owner"].group == "OWNERSHIP" and "None" in schema["owner"].help
+
+
 def test_editor_exposes_the_full_behaviour_surface():
     """The editor is a toolkit: every scalar behaviour the runtime reads should
     be an editable, typed field, not a hidden magic property."""

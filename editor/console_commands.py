@@ -1050,7 +1050,8 @@ entity to drive them from the I/O system.</i><br>
             cmds = []
         if cmds:
             help_text += '<b style="color:cyan;">=== Plugin Commands ===</b><br>'
-            for name, chelp in cmds:
+            for name, metadata in cmds.items():
+                chelp = metadata.get("help", "")
                 suffix = f" — {chelp}" if chelp else ""
                 help_text += f'<b style="color:orange;">{name}</b>{suffix}<br>'
         debug_log("Info", help_text)

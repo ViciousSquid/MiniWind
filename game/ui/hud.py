@@ -67,6 +67,7 @@ def draw(painter, session, width, height):
     from . import hud_frame
     hud_frame.draw(painter, session, c, width, height)
     _draw_clock(painter, session, width)
+    _draw_law(painter, session, width)
     _draw_active(painter, session, c, width, height)
     if not menu_open:
         _draw_quest_tracker(painter, session, width)
@@ -600,6 +601,33 @@ def _draw_active(painter, session, c, width, height):
     T.text(painter, x + 210, y + 44, "R", size=8, color=T.DIM, family="Segoe UI")
 
 
+def _draw_law(painter, session, width):
+    from . import fonts
+    if not hasattr(session, "law_status"):
+        return
+    status = session.law_status()
+    phase = status["phase"]
+    if not status["bounty"] and not status["curfew"]:
+        return
+    labels = {"pursuit": "HUE AND CRY", "search": "THE WATCH IS SEARCHING",
+              "writ": "BLOOD WRIT" if status["blood"] else "WANTED BY THE WATCH"}
+    label = labels.get(phase, "TOWN CURFEW")
+    box = QRect(width // 2 - 170, 56, 340, 49)
+    painter.fillRect(box, QColor(28, 18, 22, 225))
+    T.text_in(painter, QRect(box.x(), 59, 340, 21), label, size=11,
+              color=QColor(245, 130, 92), align=T.ALIGN_CENTER,
+              family=fonts.dialogue_family())
+    caption = f'{status["region"]} · {status["bounty"]} gold'
+    if status["curfew"]:
+        caption += " · Curfew"
+    T.text_in(painter, QRect(box.x(), 81, 340, 18), caption, size=9,
+              color=T.PARCH, align=T.ALIGN_CENTER, family=fonts.dialogue_family())
+    if phase == "search":
+        painter.fillRect(QRect(box.x(), 103, 340, 3), QColor(70, 42, 38))
+        painter.fillRect(QRect(box.x(), 103, int(340 * status["remaining"]), 3),
+                         QColor(215, 110, 70))
+
+
 def _draw_status_flags(painter, session, c, width, height):
     flags = []
     if session.game.sneaking:
@@ -1056,12 +1084,17 @@ def _draw_notifications(painter, session, width, height):
         return
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
-    font = T.font(15, bold=True)
+    from . import fonts
+    font = fonts.dialogue_font(15)
     painter.setFont(font)
     metrics = painter.fontMetrics()
     pad_x, pad_y, gap = 18, 8, 6
     max_w = int(width * 0.7)
     y = TOAST_TOP
+    if hasattr(session, "law_status"):
+        status = session.law_status()
+        if status["bounty"] or status["curfew"]:
+            y = 118  # keep the new watch status readable above the notices
 
     for n in reversed(notes):
         text = str(n["text"])

@@ -363,6 +363,9 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
                                 scale, player=(px, pz), key="minimap")
 
     # People and creatures nearby.
+    from . import law_marks
+    status = session.law_status() if hasattr(session, "law_status") else None
+    law_marks.draw_search(painter, status, to_screen, scale)
     reach2 = (MINIMAP_SPAN / 2.0) ** 2
     try:
         actors = session._live_actors()
@@ -378,6 +381,13 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
             continue
         painter.setBrush(QBrush(_relation_colour(session, thing)))
         painter.drawEllipse(to_screen(thing.pos[0], thing.pos[2]), 3.2, 3.2)
+
+    # Actual living witnesses, derived from the same facts that drive reports.
+    witnesses = session.witness_markers() if hasattr(session, "witness_markers") else []
+    for witness in witnesses:
+        point = to_screen(witness["x"], witness["z"])
+        if math.hypot(point.x() - centre.x(), point.y() - centre.y()) < radius - 10:
+            law_marks.draw_witness(painter, point, witness, radius=5.0)
 
     # The tracked quest's target: a yellow diamond, held on the edge if far.
     try:
@@ -424,7 +434,12 @@ def map_features(session):
     *discovered* location markers (an undiscovered town is not on your map),
     the quests every active quest whose objective has a place in the world.
     """
-    out = {"player": None, "places": [], "quests": [], "night": None}
+    out = {"player": None, "places": [], "quests": [], "night": None,
+           "witnesses": [], "law": None}
+    if hasattr(session, "witness_markers"):
+        out["witnesses"] = session.witness_markers()
+    if hasattr(session, "law_status"):
+        out["law"] = session.law_status()
     try:
         from . import daylight
         out["night"] = daylight.map_night(session)

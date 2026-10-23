@@ -37,7 +37,8 @@ def owner_of(props: Optional[Dict]) -> str:
     """The owning actor's key, or ``""`` when the thing is unowned."""
     if not isinstance(props, dict):
         return ""
-    return str(props.get(OWNER, "") or "").strip()
+    owner = str(props.get(OWNER, "") or "").strip()
+    return "" if owner.casefold() in ("none", "(none)") else owner
 
 
 def owner_name_of(props: Optional[Dict]) -> str:
@@ -48,6 +49,11 @@ def owner_name_of(props: Optional[Dict]) -> str:
 
 def owner_faction_of(props: Optional[Dict]) -> str:
     if not isinstance(props, dict):
+        return ""
+    # Explicit None is free-for-all. A blank owner still permits the existing
+    # communal/faction ownership field.
+    if OWNER in props and (props[OWNER] is None or
+            str(props[OWNER]).strip().casefold() in ("none", "(none)")):
         return ""
     return str(props.get(OWNER_FACTION, "") or "").strip()
 

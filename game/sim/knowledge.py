@@ -80,6 +80,8 @@ def fact_from_event(event, certainty: float, source: str,
         # Whether this occurrence was an offence travels with the fact, so a
         # lawful killing stays lawful however far the story is passed on.
         "crime": bool(getattr(event, "is_crime", False)),
+        "law_region": str((getattr(event, "data", None) or {}).get("law_region", "")),
+        "identified": True,
         "certainty": max(0.0, min(1.0, float(certainty))),
         "source": str(source),
         "from": str(told_by or ""),
@@ -141,11 +143,15 @@ def learn(store, key: str, fact: Dict) -> bool:
     eid = int(fact.get("e", 0) or 0)
     for i, f in enumerate(existing):
         if eid and int(f.get("e", 0) or 0) == eid:
-            if float(fact["certainty"]) > float(f.get("certainty", 0.0)) + 1e-6:
+            identified = fact.get("identified", True)
+            prior_identified = f.get("identified", True)
+            if ((identified and not prior_identified)
+                    or (identified == prior_identified and
+                        float(fact["certainty"]) > float(f.get("certainty", 0.0)) + 1e-6)):
                 # A better account of something already known: upgrade in place
                 # and carry over whether it was already reported to the law.
                 merged = dict(fact)
-                merged["reported"] = bool(f.get("reported"))
+                merged["reported"] = bool(f.get("reported")) and prior_identified
                 existing[i] = merged
                 _write(store, key, existing)
                 return True

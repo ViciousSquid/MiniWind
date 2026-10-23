@@ -52,6 +52,8 @@ from .rpg import daily as rpg_daily
 from .rpg import quests as _quests
 from .rpg.gametime import DEFAULT_MINUTES_PER_DAY, GameClock
 from .world_index import WorldIndex
+from .law import SettlementLaw
+from .sim.law import Writs
 from . import sim
 from .sim import appraisal as sim_appraisal
 from .sim import crime as sim_crime
@@ -100,6 +102,9 @@ NPC_WALK_SPEED = 90.0
 #: as soon as no hostile is within FLEE_SIGHT — so the sprint lasts exactly as
 #: long as the fright does, and they go back to a walk on their own.
 FLEE_SPEED_MULTIPLIER = 2.0
+#: A provoked fighter remembers its opponent well beyond initial perception.
+#: Only retaliation applies this limit; ordinary detection stays at 1024.
+RETALIATION_PURSUIT_RANGE = 3200.0
 ARRIVE_RADIUS = 48.0
 #: How high an actor steps up onto a brush (a kerb, a floor, a low step);
 #: anything taller over it is a roof or a wall, not its ground.
@@ -154,8 +159,6 @@ FOLLOW_DISTANCE = 220.0
 #: How far a companion will look for a target the *player* just struck
 #: before joining in (see _provoke's follower-alert pass).
 FOLLOW_ASSIST_RADIUS = 900.0
-#: A bounty below this value can be resolved by paying gold instead of serving jail time.
-BOUNTY_FINE_THRESHOLD = 1000
 #: Guards notice a wanted player when the player enters this radius.
 BOUNTY_NOTICE_RADIUS = 700.0
 #: Maximum distance the player may get from the escort guard before resisting arrest.
@@ -423,7 +426,7 @@ class StateStore:
             pass
 
 
-class MiniwindSession:
+class MiniwindSession(SettlementLaw):
     """Owns the clock, the player character, NPC AI and dialogue state."""
 
     def __init__(self, logic, cfg: Dict = None, globals_store=None):
@@ -449,6 +452,8 @@ class MiniwindSession:
 
         self.rng = random.Random()
         self.game = GameState(self.store, rng=self.rng)
+        self.law = Writs(self.store)
+        self._arrest_region = ""
         self.needs_char_creation = str(cfg.get("start_scenario", "prompt")) == "prompt"
         #: Which map this is, for what it remembers (game/map_memory.py): the
         #: map's own settings entity, else its region's name.
@@ -633,7 +638,11 @@ class MiniwindSession:
             hostile=factions.is_hostile,
             disposition=self._sim_disposition,
             on_bounty=self._sim_on_bounty,
-            on_message=self.game.message)
+            on_message=self.game.message,
+            on_witness=lambda event, seen: self.notify(
+                "Someone witnessed your crime." if seen else
+                "Someone heard the disturbance.", 4.0),
+            sight_test=self._law_visible, region_for=self._law_region)
         #: Accumulated game-hours since the last simulation tick, so rumour
         #: propagation and production advance on world time rather than frames.
         self._sim_hours = 0.0
@@ -689,7 +698,11 @@ class MiniwindSession:
         except Exception:
             pass
         self.rng = random.Random()
+        self._clear_arrest()
+        self._arrest_region = ""
+        self.law = Writs(self.store)
         self.game = GameState(self.store, rng=self.rng)
+        self.director.invalidate()
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
         self.needs_char_creation = True
@@ -3024,9 +3037,15 @@ class MiniwindSession:
         his post and stood there. Name is still accepted as a fallback for maps
         that authored a plain entity called "prison".
         """
-        for marker in self._markers_of_kind("prison"):
-            return marker
-        return self._find_named(PRISON_MARKER_NAME)
+        region = self._arrest_region or self._law_region()
+        prisons = [m for m in self._markers_of_kind("prison")
+                   if self._law_region(m.pos, m) == region]
+        if prisons:
+            return min(prisons, key=lambda m: self._dist2d(m.pos, self._player_pos()))
+        named = self._find_named(PRISON_MARKER_NAME)
+        if named is not None and self._law_region(named.pos, named) == region:
+            return named
+        return None
 
     def _prison_position(self):
         """Where an escorted prisoner is being taken, or None if the map has no
@@ -3040,6 +3059,13 @@ class MiniwindSession:
         player_pos = self._player_pos()
         if player_pos is None or self.game.character.is_dead:
             return
+
+        self._law_sync()
+        region = self._law_region(player_pos)
+        if self._arrest_region and self._arrest_region != region:
+            self.law.abandon_search(self._arrest_region)
+            self._clear_arrest()
+            self._arrest_region = ""
 
         guard = self._arrest_guard
         state = self._arrest_state
@@ -3077,13 +3103,18 @@ class MiniwindSession:
                     self._start_arrest_pursuit()
             return
 
-        bounty = int(getattr(self.game.character, "bounty", 0) or 0)
+        bounty = self.law.bounty(region)
         if bounty <= 0:
             if state:
                 self._clear_arrest()
             return
 
         if state in ("approach", "ready") and self._is_arrest_guard(guard):
+            if not self._guard_sees_player(guard):
+                self.law.sighted(region, guard.properties.get("_law_last_pos", player_pos), self._law_now())
+                self._start_arrest_pursuit()
+                return
+            guard.properties["_law_last_pos"] = list(player_pos)
             if state == "approach" and self._dist2d(guard.pos, player_pos) <= TALK_RADIUS:
                 self._arrest_state = "ready"
                 guard.properties["_arrest_state"] = "ready"
@@ -3105,11 +3136,18 @@ class MiniwindSession:
             dx = candidate.pos[0] - player_pos[0]
             dz = candidate.pos[2] - player_pos[2]
             d = dx * dx + dz * dz
-            if d <= radius2:
-                candidates.append((d, candidate))
+            if d > radius2:
+                continue
+            if (self._law_region(candidate.pos, candidate) != region
+                    or not self._guard_knows_writ(candidate, region)
+                    or not self._guard_sees_player(candidate)):
+                continue
+            candidates.append((d, candidate))
         if candidates:
             _, guard = min(candidates, key=lambda item: item[0])
             self._arrest_guard = guard
+            self._arrest_region = region
+            guard.properties["_law_last_pos"] = list(player_pos)
             self._arrest_state = "approach"
             guard.properties["_arrest_state"] = "approach"
             guard.properties["triggered"] = True
@@ -3178,61 +3216,24 @@ class MiniwindSession:
         return None
 
     def _arrest_tree(self, guard):
-        """Build the short guard conversation for the current bounty."""
-        bounty = max(1, int(self.game.character.bounty))
-        name = guard.properties.get("display_name", "Guard")
-        tree = self._arrest_tree_full(guard, bounty, name)
-        if self._prison_position() is None:
-            # No cell to be taken to: surrendering means paying what you can.
-            for node in tree["nodes"].values():
-                node["responses"] = [
-                    r for r in node["responses"]
-                    if not any(a.get("op") == "begin_escort" for a in r.get("actions", []))]
-                if not any(any(a.get("op") == "pay_bounty" for a in r.get("actions", []))
-                           for r in node["responses"]):
-                    node["responses"].insert(0, {
-                        "text": f"Pay what I owe ({min(bounty, self.game.character.gold)} gold).",
-                        "goto": "END", "actions": [{"op": "pay_bounty"}]})
-        return tree
-
-    def _arrest_tree_full(self, guard, bounty, name):
-        if bounty < BOUNTY_FINE_THRESHOLD:
-            responses = []
-            if self.game.character.gold >= bounty:
-                responses.append({
-                    "text": f"Pay the {bounty} gold fine.",
-                    "goto": "END",
-                    "actions": [{"op": "pay_bounty"}],
-                })
-            else:
-                responses.append({
-                    "text": "I cannot pay. Take me to prison.",
-                    "goto": "END",
-                    "actions": [{"op": "begin_escort"}],
-                })
-            responses.extend([
-                {"text": "I surrender. Take me to prison.", "goto": "END",
-                 "actions": [{"op": "begin_escort"}]},
-                {"text": "I refuse and run.", "goto": "END",
-                 "actions": [{"op": "resist_arrest"}]},
-            ])
-        else:
-            responses = [
-                {"text": "I surrender. Take me to prison.", "goto": "END",
-                 "actions": [{"op": "begin_escort"}]},
-                {"text": "I refuse and run.", "goto": "END",
-                 "actions": [{"op": "resist_arrest"}]},
-            ]
-        return {
-            "start": "arrest",
-            "nodes": {
-                "arrest": {
-                    "text": f"{name}: You have an outstanding bounty of {bounty} gold. "
-                            "Surrender and answer for your crimes.",
-                    "responses": responses,
-                },
-            },
-        }
+        """A watchman can receive a writ's full payment or accept surrender."""
+        region = self._law_region(guard.pos, guard)
+        bounty = self.law.bounty(region)
+        name = guard.properties.get("display_name", "Watchman")
+        responses = []
+        if self.game.character.gold >= bounty:
+            responses.append({"text": f"Settle the writ ({bounty} gold).",
+                              "goto": "END", "actions": [{"op": "pay_bounty"}]})
+        if self._prison_position() is not None:
+            responses.append({"text": "I yield. Take me to the gaol.", "goto": "END",
+                              "actions": [{"op": "begin_escort"}]})
+        responses.append({"text": "I refuse and run.", "goto": "END",
+                          "actions": [{"op": "resist_arrest"}]})
+        writ = "blood writ" if self.law.blood_writ(region) else "writ"
+        return {"start": "arrest", "nodes": {"arrest": {
+            "text": f"{name}: The watch of {region} holds a {writ} against you: "
+                    f"{bounty} gold. Settle your debt or answer before the reeve.",
+            "responses": responses}}}
 
     def _clear_arrest(self) -> None:
         """Release the arrest guard back to normal settlement AI."""
@@ -3251,25 +3252,24 @@ class MiniwindSession:
         self._arrest_notice_sent = False
 
     def _pay_bounty(self) -> None:
-        """Pay a low bounty in gold and end the arrest."""
-        amount = max(1, int(self.game.character.bounty))
+        """Only a living settlement guard takes payment, for their own writs."""
+        guard = self.dialogue_npc or self._arrest_guard
+        if (guard is None or not self._is_arrest_guard(guard)
+                or self._arrest_state == "pursuit"
+                or self._dist2d(guard.pos, self._player_pos()) > TALK_RADIUS):
+            return
+        region = self._law_region(guard.pos, guard)
+        amount = self.law.bounty(region)
+        if amount <= 0:
+            return
         if self.game.character.gold < amount:
-            if self._prison_position() is None:
-                # Nowhere to lock you up: the watch takes every coin you have
-                # and lets you go with a warning.
-                taken = int(self.game.character.gold)
-                self.game.add_gold(-taken)
-                self.game.character.bounty = 0
-                self.notify(f"The guard takes all you have ({taken} gold). "
-                            "\"Don't let me see you again.\"", 4.5)
-                self._clear_arrest()
-                return
-            self.notify("You cannot afford the fine. You will be escorted to prison.")
-            self._begin_escort()
+            self.notify("The watch requires the full sum. Your writ still stands.")
             return
         self.game.add_gold(-amount)
-        self.game.character.bounty = 0
-        self.notify(f"You paid the {amount} gold fine.", 4.0)
+        self.law.settle(region)
+        self.game.character.bounty = self.law.total
+        self.director.invalidate()
+        self.notify(f"You pay {amount} gold to the watch of {region}. Your writ is sealed.", 4.0)
         self._clear_arrest()
 
     def _begin_escort(self) -> None:
@@ -3278,7 +3278,7 @@ class MiniwindSession:
         if not self._is_arrest_guard(guard):
             return
         if self._prison_position() is None:
-            self.notify("No prison marker is placed in this settlement.")
+            self.notify("There is no gaol here. Settle your writ with the watch.")
             return
         self._arrest_state = "escorting"
         guard.properties["_arrest_state"] = "escorting"
@@ -3288,32 +3288,40 @@ class MiniwindSession:
         self.notify("You are being escorted to prison. Stay with the guard.", 5.0)
 
     def _start_arrest_pursuit(self) -> None:
-        """Run the player down after they break away from an escort or refuse arrest.
-
-        Every guard within :data:`GUARD_PURSUIT_RADIUS` turns hostile, which
-        hands them to the combat AI to fight with once they can see the player.
-        But the combat AI only engages what it has line of sight to, so on its
-        own a guard loses you the moment you round a corner and simply stands
-        there. So the guards also enter a runtime-driven ``pursuit``: their
-        destination is refreshed to the player's position every decision pass,
-        and they keep coming — through doorways, round buildings — until the
-        bounty is settled or they are put down.
-        """
+        """The local watch rallies. Losing sight freezes the last known position."""
         player_pos = self._player_pos()
         if player_pos is None:
             return
-        radius2 = GUARD_PURSUIT_RADIUS * GUARD_PURSUIT_RADIUS
+        region = self._arrest_region or self._law_region(player_pos)
+        self._arrest_region = region
+        row = self.law.record(region)
+        leader = self._arrest_guard
+        if row["last_pos"] is None or (leader is not None and self._guard_sees_player(leader)):
+            self.law.sighted(region, player_pos, self._law_now())
+        rally_pos = row["last_pos"]
         pursuers = []
         for guard in self.npcs():
-            if not self._is_guard(guard) or guard.properties.get("dead"):
+            if not self._is_guard(guard):
                 continue
-            dx = guard.pos[0] - player_pos[0]
-            dz = guard.pos[2] - player_pos[2]
-            if dx * dx + dz * dz > radius2:
+            if (self._law_region(guard.pos, guard) != region
+                    or (self._dist2d(guard.pos, rally_pos) > GUARD_PURSUIT_RADIUS
+                        and guard.properties.get("_arrest_state") != "pursuit")):
+                continue
+            # The refusing offender is pointed out by the arresting watchman.
+            if leader is not None:
+                for fact in sim_knowledge.facts(self.store, actor_key(leader)):
+                    if str(fact.get("e")) in row["charges"]:
+                        sim_knowledge.tell(self.store, actor_key(leader), actor_key(guard), fact, decay=0)
+            elif not self._guard_knows_writ(guard, region):
                 continue
             p = guard.properties
+            p.setdefault("_law_restore", {k: p.get(k) for k in
+                         ("aggression", "triggered", "awake", "wake_on_sight")})
+            if "_base_aggression" in p:
+                p["_law_restore"].update(aggression=p["_base_aggression"],
+                                         triggered=True, awake=False)
             p["_arrest_state"] = "pursuit"
-            p["_dest"] = list(player_pos)
+            p["_dest"] = list(row["last_pos"])
             p["aggression"] = "hostile"
             p["triggered"] = False
             p["awake"] = True
@@ -3321,33 +3329,38 @@ class MiniwindSession:
             pursuers.append(guard)
         self._arrest_guard = None
         self._arrest_state = "pursuit" if pursuers else ""
+        if not pursuers:
+            self.law.abandon_search(region)
         self._arrest_pursuers = pursuers
         self._arrest_notice_sent = False
-        self.notify("You broke away from the escort. The guards give chase!", 5.0)
+        self.notify("The watch raises the hue and cry. Break sight and leave the search area!", 5.0)
 
     def _update_arrest_pursuit(self) -> None:
-        """Keep the chase alive, and call it off when it is over.
-
-        Runs on the arrest pass, which is already once per tick, and does one
-        dict lookup per pursuing guard — a handful at most. Where the guards are
-        actually headed is only rewritten on the decision pass (see _decide), so
-        this is not a per-tick path recompute.
-        """
-        alive = []
-        for guard in self._arrest_pursuers:
-            p = getattr(guard, "properties", None)
-            if not isinstance(p, dict) or p.get("dead"):
-                continue
-            if p.get("_arrest_state") != "pursuit":
-                continue        # something else claimed this guard
-            alive.append(guard)
+        alive = [g for g in self._arrest_pursuers
+                 if not g.properties.get("dead")
+                 and g.properties.get("_arrest_state") == "pursuit"]
         self._arrest_pursuers = alive
-        if not alive:
-            self._arrest_state = ""
-            return
-        # The chase ends when the debt is settled — paid, served, or forgiven.
-        if int(getattr(self.game.character, "bounty", 0) or 0) <= 0:
+        region = self._arrest_region
+        if self.law.bounty(region) <= 0:
             self._end_arrest_pursuit()
+            return
+        now = self._law_now()
+        visible = any(self._guard_sees_player(g) for g in alive)
+        if visible:
+            self.law.sighted(region, self._player_pos(), now)
+        elif not alive or self.law.search(region, self._player_pos(), now):
+            self.law.abandon_search(region)
+            self._end_arrest_pursuit()
+            self.notify("The hue and cry dies away. The writ against you still stands.", 4.5)
+            return
+        searching = self.law.record(region)["phase"] == "search"
+        for guard in alive:
+            p = guard.properties
+            # Park the engine's hostile AI while searching: it otherwise gets
+            # the live player's position independently of this search.
+            p["aggression"] = "defensive" if searching else "hostile"
+            p["triggered"] = searching
+            p["awake"] = not searching
 
     def _end_arrest_pursuit(self) -> None:
         """Call off the chase and send the guards back to their posts."""
@@ -3357,9 +3370,12 @@ class MiniwindSession:
                 continue
             p.pop("_arrest_state", None)
             p.pop("_dest", None)
-            p["aggression"] = "defensive"
-            p["triggered"] = True
-            p["awake"] = False
+            for key, value in p.pop("_law_restore", {}).items():
+                if value is None:
+                    p.pop(key, None)
+                else:
+                    p[key] = value
+            p.pop("_base_aggression", None)
         self._arrest_pursuers = []
         self._arrest_state = ""
         self._arrest_notice_sent = False
@@ -3374,8 +3390,15 @@ class MiniwindSession:
                 player.pos.z = float(prison_pos[2])
             except Exception:
                 pass
-        self.game.character.bounty = 0
-        self.notify("You have been escorted to prison. Your bounty is cleared.", 5.0)
+        region = self._arrest_region or self._law_region(prison_pos)
+        hours = max(1, min(72, math.ceil(self.law.bounty(region) / 100)))
+        total = self.clock.hour + hours
+        self.clock.set_time(total % 24, self.clock.day + int(total // 24))
+        self._sim_last_hour = float(self.clock.hour)
+        self.law.settle(region)
+        self.game.character.bounty = self.law.total
+        self.director.invalidate()
+        self.notify(f"You serve {hours} hours in the gaol. The local writ is discharged.", 5.0)
         self._clear_arrest()
 
     # ==================================================== reactive simulation
@@ -3400,20 +3423,33 @@ class MiniwindSession:
         return 50
 
     def _sim_on_bounty(self, amount: int, event, reporter_key: str) -> None:
-        """A charge was laid against the player: add it to the existing bounty.
-
-        The bounty purse, the arrest flow and the guard escort are all already
-        MiniWind systems (see ``_update_arrest``); the simulation only decides
-        *whether and when* a crime reaches them."""
+        """Testimony, including delayed rumours, opens a local writ."""
         amount = max(0, int(amount))
-        if amount <= 0:
+        if amount <= 0 or event is None:
             return
-        self.game.character.bounty += amount
-        kind = getattr(event, "kind", "crime")
-        self.notify(f"Word reaches the watch: your bounty rises by {amount} gold "
-                    f"({kind}).", 5.0)
-        self.game.message(f"A witness reported the {kind} to the watch "
-                          f"(+{amount} bounty).")
+        self._law_sync()
+        region = event.data.get("law_region") or self._law_region(event.pos)
+        grave = event.kind == "death"
+        was_curfew = self.law.curfew(region, self._law_now())
+        if not self.law.charge(region, event.id, amount, self._law_now(), grave=grave):
+            return
+        self.game.character.bounty = self.law.total
+        self.notify(f"Word reaches the watch of {region}: a writ for {amount} gold "
+                    f"({event.kind}).", 5.0)
+        self.game.message(f"The watch of {region} records the {event.kind}: +{amount} gold.")
+        if grave:
+            self._raise_hue_and_cry(region, reporter_key, event)
+        victim = self._sim_actor_by_key(event.target)
+        reporter = self._sim_actor_by_key(reporter_key)
+        if (victim is not None and sim_crime.is_lawful(victim.properties)
+                and reporter is not None and self._law_region() == region
+                and self._law_region(reporter.pos, reporter) == region
+                and self._guard_sees_player(reporter)):
+            self._arrest_region = region
+            self.law.sighted(region, self._player_pos(), self._law_now())
+            self._start_arrest_pursuit()
+        if not was_curfew and self.law.curfew(region, self._law_now()):
+            self.notify(f"{region} is under curfew. The market shutters for six hours.", 5.0)
 
     @property
     def player_actor(self):
@@ -3504,7 +3540,7 @@ class MiniwindSession:
         cutting down a farmer is. No list of protected characters, no quest
         flags."""
         tp = getattr(target, "properties", {}) or {}
-        if tp.get("aggression") == "hostile":
+        if self._natively_hostile(tp):
             return False
         team = tp.get("team") or tp.get("faction")
         return not factions.is_hostile("player", team)
@@ -3580,7 +3616,7 @@ class MiniwindSession:
                            item_name=item.properties["display_name"])
 
     # -- turning intents into behaviour --------------------------------------
-    def _apply_sim_intent(self, npc) -> bool:
+    def _apply_sim_intent(self, npc, *, fresh_assault=False) -> bool:
         """Let what this NPC *knows* override its daily schedule.
 
         Returns True when the intent claimed this decision tick. Every branch
@@ -3599,29 +3635,50 @@ class MiniwindSession:
         p["_sim_reason"] = intent.reason
         p["_sim_target"] = intent.target_name
 
+        if intent.reaction == sim_appraisal.REPORT:
+            return self._sim_go_report(npc)
+        if intent.reaction == sim_appraisal.INVESTIGATE:
+            stamp = p.setdefault("_investigate_since", {})
+            started = stamp.setdefault(str(intent.event_id), self._law_now())
+            if self._law_now() - started >= 0.25:
+                return False
+            p["sched_state"] = "INVESTIGATE"
+            p["_dest"] = list(intent.fact["pos"])
+            return True
         offender = self._sim_actor_by_key(intent.target)
         if offender is None:
             return False
 
         if intent.reaction in (sim_appraisal.FIGHT, sim_appraisal.ARREST):
-            # An ARREST of the player is the existing bounty/arrest flow's job
-            # (a guard should not simply murder a wanted man), so it is left to
-            # ``_update_arrest``; everything else is ordinary combat.
-            if intent.reaction == sim_appraisal.ARREST and offender is self.player_actor:
+            # The watch owns its criminal response, including self-defence.
+            # Replaying an old assault fact through ordinary combat would
+            # restart a chase after escape or even after accepting payment.
+            if (not fresh_assault and offender is self.player_actor
+                    and self._is_guard(npc) and sim_crime.is_crime(intent.fact)):
                 return False
             return self._sim_engage(npc, offender)
 
         if intent.reaction == sim_appraisal.FLEE:
+            # Park the combat AI before giving the schedule mover a refuge.
+            # A victim who first fought can still panic after being wounded.
+            p["triggered"] = True
+            p["awake"] = False
+            p.pop("_aggro_target", None)
+            p.pop("_pursuit_range", None)
+            base = p.pop("_base_aggression", None)
+            if base is not None:
+                p["aggression"] = base
             p["sched_state"] = sched.FLEE
             p["_flee"] = True
             self._set_rally(npc, False)
             p["_dest"] = self._refuge_point(npc, offender)
             return True
 
-        if intent.reaction == sim_appraisal.REPORT:
-            return self._sim_go_report(npc)
-
         if intent.reaction == sim_appraisal.CONFRONT:
+            if (offender is self.player_actor and intent.fact
+                    and not intent.fact.get("reported")
+                    and not sim_crime.settled(self.store, intent.event_id)):
+                return self._sim_go_report(npc)
             if offender is self.player_actor or offender.properties.get("dead"):
                 return False
             p["sched_state"] = sched.CONFRONT
@@ -3646,6 +3703,8 @@ class MiniwindSession:
             self._remember_aggression(p)
             p["aggression"] = "hostile"
             p["wake_on_sight"] = True
+            p["_pursuit_range"] = RETALIATION_PURSUIT_RANGE
+            p.pop("_aggro_target", None)
         else:
             p["_aggro_target"] = id(offender)
         return True
@@ -3659,7 +3718,13 @@ class MiniwindSession:
         p = npc.properties
         guard = self._nearest_guard(npc)
         if guard is None:
-            return False
+            p["sched_state"] = sched.REPORT
+            post = self._nearest_in(self._markers_of_kind("guardpost"), npc)
+            if post is not None:
+                p["_dest"] = list(post.pos)
+            else:
+                p.pop("_dest", None)
+            return True
         if self._dist2d(npc.pos, guard.pos) <= REPORT_ARRIVE_RADIUS:
             p["sched_state"] = sched.REPORT
             p.pop("_dest", None)
@@ -3689,14 +3754,10 @@ class MiniwindSession:
                 self._engage(npc, enemy)
                 return
         if arrest_state == "pursuit":
-            # A pursuing guard is hostile, so the combat AI owns him whenever he
-            # can see the player. This only refreshes where he is headed, so he
-            # keeps closing when sight is broken instead of stopping at the
-            # corner the player ran round.
-            player_pos = self._player_pos()
-            if player_pos is not None:
-                p["_dest"] = player_pos
-            p["sched_state"] = "PURSUE"
+            row = self.law.record(self._arrest_region)
+            if row["last_pos"] is not None:
+                p["_dest"] = list(row["last_pos"])
+            p["sched_state"] = "SEARCH" if row["phase"] == "search" else "PURSUE"
             return
         if arrest_state in ("approach", "ready", "escorting"):
             p["triggered"] = True
@@ -3705,9 +3766,9 @@ class MiniwindSession:
                                   else "ARREST_READY" if arrest_state == "ready"
                                   else "ESCORT")
             if arrest_state == "approach":
-                player_pos = self._player_pos()
-                if player_pos is not None:
-                    p["_dest"] = player_pos
+                last_pos = p.get("_law_last_pos")
+                if last_pos is not None:
+                    p["_dest"] = list(last_pos)
             elif arrest_state == "ready":
                 p.pop("_dest", None)
             else:
@@ -3986,6 +4047,12 @@ class MiniwindSession:
             self._decide(npc)              # the arrest flow owns this one
             return
 
+        # A witness already carrying testimony keeps walking off screen. This
+        # only follows existing knowledge; it performs no distant perception.
+        if p.get("sched_state") == sched.REPORT:
+            if self._apply_sim_intent(npc):
+                return
+
         if str(p.get("aggression")) == "hostile" and not p.get("triggered", False):
             p["sched_state"] = sched.COMBAT
             return
@@ -4251,7 +4318,8 @@ class MiniwindSession:
 
     def _nearest_guard(self, npc):
         """The nearest member of the watch, from the decision pass's snapshot."""
-        return self._nearest_in(self._guards, npc)
+        return self._nearest_in((g for g in self._guards
+                                 if not g.properties.get("dead")), npc)
 
     def _nearest_of(self, npc, predicate):
         """Nearest live thing (2D) satisfying *predicate*, excluding *npc*.
@@ -5775,8 +5843,12 @@ class MiniwindSession:
                 target.properties["faction"] = "player"
 
     def _provoke(self, target):
-        """A struck NPC turns hostile and fights back, and any nearby
-        follow_player companion joins in against that same target."""
+        """Record the assault and act on the victim's own fight-or-flight intent.
+
+        The director decides whether courage, combat capability and wounds
+        produce retaliation or flight. Nearby player companions may still
+        defend the player against a surviving target.
+        """
         tp = target.properties
         tp["_hit_flash"] = HIT_FLASH_TIME    # red flash on a landed player hit
         # The strike is emitted as a world event rather than being punished on
@@ -5787,11 +5859,16 @@ class MiniwindSession:
         self.director.emit("attack", actor=self.player_actor, target=target,
                            observers=self._sim_observers(),
                            crime=self._sim_is_crime_against(target))
-        self._remember_aggression(tp)
-        tp["aggression"] = "hostile"
-        tp["triggered"] = False
-        tp["awake"] = True
-        tp["wake_on_sight"] = True
+        if not tp.get("dead"):
+            # The event made the victim's belief dirty; the director now
+            # returns its current considered response rather than a forced
+            # hostility flag. A second blow can change FIGHT into FLEE.
+            intent = self.director.top_intent(target)
+            if intent is not None and intent.reaction in (
+                    sim_appraisal.FIGHT, sim_appraisal.FLEE, sim_appraisal.ARREST):
+                self._apply_sim_intent(target, fresh_assault=True)
+            elif self._natively_hostile(tp):
+                self._sim_engage(target, self.player_actor)
         self._alert_followers(target)
 
     def _alert_followers(self, target) -> None:
@@ -6639,7 +6716,7 @@ class MiniwindSession:
         if npc is self._arrest_guard and self._arrest_state in ("approach", "ready"):
             return "!"
         if npc in self._arrest_pursuers:
-            return "!"
+            return "?" if props.get("sched_state") == "SEARCH" else "!"
         return None
 
     def head_marks(self):
@@ -6732,6 +6809,8 @@ class MiniwindSession:
         if not tree:
             # a bare merchant/greeter: synthesise a tiny greeting tree
             tree = self._default_tree(npc)
+        if self._is_arrest_guard(npc) and npc is not self._arrest_guard:
+            tree = self._law_payment_tree(npc, tree)
         tree = self._with_first_impression(tree, npc)
         if getattr(self, "living", None) is not None:
             tree = self.living.prepare_tree(tree, npc)
@@ -6853,6 +6932,12 @@ class MiniwindSession:
         elif op == "resist_arrest":
             self._start_arrest_pursuit()
         elif op == "open_trade":
+            region = self._law_region(npc.pos, npc)
+            if self.law.curfew(region, self._law_now()):
+                self.end_dialogue()
+                self.merchant_npc = None
+                self.notify("The shutters are barred until the watch lifts the curfew.", 4.0)
+                return
             c = self.game.character
             if rpg_cha.merchant_refuses(rpg_cha.charisma_of(c),
                                         disp.of(c, npc.properties, self.store)):
@@ -6991,7 +7076,7 @@ class MiniwindSession:
             self.notify("A sheared pick has jammed this lock. Only the Knock spell can open it.", 5.0)
             return False
         if p.get("locked") and not p.get("dead"):
-            key = str(p.get("lock_key") or "")
+            key = str(p.get("lock_key") or p.get("key_id") or "")
             if key and inv.has_item(self.game.character.inventory, key):
                 p["locked"] = False
                 p.pop("lockpick_state", None)
@@ -7020,8 +7105,15 @@ class MiniwindSession:
         self.lockpick_thing = thing
         p = thing.properties
         seed = p.get("id") or f"{p.get('name', '')}:{list(thing.pos)}"
+        # Older work maps authored difficulty as 1..100, newer maps as a tier.
+        difficulty = p.get("lock_difficulty", "novice")
+        if isinstance(difficulty, (int, float)):
+            difficulty = ("novice" if difficulty <= 20 else
+                          "apprentice" if difficulty <= 40 else
+                          "adept" if difficulty <= 60 else
+                          "expert" if difficulty <= 80 else "master")
         self.lockpick_attempt = LockpickAttempt(
-            p.get("lock_difficulty", "novice"), self.game.character.skill(sk.SECURITY),
+            difficulty, self.game.character.skill(sk.SECURITY),
             seed, p.get("lockpick_state"))
         self._lockpick_health = self.game.character.health
         self._lockpick_witness_timer = 0.0
@@ -7184,7 +7276,7 @@ class MiniwindSession:
             props, self.player_actor,
             target_thing=self._sim_actor_by_key(sim_own.owner_of(props)),
             observers=self._sim_observers(), item_id=str(stack.get("id", "")),
-            item_name=name, value=int(stack.get("value", 0) or 0),
+            item_name=name, value=int(stack.get("value", 0) or 0) * max(1, int(stack.get("qty", 1) or 1)),
             pos=list(self.container_thing.pos) if self.container_thing else None)
         if event is not None and event.kind == "theft":
             sim_own.mark_stolen(stack, sim_own.owner_of(props),
@@ -7389,11 +7481,14 @@ class MiniwindSession:
             # the simulation knows (who believes what, who was wronged, which
             # crimes were charged) already lives in the store as it is written.
             self.director.persist()
+            self.law.persist()
 
     def restore(self) -> None:
         # The event history first, so anything that reads it during the rest of
         # the restore sees the world's past rather than an empty log.
         self.director.restore()
+        self.law.restore()
+        self._clear_arrest()
         if getattr(self, "living", None) is not None:
             self.living.restore()
         hour = self.store.get("_clock_hour", None)
@@ -7408,8 +7503,17 @@ class MiniwindSession:
                 self.clock.day = int(float(day))
             except Exception:
                 pass
+        self._sim_last_hour = float(self.clock.hour)
+        self._sim_hours = 0.0
         if self.game.load_from_store():
             self.needs_char_creation = False
+            self._law_sync()
+            # A loaded chase resumes from its search record, without granting
+            # any guard fresh knowledge of the player's current position.
+            region = self._law_region()
+            if self.law.record(region)["phase"] in ("pursuit", "search"):
+                self._arrest_region = region
+                self._start_arrest_pursuit()
             warrior_fist.ensure_fist(self)
             self._sync_engine_health(full=True)
             # Re-apply the saved head so the player billboard matches on load.

@@ -44,6 +44,7 @@ from editor.component_edit import (
 from editor.terrain_editor import TerrainEditorPanel
 from editor.debug_console import DebugConsole, CommandInput, debug_log
 from editor.console_commands import ConsoleCommandHandler
+from editor.console_key import ConsoleShortcutFilter, is_console_key
 
 
 class Toast(QLabel):
@@ -334,6 +335,8 @@ class MainWindow(QMainWindow):
         self.view_3d.installEventFilter(self)
         # Install event filter on self to catch arrow keys globally for nudging
         self.installEventFilter(self)
+        self._console_shortcut_filter = ConsoleShortcutFilter(self)
+        QApplication.instance().installEventFilter(self._console_shortcut_filter)
         
         # Show startup tooltip after window is shown
         QTimer.singleShot(1500, self._show_startup_tooltip)
@@ -765,7 +768,8 @@ class MainWindow(QMainWindow):
             if self._is_play_console_visible():
                 self._hide_play_console_overlay()
             else:
-                self._show_play_console_overlay()
+                self.keys_pressed.clear()
+                self.view_3d._open_console_overlay()
             return
 
         # --- Editor mode: switch tabs as before ---
@@ -877,6 +881,9 @@ class MainWindow(QMainWindow):
 
     def _hide_play_console_overlay(self):
         """Hide the overlay and re-grab the mouse."""
+        if self.view_3d.console_overlay_active:
+            self.view_3d._close_console_overlay()
+            return
         self._play_console_frame.hide()
 
         # Re-hide cursor for FPS control
@@ -884,7 +891,7 @@ class MainWindow(QMainWindow):
         self.view_3d.setFocus()
 
     def _is_play_console_visible(self):
-        return self._play_console_frame.isVisible()
+        return self.view_3d.console_overlay_active or self._play_console_frame.isVisible()
 
     def _on_play_console_submit(self):
         """Submit the typed command, echo it in the debug console, then hide."""
@@ -3596,6 +3603,11 @@ class MainWindow(QMainWindow):
         return key_str in self.key_bindings
 
     def keyPressEvent(self, event):
+        if is_console_key(event):
+            if not event.isAutoRepeat():
+                self.toggle_debug_console()
+            event.accept()
+            return
         # ------------------------------------------------------------------
         # PLAY MODE HANDLING (hardcoded shortcuts first)
         # ------------------------------------------------------------------
@@ -3623,7 +3635,7 @@ class MainWindow(QMainWindow):
             # If the play console overlay is open, swallow all keys except
             # tilde (close it) and Escape (also close it).
             if self._is_play_console_visible():
-                if event.key() in (Qt.Key_QuoteLeft, Qt.Key_Escape):
+                if event.key() == Qt.Key_Escape:
                     self._hide_play_console_overlay()
                 # All other keys go to the overlay input — don't process as game input
                 return
@@ -3680,10 +3692,6 @@ class MainWindow(QMainWindow):
                 self.keys_pressed.add(event.key())
                 return
 
-            elif event.key() == Qt.Key_QuoteLeft:  # Tilde/backtick
-                self.toggle_debug_console()
-                return
-
             else:
                 # Check for user‑defined key bindings (only if console input does NOT have focus)
                 console_input = self.debug_console.command_input
@@ -3701,11 +3709,6 @@ class MainWindow(QMainWindow):
         # ------------------------------------------------------------------
         # EDITOR MODE HANDLING (including bindings)
         # ------------------------------------------------------------------
-
-        # Tilde always toggles console (works in both modes)
-        if event.key() == Qt.Key_QuoteLeft:
-            self.toggle_debug_console()
-            return
 
         # ESC: back out of whatever is in progress, innermost first
         if event.key() == Qt.Key_Escape:

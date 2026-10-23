@@ -518,6 +518,28 @@ def cmd_paths(ctx, args):
     return None
 
 
+def cmd_searchradius(ctx, args):
+    """searchradius 1|0 -- show or hide the search circle and its orbiting label."""
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    if session is None or not ctx.play_mode:
+        debug_log("Error", "searchradius: enter Play Mode first.")
+        return None
+    text = str(args or "").strip()
+    if text not in ("0", "1"):
+        debug_log("Error", "Usage: searchradius 1 (show) or searchradius 0 (hide).")
+        return None
+    session.store.set("law.searchradius", text)
+    view = getattr(ctx.main_window, "view_3d", None)
+    menu = getattr(view, "play_menu", None)
+    page = getattr(menu, "map", None)
+    if page is not None:
+        page.refresh()
+    if view is not None:
+        view.update()
+    debug_log("Info", "Search radius " + ("shown." if text == "1" else "hidden."))
+    return None
+
+
 #: (names, handler, help) for every command this module provides.
 COMMANDS = (
     (("diceroll", "dice"), cmd_diceroll,
@@ -531,6 +553,8 @@ COMMANDS = (
      "— Pause and click an actor: schedule, destination, AI state (Play Mode)"),
     (("paths", "pathfinding"), cmd_paths,
      "[on|off] — Draw every nearby actor's path: routes, walks, chases (Play Mode)"),
+    (("searchradius",), cmd_searchradius,
+     "1|0 — Show or hide the search circle and orbiting Searching label (saved)"),
     (("roads", "travellers"), cmd_roads,
      "— List the parties on the roads: who, where from/to, where now (Play Mode)"),
     (("debugtools", "debug"), cmd_debugtools,

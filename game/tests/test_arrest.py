@@ -21,6 +21,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from .. import runtime
 from ..runtime import MiniwindSession
+from ..law import SettlementLaw
+from ..rpg.gametime import GameClock
+from ..sim.law import Writs
+from .test_sim import _Store
 from .fio_logic import FioLogic
 
 
@@ -45,6 +49,9 @@ class _Character:
         self.bounty = bounty
         self.is_dead = False
 
+    def effect_magnitude(self, effect):
+        return 0
+
 
 class _Game:
     def __init__(self, bounty=0):
@@ -62,7 +69,7 @@ class _Logic(FioLogic):
         self.player = _Player(player_pos)
 
 
-class _Session:
+class _Session(SettlementLaw):
     """The arrest flow, bound to a scene of plain things.
 
     Every method under test is MiniwindSession's own; only the scene plumbing
@@ -88,6 +95,7 @@ class _Session:
     _nearest_of = MiniwindSession._nearest_of
     _dist2d = staticmethod(MiniwindSession._dist2d)
     _player_pos = MiniwindSession._player_pos
+    player_actor = MiniwindSession.player_actor
     # A guard on arrest duty still answers a real enemy first (see _decide).
     _is_combatant = staticmethod(MiniwindSession._is_combatant)
     _defend_sight = staticmethod(MiniwindSession._defend_sight)
@@ -109,6 +117,12 @@ class _Session:
         self._marker_kinds_token = None
         self.logic = _Logic(things, player_pos)
         self.game = _Game(bounty)
+        self.store = _Store()
+        self.clock = GameClock(hour=12)
+        self.region_name = "Millbrook"
+        self.law = Writs(self.store)
+        self.law.migrate(self.region_name, bounty)
+        self._arrest_region = self.region_name
         self._arrest_guard = None
         self._arrest_state = ""
         self._arrest_notice_sent = False
@@ -187,16 +201,16 @@ def test_breaking_away_starts_a_chase():
     assert guard.properties["aggression"] == "hostile"
 
 
-def test_a_pursuing_guard_keeps_walking_to_where_the_player_is():
-    """The point of the chase: he must not stop at the corner you ran round."""
+def test_a_pursuing_guard_searches_the_last_sighting_after_losing_the_player():
     guard = _guard((100.0, 0.0, 0.0))
     session = _Session([guard], player_pos=(0.0, 0.0, 0.0), bounty=200)
     session._start_arrest_pursuit()
 
     session.logic.player.pos = [2000.0, 0.0, 400.0]      # the player runs
+    session._update_arrest_pursuit()
     session._decide_arrest(guard)
-    assert guard.properties["_dest"] == [2000.0, 0.0, 400.0]
-    assert guard.properties["sched_state"] == "PURSUE"
+    assert guard.properties["_dest"] == [0.0, 0.0, 0.0]
+    assert guard.properties["sched_state"] == "SEARCH"
 
 
 def test_a_distant_guard_does_not_join_the_chase():
@@ -221,6 +235,7 @@ def test_the_chase_ends_when_the_bounty_is_settled():
     session = _Session([guard], player_pos=(0.0, 0.0, 0.0), bounty=200)
     session._start_arrest_pursuit()
 
+    session.law.settle(session.region_name)
     session.game.character.bounty = 0
     session._update_arrest()
 
@@ -323,6 +338,7 @@ def test_every_guard_running_the_player_down_shows_one():
     session = _Marked([one, two], player_pos=(0.0, 0.0, 0.0), bounty=200)
     session._start_arrest_pursuit()
     assert sorted(m for _n, m in session.head_marks()) == ["!", "!"]
+    session.law.settle(session.region_name)
     session.game.character.bounty = 0
     session._update_arrest()                     # settled: the chase ends
     assert session.head_marks() == []

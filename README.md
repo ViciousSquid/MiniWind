@@ -64,6 +64,9 @@ Lift the active pin by dragging, then hold the right button or toggle Space
 to apply tension. Patrols can catch you. Snapped picks can jam a lock at very
 low Security; only the **Knock** spell can open a jammed container.
 
+The physical key below **Esc** opens and closes the console in play and in the
+editor, including **§** on ISO Mac keyboards and **` / ~** on US keyboards.
+
 ## What's in the game
 
 | System | Summary |
@@ -118,6 +121,50 @@ Everything here is pure Python — no Qt, no engine imports — and headlessly
 tested. The **director** owns the bus and drives the chain; parked, distant
 actors are simulated coarsely (gossip, reports, production in hour-long
 catch-up passes), and truly dormant ones not at all.
+
+### The settlement watch
+
+[Player guide: Crime & the Settlement Watch](docs/CRIME_AND_THE_WATCH.md)
+
+[Player and editor guide: Locks & Containers](docs/lockpicking.md)
+
+An observed player crime immediately shows **“Someone witnessed your crime.”**
+Hearing a disturbance alone does not identify its culprit. Witnesses walk to the
+nearest living guard using the normal wall-aware pathfinder, choose another if
+that guard dies, and must reach speaking distance to testify. If the watch is
+absent they seek a guardpost and keep their account. Existing gossip can carry
+the same accusation through other townsfolk; one crime still produces one charge.
+
+Both the world map and minimap show witnesses carrying unreported accusations:
+an **eye** means they identified you, **?** means an uncertain account, and a
+**red marker with an arrow** means they are going to report. Markers follow the
+living witness and clear after reporting or death.
+
+The watch records a local **writ**. Guards act on accusations they have actually
+heard, rather than sharing an all-knowing bounty flag. Refusing arrest raises the
+**hue and cry**. Break sight, leave the circle around your last sighting, and stay
+unseen for 15 game minutes (45 for a blood writ) to end the search. Your debt
+survives escape, borders and saving. Darkness, sneaking, walls and invisibility
+help you escape; seeing you again resets the search.
+
+While guards search, both maps show a faint red circle with a gold rim and
+**“Searching”** slowly orbiting outside it (one turn per minute). The console
+commands **`searchradius 0`** and **`searchradius 1`** hide or show this visual;
+the choice is saved and does not change guard behaviour.
+
+Pay the full writ to a settlement guard through their conversation, or yield
+and follow them to the nearest local gaol to serve time. Payment and gaol clear
+only that jurisdiction's debt; personal grudges remain. There are no post offices.
+Murder brings a **blood writ** and a named hue and cry that reaches only nearby
+watchmen. Three reported killings within a game hour put the settlement under
+six hours of curfew, during which merchants bar their shutters.
+
+Maps without authored boundaries use their existing region name as one
+jurisdiction. In the editor, a **Location Marker → Watch jurisdiction** and its
+**Jurisdiction radius** define another watch's territory; guards may also have
+an explicit **Watch jurisdiction**. Overlapping territories use the nearest
+marker. Writs, curfews and searches use the ordinary persistent game store;
+old saves' single bounty migrates into the current jurisdiction.
 
 ## The living world — computed, not simulated, until it matters
 

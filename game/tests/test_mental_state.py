@@ -115,3 +115,30 @@ def test_the_snapshot_shows_mood_and_needs():
     sections = dict(snap["sections"])
     assert dict(sections["AI State"])["Mood"].startswith("hungry")
     assert dict(sections["Needs"])["Hunger"]
+
+def test_inspect_explains_live_retaliation_aggro_mood_and_thoughts():
+    t = _Thing({"npc_role": "guard", "name": "Kestrel", "health": 40,
+                "aggression": "hostile", "awake": True, "triggered": False,
+                "sched_state": "COMBAT", "combatant": True,
+                "_sim_intent": "FIGHT", "_sim_reason": "You attacked me",
+                "_pursuit_range": 3200.0, "_active_weapon": "hunting_bow"})
+    sections = dict(ms.snapshot(t)["sections"])
+    ai = dict(sections["AI State"])
+    assert ai["Fight or flight"] == "FIGHT"
+    assert ai["Aggro"] == "player"
+    assert ai["Mood"].startswith("angry")
+    assert ai["Thought"] == "You attacked me"
+    assert ai["Weapon in hand"] == "hunting_bow"
+    assert ai["Pursuit limit"] == "3200 units"
+    assert "Attack player" in ms.snapshot(t)["tasks"][0][1]
+
+
+def test_inspect_shows_flight_without_inventing_aggro():
+    t = _Thing({"npc_role": "villager", "aggression": "passive",
+                "sched_state": "FLEE", "_flee": True,
+                "_sim_intent": "FLEE", "_sim_reason": "I must survive"})
+    ai = dict(dict(ms.snapshot(t)["sections"])["AI State"])
+    assert ai["Fight or flight"] == "FLIGHT"
+    assert ai["Aggro"] == "none"
+    assert ai["Mood"].startswith("frightened")
+    assert ai["Thought"] == "I must survive"
