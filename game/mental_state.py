@@ -106,7 +106,8 @@ def mood(props, target=None, confidence=None) -> Tuple[str, str]:
 
 
 def snapshot(thing, monster_state: Optional[dict] = None,
-             session: Optional[object] = None) -> Dict[str, Any]:
+             session: Optional[object] = None,
+             target_name: Optional[str] = None) -> Dict[str, Any]:
     """Build a display-ready mental-state snapshot for *thing*.
 
     ``monster_state`` is the engine's ``MonsterAI.monster_states[id]`` dict for
@@ -149,17 +150,38 @@ def snapshot(thing, monster_state: Optional[dict] = None,
     ]
 
     # ---- Live AI flags ----------------------------------------------
-    target = _get(props, "target_name", "_aggro_target", default=None)
+    target = target_name or _get(props, "target_name", default=None)
+    if not target and props.get("_aggro_target") is not None:
+        target = "another actor"  # the UI can pass its resolved name
+    if (not target and aggression == "hostile" and props.get("awake")
+            and not props.get("triggered")):
+        target = "player"
     in_sight = bool(monster_state.get("in_sight", props.get("_in_sight", False)))
     investigating = monster_state.get("investigating_sound")
+    sched_state = str(_get(props, "sched_state", default="")).upper()
+    if dead:
+        reaction = "dead"
+    elif props.get("_flee") or sched_state == "FLEE":
+        reaction = "FLIGHT"
+    elif (sched_state in ("COMBAT", "ATTACK", "CHASE")
+          or (aggression == "hostile" and not props.get("triggered", False))):
+        reaction = "FIGHT"
+    elif sched_state == "RALLY":
+        reaction = "RALLY"
+    elif sched_state == "ALERT":
+        reaction = "ALERT"
+    else:
+        reaction = "none"
+
     ai = [
+        ("Fight or flight", reaction),
+        ("Aggro", str(target) if reaction == "FIGHT" and target else "none"),
         ("Awake", _fmt(bool(props.get("awake", not props.get("triggered", False))))),
         ("Parked (triggered)", _fmt(bool(props.get("triggered", False)))),
         ("Player in sight", _fmt(in_sight)),
         ("Current target", _fmt(target) if target else "—"),
     ]
 
-    sched_state = str(_get(props, "sched_state", default="")).upper()
     if sched_state:
         ai.insert(0, ("State", f"{sched_state} — {_STATE_BLURB.get(sched_state, sched_state)}"))
     need_reason = props.get("_need_reason")
@@ -186,9 +208,25 @@ def snapshot(thing, monster_state: Optional[dict] = None,
             if confidence is not None:
                 ai.append(("Confidence vs threat", _fmt(confidence)))
 
+    equipped = props.get("_active_weapon") or props.get("equipped_weapon")
+    if equipped:
+        ai.append(("Weapon in hand", str(equipped)))
+    if props.get("_pursuit_range") and reaction == "FIGHT":
+        ai.append(("Pursuit limit", f"{float(props['_pursuit_range']):.0f} units"))
+
     # ---- Mood -------------------------------------------------------------
     feeling, feeling_why = mood(props, target, confidence)
     ai.insert(0, ("Mood", f"{feeling} — {feeling_why}" if feeling_why else feeling))
+    thought = props.get("_sim_reason")
+    if not thought and session is not None:
+        try:
+            intent = session.director.top_intent(thing)
+            if intent is not None:
+                thought = f"Considering {intent.label}: {intent.reason}"
+        except (AttributeError, TypeError):
+            pass
+    if thought:
+        ai.append(("Thought", str(thought)))
 
     # ---- Task list (prioritised) ------------------------------------
     tasks = _build_tasks(props, sched_state, target, investigating, confidence)
@@ -308,7 +346,7 @@ def _build_tasks(props, sched_state, target, investigating, confidence):
         return [(0, "Dead — no active tasks", True)]
 
     # Combat / threat reactions (mutually exclusive top of the stack).
-    if target and combatant:
+    if target and (combatant or (aggression == "hostile" and not props.get("triggered", False))):
         tasks.append((PRI_COMBAT, f"Attack {target}", False))
     if props.get("_flee") or sched_state == "FLEE":
         tasks.append((PRI_FLEE, "Flee to safety", False))
