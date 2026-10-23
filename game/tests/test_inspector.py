@@ -240,3 +240,18 @@ def test_walking_brings_the_camera_back(qt_app):
     assert logic.camera_focus is not None
     inspector.cancel_focus_on_move(logic, _Ctx({"w"}))
     assert logic.camera_focus is None
+
+def test_inspect_resolves_aggro_and_shows_thoughts_in_overview(qt_app):
+    smith, _session, logic, view = _world()
+    wolf = _Thing((50, 0, 60), type="creature", display_name="Wolf")
+    logic.things.append(wolf)
+    smith.properties.update({"_aggro_target": id(wolf), "awake": True,
+                             "triggered": False, "aggression": "hostile",
+                             "sched_state": "COMBAT", "_sim_intent": "FIGHT",
+                             "_sim_reason": "Wolf attacked me"})
+    win = inspector.open_inspector(view, smith)
+    values = {label: value for kind, label, value in win.build_rows() if kind == "row"}
+    assert values["Fight or flight"] == "FIGHT"
+    assert values["Aggro"] == "Wolf"
+    assert values["Current target"] == "Wolf"
+    assert values["Thought"] == "Wolf attacked me"
