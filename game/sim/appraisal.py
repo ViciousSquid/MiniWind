@@ -309,19 +309,7 @@ def appraise_all(observer_props: Dict, observer_key: str, facts: List[Dict],
         if intent is None:
             continue
         prior = best.get(intent.target)
-        # A fresh blow can break the nerve of somebody who initially fought.
-        # For repeated *personal assaults* the latest experience supersedes
-        # the old choice, even when FLEE has a lower global task priority.
-        personal_violence = (intent.fact is not None
-                             and intent.fact.get("target") == observer_key
-                             and "violence" in kind_spec(intent.fact.get("kind", ""))["tags"])
-        prior_personal = (prior is not None and prior.fact is not None
-                          and prior.fact.get("target") == observer_key
-                          and "violence" in kind_spec(prior.fact.get("kind", ""))["tags"])
-        if personal_violence and prior_personal:
-            if intent.event_id >= prior.event_id:
-                best[intent.target] = intent
-        elif prior is None or intent.priority > prior.priority:
+        if prior is None or intent.priority > prior.priority:
             best[intent.target] = intent
     out = list(best.values())
     out.sort(key=lambda i: -i.priority)
