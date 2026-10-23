@@ -722,7 +722,9 @@ all accumulated time when it runs, so simulation time is not lost.
         dist_sq = d[:, 0] * d[:, 0] + d[:, 1] * d[:, 1] + d[:, 2] * d[:, 2]
         dist_sq[idle] = np.float32(np.inf)      # nobody to see: out of sight
         t.dist_sq[rows] = dist_sq
-        in_sight = dist_sq <= MONSTER_SIGHT_RANGE * MONSTER_SIGHT_RANGE
+        # Initial acquisition stays at sight range; a provoked pursuer gets
+        # a longer remembered engagement, in both the dense and scalar paths.
+        in_sight = dist_sq <= t.pursuit_range[rows] * t.pursuit_range[rows]
         was = t.in_sight[rows].copy()
         changed = np.zeros(n, dtype=bool)
         changed[rows] = in_sight != was
@@ -1102,8 +1104,9 @@ all accumulated time when it runs, so simulation time is not lost.
         _dist_diff = thing_pos - target_pos
         distance_sq = float('inf') if no_target else glm.dot(_dist_diff, _dist_diff)
 
-        if distance_sq <= MONSTER_SIGHT_RANGE * MONSTER_SIGHT_RANGE:
-            # ---- Entered sight range ----
+        pursuit_range = monster_table.engagement_range(thing.properties)
+        if distance_sq <= pursuit_range * pursuit_range:
+            # ---- Entered engagement range ----
             if not state['in_sight']:
                 state['in_sight'] = True
                 self._sight_gained(thing, aggro_monster)
