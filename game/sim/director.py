@@ -233,7 +233,11 @@ class Director:
                 and not _props(target_thing).get("dead")):
             victim_percept = next((pc for pc in percepts if pc.observer is target_thing), None)
             fact = knowledge.fact_from_event(event, 1.0, knowledge.SOURCE_WITNESSED)
-            fact["identified"] = bool(victim_percept and victim_percept.mode == "sight")
+            # A living victim knows who struck them, even if the event's
+            # sight/sound witness classification was obscured (e.g. at night).
+            # Other crimes retain the usual eyewitness-identification rule.
+            fact["identified"] = ("violence" in event.tags or bool(
+                victim_percept and victim_percept.mode == "sight"))
             if event.kind == "theft":
                 fact["value"] = int(event.data.get("value", 0) or 0)
             if knowledge.learn(self.store, event.target, fact):
