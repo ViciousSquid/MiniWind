@@ -375,8 +375,13 @@ class ActorInspectorWindow(FloatingWindow):
         snap = None
         try:
             from .. import mental_state
-            snap = mental_state.snapshot(thing, monster_state=_monster_state(logic, thing),
-                                         session=session)
+            aggro_id = props.get("_aggro_target")
+            aggro_actor = (_actor_by_id(logic, aggro_id)
+                           if aggro_id is not None else None)
+            snap = mental_state.snapshot(
+                thing, monster_state=_monster_state(logic, thing),
+                session=session,
+                target_name=_name(aggro_actor) if aggro_actor is not None else None)
         except Exception:
             snap = None
         if snap:

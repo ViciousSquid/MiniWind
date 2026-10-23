@@ -722,3 +722,22 @@ def test_the_inspector_explains_the_behaviour_it_caused():
     assert "Why" in headings and "Knowledge" in headings
     why_rows = dict(next(rows for h, rows in snap["sections"] if h == "Why"))
     assert "my sister" in why_rows["Because"]
+
+def test_a_direct_assault_victim_recognises_the_attacker_without_sight():
+    d = _director()
+    player = _player((0, 0, 0))
+    victim = _Thing("Night Victim", (50, 0, 0), faction="villagers",
+                    sight_range=0, courage=0.1)
+    d.emit("attack", actor=player, target=victim, observers=[player, victim])
+    facts = knowledge.facts(d.store, actor_key(victim))
+    assert facts and facts[0]["identified"] is True
+    assert d.top_intent(victim).reaction == appraisal.FLEE
+
+
+def test_badly_wounded_combatant_prefers_flight_unless_exceptionally_brave():
+    fact = _fact("attack", target="wick", target_name="Wick")
+    p = {"combatant": True, "courage": 0.8, "health": 20,
+         "max_health": 100}
+    assert appraisal.appraise(p, "wick", fact).reaction == appraisal.FLEE
+    p["courage"] = 0.95
+    assert appraisal.appraise(p, "wick", fact).reaction == appraisal.FIGHT

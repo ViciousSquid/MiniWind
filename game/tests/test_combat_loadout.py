@@ -228,3 +228,15 @@ def test_the_renderer_shows_whatever_is_actually_in_hand():
     assert monster.get_render_snapshot()["weapon_id"] == "iron_shortsword"
     monster.properties["_active_weapon"] = "hunting_bow"
     assert monster.get_render_snapshot()["weapon_id"] == "hunting_bow"
+
+def test_melee_only_npc_cannot_hit_the_player_at_bow_range():
+    from types import SimpleNamespace
+    from ..npc_archery import NpcArchery
+
+    class _Thing:
+        properties = {"attack_style": "melee",
+                      "equipped_weapon": "iron_shortsword", "inventory": []}
+
+    archer = NpcArchery(SimpleNamespace())
+    # Returning True consumes the engine's generic hitscan at long range.
+    assert archer.shot_hook(_Thing(), [600, 0, 0], None, 600.0 ** 2) is True

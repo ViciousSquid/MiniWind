@@ -273,3 +273,45 @@ def test_combat_capability_is_separate_from_faction():
     for _ in range(5):
         s.tick(0.1)
     assert m.properties["sched_state"] in (sched.FLEE, sched.ALERT)
+
+# A player assault is a *fact*, not an unconditional aggression override.
+def test_stabbed_coward_flees_instead_of_becoming_hostile():
+    victim = _villager([80, 0, 0], name="Cautious", courage=0.1,
+                       health=70, max_health=100, home=[-300, 0, 0])
+    s = _session([victim], _FakePlayer([0, 0, 0]))
+    s._provoke(victim)
+    p = victim.properties
+    assert p["sched_state"] == sched.FLEE
+    assert p["_flee"] is True
+    assert p["aggression"] == "passive"
+    assert p["triggered"] is True and p["awake"] is False
+    assert p["_dest"][0] < victim.pos[0]
+    assert p["_sim_intent"] == "FLEE"
+
+
+def test_stabbed_brave_actor_pursues_the_player():
+    victim = _villager([80, 0, 0], name="Brave", courage=0.95,
+                       health=90, max_health=100)
+    s = _session([victim], _FakePlayer([0, 0, 0]))
+    s._provoke(victim)
+    p = victim.properties
+    assert p["sched_state"] == sched.COMBAT
+    assert p["aggression"] == "hostile"
+    assert p["awake"] is True and p["triggered"] is False
+    assert p["_pursuit_range"] > 1024
+    assert p["_sim_intent"] == "FIGHT"
+
+
+def test_a_wounded_fighter_can_change_from_fighting_to_fleeing():
+    victim = _guard([80, 0, 0])
+    victim.properties.update(name="Wounded Guard", health=90, max_health=100)
+    s = _session([victim], _FakePlayer([0, 0, 0]))
+    s._provoke(victim)
+    assert victim.properties["aggression"] == "hostile"
+    victim.properties["health"] = 20
+    s._provoke(victim)
+    p = victim.properties
+    assert p["sched_state"] == sched.FLEE
+    assert p["aggression"] == "defensive"
+    assert p["_sim_intent"] == "FLEE"
+    assert "_pursuit_range" not in p

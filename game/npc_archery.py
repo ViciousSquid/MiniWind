@@ -139,6 +139,12 @@ class NpcArchery:
             pass
         session = self.session
         if not is_bow_shot(props, distance):
+            # A fighter without a ranged weapon has to close the distance;
+            # extending pursuit must not turn a dagger into a hitscan rifle.
+            loadout = combat_loadout.build_loadout(props)
+            if (combat_loadout.choose_style(loadout, distance <= MELEE_BAND)
+                    == combat_loadout.MELEE and distance > MELEE_BAND):
+                return True
             # A melee blow: the engine lands the main hand's; a second
             # weapon strikes after it, on its own roll (game/dual_wield.py).
             try:

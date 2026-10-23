@@ -34,6 +34,17 @@ import math
 
 import numpy as np
 
+from .monster_constants import MONSTER_SIGHT_RANGE
+
+
+def engagement_range(props):
+    """Detection remains fixed; an explicitly engaged actor may pursue farther."""
+    try:
+        distance = float(props.get('_pursuit_range', MONSTER_SIGHT_RANGE))
+    except (TypeError, ValueError, OverflowError):
+        return float(MONSTER_SIGHT_RANGE)
+    return distance if math.isfinite(distance) and distance > MONSTER_SIGHT_RANGE else float(MONSTER_SIGHT_RANGE)
+
 #: What each row did this tick (``mode`` column; Debug Tables names them).
 MODE_SKIPPED = 0      # hidden or disabled
 MODE_DEAD = 1         # dead: falls to the ground
@@ -66,6 +77,7 @@ _COLUMNS = (
     ('shoot_timer', (), np.float64, 0.0),
     ('anim_timer', (), np.float64, 0.0),
     ('in_sight', (), bool, False),
+    ('pursuit_range', (), np.float32, MONSTER_SIGHT_RANGE),
     ('vel_y', (), np.float64, 0.0),
     ('target', (), np.int32, TARGET_NONE),
     ('target_pos', (3,), np.float32, 0.0),
@@ -167,6 +179,7 @@ class MonsterTable:
         if not n:
             return
         self.pos[:n] = [m.pos for m in monsters]
+        self.pursuit_range[:n] = [engagement_range(p) for p in props]
 
         def flag(column, key, default=False):
             column[:n] = np.fromiter((bool(p.get(key, default)) for p in props),
