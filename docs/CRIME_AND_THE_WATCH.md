@@ -8,6 +8,11 @@ Assaulting townsfolk or the watch, killing protected people, and taking owned
 goods can bring a charge. Fighting ordinary hostile enemies is lawful; making
 a peaceful person fight back does not make further attacks lawful.
 
+**Looking inside containers is free; taking owned contents is theft.** A
+container with **Owner = None** is free for all and creates no theft or bounty.
+Unlocking alone is free too. See [Locks & Containers](LOCKS_AND_CONTAINERS.md)
+for mouse-controlled tumblers, lockpicks and editor settings.
+
 An act alone does not give every guard knowledge of it. **“Someone witnessed
 your crime.”** appears immediately when somebody sees it. **“Someone heard the
 disturbance.”** means someone noticed trouble without necessarily identifying

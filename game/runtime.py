@@ -53,6 +53,7 @@ from .rpg import quests as _quests
 from .rpg.gametime import DEFAULT_MINUTES_PER_DAY, GameClock
 from .world_index import WorldIndex
 from .law import SettlementLaw
+from .container_locks import ContainerLocks
 from .sim.law import Writs
 from . import sim
 from .sim import appraisal as sim_appraisal
@@ -422,7 +423,7 @@ class StateStore:
             pass
 
 
-class MiniwindSession(SettlementLaw):
+class MiniwindSession(SettlementLaw, ContainerLocks):
     """Owns the clock, the player character, NPC AI and dialogue state."""
 
     def __init__(self, logic, cfg: Dict = None, globals_store=None):
@@ -514,7 +515,9 @@ class MiniwindSession(SettlementLaw):
         self.dialogue_npc = None
         self.dialogue_options = []      # for merchant/persuade extra options
         self.container_thing = None     # the world Container the player has open
-        self.open_screen = None         # None | 'inventory' | 'character' | 'journal' | 'spells' | 'charcreate' | 'map' | 'levelup' | 'container'
+        self.lockpicking = None
+        self.lockpick_target = None
+        self.open_screen = None         # None | 'inventory' | 'character' | 'journal' | 'spells' | 'charcreate' | 'map' | 'levelup' | 'container' | 'lockpick'
         #: The full map was asked for (M, a quest's *Show on map*): "player"
         #: or (x, z, label); the host opens the pause menu's MAP page on it.
         self.map_request = None
@@ -691,6 +694,7 @@ class MiniwindSession(SettlementLaw):
             self.store.clear()
         except Exception:
             pass
+        self.cancel_lockpicking()
         self.rng = random.Random()
         self._clear_arrest()
         self._arrest_region = ""
@@ -7009,6 +7013,9 @@ class MiniwindSession(SettlementLaw):
         if thing is None:
             return False
         p = thing.properties
+        if p.get("locked") and not p.get("dead"):
+            return self.open_locked_container(thing)
+        self.cancel_lockpicking()
         inv_list = p.get("inventory")
         if not isinstance(inv_list, list):
             # Accept authored shorthand ("id:qty, ...") the spawner also accepts.
@@ -7020,7 +7027,7 @@ class MiniwindSession(SettlementLaw):
 
     def container_inventory(self) -> list:
         t = self.container_thing
-        if t is None:
+        if t is None or (t.properties.get("locked") and not t.properties.get("dead")):
             return []
         inv_list = t.properties.get("inventory")
         if not isinstance(inv_list, list):
@@ -7054,7 +7061,7 @@ class MiniwindSession(SettlementLaw):
             props, self.player_actor,
             target_thing=self._sim_actor_by_key(sim_own.owner_of(props)),
             observers=self._sim_observers(), item_id=str(stack.get("id", "")),
-            item_name=name, value=int(stack.get("value", 0) or 0),
+            item_name=name, value=int(stack.get("value", 0) or 0) * max(1, int(stack.get("qty", 1) or 1)),
             pos=list(self.container_thing.pos) if self.container_thing else None)
         if event is not None and event.kind == "theft":
             sim_own.mark_stolen(stack, sim_own.owner_of(props),
@@ -7073,6 +7080,8 @@ class MiniwindSession(SettlementLaw):
     def store_in_container(self, index: int) -> bool:
         """Move one stack from the player's inventory into the open container."""
         if self.container_thing is None:
+            return False
+        if self.container_thing.properties.get("locked"):
             return False
         pinv = self.game.character.inventory
         if not (0 <= index < len(pinv)):
@@ -7262,6 +7271,7 @@ class MiniwindSession(SettlementLaw):
     def restore(self) -> None:
         # The event history first, so anything that reads it during the rest of
         # the restore sees the world's past rather than an empty log.
+        self.cancel_lockpicking()
         self.director.restore()
         self.law.restore()
         self._clear_arrest()

@@ -115,6 +115,8 @@ catch-up passes), and truly dormant ones not at all.
 
 [Player guide: Crime & the Settlement Watch](docs/CRIME_AND_THE_WATCH.md)
 
+[Player and editor guide: Locks & Containers](docs/LOCKS_AND_CONTAINERS.md)
+
 An observed player crime immediately shows **“Someone witnessed your crime.”**
 Hearing a disturbance alone does not identify its culprit. Witnesses walk to the
 nearest living guard using the normal wall-aware pathfinder, choose another if

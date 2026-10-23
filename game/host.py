@@ -133,7 +133,7 @@ def _ownership_props(faction_choices, help_suffix=""):
     per object."""
     return [
         prop("owner", "string", "Owner", default="", group="OWNERSHIP",
-             help="Identity of the owner (an NPC's name). Taking this without "
+             help="Identity of the owner (an NPC's name). None = unowned, free for all. Taking this without "
                   "permission is a theft" + help_suffix),
         prop("owner_name", "string", "Owner display name", default="",
              group="OWNERSHIP",
@@ -380,6 +380,14 @@ class MiniwindGame:
         ])
 
         api.register_properties("container", [
+            prop("locked", "bool", "Locked", default=False, group="LOCK",
+                 help="Requires a matching key or the lockpicking minigame to open."),
+            prop("lock_difficulty", "int", "Lock difficulty", default=25, min=1, max=100,
+                 group="LOCK", help="1 = simple, 100 = masterwork. Security skill helps."),
+            prop("key_id", "string", "Key item ID", default="", group="LOCK",
+                 help="Optional inventory item ID that unlocks this container. The key is kept."),
+            prop("pickable", "bool", "Can be lockpicked", default=True, group="LOCK",
+                 help="Disable for key-only locks. Set Key item ID for the matching key."),
             prop("display_name", "string", "Name", default="Chest", group="CONTAINER",
                  help="Shown in the '[E] to open <name>' prompt and window title."),
             prop("container_kind", "enum", "Kind", default="chest",
@@ -953,6 +961,14 @@ class MiniwindGame:
 
     def _handle_screen_input(self, session, just, ctx):
         from .ui import screens
+        if session.open_screen == "lockpick":
+            if "escape" in just or K_INTERACT in just:
+                session.cancel_lockpicking()
+                return
+            for name in just:
+                screens.handle_key(session, name)
+            session.tick_lockpicking(ctx.delta)
+            return
         for name in just:
             if screens.handle_key(session, name):
                 # one meaningful key per tick is enough; keep it simple
@@ -1014,7 +1030,8 @@ class MiniwindGame:
             return
         if container is not None:
             cname = container.properties.get("display_name", "container")
-            prompt = f"[E] to open {cname}"
+            prompt = (f"[E] Locked: {cname}" if container.properties.get("locked")
+                      else f"[E] to open {cname}")
             ctx.set_prompt(prompt, priority=5)
             session.interact_prompt = prompt
             if K_INTERACT in just or ctx.use_pressed:
@@ -1164,7 +1181,7 @@ class MiniwindGame:
         "charcreate": "Create Your Character", "inventory": "Inventory",
         "character": "Character", "journal": "Quest Journal",
         "spells": "Spellbook", "levelup": "Level Up", "trade": "Trade",
-        "quest": "Current Quest",
+        "quest": "Current Quest", "lockpick": "Pick the Lock",
     }
 
     def _close_overlay_screen(self, session, screen):
@@ -1184,6 +1201,9 @@ class MiniwindGame:
             return
         if screen == "container":
             session.close_container()
+            return
+        if screen == "lockpick":
+            session.cancel_lockpicking()
             return
         session.open_screen = None
 
@@ -1388,6 +1408,9 @@ class MiniwindGame:
                 click_cb = (lambda cx, cy, s=session: screens.handle_click(s, cx, cy))
                 wants_cursor = True
             window_cls = CallbackWindow
+            if key == "screen:lockpick":
+                from .ui.lockpick_window import LockpickWindow
+                window_cls = LockpickWindow
             if key == "screen:container":
                 # Rows drag out to the strip and the character window, and
                 # things drag in (game/ui/container_window.py).
@@ -1402,6 +1425,8 @@ class MiniwindGame:
                                  on_close_cb=on_close,
                                  on_body_click_cb=click_cb,
                                  wants_cursor=wants_cursor)
+            if key == "screen:lockpick":
+                win.bind(session)
             # The title bar in the game's medieval face, not the chrome's Arial.
             try:
                 from .ui import fonts as _fonts
@@ -1415,6 +1440,8 @@ class MiniwindGame:
             # The conversation box grows/shrinks with the number of responses.
             bw, bh = dialogue_ui.window_body_size(session)
             cur.set_body_size(bw, bh)
+        elif key == "screen:lockpick" and cur.attempt is not session.lockpicking:
+            cur.bind(session)
         return True
 
     @staticmethod
