@@ -500,7 +500,7 @@ def _handle_charcreate(session, key):
             return True
         if len(key) == 1 and (key.isalpha() or key.isdigit()):
             if len(s["name"]) < _MAX_NAME:
-                s["name"] += key
+                s["name"] += key.upper() if not s["name"] else key
             return True
     elif step == "fortune":
         if key in ("r", "space"):

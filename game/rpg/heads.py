@@ -1,6 +1,6 @@
 """
 Character **heads** — the portrait/billboard sprites under
-``assets/sprites/heads/head00.png`` … ``head19.png``.
+``assets/sprites/heads/head00.png`` … ``head81.png``.
 
 A head is the player's whole visual identity (no gender, no animation frames):
 the player picks one at character creation, it becomes the player's overhead
@@ -25,9 +25,9 @@ import os
 import random as _random
 from typing import Iterable, Optional
 
-#: Heads are numbered head00 … head19 (20 in total).
+#: Heads are numbered head00 … head81 (82 in total).
 HEAD_FIRST = 0
-HEAD_LAST = 19
+HEAD_LAST = 81
 HEAD_COUNT = HEAD_LAST - HEAD_FIRST + 1
 HEAD_DIR = "assets/sprites/heads"
 HEAD_IDS = [f"head{n:02d}" for n in range(HEAD_FIRST, HEAD_LAST + 1)]
