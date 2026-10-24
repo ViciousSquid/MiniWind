@@ -54,6 +54,16 @@ def test_fade_survives_render_table_swaps_and_row_generation_changes():
         assert stream.weights.size == 0
 
 
+@pytest.mark.parametrize('world_reach', [512.0, 1024.0, 8192.0])
+def test_earlier_world_parking_boundary_only_changes_intensity(world_reach):
+    end = min(ACTIVE_LIGHT_RANGE, world_reach)
+    table = table_at(end - FADE_DISTANCE / 2, end)
+    stream = LightStream()
+    assert stream.select(table, table.light_slots, (0, 0, 0),
+                         fade_reach=world_reach).tolist() == [0, 1]
+    assert stream.weights.tolist() == [.5, 0]
+
+
 def test_weights_follow_nearest_order_and_change_without_gathering_again():
     table = table_at(ACTIVE_LIGHT_RANGE, 10)
     stream = LightStream(clock=lambda: 0)
@@ -103,6 +113,10 @@ def test_shared_gpu_payload_fades_live_without_mutating_authored_lights(monkeypa
     assert len(uploads) == 2
     assert uploads[-1]['params'][0, :2].tolist() == [2, 512]
     np.testing.assert_array_equal(table.light_params, original)
+    # Big World can fit its residency inside the renderer's fixed range.
+    config.update(light_focus=(ACTIVE_LIGHT_RANGE - 384, 0, 0), light_fade_range=512)
+    renderer._upload_light_ubo(renderer._get_active_lights(config), 1)
+    assert uploads[-1]['params'][0, 0] == 1
     # Editor has no player-distance fade.
     del config['light_focus']
     renderer._upload_light_ubo(renderer._get_active_lights(config), 1)

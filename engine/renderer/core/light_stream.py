@@ -90,12 +90,14 @@ class LightStream:
         else:
             self._candidates = np.empty(0, dtype=np.int32)
 
-    def select(self, table, light_slots, focus, usable=None, reach=None):
+    def select(self, table, light_slots, focus, usable=None, reach=None, fade_reach=None):
         """The slots of the lights to light this frame, nearest first.
 
         *light_slots* are all the table's light rows; *usable(slots)* returns
         a mask of those that may light now (enabled, not hidden). *reach*
         overrides :data:`ACTIVE_LIGHT_RANGE` (deactivation keeps its margin).
+        *fade_reach* can end the intensity fade earlier when a world streamer
+        parks lights inside that range; it never changes slot selection.
         """
         focus = np.asarray(focus, dtype=np.float64)[:3]
         now = self._clock()
@@ -130,10 +132,11 @@ class LightStream:
         # Smoothstep has zero slope at both ends, avoiding a brightness kink.
         # Use the inner boundary: render snapshots can change table identity,
         # and a previously lit row can then disappear at `on` rather than `off`.
-        width = min(FADE_DISTANCE, max(on, 0.0))
+        end = on if fade_reach is None else min(on, max(float(fade_reach), 0.0))
+        width = min(FADE_DISTANCE, max(end, 0.0))
         if width > 0.0:
-            t = np.clip((on - np.sqrt(d2[order])) / width, 0.0, 1.0)
+            t = np.clip((end - np.sqrt(d2[order])) / width, 0.0, 1.0)
             self.weights = (t * t * (3.0 - 2.0 * t)).astype(np.float32)
         else:
-            self.weights = np.ones(len(order), dtype=np.float32)
+            self.weights = np.zeros(len(order), dtype=np.float32)
         return self._lit

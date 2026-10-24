@@ -99,7 +99,8 @@ editor residency. The map's **Stream around editor camera** setting can disable
 this editor behavior when a full-world authoring pass is needed.
 
 In Play, the renderer fades nearby lights smoothly over the last 256 world
-units before its player-distance limit (2048 units by default). The existing
+units before its player-distance limit (2048 units by default), or Big World's
+active radius when smaller, including overhead-camera fitting. The existing
 activation range, hysteresis, light budgets and Big World parking remain in
 place. The fade affects rendered intensity only; authored values, flicker and
 explicit light on/off inputs retain their behavior.

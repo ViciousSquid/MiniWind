@@ -2097,6 +2097,7 @@ class QtGameView(QOpenGLWidget):
             _fp = render_state.player_pos
             _focus = (float(_fp.x), float(_fp.y), float(_fp.z))
         self._render_config["light_focus"] = _focus
+        self._render_config["light_fade_range"] = render_state.light_fade_range
 
         _splitscreen = (
             self.play_mode
