@@ -83,8 +83,8 @@ class RotatablePlayButton(QPushButton):
 
 #: Toolbar icon edge and Play button length, by Settings > Large Toolbar
 #: Buttons (``[Display] big_toolbar_buttons``).
-TOOLBAR_ICON_SIZES = {True: 45, False: 35}
-PLAY_BUTTON_LENGTHS = {True: 250, False: 170}
+TOOLBAR_ICON_SIZES = {True: 45, False: 24}
+PLAY_BUTTON_LENGTHS = {True: 250, False: 110}
 
 
 def toolbar_metrics(config):
@@ -97,7 +97,7 @@ def toolbar_metrics(config):
 #: an older version is dropped once, so a new default actually reaches an
 #: install that has been opened before -- settings.ini stores the layout on
 #: every close, and restoreState() would otherwise win forever.
-LAYOUT_VERSION = 3
+LAYOUT_VERSION = 4
 
 
 
@@ -374,8 +374,10 @@ class Ui_MainWindow(object):
         MainWindow.scene_hierarchy_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         MainWindow.addDockWidget(Qt.LeftDockWidgetArea, MainWindow.scene_hierarchy_dock)
         
-        screen_width = QApplication.primaryScreen().geometry().width()
-        MainWindow.scene_hierarchy_dock.setMaximumWidth(int(screen_width * 0.10))
+        # Logical pixels: useful on Retina displays too, and freely resizable.
+        MainWindow.scene_hierarchy_dock.setMinimumWidth(220)
+        MainWindow.scene_hierarchy_dock.setMaximumWidth(400)
+        MainWindow.resizeDocks([MainWindow.scene_hierarchy_dock], [260], Qt.Horizontal)
 
         # 3D View Dock (Center/Right)
         MainWindow.view_3d_dock = QDockWidget("3D View", MainWindow)
@@ -400,12 +402,15 @@ class Ui_MainWindow(object):
         MainWindow.debug_console = DebugConsole.get_instance(MainWindow)
 
         MainWindow.properties_tab_widget = QTabWidget()
+        MainWindow.properties_tab_widget.setObjectName("PropertiesConsoleTabs")
+        MainWindow.properties_tab_widget.tabBar().setObjectName("PropertiesConsoleTabBar")
         MainWindow.properties_tab_widget.addTab(MainWindow.property_editor, "Properties")
         MainWindow.properties_tab_widget.addTab(MainWindow.debug_console, "Debug Console")
         MainWindow.properties_tab_widget.setStyleSheet("""
-            QTabBar::tab:selected { background: #F08000; color: white; }
-            QTabBar::tab { background: #2b2b2b; color: #ccc; height: 40px; min-width: 120px; padding: 0px 8px; border: 1px solid #222; }
-            QTabBar::tab:hover { background: #5a7a82; }
+            QTabWidget#PropertiesConsoleTabs::tab-bar { alignment: left; }
+            QTabBar#PropertiesConsoleTabBar::tab:selected { background: #F08000; color: white; }
+            QTabBar#PropertiesConsoleTabBar::tab { background: #2b2b2b; color: #ccc; padding: 6px 12px; border: 1px solid #222; }
+            QTabBar#PropertiesConsoleTabBar::tab:hover { background: #5a7a82; }
         """)
 
         MainWindow.properties_dock = QDockWidget(" ", MainWindow)
@@ -846,6 +851,7 @@ class Ui_MainWindow(object):
             if toggle_strip and bottom_color:
                 b.setStyleSheet(f"""
                     QPushButton {{
+                        min-width: 0px;
                         background-color: #111111;
                         border: 1px solid #333;
                         border-bottom: 3px solid {strip_off_color};
@@ -869,6 +875,7 @@ class Ui_MainWindow(object):
                 
                 b.setStyleSheet(f"""
                     QPushButton {{
+                        min-width: 0px;
                         background-color: #111111; 
                         border: 1px solid #333;
                         {border_bottom}

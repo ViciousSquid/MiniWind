@@ -1,0 +1,72 @@
+name: macOS editor validation and screenshots
+
+on:
+  pull_request:
+    branches: [work]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-editor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  editor:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      QT_QPA_PLATFORM: cocoa
+      PYOPENGL_PLATFORM: darwin
+      SDL_AUDIODRIVER: dummy
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: pip
+      - name: Install the desktop dependencies
+        run: python -m pip install -r requirements.txt pytest
+      - name: Validate editor layout, streaming and persistence
+        run: >-
+          python -m pytest -q
+          tests/editor/test_macos_layout.py
+          tests/editor/test_loading_overlay.py
+          tests/editor/test_toolbar_button_size.py
+          tests/editor/test_default_layout.py
+          tests/editor/test_property_editor_rebuilds.py
+          tests/editor/test_restore_world_on_stop.py
+          tests/persistence
+          tests/undo_redo
+          plugins/bigworld/tests
+          game/tests/test_property_tabs.py
+          --junitxml=artifacts/macos-tests.xml
+      - name: Check out the before version from work
+        if: always()
+        run: git worktree add --detach "$RUNNER_TEMP/miniwind-before" 456f595cbc3e4daecde432edea8b933d40d5687b
+      - name: Capture the before editor with native macOS widgets
+        if: always()
+        run: >-
+          python tools/capture_editor_ui.py
+          --source "$RUNNER_TEMP/miniwind-before"
+          --output "$GITHUB_WORKSPACE/artifacts/before.png"
+      - name: Capture the after editor with native macOS widgets
+        if: always()
+        run: >-
+          python tools/capture_editor_ui.py
+          --source "$GITHUB_WORKSPACE"
+          --output "$GITHUB_WORKSPACE/artifacts/after.png"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-editor-comparison
+          path: |
+            artifacts/*.png
+            artifacts/*.json
+            artifacts/*.xml
+          if-no-files-found: error
+          retention-days: 14

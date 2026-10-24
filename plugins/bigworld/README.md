@@ -78,6 +78,22 @@ Objects are indexed by their existing **stable UUIDs**. A brush spanning several
 
 # Quick start
 
+## Editor camera streaming
+
+Big World maps also stream while editing. The configured startup map still
+opens, with live brushes and entities limited to cells around the 3D editor
+camera. Crossing a cell boundary loads nearby cells and releases distant
+objects, using the same 512-unit cells, activation radius and hysteresis as
+Play. Selected objects stay resident until the selection is released.
+
+The existing JSON file is read once to build an index of serialized records;
+distant records do not become live editor entities or renderer geometry.
+Edits are committed before objects leave residency. Save and undo include the
+whole authored world, including cells never visited. Play receives the complete
+authored world through its existing Big World lifecycle; Stop restores local
+editor residency. The map's **Stream around editor camera** setting can disable
+this editor behavior when a full-world authoring pass is needed.
+
 ## 1. Opt a map into Big World
 
 Add a **Big World Settings** entity to the map:

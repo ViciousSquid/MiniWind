@@ -148,14 +148,6 @@ def _missing_mandatory_plugins(config):
 if __name__ == "__main__":
     require_supported_python()
 
-    # The loading throbber the editor shows over itself during a big level
-    # load runs as a separate process of this same program (see
-    # load_throbber.py); it needs nothing but PyQt5.
-    from load_throbber import CHILD_FLAG
-    if CHILD_FLAG in sys.argv:
-        from load_throbber import child_main
-        raise SystemExit(child_main(sys.argv))
-
     from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QProgressBar
     from PyQt5.QtGui import QPixmap, QSurfaceFormat, QIcon
     from PyQt5.QtCore import Qt
@@ -224,9 +216,14 @@ if __name__ == "__main__":
             layout.addWidget(self.image_label)
 
             self.progress_bar = QProgressBar()
-            self.progress_bar.setFixedHeight(35)
+            from editor.loading_overlay import BAR_HEIGHT
+            self.progress_bar.setFixedHeight(BAR_HEIGHT)
+            self.progress_bar.setTextVisible(False)
             self.progress_bar.setAlignment(Qt.AlignCenter)
+            self.progress_message = QLabel()
+            self.progress_message.setAlignment(Qt.AlignCenter)
             layout.addWidget(self.progress_bar)
+            layout.addWidget(self.progress_message)
 
             self.center_on_screen()
 
@@ -241,6 +238,7 @@ if __name__ == "__main__":
         def set_progress(self, value, message):
             self.progress_bar.setValue(value)
             self.progress_bar.setFormat(f"{message} ({value}%)")
+            self.progress_message.setText(f"{message} ({value}%)")
             QApplication.processEvents()
 
         def finish(self, main_window):
