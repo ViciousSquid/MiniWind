@@ -6,25 +6,25 @@ time a font is asked for, so a typeface dropped into that folder is available
 by its family name.
 
 * :func:`menu_family`: the pause menu's banner and options, **Enchanted
-  Land** (Arial if its file is missing).
+  Land** (Georgia if its file is missing).
 * :func:`dialogue_font`: what NPCs and the player say in a conversation,
   **MedievalSharp** (SIL Open Font License, ``MedievalSharp-OFL.txt``;
   Georgia if its file is missing).
-* :func:`game_family`: what a game UI that asked for a sans face gets:
-  MedievalSharp when installed (the game never shows a sans face it can
-  avoid), the face it asked for otherwise.
+* :func:`game_family`: the readable MedievalSharp face for all game UI text,
+  including older callers that still request Georgia or a sans face.
 """
 
 from __future__ import annotations
 
 import os
 
-#: Where the game's font files live, relative to the working directory.
-FONT_DIR = os.path.join("assets", "fonts")
+#: Resolve bundled fonts independently of the directory the game starts in.
+FONT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))), "assets", "fonts")
 
 #: The pause menu's typeface, and the face used while it is not installed.
 MENU_FAMILY = "Enchanted Land"
-FALLBACK_FAMILY = "Arial"
+FALLBACK_FAMILY = "Georgia"
 
 #: The conversation typeface, and the face used while it is not installed.
 DIALOGUE_FAMILY = "MedievalSharp"
@@ -74,7 +74,7 @@ def _family(wanted, fallback):
 
 
 def menu_family() -> str:
-    """The pause menu's font family: Enchanted Land if installed, else Arial."""
+    """The pause menu's font family: Enchanted Land if installed, else Georgia."""
     return _family(MENU_FAMILY, FALLBACK_FAMILY)
 
 
@@ -105,14 +105,9 @@ def dialogue_font_px(pixels):
     return f
 
 
-#: Sans faces the game's UI code names; :func:`game_family` replaces them.
-SANS_FAMILIES = frozenset({"segoe ui", "arial", "helvetica", "verdana",
-                           "tahoma", "sans-serif", "sans"})
-
-
 def game_family(family: str) -> str:
-    """*family*, or MedievalSharp in place of a sans face when it is installed."""
-    if str(family).lower() not in SANS_FAMILIES:
-        return family
-    reading = dialogue_family()
-    return family if reading == DIALOGUE_FALLBACK else reading
+    """Use the game's reading face, regardless of a legacy family request.
+
+    Debug tools choose their fonts separately and never use this helper.
+    """
+    return dialogue_family()

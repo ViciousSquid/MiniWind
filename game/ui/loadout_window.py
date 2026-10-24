@@ -18,7 +18,7 @@ frame so equip / selection state is always current.
 from __future__ import annotations
 
 from PyQt5.QtCore import Qt, QRect
-from PyQt5.QtGui import QColor, QFont, QPen, QBrush, QPixmap
+from PyQt5.QtGui import QColor, QFontMetrics, QPen, QBrush, QPixmap
 
 from engine.floating_windows import FloatingWindow
 
@@ -52,8 +52,10 @@ class LoadoutWindow(FloatingWindow):
         self._tab_rects = []            # [(QRect, tab_name)]
         self._row_rects = []            # [(QRect, kind, id)]
         from . import fonts
-        self.body_font = QFont(fonts.game_family("Arial"), 9)
-        self.small_font = QFont(fonts.game_family("Arial"), 8)
+        self.body_font = fonts.dialogue_font(10)
+        self.small_font = fonts.dialogue_font(9)
+        self.title_font = fonts.dialogue_font(11)
+        self._fm = QFontMetrics(self.body_font)
         self._icon_cache = {}
 
     # ---- data (read live from the session) -------------------------------

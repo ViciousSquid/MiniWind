@@ -17,6 +17,10 @@ the actor to where it is heading, ending in a ring, in the window's own colour,
 and circles the actor so it is clear which window is whose. Several actors can
 be inspected at once.
 
+Opening an inspector pauses the world until its Resume control is clicked or
+the window is closed. Long tabs scroll inside a compact panel; the pause
+control and tab strip stay visible.
+
 The places in the schedule ("@ work", "@ home", "@ thalen_bed") and the
 "Heading to" point are links: clicking one swings the play camera there
 (``LogicThread.set_camera_focus``) and puts a beacon on the spot, with the
@@ -272,10 +276,12 @@ class ActorInspectorWindow(FloatingWindow):
     LINE_H = 24
     HEAD_GAP = 10
     LABEL_W = 180
+    WIDTH = 560
+    MAX_BODY_H = 440
 
     def __init__(self, view, thing, x=60, y=60):
         global _next_colour
-        super().__init__(f"Inspect: {_name(thing)}", x=x, y=y, width=560,
+        super().__init__(f"Inspect: {_name(thing)}", x=x, y=y, width=self.WIDTH,
                          body_height=320)
         self.view = view
         self.thing = thing
@@ -291,11 +297,13 @@ class ActorInspectorWindow(FloatingWindow):
         self._refreshed = 0.0
         self._links = []         # [(QRectF, action)] of the last paint
         #: Whether this window holds the world paused (its own pause request,
-        #: so several inspectors and the menus never fight over it). Off: the
-        #: world runs while you watch.
+        #: so several inspectors and the menus never fight over it).
         self.paused = False
+        self._scroll = 0
+        self._body_clip = None
         #: The tab shown (see TABS).
         self.tab = TABS[0]
+        self.set_paused(True)
 
     # -- data ----------------------------------------------------------------
     def _logic(self):
@@ -322,7 +330,7 @@ class ActorInspectorWindow(FloatingWindow):
         def row(label, value):
             rows.append(("row", label, "" if value is None else str(value)))
 
-        rows.append(("pause", "\u23f8 World paused \u2014 click to run" if self.paused
+        rows.append(("pause", "\u23f8 World paused \u2014 click to resume" if self.paused
                      else "\u25b6 World running \u2014 click to pause", ""))
         focus = focused_place(logic)
         if focus is not None and focus["window"] is self:
@@ -569,13 +577,29 @@ class ActorInspectorWindow(FloatingWindow):
             return self.ITEM_H
         return self.LINE_H + self.HEAD_GAP if kind == "head" else self.LINE_H
 
-    def content_height(self):
+    def _rows_height(self):
         self.refresh()
         if not self._rows:
             return 10 + self.LINE_H
         return 10 + sum(self._row_h(kind) for kind, _t, _v in self._rows)
 
+    def content_height(self):
+        return min(self._rows_height(), self.MAX_BODY_H,
+                   max(0, self.view.height() - self.HEADER_H - 20))
+
+    def handle_wheel(self, event):
+        if self.expanded:
+            delta = event.pixelDelta().y() or event.angleDelta().y() / 120 * self.LINE_H * 3
+            self._scroll = max(0, min(self._scroll - delta,
+                                      self._rows_height() - self.content_height()))
+            self._links = []
+            self.view.update()
+        return True
+
     def draw(self, painter, focused=False):
+        height = self._full_rect().height()
+        self.window_rect.moveTop(max(10, min(self.window_rect.y(),
+                                           self.view.height() - height - 10)))
         super().draw(painter, focused)
         # The window's colour on its title bar ties it to its line in the world.
         rect = self._full_rect()
@@ -596,8 +620,14 @@ class ActorInspectorWindow(FloatingWindow):
         painter.setFont(font)
         painter.setPen(_LINK_HOT if (hot or active) else _LINK)
         painter.drawText(QPointF(x, base), text)
-        self._links.append((rect, action))
+        self._add_link(rect, action)
         return rect.right()
+
+    def _add_link(self, rect, action):
+        if self._body_clip is not None:
+            rect = rect.intersected(self._body_clip)
+        if not rect.isEmpty():
+            self._links.append((rect, action))
 
     def _draw_stats(self, painter, x, ty, values):
         """S / E / C in the larger face: the letter in its colour, the 3..18
@@ -668,7 +698,9 @@ class ActorInspectorWindow(FloatingWindow):
     def _set_tab(self, name):
         def action():
             self.tab = name
-            self._refreshed = 0.0           # rebuild the rows for the new tab now
+            self._rows = []
+            self._links = []
+            self._scroll = 0
         return action
 
     def _button(self, painter, rect, text, action, active=False):
@@ -684,7 +716,7 @@ class ActorInspectorWindow(FloatingWindow):
         painter.setFont(self.bold if active else self.font)
         painter.setPen(_TEXT if active else _MUTED if not hot else _TEXT)
         painter.drawText(rect, int(Qt.AlignCenter), text)
-        self._links.append((QRectF(rect), action))
+        self._add_link(QRectF(rect), action)
 
     def _draw_tabs(self, painter, x, y, w):
         gap = 4
@@ -726,12 +758,20 @@ class ActorInspectorWindow(FloatingWindow):
         self.refresh()
         painter.save()
         self._links = []
+        self._body_clip = None
+        height = self.content_height()
+        self._scroll = max(0, min(self._scroll, self._rows_height() - height))
+        painter.setClipRect(QRectF(x, y, w, height), Qt.IntersectClip)
         focus = focused_place(self._logic())
         mine = focus["key"] if focus is not None and focus["window"] is self else None
         ty = y + 8
         label_w = self.LABEL_W
         stripe = False
         for kind, text, value in self._rows:
+            if self._body_clip is None and kind not in ("pause", "back", "tabs"):
+                self._body_clip = QRectF(x, ty, w - 8, max(0, y + height - ty))
+                painter.setClipRect(self._body_clip, Qt.IntersectClip)
+                ty -= self._scroll
             if kind == "head":
                 ty += self.HEAD_GAP          # air above each section
                 stripe = False
@@ -816,6 +856,15 @@ class ActorInspectorWindow(FloatingWindow):
                                      self._fm.elidedText(value, Qt.ElideRight, w - label_w - 24))
             ty += self.LINE_H
         painter.restore()
+        if self._body_clip is not None and self._rows_height() > height:
+            track = self._body_clip
+            total = track.height() + self._rows_height() - height
+            thumb_h = min(track.height(), max(16, track.height() ** 2 / total))
+            travel = max(0, track.height() - thumb_h)
+            thumb_y = track.y() + travel * self._scroll / (self._rows_height() - height)
+            painter.fillRect(QRectF(x + w - 6, track.y(), 3, track.height()), _TAB)
+            painter.fillRect(QRectF(x + w - 6, thumb_y, 3, thumb_h), _MUTED)
+        self._body_clip = None
 
 
 # --------------------------------------------------------------------------- opening
@@ -829,6 +878,7 @@ def open_inspector(view, thing):
                             and w.thing is thing)
     if existing is not None:
         existing.active = True
+        existing.set_paused(True)
         manager.raise_(existing)
         view.update()
         return existing
@@ -851,7 +901,8 @@ def _beside(view, thing, n):
     kept fully inside the view. Falls back to the right-hand side when the
     actor cannot be projected (behind the camera, no frame drawn yet)."""
     width, height = view.width(), view.height()
-    win_w, win_h = 380, 260
+    win_w = ActorInspectorWindow.WIDTH
+    win_h = min(ActorInspectorWindow.MAX_BODY_H + FloatingWindow.HEADER_H, height - 20)
     point = None
     try:
         import glm
@@ -860,7 +911,8 @@ def _beside(view, thing, n):
     except Exception:
         point = None
     if point is None or not (0 <= point.x() <= width and 0 <= point.y() <= height):
-        return (max(10, width - 400 - (n % 4) * 26), 70 + (n % 4) * 26)
+        return (max(10, width - win_w - 20 - (n % 4) * 26),
+                max(10, min(70 + (n % 4) * 26, height - win_h - 10)))
     x = point.x() + OPEN_OFFSET[0] + (n % 4) * OPEN_STEP
     y = point.y() + OPEN_OFFSET[1] + (n % 4) * OPEN_STEP
     if x + win_w > width - 10:

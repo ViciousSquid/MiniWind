@@ -4455,6 +4455,9 @@ class QtGameView(QOpenGLWidget):
             if wheel is not None:
                 wheel(event)
             return
+        if self.pause_menu is None and self.window_manager.handle_wheel(event):
+            self.update()
+            return
         if not self.play_mode:
             self.camera.fov = np.clip(self.camera.fov - event.angleDelta().y() * 0.05, 30, 120)
             self.editor.update_views()

@@ -104,7 +104,8 @@ class FloatingWindow:
 
         painter.setFont(self.title_font)
         painter.setPen(_WHITE)
-        title = self._fm.elidedText(self.title, Qt.ElideRight, rect.width() - 70)
+        title = QFontMetrics(self.title_font).elidedText(
+            self.title, Qt.ElideRight, rect.width() - 70)
         painter.drawText(header.adjusted(10, 0, 0, 0),
                          Qt.AlignVCenter | Qt.AlignLeft, title)
         painter.drawText(QRect(rect.right() - 50, rect.y(), 25, self.HEADER_H),
@@ -249,6 +250,16 @@ class WindowManager:
             if w.handle_mouse_release(event):
                 handled = True
         return handled
+
+    def handle_wheel(self, event):
+        """Route scrolling to the topmost window under the pointer."""
+        for w in reversed(self.windows):
+            if w.active and w.hit(event.pos()):
+                handler = getattr(w, "handle_wheel", None)
+                if handler is not None:
+                    handler(event)
+                return True
+        return False
 
 
 class CallbackWindow(FloatingWindow):

@@ -153,6 +153,92 @@ def test_one_window_per_actor_and_the_close_button_closes_it(qt_app):
     assert inspector.open_windows(view) == []
 
 
+def test_inspector_pauses_by_default_and_its_visible_control_resumes(qt_app):
+    smith, _session, logic, view = _world()
+    win = inspector.open_inspector(view, smith)
+    assert logic.session_runtime.world_paused
+    assert "resume" in win.build_rows()[0][1]
+
+    _paint(win)
+    pause_rect = win._links[0][0]
+    assert win.handle_body_click(pause_rect.center().x(), pause_rect.center().y())
+    assert not logic.session_runtime.world_paused
+    assert "click to pause" in win.build_rows()[0][1]
+
+    # Inspecting the same actor again reuses the window and pauses again.
+    assert inspector.open_inspector(view, smith) is win
+    assert logic.session_runtime.world_paused
+    win.on_close()
+    assert not logic.session_runtime.world_paused
+
+
+def test_inspector_releases_only_its_own_pause(qt_app):
+    smith, _session, logic, view = _world()
+    wolf = _Thing((50, 0, 60), type="creature", display_name="Wolf")
+    a = inspector.open_inspector(view, smith)
+    b = inspector.open_inspector(view, wolf)
+    a.toggle_pause()
+    assert logic.session_runtime.world_paused
+    logic.session_runtime.set_world_paused("pause_menu", True)
+    b.on_close()
+    assert logic.session_runtime.world_paused
+    logic.session_runtime.set_world_paused("pause_menu", False)
+    assert not logic.session_runtime.world_paused
+
+
+def _paint(win):
+    pixmap = QtGui.QPixmap(win.view.width(), win.view.height())
+    pixmap.fill(QtCore.Qt.transparent)
+    painter = QtGui.QPainter(pixmap)
+    try:
+        win.draw(painter)
+    finally:
+        painter.end()
+    return pixmap
+
+
+def _wheel(win, delta):
+    point = QtCore.QPointF(win._full_rect().center())
+    return QtGui.QWheelEvent(point, point, QtCore.QPoint(), QtCore.QPoint(0, delta),
+                             QtCore.Qt.NoButton, QtCore.Qt.NoModifier,
+                             QtCore.Qt.NoScrollPhase, False)
+
+
+@pytest.mark.parametrize("height", [720, 360])
+def test_long_inspector_stays_in_view_and_scrolls_with_controls_visible(qt_app, height):
+    smith, _session, _logic, view = _world()
+    view.height = lambda: height
+    # Each schedule place is a link, including rows initially below the window.
+    smith.properties["schedule"] = [
+        {"hour": i / 2, "state": "IDLE", "location": f"place_{i}"}
+        for i in range(40)]
+    win = inspector.open_inspector(view, smith)
+    clicked_places = []
+    win._place_action = lambda key: lambda: clicked_places.append(key)
+    win._set_tab("Schedule")()
+    _paint(win)
+    rect = win._full_rect()
+    assert rect.top() >= 10 and rect.bottom() < height - 9
+    assert rect.height() <= 465
+    controls = [QtCore.QRectF(r) for r, _action in win._links[:6]]
+    assert len(win._links) < 46       # offscreen places cannot be clicked
+
+    assert view.window_manager.handle_wheel(_wheel(win, -12000))
+    _paint(win)
+    assert win._scroll > 0
+    assert [r for r, _action in win._links[:6]] == controls
+    last_place = win._links[-1][0].center()
+    assert win.handle_body_click(last_place.x(), last_place.y())
+    assert clicked_places == ["place_39"]
+    assert all(rect.contains(r.toAlignedRect()) for r, _action in win._links)
+
+    # Switching to a shorter tab clears the old scroll and link targets.
+    win._set_tab("Inventory")()
+    _paint(win)
+    assert win._scroll == 0
+    assert win.tab == "Inventory"
+
+
 # ------------------------------------------------------------ place links
 
 class _FocusLogic(_Logic):
