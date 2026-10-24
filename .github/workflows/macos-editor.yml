@@ -106,6 +106,7 @@ jobs:
           tests/persistence
           tests/undo_redo
           tests/renderer/test_terrain_context.py
+          tests/renderer/test_light_fade.py
           plugins/bigworld/tests
           game/tests/test_property_tabs.py
           --junitxml=artifacts/macos-tests.xml
