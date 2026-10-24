@@ -106,6 +106,31 @@ def test_a_character_without_a_head_is_given_one():
     assert npc.properties["head"] != head
 
 
+def test_guard_heads_are_never_player_choices_or_assignments():
+    assert set(heads.HEAD_IDS).isdisjoint(heads.GUARD_HEAD_IDS)
+    s = _session([])
+    for guard_head in heads.GUARD_HEAD_IDS:
+        s.begin_new_character("Tester", "imperial", "warrior", head=guard_head)
+        assert heads.is_head(s.game.character.head)
+        # Neither a corrupted character nor the saved fallback can assign one.
+        s.game.character.head = guard_head
+        s.store.set("player_head", guard_head)
+        assert heads.is_head(s._ensure_player_head())
+
+
+def test_only_guard_roles_can_keep_or_receive_guard_heads():
+    civilian = _actor("Guard Impersonator", head="guard07", role="merchant")
+    animal = _actor("Wolf", head="guard16", kind="creature", role="wolf")
+    guard = _actor("Alice", head="guard10", role="guard")
+    unassigned_guard = _actor("Bob", role="guard")
+    s = _session([civilian, animal, guard, unassigned_guard])
+    s.begin_new_character("Tester", "imperial", "warrior", head="head13")
+    assert heads.is_head(civilian.properties["head"])
+    assert animal.properties["head"] in heads.animal_heads("wolf")
+    assert guard.properties["head"] == "guard10"
+    assert heads.is_guard_head(unassigned_guard.properties["head"])
+
+
 def test_a_loaded_character_keeps_its_head_and_npcs_avoid_it():
     saved = _Globals()
     s = _session([], globals_store=saved)

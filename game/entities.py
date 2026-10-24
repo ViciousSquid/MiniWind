@@ -95,9 +95,11 @@ def _apply_head_sprite(p: dict) -> None:
     """If a ``head`` id is set, point the actor's billboard frames at that head
     sprite (a single static image), drawn at the one head size; otherwise
     leave the role art in place. Accepts either a regular head (headNN) or,
-    for guard-named NPCs, one of the special guard heads (guard01…guard06)."""
+    for NPCs with the guard role, one of the special guard heads (guard01…guard16)."""
     from .rpg import heads
     hid = str(p.get("head", "") or "")
+    if heads.is_guard_head(hid) and not heads.is_guard(p):
+        hid = p["head"] = heads.HEAD_IDS[0]
     if heads.is_any_head(hid):
         path = heads.any_head_path(hid)
         p["custom_idle"] = path

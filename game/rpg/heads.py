@@ -1,6 +1,6 @@
 """
 Character **heads** — the portrait/billboard sprites under
-``assets/sprites/heads/head00.png`` … ``head81.png``.
+``assets/sprites/heads/head00.png`` … ``head141.png``.
 
 A head is the player's whole visual identity (no gender, no animation frames):
 the player picks one at character creation, it becomes the player's overhead
@@ -11,10 +11,10 @@ also the key a future audio layer will use to pick voice files.
 when its owner dies (see the renderers), so a corpse keeps its identity instead
 of switching to a generic role sprite.
 
-**Guard heads** (``guard01``…``guard06``) are a separate, NPC-only pool under
+**Guard heads** (``guard01``…``guard16``) are a separate, NPC-only pool under
 the same directory. They are never offered at player character creation and
 are never picked by :func:`random_head`; they only become available in the
-editor's Appearance tab for an NPC whose ``name`` contains "guard" (see
+editor's Appearance tab for an NPC whose ``npc_role`` is "guard" (see
 :mod:`game.editor_ui`), and an authored guard head is preserved for such NPCs
 by :meth:`game.runtime.GameRuntime._assign_npc_heads`.
 """
@@ -25,17 +25,17 @@ import os
 import random as _random
 from typing import Iterable, Optional
 
-#: Heads are numbered head00 … head81 (82 in total).
+#: Heads are numbered head00 … head141 (142 in total).
 HEAD_FIRST = 0
-HEAD_LAST = 81
+HEAD_LAST = 141
 HEAD_COUNT = HEAD_LAST - HEAD_FIRST + 1
 HEAD_DIR = "assets/sprites/heads"
 HEAD_IDS = [f"head{n:02d}" for n in range(HEAD_FIRST, HEAD_LAST + 1)]
 
-#: Special guard heads — assets/sprites/heads/guard01.png … guard06.png.
+#: Special guard heads — assets/sprites/heads/guard01.png … guard16.png.
 #: A separate pool from HEAD_IDS: NPC-only, opt-in (never random, never the
 #: player's), offered only for NPCs whose name contains "guard".
-GUARD_HEAD_IDS = [f"guard{n:02d}" for n in (1, 2, 3, 4, 5, 6)]
+GUARD_HEAD_IDS = [f"guard{n:02d}" for n in range(1, 17)]
 
 #: Overlay blended over a head sprite when its owner is dead.
 DEAD_OVERLAY = f"{HEAD_DIR}/dead.png"
@@ -106,6 +106,11 @@ def is_head(head_id) -> bool:
 
 def is_guard_head(head_id) -> bool:
     return str(head_id) in GUARD_HEAD_IDS
+
+
+def is_guard(props) -> bool:
+    """Guard appearances are reserved for actors with the guard role."""
+    return str((props or {}).get("npc_role", "")).strip().lower() == "guard"
 
 
 #: Heads whose art may not be in place yet, and what stands in until it is
@@ -194,7 +199,7 @@ def random_head(rng: Optional[_random.Random] = None,
 
 
 def random_guard_head(rng: Optional[_random.Random] = None) -> str:
-    """A random guard head id (guard01…guard06). Used to auto-assign a head to
+    """A random guard head id (guard01…guard16). Used to auto-assign a head to
     a guard-named NPC that has no head explicitly set in the editor."""
     return (rng or _random).choice(GUARD_HEAD_IDS)
 
