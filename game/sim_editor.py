@@ -297,11 +297,13 @@ def _ObjectTab(thing, QtWidgets, QtCore):
             super().__init__()
             self.thing = thing
             layout = QtWidgets.QVBoxLayout(self)
-            layout.addWidget(QtWidgets.QLabel(
-                "<b>Ownership</b> is the whole of MiniWind's property model. Give "
-                "this a owner and taking it becomes a theft — which needs a "
-                "witness, produces a bounty when word reaches the watch, and is "
-                "remembered by the owner. Nothing here is authored per object."))
+            description = QtWidgets.QLabel(
+                "Taking an owned object counts as theft when witnessed. "
+                "Choose an owner or faction below. Production creates items "
+                "at the selected interval.")
+            description.setWordWrap(True)
+            description.setStyleSheet("border: none; color: #aaa; padding: 0 0 6px 0;")
+            layout.addWidget(description)
 
             form = QtWidgets.QFormLayout()
             self.owner = QtWidgets.QComboBox()

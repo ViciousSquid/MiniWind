@@ -53,6 +53,9 @@ class Field(NamedTuple):
 FIELDS: List[Field] = [
     Field("enabled", "bool", "Streaming enabled", True,
           "Turn cell streaming on for this map."),
+    Field("editor_streaming", "bool", "Stream around editor camera", True,
+          "Load nearby cells while editing. Unloaded cells remain in the map "
+          "and are preserved by saving and undo."),
     Field("activation_radius", "float", "Activation radius", 2048.0,
           "Cells within this distance of the player become active.",
           min=256.0, max=65536.0),

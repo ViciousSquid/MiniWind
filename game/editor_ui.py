@@ -132,6 +132,8 @@ def apply_dark(widget):
     apply_dark(Tab())``."""
     if widget is not None and not getattr(widget, "_mw_dark", False):
         try:
+            from editor.form_layout import configure_property_forms
+            configure_property_forms(widget)
             widget.setStyleSheet(PANEL_STYLE + widget.styleSheet())
             widget._mw_dark = True
         except Exception:                   # pragma: no cover - defensive

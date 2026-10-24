@@ -1443,6 +1443,8 @@ class QtGameView(QOpenGLWidget):
             self._console_input.setGeometry(0, height - 36, width, 36)
 
     def update_loop(self):
+        if not self.play_mode and self.editor.state.stream_editor_camera(self.camera.pos):
+            self.editor.update_all_ui()
         current_time = time.perf_counter()
         delta = current_time - self.last_time
         self.last_time = current_time
@@ -4454,6 +4456,9 @@ class QtGameView(QOpenGLWidget):
             wheel = getattr(self.play_menu, 'handle_wheel', None)
             if wheel is not None:
                 wheel(event)
+            return
+        if self.pause_menu is None and self.window_manager.handle_wheel(event):
+            self.update()
             return
         if not self.play_mode:
             self.camera.fov = np.clip(self.camera.fov - event.angleDelta().y() * 0.05, 30, 120)

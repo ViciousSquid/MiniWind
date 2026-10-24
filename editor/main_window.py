@@ -1480,10 +1480,16 @@ class MainWindow(QMainWindow):
         box of everything the map contains), padded so terrain extends a little
         past the outermost object. Returns None when the map is empty.
         """
+        stream = self.state.editor_stream
+        cache_key = (self.state.world_epoch, pad, id(stream))
+        cached = getattr(self, '_editor_world_extent_cache', None)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
         min_x = min_z = float('inf')
         max_x = max_z = float('-inf')
         found = False
-        for b in self.state.brushes:
+        brushes = stream.records['brushes'].values() if stream else self.state.brushes
+        for b in brushes:
             pos = b.get('pos'); size = b.get('size') or [0, 0, 0]
             if not pos:
                 continue
@@ -1491,8 +1497,9 @@ class MainWindow(QMainWindow):
             min_x = min(min_x, pos[0] - hx); max_x = max(max_x, pos[0] + hx)
             min_z = min(min_z, pos[2] - hz); max_z = max(max_z, pos[2] + hz)
             found = True
-        for t in self.state.things:
-            pos = getattr(t, 'pos', None)
+        things = stream.records['things'].values() if stream else self.state.things
+        for t in things:
+            pos = t.get('pos') if isinstance(t, dict) else getattr(t, 'pos', None)
             if not pos:
                 continue
             min_x = min(min_x, pos[0]); max_x = max(max_x, pos[0])
@@ -1500,7 +1507,9 @@ class MainWindow(QMainWindow):
             found = True
         if not found:
             return None
-        return (min_x - pad, min_z - pad, max_x + pad, max_z + pad)
+        result = (min_x - pad, min_z - pad, max_x + pad, max_z + pad)
+        self._editor_world_extent_cache = (cache_key, result)
+        return result
 
     def _ensure_terrain(self):
         """Create a procedural Terrain if the map has none, and return it.
@@ -1625,6 +1634,9 @@ class MainWindow(QMainWindow):
 
     def update_play_button_color(self):
         """Update the Play button color based on current mode."""
+        checkbox = getattr(self, 'show_whole_world_checkbox', None)
+        if checkbox is not None:
+            checkbox.setEnabled(not self.view_3d.play_mode)
         if hasattr(self, 'play_button'):
             if self.view_3d.play_mode:
                 # Red for play mode
@@ -2519,6 +2531,7 @@ class MainWindow(QMainWindow):
 
         with _loading_overlay(self).busy("Starting the game", "Building the world", 40):
             self._capture_pre_play_world()
+            self.state.materialize_editor_world()
             logic = self.view_3d.logic_thread
             if logic is not None:
                 # A played package's cutscenes are looked up in the package.
@@ -2600,6 +2613,10 @@ class MainWindow(QMainWindow):
             self.view_3d.toggle_play_mode()
             self.view_3d.play_mode = False  # Force state change before UI update
             self._restore_pre_play_world()
+            stream = self.state.editor_stream
+            if stream is not None and stream.suspended:
+                stream.suspended = False
+                self.state.stream_editor_camera(self.view_3d.camera.pos, force=True)
 
         self.ui.notification_label.setText("")
         self._restore_properties_tab()
@@ -2714,6 +2731,18 @@ class MainWindow(QMainWindow):
     def set_camera_mode(self, text):
         """Switch the play-mode camera between First Person and Overhead."""
         self.view_3d.set_camera_mode(text)
+
+    def set_show_whole_world(self, shown):
+        if not self.config.has_section('Display'):
+            self.config.add_section('Display')
+        self.config.set('Display', 'show_whole_world', str(bool(shown)))
+        self.save_config()
+        if self.view_3d.play_mode:
+            return
+        title = "Loading whole world" if shown else "Loading nearby cells"
+        with self.loading_overlay.busy(title, "Updating the editor", 30):
+            if self.state.set_editor_whole_world(shown, self.view_3d.camera.pos):
+                self.update_all_ui()
 
     def sync_camera_mode_combo(self):
         """Show the camera mode the game is actually using in the Camera dropdown.
@@ -4480,7 +4509,10 @@ class MainWindow(QMainWindow):
         # dirty), so a malformed map or one that fails to parse leaves the open
         # level as it was. Clearing first emptied the scene for any map that
         # got past the shape check.
-        self.state.load_from_data(level_data, validated=validated)
+        self.state.load_from_data(level_data, validated=validated, stream_editor=True)
+        self.state.set_editor_whole_world(
+            self.config.getboolean('Display', 'show_whole_world', fallback=False),
+            self.view_3d.camera.pos)
         self.state.mark_lighting_dirty()
 
         # Drop the previous map's terrain; this also clears terrain_data,
@@ -4497,6 +4529,8 @@ class MainWindow(QMainWindow):
                 self.terrain = Terrain()
             _loading_step(self, "Building terrain", 40)
             self.terrain.from_dict(self.state.terrain_data)
+            if self.state.editor_stream is not None:
+                self.terrain.set_streaming(True, self.state.editor_stream.config['activation_radius'])
             _loading_step(self, "Preparing terrain", 65)
 
             if self.view_3d is not None and self.view_3d.logic_thread:
@@ -4549,7 +4583,8 @@ class MainWindow(QMainWindow):
         Like the package's start map, it never takes the extraction's path as
         its file: the first save goes through Save As.
         """
-        with self._loading_throbber(map_path):
+        name = os.path.splitext(os.path.basename(str(map_path)))[0]
+        with _loading_overlay(self).busy(f"Loading {name}", "Reading the map", 5):
             try:
                 with open(map_path, 'r', encoding='utf-8') as f:
                     level_data = json.load(f)
@@ -4574,8 +4609,7 @@ class MainWindow(QMainWindow):
         """
         print(f"[MainWindow] Loading level: {filePath}")
         name = os.path.splitext(os.path.basename(str(filePath)))[0]
-        with _loading_overlay(self).busy(f"Loading {name}", "Reading the map", 5), \
-                self._loading_throbber(filePath):
+        with _loading_overlay(self).busy(f"Loading {name}", "Reading the map", 5):
             try:
                 level_data = _read_level_json(filePath)
             except Exception as e:
@@ -4597,41 +4631,6 @@ class MainWindow(QMainWindow):
     def loading_overlay(self):
         """The window's staged loading bar (editor/loading_overlay.py)."""
         return _loading_overlay(self)
-
-    @contextlib.contextmanager
-    def _loading_throbber(self, path):
-        """Show the loading throbber over the window while a big level loads.
-
-        The GUI thread is busy for the whole load, so the throbber is a
-        separate process (see load_throbber.py). It is stopped on the next
-        turn of the event loop, after the new level's first repaint.
-        """
-        from load_throbber import MIN_LEVEL_BYTES, LoadThrobber, throbber_geometry
-        throbber = None
-        try:
-            if os.path.getsize(path) >= MIN_LEVEL_BYTES:
-                self._stop_load_throbber()
-                frame = self.frameGeometry()
-                throbber = LoadThrobber(
-                    f"Loading {os.path.basename(path)}\u2026",
-                    throbber_geometry((frame.x(), frame.y(), frame.width(), frame.height())),
-                    self.root_dir).start()
-        except OSError:
-            throbber = None
-        # Held by the window: Qt keeps no reference to a plain object's
-        # method, and an unreferenced but running Popen keeps its pipe open.
-        self._load_throbber = throbber
-        try:
-            yield throbber
-        finally:
-            if throbber is not None:
-                QTimer.singleShot(0, self._stop_load_throbber)
-
-    def _stop_load_throbber(self):
-        throbber = getattr(self, '_load_throbber', None)
-        self._load_throbber = None
-        if throbber is not None:
-            throbber.stop()
 
     def _load_level(self, level_data, file_path=None, destination_spawn=None,
                     from_game=False):
@@ -5566,7 +5565,6 @@ class MainWindow(QMainWindow):
 
             # Cleanup extracted package temp dir
             self._discard_package_temp_dir()
-            self._stop_load_throbber()
 
             try:
                 self.save_layout()

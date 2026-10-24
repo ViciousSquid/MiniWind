@@ -42,9 +42,8 @@ _FONT_CACHE = {}
 _font_cache_families = None
 
 
-def font(size, bold=False, italic=False, family="Georgia"):
-    """A UI font. A sans *family* becomes MedievalSharp when that is installed
-    (see :func:`game.ui.fonts.game_family`).
+def font(size, bold=False, italic=False, family="MedievalSharp"):
+    """A readable medieval UI font (including legacy family requests).
 
     Built once per distinct request and handed out as a copy (QFont copies
     are implicitly shared, so cheap): the HUD asks for the same dozen fonts
@@ -64,23 +63,8 @@ def font(size, bold=False, italic=False, family="Georgia"):
     return QFont(f)
 
 
-#: Decorative "old RPG" family stack for titles — the same one the spell cards
-#: use. Whatever the OS has first wins (Papyrus/Palatino/Book Antiqua/Georgia…).
-FANCY_FAMILIES = ["Papyrus", "Luminari", "Palatino Linotype", "Book Antiqua",
-                  "Georgia", "Cambria", "serif"]
-
-
 def fancy_font(size, bold=False, italic=False):
-    f = QFont()
-    try:
-        f.setFamilies(FANCY_FAMILIES)
-    except Exception:
-        f.setFamily("Georgia")
-    f.setPointSize(int(size))
-    f.setBold(bool(bold))
-    f.setItalic(bool(italic))
-    f.setStyleHint(QFont.Serif)
-    return f
+    return font(size, bold, italic)
 
 
 # ------------------------------------------------------------------ sprites
@@ -215,7 +199,7 @@ def bar(painter, x, y, w, h, frac, color, bg=QColor(20, 18, 26, 220), label=None
 
 
 def text(painter, x, y, s, size=11, color=INK, bold=False, italic=False,
-         family="Georgia"):
+         family="MedievalSharp"):
     painter.save()
     painter.setFont(font(size, bold, italic, family))
     painter.setPen(color)
@@ -224,7 +208,7 @@ def text(painter, x, y, s, size=11, color=INK, bold=False, italic=False,
 
 
 def text_in(painter, rect, s, size=11, color=INK, align=ALIGN_LEFT, bold=False,
-            italic=False, family="Georgia"):
+            italic=False, family="MedievalSharp"):
     painter.save()
     painter.setFont(font(size, bold, italic, family))
     painter.setPen(color)

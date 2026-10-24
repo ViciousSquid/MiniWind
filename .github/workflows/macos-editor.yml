@@ -1,0 +1,117 @@
+name: macOS editor validation and screenshots
+
+on:
+  pull_request:
+    branches: [work]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  editor:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      QT_QPA_PLATFORM: cocoa
+      PYOPENGL_PLATFORM: darwin
+      SDL_AUDIODRIVER: dummy
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: pip
+      - name: Install the desktop dependencies
+        run: python -m pip install -r requirements.txt pytest
+      - name: Check out the before version from work
+        if: always()
+        run: git worktree add --detach "$RUNNER_TEMP/miniwind-before" 456f595cbc3e4daecde432edea8b933d40d5687b
+      - name: Capture the before editor with native macOS widgets
+        if: always()
+        timeout-minutes: 8
+        run: >-
+          python tools/capture_editor_ui.py
+          --source "$RUNNER_TEMP/miniwind-before"
+          --output "$GITHUB_WORKSPACE/artifacts/before.png"
+      - name: Capture the after editor with native macOS widgets
+        if: always()
+        timeout-minutes: 8
+        run: >-
+          python tools/capture_editor_ui.py
+          --source "$GITHUB_WORKSPACE"
+          --output "$GITHUB_WORKSPACE/artifacts/after.png"
+      - name: Build the side-by-side macOS comparison
+        if: always()
+        run: |
+          python - <<'PY'
+          import base64
+          from pathlib import Path
+          from PIL import Image, ImageDraw, ImageFont
+
+          folder = Path('artifacts')
+          images = [Image.open(folder / name).convert('RGB')
+                    for name in ('before.png', 'after.png')]
+          width = 1440
+          images = [im.resize((width, round(im.height * width / im.width)), Image.Resampling.LANCZOS)
+                    for im in images]
+          height = max(im.height for im in images)
+          comparison = Image.new('RGB', (width * 2, height + 100), '#16181b')
+          draw = ImageDraw.Draw(comparison)
+          font = ImageFont.load_default(size=28)
+          for x, label, im in ((0, 'BEFORE | work branch', images[0]),
+                               (width, 'AFTER | camera-local editor chunks', images[1])):
+              draw.text((x + 20, 16), label, font=font, fill='white')
+              comparison.paste(im, (x, 58))
+          draw.text((20, height + 72), 'Native macOS / Cocoa | Same village map and camera',
+                    font=ImageFont.load_default(size=19), fill='#b7bdc7')
+          comparison.save(folder / 'comparison.png', optimize=True)
+          preview = comparison.resize((1920, round(comparison.height * 2 / 3)), Image.Resampling.LANCZOS)
+          preview.save(folder / 'comparison-preview.png', optimize=True)
+          # The preview also travels through the GitHub log connector so chat
+          # clients can display it without an authenticated artifact download.
+          encoded = base64.b64encode((folder / 'comparison-preview.png').read_bytes()).decode()
+          print('MINIWIND_PREVIEW_BEGIN')
+          for start in range(0, len(encoded), 12000):
+              print(encoded[start:start + 12000])
+          print('MINIWIND_PREVIEW_END')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-editor-comparison
+          path: |
+            artifacts/*.png
+            artifacts/*.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Validate editor layout, streaming and persistence
+        timeout-minutes: 10
+        # Native Cocoa captures above exercise the platform presentation. Keep
+        # logic/Qt tests independent of asynchronous GL paints, as in the
+        # no-GPU tier, while running the actual macOS Python/Qt binaries.
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: >-
+          python -m pytest -q
+          tests/editor/test_macos_layout.py
+          tests/editor/test_loading_overlay.py
+          tests/editor/test_toolbar_button_size.py
+          tests/editor/test_default_layout.py
+          tests/editor/test_property_editor_rebuilds.py
+          tests/editor/test_restore_world_on_stop.py
+          tests/persistence
+          tests/undo_redo
+          tests/renderer/test_terrain_context.py
+          plugins/bigworld/tests
+          game/tests/test_property_tabs.py
+          --junitxml=artifacts/macos-tests.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-editor-test-results
+          path: artifacts/macos-tests.xml
+          if-no-files-found: warn

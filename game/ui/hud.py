@@ -435,10 +435,8 @@ def _paint_bubble(painter, cx, cy, kind):
     painter.setPen(Qt.NoPen)
     painter.drawRect(QRect(cx - BUBBLE_TAIL_W + 1, cy - 3, BUBBLE_TAIL_W * 2 - 1, 3))
     painter.setPen(text_col)
-    f = painter.font()
-    f.setBold(True)
-    f.setPointSize(BUBBLE_FONT_PT)
-    painter.setFont(f)
+    from . import fonts
+    painter.setFont(fonts.dialogue_font(BUBBLE_FONT_PT))
     painter.drawText(rect, Qt.AlignCenter, glyph)
     painter.restore()
 

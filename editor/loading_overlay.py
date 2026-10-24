@@ -39,7 +39,7 @@ _ADVANCE = 0.25
 _CEILING = 95
 
 #: The bar's height, as on the splash.
-BAR_HEIGHT = 35
+BAR_HEIGHT = 10
 
 #: Faces a game may set (:func:`set_fonts`) for the title and the bar's text;
 #: None keeps Arial for the title and the application font for the bar.
@@ -69,6 +69,7 @@ class LoadingOverlay(QWidget):
         self.bar = QProgressBar(self)
         self.bar.setRange(0, 100)
         self.bar.setFixedHeight(BAR_HEIGHT)
+        self.bar.setTextVisible(False)
         self.bar.setAlignment(Qt.AlignCenter)
         parent.installEventFilter(self)
         self.hide()
@@ -165,6 +166,11 @@ class LoadingOverlay(QWidget):
         top = self.bar.y() - fm.height() - 14
         p.drawText(QRectF(0, top, w, fm.height() + 4),
                    Qt.AlignHCenter | Qt.AlignTop, self.title)
+        # Keep the stage readable without squeezing text into a 10px bar.
+        p.setFont(QFont(_BAR_FONT) if _BAR_FONT is not None else self.font())
+        stage_height = p.fontMetrics().height()
+        p.drawText(QRectF(8, self.bar.geometry().bottom() + 10, w - 16, stage_height + 4),
+                   Qt.AlignHCenter | Qt.AlignTop, f"{self.stage} ({self.value}%)")
         p.end()
 
 

@@ -873,7 +873,7 @@ def _display_font(pt):
     """The face for the banner and the options (see :mod:`game.ui.fonts`).
 
     Enchanted Land when it is installed, a little larger as its letters are
-    small for their size and without a synthetic bold; bold Arial otherwise.
+    small for their size and without a synthetic bold; bold serif otherwise.
     """
     from . import fonts
     family = fonts.menu_family()
@@ -886,7 +886,7 @@ def _display_font(pt):
     return font
 
 
-#: How much larger the installed display face is set than Arial would be,
+#: How much larger the installed display face is set than the fallback,
 #: and the extra room given to each space, as a share of its size.
 DISPLAY_SCALE = 1.3
 DISPLAY_WORD_SPACING = 0.4
@@ -899,7 +899,7 @@ def _display_face_installed() -> bool:
 
 def _text_font(pt):
     """Small print (captions, details, key hints): MedievalSharp, the game's
-    reading face, when installed; Arial otherwise."""
+    reading face, when installed; Georgia otherwise."""
     from . import fonts
     family = fonts.dialogue_family()
     if family == fonts.DIALOGUE_FALLBACK:
@@ -916,7 +916,7 @@ def _shown(label):
 
 
 def _shown_title():
-    """The banner: letter-spaced capitals in Arial, plain "Paused" in the
+    """The banner: letter-spaced capitals in the fallback, plain "Paused" in the
     display face, whose letters already carry the weight."""
     return "Paused" if _display_face_installed() else "P A U S E D"
 
