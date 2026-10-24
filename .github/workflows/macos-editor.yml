@@ -31,7 +31,38 @@ jobs:
           cache: pip
       - name: Install the desktop dependencies
         run: python -m pip install -r requirements.txt pytest
+      - name: Check out the before version from work
+        if: always()
+        run: git worktree add --detach "$RUNNER_TEMP/miniwind-before" 456f595cbc3e4daecde432edea8b933d40d5687b
+      - name: Capture the before editor with native macOS widgets
+        if: always()
+        timeout-minutes: 8
+        run: >-
+          python tools/capture_editor_ui.py
+          --source "$RUNNER_TEMP/miniwind-before"
+          --output "$GITHUB_WORKSPACE/artifacts/before.png"
+      - name: Capture the after editor with native macOS widgets
+        if: always()
+        timeout-minutes: 8
+        run: >-
+          python tools/capture_editor_ui.py
+          --source "$GITHUB_WORKSPACE"
+          --output "$GITHUB_WORKSPACE/artifacts/after.png"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-editor-comparison
+          path: |
+            artifacts/*.png
+            artifacts/*.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Validate editor layout, streaming and persistence
+        # Native Cocoa captures above exercise the platform presentation. Keep
+        # logic/Qt tests independent of asynchronous GL paints, as in the
+        # no-GPU tier, while running the actual macOS Python/Qt binaries.
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: >-
           python -m pytest -q
           tests/editor/test_macos_layout.py
@@ -45,28 +76,9 @@ jobs:
           plugins/bigworld/tests
           game/tests/test_property_tabs.py
           --junitxml=artifacts/macos-tests.xml
-      - name: Check out the before version from work
-        if: always()
-        run: git worktree add --detach "$RUNNER_TEMP/miniwind-before" 456f595cbc3e4daecde432edea8b933d40d5687b
-      - name: Capture the before editor with native macOS widgets
-        if: always()
-        run: >-
-          python tools/capture_editor_ui.py
-          --source "$RUNNER_TEMP/miniwind-before"
-          --output "$GITHUB_WORKSPACE/artifacts/before.png"
-      - name: Capture the after editor with native macOS widgets
-        if: always()
-        run: >-
-          python tools/capture_editor_ui.py
-          --source "$GITHUB_WORKSPACE"
-          --output "$GITHUB_WORKSPACE/artifacts/after.png"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: macos-editor-comparison
-          path: |
-            artifacts/*.png
-            artifacts/*.json
-            artifacts/*.xml
-          if-no-files-found: error
-          retention-days: 14
+          name: macos-editor-test-results
+          path: artifacts/macos-tests.xml
+          if-no-files-found: warn

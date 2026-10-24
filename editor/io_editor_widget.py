@@ -255,6 +255,8 @@ class IOConnectionDialog(QDialog):
         layout.addWidget(buttons)
     
     def _get_all_entity_names(self):
+        if self.editor_state is not None:
+            return self.editor_state.get_all_entity_names()
         names = []
         if self.editor_state:
             for brush in self.editor_state.brushes:

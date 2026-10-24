@@ -477,6 +477,11 @@ class Ui_MainWindow(object):
         self.create_toolbars(MainWindow)  # Creates Play button
         self.create_tool_toolbar(MainWindow)  # Single top strip: tools + Play last
         self.create_status_bar(MainWindow)
+        # Apply widths after every dock exists, so the hierarchy starts near
+        # 260px rather than expanding to its maximum while docks are added.
+        MainWindow.resizeDocks([MainWindow.scene_hierarchy_dock], [260], Qt.Horizontal)
+        MainWindow.resizeDocks([MainWindow.view_3d_dock, MainWindow.right_dock],
+                               [40, 60], Qt.Horizontal)
 
     def create_menu_bar(self, MainWindow):
         menubar = MainWindow.menuBar()

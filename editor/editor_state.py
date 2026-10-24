@@ -539,6 +539,17 @@ class EditorState:
         self.ensure_entity_ids()
         stream.merge(self._serialize_brushes(), [t.to_dict() for t in self.things])
         if changed:
+            from plugins.bigworld.config import config_from_properties
+            settings = next((t for t in self.things
+                             if t.properties.get('type') == 'bigworldsettings'), None)
+            cfg = config_from_properties(settings.properties) if settings else None
+            if cfg is None or not cfg['enabled'] or not cfg['editor_streaming']:
+                self.materialize_editor_world()
+                self.editor_stream = None
+                return True
+            stream.config = cfg
+            stream.manager.activation_radius = cfg['activation_radius']
+            stream.manager.deactivation_radius = cfg['deactivation_radius']
             stream.reindex()
         pinned = [self.get_entity_id(obj) for obj in self.selected_objects]
         local = stream.local_data(position, pinned=pinned)
@@ -715,7 +726,10 @@ class EditorState:
         if not validated:
             self.validate_level_data(level_data)
         stream = None
-        if stream_editor:
+        if stream_editor and any(
+                str(r.get('type', r.get('properties', {}).get('type', '')))
+                .replace('_', '').lower() == 'bigworldsettings'
+                for r in level_data.get('things', [])):
             from plugins.bigworld.editor_streaming import EditorCellStream
             stream = EditorCellStream.for_level(level_data)
         local = stream.local_data() if stream is not None else level_data
@@ -1134,7 +1148,7 @@ class EditorState:
             if thing.properties.get('name') == name:
                 return thing
 
-        return None
+        return self._load_editor_record(name=name)
 
     def find_entity_by_id(self, entity_id: str):
         """Find an entity (brush or thing) by stable UUID."""
@@ -1149,6 +1163,40 @@ class EditorState:
             if thing.properties.get('id') == entity_id:
                 return thing
 
+        return self._load_editor_record(identity=entity_id)
+
+    def _load_editor_record(self, identity=None, name=None):
+        """Resolve an explicitly requested distant object without loading its region."""
+        stream = self.editor_stream
+        if stream is None or stream.suspended:
+            return None
+        for kind, records in stream.records.items():
+            if identity is not None:
+                record = records.get(identity)
+            else:
+                record = next((r for r in records.values() if (
+                    r.get('name') if kind == 'brushes' else
+                    r.get('properties', {}).get('name')) == name), None)
+            if record is None:
+                continue
+            record_identity = record.get('id') if kind == 'brushes' else record['properties']['id']
+            if record_identity in stream.resident[kind]:
+                # A resident record absent from the live lists was deleted
+                # (or renamed); lookup must not resurrect its previous copy.
+                continue
+            if kind == 'brushes':
+                obj = self._deserialize_brushes([record])[0]
+                self.brushes = self.brushes + [obj]
+                identity = obj['id']
+            else:
+                obj = Thing.from_dict(record)
+                if obj is None:
+                    return None
+                self.things = self.things + [obj]
+                identity = obj.properties['id']
+            stream.resident[kind].add(identity)
+            self._invalidate_entity_caches()
+            return obj
         return None
 
     def ensure_entity_ids(self):
@@ -1192,6 +1240,13 @@ class EditorState:
 
     def get_all_entity_names(self):
         """Get a list of all entity names in the scene."""
+        stream = self.editor_stream
+        if stream is not None and not stream.suspended:
+            stream.merge(self._serialize_brushes(), [t.to_dict() for t in self.things])
+            return [name for kind, records in stream.records.items()
+                    for record in records.values()
+                    if (name := (record.get('name') if kind == 'brushes' else
+                                 record.get('properties', {}).get('name')))]
         names = []
 
         for brush in self.brushes:

@@ -110,3 +110,32 @@ def test_plain_maps_and_disabled_editor_streaming_keep_the_normal_load_path():
     state.load_from_data(data, stream_editor=True)
     assert state.editor_stream is None
     assert 'far-brush' in ids(state)
+
+
+def test_distant_objects_can_be_found_and_edited_without_loading_all_cells():
+    state = load()
+    assert 'Far wall' in state.get_all_entity_names()
+    wall = state.find_entity_by_name('Far wall')
+    assert wall['id'] == 'far-brush'
+    assert 'far-light' not in ids(state)
+    state.save_state()
+    wall['name'] = 'Renamed distant wall'
+    state.stream_editor_camera([1, 40, 1])
+    saved = state.get_level_data()
+    assert next(b for b in saved['brushes'] if b['id'] == 'far-brush')['name'] == 'Renamed distant wall'
+
+
+def test_lookup_does_not_resurrect_a_deleted_resident_object():
+    state = load()
+    state.brushes = [b for b in state.brushes if b['id'] != 'near-brush']
+    assert state.find_entity_by_id('near-brush') is None
+    assert state.find_entity_by_name('Near wall') is None
+
+
+def test_disabling_editor_streaming_restores_the_complete_world():
+    state = load()
+    state.save_state()
+    state.find_entity_by_id('settings').properties['editor_streaming'] = False
+    assert state.stream_editor_camera([1, 40, 1])
+    assert state.editor_stream is None
+    assert 'far-light' in ids(state)
