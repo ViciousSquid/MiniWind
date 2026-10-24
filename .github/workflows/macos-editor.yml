@@ -8,10 +8,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: macos-editor-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   editor:
     runs-on: macos-latest
@@ -58,6 +54,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Validate editor layout, streaming and persistence
+        timeout-minutes: 10
         # Native Cocoa captures above exercise the platform presentation. Keep
         # logic/Qt tests independent of asynchronous GL paints, as in the
         # no-GPU tier, while running the actual macOS Python/Qt binaries.

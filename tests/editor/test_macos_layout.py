@@ -82,5 +82,3 @@ def test_hierarchy_has_room_for_names_and_can_be_resized(main_window):
         assert group.textAlignment(0) & Qt.AlignLeft
         for child in range(group.childCount()):
             assert group.child(child).textAlignment(0) & Qt.AlignLeft
-
-

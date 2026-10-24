@@ -139,3 +139,9 @@ def test_disabling_editor_streaming_restores_the_complete_world():
     assert state.stream_editor_camera([1, 40, 1])
     assert state.editor_stream is None
     assert 'far-light' in ids(state)
+
+
+def test_hierarchy_search_includes_unloaded_entity_types(main_window):
+    main_window.state.load_from_data(level(), stream_editor=True)
+    found = main_window.scene_hierarchy.find_matches('light')
+    assert {t.properties['id'] for t in found} == {'near-light', 'far-light'}

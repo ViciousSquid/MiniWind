@@ -262,6 +262,8 @@ class SceneHierarchy(QWidget):
                 for identity, record in list(records.items()):
                     props = record if kind == 'brushes' else record.get('properties', {})
                     text = self._searchable_text(props, props.get('name', ''))
+                    if kind == 'things':
+                        text += ' ' + str(props.get('type', record.get('type', ''))).lower()
                     if is_match(text):
                         obj = state.find_entity_by_id(identity)
                         if obj is not None:
