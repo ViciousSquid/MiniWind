@@ -933,8 +933,8 @@ class MiniwindSession(SettlementLaw):
 
         * an animal gets a head of its own kind (:func:`heads.animal_head`):
           its own image once drawn, the placeholder head until then;
-        * an NPC whose name contains "guard" gets a random *guard* head
-          (guard01…guard06), matching the editor's guard-head option;
+        * an NPC whose role is "guard" gets a random *guard* head
+          (guard01…guard16), matching the editor's guard-head option;
         * everyone else gets a random regular head that is never the player's.
         """
         from .rpg import heads
@@ -956,11 +956,14 @@ class MiniwindSession(SettlementLaw):
             # An animal still on the stand-in (from a save made before its art
             # was drawn) looks again, so new art reaches it.
             stand_in = cur == heads.PLACEHOLDER_HEAD and role in heads.ANIMAL_ROLES
-            if heads.is_any_head(cur) and cur != player_head and not stand_in:
+            guard = heads.is_guard(p)
+            forbidden_guard = heads.is_guard_head(cur) and not guard
+            if (heads.is_any_head(cur) and cur != player_head and not stand_in
+                    and not forbidden_guard):
                 head = cur
             elif role in heads.ANIMAL_ROLES:
                 head = heads.animal_head(role, self.rng, deck)
-            elif heads.name_is_guard(p.get("name") or p.get("display_name")):
+            elif guard:
                 head = heads.random_guard_head(self.rng)
             else:
                 head = heads.random_head(self.rng, exclude={player_head})

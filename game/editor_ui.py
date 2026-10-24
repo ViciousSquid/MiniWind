@@ -233,8 +233,8 @@ def make_appearance_tab(thing):
     animation). '(random)' lets the game assign a head never used by the player.
     Setting a head updates the entity's sprite immediately.
 
-    NPCs whose ``name`` contains "guard" (case-insensitive) also get an extra
-    "Guard heads" section offering the special guard01…guard06 sprites, plus a
+    NPCs whose ``npc_role`` is "guard" also get an extra
+    "Guard heads" section offering the special guard01…guard16 sprites, plus a
     Browse… button to pick any PNG directly from assets/sprites/heads/."""
     try:
         QtWidgets, QtCore = _qt()
@@ -264,6 +264,11 @@ def make_appearance_tab(thing):
                 for hid in heads.GUARD_HEAD_IDS:
                     self.combo.addItem(f"{hid} (guard)", hid)
             cur = str(thing.properties.get("head", "") or "")
+            if heads.is_guard_head(cur) and not self._is_guard_named():
+                cur = heads.HEAD_IDS[0]
+                thing.properties["head"] = cur
+                for key in ("custom_idle", "custom_shoot"):
+                    thing.properties[key] = heads.head_path(cur)
             self._ensure_combo_entry(cur)
             i = self.combo.findData(cur)
             self.combo.setCurrentIndex(i if i >= 0 else 0)
@@ -284,16 +289,16 @@ def make_appearance_tab(thing):
             self._refresh()
 
         def _is_guard_named(self) -> bool:
-            name = str(self.thing.properties.get("name", "") or
-                        self.thing.properties.get("display_name", "") or "")
-            return "guard" in name.lower()
+            return heads.is_guard(self.thing.properties)
 
         def _repo_root(self):
             return os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 
         def _ensure_combo_entry(self, hid: str) -> None:
             """Add a combo entry for *hid* if it isn't one already (e.g. a
-            head picked via Browse… that isn't head00-19 or guard01-06)."""
+            head picked via Browse… that isn't head00-141 or guard01-16)."""
+            if heads.is_guard_head(hid) and not self._is_guard_named():
+                return
             if not hid or self.combo.findData(hid) >= 0:
                 return
             self.combo.addItem(hid, hid)
@@ -303,6 +308,8 @@ def make_appearance_tab(thing):
             self._apply_head(hid)
 
         def _apply_head(self, hid: str) -> None:
+            if heads.is_guard_head(hid) and not self._is_guard_named():
+                hid = heads.HEAD_IDS[0]
             self.thing.properties["head"] = hid
             if heads.is_any_head(hid):
                 path = heads.any_head_path(hid)
@@ -336,6 +343,10 @@ def make_appearance_tab(thing):
                     "Please select a file within that folder.")
                 return
             hid = os.path.splitext(os.path.basename(path))[0]
+            if heads.is_guard_head(hid) and not self._is_guard_named():
+                QtWidgets.QMessageBox.warning(
+                    self, "Guard heads", "Only NPCs with the guard role can use guard heads.")
+                return
             self._ensure_combo_entry(hid)
             i = self.combo.findData(hid)
             if i >= 0:
