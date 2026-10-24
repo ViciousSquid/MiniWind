@@ -34,8 +34,8 @@ def main():
     os.chdir(runtime)
     sys.path.insert(0, str(source))
 
-    from PyQt5.QtCore import Qt, QTimer, QPointF
-    from PyQt5.QtGui import QSurfaceFormat
+    from PyQt5.QtCore import Qt, QTimer, QPointF, QEvent
+    from PyQt5.QtGui import QSurfaceFormat, QKeyEvent
     from PyQt5.QtWidgets import QApplication
 
     fmt = QSurfaceFormat()
@@ -83,6 +83,15 @@ def main():
             window.scene_hierarchy.tree.expandAll()
             window.scene_hierarchy.tree.scrollToTop()
             window.resizeDocks([window.right_dock, window.properties_dock], [410, 410], Qt.Vertical)
+            # Exercise capture/release on native Cocoa too, beyond the
+            # offscreen interaction suite. The baseline predates this mode.
+            view = window.view_3d
+            if hasattr(view, 'set_editor_freelook'):
+                QApplication.sendEvent(view, QKeyEvent(QEvent.KeyPress, Qt.Key_Z, Qt.NoModifier))
+                assert view.editor_freelook_active and view.mouseGrabber() is view
+                QApplication.sendEvent(view, QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
+                assert not view.mouselook_active and view.mouseGrabber() is not view
+                metrics['freelook_toggle_checked'] = True
             QTimer.singleShot(2000, capture)
         except Exception:
             import traceback

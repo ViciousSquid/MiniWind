@@ -80,22 +80,23 @@ Objects are indexed by their existing **stable UUIDs**. A brush spanning several
 
 ## Editor camera streaming
 
-Big World maps also stream while editing. The configured startup map still
-opens, with live brushes and entities limited to cells around the 3D editor
-camera. Crossing a cell boundary loads nearby cells and releases distant
-objects, using the same 512-unit cells, activation radius and hysteresis as
-Play. Selected objects stay resident until the selection is released.
+Big World maps open with **Show whole world** checked by default. The checkbox
+beside the status bar's **Display** dropdown remembers your choice. Clear it
+to limit live brushes and entities to cells around the 3D editor camera;
+check it to load every editor cell. The configured startup map still opens.
 
-Use **Show whole world** beside the status bar's **Display** dropdown to load
-every editor cell. Clear the checkbox to return to the area around the camera;
-switching either way preserves edits and the undo history.
+While camera streaming is enabled, crossing a cell boundary loads nearby
+cells and releases distant objects, using the same 512-unit cells, activation
+radius and hysteresis as Play. Selected objects stay resident until the
+selection is released. Switching either way preserves edits and undo history.
 
 The existing JSON file is read once to build an index of serialized records;
-distant records do not become live editor entities or renderer geometry.
+in camera streaming mode, distant records do not become live editor entities
+or renderer geometry.
 Edits are committed before objects leave residency. Save and undo include the
 whole authored world, including cells never visited. Play receives the complete
-authored world through its existing Big World lifecycle; Stop restores local
-editor residency. The map's **Stream around editor camera** setting can disable
+authored world through its existing Big World lifecycle; Stop restores the
+chosen editor residency mode. The map's **Stream around editor camera** setting can disable
 this editor behavior when a full-world authoring pass is needed.
 
 In Play, the renderer fades nearby lights smoothly over the last 256 world

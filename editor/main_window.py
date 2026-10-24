@@ -303,7 +303,7 @@ class MainWindow(QMainWindow):
         self._apply_audio_volumes()
         self.startup_tooltip_shown = False
         self.tooltip_tips = [
-            "Right-click + WASD: Move camera",
+            "Z: Toggle freelook; WASD: Move camera",
             "Mouse wheel: Zoom in/out",
             "Ctrl+Tab: Cycle 2D views",
             "Shift+Space: Clone, then click to place it",
@@ -1035,7 +1035,7 @@ class MainWindow(QMainWindow):
             return
         self.startup_tooltip_shown = True
         # Duration 0 = persistent until dismissed
-        self.show_tooltip("Hold right mouse to move camera with WASD", duration=0, toast_id="camera_tip")
+        self.show_tooltip("Press Z or hold right mouse to look; WASD to move", duration=0, toast_id="camera_tip")
 
     def _check_occasional_tooltip(self):
         """Periodically show helpful tooltips."""
@@ -1058,7 +1058,7 @@ class MainWindow(QMainWindow):
             self.last_tooltip_time = current_time
 
     def on_camera_moved_with_wasd(self):
-        """Called when user holds right-click and moves camera with WASD."""
+        """Called when the user moves with WASD during editor mouse look."""
         if self.camera_movement_learned:
             return
         
@@ -2173,6 +2173,9 @@ class MainWindow(QMainWindow):
         Returns True when something was backed out of, so a caller can tell an
         Escape that did something from one that had nothing to do.
         """
+        if self.view_3d.mouselook_active:
+            self.view_3d.stop_editor_mouselook()
+            return True
         if self.cancel_clone_placement():
             return True
         if self.view_3d.terrain_sculpt_active:
@@ -3750,6 +3753,12 @@ class MainWindow(QMainWindow):
         # user has bound to a console command in Settings always wins.
         user_bound = self._has_user_binding(event)
 
+        if not user_bound and event.key() == Qt.Key_Z and not event.modifiers():
+            if not event.isAutoRepeat():
+                self.view_3d.set_editor_freelook(not self.view_3d.editor_freelook_active)
+            event.accept()
+            return
+
         if not user_bound and event.modifiers() == Qt.ShiftModifier and \
                 event.key() in (Qt.Key_V, Qt.Key_E, Qt.Key_F):
             self.set_component_mode({Qt.Key_V: MODE_VERTEX,
@@ -3925,8 +3934,8 @@ class MainWindow(QMainWindow):
             self.show_toast(f"Grid Size: {new_size}")
             return
 
-        # Camera movement lesson (WASD with right mouse held)
-        if not self.camera_movement_learned and self.right_mouse_held:
+        # Camera movement lesson (WASD during held or toggled mouse look)
+        if not self.camera_movement_learned and self.view_3d.mouselook_active:
             if event.key() in (Qt.Key_W, Qt.Key_A, Qt.Key_S, Qt.Key_D):
                 self.on_camera_moved_with_wasd()
 
@@ -4511,7 +4520,7 @@ class MainWindow(QMainWindow):
         # got past the shape check.
         self.state.load_from_data(level_data, validated=validated, stream_editor=True)
         self.state.set_editor_whole_world(
-            self.config.getboolean('Display', 'show_whole_world', fallback=False),
+            self.config.getboolean('Display', 'show_whole_world', fallback=True),
             self.view_3d.camera.pos)
         self.state.mark_lighting_dirty()
 
@@ -5134,7 +5143,7 @@ class MainWindow(QMainWindow):
         self._exit_play_mode()
         if not self.camera_movement_learned:
             self._after(500, lambda: self.show_tooltip(
-                "Hold right mouse to move camera with WASD", duration=0, toast_id="camera_tip"))
+                "Press Z or hold right mouse to look; WASD to move", duration=0, toast_id="camera_tip"))
 
     def open_pause_menu(self):
         """Open the Play Mode pause menu (what Esc does). False outside Play."""

@@ -1108,7 +1108,7 @@ class Ui_MainWindow(object):
             QCheckBox:disabled { color: #777; }
         """)
         MainWindow.show_whole_world_checkbox.setChecked(
-            MainWindow.config.getboolean('Display', 'show_whole_world', fallback=False))
+            MainWindow.config.getboolean('Display', 'show_whole_world', fallback=True))
         MainWindow.show_whole_world_checkbox.setToolTip(
             "Load every editor cell. Clear to stream cells around the 3D camera.")
         MainWindow.show_whole_world_checkbox.toggled.connect(MainWindow.set_show_whole_world)
