@@ -144,7 +144,7 @@ class Character:
                gender: str = "male", custom_class: cls.CharClass = None) -> "Character":
         """Roll a fresh character from a race + class + birthsign."""
         c = cls_()
-        c.name = name or "Adventurer"
+        c.name = (name[:1].upper() + name[1:]) if name else "Adventurer"
         c.gender = gender
         race = races.get(race_id)
         klass = custom_class or cls.get(class_id)
