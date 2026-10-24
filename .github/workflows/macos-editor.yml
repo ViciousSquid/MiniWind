@@ -44,6 +44,41 @@ jobs:
           python tools/capture_editor_ui.py
           --source "$GITHUB_WORKSPACE"
           --output "$GITHUB_WORKSPACE/artifacts/after.png"
+      - name: Build the side-by-side macOS comparison
+        if: always()
+        run: |
+          python - <<'PY'
+          import base64
+          from pathlib import Path
+          from PIL import Image, ImageDraw, ImageFont
+
+          folder = Path('artifacts')
+          images = [Image.open(folder / name).convert('RGB')
+                    for name in ('before.png', 'after.png')]
+          width = 1440
+          images = [im.resize((width, round(im.height * width / im.width)), Image.Resampling.LANCZOS)
+                    for im in images]
+          height = max(im.height for im in images)
+          comparison = Image.new('RGB', (width * 2, height + 100), '#16181b')
+          draw = ImageDraw.Draw(comparison)
+          font = ImageFont.load_default(size=28)
+          for x, label, im in ((0, 'BEFORE — work branch', images[0]),
+                               (width, 'AFTER — camera-local editor chunks', images[1])):
+              draw.text((x + 20, 16), label, font=font, fill='white')
+              comparison.paste(im, (x, 58))
+          draw.text((20, height + 72), 'Native macOS / Cocoa — same village map and camera',
+                    font=ImageFont.load_default(size=19), fill='#b7bdc7')
+          comparison.save(folder / 'comparison.png', optimize=True)
+          preview = comparison.resize((1440, round(comparison.height / 2)), Image.Resampling.LANCZOS)
+          preview.save(folder / 'comparison-preview.png', optimize=True)
+          # The preview also travels through the GitHub log connector so chat
+          # clients can display it without an authenticated artifact download.
+          encoded = base64.b64encode((folder / 'comparison-preview.png').read_bytes()).decode()
+          print('MINIWIND_PREVIEW_BEGIN')
+          for start in range(0, len(encoded), 12000):
+              print(encoded[start:start + 12000])
+          print('MINIWIND_PREVIEW_END')
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
