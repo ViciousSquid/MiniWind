@@ -78,6 +78,34 @@ Objects are indexed by their existing **stable UUIDs**. A brush spanning several
 
 # Quick start
 
+## Editor camera streaming
+
+Big World maps open with **Show whole world** checked by default. The checkbox
+beside the status bar's **Display** dropdown remembers your choice. Clear it
+to limit live brushes and entities to cells around the 3D editor camera;
+check it to load every editor cell. The configured startup map still opens.
+
+While camera streaming is enabled, crossing a cell boundary loads nearby
+cells and releases distant objects, using the same 512-unit cells, activation
+radius and hysteresis as Play. Selected objects stay resident until the
+selection is released. Switching either way preserves edits and undo history.
+
+The existing JSON file is read once to build an index of serialized records;
+in camera streaming mode, distant records do not become live editor entities
+or renderer geometry.
+Edits are committed before objects leave residency. Save and undo include the
+whole authored world, including cells never visited. Play receives the complete
+authored world through its existing Big World lifecycle; Stop restores the
+chosen editor residency mode. The map's **Stream around editor camera** setting can disable
+this editor behavior when a full-world authoring pass is needed.
+
+In Play, the renderer fades nearby lights smoothly over the last 256 world
+units before its player-distance limit (2048 units by default), or Big World's
+active radius when smaller, including overhead-camera fitting. The existing
+activation range, hysteresis, light budgets and Big World parking remain in
+place. The fade affects rendered intensity only; authored values, flicker and
+explicit light on/off inputs retain their behavior.
+
 ## 1. Opt a map into Big World
 
 Add a **Big World Settings** entity to the map:
