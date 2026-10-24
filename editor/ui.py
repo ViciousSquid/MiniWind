@@ -1100,6 +1100,13 @@ class Ui_MainWindow(object):
         bottom_layout.addWidget(MainWindow.display_mode_combobox)
 
         MainWindow.show_whole_world_checkbox = QCheckBox("Show whole world")
+        MainWindow.show_whole_world_checkbox.setStyleSheet("""
+            QCheckBox::indicator { width: 14px; height: 14px;
+                border: 1px solid #888; border-radius: 2px; background: #3c3f41; }
+            QCheckBox::indicator:checked { background: #F08000;
+                border-color: #F08000; image: url(assets/checkmark.svg); }
+            QCheckBox:disabled { color: #777; }
+        """)
         MainWindow.show_whole_world_checkbox.setChecked(
             MainWindow.config.getboolean('Display', 'show_whole_world', fallback=False))
         MainWindow.show_whole_world_checkbox.setToolTip(

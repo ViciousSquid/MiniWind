@@ -6,6 +6,8 @@ directory so global registries, cached pages and saved layouts cannot leak.
 """
 
 import argparse
+import configparser
+import importlib
 import json
 import os
 from pathlib import Path
@@ -47,8 +49,11 @@ def main():
     font = app.font()
     font.setPointSize(11)
     app.setFont(font)
-    import game
-    game.install()
+    config = configparser.ConfigParser()
+    config.read(source / 'settings.ini')
+    game_module = config.get('Startup', 'game_module', fallback='').strip()
+    if game_module:
+        importlib.import_module(game_module).install()
     from editor.main_window import MainWindow
     window = MainWindow(str(source))
     window.resize(1440, 900)

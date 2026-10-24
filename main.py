@@ -47,7 +47,7 @@ dark_stylesheet = """
     QPushButton:pressed {
         background-color: #2b2b2b;
     }
-    QLineEdit, QTextEdit, QSpinBox, QComboBox {
+    QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
         background-color: #3c3f41;
         border: 1px solid #555;
         color: #e0e0e0;
