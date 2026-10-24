@@ -164,6 +164,7 @@ def test_whole_world_toggle_keeps_edits_and_history_and_returns_to_local_cells(m
     checkbox = main_window.show_whole_world_checkbox
     assert checkbox.text() == 'Show whole world'
     assert checkbox.x() > main_window.display_mode_combobox.x()
+    checkbox.setChecked(False)
     history = list(state.undo_stack)
     checkbox.setChecked(True)
     assert state.editor_stream.whole_world
@@ -180,3 +181,14 @@ def test_whole_world_toggle_keeps_edits_and_history_and_returns_to_local_cells(m
     assert next(b for b in saved['brushes'] if b['id'] == 'far-brush')['name'] == 'Edited while showing all'
     assert list(state.undo_stack) == history
     assert main_window.config.getboolean('Display', 'show_whole_world') is False
+
+
+@pytest.mark.parametrize('show_whole_world', [True, False])
+def test_map_load_shows_the_whole_world_by_default_and_honours_opt_out(main_window, show_whole_world):
+    checkbox = main_window.show_whole_world_checkbox
+    assert checkbox.isChecked()
+    if not show_whole_world:
+        checkbox.setChecked(False)
+    assert main_window._load_level(level())
+    assert main_window.state.editor_stream.whole_world is show_whole_world
+    assert ('far-brush' in ids(main_window.state)) is show_whole_world

@@ -63,7 +63,7 @@ jobs:
           draw = ImageDraw.Draw(comparison)
           font = ImageFont.load_default(size=28)
           for x, label, im in ((0, 'BEFORE | work branch', images[0]),
-                               (width, 'AFTER | camera-local editor chunks', images[1])):
+                               (width, 'AFTER | macOS editor fixes', images[1])):
               draw.text((x + 20, 16), label, font=font, fill='white')
               comparison.paste(im, (x, 58))
           draw.text((20, height + 72), 'Native macOS / Cocoa | Same village map and camera',
@@ -98,6 +98,9 @@ jobs:
         run: >-
           python -m pytest -q
           tests/editor/test_macos_layout.py
+          tests/editor/test_editor_freelook.py
+          tests/editor/test_mouselook_warp.py
+          tests/editor/test_shortcuts_window.py
           tests/editor/test_loading_overlay.py
           tests/editor/test_toolbar_button_size.py
           tests/editor/test_default_layout.py
@@ -106,6 +109,7 @@ jobs:
           tests/persistence
           tests/undo_redo
           tests/renderer/test_terrain_context.py
+          tests/renderer/test_light_fade.py
           plugins/bigworld/tests
           game/tests/test_property_tabs.py
           --junitxml=artifacts/macos-tests.xml

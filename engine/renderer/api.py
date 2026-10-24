@@ -70,6 +70,8 @@ FRAME_INPUT = {
                    'light cap keeps the closest (the host passes the player in play)',
     'light_range': 'optional float: the reach of light_focus in world units '
                    '(default engine.renderer.core.visibility.ACTIVE_LIGHT_RANGE)',
+    'light_fade_range': 'optional float: finish the intensity fade before this '
+                       'world-streaming boundary; does not change light selection',
     'terrain': 'engine.terrain.Terrain or None; the renderer prepares whatever '
                'GPU state it needs from it when it first sees it',
     # Selection (same object as render_scene's primary_selection argument)

@@ -263,9 +263,14 @@ class VisibilityMixin:
                 stream = LightStream()
                 if self is not None:
                     self._light_stream = stream
-            return (table, stream.select(table, table.light_slots, focus,
-                                         usable=usable,
-                                         reach=config.get('light_range')))
+            slots = stream.select(table, table.light_slots, focus,
+                                  usable=usable, reach=config.get('light_range'),
+                                  fade_reach=config.get('light_fade_range'))
+            if self is not None:
+                self._light_fade = (table, dict(zip(slots, stream.weights)))
+            return (table, slots)
+        if self is not None:
+            self._light_fade = None
         slots = table.light_slots
         if len(slots):
             slots = slots[usable(slots)]
