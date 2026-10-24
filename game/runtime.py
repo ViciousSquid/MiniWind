@@ -934,7 +934,7 @@ class MiniwindSession(SettlementLaw):
         * an animal gets a head of its own kind (:func:`heads.animal_head`):
           its own image once drawn, the placeholder head until then;
         * an NPC whose role is "guard" gets a random *guard* head
-          (guard01…guard16), matching the editor's guard-head option;
+          (guard01…guard26), matching the editor's guard-head option;
         * everyone else gets a random regular head that is never the player's.
         """
         from .rpg import heads
