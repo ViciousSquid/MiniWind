@@ -62,14 +62,14 @@ jobs:
           comparison = Image.new('RGB', (width * 2, height + 100), '#16181b')
           draw = ImageDraw.Draw(comparison)
           font = ImageFont.load_default(size=28)
-          for x, label, im in ((0, 'BEFORE — work branch', images[0]),
-                               (width, 'AFTER — camera-local editor chunks', images[1])):
+          for x, label, im in ((0, 'BEFORE | work branch', images[0]),
+                               (width, 'AFTER | camera-local editor chunks', images[1])):
               draw.text((x + 20, 16), label, font=font, fill='white')
               comparison.paste(im, (x, 58))
-          draw.text((20, height + 72), 'Native macOS / Cocoa — same village map and camera',
+          draw.text((20, height + 72), 'Native macOS / Cocoa | Same village map and camera',
                     font=ImageFont.load_default(size=19), fill='#b7bdc7')
           comparison.save(folder / 'comparison.png', optimize=True)
-          preview = comparison.resize((1440, round(comparison.height / 2)), Image.Resampling.LANCZOS)
+          preview = comparison.resize((1920, round(comparison.height * 2 / 3)), Image.Resampling.LANCZOS)
           preview.save(folder / 'comparison-preview.png', optimize=True)
           # The preview also travels through the GitHub log connector so chat
           # clients can display it without an authenticated artifact download.
@@ -105,6 +105,7 @@ jobs:
           tests/editor/test_restore_world_on_stop.py
           tests/persistence
           tests/undo_redo
+          tests/renderer/test_terrain_context.py
           plugins/bigworld/tests
           game/tests/test_property_tabs.py
           --junitxml=artifacts/macos-tests.xml

@@ -72,6 +72,10 @@ dark_stylesheet = """
         titlebar-close-icon: url(assets/close.png);
         titlebar-normal-icon: url(assets/undock.png);
     }
+    QToolBar {
+        background-color: #2b2b2b;
+        border: none;
+    }
     QDockWidget::title {
         background-color: #3c3f41;
         padding-left: 10px;

@@ -86,6 +86,10 @@ camera. Crossing a cell boundary loads nearby cells and releases distant
 objects, using the same 512-unit cells, activation radius and hysteresis as
 Play. Selected objects stay resident until the selection is released.
 
+Use **Show whole world** beside the status bar's **Display** dropdown to load
+every editor cell. Clear the checkbox to return to the area around the camera;
+switching either way preserves edits and the undo history.
+
 The existing JSON file is read once to build an index of serialized records;
 distant records do not become live editor entities or renderer geometry.
 Edits are committed before objects leave residency. Save and undo include the

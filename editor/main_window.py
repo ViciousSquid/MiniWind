@@ -1634,6 +1634,9 @@ class MainWindow(QMainWindow):
 
     def update_play_button_color(self):
         """Update the Play button color based on current mode."""
+        checkbox = getattr(self, 'show_whole_world_checkbox', None)
+        if checkbox is not None:
+            checkbox.setEnabled(not self.view_3d.play_mode)
         if hasattr(self, 'play_button'):
             if self.view_3d.play_mode:
                 # Red for play mode
@@ -2728,6 +2731,18 @@ class MainWindow(QMainWindow):
     def set_camera_mode(self, text):
         """Switch the play-mode camera between First Person and Overhead."""
         self.view_3d.set_camera_mode(text)
+
+    def set_show_whole_world(self, shown):
+        if not self.config.has_section('Display'):
+            self.config.add_section('Display')
+        self.config.set('Display', 'show_whole_world', str(bool(shown)))
+        self.save_config()
+        if self.view_3d.play_mode:
+            return
+        title = "Loading whole world" if shown else "Loading nearby cells"
+        with self.loading_overlay.busy(title, "Updating the editor", 30):
+            if self.state.set_editor_whole_world(shown, self.view_3d.camera.pos):
+                self.update_all_ui()
 
     def sync_camera_mode_combo(self):
         """Show the camera mode the game is actually using in the Camera dropdown.
@@ -4495,6 +4510,9 @@ class MainWindow(QMainWindow):
         # level as it was. Clearing first emptied the scene for any map that
         # got past the shape check.
         self.state.load_from_data(level_data, validated=validated, stream_editor=True)
+        self.state.set_editor_whole_world(
+            self.config.getboolean('Display', 'show_whole_world', fallback=False),
+            self.view_3d.camera.pos)
         self.state.mark_lighting_dirty()
 
         # Drop the previous map's terrain; this also clears terrain_data,

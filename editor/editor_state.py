@@ -492,6 +492,8 @@ class EditorState:
         if self.editor_stream is not None and not self.editor_stream.suspended:
             self.editor_stream.merge(data['brushes'], data['things'])
             data.update(self.editor_stream.all_data())
+            data['things'] = [r for r in data['things']
+                              if not r.get('properties', {}).get('_cutscene_temporary')]
 
         # When this map was first written. Set once and carried forward on every
         # later save, so it means "created" and not "saved most recently" — the
@@ -531,7 +533,7 @@ class EditorState:
     def stream_editor_camera(self, position, *, force=False):
         """Publish camera-local cells; keep selected objects resident during edits."""
         stream = self.editor_stream
-        if stream is None or stream.suspended:
+        if stream is None or stream.suspended or stream.whole_world:
             return False
         changed = stream.epoch != self.world_epoch
         if not force and not changed and stream.same_cell(position):
@@ -589,6 +591,20 @@ class EditorState:
         stream.suspended = True
         self._invalidate_entity_caches()
         stream.remember_resident(self)
+
+    def set_editor_whole_world(self, shown, position):
+        """Switch residency without replacing objects or adding undo entries."""
+        stream = self.editor_stream
+        if stream is None or stream.whole_world == bool(shown):
+            return False
+        if shown:
+            self.materialize_editor_world()
+            stream.suspended = False
+            stream.whole_world = True
+        else:
+            stream.whole_world = False
+            self.stream_editor_camera(position, force=True)
+        return True
 
     def _collect_logic_graph_positions(self):
         """The logic graph's node positions, for the map file.
@@ -942,6 +958,7 @@ class EditorState:
             stream.merge(self._serialize_brushes(), checkpoint['things'])
             checkpoint.update(stream.all_data())
             checkpoint['editor_camera'] = stream.position
+            checkpoint['editor_whole_world'] = stream.whole_world
         return json.dumps(checkpoint, separators=(',', ':'), check_circular=False)
 
     def save_state(self):
@@ -1041,6 +1058,9 @@ class EditorState:
                 pinned = [entry[2] for entry in state.get('selection', [])
                           if isinstance(entry, (list, tuple)) and len(entry) > 2]
                 local = stream.local_data(pinned=pinned)
+                if state.get('editor_whole_world'):
+                    stream.whole_world = True
+                    local = stream.all_data()
                 state = dict(state, **local)
 
         # Restore brushes with I/O connections

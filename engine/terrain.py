@@ -3,11 +3,13 @@ import os
 import numpy as np
 try:
     import OpenGL.GL as gl
+    from OpenGL import platform as gl_platform
     from OpenGL.GL.shaders import compileProgram, compileShader
 except ImportError:  # Headless/core tier: terrain data logic is still usable.
     gl = None
     compileProgram = None
     compileShader = None
+    gl_platform = None
 import glm
 import ctypes
 from dataclasses import dataclass, field
@@ -561,6 +563,11 @@ class Terrain:
         """
         if gl is None or compileProgram is None or compileShader is None:
             return 0
+        # On macOS an unbound glCreateShader may segfault instead of raising.
+        # Terrain is also constructed during map loading and headless data
+        # operations; the render thread retries once its context is current.
+        if gl_platform is None or not gl_platform.PLATFORM.GetCurrentContext():
+            return 0
         if vertex_name in self._failed_programs:
             return 0
         try:
@@ -599,6 +606,8 @@ class Terrain:
         self.uniforms = {}
 
     def _init_grass_shader(self):
+        if gl_platform is None or not gl_platform.PLATFORM.GetCurrentContext():
+            return
         try:
             vertex_code = shaders.DEFAULT_SHADERS['grass.vert']
             fragment_code = shaders.DEFAULT_SHADERS['grass.frag']

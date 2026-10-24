@@ -86,6 +86,17 @@ def main():
 
     def capture():
         try:
+            # Flush the native stacked-widget transition before grabbing a
+            # window containing a QOpenGLWidget (Cocoa can retain the previous
+            # console backing store until its next paint).
+            window.properties_tab_widget.setCurrentWidget(window.property_editor)
+            window.debug_console.hide()
+            window.property_editor.show()
+            app.processEvents()
+            window.property_editor.repaint()
+            window.properties_tab_widget.repaint()
+            metrics['properties_tab'] = window.properties_tab_widget.currentIndex()
+            metrics['properties_visible'] = window.property_editor.isVisible()
             window.grab().save(str(output))
             metrics['paint_ms'] = window.view_3d.paint_ms
             overlay = window.loading_overlay

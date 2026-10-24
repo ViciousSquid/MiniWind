@@ -145,3 +145,38 @@ def test_hierarchy_search_includes_unloaded_entity_types(main_window):
     main_window.state.load_from_data(level(), stream_editor=True)
     found = main_window.scene_hierarchy.find_matches('light')
     assert {t.properties['id'] for t in found} == {'near-light', 'far-light'}
+
+
+def test_temporary_wizard_actors_remain_live_and_do_not_leak_into_saved_maps():
+    state = load()
+    actor = Light(pos=[0, 0, 0], properties={'_cutscene_temporary': True})
+    state.save_state()
+    state.things.append(actor)
+    state.stream_editor_camera([8192, 40, 0])
+    assert any(t is actor for t in state.things)
+    saved_ids = {r['properties']['id'] for r in state.get_level_data()['things']}
+    assert actor.properties['id'] not in saved_ids
+
+
+def test_whole_world_toggle_keeps_edits_and_history_and_returns_to_local_cells(main_window):
+    main_window.state.load_from_data(level(), stream_editor=True)
+    state = main_window.state
+    checkbox = main_window.show_whole_world_checkbox
+    assert checkbox.text() == 'Show whole world'
+    assert checkbox.x() > main_window.display_mode_combobox.x()
+    history = list(state.undo_stack)
+    checkbox.setChecked(True)
+    assert state.editor_stream.whole_world
+    assert 'far-brush' in ids(state)
+    state.find_entity_by_id('far-brush')['name'] = 'Edited while showing all'
+    assert not state.stream_editor_camera([0, 40, 0])
+    checkpoint = state.snapshot()
+    state.restore_state(checkpoint)
+    assert state.editor_stream.whole_world
+    checkbox.setChecked(False)
+    assert not state.editor_stream.whole_world
+    assert 'far-brush' not in ids(state)
+    saved = state.get_level_data()
+    assert next(b for b in saved['brushes'] if b['id'] == 'far-brush')['name'] == 'Edited while showing all'
+    assert list(state.undo_stack) == history
+    assert main_window.config.getboolean('Display', 'show_whole_world') is False

@@ -24,6 +24,7 @@ class EditorCellStream:
         self.records = {'brushes': {}, 'things': {}}
         self.resident = {'brushes': set(), 'things': set()}
         self.suspended = False
+        self.whole_world = False
         self.epoch = -1
         seen = set()
         for kind in self.records:
@@ -82,6 +83,8 @@ class EditorCellStream:
             + self.manager.persistent_things)}
         brush_ids.update(pinned)
         thing_ids.update(pinned)
+        thing_ids.update(identity for identity, record in self.records['things'].items()
+                         if record.get('properties', {}).get('_cutscene_temporary'))
         # Preserve file order, including PlayerStart creation order.
         return {kind: [self.records[kind][identity] for identity in
                        sorted(ids & self.records[kind].keys(), key=self.order[kind].__getitem__)]
