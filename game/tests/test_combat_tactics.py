@@ -161,3 +161,58 @@ def test_out_of_magicka_a_caster_closes_like_a_swordsman():
     caster = _caster()
     caster.properties["max_magicka"] = 0
     assert tactics.waypoint(caster, (0.0, 0.0, 0.0), (200.0, 0.0, 0.0)) is None
+
+
+# ------------------------------------------------------------ crossbows
+
+def _archery(retreating=False):
+    import random
+    from types import SimpleNamespace
+    from ..npc_archery import NpcArchery
+
+    class _Combat:
+        shots = []
+
+        def spawn_projectile(self, pos, vel, **kw):
+            self.shots.append(kw)
+            return None
+
+    combat = _Combat()
+    logic = SimpleNamespace(combat_runtime=combat, monster_ai=None,
+                            player_runtime=SimpleNamespace(player=None))
+    session = SimpleNamespace(logic=logic, rng=random.Random(1), _archery_clock=10.0,
+                              _player_pos=lambda: [100.0, 0.0, 0.0], _arrow_tags={},
+                              tactics=SimpleNamespace(note_shot=lambda t: None,
+                                                      retreating=lambda t: retreating))
+    session.archery = NpcArchery(session)
+    return session, combat
+
+
+def _crossbowman():
+    return _Actor(attack_style="bow", equipped_weapon="crossbow",
+                  inventory=[{"id": "iron_dagger", "qty": 1}])
+
+
+def test_a_crossbowman_shoots_from_the_hip_while_backing_away():
+    session, combat = _archery(retreating=True)
+    shooter = _crossbowman()
+    assert session.archery.shot_hook(shooter, [400.0, 0, 0], None, 400.0 ** 2) is True
+    assert len(combat.shots) == 1
+
+
+def test_an_archer_with_a_bow_holds_its_fire_while_backing_away():
+    session, combat = _archery(retreating=True)
+    archer = _Actor(attack_style="bow", equipped_weapon="long_bow", inventory=[])
+    assert session.archery.shot_hook(archer, [400.0, 0, 0], None, 400.0 ** 2) is True
+    assert combat.shots == [] and not session.archery.drawing
+
+
+def test_point_blank_a_loaded_crossbow_fires_then_the_blade_comes_out():
+    session, combat = _archery()
+    shooter = _crossbowman()
+    assert session.archery.shot_hook(shooter, [100.0, 0, 0], None, 100.0 ** 2) is True
+    assert len(combat.shots) == 1
+    # Winding back: the next blow up close is the dagger's (the engine's strike).
+    assert session.archery.shot_hook(shooter, [100.0, 0, 0], None, 100.0 ** 2) is False
+    assert shooter.properties["_active_weapon"] == "iron_dagger"
+    assert len(combat.shots) == 1

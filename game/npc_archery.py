@@ -98,6 +98,18 @@ def is_crossbow(props) -> bool:
     return d is not None and d.get("kind") == items.KIND_CROSSBOW
 
 
+def crossbow_in_kit(props):
+    """The crossbow *props*' actor would fight with at range, or ''."""
+    from .rpg import items
+    try:
+        weapon = combat_loadout.weapon_for(combat_loadout.build_loadout(props),
+                                           combat_loadout.BOW)
+    except Exception:
+        return ""
+    d = items.get(weapon) if weapon else None
+    return weapon if d is not None and d.get("kind") == items.KIND_CROSSBOW else ""
+
+
 def is_bow_shot(props, distance: float) -> bool:
     """Whether an actor fights this shot with a bow.
 
@@ -139,15 +151,24 @@ class NpcArchery:
         except Exception:
             pass
         session = self.session
+        # A crossbow needs no draw: a loaded one is shot from the hip, on the
+        # move or point-blank, where a bow would need a stand and a blade a
+        # step closer.
+        now = getattr(session, "_archery_clock", 0.0)
+        hip = ""
+        if now >= float(props.get("_bow_ready_at", 0.0) or 0.0):
+            hip = crossbow_in_kit(props)
         tactics = getattr(session, "tactics", None)
+        backing = False
         if tactics is not None:
             tactics.note_shot(thing)
-            if tactics.retreating(thing):
+            backing = tactics.retreating(thing)
+            if backing and not hip:
                 return True               # backing away: no shot this time
         # A caster heals itself when badly hurt, and fights with its spells
         # wherever its loadout picks magic (game/npc_magic.py).
         magic = getattr(session, "npc_magic", None)
-        if magic is not None:
+        if magic is not None and not backing:
             target = aggro_monster if aggro_monster is not None else "player"
             try:
                 if magic.try_heal(thing):
@@ -159,7 +180,10 @@ class NpcArchery:
                         return True       # no spell to cast: close in instead
             except Exception as exc:
                 print(f"[MiniWind] NPC spell failed: {exc}")
-        if not is_bow_shot(props, distance):
+        point_blank = bool(hip) and distance <= MELEE_BAND
+        if point_blank:
+            props["_active_weapon"] = hip
+        if not point_blank and not is_bow_shot(props, distance):
             # A fighter without a ranged weapon has to close the distance;
             # extending pursuit must not turn a dagger into a hitscan rifle.
             loadout = combat_loadout.build_loadout(props)
@@ -176,7 +200,6 @@ class NpcArchery:
             return False
         if id(thing) in self.drawing:
             return True               # already drawing: this shot is that one
-        now = getattr(session, "_archery_clock", 0.0)
         if now < float(props.get("_bow_ready_at", 0.0) or 0.0):
             return True               # still nocking the next arrow
         target = aggro_monster if aggro_monster is not None else "player"
