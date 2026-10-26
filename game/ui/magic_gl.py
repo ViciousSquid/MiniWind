@@ -154,8 +154,10 @@ in vec2 uv;
 uniform sampler2D scene;
 uniform vec4 lens[8];        // xy centre (uv), z radius (uv height), w strength
 uniform vec4 ring[8];        // x progress, yzw rim colour
+uniform float shimmer[8];    // a ward's ripple through the glass (0: none)
 uniform int count;
 uniform float aspect;
+uniform float time;
 out vec4 frag;
 void main() {
     vec2 offR = vec2(0.0), offG = vec2(0.0), offB = vec2(0.0);
@@ -171,7 +173,12 @@ void main() {
         if (r >= 1.0) continue;
         // Fisheye: the middle magnified, squeezed toward the rim.
         float k = s * (1.0 - r * r) * (1.0 - r * r);
+        // A ward shimmers: slow ripples run round and through the glass.
+        float ang = atan(d.y, d.x);
+        k *= 1.0 + shimmer[i] * 0.18 * sin(r * 14.0 - time * 3.1 + sin(ang * 3.0 + time * 1.3));
         vec2 pull = -(d * k);
+        pull += shimmer[i] * 0.004 * (1.0 - r) * R
+              * vec2(sin(ang * 5.0 + time * 2.3 + r * 9.0), cos(ang * 4.0 - time * 1.9));
         // The shock ring refracts outward as it runs.
         float at = ring[i].x;
         float wave = exp(-pow((r - at) / 0.07, 2.0)) * s;
@@ -244,7 +251,8 @@ def _init(gl) -> bool:
 
         _S.lens_prog = _compile(gl, _LENS_VERT, _LENS_FRAG)
         _S.lens_loc = {n: gl.glGetUniformLocation(_S.lens_prog, n)
-                       for n in ("scene", "lens", "ring", "count", "aspect")}
+                       for n in ("scene", "lens", "ring", "shimmer", "count", "aspect",
+                                 "time")}
         _S.lens_vao = gl.glGenVertexArrays(1)
         _S.ok = True
     except Exception as exc:
@@ -312,9 +320,9 @@ def draw_sprites(projection, view, sprites, now=None) -> int:
 
 
 def project_lenses(projection, view, lenses, width, height):
-    """``[(cx, cy, radius, strength, progress, colour)]`` in screen uv for the
-    lenses in front of the camera (``(x, y, z, strength, radius_world,
-    progress, colour)`` each)."""
+    """``[(cx, cy, radius, strength, progress, colour, shimmer)]`` in screen uv
+    for the lenses in front of the camera (``(x, y, z, strength, radius_world,
+    progress, colour, shimmer)`` each)."""
     import glm
     out = []
     if not lenses or width <= 0 or height <= 0:
@@ -322,7 +330,7 @@ def project_lenses(projection, view, lenses, width, height):
     vp = projection * view
     right, _up = _camera_axes(view)
     aspect = width / float(height)
-    for x, y, z, strength, radius, progress, colour in lenses:
+    for x, y, z, strength, radius, progress, colour, shimmer in lenses:
         if strength <= 1e-3:
             continue
         c = vp * glm.vec4(x, y, z, 1.0)
@@ -337,7 +345,7 @@ def project_lenses(projection, view, lenses, width, height):
         r = math.hypot((ex - cx) * aspect, ey - cy)
         if r <= 1e-4 or cx < -r or cx > 1 + r or cy < -r or cy > 1 + r:
             continue
-        out.append((cx, cy, min(r, 1.5), min(1.0, strength), progress, colour))
+        out.append((cx, cy, min(r, 1.5), min(1.0, strength), progress, colour, shimmer))
     return out[:8]
 
 
@@ -394,11 +402,15 @@ def draw_lenses(projection, view, lenses) -> int:
         gl.glUniform1i(loc["scene"], 0)
         lens = np.zeros((8, 4), dtype=np.float32)
         ring = np.zeros((8, 4), dtype=np.float32)
-        for i, (cx, cy, r, s, progress, colour) in enumerate(screen):
+        shimmer = np.zeros(8, dtype=np.float32)
+        for i, (cx, cy, r, s, progress, colour, ripple) in enumerate(screen):
             lens[i] = (cx, cy, r, s)
             ring[i] = (progress, *colour)
+            shimmer[i] = ripple
         gl.glUniform4fv(loc["lens"], 8, lens)
         gl.glUniform4fv(loc["ring"], 8, ring)
+        gl.glUniform1fv(loc["shimmer"], 8, shimmer)
+        gl.glUniform1f(loc["time"], float(time.perf_counter() % 1000.0))
         gl.glUniform1i(loc["count"], len(screen))
         gl.glUniform1f(loc["aspect"], w / float(h))
         gl.glBindVertexArray(_S.lens_vao)

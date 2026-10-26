@@ -2193,7 +2193,92 @@ def open_spell_editor(parent=None):
             nums.addWidget(self.spd)
             nums.addStretch(1)
             root.addLayout(nums)
+            self._effects_rows(root, _lab)
             self._restyle()
+
+        # -- Effects: how the spell looks (game/magic_fx.py) ------------------
+        def _vis(self, key, value):
+            """Set one visual override; None goes back to the element's look."""
+            v = self.d.setdefault("visuals", {})
+            if value is None:
+                v.pop(key, None)
+            else:
+                v[key] = value
+
+        def _effects_rows(self, root, _lab):
+            from .magic_fx import ELEMENT_LOOKS, HIT_TINTS, TRAILS
+            vis = dict(self.d.get("visuals") or {})
+            base = ELEMENT_LOOKS.get(self.d.get("element"), ELEMENT_LOOKS["magic"])
+
+            def combo(key, options, current, tip):
+                box = QtWidgets.QComboBox()
+                box.addItems(options)
+                box.setCurrentText(current)
+                box.setToolTip(tip)
+                box.currentTextChanged.connect(
+                    lambda t, k=key: self._vis(k, None if t == "auto" else t))
+                return box
+
+            def flag(key, tip):
+                cur = vis.get(key)
+                box = QtWidgets.QComboBox()
+                box.addItems(["auto", "on", "off"])
+                box.setCurrentText("auto" if cur is None else ("on" if cur else "off"))
+                box.setToolTip(tip)
+                box.currentTextChanged.connect(
+                    lambda t, k=key: self._vis(k, None if t == "auto" else t == "on"))
+                return box
+
+            def number(key, top, step, tip, decimals=0):
+                box = QtWidgets.QDoubleSpinBox()
+                box.setDecimals(decimals)
+                box.setRange(-step, top)
+                box.setSingleStep(step)
+                box.setSpecialValueText("auto")       # the minimum reads "auto"
+                cur = vis.get(key)
+                box.setValue(-step if cur is None else float(cur))
+                box.setToolTip(f"{tip} (auto: {base.get(key)})")
+                box.valueChanged.connect(
+                    lambda v, k=key, lo=-step, d=decimals:
+                    self._vis(k, None if v <= lo else (round(v, 2) if d else int(v))))
+                return box
+
+            head = _lab("Effects")
+            head.setStyleSheet("color:%s; border:none; background:transparent;"
+                               "font-weight:bold;" % self.ink)
+            row1 = QtWidgets.QHBoxLayout(); row1.setSpacing(8)
+            row1.addWidget(head)
+            row1.addWidget(_lab("Trail"))
+            row1.addWidget(combo("trail", ["auto", *TRAILS], vis.get("trail", "auto"),
+                                 "What the bolt leaves behind it in flight"))
+            row1.addWidget(_lab("Cast"))
+            row1.addWidget(combo("cast", ["auto", "runes", "none"], vis.get("cast", "auto"),
+                                 "The rune circle under the caster's feet"))
+            row1.addWidget(_lab("Hit wash"))
+            row1.addWidget(combo("hit_tint", ["auto", *HIT_TINTS, "none"],
+                                 vis.get("hit_tint", "auto"),
+                                 "What the screen does when this spell hits the player"))
+            row1.addStretch(1)
+            root.addLayout(row1)
+
+            row2 = QtWidgets.QHBoxLayout(); row2.setSpacing(8)
+            row2.addWidget(_lab("Orb"))
+            row2.addWidget(number("orb", 200, 2, "Bolt orb size, world units"))
+            row2.addWidget(_lab("Flash"))
+            row2.addWidget(number("flash", 600, 10, "Impact flash size"))
+            row2.addWidget(_lab("Ring"))
+            row2.addWidget(number("ring", 800, 10, "Impact shockwave size"))
+            row2.addWidget(_lab("Sparks"))
+            row2.addWidget(number("sparks", 120, 1, "Sparks thrown by the impact"))
+            row2.addWidget(_lab("Fisheye"))
+            row2.addWidget(number("lens", 1.0, 0.05,
+                                  "Screen lens strength at the impact, 0 for none", 2))
+            row2.addWidget(_lab("Ice star"))
+            row2.addWidget(flag("shards", "An ice star at the impact"))
+            row2.addWidget(_lab("Rays"))
+            row2.addWidget(flag("rays", "A burst of light rays at the impact"))
+            row2.addStretch(1)
+            root.addLayout(row2)
 
         def _paint(self, rgb):
             r, g, b = int(rgb[0]), int(rgb[1]), int(rgb[2])
@@ -2238,8 +2323,10 @@ def open_spell_editor(parent=None):
             layout.addWidget(_hint_label(
                 QtWidgets,
                 "Edit the spell definitions as cards. Colour drives the projectile "
-                "bolt and its light. Click a card to select it for deletion. Saving "
-                "writes game/data/spells.json and applies to the live game."))
+                "bolt and its light; Effects set how it looks in play (anything on "
+                "'auto' follows its element). Click a card to select it for "
+                "deletion. Saving writes game/data/spells.json and applies to the "
+                "live game."))
 
             self.scroll = QtWidgets.QScrollArea()
             self.scroll.setWidgetResizable(True)

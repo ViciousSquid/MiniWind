@@ -56,9 +56,14 @@ BODY_LIFT = 56.0
 BOLT_HEIGHT = 48.0
 #: A ward bubble's diameter, comfortably round the wearer; how strongly it
 #: bends what is behind it, and where (0 centre .. 1 edge) its rim refracts.
-WARD_SIZE = 150.0
+WARD_SIZE = 200.0
 WARD_LENS = 0.45
 WARD_RIM = 0.9
+#: The ward breathes: its size swells by this share, this many times a second,
+#: and its lens shimmers (a ripple through the glass) by WARD_SHIMMER.
+WARD_PULSE = 0.06
+WARD_PULSE_HZ = 0.7
+WARD_SHIMMER = 1.0
 #: A hostile bolt ending this near the player struck the player.
 PLAYER_HIT_REACH = 110.0
 #: The resurrection's dark red wash: in, held, out (3 seconds in all).
@@ -447,7 +452,7 @@ class MagicFX:
 
         *sprites*: ``(n, 12)`` float32 rows ``x, y, z, size, r, g, b, a, mode,
         progress, seed, flat``. *lenses*: ``[(x, y, z, strength, radius,
-        progress, (r, g, b))]``. *tints*: ``[((r, g, b), alpha, style,
+        progress, (r, g, b), shimmer)]``. *tints*: ``[((r, g, b), alpha, style,
         progress, envelope)]``, *alpha* being the peak scaled by the 0..1
         *envelope*.
         """
@@ -476,14 +481,15 @@ class MagicFX:
         ward_lenses = []
         for pos, colour, kind in (self._wards_now() or ()):
             c = _rgb(colour)
-            size = WARD_SIZE * (0.88 if kind == "berserk" else 1.0)
             # The ward is a lens: the world behind it bulges as through glass,
-            # its rim refracting (the shock ring, held at the edge), breathing.
-            breathe = 1.0 + 0.04 * math.sin(now * 2.2)
+            # its rim refracting (the shock ring, held at the edge), and it
+            # breathes -- a gentle swell -- with a shimmer through the glass.
+            breathe = 1.0 + WARD_PULSE * math.sin(now * math.tau * WARD_PULSE_HZ)
+            size = WARD_SIZE * (0.88 if kind == "berserk" else 1.0) * breathe
             ward_lenses.append((float(pos[0]), float(pos[1]) + BODY_LIFT, float(pos[2]),
-                                WARD_LENS * breathe, size * 0.5, WARD_RIM, c))
+                                WARD_LENS, size * 0.5, WARD_RIM, c, WARD_SHIMMER))
             extra.append([float(pos[0]), float(pos[1]) + BODY_LIFT, float(pos[2]),
-                          WARD_SIZE * (0.88 if kind == "berserk" else 1.0), *c, 0.9, BUBBLE,
+                          size, *c, 0.9, BUBBLE,
                           (now * 0.35) % 1.0, 0.5 if kind == "invisibility" else 0.0, 0.0])
         if extra:
             sprites = np.concatenate((sprites, np.asarray(extra, dtype=np.float32)))
@@ -493,7 +499,7 @@ class MagicFX:
             if t < 0:
                 continue
             env = min(1.0, (now - start) / 0.06) * (1.0 - t) ** 2
-            out_lenses.append((x, y, z, strength * env, radius, t, (cr, cg, cb)))
+            out_lenses.append((x, y, z, strength * env, radius, t, (cr, cg, cb), 0.0))
         out_tints = []
         for start, fade_in, hold, fade_out, colour, peak, style in tints:
             t = now - start

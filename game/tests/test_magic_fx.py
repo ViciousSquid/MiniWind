@@ -133,7 +133,7 @@ def test_wards_are_drawn_as_bubbles_round_the_wearer():
     sprites = fx.frame()[0]
     bubble = sprites[sprites[:, 8] == mf.BUBBLE]
     assert len(bubble) == 1 and bubble[0, 1] == pytest.approx(mf.BODY_LIFT)
-    assert bubble[0, 3] == mf.WARD_SIZE
+    assert bubble[0, 3] == pytest.approx(mf.WARD_SIZE, rel=mf.WARD_PULSE + 1e-6)
 
 
 def test_sparks_fly_and_fall():
@@ -150,7 +150,20 @@ def test_a_ward_is_a_fisheye_lens_too():
     fx.wards = lambda: [((5.0, 0.0, 5.0), (110, 190, 255), "shield")]
     lenses = fx.frame()[1]
     assert len(lenses) == 1
-    x, y, z, strength, radius, rim, _colour = lenses[0]
+    x, y, z, strength, radius, rim, _colour, shimmer = lenses[0]
     assert (x, z) == (5.0, 5.0) and y == pytest.approx(mf.BODY_LIFT)
-    assert strength > 0.3 and radius == pytest.approx(mf.WARD_SIZE / 2)
+    assert strength > 0.3 and shimmer > 0.0
+    assert radius == pytest.approx(mf.WARD_SIZE / 2, rel=mf.WARD_PULSE + 1e-6)
     assert rim == mf.WARD_RIM
+
+
+def test_a_ward_gently_breathes():
+    fx, clock = _fx()
+    fx.wards = lambda: [((0.0, 0.0, 0.0), (110, 190, 255), "shield")]
+    sizes = []
+    for k in range(20):
+        clock.t = 100.0 + k * 0.1
+        sprites = fx.frame()[0]
+        sizes.append(float(sprites[sprites[:, 8] == mf.BUBBLE][0, 3]))
+    assert max(sizes) - min(sizes) > mf.WARD_SIZE * mf.WARD_PULSE
+    assert max(sizes) <= mf.WARD_SIZE * (1 + mf.WARD_PULSE) + 1e-3
