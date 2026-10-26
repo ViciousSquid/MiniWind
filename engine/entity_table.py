@@ -110,7 +110,7 @@ except ImportError:                                   # pragma: no cover
 #: Never drawn by the Thing passes: a PathNode (it has its own debug pass), or
 #: an object that is not a Thing at all.
 ENT_SKIP            = 1 << 0
-#: Drawn as a sprite whatever else is true -- a Portal or a Monster.
+#: Drawn as a sprite whatever else is true -- a Portal, Monster or LevelChanger.
 ENT_ALWAYS_SPRITE   = 1 << 1
 #: Carries a ``model_path``.
 ENT_HAS_MODEL       = 1 << 2
@@ -335,6 +335,10 @@ def _entity_class_bits(thing) -> int:
     # as what will actually be handed over -- a dict with 'monster_type'.
     if Monster is not None and isinstance(thing, Monster):
         bits |= ENT_MONSTER | ENT_ALWAYS_SPRITE
+    # A level transition is gameplay scenery: keep its icon in Play even
+    # with editor sprites off or stale model/hidden properties on the entity.
+    if LevelChanger is not None and isinstance(thing, LevelChanger):
+        bits |= ENT_ALWAYS_SPRITE
 
     props = getattr(thing, 'properties', None)
     if not isinstance(props, dict):
@@ -1593,7 +1597,7 @@ def classify_slots(table, slots, hidden, is_play, show_sprites):
     The chain being reproduced, in its original order:
 
     1. a PathNode, or a non-Thing, is skipped;
-    2. a Portal, or a monster snapshot, is a sprite;
+    2. a Portal, monster snapshot or LevelChanger is a sprite;
     3. a visible model (``model_path``, ``render_mode == 'model'``, not hidden)
        goes to the model pass;
     4. otherwise the entity's *kind* decides -- the

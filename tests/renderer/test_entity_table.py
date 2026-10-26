@@ -78,6 +78,25 @@ def test_a_monster_classifies_as_what_is_actually_published():
         "anything else; got %s" % et.describe(bits))
 
 
+@pytest.mark.parametrize('hidden', [False, True])
+@pytest.mark.parametrize('model_path', ['', 'crate.glb'])
+@pytest.mark.parametrize('render_mode', ['model', 'billboard'])
+def test_levelchanger_keeps_its_normal_sprite_in_play_with_editor_sprites_off(
+        hidden, model_path, render_mode):
+    changer = make_thing(LevelChanger, 'exit', hidden=hidden,
+                         model_path=model_path, render_mode=render_mode)
+    table = EntityTable()
+    hidden_rows = table.begin_frame([changer], epoch=1)
+    models, sprites = et.classify_slots(
+        table, table.all_slots, hidden_rows, is_play=True, show_sprites=False)
+
+    assert models.tolist() == []
+    assert sprites.tolist() == [0]
+    assert table.sprite_size[0].tolist() == [32.0, 32.0]
+    assert et.sprite_candidates(changer) == (
+        ('LevelChanger', 'levelchanger.png', 'sprites', True),)
+
+
 def test_a_plain_dict_is_skipped_rather_than_drawn():
     assert et._entity_class_bits({'pos': [0, 0, 0]}) == et.ENT_SKIP
     assert et.sprite_candidates({'pos': [0, 0, 0]}) is None
