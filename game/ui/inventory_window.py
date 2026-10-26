@@ -185,6 +185,9 @@ class InventoryWindow(FloatingWindow):
     #: What the right-hand panel shows: the item under the pointer, or the
     #: character sheet (the C key opens the window on that).
     VIEWS = (("details", "Details"), ("character", "Character"))
+    #: Whether the details panel carries its own Equip / Assign / Exit row (a
+    #: window with buttons of its own turns it off).
+    DETAIL_BUTTONS = True
 
     def __init__(self, session, x=40, y=40, view="details"):
         width = 1120
@@ -849,6 +852,8 @@ class InventoryWindow(FloatingWindow):
             painter.setPen(_INK)
             _fit(painter, stats.adjusted(0, 0, -8, 0), Qt.AlignRight | Qt.AlignVCenter,
                              f"{float(d.weight):g} wt")
+        if not self.DETAIL_BUTTONS:
+            return
         # Buttons.
         by = inner.bottom() - 34
         bw = (inner.width() - 12) // 3

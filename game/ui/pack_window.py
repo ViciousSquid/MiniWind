@@ -47,6 +47,9 @@ _ON = QColor(240, 242, 246)
 class PackWindow(InventoryWindow):
     """The inventory screen (see the module docstring)."""
 
+    #: Equip / Use / Drop sit under the grid and Exit along the top.
+    DETAIL_BUTTONS = False
+
     def __init__(self, session, x=40, y=40):
         super().__init__(session, x, y, view="details")
         self.title = "Inventory"
