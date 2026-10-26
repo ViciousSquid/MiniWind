@@ -171,6 +171,9 @@ class NpcArchery:
         if magic is not None and not backing:
             target = aggro_monster if aggro_monster is not None else "player"
             try:
+                # Seen its foe: a caster with a ward raises it before engaging.
+                if magic.try_ward(thing):
+                    return True
                 if magic.try_heal(thing):
                     return True
                 if style == combat_loadout.MAGIC:

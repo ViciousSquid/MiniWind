@@ -81,6 +81,9 @@ def arm_fighters(things, rng, make_stack) -> int:
         role = str(p.get("npc_role", "") or "").lower()
         if _arm_caster(p, ttype, role, make_stack):
             armed += 1
+        # Some casters know a ward to raise before a fight (game/npc_magic.py).
+        from .npc_magic import roll_ward
+        roll_ward(p, rng)
         if p.get("_second_weapon_rolled"):
             continue
         p["_second_weapon_rolled"] = True

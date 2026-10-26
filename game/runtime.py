@@ -800,6 +800,8 @@ class MiniwindSession(SettlementLaw):
         # the engine's instant hit-scan (game/npc_archery.py).
         from engine.monster_ai import MonsterAI
         MonsterAI.install_shot_hook(self.archery.shot_hook)
+        # A caster's ward soaks part of every blow it takes (game/npc_magic.py).
+        MonsterAI.install_damage_filter(self.npc_magic.damage_filter)
         # Chasers route round walls rather than pressing into them
         # (game/navigation.py); schedule walking uses the same routes.
         MonsterAI.install_steer_hook(self.tactics.steer_many)
@@ -856,6 +858,7 @@ class MiniwindSession(SettlementLaw):
         faction_ai.uninstall(self.logic)
         from engine.monster_ai import MonsterAI
         MonsterAI.clear_shot_hook(self.archery.shot_hook)
+        MonsterAI.clear_damage_filter(self.npc_magic.damage_filter)
         self.archery.clear()
 
     def _mitigate_incoming(self, raw_damage, damage_kind="physical") -> float:
@@ -5527,15 +5530,15 @@ class MiniwindSession(SettlementLaw):
                     "berserk": (255, 50, 40), "invisibility": (220, 230, 255)}
 
     def _magic_wards(self):
-        """``[(pos, colour, kind)]``: the wards the player wears right now."""
+        """``[(feet, colour, kind)]``: the wards worn right now, the player's
+        and every NPC caster's."""
+        out = list(self.npc_magic.ward_bubbles())
         c = self.game.character
-        if c.is_dead:
-            return ()
         pos = self._player_pos()
-        if pos is None:
-            return ()
-        return [(pos, colour, kind) for kind, colour in self.WARD_COLOURS.items()
-                if c.effect_magnitude(kind) > 0]
+        if c.is_dead or pos is None:
+            return out
+        return out + [(pos, colour, kind) for kind, colour in self.WARD_COLOURS.items()
+                      if c.effect_magnitude(kind) > 0]
 
     def _magic_cast_fx(self, spell, target=None) -> None:
         """The visible side of a cast the player just made."""
@@ -5622,6 +5625,8 @@ class MiniwindSession(SettlementLaw):
             self.cancel_spell_aim()
             return False
         c = self.game.character
+        if not c.can_use_magic():
+            return False                # a class without magic: K does nothing
         if self.cast_mode() == self.CAST_FACING:
             return self.do_cast(aim="facing")
         spell = rpg_magic.get(c.active_spell) if c.active_spell else None

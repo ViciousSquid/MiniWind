@@ -206,3 +206,57 @@ def test_only_bladeless_fighting_casters_who_are_people_get_one(props):
     before = [s["id"] for s in actor.properties["inventory"]]
     arm_fighters([actor], random.Random(3), _make_stack)
     assert [s["id"] for s in actor.properties["inventory"]] == before
+
+
+# ------------------------------------------------------------ wards
+
+def test_a_caster_with_a_ward_raises_it_before_its_first_blow():
+    session, combat = _session()
+    mage = _cultist(spells=[{"id": "flare"}, {"id": "sp_shield"}])
+    assert _shot(session, mage, FAR) is True
+    assert combat.shots == []                         # the ward, not a bolt
+    assert npc_magic.warded(mage.properties) == ("shield", 20.0)
+    assert session.npc_magic.ward_bubbles()[0][2] == "shield"
+    assert _shot(session, mage, FAR) is True          # warded: now it fights
+    assert len(combat.shots) == 1
+
+
+def test_a_ward_soaks_half_its_magnitude_of_each_blow_until_it_lapses():
+    session, _combat = _session()
+    mage = _cultist(spells=[{"id": "sp_shield"}])
+    session.npc_magic.try_ward(mage)
+    assert session.npc_magic.damage_filter(mage, 30) == pytest.approx(20.0)
+    assert npc_magic.ward_soak(mage.properties, 6) == 0.0
+    session._archery_clock += 31.0                    # Shield lasts 30 s
+    assert npc_magic.ward_soak(mage.properties, 30) == 30
+    assert session.npc_magic.ward_bubbles() == []
+
+
+def test_only_some_casters_learn_a_ward():
+    learned = 0
+    rng = random.Random(5)
+    for _ in range(400):
+        caster = _cultist(spells=[{"id": "flare"}])
+        learned += npc_magic.roll_ward(caster.properties, rng)
+        assert not npc_magic.roll_ward(caster.properties, rng)    # once only
+    assert 0.25 < learned / 400 < 0.45
+
+
+def test_an_authored_ward_is_always_used_and_non_casters_learn_none():
+    rng = random.Random(1)
+    warded = _cultist(spells=[{"id": "flare"}, {"id": "sp_dragonskin"}])
+    assert not npc_magic.roll_ward(warded.properties, rng)
+    assert npc_magic.wards(warded.properties)[0][1] == "shield"
+    swordsman = _Actor(combatant=True, equipped_weapon="iron_longsword", inventory=[])
+    for _ in range(50):
+        swordsman.properties.pop("_ward_rolled", None)
+        assert not npc_magic.roll_ward(swordsman.properties, rng)
+
+
+def test_the_player_hitting_a_warded_caster_does_less_damage():
+    from ..rpg.game_state import _warded
+    session, _combat = _session()
+    mage = _cultist(spells=[{"id": "sp_shield"}])
+    assert _warded(mage.properties, 25.0) == 25.0
+    session.npc_magic.try_ward(mage)
+    assert _warded(mage.properties, 25.0) == 15.0

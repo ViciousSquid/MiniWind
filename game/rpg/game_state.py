@@ -94,6 +94,16 @@ STARTER_KITS = {
 }
 
 
+def _warded(target_props, damage):
+    """*damage* after the ward the creature wears (an NPC caster's Shield,
+    game/npc_magic.py) soaks its share."""
+    try:
+        from ..npc_magic import ward_soak
+    except ImportError:            # the rules alone, outside the game
+        return damage
+    return ward_soak(target_props, damage)
+
+
 class GameState:
     def __init__(self, store, character: Optional[Character] = None,
                  rng: Optional[random.Random] = None):
@@ -328,6 +338,7 @@ class GameState:
         char = self.character
         if not res["hit"]:
             return res
+        res["damage"] = _warded(target_props, res["damage"])
         hp = int(target_props.get("health", 30))
         hp -= int(round(res["damage"]))
         target_props["health"] = hp
@@ -393,7 +404,7 @@ class GameState:
             if k == "damage_health":
                 # elemental resistance on the creature
                 resist = float(target_props.get("resist_" + spell.element, 0.0))
-                dealt = mag * (1.0 - max(-1.0, min(1.0, resist)))
+                dealt = _warded(target_props, mag * (1.0 - max(-1.0, min(1.0, resist))))
                 hp = int(target_props.get("health", 30)) - int(round(dealt))
                 target_props["health"] = hp
                 result["damage"] += dealt

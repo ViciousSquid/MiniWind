@@ -7,6 +7,12 @@ An actor's ``spells`` (assigned in the editor's NPC spell picker: entries of
 kit are what it can cast. When the combat AI says a shot is due
 (:meth:`game.npc_archery.NpcArchery.shot_hook`):
 
+* a caster that knows a ward (Shield, Dragon Skin, a flame cloak) raises it
+  the first time it engages -- having seen its foe, before the first blow --
+  and again whenever it has lapsed in a fight. The ward soaks damage as the
+  player's does and is drawn round the caster as the same breathing lens;
+  only some casters know one (:func:`roll_ward`: :data:`WARD_CHANCE` of
+  those not authored with one learn Shield);
 * a caster hurt below :data:`HEAL_BELOW` of its health first heals itself, if
   it knows a healing spell and has the magicka;
 * otherwise, when its loadout picks magic for this range
@@ -45,6 +51,11 @@ CAST_LIFT = 48.0
 EYE_LIFT = 64.0
 #: Bolts fizzle beyond this range.
 SPELL_MAX_RANGE = 2048.0
+#: Ward effects and the colour each is drawn in.
+WARD_KINDS = {"shield": (110, 190, 255), "fire_shield": (255, 130, 40)}
+#: The share of fighting casters, not authored with a ward, who know Shield.
+WARD_CHANCE = 0.35
+WARD_SPELL = "sp_shield"
 
 #: The session clock magicka refills against (seconds of unpaused play).
 #: :class:`NpcMagic` points it at its session; 0 with none.
@@ -126,6 +137,56 @@ def attacks(props):
     return found
 
 
+def wards(props):
+    """``(spell, kind, magnitude, duration)`` for every ward *props*' actor
+    knows, strongest first."""
+    from .rpg import magic
+    out = []
+    for spell, _entry in _known(props):
+        if spell.delivery != magic.SELF:
+            continue
+        for effect in spell.effects or ():
+            if effect.get("kind") in WARD_KINDS:
+                out.append((spell, effect["kind"], _float(effect.get("magnitude")),
+                            _float(effect.get("duration"), 20.0)))
+    out.sort(key=lambda w: w[2], reverse=True)
+    return out
+
+
+def roll_ward(props, rng) -> bool:
+    """Once per actor: perhaps teach a fighting caster with no ward of its own
+    the Shield spell (see :data:`WARD_CHANCE`). True if it learned it."""
+    if props.get("_ward_rolled"):
+        return False
+    props["_ward_rolled"] = True
+    if not props.get("combatant") or wards(props) or not attacks(props):
+        return False
+    if rng.random() >= WARD_CHANCE:
+        return False
+    spells = props.get("spells")
+    if not isinstance(spells, list):
+        spells = props["spells"] = []
+    spells.append({"id": WARD_SPELL})
+    return True
+
+
+def warded(props, now=None):
+    """``(kind, magnitude)`` of the ward *props*' actor wears now, or None."""
+    now = clock() if now is None else now
+    if _float(props.get("_ward_until")) <= now:
+        return None
+    return props.get("_ward_kind", "shield"), _float(props.get("_ward_magnitude"))
+
+
+def ward_soak(props, damage, now=None) -> float:
+    """*damage* after the ward *props*' actor wears soaks its share (half the
+    ward's magnitude a blow, as the player's shield)."""
+    ward = warded(props, now)
+    if ward is None or damage <= 0:
+        return damage
+    return max(0.0, damage - min(damage, ward[1] * 0.5))
+
+
 def max_magicka(props) -> float:
     authored = props.get("max_magicka")
     if authored is not None:
@@ -173,9 +234,50 @@ class NpcMagic:
     def __init__(self, session):
         global clock
         self.session = session
+        #: id(actor) -> actor, for those wearing a ward (drawn as bubbles).
+        self.warded = {}
         # Weakly: the clock must not keep a finished session alive.
         ref = weakref.ref(session)
         clock = lambda: float(getattr(ref(), "_archery_clock", 0.0))   # noqa: E731
+
+    def try_ward(self, thing) -> bool:
+        """Raise *thing*'s ward if it knows one and wears none; True if cast."""
+        p = thing.properties
+        now = clock()
+        if warded(p, now) is not None:
+            return False
+        for spell, kind, magnitude, duration in wards(p):
+            if spend(p, spell.base_cost, now):
+                p["_ward_until"] = now + duration
+                p["_ward_kind"] = kind
+                p["_ward_magnitude"] = magnitude
+                p["_attack_anim"] = 0.2
+                self.warded[id(thing)] = thing
+                fx = getattr(self.session, "magic_fx", None)
+                if fx is not None:
+                    from .magic_fx import look_for
+                    fx.cast(_feet(thing), look_for(spell.id, WARD_KINDS[kind], spell.element,
+                                                   getattr(spell, "visuals", None)))
+                return True
+        return False
+
+    def ward_bubbles(self):
+        """``[(feet, colour, kind)]`` for every actor wearing a ward now."""
+        now = clock()
+        out = []
+        for key, thing in list(self.warded.items()):
+            p = thing.properties
+            ward = None if p.get("dead") else warded(p, now)
+            if ward is None:
+                del self.warded[key]
+                continue
+            out.append((_feet(thing), WARD_KINDS.get(ward[0], WARD_KINDS["shield"]), ward[0]))
+        return out
+
+    def damage_filter(self, victim, damage, _attacker=None):
+        """Fio's damage filter: a ward soaks part of each blow."""
+        props = getattr(victim, "properties", None)
+        return ward_soak(props, damage) if isinstance(props, dict) else damage
 
     def try_heal(self, thing) -> bool:
         """Heal *thing* if it is badly hurt and can; True when it cast."""
