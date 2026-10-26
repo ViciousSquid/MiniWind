@@ -792,6 +792,8 @@ class MiniwindGame:
             fio.set_world_paused(logic, SCREEN_PAUSE, True)
         logic._miniwind = session
         logic.game_session = session
+        from .ui import magic_overlay
+        magic_overlay.prepare()
         self._prev_keys = frozenset()
         from . import music
         if music.PLAYER.configured:

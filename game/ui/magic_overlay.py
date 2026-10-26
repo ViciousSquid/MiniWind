@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 import random
+import threading
 
 import numpy as np
 from PyQt5.QtCore import QPointF, QRect
@@ -24,13 +25,17 @@ from PyQt5.QtGui import QColor, QImage, QPainter, QPen, QRadialGradient
 #: Rime lines in the frost wash: generated once, in unit coordinates.
 _RIME = None
 #: The halftone masks, built once at this resolution (scaled up unsmoothed, so
-#: the grain stays crisp), and how many to cycle through so it flickers.
-HALFTONE_SIZE = (960, 540)
-HALFTONE_FRAMES = 3
-HALFTONE_FPS = 9.0
+#: the grain stays crisp), and how many there are to churn between.
+HALFTONE_SIZE = (800, 450)
+HALFTONE_FRAMES = 6
+#: The grain jumps this often: to a random mask, at a random jitter of up to
+#: HALFTONE_JITTER pixels, so it boils rather than cycles.
+HALFTONE_FPS = 24.0
+HALFTONE_JITTER = 9
 #: The halftone's ink, and the red in the middle.
 HALFTONE_INK = (14, 8, 10)
 _HALFTONE = None
+_BUILD_LOCK = threading.Lock()
 #: (frame, colour) -> the centre mask filled with that colour.
 _TINTED = {}
 
@@ -41,6 +46,20 @@ def _halftone_masks():
     global _HALFTONE
     if _HALFTONE is not None:
         return _HALFTONE
+    with _BUILD_LOCK:
+        if _HALFTONE is None:
+            _HALFTONE = _build_halftone()
+    return _HALFTONE
+
+
+def prepare() -> None:
+    """Build the halftone masks in the background (a resurrection's first
+    frame would otherwise wait for them)."""
+    import threading
+    threading.Thread(target=_halftone_masks, name="halftone", daemon=True).start()
+
+
+def _build_halftone():
     w, h = HALFTONE_SIZE
     rng = np.random.default_rng(11)
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
@@ -66,7 +85,6 @@ def _halftone_masks():
         centre_rgba = np.zeros((h, w, 4), np.uint8)
         centre_rgba[~ink, 3] = 255
         frames.append((_qimage(edge_rgba), _qimage(centre_rgba)))
-    _HALFTONE = frames
     return frames
 
 
@@ -79,7 +97,15 @@ def _qimage(rgba):
 
 def _draw_halftone(painter, rect, colour, alpha, envelope, now):
     frames = _halftone_masks()
-    index = int(now * HALFTONE_FPS) % len(frames)
+    # Chaos: each step picks a mask and an offset from a hash of the step.
+    step = int(now * HALFTONE_FPS)
+    chaos = random.Random(step * 7919)
+    index = chaos.randrange(len(frames))
+    jx = chaos.randint(-HALFTONE_JITTER, HALFTONE_JITTER)
+    jy = chaos.randint(-HALFTONE_JITTER, HALFTONE_JITTER)
+    flip = chaos.random() < 0.5
+    rect = rect.adjusted(-HALFTONE_JITTER + jx, -HALFTONE_JITTER + jy,
+                         HALFTONE_JITTER + jx, HALFTONE_JITTER + jy)
     edge, centre = frames[index]
     beat = 0.92 + 0.08 * math.sin(now * 5.5)
     # The red middle: the centre mask, filled with the tint (once per colour).
@@ -91,11 +117,22 @@ def _draw_halftone(painter, rect, colour, alpha, envelope, now):
         p.fillRect(red.rect(), QColor(*colour, 255))
         p.end()
         _TINTED[(index, colour)] = red
+    if flip:
+        red, edge = _mirrored(index, colour, red, edge)
     painter.setOpacity(max(0.0, min(1.0, alpha * beat)))
     painter.drawImage(rect, red)
     painter.setOpacity(max(0.0, min(1.0, envelope)))
     painter.drawImage(rect, edge)
     painter.setOpacity(1.0)
+
+
+def _mirrored(index, colour, red, edge):
+    """The pair mirrored left to right: twice the masks for the churn, free."""
+    key = (index, colour, "flip")
+    pair = _TINTED.get(key)
+    if pair is None:
+        pair = _TINTED[key] = (red.mirrored(True, False), edge.mirrored(True, False))
+    return pair
 
 
 def _rime():
