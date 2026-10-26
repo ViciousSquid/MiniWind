@@ -579,6 +579,11 @@ class MiniwindSession(SettlementLaw):
         self.archery = npc_archery.NpcArchery(self)
         from . import npc_magic
         self.npc_magic = npc_magic.NpcMagic(self)
+        # Casters and archers keep their distance, but can be run down
+        # (game/combat_tactics.py); everyone else is routed round walls.
+        from .combat_tactics import CombatTactics
+        self.tactics = CombatTactics(lambda: getattr(self, "_archery_clock", 0.0), self.nav,
+                                     self._tier_of, busy=lambda t: id(t) in self.archery.drawing)
         from .held_weapons import HeldWeapons
         self.held = HeldWeapons(self)
         from .dragon_fire import DragonFire
@@ -774,7 +779,7 @@ class MiniwindSession(SettlementLaw):
         MonsterAI.install_shot_hook(self.archery.shot_hook)
         # Chasers route round walls rather than pressing into them
         # (game/navigation.py); schedule walking uses the same routes.
-        MonsterAI.install_steer_hook(self.nav.steer_many)
+        MonsterAI.install_steer_hook(self.tactics.steer_many)
         self.memory.load(self._map_key)
         self.spawn_creature_points()   # materialise CreatureSpawn points once
         self.memory.apply()            # the dead stay dead; lairs refill after a day
@@ -818,7 +823,8 @@ class MiniwindSession(SettlementLaw):
         fio.set_projectile_split(self.logic, None)
         try:
             from engine.monster_ai import MonsterAI
-            MonsterAI.clear_steer_hook(self.nav.steer_many)
+            MonsterAI.clear_steer_hook(self.tactics.steer_many)
+            self.tactics.clear()
         except Exception:
             pass
         self.arrows_in_flight = ()

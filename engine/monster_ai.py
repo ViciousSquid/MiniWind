@@ -188,7 +188,9 @@ class MonsterAI:
     @classmethod
     def clear_steer_hook(cls, hook=None):
         """Remove the steer hook (only if it is still *hook*, when given)."""
-        if hook is None or cls._steer_hook is hook:
+        # Equality, not identity: a bound method is a new object every time
+        # it is read, so ``is`` never matched the hook a game installed.
+        if hook is None or cls._steer_hook == hook:
             cls._steer_hook = None
 
     @classmethod
@@ -199,7 +201,7 @@ class MonsterAI:
     @classmethod
     def clear_shot_hook(cls, hook=None):
         """Remove the shot hook (only if it is still *hook*, when given)."""
-        if hook is None or cls._shot_hook is hook:
+        if hook is None or cls._shot_hook == hook:
             cls._shot_hook = None
 
     @classmethod
@@ -210,7 +212,7 @@ class MonsterAI:
     @classmethod
     def clear_attack_style_hook(cls, hook=None):
         """Remove the attack-style hook; with *hook*, only if it is that one."""
-        if hook is None or cls._attack_style_hook is hook:
+        if hook is None or cls._attack_style_hook == hook:
             cls._attack_style_hook = None
 
     @staticmethod
@@ -1113,7 +1115,22 @@ all accumulated time when it runs, so simulation time is not lost.
 
             # ---- Move toward target ----
             if distance_sq > MONSTER_STOP_DISTANCE * MONSTER_STOP_DISTANCE:
-                direction = target_pos - thing_pos
+                heading = target_pos
+                steer = MonsterAI._steer_hook
+                if steer is not None:
+                    # As in the dense pass: the game may send a chaser to a
+                    # corner of its way, or elsewhere, instead of straight on.
+                    try:
+                        waypoints = steer(
+                            [thing],
+                            np.asarray([tuple(thing_pos)], dtype=np.float32),
+                            np.asarray([tuple(target_pos)], dtype=np.float32))
+                    except Exception as exc:
+                        debug_log("MonsterAI", f"steer hook failed: {exc}")
+                        waypoints = None
+                    if waypoints and waypoints[0] is not None:
+                        heading = glm.vec3(*(float(v) for v in waypoints[0]))
+                direction = heading - thing_pos
                 dir_len = glm.length(direction)
                 if dir_len > 0.001:
                     direction = direction / dir_len

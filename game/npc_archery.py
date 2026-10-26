@@ -139,6 +139,11 @@ class NpcArchery:
         except Exception:
             pass
         session = self.session
+        tactics = getattr(session, "tactics", None)
+        if tactics is not None:
+            tactics.note_shot(thing)
+            if tactics.retreating(thing):
+                return True               # backing away: no shot this time
         # A caster heals itself when badly hurt, and fights with its spells
         # wherever its loadout picks magic (game/npc_magic.py).
         magic = getattr(session, "npc_magic", None)
