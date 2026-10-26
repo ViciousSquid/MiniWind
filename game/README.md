@@ -42,7 +42,7 @@ Guild.
 | **X** | Cycle active spell | **B** (hold) | Block |
 | **V** | Toggle sneak | **H** | Quick-drink a healing potion |
 | **I** | Inventory & equipment | **C** | Character sheet |
-| **J** | Quest journal | **P** | Spellbook |
+| **J** | Quest journal | **P** | Spellbook (click a spell to ready it) |
 | **L** | Level up (when available) | **1–9 / Esc** | Dialogue choices / close |
 
 ## What's in the game
