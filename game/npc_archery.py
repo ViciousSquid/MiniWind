@@ -132,12 +132,28 @@ class NpcArchery:
         distance = math.sqrt(max(0.0, float(distance_sq)))
         # The weapon for this range is the one in hand from now on: drawn
         # beside the head, and what the next shot is fought with.
+        style = ""
         try:
             from .held_weapons import choose_in_hand
-            choose_in_hand(props, distance, MELEE_BAND)
+            style = choose_in_hand(props, distance, MELEE_BAND)
         except Exception:
             pass
         session = self.session
+        # A caster heals itself when badly hurt, and fights with its spells
+        # wherever its loadout picks magic (game/npc_magic.py).
+        magic = getattr(session, "npc_magic", None)
+        if magic is not None:
+            target = aggro_monster if aggro_monster is not None else "player"
+            try:
+                if magic.try_heal(thing):
+                    return True
+                if style == combat_loadout.MAGIC:
+                    if magic.cast_attack(thing, target):
+                        return True
+                    if distance > MELEE_BAND:
+                        return True       # no spell to cast: close in instead
+            except Exception as exc:
+                print(f"[MiniWind] NPC spell failed: {exc}")
         if not is_bow_shot(props, distance):
             # A fighter without a ranged weapon has to close the distance;
             # extending pursuit must not turn a dagger into a hitscan rifle.

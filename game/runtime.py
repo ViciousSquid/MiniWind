@@ -577,6 +577,8 @@ class MiniwindSession(SettlementLaw):
         #: Every NPC / creature archer mid-draw: they draw a bow by the
         #: player's own rules (game/npc_archery.py).
         self.archery = npc_archery.NpcArchery(self)
+        from . import npc_magic
+        self.npc_magic = npc_magic.NpcMagic(self)
         from .held_weapons import HeldWeapons
         self.held = HeldWeapons(self)
         from .dragon_fire import DragonFire

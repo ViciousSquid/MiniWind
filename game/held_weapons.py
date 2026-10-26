@@ -4,9 +4,10 @@ weapon for the fighters who should have one.
 
 * :func:`arm_fighters` gives fighters a weapon for the other range, once per
   actor: guards, bandits, mercenaries, adventurers and hunters with a blade
-  often carry a bow too, and archers carry a dagger or short sword for when
-  the enemy is on top of them. Combat then switches between them on its own
-  (:mod:`game.combat_loadout`, through the archery shot hook).
+  often carry a bow too, and archers and casters carry a dagger or short
+  sword for when the enemy is on top of them. Combat then switches between
+  them on its own (:mod:`game.combat_loadout`, through the archery shot
+  hook).
 * :class:`HeldWeapons` keeps, per tick, each nearby actor's facing -- toward
   whatever it is fighting, else the way it is walking -- and answers the
   viewport's ``overhead_actor_weapons`` hook: the weapon in hand (the one
@@ -29,6 +30,11 @@ BOWS = ("hunting_bow", "short_bow", "long_bow")
 #: How often a fighter given a ranged weapon gets a crossbow instead of a bow.
 CROSSBOW_CHANCE = 0.3
 SIDEARMS = ("iron_dagger", "iron_shortsword")
+#: A caster's blade for when the enemy is on top of it, and the creatures (by
+#: role) that are people enough to carry one; any NPC caster does.
+CASTER_SIDEARM = "iron_dagger"
+CASTER_ROLES = ("cultist", "mage", "necromancer", "witch", "sorcer", "wizard",
+                "warlock", "priest", "shaman", "acolyte")
 #: Fighters with a one-handed blade in hand who carry a second for the other
 #: hand, by faction and by role (the larger chance wins), and how often that
 #: second weapon is a twin of the first.
@@ -67,15 +73,19 @@ def arm_fighters(things, rng, make_stack) -> int:
     armed = 0
     for t in things:
         p = getattr(t, "properties", None)
-        if not isinstance(p, dict) or p.get("_second_weapon_rolled"):
+        if not isinstance(p, dict):
             continue
         ttype = str(p.get("type", "")).replace("_", "").lower()
         if ttype not in ("npc", "creature", "monster") or p.get("dead"):
             continue
+        role = str(p.get("npc_role", "") or "").lower()
+        if _arm_caster(p, ttype, role, make_stack):
+            armed += 1
+        if p.get("_second_weapon_rolled"):
+            continue
         p["_second_weapon_rolled"] = True
         if not p.get("combatant"):
             continue
-        role = str(p.get("npc_role", "") or "").lower()
         team = str(p.get("faction") or p.get("team") or "").lower()
         equipped = p.get("equipped_weapon") or ""
         if _arm_off_hand(p, role, team, equipped, rng, make_stack):
@@ -97,6 +107,26 @@ def arm_fighters(things, rng, make_stack) -> int:
             p.setdefault("inventory", []).append(stack)
             armed += 1
     return armed
+
+
+def _arm_caster(p, ttype, role, make_stack) -> bool:
+    """Give a fighting caster with no blade a dagger, once: it casts while the
+    enemy is at range and stabs when it closes (game/combat_loadout.py)."""
+    if p.get("_caster_sidearm_rolled"):
+        return False
+    p["_caster_sidearm_rolled"] = True
+    if not p.get("combatant") or (ttype != "npc" and not any(r in role for r in CASTER_ROLES)):
+        return False
+    from .npc_magic import attacks
+    if not attacks(p):
+        return False
+    if "melee" in {_style(p.get("equipped_weapon"))} | {_style(i) for i in _carried(p)}:
+        return False
+    stack = make_stack(CASTER_SIDEARM)
+    if not stack:
+        return False
+    p.setdefault("inventory", []).append(stack)
+    return True
 
 
 def _arm_off_hand(p, role, team, equipped, rng, make_stack) -> bool:

@@ -102,7 +102,6 @@ class LogicInteraction:
                 world.refresh_levelchanger_table()
             centres = world.levelchanger_centres
             radii = world.levelchanger_radii
-            eligible = world.levelchanger_eligible
 
             player_pos = np.asarray(
                 (px, py, pz),
@@ -110,14 +109,21 @@ class LogicInteraction:
             )
             offsets = centres - player_pos
             distance_sq = np.einsum("ij,ij->i", offsets, offsets)
-            in_range = eligible & (distance_sq < radii * radii)
+            in_range = distance_sq < radii * radii
 
             if in_range.any():
-                candidates = np.flatnonzero(in_range)
-                if candidates.size:
+                # Eligibility is read live for the few rows in range: streaming
+                # parks and unparks changers (``disabled``) after the table is
+                # packed, so the packed column can be stale.
+                things = world.levelchanger_things
+                candidates = [
+                    int(row) for row in np.flatnonzero(in_range)
+                    if world.levelchanger_usable(things[row])
+                ]
+                if candidates:
                     # Preserve authored list order: first matching row wins.
-                    row = int(candidates[0])
-                    thing = world.levelchanger_things[row]
+                    row = candidates[0]
+                    thing = things[row]
                     self.current_hud_message = (
                         str(thing.properties.get("prompt") or "").strip()
                         or "[E] Complete Level")

@@ -208,13 +208,20 @@ class LogicWorld:
         )
 
         self.levelchanger_eligible = np.asarray(
-            [
-                not thing.properties.get("disabled", False)
-                and thing.properties.get("usable", True)
-                for thing in things
-            ],
+            [self.levelchanger_usable(thing) for thing in things],
             dtype=bool,
         )
+
+    @staticmethod
+    def levelchanger_usable(thing) -> bool:
+        """A LevelChanger's live eligibility: enabled and authored usable.
+
+        Read live at use time as well: world streaming parks distant entities
+        by setting ``disabled`` and unparks them as the player approaches,
+        without changing the row count that rebuilds this table.
+        """
+        props = thing.properties
+        return bool(not props.get("disabled", False) and props.get("usable", True))
 
     def notify_visibility_changed(self):
         """Record a drawable-world invalidation without rebuilding collision."""

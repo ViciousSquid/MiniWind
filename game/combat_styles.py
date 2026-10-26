@@ -29,6 +29,22 @@ def weapon_attack_style(item_id):
     return KIND_STYLES.get(str(definition.get("kind", "")).lower())
 
 
+def weapon_rating(item_id) -> float:
+    """How hard *item_id* hits over time: its damage times its swing speed."""
+    from .rpg import items
+    definition = items.get(str(item_id))
+    if definition is None or definition.category != items.WEAPON:
+        return 0.0
+    try:
+        return float(definition.get("damage", 0) or 0) * float(definition.get("speed", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def register() -> None:
-    """Install :func:`weapon_attack_style` as the engine's item-style resolver."""
+    """Install MiniWind's weapon styles, weapon ratings and can-cast check on
+    the combat loadout."""
+    from .npc_magic import can_attack_with_magic
     combat_loadout.set_item_style_resolver(weapon_attack_style)
+    combat_loadout.set_item_rating_resolver(weapon_rating)
+    combat_loadout.set_magic_resolver(can_attack_with_magic)

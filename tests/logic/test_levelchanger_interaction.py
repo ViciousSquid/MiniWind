@@ -159,3 +159,22 @@ def test_every_shipped_cave_entrance_activates_from_the_clear_approach(logic):
         assert ui['target_map'] == props['target_map']
         assert ui['destination_spawn'] == 'entrance'
         assert ui['immediate'] is True
+
+
+def test_levelchanger_unparked_by_streaming_after_packing_becomes_usable(logic):
+    # World streaming parks distant entities (``disabled``) before the table is
+    # packed and unparks them as the player walks up; the row count does not
+    # change, so use must read eligibility live rather than from the packed column.
+    changer = _levelchanger(disabled=True, prompt='[E] Enter Wolfmaw Cave')
+    _prepare(logic, [changer])
+    logic.interaction_runtime.handle(False)
+    assert logic.interaction_runtime.current_hud_message == ''
+
+    changer.properties['disabled'] = False
+    logic.interaction_runtime.handle(False)
+    assert logic.interaction_runtime.current_hud_message == '[E] Enter Wolfmaw Cave'
+
+    changer.properties['disabled'] = True
+    logic.interaction_runtime.handle(True)
+    assert logic.interaction_runtime.current_hud_message == ''
+    assert logic.interaction_runtime.level_complete_ui is None
