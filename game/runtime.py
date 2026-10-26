@@ -71,6 +71,22 @@ from . import npc_stamina
 
 _current_session = None
 
+
+def _feet(thing):
+    """The ground under an actor: Fio keeps a monster's origin at the middle
+    of its sprite."""
+    p = thing.properties
+    try:
+        half = float(p.get("sprite_height", 112) or 112) / 2.0
+    except (TypeError, ValueError):
+        half = 56.0
+    return [float(thing.pos[0]), float(thing.pos[1]) - half, float(thing.pos[2])]
+
+
+def _bolt_landed(_pos, _target) -> None:
+    """A spell bolt's impact hook: nothing to do, but having one tags the bolt
+    (Fio tags only hooked projectiles), so its light and trail can follow it."""
+
 #: The editor's live settings (settings.ini), handed over by the editor
 #: integration as the 3D view is built (game/integration.py). The logic thread
 #: has no way back to the window, so this is how a session reads the GAME
@@ -575,6 +591,12 @@ class MiniwindSession(SettlementLaw):
         self.archery = npc_archery.NpcArchery(self)
         from . import npc_magic
         self.npc_magic = npc_magic.NpcMagic(self)
+        # What magic looks like: casts, bolts, impacts, wards (game/magic_fx.py),
+        # drawn by game/ui/magic_gl.py and game/ui/magic_overlay.py.
+        from .magic_fx import MagicFX
+        self.magic_fx = MagicFX(player_pos=self._player_pos)
+        self.magic_fx.wards = self._magic_wards
+        self._fx_tints = ()
         # Casters and archers keep their distance, but can be run down
         # (game/combat_tactics.py); everyone else is routed round walls.
         from .combat_tactics import CombatTactics
@@ -809,6 +831,7 @@ class MiniwindSession(SettlementLaw):
                 pass
         self._remove_wisp()
         self._remove_all_torch_lights()
+        self.magic_fx.clear()
         self._bolt_positions = {}
         self._update_bolt_lights()          # no bolt is live: every light goes out
         if getattr(self.logic, "_player_damage_filter", None) is self._mitigate_incoming:
@@ -5411,9 +5434,11 @@ class MiniwindSession(SettlementLaw):
                 tags, np.fromiter(bolts, dtype=np.int64, count=len(bolts)))).tolist()
             self._bolt_positions = {int(tags[r]): tuple(store.pos[r].tolist())
                                     for r in lit}
+        # Spell bolts are drawn by the game too: a lit orb with a trail.
+        bolts_drawn = self._track_spell_bolts(store, tags)
         if not arrows:
             self.arrows_in_flight = ()
-            return None
+            return None if bolts_drawn is None else ~bolts_drawn
         is_arrow = np.isin(tags, np.fromiter(arrows, dtype=np.int64, count=len(arrows)))
         rows = np.flatnonzero(is_arrow).tolist()
         self.arrows_in_flight = tuple(
@@ -5436,7 +5461,61 @@ class MiniwindSession(SettlementLaw):
         live = set(int(t) for t in tags[rows])
         for tag in [t for t in arrows if t not in live]:
             del arrows[tag]
-        return ~is_arrow
+        return ~(is_arrow | bolts_drawn) if bolts_drawn is not None else ~is_arrow
+
+    def _track_spell_bolts(self, store, tags):
+        """Hand the spell bolts in flight to the magic effects, which lay
+        their trails and burst the ones that are gone; the mask of their rows
+        (None with no bolts known)."""
+        fx = self.magic_fx
+        known = fx.bolt_tags()
+        if not known:
+            return None
+        is_bolt = np.isin(tags, np.asarray(known, dtype=np.int64))
+        fx.track_bolts({int(tags[r]): (tuple(store.pos[r].tolist()),
+                                       tuple(store.vel[r].tolist()))
+                        for r in np.flatnonzero(is_bolt).tolist()})
+        return is_bolt
+
+    # ------------------------------------------------------------ magic looks
+    def spell_look(self, spell):
+        """How *spell* looks (game/magic_fx.py), its editor overrides included."""
+        from .magic_fx import look_for
+        return look_for(getattr(spell, "id", ""), getattr(spell, "color", None),
+                        getattr(spell, "element", "magic"),
+                        getattr(spell, "visuals", None))
+
+    #: Ward effects drawn as a fresnel bubble round the player: kind -> colour.
+    WARD_COLOURS = {"shield": (110, 190, 255), "fire_shield": (255, 130, 40),
+                    "berserk": (255, 50, 40), "invisibility": (220, 230, 255)}
+
+    def _magic_wards(self):
+        """``[(pos, colour, kind)]``: the wards the player wears right now."""
+        c = self.game.character
+        if c.is_dead:
+            return ()
+        pos = self._player_pos()
+        if pos is None:
+            return ()
+        return [(pos, colour, kind) for kind, colour in self.WARD_COLOURS.items()
+                if c.effect_magnitude(kind) > 0]
+
+    def _magic_cast_fx(self, spell, target=None) -> None:
+        """The visible side of a cast the player just made."""
+        pos = self._player_pos()
+        if pos is None:
+            return
+        fx = self.magic_fx
+        look = self.spell_look(spell)
+        fx.cast(pos, look)
+        kinds = {e.get("kind") for e in (spell.effects or ())}
+        if spell.delivery == rpg_magic.SELF:
+            if kinds & {"restore_health", "cure_disease", "restore_magicka"}:
+                fx.heal(pos, spell.color)
+            if kinds & {"summon", "bound_weapon", "wisp"}:
+                fx.summon(pos, spell.color)
+        elif target is not None:
+            fx.impact(list(target.pos), look)
 
     #: Out of breath, the player walks until this share of stamina is back.
     SPRINT_RECOVER_AT = 0.3
@@ -5474,6 +5553,7 @@ class MiniwindSession(SettlementLaw):
             self.notify("Not enough magicka")
             return False
         c.use_skill("destruction", 1.0)
+        self._magic_cast_fx(spell, target)
         if target is not None:
             r = self.game.resolve_spell_on_creature(spell, target.properties)
             _journal(target)
@@ -5535,13 +5615,18 @@ class MiniwindSession(SettlementLaw):
             return True
         # A "wisp" effect conjures the wandering companion light (a SELF spell).
         if any(e.get("kind") == "wisp" for e in (spell.effects or [])):
+            self._magic_cast_fx(spell)
             self._spawn_wisp(spell)
             return True
+        if spell.delivery == rpg_magic.SELF:
+            self._magic_cast_fx(spell)
         if spell.delivery == rpg_magic.PROJECTILE:
+            self._magic_cast_fx(spell)
             self._spawn_player_spell_projectile(spell)
             return True
         if spell.delivery in (rpg_magic.TARGET, rpg_magic.TOUCH):
             target = self._acquire_target(BOW_REACH if spell.delivery != rpg_magic.TOUCH else MELEE_REACH)
+            self._magic_cast_fx(spell, target)
             if target is not None:
                 r = self.game.resolve_spell_on_creature(spell, target.properties)
                 _journal(target)
@@ -5616,6 +5701,8 @@ class MiniwindSession(SettlementLaw):
             return False
         name = target.properties.get("name") or target.properties.get("npc_role") \
             or target.properties.get("monster_type") or "The fallen"
+        # The whole screen sinks into dark red as light pours up from the body.
+        self.magic_fx.resurrection(_feet(target))
         self.notify(f"{name} rises again!")
         self.add_floater("RAISED", kind="heal")
         return True
@@ -5669,10 +5756,15 @@ class MiniwindSession(SettlementLaw):
 
         # A player-owned bolt: it flies past the caster and strikes creatures
         # with the spell's damage.
+        # A no-op impact hook gives the bolt a tag, so its light and its
+        # trail can follow it.
         row = fio.spawn_projectile(lt, start, vel,
                                    lifetime=MONSTER_PROJECTILE_MAX_DIST / speed,
-                                   damage=int(getattr(spell, "damage", 0) or 0))
+                                   damage=int(getattr(spell, "damage", 0) or 0),
+                                   on_impact=_bolt_landed)
         self._attach_bolt_light(row, start, spell)
+        if row is not None:
+            self.magic_fx.bolt(fio.projectile_tag(lt, row), self.spell_look(spell))
 
     def _attach_bolt_light(self, row, start, spell) -> None:
         """Give a spell bolt its own moving light, in the spell's colour.

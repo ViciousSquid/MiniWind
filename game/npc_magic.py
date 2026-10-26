@@ -51,6 +51,12 @@ SPELL_MAX_RANGE = 2048.0
 clock = lambda: 0.0      # noqa: E731
 
 
+def _feet(thing):
+    """The ground under *thing*: Fio keeps an actor's origin mid-sprite."""
+    half = _float(thing.properties.get("sprite_height", 112), 112.0) / 2.0
+    return [float(thing.pos[0]), float(thing.pos[1]) - half, float(thing.pos[2])]
+
+
 def _float(value, default=0.0) -> float:
     try:
         return float(value)
@@ -186,6 +192,9 @@ class NpcMagic:
                 p["health"] = min(top, health + amount)
                 p["_attack_anim"] = 0.2
                 self._journal(thing)
+                fx = getattr(self.session, "magic_fx", None)
+                if fx is not None:
+                    fx.heal(_feet(thing), spell.color)
                 return True
         return False
 
@@ -233,6 +242,14 @@ class NpcMagic:
         attach = getattr(session, "_attach_bolt_light", None)
         if row is not None and attach is not None:
             attach(row, start, SimpleNamespace(color=colour))
+        # The cast and the bolt, as the player's look (game/magic_fx.py).
+        fx = getattr(session, "magic_fx", None)
+        if fx is not None:
+            from .magic_fx import look_for
+            look = look_for(spell.id, colour, spell.element, getattr(spell, "visuals", None))
+            fx.cast(_feet(thing), look)
+            if row is not None:
+                fx.bolt(fio.projectile_tag(logic, row), look, hostile=target == "player")
 
     def _journal(self, thing) -> None:
         try:

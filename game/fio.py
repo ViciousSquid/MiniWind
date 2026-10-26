@@ -195,7 +195,7 @@ def set_projectile_split(logic, split) -> None:
 
     Fio draws every projectile as one shared billboard. ``split(store, count)``
     is called, under the monster lock, whenever Fio publishes the projectiles
-    for a frame; it returns a boolean mask of the rows Fio should go on
+    for a frame (*count* may be 0); it returns a boolean mask of the rows Fio should go on
     drawing (or None for all of them), and may read the rest for its own
     drawing.
     """
@@ -214,7 +214,8 @@ def set_projectile_split(logic, split) -> None:
         with monster_lock(logic) or contextlib.nullcontext():
             store = runtime._monster_projectiles
             count = len(store)
-            keep = split(store, count) if count else None
+            # Asked with none too, so the game sees its last ones go.
+            keep = split(store, count)
             if not count:
                 positions = NO_PROJECTILES
             elif keep is None:

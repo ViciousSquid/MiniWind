@@ -745,22 +745,33 @@ class MiniwindGame:
         host.on("render.post_scene", self._on_post_scene)
 
     def _on_post_scene(self, ev):
-        """Draw the arrows in flight and their fading flight paths, in the 3D
-        pass (game/ui/arrows.py)."""
+        """Draw, in the 3D pass: magic (game/ui/magic_gl.py), the arrows in
+        flight and their fading flight paths (game/ui/arrows.py), and last the
+        fisheye lenses of heavy spell impacts, which bend all of it."""
         if not ev.get("play_mode"):
             return
         host = getattr(self, "_host", None)
         session = getattr(getattr(host, "logic", None), "_miniwind", None)
-        arrows = getattr(session, "arrows_in_flight", ()) if session else ()
-        paths = getattr(session, "arrow_paths", ()) if session else ()
-        if not arrows and not paths:
+        if session is None:
             return
-        from .ui import arrows as arrow_art
-        if paths:
-            # Each loosed arrow's flight, a dark red dotted line fading out.
-            arrow_art.draw_paths(ev.get("projection"), ev.get("view"), paths)
-        if arrows:
-            arrow_art.draw_arrows(ev.get("projection"), ev.get("view"), arrows)
+        projection, view = ev.get("projection"), ev.get("view")
+        fx = getattr(session, "magic_fx", None)
+        lenses = ()
+        if fx is not None:
+            from .ui import magic_gl
+            sprites, lenses, session._fx_tints = fx.frame()
+            magic_gl.draw_sprites(projection, view, sprites)
+        arrows = getattr(session, "arrows_in_flight", ())
+        paths = getattr(session, "arrow_paths", ())
+        if arrows or paths:
+            from .ui import arrows as arrow_art
+            if paths:
+                # Each loosed arrow's flight, a dark red dotted line fading out.
+                arrow_art.draw_paths(projection, view, paths)
+            if arrows:
+                arrow_art.draw_arrows(projection, view, arrows)
+        if lenses:
+            magic_gl.draw_lenses(projection, view, lenses)
 
     # ------------------------------------------------------------- lifecycle
     def on_play_start(self, logic):
@@ -1139,6 +1150,11 @@ class MiniwindGame:
 
             if not session.needs_char_creation and session.open_screen != "charcreate":
                 hud.draw_time_tint(painter, session, w, h, viewport)
+                # Magic's screen washes (a resurrection's dark red, a frost
+                # hit's rime) over the world, under the HUD.
+                from .ui import magic_overlay
+                magic_overlay.draw(painter, getattr(session, "_fx_tints", ()), w, h,
+                                   time.perf_counter())
                 # Inspector lines (console 'inspect') lie on the world, under
                 # the HUD; their windows float above everything.
                 from .ui import inspector, path_debug
