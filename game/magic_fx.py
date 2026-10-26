@@ -444,7 +444,9 @@ class MagicFX:
 
         *sprites*: ``(n, 12)`` float32 rows ``x, y, z, size, r, g, b, a, mode,
         progress, seed, flat``. *lenses*: ``[(x, y, z, strength, radius,
-        progress, (r, g, b))]``. *tints*: ``[((r, g, b), alpha, style, progress)]``.
+        progress, (r, g, b))]``. *tints*: ``[((r, g, b), alpha, style,
+        progress, envelope)]``, *alpha* being the peak scaled by the 0..1
+        *envelope*.
         """
         now = self._clock() if now is None else now
         with self._lock:
@@ -491,7 +493,7 @@ class MagicFX:
                 a = 1.0
             else:
                 a = max(0.0, 1.0 - (t - fade_in - hold) / fade_out) if fade_out > 0 else 0.0
-            out_tints.append((colour, peak * a, style, t / (fade_in + hold + fade_out)))
+            out_tints.append((colour, peak * a, style, t / (fade_in + hold + fade_out), a))
         return sprites, out_lenses[-MAX_LENSES:], out_tints
 
     def _wards_now(self):
