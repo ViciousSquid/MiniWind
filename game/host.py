@@ -1417,12 +1417,16 @@ class MiniwindGame:
             return True
 
         if cur is None and key in ("screen:inventory", "screen:character"):
-            # The inventory and the character sheet are one window: drag and
-            # drop onto the paperdoll, with the sheet or the item details
-            # beside it (game/ui/inventory_window.py).
-            from .ui.inventory_window import InventoryWindow
-            win = InventoryWindow(session, view="character" if key == "screen:character"
-                                  else "details")
+            # C is the character window: drag and drop onto the paperdoll,
+            # with the sheet beside it (game/ui/inventory_window.py). I is the
+            # pack, Deus Ex-style: a big grid, Equip / Use / Drop, the item's
+            # details (game/ui/pack_window.py).
+            if key == "screen:inventory":
+                from .ui.pack_window import PackWindow
+                win = PackWindow(session)
+            else:
+                from .ui.inventory_window import InventoryWindow
+                win = InventoryWindow(session, view="character")
             win.place(w, h)
             wm.add(win)
             session._overlay_win = win
