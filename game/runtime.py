@@ -67,6 +67,7 @@ from .rpg import skills as sk
 from .rpg.game_state import GameState
 from .diceroll_anim import SHAKE_DURATION, ROLL_DURATION, FADE_DURATION
 from . import npc_archery
+from . import npc_stamina
 
 _current_session = None
 
@@ -97,11 +98,6 @@ OFFSCREEN_STRIDE = 4
 #: conditions) run this often rather than every tick.
 PROXIMITY_INTERVAL = 0.1
 NPC_WALK_SPEED = 90.0
-#: How much quicker a frightened villager moves. Applied only while the NPC is
-#: in the FLEE state, which the decision tick re-evaluates constantly and drops
-#: as soon as no hostile is within FLEE_SIGHT — so the sprint lasts exactly as
-#: long as the fright does, and they go back to a walk on their own.
-FLEE_SPEED_MULTIPLIER = 2.0
 #: A provoked fighter remembers its opponent well beyond initial perception.
 #: Only retaliation applies this limit; ordinary detection stays at 1024.
 RETALIATION_PURSUIT_RANGE = 3200.0
@@ -1127,7 +1123,7 @@ class MiniwindSession(SettlementLaw):
             self._arrow_tags.clear()
         self._keep_player_in_world()
         self.clock.advance(delta)
-        self.game.tick(delta)
+        self.game.tick(delta, self._sprint(delta))
         self._announce_skill_raises()
         self._update_encumbrance()
         if self._attack_cooldown > 0:
@@ -4821,8 +4817,12 @@ class MiniwindSession(SettlementLaw):
         if dist <= ARRIVE_RADIUS:
             return
         speed = float(p.get("move_speed", NPC_WALK_SPEED)) or NPC_WALK_SPEED
-        if p.get("sched_state") == sched.FLEE:
-            speed *= FLEE_SPEED_MULTIPLIER   # a fright doubles the step
+        # A frightened villager runs while its stamina lasts, then walks
+        # winded (game/npc_stamina.py). FLEE is re-decided every tick and
+        # dropped once no hostile is in sight, so the run ends with the fright.
+        fleeing = p.get("sched_state") == sched.FLEE
+        if fleeing or p.get("_running"):
+            speed *= npc_stamina.pace(p, getattr(self, "_archery_clock", 0.0), fleeing)
         # Round a wall rather than into it: once a step has been blocked (or a
         # route is being followed) head for the next corner of a route.
         nav = getattr(self, "nav", None)
@@ -5437,6 +5437,28 @@ class MiniwindSession(SettlementLaw):
         for tag in [t for t in arrows if t not in live]:
             del arrows[tag]
         return ~is_arrow
+
+    #: Out of breath, the player walks until this share of stamina is back.
+    SPRINT_RECOVER_AT = 0.3
+
+    def _sprint(self, delta: float) -> bool:
+        """Whether the player is sprinting this tick (Shift held while moving,
+        set by the host as ``sprint_held``): it costs stamina, and run dry the
+        player is winded and held to a walk until some of it is back. Running
+        trains Athletics."""
+        c = self.game.character
+        player = fio.player(self.logic)
+        if c.stamina <= 0.0:
+            self._winded = True
+        elif getattr(self, "_winded", False) and c.stamina >= c.max_stamina * self.SPRINT_RECOVER_AT:
+            self._winded = False
+        winded = getattr(self, "_winded", False)
+        if player is not None:
+            player.sprint_allowed = not winded
+        sprinting = bool(getattr(self, "sprint_held", False)) and not winded and not c.is_dead
+        if sprinting:
+            c.use_skill(sk.ATHLETICS, 0.08 * delta)
+        return sprinting
 
     def _staff_attack(self, w) -> bool:
         """Channel a staff's bound spell (called from do_attack for KIND_STAFF)."""

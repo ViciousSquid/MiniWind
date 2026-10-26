@@ -877,6 +877,9 @@ class MiniwindGame:
         # this tick's remaining gameplay input. Debug Tools is non-modal, so its
         # rewind/teleport clicks must also be drained on this path.
         was_lockpicking = session.open_screen == "lockpicking"
+        # Shift while moving is a sprint, paid for in stamina (session._sprint).
+        down = getattr(ctx, "key_down", None)
+        session.sprint_held = bool(down) and down("shift") and any(down(k) for k in "wasd")
         session.tick(ctx.delta)
         from .ui import hits
         hits.run_clicks(session)

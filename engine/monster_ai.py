@@ -775,8 +775,13 @@ all accumulated time when it runs, so simulation time is not lost.
             m = m[ok]
             direction = direction[ok]
             if len(m):
+                # A game may set a mover's pace (``_speed_scale``): a run to
+                # close the distance, a walk when winded.
+                pace = np.fromiter(
+                    (float(props[rows[i]].get('_speed_scale', 1.0) or 1.0) for i in m),
+                    dtype=np.float32, count=len(m))
                 step = (direction * np.float32(MONSTER_MOVE_SPEED)
-                        * delta[m].astype(np.float32)[:, None])
+                        * (delta[m].astype(np.float32) * pace)[:, None])
                 start = p32[m]
                 full = start + step
                 slide_x = start.copy()
@@ -1137,7 +1142,8 @@ all accumulated time when it runs, so simulation time is not lost.
                     if mtype != 'flying':
                         direction = _flatten_to_ground(direction)
                 if dir_len > 0.001 and direction is not None:
-                    step = direction * MONSTER_MOVE_SPEED * delta
+                    pace = float(thing.properties.get('_speed_scale', 1.0) or 1.0)
+                    step = direction * MONSTER_MOVE_SPEED * pace * delta
                     new_pos = thing_pos + step
 
                     if not self._monster_overlaps_wall(new_pos.x, new_pos.y, new_pos.z, MONSTER_WALL_MARGIN):

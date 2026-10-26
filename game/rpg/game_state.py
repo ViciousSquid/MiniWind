@@ -518,8 +518,8 @@ class GameState:
             listeners.append(fn)
 
     # ---------------------------------------------------------- per-tick regen
-    def tick(self, dt: float) -> None:
-        self.character.regen(dt)
+    def tick(self, dt: float, sprinting: bool = False) -> None:
+        self.character.regen(dt, sprinting)
         self.character.tick_effects(dt)
 
     # ------------------------------------------------------------- persistence

@@ -112,18 +112,18 @@ def test_runtime_npc_mover_writes_the_property_the_renderer_reads():
     assert math.isclose(npc.properties[facing.FACING_KEY], math.pi / 2, abs_tol=1e-6)
 
 
-def test_a_fleeing_villager_moves_at_double_speed():
-    """Fright doubles the step, and only for as long as the fright lasts.
+def test_a_fleeing_villager_runs_while_its_stamina_lasts():
+    """Fright makes a villager run, paid for in stamina; winded, it walks.
 
     The FLEE state is re-decided every tick and dropped as soon as no hostile is
-    in sight, so the multiplier is inherently temporary — this pins the factor
-    and that a calm NPC is unaffected.
+    in sight, so the run is inherently temporary -- this pins the pace, that a
+    calm NPC is unaffected, and that a winded one is back to a walk.
     """
-    from .. import runtime
+    from .. import npc_stamina, runtime
     from ..rpg import schedule as sched
 
-    def _walk(state):
-        props = {"move_speed": runtime.NPC_WALK_SPEED}
+    def _walk(state, **extra):
+        props = {"move_speed": runtime.NPC_WALK_SPEED, **extra}
         if state:
             props["sched_state"] = state
         npc = _NPC(dest=(100000.0, 0.0, 0.0), **props)
@@ -133,5 +133,5 @@ def test_a_fleeing_villager_moves_at_double_speed():
     calm = _walk(None)
     fleeing = _walk(sched.FLEE)
     assert math.isclose(calm, runtime.NPC_WALK_SPEED)
-    assert math.isclose(fleeing, calm * runtime.FLEE_SPEED_MULTIPLIER)
-    assert runtime.FLEE_SPEED_MULTIPLIER == 2.0
+    assert math.isclose(fleeing, calm * npc_stamina.RUN_SCALE)
+    assert math.isclose(_walk(sched.FLEE, _stamina=0.0, _stamina_at=0.0), calm)

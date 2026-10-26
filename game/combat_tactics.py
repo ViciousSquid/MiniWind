@@ -19,9 +19,10 @@ A fighter whose loadout fights at range with a spell or a bow
   :data:`RETREAT_BURST` seconds, then must stand for at least
   :data:`RETREAT_REST` (it casts or draws in that pause).
 
-It can always be caught. Fighters walk at 90 units a second and the player
-runs at two to three times that; and because every burst is followed by a
-rest, a caster gives up ground to a swordsman of its own speed too. Within
+It can always be caught. It backs away at a walk (90 units a second), while
+the player runs at 300 and a fighter closing in runs at about 190 for as long
+as its stamina lasts (:mod:`game.npc_stamina`); and because every burst is
+followed by a rest, a caster gives up ground even to a walking swordsman. Within
 :data:`COMMIT_RANGE` it stops backing off and fights with whatever blade it
 has; so it does after :data:`MAX_RETREATS` bursts in :data:`RETREAT_WINDOW`
 seconds, or when a burst makes no ground (a wall at its back). Committed, it
@@ -39,7 +40,7 @@ from __future__ import annotations
 
 import math
 
-from . import combat_loadout
+from . import combat_loadout, npc_stamina
 
 #: Distances (min, max) each ranged style tries to fight from.
 KEEP_BAND = {combat_loadout.MAGIC: (300.0, 620.0), combat_loadout.BOW: (380.0, 820.0)}
@@ -70,6 +71,10 @@ SIDESTEP_SECONDS = 0.7
 NO_SHOT_ADVANCE = 3.0
 #: How long a fighter's loadout answer is reused.
 LOADOUT_SECONDS = 0.5
+#: A fighter closing on its foe runs (stamina allowing) when farther than
+#: this; a ranged one runs back toward its band when this far beyond it.
+RUN_FROM = 220.0
+RUN_MARGIN = 250.0
 
 HOLD = "hold"
 RETREAT = "retreat"
@@ -161,6 +166,7 @@ class CombatTactics:
             from engine.spatial import TIER_ACTIVE
             if self._tier_of(thing) > TIER_ACTIVE:
                 self._states.pop(id(thing), None)
+                npc_stamina.walk(props)
                 return None
         now = self._clock()
         key = id(thing)
@@ -170,10 +176,18 @@ class CombatTactics:
         if now - state.style_at > LOADOUT_SECONDS:
             state.style = ranged_style(props)
             state.style_at = now
+        dist = math.hypot(float(start[0]) - float(target[0]),
+                          float(start[2]) - float(target[2]))
         if not state.style:
             state.mode = ADVANCE
+            npc_stamina.pace(props, now, dist > RUN_FROM)
             return None
         mode = self._decide(state, props, start, target, now)
+        # Run to close in or to get back in range; back away and edge
+        # sideways at a walk.
+        far = KEEP_BAND[state.style][1]
+        npc_stamina.pace(props, now, (mode == ADVANCE and dist > far + RUN_MARGIN)
+                         or (mode == COMMIT and dist > RUN_FROM))
         sx, sy, sz = float(start[0]), float(start[1]), float(start[2])
         if mode != COMMIT and self._busy is not None and self._busy(thing):
             return (sx, sy, sz)                     # an archer draws standing
