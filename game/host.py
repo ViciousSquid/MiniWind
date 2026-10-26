@@ -794,6 +794,9 @@ class MiniwindGame:
         logic.game_session = session
         from .ui import magic_overlay
         magic_overlay.prepare()
+        # The player's own key bindings (pause menu -> Options -> Key bindings).
+        from . import keybinds, runtime
+        keybinds.apply(runtime._editor_config)
         self._prev_keys = frozenset()
         from . import music
         if music.PLAYER.configured:

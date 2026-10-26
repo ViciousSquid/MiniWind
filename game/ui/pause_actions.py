@@ -322,6 +322,10 @@ class PauseActions:
             except Exception:
                 pass
 
+    def pause_menu_config(self):
+        """``(config, save)``: the editor's settings and how to write them."""
+        return getattr(self.window, "config", None), getattr(self.window, "save_config", None)
+
     def pause_menu_cast_mode(self):
         """How the cast key aims: "aimed" (K, then click) or "facing"."""
         return self._game_option("cast_mode", "aimed")

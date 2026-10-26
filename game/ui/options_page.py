@@ -44,6 +44,10 @@ class OptionsPage:
         self._slider = None       # QRectF of the volume track
         self._dragging = False
         self._next_launch = set() # keys changed that apply next launch
+        #: The key bindings list is showing, and the action waiting for its
+        #: new key (None when none is).
+        self.keys_mode = False
+        self.capture = None
 
     # -- data -------------------------------------------------------------
     def open(self):
@@ -67,8 +71,29 @@ class OptionsPage:
         self.menu._call_action("pause_menu_set_music_volume", value)
         self.menu.view.update()
 
+    def _config(self):
+        reader = getattr(self.menu.actions, "pause_menu_config", None)
+        try:
+            return reader() if reader is not None else (None, None)
+        except Exception:
+            return None, None
+
+    def _key_rows(self):
+        from .. import keybinds
+        config, _save = self._config()
+        keys = keybinds.current(config)
+        rows = []
+        for action, label, _const, _default in keybinds.ACTIONS:
+            value = "Press a key…" if self.capture == action else keybinds.label(keys[action])
+            rows.append(("bind:" + action, label, value, True))
+        rows.append(("keys_reset", "Reset to defaults", "", True))
+        rows.append(("keys_back", "Back", "", True))
+        return rows
+
     def rows(self):
         """``[(key, label, value text, enabled)]`` top to bottom."""
+        if self.keys_mode:
+            return self._key_rows()
         from . import launcher
         s = self.settings
         rows = []
@@ -83,6 +108,7 @@ class OptionsPage:
         rows.append(("volume", "Music volume",
                      "OFF" if volume <= 0.0 else f"{int(round(volume * 100))}%", True))
         rows.append(("cast", "Spell casting", CAST_MODES.get(self._cast_mode(), ""), True))
+        rows.append(("keys", "Key bindings", "▸", True))
         rows.append(("back", "Back", "", True))
         return rows
 
@@ -101,6 +127,13 @@ class OptionsPage:
             return text + "  Takes effect next launch."
         if key == "volume":
             return "Drag or use ← →.  0% turns the music off."
+        if key == "keys":
+            return "Choose the key for each action."
+        if key.startswith("bind:"):
+            return ("Press the new key (Esc cancels). A key already in use swaps over."
+                    if self.capture else "Enter or click, then press the new key.")
+        if key == "keys_reset":
+            return "Every action back on its usual key."
         if key == "cast":
             return ("K, then click where the spell goes (Esc or right-click puts it away)."
                     if self._cast_mode() == "aimed"
@@ -135,6 +168,24 @@ class OptionsPage:
         if key == "back":
             self.menu._leave_options()
             return
+        if key == "keys":
+            self.keys_mode, self.capture, self.index = True, None, 0
+            self.menu.view.update()
+            return
+        if key == "keys_back":
+            self.keys_mode, self.capture, self.index = False, None, 0
+            self.menu.view.update()
+            return
+        if key == "keys_reset":
+            from .. import keybinds
+            config, save = self._config()
+            keybinds.reset(config, save)
+            self.menu.view.update()
+            return
+        if key.startswith("bind:"):
+            self.capture = key[5:]
+            self.menu.view.update()
+            return
         if key == "cast":
             modes = list(CAST_MODES)
             mode = modes[(modes.index(self._cast_mode()) + step) % len(modes)]
@@ -163,7 +214,22 @@ class OptionsPage:
 
     # -- input ------------------------------------------------------------
     def handle_key(self, key):
+        if self.capture is not None:
+            # Waiting for the new key: Esc cancels, anything bindable binds.
+            if key != Qt.Key_Escape:
+                from .. import keybinds
+                name = keybinds.key_name(key)
+                if not name or name in keybinds.RESERVED:
+                    return
+                config, save = self._config()
+                keybinds.bind(config, self.capture, name, save)
+            self.capture = None
+            self.menu.view.update()
+            return
         rows = self.rows()
+        if self.keys_mode and key == Qt.Key_Escape:
+            self.change("keys_back")
+            return
         if key in (Qt.Key_Up, Qt.Key_W):
             self.index = (self.index - 1) % len(rows)
         elif key in (Qt.Key_Down, Qt.Key_S, Qt.Key_Tab):
