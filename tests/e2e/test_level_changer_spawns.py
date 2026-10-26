@@ -144,6 +144,31 @@ def test_the_hub_round_trip(fio_session, maps):
     assert seen == ["DungeonStart", "DungeonEntrance"]
 
 
+@pytest.mark.gl
+def test_e_on_the_sprite_loads_the_destination_without_a_confirmation(fio_session, maps):
+    import glm
+
+    hub, dungeon = maps
+    session = fio_session(hub).start_play()
+    changer = _thing(session, 'ToDungeon')
+    changer.properties['confirm'] = False
+    player = session.logic.player_runtime.player
+    # Standing on the icon used to fail every facing-angle test.
+    player.pos = glm.vec3(changer.pos[0], 50.0, changer.pos[2])
+    session.step(1)
+    assert session.logic.interaction_runtime.current_hud_message == '[E] Complete Level'
+
+    session.window.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_E, Qt.NoModifier))
+    session.step(1)
+    assert session.logic.interaction_runtime.level_complete_ui['immediate'] is True
+    session.paint()  # The real viewport queues the immediate map transition.
+    session.app.processEvents()
+    session.logic.session_runtime.stop_monster_ai()
+
+    assert session.window.file_path == dungeon
+    assert _spawned_at(session)[0] == 'DungeonStart'
+
+
 def test_an_empty_destination_spawn_uses_the_destination_primary(fio_session, maps):
     hub, dungeon = maps
     session = fio_session(dungeon).start_play()

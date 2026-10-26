@@ -995,6 +995,11 @@ class MiniwindGame:
 
     def _handle_interaction(self, logic, ctx, session, just=frozenset()):
         session.interact_prompt = ""
+        if ctx.interaction_consumed:
+            # MiniWind suppresses the stock HUD. Show the core's cave/door
+            # prompt here and keep the same E press from opening another UI.
+            session.interact_prompt = fio.interaction_prompt(logic)
+            return
         player = fio.player(logic)
         if player is None or session.game.character.is_dead:
             return

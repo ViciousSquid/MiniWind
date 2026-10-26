@@ -26,6 +26,12 @@ def player(logic):
     return getattr(runtime, "player", None)
 
 
+def interaction_prompt(logic) -> str:
+    """The engine's current contextual use prompt, for the game's own HUD."""
+    runtime = getattr(logic, "interaction_runtime", None)
+    return getattr(runtime, "current_hud_message", "") or ""
+
+
 def player_runtime(logic):
     """The player's runtime (health, god mode), or None."""
     return getattr(logic, "player_runtime", None)

@@ -6,8 +6,6 @@ LogicThread remains the authoritative tick-order orchestrator.
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 
 
@@ -98,9 +96,8 @@ class LogicInteraction:
 
         world = logic.world_runtime
         if not door_consumed_use and world.levelchanger_things:
-            # Radius activation is squared, removing the old per-entry
-            # distance sqrt. Facing is also tested without per-row
-            # normalisation.
+            # Level transitions use proximity, so E still works when the
+            # player stands on the icon or faces away in the overhead view.
             if len(world.levelchanger_centres) != len(world.levelchanger_things):
                 world.refresh_levelchanger_table()
             centres = world.levelchanger_centres
@@ -116,20 +113,7 @@ class LogicInteraction:
             in_range = eligible & (distance_sq < radii * radii)
 
             if in_range.any():
-                forward = np.asarray(
-                    (
-                        math.sin(logic.player_runtime.player.angle),
-                        0.0,
-                        math.cos(logic.player_runtime.player.angle),
-                    ),
-                    dtype=np.float32,
-                )
-                forward_dot = offsets @ forward
-                facing = (
-                    (forward_dot > 0.0)
-                    & (forward_dot * forward_dot > (0.25 * distance_sq))
-                )
-                candidates = np.flatnonzero(in_range & facing)
+                candidates = np.flatnonzero(in_range)
                 if candidates.size:
                     # Preserve authored list order: first matching row wins.
                     row = int(candidates[0])
