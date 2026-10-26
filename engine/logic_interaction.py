@@ -6,8 +6,6 @@ LogicThread remains the authoritative tick-order orchestrator.
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 
 
@@ -98,14 +96,12 @@ class LogicInteraction:
 
         world = logic.world_runtime
         if not door_consumed_use and world.levelchanger_things:
-            # Radius activation is squared, removing the old per-entry
-            # distance sqrt. Facing is also tested without per-row
-            # normalisation.
+            # Level transitions use proximity, so E still works when the
+            # player stands on the icon or faces away in the overhead view.
             if len(world.levelchanger_centres) != len(world.levelchanger_things):
                 world.refresh_levelchanger_table()
             centres = world.levelchanger_centres
             radii = world.levelchanger_radii
-            eligible = world.levelchanger_eligible
 
             player_pos = np.asarray(
                 (px, py, pz),
@@ -113,27 +109,21 @@ class LogicInteraction:
             )
             offsets = centres - player_pos
             distance_sq = np.einsum("ij,ij->i", offsets, offsets)
-            in_range = eligible & (distance_sq < radii * radii)
+            in_range = distance_sq < radii * radii
 
             if in_range.any():
-                forward = np.asarray(
-                    (
-                        math.sin(logic.player_runtime.player.angle),
-                        0.0,
-                        math.cos(logic.player_runtime.player.angle),
-                    ),
-                    dtype=np.float32,
-                )
-                forward_dot = offsets @ forward
-                facing = (
-                    (forward_dot > 0.0)
-                    & (forward_dot * forward_dot > (0.25 * distance_sq))
-                )
-                candidates = np.flatnonzero(in_range & facing)
-                if candidates.size:
+                # Eligibility is read live for the few rows in range: streaming
+                # parks and unparks changers (``disabled``) after the table is
+                # packed, so the packed column can be stale.
+                things = world.levelchanger_things
+                candidates = [
+                    int(row) for row in np.flatnonzero(in_range)
+                    if world.levelchanger_usable(things[row])
+                ]
+                if candidates:
                     # Preserve authored list order: first matching row wins.
-                    row = int(candidates[0])
-                    thing = world.levelchanger_things[row]
+                    row = candidates[0]
+                    thing = things[row]
                     self.current_hud_message = (
                         str(thing.properties.get("prompt") or "").strip()
                         or "[E] Complete Level")

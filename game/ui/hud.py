@@ -572,7 +572,7 @@ def _draw_active(painter, session, c, width, height):
         tx = x + 40
     T.text(painter, tx, y + 21, wname, size=10,
            color=T.GOLD_BRIGHT if w else T.DIM, family="Segoe UI")
-    T.text(painter, x + 210, y + 21, "L", size=8, color=T.DIM, family="Segoe UI")
+    T.text(painter, x + 200, y + 21, "LMB", size=8, color=T.DIM, family="Segoe UI")
 
     # Spell row: element-coloured swatch + name (right mouse hint); the
     # second weapon instead, when the off hand holds one.
@@ -584,7 +584,7 @@ def _draw_active(painter, session, c, width, height):
             tx = x + 40
         T.text(painter, tx, y + 44, off.name, size=10, color=T.GOLD_BRIGHT,
                family="Segoe UI")
-        T.text(painter, x + 210, y + 44, "R", size=8, color=T.DIM, family="Segoe UI")
+        T.text(painter, x + 200, y + 44, "RMB", size=8, color=T.DIM, family="Segoe UI")
         return
     scol = T.MAGICKA.lighter(140) if spell else T.DIM
     if spell is not None:
@@ -596,7 +596,7 @@ def _draw_active(painter, session, c, width, height):
     else:
         tx = x + 14
     T.text(painter, tx, y + 44, sname, size=10, color=scol, family="Segoe UI")
-    T.text(painter, x + 210, y + 44, "R", size=8, color=T.DIM, family="Segoe UI")
+    T.text(painter, x + 210, y + 44, "K", size=8, color=T.DIM, family="Segoe UI")
 
 
 def _draw_law(painter, session, width):

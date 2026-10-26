@@ -101,7 +101,8 @@ class LogicPlayer:
 
         jump = KEY_SPACE in keys
         crouch = KEY_C in keys
-        sprint = KEY_SHIFT in keys
+        # A game can hold the player to a walk (out of breath, say).
+        sprint = KEY_SHIFT in keys and getattr(player, "sprint_allowed", True)
 
         player.update(
             delta,

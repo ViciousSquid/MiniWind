@@ -52,7 +52,7 @@ _NAV_BY_CODE = _names_by_code()
 
 # action bindings (single-press unless noted)
 K_ATTACK = "f"
-K_CAST = "r"
+K_CAST = "k"
 K_BLOCK = "b"          # held
 K_INTERACT = "e"       # talk to / trade with / use the nearest NPC
 K_SNEAK = "v"
@@ -745,22 +745,33 @@ class MiniwindGame:
         host.on("render.post_scene", self._on_post_scene)
 
     def _on_post_scene(self, ev):
-        """Draw the arrows in flight and their fading flight paths, in the 3D
-        pass (game/ui/arrows.py)."""
+        """Draw, in the 3D pass: magic (game/ui/magic_gl.py), the arrows in
+        flight and their fading flight paths (game/ui/arrows.py), and last the
+        fisheye lenses of heavy spell impacts, which bend all of it."""
         if not ev.get("play_mode"):
             return
         host = getattr(self, "_host", None)
         session = getattr(getattr(host, "logic", None), "_miniwind", None)
-        arrows = getattr(session, "arrows_in_flight", ()) if session else ()
-        paths = getattr(session, "arrow_paths", ()) if session else ()
-        if not arrows and not paths:
+        if session is None:
             return
-        from .ui import arrows as arrow_art
-        if paths:
-            # Each loosed arrow's flight, a dark red dotted line fading out.
-            arrow_art.draw_paths(ev.get("projection"), ev.get("view"), paths)
-        if arrows:
-            arrow_art.draw_arrows(ev.get("projection"), ev.get("view"), arrows)
+        projection, view = ev.get("projection"), ev.get("view")
+        fx = getattr(session, "magic_fx", None)
+        lenses = ()
+        if fx is not None:
+            from .ui import magic_gl
+            sprites, lenses, session._fx_tints = fx.frame()
+            magic_gl.draw_sprites(projection, view, sprites)
+        arrows = getattr(session, "arrows_in_flight", ())
+        paths = getattr(session, "arrow_paths", ())
+        if arrows or paths:
+            from .ui import arrows as arrow_art
+            if paths:
+                # Each loosed arrow's flight, a dark red dotted line fading out.
+                arrow_art.draw_paths(projection, view, paths)
+            if arrows:
+                arrow_art.draw_arrows(projection, view, arrows)
+        if lenses:
+            magic_gl.draw_lenses(projection, view, lenses)
 
     # ------------------------------------------------------------- lifecycle
     def on_play_start(self, logic):
@@ -781,6 +792,11 @@ class MiniwindGame:
             fio.set_world_paused(logic, SCREEN_PAUSE, True)
         logic._miniwind = session
         logic.game_session = session
+        from .ui import magic_overlay
+        magic_overlay.prepare()
+        # The player's own key bindings (pause menu -> Options -> Key bindings).
+        from . import keybinds, runtime
+        keybinds.apply(runtime._editor_config)
         self._prev_keys = frozenset()
         from . import music
         if music.PLAYER.configured:
@@ -877,6 +893,9 @@ class MiniwindGame:
         # this tick's remaining gameplay input. Debug Tools is non-modal, so its
         # rewind/teleport clicks must also be drained on this path.
         was_lockpicking = session.open_screen == "lockpicking"
+        # Shift while moving is a sprint, paid for in stamina (session._sprint).
+        down = getattr(ctx, "key_down", None)
+        session.sprint_held = bool(down) and down("shift") and any(down(k) for k in "wasd")
         session.tick(ctx.delta)
         from .ui import hits
         hits.run_clicks(session)
@@ -939,7 +958,9 @@ class MiniwindGame:
             # Both hands, one after the other, when dual wielding.
             session.attack_with_both()
         if K_CAST in just:
-            session.do_cast()
+            session.cast_key()
+        if getattr(session, "spell_aiming", False) and "escape" in just:
+            session.cancel_spell_aim()
         if K_NEXT_SPELL in just:
             session.next_spell()
         # Number keys pick a slot on the inventory strip; a weapon in it is
@@ -995,6 +1016,17 @@ class MiniwindGame:
 
     def _handle_interaction(self, logic, ctx, session, just=frozenset()):
         session.interact_prompt = ""
+        if getattr(session, "spell_aiming", False):
+            from .rpg import magic as rpg_magic
+            spell = rpg_magic.get(session.game.character.active_spell or "")
+            name = spell.name if spell is not None else "the spell"
+            session.interact_prompt = f"Click to cast {name}  ·  K, Esc or right-click to cancel"
+            return
+        if ctx.interaction_consumed:
+            # MiniWind suppresses the stock HUD. Show the core's cave/door
+            # prompt here and keep the same E press from opening another UI.
+            session.interact_prompt = fio.interaction_prompt(logic)
+            return
         player = fio.player(logic)
         if player is None or session.game.character.is_dead:
             return
@@ -1131,6 +1163,11 @@ class MiniwindGame:
 
             if not session.needs_char_creation and session.open_screen != "charcreate":
                 hud.draw_time_tint(painter, session, w, h, viewport)
+                # Magic's screen washes (a resurrection's dark red, a frost
+                # hit's rime) over the world, under the HUD.
+                from .ui import magic_overlay
+                magic_overlay.draw(painter, getattr(session, "_fx_tints", ()), w, h,
+                                   time.perf_counter())
                 # Inspector lines (console 'inspect') lie on the world, under
                 # the HUD; their windows float above everything.
                 from .ui import inspector, path_debug
@@ -1144,6 +1181,12 @@ class MiniwindGame:
                     session._worldmap_requested = True
                     worldmap.ensure_for(logic, viewport)
                 hud.draw(painter, session, w, h)
+                if getattr(session, "spell_aiming", False):
+                    from .rpg import magic as rpg_magic
+                    spell = rpg_magic.get(session.game.character.active_spell or "")
+                    magic_overlay.draw_aim(painter, hits.pointer,
+                                           spell.color if spell else (200, 200, 255),
+                                           time.perf_counter())
                 hud.draw_bow_charge(painter, session, viewport, w, h)
                 hud.draw_npc_bow_charges(painter, session, viewport, w, h)
                 # The armed pick's highlight goes over the HUD, so its name
@@ -1374,12 +1417,16 @@ class MiniwindGame:
             return True
 
         if cur is None and key in ("screen:inventory", "screen:character"):
-            # The inventory and the character sheet are one window: drag and
-            # drop onto the paperdoll, with the sheet or the item details
-            # beside it (game/ui/inventory_window.py).
-            from .ui.inventory_window import InventoryWindow
-            win = InventoryWindow(session, view="character" if key == "screen:character"
-                                  else "details")
+            # C is the character window: drag and drop onto the paperdoll,
+            # with the sheet beside it (game/ui/inventory_window.py). I is the
+            # pack, Deus Ex-style: a big grid, Equip / Use / Drop, the item's
+            # details (game/ui/pack_window.py).
+            if key == "screen:inventory":
+                from .ui.pack_window import PackWindow
+                win = PackWindow(session)
+            else:
+                from .ui.inventory_window import InventoryWindow
+                win = InventoryWindow(session, view="character")
             win.place(w, h)
             wm.add(win)
             session._overlay_win = win

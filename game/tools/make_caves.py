@@ -100,6 +100,9 @@ BLACK = "_black.jpg"
 GRID = 30
 CELL = 128.0
 WALL_HEIGHT = 320.0
+#: Keep the changer and a standing player beyond the shoulder's front edge,
+#: including diagonal mouths (the shoulder is an axis-aligned 520-unit box).
+MOUTH_CHANGER_OFFSET = 220.0
 
 
 def _uid():
@@ -265,7 +268,8 @@ class CaveMouths:
             r = rng.uniform(320, 620)
             s = float(rng.uniform(60, 140))
             brush(x + math.cos(a) * r, z + math.sin(a) * r, (s, s * 0.7, s * 1.1), rock)
-        things.append(_changer(f"LevelChanger_{slug}", (x + dx * 20.0, g + 64.0, z + dz * 20.0),
+        cx, cz = x + dx * MOUTH_CHANGER_OFFSET, z + dz * MOUTH_CHANGER_OFFSET
+        things.append(_changer(f"LevelChanger_{slug}", (cx, self.ground(cx, cz) + 64.0, cz),
                                f"maps/{slug}.json", "entrance", f"[E] Enter {name}"))
         things[-1]["properties"].update(tag)
         sx, sz = x + dx * 300.0, z + dz * 300.0

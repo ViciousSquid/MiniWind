@@ -67,8 +67,32 @@ from .rpg import skills as sk
 from .rpg.game_state import GameState
 from .diceroll_anim import SHAKE_DURATION, ROLL_DURATION, FADE_DURATION
 from . import npc_archery
+from . import npc_stamina
 
 _current_session = None
+
+
+def _feet(thing):
+    """The ground under an actor: Fio keeps a monster's origin at the middle
+    of its sprite."""
+    p = thing.properties
+    try:
+        half = float(p.get("sprite_height", 112) or 112) / 2.0
+    except (TypeError, ValueError):
+        half = 56.0
+    return [float(thing.pos[0]), float(thing.pos[1]) - half, float(thing.pos[2])]
+
+
+def _scatter(dx, dz, rng, degrees):
+    """(*dx*, *dz*) turned by a random angle of up to *degrees* either way."""
+    a = math.radians(rng.uniform(-degrees, degrees))
+    ca, sa = math.cos(a), math.sin(a)
+    return dx * ca - dz * sa, dx * sa + dz * ca
+
+
+def _bolt_landed(_pos, _target) -> None:
+    """A spell bolt's impact hook: nothing to do, but having one tags the bolt
+    (Fio tags only hooked projectiles), so its light and trail can follow it."""
 
 #: The editor's live settings (settings.ini), handed over by the editor
 #: integration as the 3D view is built (game/integration.py). The logic thread
@@ -97,11 +121,6 @@ OFFSCREEN_STRIDE = 4
 #: conditions) run this often rather than every tick.
 PROXIMITY_INTERVAL = 0.1
 NPC_WALK_SPEED = 90.0
-#: How much quicker a frightened villager moves. Applied only while the NPC is
-#: in the FLEE state, which the decision tick re-evaluates constantly and drops
-#: as soon as no hostile is within FLEE_SIGHT — so the sprint lasts exactly as
-#: long as the fright does, and they go back to a walk on their own.
-FLEE_SPEED_MULTIPLIER = 2.0
 #: A provoked fighter remembers its opponent well beyond initial perception.
 #: Only retaliation applies this limit; ordinary detection stays at 1024.
 RETALIATION_PURSUIT_RANGE = 3200.0
@@ -487,6 +506,11 @@ class MiniwindSession(SettlementLaw):
         #: strikes on its own button and its own rhythm.
         self._offhand_cooldown = 0.0
         self._cast_cooldown = 0.0
+        #: Waiting for a click to say where the spell goes (cast mode "aimed").
+        self.spell_aiming = False
+        #: The facing to cast along, in "aimed" mode once clicked: set for the
+        #: one cast it was clicked for.
+        self._cast_aim = None
         #: Live combat actors (NPCs/creatures), refreshed once per decision pass
         #: so per-NPC threat lookups iterate a short cached list instead of
         #: re-scanning the whole scene (markers, lights, brushes…) for each NPC.
@@ -577,6 +601,19 @@ class MiniwindSession(SettlementLaw):
         #: Every NPC / creature archer mid-draw: they draw a bow by the
         #: player's own rules (game/npc_archery.py).
         self.archery = npc_archery.NpcArchery(self)
+        from . import npc_magic
+        self.npc_magic = npc_magic.NpcMagic(self)
+        # What magic looks like: casts, bolts, impacts, wards (game/magic_fx.py),
+        # drawn by game/ui/magic_gl.py and game/ui/magic_overlay.py.
+        from .magic_fx import MagicFX
+        self.magic_fx = MagicFX(player_pos=self._player_pos)
+        self.magic_fx.wards = self._magic_wards
+        self._fx_tints = ()
+        # Casters and archers keep their distance, but can be run down
+        # (game/combat_tactics.py); everyone else is routed round walls.
+        from .combat_tactics import CombatTactics
+        self.tactics = CombatTactics(lambda: getattr(self, "_archery_clock", 0.0), self.nav,
+                                     self._tier_of, busy=lambda t: id(t) in self.archery.drawing)
         from .held_weapons import HeldWeapons
         self.held = HeldWeapons(self)
         from .dragon_fire import DragonFire
@@ -770,9 +807,11 @@ class MiniwindSession(SettlementLaw):
         # the engine's instant hit-scan (game/npc_archery.py).
         from engine.monster_ai import MonsterAI
         MonsterAI.install_shot_hook(self.archery.shot_hook)
+        # A caster's ward soaks part of every blow it takes (game/npc_magic.py).
+        MonsterAI.install_damage_filter(self.npc_magic.damage_filter)
         # Chasers route round walls rather than pressing into them
         # (game/navigation.py); schedule walking uses the same routes.
-        MonsterAI.install_steer_hook(self.nav.steer_many)
+        MonsterAI.install_steer_hook(self.tactics.steer_many)
         self.memory.load(self._map_key)
         self.spawn_creature_points()   # materialise CreatureSpawn points once
         self.memory.apply()            # the dead stay dead; lairs refill after a day
@@ -806,6 +845,7 @@ class MiniwindSession(SettlementLaw):
                 pass
         self._remove_wisp()
         self._remove_all_torch_lights()
+        self.magic_fx.clear()
         self._bolt_positions = {}
         self._update_bolt_lights()          # no bolt is live: every light goes out
         if getattr(self.logic, "_player_damage_filter", None) is self._mitigate_incoming:
@@ -816,7 +856,8 @@ class MiniwindSession(SettlementLaw):
         fio.set_projectile_split(self.logic, None)
         try:
             from engine.monster_ai import MonsterAI
-            MonsterAI.clear_steer_hook(self.nav.steer_many)
+            MonsterAI.clear_steer_hook(self.tactics.steer_many)
+            self.tactics.clear()
         except Exception:
             pass
         self.arrows_in_flight = ()
@@ -824,6 +865,7 @@ class MiniwindSession(SettlementLaw):
         faction_ai.uninstall(self.logic)
         from engine.monster_ai import MonsterAI
         MonsterAI.clear_shot_hook(self.archery.shot_hook)
+        MonsterAI.clear_damage_filter(self.npc_magic.damage_filter)
         self.archery.clear()
 
     def _mitigate_incoming(self, raw_damage, damage_kind="physical") -> float:
@@ -1119,7 +1161,7 @@ class MiniwindSession(SettlementLaw):
             self._arrow_tags.clear()
         self._keep_player_in_world()
         self.clock.advance(delta)
-        self.game.tick(delta)
+        self.game.tick(delta, self._sprint(delta))
         self._announce_skill_raises()
         self._update_encumbrance()
         if self._attack_cooldown > 0:
@@ -2728,8 +2770,8 @@ class MiniwindSession(SettlementLaw):
         (see :data:`ESCAPE_LOCKED_SCREENS`) — giving them the key would swallow
         it silently and leave the player with no way to stop play mode.
         """
-        if self.dialogue is not None:
-            return True
+        if self.dialogue is not None or getattr(self, "spell_aiming", False):
+            return True                # Escape stops aiming a spell
         if self.open_screen is None:
             return False
         return self.open_screen not in ESCAPE_LOCKED_SCREENS
@@ -4813,8 +4855,12 @@ class MiniwindSession(SettlementLaw):
         if dist <= ARRIVE_RADIUS:
             return
         speed = float(p.get("move_speed", NPC_WALK_SPEED)) or NPC_WALK_SPEED
-        if p.get("sched_state") == sched.FLEE:
-            speed *= FLEE_SPEED_MULTIPLIER   # a fright doubles the step
+        # A frightened villager runs while its stamina lasts, then walks
+        # winded (game/npc_stamina.py). FLEE is re-decided every tick and
+        # dropped once no hostile is in sight, so the run ends with the fright.
+        fleeing = p.get("sched_state") == sched.FLEE
+        if fleeing or p.get("_running"):
+            speed *= npc_stamina.pace(p, getattr(self, "_archery_clock", 0.0), fleeing)
         # Round a wall rather than into it: once a step has been blocked (or a
         # route is being followed) head for the next corner of a route.
         nav = getattr(self, "nav", None)
@@ -5211,9 +5257,9 @@ class MiniwindSession(SettlementLaw):
         One button per hand. Primary fire (left) uses the main hand -- a bow
         looses an arrow, a crossbow a bolt, a staff channels its spell, a blade
         swings. Secondary fire (right) uses the off hand: the weapon in the
-        shield slot when there is one, else it casts the active spell (which a
-        Warrior cannot). Returns True: MiniWind always owns the shot, so Fio's
-        hitscan weapon path never runs underneath it.
+        shield slot, or a worn shield's bash. Spells are the cast key's (K).
+        Returns True: MiniWind always owns the shot, so Fio's hitscan weapon
+        path never runs underneath it.
         """
         c = self.game.character
         if self.modal_input_active():
@@ -5223,10 +5269,42 @@ class MiniwindSession(SettlementLaw):
         if mode == "secondary":
             if eq.offhand_weapon(c) is not None:
                 self.do_attack("off")
-            else:
-                self.do_cast()
+            elif eq.equipped_id(c, rpg_items.SLOT_SHIELD):
+                self.shield_bash()
         else:
             self.do_attack()
+        return True
+
+    #: A shield bash: its damage (plus a share of the shield's armour rating),
+    #: stamina and recovery.
+    BASH_DAMAGE = 3.0
+    BASH_ARMOUR_SHARE = 0.5
+    BASH_STAMINA = 8.0
+    BASH_COOLDOWN = 0.9
+
+    def shield_bash(self) -> bool:
+        """The off hand's attack with a shield worn: a short, heavy shove of
+        the shield into whoever is in front, trained as Block."""
+        c = self.game.character
+        if c.is_dead or self._offhand_cooldown > 0:
+            return False
+        d = eq.equipped_def(c, rpg_items.SLOT_SHIELD)
+        if d is None:
+            return False
+        self._offhand_cooldown = self.BASH_COOLDOWN
+        self._offhand_anim_time = 0.25
+        if c.stamina < self.BASH_STAMINA:
+            self.notify("Too exhausted to bash")
+            return False
+        c.spend_stamina(self.BASH_STAMINA)
+        target = self._acquire_target(MELEE_REACH, aim_dot=MELEE_AIM_DOT)
+        if target is None:
+            return True
+        damage = self.BASH_DAMAGE + float(d.get("armor_rating", 0) or 0) * self.BASH_ARMOUR_SHARE
+        res = self.game._apply_hit(target.properties, {
+            "hit": True, "damage": damage, "skill": sk.BLOCK, "difficulty": 1.0,
+            "sneak": False, "crit": False})
+        self._land_player_hit(target, res, heavy=True)
         return True
 
     def do_attack(self, hand: str = "main") -> bool:
@@ -5336,6 +5414,9 @@ class MiniwindSession(SettlementLaw):
         aim = self._projectile_aim_point(start)
 
         dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
+        if eq.dual_wielding(c):
+            # A crossbow in each hand: neither is aimed well.
+            dx, dz = _scatter(dx, dz, self.rng, rpg_combat.DUAL_WIELD_SPREAD)
         dlen = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
         vel = [dx / dlen * ARROW_SPEED, dy / dlen * ARROW_SPEED, dz / dlen * ARROW_SPEED]
 
@@ -5403,9 +5484,11 @@ class MiniwindSession(SettlementLaw):
                 tags, np.fromiter(bolts, dtype=np.int64, count=len(bolts)))).tolist()
             self._bolt_positions = {int(tags[r]): tuple(store.pos[r].tolist())
                                     for r in lit}
+        # Spell bolts are drawn by the game too: a lit orb with a trail.
+        bolts_drawn = self._track_spell_bolts(store, tags)
         if not arrows:
             self.arrows_in_flight = ()
-            return None
+            return None if bolts_drawn is None else ~bolts_drawn
         is_arrow = np.isin(tags, np.fromiter(arrows, dtype=np.int64, count=len(arrows)))
         rows = np.flatnonzero(is_arrow).tolist()
         self.arrows_in_flight = tuple(
@@ -5428,7 +5511,83 @@ class MiniwindSession(SettlementLaw):
         live = set(int(t) for t in tags[rows])
         for tag in [t for t in arrows if t not in live]:
             del arrows[tag]
-        return ~is_arrow
+        return ~(is_arrow | bolts_drawn) if bolts_drawn is not None else ~is_arrow
+
+    def _track_spell_bolts(self, store, tags):
+        """Hand the spell bolts in flight to the magic effects, which lay
+        their trails and burst the ones that are gone; the mask of their rows
+        (None with no bolts known)."""
+        fx = self.magic_fx
+        known = fx.bolt_tags()
+        if not known:
+            return None
+        is_bolt = np.isin(tags, np.asarray(known, dtype=np.int64))
+        fx.track_bolts({int(tags[r]): (tuple(store.pos[r].tolist()),
+                                       tuple(store.vel[r].tolist()))
+                        for r in np.flatnonzero(is_bolt).tolist()})
+        return is_bolt
+
+    # ------------------------------------------------------------ magic looks
+    def spell_look(self, spell):
+        """How *spell* looks (game/magic_fx.py), its editor overrides included."""
+        from .magic_fx import look_for
+        return look_for(getattr(spell, "id", ""), getattr(spell, "color", None),
+                        getattr(spell, "element", "magic"),
+                        getattr(spell, "visuals", None))
+
+    #: Ward effects drawn as a fresnel bubble round the player: kind -> colour.
+    WARD_COLOURS = {"shield": (110, 190, 255), "fire_shield": (255, 130, 40),
+                    "berserk": (255, 50, 40), "invisibility": (220, 230, 255)}
+
+    def _magic_wards(self):
+        """``[(feet, colour, kind)]``: the wards worn right now, the player's
+        and every NPC caster's."""
+        out = list(self.npc_magic.ward_bubbles())
+        c = self.game.character
+        pos = self._player_pos()
+        if c.is_dead or pos is None:
+            return out
+        return out + [(pos, colour, kind) for kind, colour in self.WARD_COLOURS.items()
+                      if c.effect_magnitude(kind) > 0]
+
+    def _magic_cast_fx(self, spell, target=None) -> None:
+        """The visible side of a cast the player just made."""
+        pos = self._player_pos()
+        if pos is None:
+            return
+        fx = self.magic_fx
+        look = self.spell_look(spell)
+        fx.cast(pos, look)
+        kinds = {e.get("kind") for e in (spell.effects or ())}
+        if spell.delivery == rpg_magic.SELF:
+            if kinds & {"restore_health", "cure_disease", "restore_magicka"}:
+                fx.heal(pos, spell.color)
+            if kinds & {"summon", "bound_weapon", "wisp"}:
+                fx.summon(pos, spell.color)
+        elif target is not None:
+            fx.impact(list(target.pos), look)
+
+    #: Out of breath, the player walks until this share of stamina is back.
+    SPRINT_RECOVER_AT = 0.3
+
+    def _sprint(self, delta: float) -> bool:
+        """Whether the player is sprinting this tick (Shift held while moving,
+        set by the host as ``sprint_held``): it costs stamina, and run dry the
+        player is winded and held to a walk until some of it is back. Running
+        trains Athletics."""
+        c = self.game.character
+        player = fio.player(self.logic)
+        if c.stamina <= 0.0:
+            self._winded = True
+        elif getattr(self, "_winded", False) and c.stamina >= c.max_stamina * self.SPRINT_RECOVER_AT:
+            self._winded = False
+        winded = getattr(self, "_winded", False)
+        if player is not None:
+            player.sprint_allowed = not winded
+        sprinting = bool(getattr(self, "sprint_held", False)) and not winded and not c.is_dead
+        if sprinting:
+            c.use_skill(sk.ATHLETICS, 0.08 * delta)
+        return sprinting
 
     def _staff_attack(self, w) -> bool:
         """Channel a staff's bound spell (called from do_attack for KIND_STAFF)."""
@@ -5444,6 +5603,7 @@ class MiniwindSession(SettlementLaw):
             self.notify("Not enough magicka")
             return False
         c.use_skill("destruction", 1.0)
+        self._magic_cast_fx(spell, target)
         if target is not None:
             r = self.game.resolve_spell_on_creature(spell, target.properties)
             _journal(target)
@@ -5453,11 +5613,81 @@ class MiniwindSession(SettlementLaw):
                 self._on_creature_killed(target)
         return True
 
-    def do_cast(self) -> bool:
+    # -------------------------------------------------------------- casting
+    #: How the cast key (K) aims, set in the pause menu's options
+    #: (GAME → cast_mode): "aimed" -- K, then click where the spell goes;
+    #: "facing" -- K casts at once, straight out along the player's facing.
+    CAST_AIMED = "aimed"
+    CAST_FACING = "facing"
+
+    def cast_mode(self) -> str:
+        try:
+            config = self._editor_config()
+            mode = config.get("GAME", "cast_mode", fallback=self.CAST_AIMED) if config else None
+        except (AttributeError, TypeError, ValueError):
+            mode = None
+        return mode if mode in (self.CAST_AIMED, self.CAST_FACING) else self.CAST_AIMED
+
+    def cast_key(self) -> bool:
+        """The cast key: cast now along the facing, or start aiming (and,
+        pressed again while aiming, stop)."""
+        if self.spell_aiming:
+            self.cancel_spell_aim()
+            return False
+        c = self.game.character
+        if not c.can_use_magic():
+            return False                # a class without magic: K does nothing
+        if self.cast_mode() == self.CAST_FACING:
+            return self.do_cast(aim="facing")
+        spell = rpg_magic.get(c.active_spell) if c.active_spell else None
+        if not c.can_use_magic() or c.is_dead or spell is None:
+            return self.do_cast(aim="facing")      # says why not, as ever
+        if spell.delivery == rpg_magic.SELF:
+            return self.do_cast()                  # nothing to aim
+        self.spell_aiming = True
+        return True
+
+    def cancel_spell_aim(self) -> None:
+        self.spell_aiming = False
+
+    def cast_at(self, point, target=None) -> bool:
+        """The aimed cast's click: the spell goes to *point* (a world point
+        under the cursor) or at *target* (the creature clicked)."""
+        self.spell_aiming = False
+        return self.do_cast(aim=list(target.pos) if target is not None else point,
+                            target=target)
+
+    def _face(self, point) -> None:
+        """Turn the player toward *point*: one casts where one looks."""
+        player = fio.player(self.logic)
+        ppos = self._player_pos()
+        if player is None or ppos is None or point is None:
+            return
+        dx, dz = float(point[0]) - ppos[0], float(point[2]) - ppos[2]
+        if dx or dz:
+            player.angle = math.atan2(dx, dz)
+
+    def _cast_point(self, aim, start, reach):
+        """Where a bolt cast with *aim* goes: along the facing ("facing"), at
+        a point, or (None) the old auto-aim."""
+        if aim == "facing":
+            fwd = self._player_forward()
+            if fwd is None:
+                return None
+            return [start[0] + fwd[0] * reach, start[1], start[2] + fwd[2] * reach]
+        if aim is not None:
+            return [float(aim[0]), start[1], float(aim[2])]   # level flight
+        return None
+
+    def do_cast(self, aim=None, target=None) -> bool:
         """Cast the active spell. PROJECTILE spells launch a visible bolt that
         flies from the player and damages the first creature it strikes;
         TARGET/TOUCH spells resolve instantly on the aimed creature; SELF spells
-        are applied to the caster by ``cast_active_spell``."""
+        are applied to the caster by ``cast_active_spell``.
+
+        *aim* is where it goes: ``"facing"`` (straight out ahead), a world
+        point (clicked), or None (the nearest creature in front, as before);
+        *target* a creature clicked on."""
         c = self.game.character
         if not c.can_use_magic():
             # A Warrior works no magic: the right hand does nothing.
@@ -5505,13 +5735,29 @@ class MiniwindSession(SettlementLaw):
             return True
         # A "wisp" effect conjures the wandering companion light (a SELF spell).
         if any(e.get("kind") == "wisp" for e in (spell.effects or [])):
+            self._magic_cast_fx(spell)
             self._spawn_wisp(spell)
             return True
+        if spell.delivery == rpg_magic.SELF:
+            self._magic_cast_fx(spell)
+        if aim is not None and aim != "facing":
+            self._face(aim)
         if spell.delivery == rpg_magic.PROJECTILE:
-            self._spawn_player_spell_projectile(spell)
+            self._magic_cast_fx(spell)
+            self._spawn_player_spell_projectile(spell, aim)
             return True
         if spell.delivery in (rpg_magic.TARGET, rpg_magic.TOUCH):
-            target = self._acquire_target(BOW_REACH if spell.delivery != rpg_magic.TOUCH else MELEE_REACH)
+            reach = BOW_REACH if spell.delivery != rpg_magic.TOUCH else MELEE_REACH
+            if target is not None:
+                ppos = self._player_pos()
+                if ppos is None or self._dist2d(ppos, target.pos) > reach:
+                    self.notify("Too far away", 1.5)
+                    target = None
+            elif aim is not None and aim != "facing":
+                target = self._creature_near(aim, 140.0)
+            else:
+                target = self._acquire_target(reach)
+            self._magic_cast_fx(spell, target)
             if target is not None:
                 r = self.game.resolve_spell_on_creature(spell, target.properties)
                 _journal(target)
@@ -5586,6 +5832,8 @@ class MiniwindSession(SettlementLaw):
             return False
         name = target.properties.get("name") or target.properties.get("npc_role") \
             or target.properties.get("monster_type") or "The fallen"
+        # The whole screen sinks into dark red as light pours up from the body.
+        self.magic_fx.resurrection(_feet(target))
         self.notify(f"{name} rises again!")
         self.add_floater("RAISED", kind="heal")
         return True
@@ -5617,7 +5865,21 @@ class MiniwindSession(SettlementLaw):
         self._rebuild_entity_caches()
         return True
 
-    def _spawn_player_spell_projectile(self, spell) -> None:
+    def _creature_near(self, point, radius):
+        """The living creature nearest *point* within *radius*, or None."""
+        best, best_d = None, radius
+        for t in fio.things(self.logic):
+            tp = t.properties
+            if tp.get("dead") or tp.get("hidden"):
+                continue
+            if str(tp.get("type", "")).replace("_", "").lower() not in ("npc", "creature", "monster"):
+                continue
+            d = self._dist2d(point, t.pos)
+            if d < best_d:
+                best, best_d = t, d
+        return best
+
+    def _spawn_player_spell_projectile(self, spell, aim=None) -> None:
         """Launch a visible spell bolt from the player toward the aim point (a
         creature in front, else straight ahead). It reuses the engine's
         projectile pipeline — flagged as player-owned so it flies past the
@@ -5630,7 +5892,8 @@ class MiniwindSession(SettlementLaw):
             MONSTER_PROJECTILE_SPEED, MONSTER_PROJECTILE_MAX_DIST)
 
         start = [ppos[0], ppos[1] + 48.0, ppos[2]]
-        aim = self._projectile_aim_point(start)
+        aim = self._cast_point(aim, start, MONSTER_PROJECTILE_MAX_DIST) \
+            or self._projectile_aim_point(start)
 
         dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
         dlen = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
@@ -5639,10 +5902,15 @@ class MiniwindSession(SettlementLaw):
 
         # A player-owned bolt: it flies past the caster and strikes creatures
         # with the spell's damage.
+        # A no-op impact hook gives the bolt a tag, so its light and its
+        # trail can follow it.
         row = fio.spawn_projectile(lt, start, vel,
                                    lifetime=MONSTER_PROJECTILE_MAX_DIST / speed,
-                                   damage=int(getattr(spell, "damage", 0) or 0))
+                                   damage=int(getattr(spell, "damage", 0) or 0),
+                                   on_impact=_bolt_landed)
         self._attach_bolt_light(row, start, spell)
+        if row is not None:
+            self.magic_fx.bolt(fio.projectile_tag(lt, row), self.spell_look(spell))
 
     def _attach_bolt_light(self, row, start, spell) -> None:
         """Give a spell bolt its own moving light, in the spell's colour.
@@ -5723,8 +5991,12 @@ class MiniwindSession(SettlementLaw):
                  sway.offset("main", facing, now))]
         off_lag = sway.offset("off", facing, now)
         off = eq.offhand_weapon(c)
+        shield = eq.equipped_id(c, rpg_items.SLOT_SHIELD)
         if off is not None:
             held.append((off.id, other, self._offhand_anim_time > 0.0, off_lag))
+        elif shield:
+            # A worn shield is on the off arm, brought up while blocking.
+            held.append((shield, other, bool(self._blocking), off_lag))
         else:
             torch = self._player_torch_def()
             if torch is not None:
@@ -6461,9 +6733,11 @@ class MiniwindSession(SettlementLaw):
         return True
 
     def select_strip_slot(self, index: int) -> bool:
-        """A strip slot picked, by a click or its number key: selected, and a
-        weapon in it taken in hand at once (see :meth:`ready_weapon`).
-        True if anything changed in hand."""
+        """A strip slot picked, by a click or its number key: selected, and
+        what is in it applied at once -- a weapon taken in hand (see
+        :meth:`ready_weapon`); anything else used as a double-click would
+        (:meth:`inventory_use`): a shield or armour worn, or taken off when
+        already worn, a potion drunk. True if anything changed."""
         slots = self.strip_slots()
         index = int(index)
         if not 0 <= index < len(slots):
@@ -6473,8 +6747,10 @@ class MiniwindSession(SettlementLaw):
         if not stack:
             return False
         d = rpg_items.get(stack.get("id"))
-        if d is None or d.category != rpg_items.WEAPON:
+        if d is None:
             return False
+        if d.category != rpg_items.WEAPON:
+            return self.inventory_use(d.id)
         copy = sum(1 for st in slots[:index] if st and st.get("id") == d.id)
         return self.ready_weapon(d.id, copy)
 

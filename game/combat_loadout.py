@@ -40,6 +40,13 @@ RANGED_PREFERENCE = (MAGIC, BOW)
 
 #: ``resolver(item_id) -> style | None`` supplied by the game layer.
 _item_style_resolver = None
+#: ``rating(item_id) -> float``: how hard a weapon hits, so an actor carrying
+#: two of a kind fights with the better one. Supplied by the game layer.
+_item_rating_resolver = None
+#: ``ready(properties) -> bool``: whether an actor can attack with a spell right
+#: now (knows an attack spell and has the magicka for it). Supplied by the game
+#: layer; without it, any assigned spell counts.
+_magic_resolver = None
 
 
 def set_item_style_resolver(resolver) -> None:
@@ -50,6 +57,41 @@ def set_item_style_resolver(resolver) -> None:
     """
     global _item_style_resolver
     _item_style_resolver = resolver
+
+
+def set_item_rating_resolver(resolver) -> None:
+    """Install (or, with None, remove) the game's weapon rating."""
+    global _item_rating_resolver
+    _item_rating_resolver = resolver
+
+
+def set_magic_resolver(resolver) -> None:
+    """Install (or, with None, remove) the game's can-cast-now check."""
+    global _magic_resolver
+    _magic_resolver = resolver
+
+
+def _item_rating(item_id) -> float:
+    resolver = _item_rating_resolver
+    if resolver is None or not item_id:
+        return 0.0
+    try:
+        return float(resolver(str(item_id)) or 0.0)
+    except Exception as exc:
+        print(f"[combat_loadout] item rating resolver failed for {item_id!r}: {exc}")
+        return 0.0
+
+
+def _magic_ready(properties) -> bool:
+    resolver = _magic_resolver
+    if resolver is None:
+        spells = properties.get("spells")
+        return isinstance(spells, list) and bool(spells)
+    try:
+        return bool(resolver(properties))
+    except Exception as exc:
+        print(f"[combat_loadout] magic resolver failed: {exc}")
+        return False
 
 
 def _item_style(item_id):
@@ -95,31 +137,41 @@ def build_loadout(properties):
     # The authored style is always available: it is what the map promised this
     # actor can do, whether or not an item backs it (claws, fangs, a hex).
     if authored in (MELEE, BOW, MAGIC):
-        loadout[authored] = properties.get("equipped_weapon") or None
+        equipped = properties.get("equipped_weapon")
+        loadout[authored] = equipped if _item_style(equipped) == authored else None
 
     # Assigned spells make magic available with no weapon needed.
     spells = properties.get("spells")
     if isinstance(spells, list) and spells:
-        loadout.setdefault(MAGIC, properties.get("equipped_weapon")
-                           if _item_style(properties.get("equipped_weapon")) == MAGIC
-                           else None)
+        loadout.setdefault(MAGIC, None)
 
-    # Anything carried that is a weapon: what is equipped, then the pack.
+    # Anything carried that is a weapon: what is equipped, then the pack. Of
+    # two of a kind the harder-hitting one is used; the one in hand wins a tie.
+    best = {}
     equipped = properties.get("equipped_weapon")
-    style = _item_style(equipped)
-    if style:
-        loadout[style] = equipped
-
+    candidates = [equipped]
     inventory = properties.get("inventory")
     if isinstance(inventory, list):
-        for stack in inventory:
-            item_id = _stack_id(stack)
-            style = _item_style(item_id)
-            # Don't demote a weapon already in hand for the same style.
-            if style and loadout.get(style) is None:
-                loadout[style] = item_id
-            elif style and style not in loadout:
-                loadout[style] = item_id
+        candidates.extend(_stack_id(stack) for stack in inventory)
+    for item_id in candidates:
+        style = _item_style(item_id)
+        if not style:
+            continue
+        rating = _item_rating(item_id)
+        if style not in best or rating > best[style][0]:
+            best[style] = (rating, item_id)
+    for style, (_rating, item_id) in best.items():
+        loadout[style] = item_id
+
+    # Magic is a way to fight only while there is a spell to cast: an actor
+    # out of magicka, or knowing only healing, reaches for a weapon instead.
+    if MAGIC in loadout and not _magic_ready(properties):
+        del loadout[MAGIC]
+        if loadout["default"] == MAGIC:
+            for style in (MELEE, BOW):
+                if style in loadout:
+                    loadout["default"] = style
+                    break
     return loadout
 
 

@@ -36,6 +36,8 @@ from . import birthsigns
 SKILL_UPS_PER_LEVEL = 10
 #: The three pools a level-up can grow, Skyrim-style: the player picks one.
 LEVEL_POOLS = ("health", "magicka", "stamina")
+#: Stamina a second of sprinting costs (a fresh 100 lasts about eight seconds).
+SPRINT_STAMINA_PER_SECOND = 12.0
 #: How much the chosen pool grows per level.
 LEVEL_POOL_GAIN = 10.0
 #: How many quick-weapon slots there are (keys 1-4).
@@ -406,8 +408,10 @@ class Character:
     def is_dead(self) -> bool:
         return self.health <= 0.0
 
-    def regen(self, dt: float) -> None:
-        """Passive per-second regeneration (magicka & stamina; not health)."""
+    def regen(self, dt: float, sprinting: bool = False) -> None:
+        """Passive per-second regeneration (magicka & stamina; not health).
+        Sprinting spends stamina (:data:`SPRINT_STAMINA_PER_SECOND`) instead
+        of regaining it."""
         if self.is_dead:
             return
         # Atronach sign: magicka does not regenerate.
@@ -415,6 +419,9 @@ class Character:
         if not golem and self.max_magicka > 0:
             rate = self.max_magicka * 0.02 * (0.5 + self.attrs.get(attr.WILLPOWER, 40) / 100.0)
             self.restore_magicka(rate * dt)
+        if sprinting:
+            self.spend_stamina(SPRINT_STAMINA_PER_SECOND * dt)
+            return
         st_rate = self.max_stamina * 0.15
         self.stamina = min(self.max_stamina, self.stamina + st_rate * dt)
 

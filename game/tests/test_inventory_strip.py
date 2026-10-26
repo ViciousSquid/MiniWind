@@ -161,10 +161,40 @@ def test_a_number_key_takes_the_weapon_in_its_slot_in_hand():
     game._handle_gameplay_input(s, {"2"}, _Ctx())
     assert s.strip_selected == 1
     assert _hands(s) == ("iron_shortsword", None)
-    game._handle_gameplay_input(s, {"1"}, _Ctx())      # a potion: selected only
-    assert s.strip_selected == 0 and _hands(s) == ("iron_shortsword", None)
     game._handle_gameplay_input(s, {"2"}, _Ctx())      # again: put away
     assert _hands(s) == (None, None)
+
+
+def test_a_number_key_applies_whatever_is_in_its_slot():
+    from ..host import MiniwindGame
+    from ..rpg import inventory as inv
+    s = _session()
+    s.needs_char_creation = False
+    _give(s, "iron_shortsword", "iron_shield", "potion_heal_minor")
+    c = s.game.character
+    c.health = c.max_health / 2
+    game = MiniwindGame.__new__(MiniwindGame)
+    game._handle_gameplay_input(s, {"2"}, _Ctx())      # the shield: worn at once
+    assert s.strip_selected == 1 and _hands(s) == (None, "iron_shield")
+    game._handle_gameplay_input(s, {"1"}, _Ctx())      # the sword beside it
+    assert _hands(s) == ("iron_shortsword", "iron_shield")
+    game._handle_gameplay_input(s, {"3"}, _Ctx())      # the potion: drunk
+    assert not inv.has_item(c.inventory, "potion_heal_minor", 1)
+    assert c.health > c.max_health / 2
+    game._handle_gameplay_input(s, {"2"}, _Ctx())      # again: taken off
+    assert _hands(s) == ("iron_shortsword", None)
+
+
+def test_a_worn_shield_is_drawn_on_the_off_arm_and_raised_to_block():
+    s = _session()
+    _give(s, "iron_shortsword", "iron_shield")
+    s.select_strip_slot(0)
+    s.select_strip_slot(1)
+    held = s.overhead_player_weapon()
+    assert [h[0] for h in held] == ["iron_shortsword", "iron_shield"]
+    assert held[1][2] is False
+    s._blocking = True
+    assert s.overhead_player_weapon()[1][2] is True
 
 
 def test_with_the_main_hand_full_a_one_handed_weapon_goes_to_the_off_hand():
@@ -421,3 +451,15 @@ def test_saved_and_loaded_the_copies_keep_their_slots():
     s.game.character.strip[1] = None                       # dragged one out
     s.game.character = Character.from_dict(s.game.character.to_dict())
     assert _ids(s)[:2] == ["iron_shortsword", None]        # not offered again
+
+
+def test_crossbows_pair_up_but_a_bow_takes_both_hands():
+    s = _session()
+    _give(s, "crossbow", "crossbow")
+    s.select_strip_slot(0)
+    assert s.select_strip_slot(1) and _hands(s) == ("crossbow", "crossbow")
+    from ..rpg import equipment
+    assert equipment.dual_wielding(s.game.character)
+    _give(s, "short_bow")
+    bow = [st["id"] if st else None for st in s.strip_slots()].index("short_bow")
+    assert s.select_strip_slot(bow) and _hands(s) == ("short_bow", None)

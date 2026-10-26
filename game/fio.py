@@ -26,6 +26,12 @@ def player(logic):
     return getattr(runtime, "player", None)
 
 
+def interaction_prompt(logic) -> str:
+    """The engine's current contextual use prompt, for the game's own HUD."""
+    runtime = getattr(logic, "interaction_runtime", None)
+    return getattr(runtime, "current_hud_message", "") or ""
+
+
 def player_runtime(logic):
     """The player's runtime (health, god mode), or None."""
     return getattr(logic, "player_runtime", None)
@@ -189,7 +195,7 @@ def set_projectile_split(logic, split) -> None:
 
     Fio draws every projectile as one shared billboard. ``split(store, count)``
     is called, under the monster lock, whenever Fio publishes the projectiles
-    for a frame; it returns a boolean mask of the rows Fio should go on
+    for a frame (*count* may be 0); it returns a boolean mask of the rows Fio should go on
     drawing (or None for all of them), and may read the rest for its own
     drawing.
     """
@@ -208,7 +214,8 @@ def set_projectile_split(logic, split) -> None:
         with monster_lock(logic) or contextlib.nullcontext():
             store = runtime._monster_projectiles
             count = len(store)
-            keep = split(store, count) if count else None
+            # Asked with none too, so the game sees its last ones go.
+            keep = split(store, count)
             if not count:
                 positions = NO_PROJECTILES
             elif keep is None:

@@ -172,6 +172,21 @@ class MonsterAI:
     #: hitscan below is skipped; False leaves the shot to the engine.
     _shot_hook = None
 
+    #: ``hook(victim, damage, attacker) -> damage``: a game's say in the damage
+    #: an actor takes (a ward soaking some of it). None leaves it whole.
+    _damage_filter = None
+
+    @classmethod
+    def install_damage_filter(cls, hook):
+        """Install the game's damage filter (see :attr:`_damage_filter`)."""
+        cls._damage_filter = hook
+
+    @classmethod
+    def clear_damage_filter(cls, hook=None):
+        """Remove the damage filter (only if it is still *hook*, when given)."""
+        if hook is None or cls._damage_filter == hook:
+            cls._damage_filter = None
+
     #: ``hook(things, starts, targets) -> [waypoint or None, ...]``: an
     #: optional game hook that steers chasing monsters. Called once a tick
     #: with the monsters about to step toward their targets (``starts`` and
@@ -188,7 +203,9 @@ class MonsterAI:
     @classmethod
     def clear_steer_hook(cls, hook=None):
         """Remove the steer hook (only if it is still *hook*, when given)."""
-        if hook is None or cls._steer_hook is hook:
+        # Equality, not identity: a bound method is a new object every time
+        # it is read, so ``is`` never matched the hook a game installed.
+        if hook is None or cls._steer_hook == hook:
             cls._steer_hook = None
 
     @classmethod
@@ -199,7 +216,7 @@ class MonsterAI:
     @classmethod
     def clear_shot_hook(cls, hook=None):
         """Remove the shot hook (only if it is still *hook*, when given)."""
-        if hook is None or cls._shot_hook is hook:
+        if hook is None or cls._shot_hook == hook:
             cls._shot_hook = None
 
     @classmethod
@@ -210,7 +227,7 @@ class MonsterAI:
     @classmethod
     def clear_attack_style_hook(cls, hook=None):
         """Remove the attack-style hook; with *hook*, only if it is that one."""
-        if hook is None or cls._attack_style_hook is hook:
+        if hook is None or cls._attack_style_hook == hook:
             cls._attack_style_hook = None
 
     @staticmethod
@@ -228,11 +245,13 @@ class MonsterAI:
             thing.properties.get('attack_style', '') or '').lower()
 
     def clear_game_hooks(self):
-        """Drop every per-session game hook: hostility and attack style."""
+        """Drop every per-session game hook: hostility, attack style, shots,
+        steering and the damage filter."""
         self.hostility = None
         MonsterAI.clear_attack_style_hook()
         MonsterAI.clear_shot_hook()
         MonsterAI.clear_steer_hook()
+        MonsterAI.clear_damage_filter()
 
     def _hostile(self, team_a, team_b) -> bool:
         """Does *team_a* attack *team_b*? The scalar form of the model."""
@@ -773,8 +792,13 @@ all accumulated time when it runs, so simulation time is not lost.
             m = m[ok]
             direction = direction[ok]
             if len(m):
+                # A game may set a mover's pace (``_speed_scale``): a run to
+                # close the distance, a walk when winded.
+                pace = np.fromiter(
+                    (float(props[rows[i]].get('_speed_scale', 1.0) or 1.0) for i in m),
+                    dtype=np.float32, count=len(m))
                 step = (direction * np.float32(MONSTER_MOVE_SPEED)
-                        * delta[m].astype(np.float32)[:, None])
+                        * (delta[m].astype(np.float32) * pace)[:, None])
                 start = p32[m]
                 full = start + step
                 slide_x = start.copy()
@@ -1113,14 +1137,30 @@ all accumulated time when it runs, so simulation time is not lost.
 
             # ---- Move toward target ----
             if distance_sq > MONSTER_STOP_DISTANCE * MONSTER_STOP_DISTANCE:
-                direction = target_pos - thing_pos
+                heading = target_pos
+                steer = MonsterAI._steer_hook
+                if steer is not None:
+                    # As in the dense pass: the game may send a chaser to a
+                    # corner of its way, or elsewhere, instead of straight on.
+                    try:
+                        waypoints = steer(
+                            [thing],
+                            np.asarray([tuple(thing_pos)], dtype=np.float32),
+                            np.asarray([tuple(target_pos)], dtype=np.float32))
+                    except Exception as exc:
+                        debug_log("MonsterAI", f"steer hook failed: {exc}")
+                        waypoints = None
+                    if waypoints and waypoints[0] is not None:
+                        heading = glm.vec3(*(float(v) for v in waypoints[0]))
+                direction = heading - thing_pos
                 dir_len = glm.length(direction)
                 if dir_len > 0.001:
                     direction = direction / dir_len
                     if mtype != 'flying':
                         direction = _flatten_to_ground(direction)
                 if dir_len > 0.001 and direction is not None:
-                    step = direction * MONSTER_MOVE_SPEED * delta
+                    pace = float(thing.properties.get('_speed_scale', 1.0) or 1.0)
+                    step = direction * MONSTER_MOVE_SPEED * pace * delta
                     new_pos = thing_pos + step
 
                     if not self._monster_overlaps_wall(new_pos.x, new_pos.y, new_pos.z, MONSTER_WALL_MARGIN):
@@ -1613,6 +1653,12 @@ the scalar fallback for callers that do not have the dense table.
     def _apply_monster_damage(self, victim, damage: int, attacker=None):
         """Deal damage to a monster from another monster (infighting).
         Sets the victim's aggro target to the attacker so it retaliates."""
+        hook = MonsterAI._damage_filter
+        if hook is not None:
+            try:
+                damage = hook(victim, damage, attacker)
+            except Exception as exc:
+                debug_log("MonsterAI", f"damage filter failed: {exc}")
         health_raw = victim.properties.get('health', 100)
         try:
             health = int(health_raw)

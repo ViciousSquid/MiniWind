@@ -45,6 +45,7 @@ from editor.terrain_editor import TerrainEditorPanel
 from editor.debug_console import DebugConsole, CommandInput, debug_log
 from editor.console_commands import ConsoleCommandHandler
 from editor.console_key import ConsoleShortcutFilter, is_console_key
+from editor.held_keys import HeldKeyInputMethodFilter
 
 
 class Toast(QLabel):
@@ -337,6 +338,9 @@ class MainWindow(QMainWindow):
         self.installEventFilter(self)
         self._console_shortcut_filter = ConsoleShortcutFilter(self)
         QApplication.instance().installEventFilter(self._console_shortcut_filter)
+        # Holding W to walk must not open macOS's accent picker over the game.
+        self._held_key_filter = HeldKeyInputMethodFilter(self)
+        QApplication.instance().installEventFilter(self._held_key_filter)
         
         # Show startup tooltip after window is shown
         QTimer.singleShot(1500, self._show_startup_tooltip)

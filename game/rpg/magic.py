@@ -49,7 +49,7 @@ def element_color(element) -> list:
 
 class Spell:
     def __init__(self, sid, name, school, cost, delivery, effects, desc="",
-                 element="magic", projectile_speed=900.0, color=None):
+                 element="magic", projectile_speed=900.0, color=None, visuals=None):
         self.id = sid
         self.name = name
         self.school = school          # a magic skill id (destruction, etc.)
@@ -62,6 +62,10 @@ class Spell:
         # Explicit projectile/light colour override (RGB 0-255) or None to use
         # the element default. Read via the ``color`` property.
         self._color = list(color) if color else None
+        # How it looks over its element's default (game/magic_fx.py: trail,
+        # orb, flash, ring, sparks, shards, rays, lens, hit_tint, cast), as set
+        # in the Spell Editor; empty for the plain look.
+        self.visuals = dict(visuals) if isinstance(visuals, dict) else {}
 
     @property
     def color(self) -> list:
@@ -83,6 +87,7 @@ class Spell:
             "desc": self.desc, "element": self.element,
             "projectile_speed": self.projectile_speed,
             "color": list(self._color) if self._color else None,
+            "visuals": dict(self.visuals),
         }
 
     @classmethod
@@ -93,7 +98,7 @@ class Spell:
             d.get("delivery", PROJECTILE), list(d.get("effects", []) or []),
             desc=d.get("desc", ""), element=d.get("element", "magic"),
             projectile_speed=d.get("projectile_speed", 900.0),
-            color=d.get("color"))
+            color=d.get("color"), visuals=d.get("visuals"))
 
 
 SPELLS: Dict[str, Spell] = {}

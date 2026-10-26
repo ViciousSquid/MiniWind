@@ -4,9 +4,10 @@ weapon for the fighters who should have one.
 
 * :func:`arm_fighters` gives fighters a weapon for the other range, once per
   actor: guards, bandits, mercenaries, adventurers and hunters with a blade
-  often carry a bow too, and archers carry a dagger or short sword for when
-  the enemy is on top of them. Combat then switches between them on its own
-  (:mod:`game.combat_loadout`, through the archery shot hook).
+  often carry a bow too, and archers and casters carry a dagger or short
+  sword for when the enemy is on top of them. Combat then switches between
+  them on its own (:mod:`game.combat_loadout`, through the archery shot
+  hook).
 * :class:`HeldWeapons` keeps, per tick, each nearby actor's facing -- toward
   whatever it is fighting, else the way it is walking -- and answers the
   viewport's ``overhead_actor_weapons`` hook: the weapon in hand (the one
@@ -29,6 +30,11 @@ BOWS = ("hunting_bow", "short_bow", "long_bow")
 #: How often a fighter given a ranged weapon gets a crossbow instead of a bow.
 CROSSBOW_CHANCE = 0.3
 SIDEARMS = ("iron_dagger", "iron_shortsword")
+#: A caster's blade for when the enemy is on top of it, and the creatures (by
+#: role) that are people enough to carry one; any NPC caster does.
+CASTER_SIDEARM = "iron_dagger"
+CASTER_ROLES = ("cultist", "mage", "necromancer", "witch", "sorcer", "wizard",
+                "warlock", "priest", "shaman", "acolyte")
 #: Fighters with a one-handed blade in hand who carry a second for the other
 #: hand, by faction and by role (the larger chance wins), and how often that
 #: second weapon is a twin of the first.
@@ -41,6 +47,11 @@ DUAL_WIELD_ROLES = {"bandit": 0.45, "mercenary": 0.45, "adventurer": 0.4,
 #: above, still sometimes carries a second.
 DUAL_WIELD_ANY = 0.15
 TWIN_CHANCE = 0.5
+#: Two weapons cost accuracy (game.rpg.combat.DUAL_WIELD_ACCURACY), so not
+#: everyone pairs them: a crossbowman takes a second crossbow at this share of
+#: the chance above, and a marksman, who trusts one well-aimed shot, never.
+CROSSBOW_PAIR_SHARE = 0.5
+MARKSMAN_ROLES = ("hunter", "ranger", "marksman", "sniper")
 
 #: Held weapons are drawn for actors within this distance of the player.
 DRAW_RADIUS = 2600.0
@@ -67,15 +78,22 @@ def arm_fighters(things, rng, make_stack) -> int:
     armed = 0
     for t in things:
         p = getattr(t, "properties", None)
-        if not isinstance(p, dict) or p.get("_second_weapon_rolled"):
+        if not isinstance(p, dict):
             continue
         ttype = str(p.get("type", "")).replace("_", "").lower()
         if ttype not in ("npc", "creature", "monster") or p.get("dead"):
             continue
+        role = str(p.get("npc_role", "") or "").lower()
+        if _arm_caster(p, ttype, role, make_stack):
+            armed += 1
+        # Some casters know a ward to raise before a fight (game/npc_magic.py).
+        from .npc_magic import roll_ward
+        roll_ward(p, rng)
+        if p.get("_second_weapon_rolled"):
+            continue
         p["_second_weapon_rolled"] = True
         if not p.get("combatant"):
             continue
-        role = str(p.get("npc_role", "") or "").lower()
         team = str(p.get("faction") or p.get("team") or "").lower()
         equipped = p.get("equipped_weapon") or ""
         if _arm_off_hand(p, role, team, equipped, rng, make_stack):
@@ -99,22 +117,48 @@ def arm_fighters(things, rng, make_stack) -> int:
     return armed
 
 
+def _arm_caster(p, ttype, role, make_stack) -> bool:
+    """Give a fighting caster with no blade a dagger, once: it casts while the
+    enemy is at range and stabs when it closes (game/combat_loadout.py)."""
+    if p.get("_caster_sidearm_rolled"):
+        return False
+    p["_caster_sidearm_rolled"] = True
+    if not p.get("combatant") or (ttype != "npc" and not any(r in role for r in CASTER_ROLES)):
+        return False
+    from .npc_magic import attacks
+    if not attacks(p):
+        return False
+    if "melee" in {_style(p.get("equipped_weapon"))} | {_style(i) for i in _carried(p)}:
+        return False
+    stack = make_stack(CASTER_SIDEARM)
+    if not stack:
+        return False
+    p.setdefault("inventory", []).append(stack)
+    return True
+
+
 def _arm_off_hand(p, role, team, equipped, rng, make_stack) -> bool:
-    """Perhaps give a fighter with a one-handed blade a second weapon for the
-    other hand (``offhand_weapon``): a twin of the first, or a sidearm."""
+    """Perhaps give a fighter with a one-handed weapon a second for the other
+    hand (``offhand_weapon``): a twin of a blade, or a sidearm; a crossbowman
+    a second crossbow. Bows take both hands and never pair."""
     if p.get("offhand_weapon") or not equipped:
         return False
     from .rpg import equipment, items
     main = items.get(equipped)
     if main is None or not equipment.can_dual_wield(main) \
-            or main.get("kind") != items.KIND_MELEE:
+            or main.get("kind") not in (items.KIND_MELEE, items.KIND_CROSSBOW):
         return False
     chance = max(DUAL_WIELD_FACTIONS.get(team, 0.0),
                  max((c for r, c in DUAL_WIELD_ROLES.items() if r in role), default=0.0),
                  DUAL_WIELD_ANY)
+    if main.get("kind") == items.KIND_CROSSBOW:
+        if any(r in role for r in MARKSMAN_ROLES):
+            return False
+        chance *= CROSSBOW_PAIR_SHARE
     if chance <= 0.0 or rng.random() >= chance:
         return False
-    off = equipped if rng.random() < TWIN_CHANCE else SIDEARMS[int(rng.random() * len(SIDEARMS))]
+    twin = main.get("kind") == items.KIND_CROSSBOW or rng.random() < TWIN_CHANCE
+    off = equipped if twin else SIDEARMS[int(rng.random() * len(SIDEARMS))]
     stack = make_stack(off)
     if not stack:
         return False

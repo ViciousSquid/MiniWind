@@ -1,5 +1,6 @@
 """Vectorised LevelChanger interaction coverage through the production logic owner."""
 
+
 import numpy as np
 import pytest
 import glm
@@ -73,6 +74,35 @@ def test_levelchanger_radius_boundary_is_squared_without_glm_distance(logic):
     assert logic.interaction_runtime.current_hud_message == "[E] Complete Level"
 
 
+@pytest.mark.parametrize('angle', [0.0, np.pi / 2, np.pi, 3 * np.pi / 2])
+@pytest.mark.parametrize('horizontal_offset', [0.0, 40.0])
+def test_levelchanger_use_works_beside_or_on_sprite_regardless_of_heading(
+        logic, angle, horizontal_offset):
+    changer = _levelchanger(pos=(0, 64, horizontal_offset), radius=170,
+                            target_map='cave01', destination_spawn='entrance',
+                            confirm=False, prompt='[E] Enter Wolfmaw Cave')
+    _prepare(logic, [changer], player_pos=(0, 50, 0), angle=angle)
+
+    logic.interaction_runtime.handle(False)
+    assert logic.interaction_runtime.current_hud_message == '[E] Enter Wolfmaw Cave'
+    assert logic.interaction_runtime.level_complete_ui is None
+
+    logic.interaction_runtime.handle(True)
+    ui = logic.interaction_runtime.level_complete_ui
+    assert ui['target_map'] == 'maps/cave01.json'
+    assert ui['destination_spawn'] == 'entrance'
+    assert ui['immediate'] is True
+    assert changer.properties['radius'] == 170
+
+
+@pytest.mark.parametrize('properties', [{'disabled': True}, {'usable': False}])
+def test_levelchanger_use_respects_authored_eligibility(logic, properties):
+    _prepare(logic, [_levelchanger(**properties)])
+    logic.interaction_runtime.handle(True)
+    assert logic.interaction_runtime.level_complete_ui is None
+    assert logic.interaction_runtime.current_hud_message == ''
+
+
 def test_levelchanger_first_matching_row_wins_after_vectorised_filter(logic):
     first = _levelchanger(name="First", radius=128.0)
     second = _levelchanger(name="Second", radius=128.0)
@@ -96,3 +126,22 @@ def test_levelchanger_first_matching_row_wins_after_vectorised_filter(logic):
     assert logic.interaction_runtime.level_complete_ui["target_map"] == "maps/NextMap.json"
     assert logic.interaction_runtime.level_complete_ui["destination_spawn"] == ""
     assert fired == [("First", "OnUse")]
+
+
+def test_levelchanger_unparked_by_streaming_after_packing_becomes_usable(logic):
+    # World streaming parks distant entities (``disabled``) before the table is
+    # packed and unparks them as the player walks up; the row count does not
+    # change, so use must read eligibility live rather than from the packed column.
+    changer = _levelchanger(disabled=True, prompt='[E] Enter Wolfmaw Cave')
+    _prepare(logic, [changer])
+    logic.interaction_runtime.handle(False)
+    assert logic.interaction_runtime.current_hud_message == ''
+
+    changer.properties['disabled'] = False
+    logic.interaction_runtime.handle(False)
+    assert logic.interaction_runtime.current_hud_message == '[E] Enter Wolfmaw Cave'
+
+    changer.properties['disabled'] = True
+    logic.interaction_runtime.handle(True)
+    assert logic.interaction_runtime.current_hud_message == ''
+    assert logic.interaction_runtime.level_complete_ui is None

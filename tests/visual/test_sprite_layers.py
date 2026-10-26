@@ -122,6 +122,30 @@ def _count_sprite_draws(renderer):
     return seen
 
 
+def test_levelchanger_draws_at_normal_size_in_play_with_editor_sprites_off(renderer, context):
+    import OpenGL.GL as gl
+    from editor.things import LevelChanger
+
+    changer = make_thing(LevelChanger, 'exit', (0, 64, 0),
+                         model_path='stale.glb', render_mode='model', hidden=True)
+    renderer.sprite_textures['LevelChanger'] = _solid((255, 0, 255))
+    config = glh.render_config(all_brushes=[], all_things=[changer],
+                              play_mode=True, show_sprites_in_play_mode=False)
+    projection, view, eye = glh.camera_matrices(
+        eye=(0, 64, 160), target=(0, 64, 0))
+    seen = _count_sprite_draws(renderer)
+    context.bind()
+    gl.glClearColor(0, 0, 0, 1)
+    renderer.render_scene(projection, view, eye, None, config,
+                          brush_slots=np.empty(0, dtype=np.int32))
+    gl.glFinish()
+
+    assert seen['instances'] == 1
+    assert config['entity_table'].sprite_size[0].tolist() == [32.0, 32.0]
+    centre = context.read_pixels()[SIZE // 2, SIZE // 2].astype(int)
+    assert centre[0] > 200 and centre[2] > 200 and centre[1] < 60, centre
+
+
 def test_near_sprite_covers_far_sprite_whatever_the_texture_ids(renderer, context):
     """Blended billboards must be drawn back to front across textures.
 

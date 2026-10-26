@@ -101,3 +101,58 @@ def test_disintegrate_spell_is_always_red_and_kills_instantly():
     assert "disintegrate" in {sid for sid, _ in _castable_spells()}
     # The old id no longer resolves (it was renamed, not aliased).
     assert magic.get("instadeath") is None
+
+
+# ------------------------------------------------------------ effects (visuals)
+
+def test_visuals_round_trip_through_the_spell_data_file(tmp_path, monkeypatch):
+    path = tmp_path / "spells.json"
+    monkeypatch.setattr(magic, "_spells_data_path", lambda: str(path))
+    row = magic.get("flare").to_dict()
+    row.update(id="frostflare", visuals={"trail": "frost", "lens": 0.6, "rays": True})
+    assert magic.save_custom_spells([row])
+    try:
+        magic.SPELLS.pop("frostflare", None)
+        magic.load_custom_spells()
+        spell = magic.get("frostflare")
+        assert spell.visuals == {"trail": "frost", "lens": 0.6, "rays": True}
+        from ..magic_fx import look_for
+        look = look_for(spell.id, spell.color, spell.element, spell.visuals)
+        assert look["trail"] == "frost" and look["lens"] == 0.6 and look["rays"]
+    finally:
+        magic.SPELLS.pop("frostflare", None)
+
+
+def test_a_built_in_spell_has_no_visual_overrides():
+    assert magic.get("flare").visuals == {}
+    assert magic.get("flare").to_dict()["visuals"] == {}
+
+
+def test_the_spell_editor_sets_and_clears_effects(qt_app, monkeypatch):
+    from PyQt5 import QtWidgets
+    from .. import editor_ui
+    seen = {}
+
+    def run(dialog):
+        seen["dialog"] = dialog
+        card = dialog.cards[0]
+
+        def by_tip(kind, text):
+            return next(w for w in card.findChildren(kind) if w.toolTip().startswith(text))
+
+        trail = by_tip(QtWidgets.QComboBox, "What the bolt leaves")
+        lens = by_tip(QtWidgets.QDoubleSpinBox, "Screen lens strength")
+        rays = by_tip(QtWidgets.QComboBox, "A burst of light rays")
+        trail.setCurrentText("arcs")
+        lens.setValue(0.75)
+        rays.setCurrentText("on")
+        seen["set"] = dict(card.d["visuals"])
+        trail.setCurrentText("auto")
+        lens.setValue(lens.minimum())
+        seen["cleared"] = dict(card.d["visuals"])
+        return 0
+
+    monkeypatch.setattr(QtWidgets.QDialog, "exec_", run)
+    assert editor_ui.open_spell_editor() is False
+    assert seen["set"] == {"trail": "arcs", "lens": 0.75, "rays": True}
+    assert seen["cleared"] == {"rays": True}

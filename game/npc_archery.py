@@ -98,6 +98,37 @@ def is_crossbow(props) -> bool:
     return d is not None and d.get("kind") == items.KIND_CROSSBOW
 
 
+def offhand_crossbow(props) -> str:
+    """The crossbow in *props*' actor's off hand, or '' (bows never pair)."""
+    from .held_weapons import offhand_in_use
+    from .rpg import items
+    off = offhand_in_use(props)
+    d = items.get(off) if off else None
+    return off if d is not None and d.get("kind") == items.KIND_CROSSBOW else ""
+
+
+def loaded_hand(props, now):
+    """Which hand has a shot ready: ``"main"``, else ``"off"`` (a second
+    crossbow winds back on its own), else None."""
+    if now >= float(props.get("_bow_ready_at", 0.0) or 0.0):
+        return "main"
+    if offhand_crossbow(props) and now >= float(props.get("_offhand_ready_at", 0.0) or 0.0):
+        return "off"
+    return None
+
+
+def crossbow_in_kit(props):
+    """The crossbow *props*' actor would fight with at range, or ''."""
+    from .rpg import items
+    try:
+        weapon = combat_loadout.weapon_for(combat_loadout.build_loadout(props),
+                                           combat_loadout.BOW)
+    except Exception:
+        return ""
+    d = items.get(weapon) if weapon else None
+    return weapon if d is not None and d.get("kind") == items.KIND_CROSSBOW else ""
+
+
 def is_bow_shot(props, distance: float) -> bool:
     """Whether an actor fights this shot with a bow.
 
@@ -132,13 +163,49 @@ class NpcArchery:
         distance = math.sqrt(max(0.0, float(distance_sq)))
         # The weapon for this range is the one in hand from now on: drawn
         # beside the head, and what the next shot is fought with.
+        style = ""
         try:
             from .held_weapons import choose_in_hand
-            choose_in_hand(props, distance, MELEE_BAND)
+            style = choose_in_hand(props, distance, MELEE_BAND)
         except Exception:
             pass
         session = self.session
-        if not is_bow_shot(props, distance):
+        # A crossbow needs no draw: a loaded one is shot from the hip, on the
+        # move or point-blank, where a bow would need a stand and a blade a
+        # step closer.
+        now = getattr(session, "_archery_clock", 0.0)
+        hip = ""
+        if loaded_hand(props, now) is not None:
+            hip = crossbow_in_kit(props)
+        tactics = getattr(session, "tactics", None)
+        backing = False
+        if tactics is not None:
+            tactics.note_shot(thing)
+            backing = tactics.retreating(thing)
+            if backing and not hip:
+                return True               # backing away: no shot this time
+        # A caster heals itself when badly hurt, and fights with its spells
+        # wherever its loadout picks magic (game/npc_magic.py).
+        magic = getattr(session, "npc_magic", None)
+        if magic is not None and not backing:
+            target = aggro_monster if aggro_monster is not None else "player"
+            try:
+                # Seen its foe: a caster with a ward raises it before engaging.
+                if magic.try_ward(thing):
+                    return True
+                if magic.try_heal(thing):
+                    return True
+                if style == combat_loadout.MAGIC:
+                    if magic.cast_attack(thing, target):
+                        return True
+                    if distance > MELEE_BAND:
+                        return True       # no spell to cast: close in instead
+            except Exception as exc:
+                print(f"[MiniWind] NPC spell failed: {exc}")
+        point_blank = bool(hip) and distance <= MELEE_BAND
+        if point_blank:
+            props["_active_weapon"] = hip
+        if not point_blank and not is_bow_shot(props, distance):
             # A fighter without a ranged weapon has to close the distance;
             # extending pursuit must not turn a dagger into a hitscan rifle.
             loadout = combat_loadout.build_loadout(props)
@@ -155,16 +222,19 @@ class NpcArchery:
             return False
         if id(thing) in self.drawing:
             return True               # already drawing: this shot is that one
-        now = getattr(session, "_archery_clock", 0.0)
-        if now < float(props.get("_bow_ready_at", 0.0) or 0.0):
-            return True               # still nocking the next arrow
+        crossbow = is_crossbow(props)
+        hand = loaded_hand(props, now) if crossbow else (
+            "main" if now >= float(props.get("_bow_ready_at", 0.0) or 0.0) else None)
+        if hand is None:
+            return True               # still nocking / winding back
         target = aggro_monster if aggro_monster is not None else "player"
-        if is_crossbow(props):
-            # A crossbow needs no draw: it shoots now, then winds back.
+        if crossbow:
+            # A crossbow needs no draw: it shoots now, then winds back; with
+            # one in each hand, each winds back on its own.
             target_pos = self._target_pos(target)
             if target_pos is not None:
                 self._loose(thing, {"charge": 1.0, "plan": 1.0, "target": target,
-                                    "crossbow": True}, target_pos)
+                                    "crossbow": True, "hand": hand}, target_pos)
             return True
         rng = session.rng
         try:
@@ -234,9 +304,10 @@ class NpcArchery:
         crossbow = bool(draw.get("crossbow"))
         self.drawing.pop(id(thing), None)
         p.pop("_bow_charge", None)
-        p["_bow_ready_at"] = session._archery_clock + (
+        off = draw.get("hand") == "off"
+        p["_offhand_ready_at" if off else "_bow_ready_at"] = session._archery_clock + (
             CROSSBOW_RELOAD_SECONDS if crossbow else NOCK_SECONDS)
-        p["_attack_anim"] = 0.2
+        p["_offhand_anim" if off else "_attack_anim"] = 0.2
         charge = draw["charge"]
         start = [float(thing.pos[0]), float(thing.pos[1]) + 48.0, float(thing.pos[2])]
         lift = EYE_LIFT
@@ -245,6 +316,11 @@ class NpcArchery:
             lift = float(getattr(player, "camera_height", 48.0) or 48.0) * 0.6
         aim = [target_pos[0], target_pos[1] + lift, target_pos[2]]
         dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
+        if crossbow and offhand_crossbow(p):
+            # A crossbow in each hand: neither is aimed well.
+            from .rpg.combat import DUAL_WIELD_SPREAD
+            a = math.radians(session.rng.uniform(-DUAL_WIELD_SPREAD, DUAL_WIELD_SPREAD))
+            dx, dz = dx * math.cos(a) - dz * math.sin(a), dx * math.sin(a) + dz * math.cos(a)
         dist = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
         vel = [dx / dist * ARROW_SPEED, dy / dist * ARROW_SPEED, dz / dist * ARROW_SPEED]
         try:
