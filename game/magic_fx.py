@@ -54,8 +54,11 @@ MAX_LENSES = 8
 GROUND_LIFT = 20.0
 BODY_LIFT = 56.0
 BOLT_HEIGHT = 48.0
-#: A ward bubble's diameter, comfortably round the wearer.
+#: A ward bubble's diameter, comfortably round the wearer; how strongly it
+#: bends what is behind it, and where (0 centre .. 1 edge) its rim refracts.
 WARD_SIZE = 150.0
+WARD_LENS = 0.45
+WARD_RIM = 0.9
 #: A hostile bolt ending this near the player struck the player.
 PLAYER_HIT_REACH = 110.0
 #: The resurrection's dark red wash: in, held, out (3 seconds in all).
@@ -470,8 +473,15 @@ class MagicFX:
             extra.append([*at, look["orb"], *c, 1.0, ORB, 0.0, (hash(look["spell"]) % 97) / 97.0,
                           0.0])
             extra.append([*at, look["orb"] * 2.4, *c, 0.35, FLASH, 0.35, 0.0, 0.0])
+        ward_lenses = []
         for pos, colour, kind in (self._wards_now() or ()):
             c = _rgb(colour)
+            size = WARD_SIZE * (0.88 if kind == "berserk" else 1.0)
+            # The ward is a lens: the world behind it bulges as through glass,
+            # its rim refracting (the shock ring, held at the edge), breathing.
+            breathe = 1.0 + 0.04 * math.sin(now * 2.2)
+            ward_lenses.append((float(pos[0]), float(pos[1]) + BODY_LIFT, float(pos[2]),
+                                WARD_LENS * breathe, size * 0.5, WARD_RIM, c))
             extra.append([float(pos[0]), float(pos[1]) + BODY_LIFT, float(pos[2]),
                           WARD_SIZE * (0.88 if kind == "berserk" else 1.0), *c, 0.9, BUBBLE,
                           (now * 0.35) % 1.0, 0.5 if kind == "invisibility" else 0.0, 0.0])
@@ -494,7 +504,8 @@ class MagicFX:
             else:
                 a = max(0.0, 1.0 - (t - fade_in - hold) / fade_out) if fade_out > 0 else 0.0
             out_tints.append((colour, peak * a, style, t / (fade_in + hold + fade_out), a))
-        return sprites, out_lenses[-MAX_LENSES:], out_tints
+        out_lenses = (ward_lenses + out_lenses)[:MAX_LENSES]
+        return sprites, out_lenses, out_tints
 
     def _wards_now(self):
         if self.wards is None:

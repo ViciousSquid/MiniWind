@@ -143,3 +143,14 @@ def test_sparks_fly_and_fall():
     clock.t += 0.5
     later = fx.frame()[0][:, :3]
     assert np.abs(later - start).max() > 10.0
+
+
+def test_a_ward_is_a_fisheye_lens_too():
+    fx, _clock = _fx()
+    fx.wards = lambda: [((5.0, 0.0, 5.0), (110, 190, 255), "shield")]
+    lenses = fx.frame()[1]
+    assert len(lenses) == 1
+    x, y, z, strength, radius, rim, _colour = lenses[0]
+    assert (x, z) == (5.0, 5.0) and y == pytest.approx(mf.BODY_LIFT)
+    assert strength > 0.3 and radius == pytest.approx(mf.WARD_SIZE / 2)
+    assert rim == mf.WARD_RIM
