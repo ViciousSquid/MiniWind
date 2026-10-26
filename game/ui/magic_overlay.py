@@ -188,3 +188,32 @@ def draw(painter, tints, width, height, now=0.0) -> None:
                         painter.drawLine(QPointF(x0 * width, y0 * height),
                                          QPointF(x1 * width, y1 * height))
     painter.restore()
+
+
+def draw_aim(painter, pos, colour, now=0.0) -> None:
+    """The aiming reticle at the cursor (cast mode "aimed"): a turning rune
+    ring in the spell's colour, ticks pointing in, a dot at the middle."""
+    if pos is None:
+        return
+    r, g, b = (int(max(0, min(255, c))) for c in colour[:3])
+    x, y = float(pos[0]), float(pos[1])
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    pulse = 1.0 + 0.08 * math.sin(now * 6.0)
+    radius = 18.0 * pulse
+    pen = QPen(QColor(0, 0, 0, 150))
+    pen.setWidthF(4.0)
+    painter.setPen(pen)
+    painter.drawEllipse(QPointF(x, y), radius, radius)
+    pen = QPen(QColor(r, g, b, 230))
+    pen.setWidthF(2.0)
+    painter.setPen(pen)
+    painter.drawEllipse(QPointF(x, y), radius, radius)
+    spin = now * 1.5
+    for k in range(4):
+        a = spin + k * math.pi / 2
+        painter.drawLine(QPointF(x + math.cos(a) * (radius + 9), y + math.sin(a) * (radius + 9)),
+                         QPointF(x + math.cos(a) * (radius - 5), y + math.sin(a) * (radius - 5)))
+    painter.setBrush(QColor(r, g, b, 230))
+    painter.drawEllipse(QPointF(x, y), 2.5, 2.5)
+    painter.restore()

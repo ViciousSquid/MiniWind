@@ -499,6 +499,11 @@ class MiniwindSession(SettlementLaw):
         #: strikes on its own button and its own rhythm.
         self._offhand_cooldown = 0.0
         self._cast_cooldown = 0.0
+        #: Waiting for a click to say where the spell goes (cast mode "aimed").
+        self.spell_aiming = False
+        #: The facing to cast along, in "aimed" mode once clicked: set for the
+        #: one cast it was clicked for.
+        self._cast_aim = None
         #: Live combat actors (NPCs/creatures), refreshed once per decision pass
         #: so per-NPC threat lookups iterate a short cached list instead of
         #: re-scanning the whole scene (markers, lights, brushes…) for each NPC.
@@ -2755,8 +2760,8 @@ class MiniwindSession(SettlementLaw):
         (see :data:`ESCAPE_LOCKED_SCREENS`) — giving them the key would swallow
         it silently and leave the player with no way to stop play mode.
         """
-        if self.dialogue is not None:
-            return True
+        if self.dialogue is not None or getattr(self, "spell_aiming", False):
+            return True                # Escape stops aiming a spell
         if self.open_screen is None:
             return False
         return self.open_screen not in ESCAPE_LOCKED_SCREENS
@@ -5242,9 +5247,9 @@ class MiniwindSession(SettlementLaw):
         One button per hand. Primary fire (left) uses the main hand -- a bow
         looses an arrow, a crossbow a bolt, a staff channels its spell, a blade
         swings. Secondary fire (right) uses the off hand: the weapon in the
-        shield slot when there is one, else it casts the active spell (which a
-        Warrior cannot). Returns True: MiniWind always owns the shot, so Fio's
-        hitscan weapon path never runs underneath it.
+        shield slot, or a worn shield's bash. Spells are the cast key's (K).
+        Returns True: MiniWind always owns the shot, so Fio's hitscan weapon
+        path never runs underneath it.
         """
         c = self.game.character
         if self.modal_input_active():
@@ -5254,10 +5259,42 @@ class MiniwindSession(SettlementLaw):
         if mode == "secondary":
             if eq.offhand_weapon(c) is not None:
                 self.do_attack("off")
-            else:
-                self.do_cast()
+            elif eq.equipped_id(c, rpg_items.SLOT_SHIELD):
+                self.shield_bash()
         else:
             self.do_attack()
+        return True
+
+    #: A shield bash: its damage (plus a share of the shield's armour rating),
+    #: stamina and recovery.
+    BASH_DAMAGE = 3.0
+    BASH_ARMOUR_SHARE = 0.5
+    BASH_STAMINA = 8.0
+    BASH_COOLDOWN = 0.9
+
+    def shield_bash(self) -> bool:
+        """The off hand's attack with a shield worn: a short, heavy shove of
+        the shield into whoever is in front, trained as Block."""
+        c = self.game.character
+        if c.is_dead or self._offhand_cooldown > 0:
+            return False
+        d = eq.equipped_def(c, rpg_items.SLOT_SHIELD)
+        if d is None:
+            return False
+        self._offhand_cooldown = self.BASH_COOLDOWN
+        self._offhand_anim_time = 0.25
+        if c.stamina < self.BASH_STAMINA:
+            self.notify("Too exhausted to bash")
+            return False
+        c.spend_stamina(self.BASH_STAMINA)
+        target = self._acquire_target(MELEE_REACH, aim_dot=MELEE_AIM_DOT)
+        if target is None:
+            return True
+        damage = self.BASH_DAMAGE + float(d.get("armor_rating", 0) or 0) * self.BASH_ARMOUR_SHARE
+        res = self.game._apply_hit(target.properties, {
+            "hit": True, "damage": damage, "skill": sk.BLOCK, "difficulty": 1.0,
+            "sneak": False, "crit": False})
+        self._land_player_hit(target, res, heavy=True)
         return True
 
     def do_attack(self, hand: str = "main") -> bool:
@@ -5563,11 +5600,79 @@ class MiniwindSession(SettlementLaw):
                 self._on_creature_killed(target)
         return True
 
-    def do_cast(self) -> bool:
+    # -------------------------------------------------------------- casting
+    #: How the cast key (K) aims, set in the pause menu's options
+    #: (GAME → cast_mode): "aimed" -- K, then click where the spell goes;
+    #: "facing" -- K casts at once, straight out along the player's facing.
+    CAST_AIMED = "aimed"
+    CAST_FACING = "facing"
+
+    def cast_mode(self) -> str:
+        try:
+            config = self._editor_config()
+            mode = config.get("GAME", "cast_mode", fallback=self.CAST_AIMED) if config else None
+        except (AttributeError, TypeError, ValueError):
+            mode = None
+        return mode if mode in (self.CAST_AIMED, self.CAST_FACING) else self.CAST_AIMED
+
+    def cast_key(self) -> bool:
+        """The cast key: cast now along the facing, or start aiming (and,
+        pressed again while aiming, stop)."""
+        if self.spell_aiming:
+            self.cancel_spell_aim()
+            return False
+        c = self.game.character
+        if self.cast_mode() == self.CAST_FACING:
+            return self.do_cast(aim="facing")
+        spell = rpg_magic.get(c.active_spell) if c.active_spell else None
+        if not c.can_use_magic() or c.is_dead or spell is None:
+            return self.do_cast(aim="facing")      # says why not, as ever
+        if spell.delivery == rpg_magic.SELF:
+            return self.do_cast()                  # nothing to aim
+        self.spell_aiming = True
+        return True
+
+    def cancel_spell_aim(self) -> None:
+        self.spell_aiming = False
+
+    def cast_at(self, point, target=None) -> bool:
+        """The aimed cast's click: the spell goes to *point* (a world point
+        under the cursor) or at *target* (the creature clicked)."""
+        self.spell_aiming = False
+        return self.do_cast(aim=list(target.pos) if target is not None else point,
+                            target=target)
+
+    def _face(self, point) -> None:
+        """Turn the player toward *point*: one casts where one looks."""
+        player = fio.player(self.logic)
+        ppos = self._player_pos()
+        if player is None or ppos is None or point is None:
+            return
+        dx, dz = float(point[0]) - ppos[0], float(point[2]) - ppos[2]
+        if dx or dz:
+            player.angle = math.atan2(dx, dz)
+
+    def _cast_point(self, aim, start, reach):
+        """Where a bolt cast with *aim* goes: along the facing ("facing"), at
+        a point, or (None) the old auto-aim."""
+        if aim == "facing":
+            fwd = self._player_forward()
+            if fwd is None:
+                return None
+            return [start[0] + fwd[0] * reach, start[1], start[2] + fwd[2] * reach]
+        if aim is not None:
+            return [float(aim[0]), start[1], float(aim[2])]   # level flight
+        return None
+
+    def do_cast(self, aim=None, target=None) -> bool:
         """Cast the active spell. PROJECTILE spells launch a visible bolt that
         flies from the player and damages the first creature it strikes;
         TARGET/TOUCH spells resolve instantly on the aimed creature; SELF spells
-        are applied to the caster by ``cast_active_spell``."""
+        are applied to the caster by ``cast_active_spell``.
+
+        *aim* is where it goes: ``"facing"`` (straight out ahead), a world
+        point (clicked), or None (the nearest creature in front, as before);
+        *target* a creature clicked on."""
         c = self.game.character
         if not c.can_use_magic():
             # A Warrior works no magic: the right hand does nothing.
@@ -5620,12 +5725,23 @@ class MiniwindSession(SettlementLaw):
             return True
         if spell.delivery == rpg_magic.SELF:
             self._magic_cast_fx(spell)
+        if aim is not None and aim != "facing":
+            self._face(aim)
         if spell.delivery == rpg_magic.PROJECTILE:
             self._magic_cast_fx(spell)
-            self._spawn_player_spell_projectile(spell)
+            self._spawn_player_spell_projectile(spell, aim)
             return True
         if spell.delivery in (rpg_magic.TARGET, rpg_magic.TOUCH):
-            target = self._acquire_target(BOW_REACH if spell.delivery != rpg_magic.TOUCH else MELEE_REACH)
+            reach = BOW_REACH if spell.delivery != rpg_magic.TOUCH else MELEE_REACH
+            if target is not None:
+                ppos = self._player_pos()
+                if ppos is None or self._dist2d(ppos, target.pos) > reach:
+                    self.notify("Too far away", 1.5)
+                    target = None
+            elif aim is not None and aim != "facing":
+                target = self._creature_near(aim, 140.0)
+            else:
+                target = self._acquire_target(reach)
             self._magic_cast_fx(spell, target)
             if target is not None:
                 r = self.game.resolve_spell_on_creature(spell, target.properties)
@@ -5734,7 +5850,21 @@ class MiniwindSession(SettlementLaw):
         self._rebuild_entity_caches()
         return True
 
-    def _spawn_player_spell_projectile(self, spell) -> None:
+    def _creature_near(self, point, radius):
+        """The living creature nearest *point* within *radius*, or None."""
+        best, best_d = None, radius
+        for t in fio.things(self.logic):
+            tp = t.properties
+            if tp.get("dead") or tp.get("hidden"):
+                continue
+            if str(tp.get("type", "")).replace("_", "").lower() not in ("npc", "creature", "monster"):
+                continue
+            d = self._dist2d(point, t.pos)
+            if d < best_d:
+                best, best_d = t, d
+        return best
+
+    def _spawn_player_spell_projectile(self, spell, aim=None) -> None:
         """Launch a visible spell bolt from the player toward the aim point (a
         creature in front, else straight ahead). It reuses the engine's
         projectile pipeline — flagged as player-owned so it flies past the
@@ -5747,7 +5877,8 @@ class MiniwindSession(SettlementLaw):
             MONSTER_PROJECTILE_SPEED, MONSTER_PROJECTILE_MAX_DIST)
 
         start = [ppos[0], ppos[1] + 48.0, ppos[2]]
-        aim = self._projectile_aim_point(start)
+        aim = self._cast_point(aim, start, MONSTER_PROJECTILE_MAX_DIST) \
+            or self._projectile_aim_point(start)
 
         dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
         dlen = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0

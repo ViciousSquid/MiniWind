@@ -301,6 +301,34 @@ class PauseActions:
                 pass
 
     # ---------------------------------------------------------------- options
+    def _game_option(self, key, default):
+        config = getattr(self.window, "config", None)
+        try:
+            return config.get("GAME", key, fallback=default) if config is not None else default
+        except Exception:
+            return default
+
+    def _set_game_option(self, key, value) -> None:
+        config = getattr(self.window, "config", None)
+        if config is None:
+            return
+        if not config.has_section("GAME"):
+            config.add_section("GAME")
+        config.set("GAME", key, str(value))
+        save = getattr(self.window, "save_config", None)
+        if save is not None:
+            try:
+                save()
+            except Exception:
+                pass
+
+    def pause_menu_cast_mode(self):
+        """How the cast key aims: "aimed" (K, then click) or "facing"."""
+        return self._game_option("cast_mode", "aimed")
+
+    def pause_menu_set_cast_mode(self, mode):
+        self._set_game_option("cast_mode", mode)
+
     def pause_menu_display_settings(self):
         """The launcher's display settings, on the editor window's own config.
 

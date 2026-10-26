@@ -152,6 +152,8 @@ class GamePointer:
             # live player to look around, so its buttons keep the pointer.
             from . import death_screen
             return death_screen.has_button()
+        if getattr(session, "spell_aiming", False):
+            return True        # aiming a spell: the cursor says where it goes
         # During free play, only the character sheet (C) and an active
         # merchant trade screen release the captured mouse. The quickbar,
         # dialogue and other game screens keep normal mouse-look captured.
@@ -161,6 +163,41 @@ class GamePointer:
         needs_creation = bool(getattr(session, "needs_char_creation", False))
         return bool((interactive_screen or needs_creation) and has_targets())
 
+    def _actor_at(self, x, y):
+        pick = getattr(self.view, "actor_at", None)
+        try:
+            actor = pick(x, y) if pick is not None else None
+        except Exception:
+            actor = None
+        props = getattr(actor, "properties", None)
+        return actor if isinstance(props, dict) and not props.get("dead") else None
+
+    def ground_point(self, x, y):
+        """The world point under pixel (*x*, *y*) at bolt height above the
+        player's feet: where a level bolt cast there would pass. None when
+        the cursor looks above the horizon."""
+        import glm
+        view = self.view
+        session = self._session()
+        feet = session._player_pos() if session is not None else None
+        w, h = max(1, view.width()), max(1, view.height())
+        if feet is None:
+            return None
+        inverse = glm.inverse(view.projection_matrix * view.view_matrix)
+        nx, ny = 2.0 * x / w - 1.0, 1.0 - 2.0 * y / h
+        near = inverse * glm.vec4(nx, ny, -1.0, 1.0)
+        far = inverse * glm.vec4(nx, ny, 1.0, 1.0)
+        near, far = glm.vec3(near) / near.w, glm.vec3(far) / far.w
+        ray = far - near
+        plane_y = float(feet[1]) + 48.0
+        if abs(ray.y) < 1e-6:
+            return None
+        t = (plane_y - near.y) / ray.y
+        if t <= 0:
+            return None
+        hit = near + ray * t
+        return [float(hit.x), plane_y, float(hit.z)]
+
     def pointer_move(self, event):
         global pointer
         pointer = (event.x(), event.y())
@@ -168,9 +205,20 @@ class GamePointer:
 
     def pointer_press(self, event):
         from PyQt5.QtCore import Qt
+        session = self._session()
+        if session is not None and getattr(session, "spell_aiming", False):
+            # Left: cast there (at the creature under the cursor, else the
+            # ground); right: put the spell away.
+            if event.button() == Qt.LeftButton:
+                actor = self._actor_at(event.x(), event.y())
+                point = None if actor is not None else self.ground_point(event.x(), event.y())
+                queue(lambda s, p=point, a=actor: s.cast_at(p, a))
+            else:
+                queue(lambda s: s.cancel_spell_aim())
+            self.view.update()
+            return True
         if event.button() != Qt.LeftButton:
             return True
-        session = self._session()
         if session is not None and session.game.character.is_dead:
             # The tick is not running: the death screen acts here.
             from . import death_screen

@@ -52,7 +52,7 @@ _NAV_BY_CODE = _names_by_code()
 
 # action bindings (single-press unless noted)
 K_ATTACK = "f"
-K_CAST = "r"
+K_CAST = "k"
 K_BLOCK = "b"          # held
 K_INTERACT = "e"       # talk to / trade with / use the nearest NPC
 K_SNEAK = "v"
@@ -955,7 +955,9 @@ class MiniwindGame:
             # Both hands, one after the other, when dual wielding.
             session.attack_with_both()
         if K_CAST in just:
-            session.do_cast()
+            session.cast_key()
+        if getattr(session, "spell_aiming", False) and "escape" in just:
+            session.cancel_spell_aim()
         if K_NEXT_SPELL in just:
             session.next_spell()
         # Number keys pick a slot on the inventory strip; a weapon in it is
@@ -1011,6 +1013,12 @@ class MiniwindGame:
 
     def _handle_interaction(self, logic, ctx, session, just=frozenset()):
         session.interact_prompt = ""
+        if getattr(session, "spell_aiming", False):
+            from .rpg import magic as rpg_magic
+            spell = rpg_magic.get(session.game.character.active_spell or "")
+            name = spell.name if spell is not None else "the spell"
+            session.interact_prompt = f"Click to cast {name}  ·  K, Esc or right-click to cancel"
+            return
         if ctx.interaction_consumed:
             # MiniWind suppresses the stock HUD. Show the core's cave/door
             # prompt here and keep the same E press from opening another UI.
@@ -1170,6 +1178,12 @@ class MiniwindGame:
                     session._worldmap_requested = True
                     worldmap.ensure_for(logic, viewport)
                 hud.draw(painter, session, w, h)
+                if getattr(session, "spell_aiming", False):
+                    from .rpg import magic as rpg_magic
+                    spell = rpg_magic.get(session.game.character.active_spell or "")
+                    magic_overlay.draw_aim(painter, hits.pointer,
+                                           spell.color if spell else (200, 200, 255),
+                                           time.perf_counter())
                 hud.draw_bow_charge(painter, session, viewport, w, h)
                 hud.draw_npc_bow_charges(painter, session, viewport, w, h)
                 # The armed pick's highlight goes over the HUD, so its name
