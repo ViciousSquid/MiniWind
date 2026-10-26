@@ -30,8 +30,8 @@ SPEEDS = (0.25, 0.5, 1.0, 2.0)
 #: The world-pause request the Pause button holds.
 PAUSE_OWNER = "debug_tools"
 REWIND_STEP = 1.0
-#: The teleport buttons: how many caves the window has room for, two a row.
-CAVE_SLOTS = 12
+#: The teleport buttons: all 20 caves, two a row to fit a 720p display.
+CAVE_SLOTS = 20
 CAVE_ROW_H = 30
 _BASE_HEIGHT = 150
 _CAVES_TOP = _BASE_HEIGHT + 4

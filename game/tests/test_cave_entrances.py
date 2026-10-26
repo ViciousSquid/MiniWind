@@ -2,12 +2,13 @@
 
 import json
 import math
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from game.tools.make_caves import CaveMouths
+from game.tools.make_caves import CAVES, DRAGON_CAVE, CaveMouths, build_cave_map
 
 
 MAPS = Path(__file__).resolve().parents[2] / 'maps'
@@ -46,7 +47,7 @@ def overworld():
 def test_shipped_overworld_cave_changers_are_clear_and_reachable(overworld):
     mouths = CaveMouths(overworld)
     changers = [t for t in overworld['things'] if t['type'] == 'levelchanger']
-    assert len(changers) == 12
+    assert len(changers) == 20
     for changer in changers:
         props = changer['properties']
         pos = np.asarray(changer['pos'])
@@ -67,8 +68,100 @@ def test_shipped_overworld_cave_changers_are_clear_and_reachable(overworld):
             _assert_player_clear(approach, overworld['brushes'], props['name'])
 
 
-@pytest.mark.parametrize('slug', [f'cave{k:02}' for k in range(1, 13)])
+@pytest.mark.parametrize('slug', [f'cave{k:02}' for k in range(1, 21)])
 def test_shipped_cave_exit_is_clear(slug):
     cave = json.loads((MAPS / f'{slug}.json').read_text())
     changer = next(t for t in cave['things'] if t['type'] == 'levelchanger')
     _assert_player_clear(changer['pos'], cave['brushes'], slug)
+
+
+def test_all_20_caves_have_unique_entrances_and_round_trip_destinations(overworld):
+    expected = {f'cave{k:02}' for k in range(1, 21)}
+    assert {c[0] for c in CAVES} == expected
+    assert {p.stem for p in MAPS.glob('cave*.json')} == expected
+    assert set(overworld['_miniwind_world']['caves']) == expected
+    entrances = [t for t in overworld['things']
+                 if t['type'] == 'levelchanger' and t['properties'].get('_cave')]
+    assert Counter(t['properties']['_cave'] for t in entrances) == dict.fromkeys(expected, 1)
+    for entrance in entrances:
+        p = entrance['properties']
+        slug = p['_cave']
+        assert p['target_map'] == f'maps/{slug}.json'
+        cave = json.loads((MAPS / f'{slug}.json').read_text())
+        assert sum(t['type'] == 'playerstart' and t['properties']['name'] == p['destination_spawn']
+                   for t in cave['things']) == 1
+        exits = [t for t in cave['things'] if t['type'] == 'levelchanger']
+        assert len(exits) == 1
+        destination = exits[0]['properties']
+        assert destination['target_map'] == 'maps/village_walled_source.json'
+        assert destination['destination_spawn'] == f'{slug}_exit'
+        assert sum(t['type'] == 'playerstart'
+                   and t['properties']['name'] == destination['destination_spawn']
+                   for t in overworld['things']) == 1
+    primary = [t for t in overworld['things']
+               if t['type'] == 'playerstart' and t['properties'].get('primary')]
+    assert len(primary) == 1
+    assert not primary[0]['properties'].get('_cave')
+
+
+def test_caves_span_the_world_and_remain_separated(overworld):
+    positions = np.asarray([t['pos'][::2] for t in overworld['things']
+                            if t['type'] == 'levelchanger' and t['properties'].get('_cave')])
+    mouths = CaveMouths(overworld)
+    assert np.all(np.ptp(positions, axis=0) > (mouths.hi - mouths.lo) * 0.7)
+    quadrants = Counter((x >= 0, z >= 0) for x, z in positions)
+    assert len(quadrants) == 4
+    assert min(quadrants.values()) >= 3
+    distances = np.linalg.norm(positions[:, None] - positions[None, :], axis=2)
+    np.fill_diagonal(distances, np.inf)
+    # The mouths are spaced by at least 5000; their use icons extend 220
+    # units towards the approach, which can bring a pair a little closer.
+    assert distances.min() >= 4500
+
+
+def _dragons(things):
+    return [t for t in things if t['type'] == 'creature'
+            and (t['properties'].get('npc_role') == 'dragon'
+                 or t['properties'].get('head') == 'dragon'
+                 or t['properties'].get('breathes_fire'))]
+
+
+def test_exactly_one_dragon_in_one_shipped_cave():
+    from game.rpg.heads import HEAD_SIZE, size_for
+
+    locations = []
+    for path in MAPS.glob('*.json'):
+        world = json.loads(path.read_text())
+        for dragon in _dragons(world.get('things', [])):
+            locations.append(path.stem)
+            assert dragon['properties']['respawn'] is False
+            assert dragon['properties']['persistent'] is True
+            assert size_for(dragon['properties']) == HEAD_SIZE * 8
+    assert locations == [DRAGON_CAVE]
+
+
+def test_regenerating_all_caves_still_creates_only_one_dragon(overworld):
+    from game.rpg.heads import HEAD_SIZE, size_for
+
+    settings = next(t for t in overworld['things'] if t['type'] == 'miniwindsettings')
+    protos = {t['properties'].get('display_name'): t for t in overworld['things']
+              if t['type'] == 'creature'}
+    locations = []
+    for k, (slug, name, monsters, count, loot) in enumerate(CAVES):
+        cave = build_cave_map(slug, name, monsters, count, loot, settings, None,
+                              protos, seed=101 + k * 17)
+        for dragon in _dragons(cave['things']):
+            locations.append(slug)
+            assert size_for(dragon['properties']) == HEAD_SIZE * 8
+    assert locations == [DRAGON_CAVE]
+
+
+@pytest.mark.parametrize('definition', CAVES[12:], ids=lambda c: c[0])
+def test_new_caves_have_their_monsters_and_treasure(definition):
+    slug, _, monsters, count, loot = definition
+    cave = json.loads((MAPS / f'{slug}.json').read_text())
+    creatures = [t for t in cave['things'] if t['type'] == 'creature']
+    assert len(creatures) == count
+    assert {t['properties']['display_name'] for t in creatures} == set(monsters)
+    chest = next(t for t in cave['things'] if t['type'] == 'container')
+    assert [(s['id'], s['qty']) for s in chest['properties']['inventory']] == list(loot)

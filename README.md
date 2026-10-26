@@ -37,16 +37,19 @@ clear the bandits from the Old Mill, cull the wolves troubling the flocks, or
 brave the barrows and caves of the Vale. What the town knows about you is a
 consequence of what it saw — see *The reactive simulation* below.
 
+The world has 20 caves spread across the Vale. Only Whisperdeep contains a
+dragon: Vharzul the Ember Wyrm, whose head is eight times the player's size.
+
 ### Controls (top-down)
 
 | Key | Action | Key | Action |
 |-----|--------|-----|--------|
 | **WASD** | Move | **E** | Talk / interact (nearest NPC or object) |
-| **F** | Attack | **R** | Cast the active spell |
+| **F** | Attack | **K** | Cast the active spell |
 | **X** | Cycle active spell | **B** (hold) | Block |
 | **V** | Toggle sneak | **H** | Quick-drink a healing potion |
 | **I** | Inventory & equipment | **C** | Character sheet |
-| **J** | Quest journal | **P** | Spellbook |
+| **J** | Quest journal | **P** | Spellbook (click a spell to ready it) |
 | **M** | Map | **Q** | Current quest (objective + how to complete) |
 | **L** | Level up (when available) | **1–9** | Weapon quick slots (taken in hand at once) |
 | **Esc** | Close / back | | |

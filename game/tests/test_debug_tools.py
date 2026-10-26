@@ -67,3 +67,29 @@ def test_unpaused_play_tick_drains_debug_tools_action_queue(monkeypatch):
     assert session.teleported == (10, 20, 30)
     assert session.tick_count == 1
     assert session.persist_count == 1
+
+
+def test_all_20_cave_teleports_fit_and_work_at_720p(qt_app):
+    from PyQt5.QtCore import QRect
+    from PyQt5.QtGui import QImage, QPainter
+    from game.ui.debug_tools import DebugToolsWindow
+
+    session = _Session()
+    caves = [(f'Cave {k}', (k * 1000, 72, k * -1000)) for k in range(1, 21)]
+    session.cave_entrances = lambda: caves
+    win = DebugToolsWindow(SimpleNamespace())
+    image = QImage(1280, 720, QImage.Format_ARGB32)
+    painter = QPainter(image)
+    try:
+        win._draw_caves(painter, win.window_rect.x(),
+                        win.window_rect.y() + win.HEADER_H + 154,
+                        win.width, 10, session)
+    finally:
+        painter.end()
+    assert len(win._buttons) == 20
+    assert QRect(0, 0, 1280, 720).contains(win._full_rect())
+    for (rect, action), (_, pos) in zip(win._buttons, caves):
+        assert win._full_rect().contains(rect)
+        action()
+        hits.run_clicks(session)
+        assert session.teleported == pos

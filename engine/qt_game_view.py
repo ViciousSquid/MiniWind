@@ -113,8 +113,8 @@ def _window_wants_cursor(view) -> bool:
     """Whether a gameplay window needs a free mouse cursor.
 
     The always-visible inventory strip and ordinary overlays do not release
-    the captured mouse. The character sheet, merchant trade window, and Debug
-    Tools window explicitly require a pointer for their interactive controls.
+    the captured mouse. The character sheet, spellbook, merchant trade window,
+    and Debug Tools explicitly require a pointer for their interactive controls.
     """
     manager = getattr(view, 'floating_windows', None)
     if (manager is None or not getattr(view, 'play_mode', False)
@@ -127,7 +127,7 @@ def _window_wants_cursor(view) -> bool:
         getattr(w, 'active', False)
         and getattr(w, 'wants_cursor', False)
         and getattr(w, 'key', None) in (
-            'screen:character', 'screen:trade', 'debug:tools'
+            'screen:character', 'screen:spells', 'screen:trade', 'debug:tools'
         )
         for w in manager.windows
     )

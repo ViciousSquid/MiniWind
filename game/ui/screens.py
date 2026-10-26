@@ -1055,29 +1055,86 @@ def _handle_quest(session, key):
 # ===========================================================================
 # Spellbook
 # ===========================================================================
-def _draw_spells(painter, session, w, h):
-    c = session.game.character
-    spells = [rpg_magic.get(s) for s in c.known_spells if rpg_magic.get(s)]
-    st = _sel(session).setdefault("spells", {"row": 0})
+def _spellbook_spells(session):
+    return [spell for sid in session.game.character.known_spells
+            if (spell := rpg_magic.get(sid)) is not None]
+
+
+def _spellbook_selection(session, spells):
+    active = session.game.character.active_spell
+    st = _sel(session).setdefault("spells", {
+        "row": next((i for i, spell in enumerate(spells) if spell.id == active), 0)})
     st["row"] = max(0, min(st["row"], max(0, len(spells) - 1)))
+    return st
+
+
+def _ready_spell(session, spell_id):
+    spells = _spellbook_spells(session)
+    index = next((i for i, spell in enumerate(spells) if spell.id == spell_id), None)
+    if index is None:
+        return
+    _spellbook_selection(session, spells)["row"] = index
+    c = session.game.character
+    c.active_spell = spell_id
+    eq._refresh_weapon_kind(c)
+    session.notify(f"Readied {spells[index].name}", 1.5)
+
+
+def _spellbook_page(session, step, page_size):
+    spells = _spellbook_spells(session)
+    st = _spellbook_selection(session, spells)
+    page = st["row"] // page_size + step
+    st["row"] = max(0, min(page * page_size, max(0, len(spells) - 1)))
+
+
+def _draw_spells(painter, session, w, h):
+    from ..host import K_CAST, K_SPELLS
+
+    c = session.game.character
+    spells = _spellbook_spells(session)
+    st = _spellbook_selection(session, spells)
     x, y, bw, bh = _panel_rect(w, h)
     inner = T.panel(painter, x, y, bw, bh)
     ty = T.heading(painter, inner, "Spellbook",
                    f"{len(spells)} spells known    ·    Magicka {int(c.magicka)}/{int(c.max_magicka)}")
 
     list_w = int(inner.width() * 0.5)
-    for i, spell in enumerate(spells):
-        ry = ty + 8 + i * 24
+    top = ty + 8
+    nav_y = inner.bottom() - 52
+    page_size = max(1, (nav_y - top - 6) // 24)
+    page = st["row"] // page_size
+    first = page * page_size
+    pages = max(1, (len(spells) + page_size - 1) // page_size)
+    fm = QFontMetrics(T.font(11, family="Segoe UI"))
+    for i in range(first, min(first + page_size, len(spells))):
+        spell = spells[i]
+        ry = top + (i - first) * 24
+        row_rect = QRect(inner.x(), ry - 2, list_w, 22)
         if i == st["row"]:
-            painter.fillRect(QRect(inner.x(), ry - 2, list_w, 22), T.SELECT)
+            painter.fillRect(row_rect, T.SELECT)
         active = c.active_spell == spell.id
         col = T.GOLD_BRIGHT if i == st["row"] else (T.MAGICKA.lighter(150) if active else T.INK)
         cost = rpg_magic.cast_cost(c, spell)
-        T.text(painter, inner.x() + 8, ry + 14, ("✦ " if active else "") + spell.name,
+        label = fm.elidedText(("✦ " if active else "") + spell.name,
+                              Qt.ElideRight, max(1, list_w - 76))
+        T.text(painter, inner.x() + 8, ry + 14, label,
                size=11, color=col, family="Segoe UI")
         T.text_in(painter, QRect(inner.x(), ry - 2, list_w - 8, 22),
                   f"{int(cost)} mp", size=9, color=T.DIM, align=T.ALIGN_RIGHT,
                   family="Segoe UI")
+        _row_target(painter, row_rect,
+                    lambda s, sid=spell.id: _ready_spell(s, sid), f"spell:{spell.id}")
+
+    if pages > 1:
+        button(painter, QRect(inner.x(), nav_y, 80, 26), "Previous",
+               lambda s, size=page_size: _spellbook_page(s, -1, size), enabled=page > 0)
+        button(painter, QRect(inner.x() + list_w - 64, nav_y, 64, 26), "Next",
+               lambda s, size=page_size: _spellbook_page(s, 1, size), enabled=page < pages - 1)
+        T.text_in(painter, QRect(inner.x() + 82, nav_y, max(1, list_w - 148), 26),
+                  f"{page + 1}/{pages}", size=9, color=T.DIM, align=T.ALIGN_CENTER)
+
+    button(painter, QRect(inner.right() - 90, nav_y, 90, 26), "Close",
+           lambda s: setattr(s, "open_screen", None))
 
     if spells:
         spell = spells[st["row"]]
@@ -1085,7 +1142,8 @@ def _draw_spells(painter, session, w, h):
         T.text(painter, dx, ty + 18, spell.name, size=15, color=T.GOLD_BRIGHT, bold=True)
         info = (f"School: {sk.label(spell.school)}\nDelivery: {spell.delivery}\n"
                 f"Element: {spell.element}\nCost: {int(rpg_magic.cast_cost(c, spell))} magicka\n\n{spell.desc}")
-        T.text_in(painter, QRect(dx, ty + 34, inner.width() - list_w - 20, 240),
+        T.text_in(painter, QRect(dx, ty + 34, inner.width() - list_w - 20,
+                                max(1, nav_y - ty - 42)),
                   info, size=10, color=T.PARCH,
                   align=int(Qt.AlignTop | Qt.AlignLeft) | int(Qt.TextWordWrap),
                   family="Segoe UI")
@@ -1095,21 +1153,23 @@ def _draw_spells(painter, session, w, h):
                size=11, color=T.DIM, family="Segoe UI")
 
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              "↑/↓ select   Enter set active   P/Esc close", size=9, color=T.DIM,
+              f"Click a spell to ready it · {K_CAST.upper()} cast · {K_SPELLS.upper()}/Esc close",
+              size=9, color=T.DIM,
               align=T.ALIGN_CENTER, family="Segoe UI")
 
 
 def _handle_spells(session, key):
-    c = session.game.character
-    spells = [s for s in c.known_spells if rpg_magic.get(s)]
-    st = _sel(session).setdefault("spells", {"row": 0})
+    from ..host import K_SPELLS
+
+    spells = _spellbook_spells(session)
+    st = _spellbook_selection(session, spells)
     if key in ("up", "w"):
         st["row"] = (st["row"] - 1) % max(1, len(spells)); return True
     if key in ("down", "s"):
         st["row"] = (st["row"] + 1) % max(1, len(spells)); return True
     if key in ("return", "enter") and spells:
-        c.active_spell = spells[st["row"]]; return True
-    if key in ("p", "escape", "esc"):
+        _ready_spell(session, spells[st["row"]].id); return True
+    if key in (K_SPELLS, "escape", "esc"):
         session.open_screen = None
     return True
 

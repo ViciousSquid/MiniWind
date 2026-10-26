@@ -68,16 +68,33 @@ CAVES = (
      (("gold", 140), ("potion_magicka", 3), ("book_blade", 1))),
     ("cave12", "Wightfall Barrow", ("Barrow Wight", "Skeleton", "Skeleton Archer"), 7,
      (("gold", 200), ("kite_shield", 1), ("elven_arrow", 15))),
+    ("cave13", "Briarweb Cavern", ("Giant Spider",), 6,
+     (("gold", 80), ("potion_cure", 2), ("potion_heal", 2))),
+    ("cave14", "Hollowguard Crypt", ("Skeleton", "Skeleton Archer"), 7,
+     (("gold", 130), ("silver_sword", 1), ("potion_magicka", 2))),
+    ("cave15", "Mossveil Grotto", ("Shroomling", "Giant Spider"), 6,
+     (("gold", 90), ("potion_heal", 3), ("potion_stamina", 3))),
+    ("cave16", "Redfang Burrow", ("Greenskin", "Greenskin Archer"), 7,
+     (("gold", 150), ("iron_shield", 1), ("steel_arrow", 20))),
+    ("cave17", "Rimeclaw Den", ("Snow Bear", "Wolf"), 5,
+     (("gold", 70), ("fur_cuirass", 1), ("potion_heal", 3))),
+    ("cave18", "Cinderfall Hollow", ("Ashen Cultist", "Skeleton"), 6,
+     (("gold", 190), ("potion_magicka", 3), ("book_blade", 1))),
+    ("cave19", "Blackwater Hideout", ("Smuggler", "Bandit Archer"), 6,
+     (("gold", 180), ("crossbow", 1), ("steel_bolt", 25))),
+    ("cave20", "Moonfang Refuge", ("Wolf", "Bear"), 6,
+     (("gold", 60), ("potion_heal", 3), ("potion_stamina", 2))),
 )
 
-#: Caves that are a dragon's lair: a great hall carved out of the cave, the
-#: dragon in the middle of it and its gold all over the floor.
+#: The sole dragon lives in Whisperdeep; adding caves must not add dragons.
+DRAGON_CAVE = "cave06"
+#: A great hall carved out of the cave, one dragon and its hoard.
 LAIRS = {
-    "cave06": {
+    DRAGON_CAVE: {
         "dragon": {
             "display_name": "Vharzul the Ember Wyrm", "head": "dragon",
-            # Five times the player's size, and hit points to match.
-            "head_scale": 5.0, "health": 3000, "max_health": 3000,
+            # Eight times the player's head size, and hit points to match.
+            "head_scale": 8.0, "health": 3000, "max_health": 3000,
             # It bites what is close; what is not, it burns (game/dragon_fire.py).
             "damage": 45, "attack_style": "melee", "creature_level": 30,
             "breathes_fire": True, "breath_damage": 14,
@@ -103,6 +120,8 @@ WALL_HEIGHT = 320.0
 #: Keep the changer and a standing player beyond the shoulder's front edge,
 #: including diagonal mouths (the shoulder is an axis-aligned 520-unit box).
 MOUTH_CHANGER_OFFSET = 220.0
+#: Prefer wide spacing, relaxing only as far as needed to place every cave.
+MOUTH_SPACINGS = (10000.0, 8000.0, 6500.0, 5000.0)
 
 
 def _uid():
@@ -185,7 +204,10 @@ class CaveMouths:
     def find_spots(self, count, seed=5, avoid=(), spacing=10000.0):
         """*count* cave mouths ``(x, z, ground, downhill (dx, dz))``, at
         least *spacing* from each other and from every ``(x, z)`` in *avoid*
-        (the caves already there)."""
+        (the caves already there). Fill the largest gaps first, choosing
+        among safe foothills rather than clustering on the steepest slopes."""
+        if count <= 0:
+            return []
         rng = np.random.default_rng(seed)
         content = np.array([(b["pos"][0], b["pos"][2]) for b in self.world["brushes"]
                             if not ew.Expander._is_tree(b)]
@@ -218,7 +240,7 @@ class CaveMouths:
         lowland = float(np.percentile(h, 40))
         ok = (up > 160.0) & (np.abs(front) < 60.0) & (h < lowland + 220.0)
         order = np.argsort(-score)
-        spots = []
+        candidates = []
         for i in order:
             if not ok[i]:
                 continue
@@ -227,13 +249,23 @@ class CaveMouths:
             z += float(rng.uniform(-60, 60))
             if len(content) and np.min(np.hypot(content[:, 0] - x, content[:, 1] - z)) < 2600:
                 continue
-            if any(math.hypot(x - s[0], z - s[1]) < spacing
-                   for s in list(spots) + [(a[0], a[1]) for a in avoid]):
-                continue
             ux, uz = best[int(k_up[i])][1], best[int(k_up[i])][2]
-            spots.append((x, z, self.ground(x, z), (-ux, -uz)))
-            if len(spots) >= count:
+            candidates.append((x, z, (-ux, -uz)))
+        if not candidates:
+            return []
+        points = np.asarray([(x, z) for x, z, _ in candidates])
+        nearest = np.full(len(points), np.inf)
+        for x, z in avoid:
+            nearest = np.minimum(nearest, np.hypot(points[:, 0] - x, points[:, 1] - z))
+        spots = []
+        while len(spots) < count:
+            i = int(np.argmax(nearest))
+            if nearest[i] < spacing:
                 break
+            x, z, downhill = candidates[i]
+            spots.append((x, z, self.ground(x, z), downhill))
+            nearest = np.minimum(nearest, np.hypot(points[:, 0] - x, points[:, 1] - z))
+            nearest[i] = -np.inf
         return spots
 
     def build(self, slug, name, spot, index):
@@ -547,9 +579,12 @@ def main():
     mouths = CaveMouths(world)
     mouths._remove_old()
     caves = CAVES[:args.count]
-    spots = mouths.find_spots(len(caves))
+    for spacing in MOUTH_SPACINGS:
+        spots = mouths.find_spots(len(caves), spacing=spacing)
+        if len(spots) >= len(caves):
+            break
     if len(spots) < len(caves):
-        print(f"only found {len(spots)} cave mouths")
+        raise RuntimeError(f"only found {len(spots)} cave mouths for {len(caves)} caves")
     mouths.settle_primary(1)
     settings = next(t for t in world["things"] if t["type"] == "miniwindsettings")
     camera = next((t for t in world["things"] if t["type"] == "logic_command"), None)
@@ -582,12 +617,12 @@ def _add_caves(world, path):
         print("every cave is already there")
         return
     spots = []
-    for spacing in (10000.0, 8000.0, 6500.0, 5000.0):
+    for spacing in MOUTH_SPACINGS:
         spots = mouths.find_spots(len(todo), avoid=list(have.values()), spacing=spacing)
         if len(spots) >= len(todo):
             break
     if len(spots) < len(todo):
-        print(f"only found {len(spots)} cave mouths for {len(todo)} caves")
+        raise RuntimeError(f"only found {len(spots)} cave mouths for {len(todo)} caves")
     settings = next(t for t in world["things"] if t["type"] == "miniwindsettings")
     camera = next((t for t in world["things"] if t["type"] == "logic_command"), None)
     protos = {}

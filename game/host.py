@@ -989,6 +989,8 @@ class MiniwindGame:
         elif K_MAP in just:
             session.map_request = "player"
         elif K_SPELLS in just:
+            session.cancel_spell_aim()
+            getattr(session, "sel", {}).pop("spells", None)
             session.open_screen = "spells"
         elif K_LEVELUP in just and session.game.character.can_level_up:
             session.open_screen = "levelup"
