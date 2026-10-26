@@ -1,7 +1,5 @@
 """Console hotkey routing, including an ISO Mac's Section key."""
 
-from types import SimpleNamespace
-
 import pytest
 from PyQt5.QtCore import QEvent, Qt
 from PyQt5.QtGui import QKeyEvent
@@ -64,11 +62,10 @@ def test_key_is_caught_inside_console_input_and_repeat_does_not_toggle(qt_app):
         window.deleteLater()
 
 
-def test_console_key_takes_precedence_over_a_game_menu(qt_app):
-    from editor.main_window import MainWindow
+def test_console_key_takes_precedence_over_a_game_menu(main_window, monkeypatch):
     toggles = []
-    window = SimpleNamespace(toggle_debug_console=lambda: toggles.append(True))
-    MainWindow.keyPressEvent(window, _key(Qt.Key_section, "§"))
+    monkeypatch.setattr(main_window, "toggle_debug_console", lambda: toggles.append(True))
+    main_window.keyPressEvent(_key(Qt.Key_section, "§"))
     assert toggles == [True]
 
 
