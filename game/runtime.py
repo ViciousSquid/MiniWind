@@ -5731,8 +5731,12 @@ class MiniwindSession(SettlementLaw):
                  sway.offset("main", facing, now))]
         off_lag = sway.offset("off", facing, now)
         off = eq.offhand_weapon(c)
+        shield = eq.equipped_id(c, rpg_items.SLOT_SHIELD)
         if off is not None:
             held.append((off.id, other, self._offhand_anim_time > 0.0, off_lag))
+        elif shield:
+            # A worn shield is on the off arm, brought up while blocking.
+            held.append((shield, other, bool(self._blocking), off_lag))
         else:
             torch = self._player_torch_def()
             if torch is not None:
@@ -6469,9 +6473,11 @@ class MiniwindSession(SettlementLaw):
         return True
 
     def select_strip_slot(self, index: int) -> bool:
-        """A strip slot picked, by a click or its number key: selected, and a
-        weapon in it taken in hand at once (see :meth:`ready_weapon`).
-        True if anything changed in hand."""
+        """A strip slot picked, by a click or its number key: selected, and
+        what is in it applied at once -- a weapon taken in hand (see
+        :meth:`ready_weapon`); anything else used as a double-click would
+        (:meth:`inventory_use`): a shield or armour worn, or taken off when
+        already worn, a potion drunk. True if anything changed."""
         slots = self.strip_slots()
         index = int(index)
         if not 0 <= index < len(slots):
@@ -6481,8 +6487,10 @@ class MiniwindSession(SettlementLaw):
         if not stack:
             return False
         d = rpg_items.get(stack.get("id"))
-        if d is None or d.category != rpg_items.WEAPON:
+        if d is None:
             return False
+        if d.category != rpg_items.WEAPON:
+            return self.inventory_use(d.id)
         copy = sum(1 for st in slots[:index] if st and st.get("id") == d.id)
         return self.ready_weapon(d.id, copy)
 
