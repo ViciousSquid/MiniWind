@@ -83,6 +83,13 @@ def _feet(thing):
     return [float(thing.pos[0]), float(thing.pos[1]) - half, float(thing.pos[2])]
 
 
+def _scatter(dx, dz, rng, degrees):
+    """(*dx*, *dz*) turned by a random angle of up to *degrees* either way."""
+    a = math.radians(rng.uniform(-degrees, degrees))
+    ca, sa = math.cos(a), math.sin(a)
+    return dx * ca - dz * sa, dx * sa + dz * ca
+
+
 def _bolt_landed(_pos, _target) -> None:
     """A spell bolt's impact hook: nothing to do, but having one tags the bolt
     (Fio tags only hooked projectiles), so its light and trail can follow it."""
@@ -5407,6 +5414,9 @@ class MiniwindSession(SettlementLaw):
         aim = self._projectile_aim_point(start)
 
         dx, dy, dz = aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]
+        if eq.dual_wielding(c):
+            # A crossbow in each hand: neither is aimed well.
+            dx, dz = _scatter(dx, dz, self.rng, rpg_combat.DUAL_WIELD_SPREAD)
         dlen = math.sqrt(dx * dx + dy * dy + dz * dz) or 1.0
         vel = [dx / dlen * ARROW_SPEED, dy / dlen * ARROW_SPEED, dz / dlen * ARROW_SPEED]
 

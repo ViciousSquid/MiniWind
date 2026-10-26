@@ -216,3 +216,85 @@ def test_point_blank_a_loaded_crossbow_fires_then_the_blade_comes_out():
     assert session.archery.shot_hook(shooter, [100.0, 0, 0], None, 100.0 ** 2) is False
     assert shooter.properties["_active_weapon"] == "iron_dagger"
     assert len(combat.shots) == 1
+
+
+def test_a_pair_of_crossbows_fires_twice_before_both_wind_back():
+    session, combat = _archery()
+    shooter = _Actor(attack_style="bow", equipped_weapon="crossbow",
+                     offhand_weapon="crossbow",
+                     inventory=[{"id": "crossbow", "qty": 2}])
+    hook = session.archery.shot_hook
+    assert hook(shooter, [400.0, 0, 0], None, 400.0 ** 2) is True
+    assert hook(shooter, [400.0, 0, 0], None, 400.0 ** 2) is True
+    assert len(combat.shots) == 2
+    assert shooter.properties["_offhand_anim"] > 0       # the second was the off hand's
+    assert hook(shooter, [400.0, 0, 0], None, 400.0 ** 2) is True
+    assert len(combat.shots) == 2                        # both winding back
+
+
+def test_crossbowmen_may_carry_a_second_crossbow_but_archers_never_a_second_bow():
+    import random
+    from ..held_weapons import arm_fighters
+    from ..rpg import items
+    paired = 0
+    for seed in range(60):
+        xbow = _Actor(type="npc", combatant=True, faction="bandits", npc_role="bandit",
+                      attack_style="bow", equipped_weapon="crossbow", inventory=[])
+        bow = _Actor(type="npc", combatant=True, faction="bandits", npc_role="bandit",
+                     attack_style="bow", equipped_weapon="long_bow", inventory=[])
+        arm_fighters([xbow, bow], random.Random(seed), lambda i: items.make(i, 1))
+        assert not bow.properties.get("offhand_weapon")
+        if xbow.properties.get("offhand_weapon"):
+            assert xbow.properties["offhand_weapon"] == "crossbow"
+            paired += 1
+    assert paired > 0
+
+
+def test_marksmen_never_pair_crossbows():
+    import random
+    from ..held_weapons import arm_fighters
+    from ..rpg import items
+    for seed in range(60):
+        hunter = _Actor(type="npc", combatant=True, faction="bandits", npc_role="hunter",
+                        attack_style="bow", equipped_weapon="crossbow", inventory=[])
+        arm_fighters([hunter], random.Random(seed), lambda i: items.make(i, 1))
+        assert not hunter.properties.get("offhand_weapon")
+
+
+def test_a_pair_of_crossbows_scatters_its_bolts_a_single_one_does_not():
+    import math
+    session, combat = _archery()
+    session.rng.seed(3)
+
+    def headings(actor):
+        out = []
+        combat.spawn_projectile = lambda pos, vel, **kw: out.append(math.atan2(vel[2], vel[0]))
+        for _ in range(16):
+            actor.properties.pop("_bow_ready_at", None)
+            actor.properties.pop("_offhand_ready_at", None)
+            session.archery.shot_hook(actor, [400.0, 0, 0], None, 400.0 ** 2)
+        return out
+
+    single = _Actor(attack_style="bow", equipped_weapon="crossbow", inventory=[])
+    pair = _Actor(attack_style="bow", equipped_weapon="crossbow", offhand_weapon="crossbow",
+                  inventory=[{"id": "crossbow", "qty": 2}])
+    assert max(abs(a) for a in headings(single)) < 1e-6
+    wide = [abs(math.degrees(a)) for a in headings(pair)]
+    assert max(wide) > 1.0 and max(wide) <= 5.0 + 1e-6
+
+
+def test_dual_wielding_costs_the_player_accuracy():
+    from types import SimpleNamespace
+    from ..rpg import combat, equipment, items, inventory as inv
+    from ..rpg.character import Character
+    c = Character()
+    for _ in range(2):
+        inv.add_item(c.inventory, items.make("iron_shortsword", 1))
+    equipment.equip(c, "iron_shortsword")
+    p = combat.hit_chance(c, c.skill("blade"), 30, c.stamina / c.max_stamina)
+    # A roll just under the lone sword's chance, but over the pair's.
+    roll = SimpleNamespace(random=lambda: p * 0.9)
+    assert combat.player_attack(c, {"health": 50, "agility": 30}, rng=roll)["hit"]
+    equipment.equip(c, "iron_shortsword", items.SLOT_SHIELD)
+    assert equipment.dual_wielding(c)
+    assert not combat.player_attack(c, {"health": 50, "agility": 30}, rng=roll)["hit"]

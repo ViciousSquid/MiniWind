@@ -47,6 +47,11 @@ DUAL_WIELD_ROLES = {"bandit": 0.45, "mercenary": 0.45, "adventurer": 0.4,
 #: above, still sometimes carries a second.
 DUAL_WIELD_ANY = 0.15
 TWIN_CHANCE = 0.5
+#: Two weapons cost accuracy (game.rpg.combat.DUAL_WIELD_ACCURACY), so not
+#: everyone pairs them: a crossbowman takes a second crossbow at this share of
+#: the chance above, and a marksman, who trusts one well-aimed shot, never.
+CROSSBOW_PAIR_SHARE = 0.5
+MARKSMAN_ROLES = ("hunter", "ranger", "marksman", "sniper")
 
 #: Held weapons are drawn for actors within this distance of the player.
 DRAW_RADIUS = 2600.0
@@ -133,21 +138,27 @@ def _arm_caster(p, ttype, role, make_stack) -> bool:
 
 
 def _arm_off_hand(p, role, team, equipped, rng, make_stack) -> bool:
-    """Perhaps give a fighter with a one-handed blade a second weapon for the
-    other hand (``offhand_weapon``): a twin of the first, or a sidearm."""
+    """Perhaps give a fighter with a one-handed weapon a second for the other
+    hand (``offhand_weapon``): a twin of a blade, or a sidearm; a crossbowman
+    a second crossbow. Bows take both hands and never pair."""
     if p.get("offhand_weapon") or not equipped:
         return False
     from .rpg import equipment, items
     main = items.get(equipped)
     if main is None or not equipment.can_dual_wield(main) \
-            or main.get("kind") != items.KIND_MELEE:
+            or main.get("kind") not in (items.KIND_MELEE, items.KIND_CROSSBOW):
         return False
     chance = max(DUAL_WIELD_FACTIONS.get(team, 0.0),
                  max((c for r, c in DUAL_WIELD_ROLES.items() if r in role), default=0.0),
                  DUAL_WIELD_ANY)
+    if main.get("kind") == items.KIND_CROSSBOW:
+        if any(r in role for r in MARKSMAN_ROLES):
+            return False
+        chance *= CROSSBOW_PAIR_SHARE
     if chance <= 0.0 or rng.random() >= chance:
         return False
-    off = equipped if rng.random() < TWIN_CHANCE else SIDEARMS[int(rng.random() * len(SIDEARMS))]
+    twin = main.get("kind") == items.KIND_CROSSBOW or rng.random() < TWIN_CHANCE
+    off = equipped if twin else SIDEARMS[int(rng.random() * len(SIDEARMS))]
     stack = make_stack(off)
     if not stack:
         return False

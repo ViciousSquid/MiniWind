@@ -451,3 +451,15 @@ def test_saved_and_loaded_the_copies_keep_their_slots():
     s.game.character.strip[1] = None                       # dragged one out
     s.game.character = Character.from_dict(s.game.character.to_dict())
     assert _ids(s)[:2] == ["iron_shortsword", None]        # not offered again
+
+
+def test_crossbows_pair_up_but_a_bow_takes_both_hands():
+    s = _session()
+    _give(s, "crossbow", "crossbow")
+    s.select_strip_slot(0)
+    assert s.select_strip_slot(1) and _hands(s) == ("crossbow", "crossbow")
+    from ..rpg import equipment
+    assert equipment.dual_wielding(s.game.character)
+    _give(s, "short_bow")
+    bow = [st["id"] if st else None for st in s.strip_slots()].index("short_bow")
+    assert s.select_strip_slot(bow) and _hands(s) == ("short_bow", None)

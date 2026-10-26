@@ -31,6 +31,13 @@ from ..diceroll import CHECK_NOTATION, DiceRoller, check_threshold
 # ---------------------------------------------------------------------------
 # Hit chance
 # ---------------------------------------------------------------------------
+#: Two weapons at once cost accuracy: each hand's chance to hit is scaled by
+#: this, and a pair of crossbows scatters its bolts by up to DUAL_WIELD_SPREAD
+#: degrees. A trade some fighters decline (game.held_weapons).
+DUAL_WIELD_ACCURACY = 0.8
+DUAL_WIELD_SPREAD = 5.0
+
+
 def hit_chance(character, weapon_skill: int, target_agility: int = 30,
                fatigue_frac: float = 1.0) -> float:
     """Probability [0.05, 0.95] that a swing/shot lands.
@@ -101,6 +108,8 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         return result
 
     hit_probability = hit_chance(character, skill, target_agi, fatigue_frac)
+    if eq.dual_wielding(character):
+        hit_probability *= DUAL_WIELD_ACCURACY
     if guaranteed_hit and kind == items.KIND_MELEE:
         # Near + facing, confirmed by the caller: always connects.
         result["hit_probability"] = hit_probability
