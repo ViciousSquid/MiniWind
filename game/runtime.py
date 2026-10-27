@@ -444,6 +444,8 @@ SOUND_DIR = os.path.join("assets", "sounds")
 TRANSACTION_SOUND = "transaction.mp3"
 #: Heard whenever a potion is drunk (assets/sounds).
 DRINK_SOUND = "drink.mp3"
+#: Heard whenever the player casts a spell that works (assets/sounds).
+SPELLCAST_SOUND = "spellcast.mp3"
 #: A guard stopping the player to arrest them says one of these, at random.
 ARREST_SOUNDS = ("arrest1.mp3", "arrest2.mp3")
 
@@ -6323,7 +6325,9 @@ class MiniwindSession(SettlementLaw):
                       if c.effect_magnitude(kind) > 0]
 
     def _magic_cast_fx(self, spell, target=None) -> None:
-        """The visible side of a cast the player just made."""
+        """The visible side of a cast the player just made -- and the sound
+        of it."""
+        self.play_ui_sound(SPELLCAST_SOUND)
         pos = self._player_pos()
         if pos is None:
             return
@@ -6518,6 +6522,7 @@ class MiniwindSession(SettlementLaw):
                 self.close_lockpicking(save_progress=False)
             self.notify("Knock clears the sheared pick and opens the lock." if jammed
                         else "Knock opens the lock.", 4.0)
+            self.play_ui_sound(SPELLCAST_SOUND)
             return True
         # A "wisp" effect conjures the wandering companion light (a SELF spell).
         if any(e.get("kind") == "wisp" for e in (spell.effects or [])):
@@ -6630,6 +6635,7 @@ class MiniwindSession(SettlementLaw):
             return False
         c.magicka = 0.0
         self.store.set("resurrect.last_day", today)
+        self.play_ui_sound(SPELLCAST_SOUND)
         c.use_skill(spell.school, 1.0 + spell.base_cost / 40.0)
         p = target.properties
         self._restore_living_kit(p)
