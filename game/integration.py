@@ -561,6 +561,11 @@ GAME_SETTINGS = (
      "Show a thought bubble over a nearby NPC whenever its reason for what "
      "it is doing changes: heading home hungry, running from a fight, going "
      "to tell the watch what it saw.", True),
+    ("gore", "Gore",
+     "Blood sprays from wounds and pools under the dead, and an overkill "
+     "blows a body apart.", True),
+    ("screen_shake", "Screen shake",
+     "Killing blows, critical hits and heavy blows taken jolt the screen.", True),
     ("torch_shadows", "Torch shadows",
      "Carried torches near you (the NEAR simulation distance) are dynamic "
      "lights that cast shadows. Costs some frame time; the renderer's shadow "

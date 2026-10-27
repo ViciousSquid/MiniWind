@@ -2627,9 +2627,27 @@ class Terrain:
             out[m] = paint[ix[m], iz[m], 3].astype(np.float32) / 255.0
         return out
 
+    #: Paint sources already loaded, by path: a game stamping the same few
+    #: images over and over (blood, footprints) reads each from disk once.
+    _RGBA_CACHE = {}
+    _RGBA_CACHE_MAX = 64
+
+    @classmethod
+    def _load_texture_rgba(cls, path):
+        """Load a paint source into a compact RGBA8 NumPy image (cached)."""
+        key = str(path)
+        hit = cls._RGBA_CACHE.get(key)
+        if hit is not None:
+            return hit
+        image = cls._read_texture_rgba(key)
+        if image is not None:
+            if len(cls._RGBA_CACHE) >= cls._RGBA_CACHE_MAX:
+                cls._RGBA_CACHE.pop(next(iter(cls._RGBA_CACHE)))
+            cls._RGBA_CACHE[key] = image
+        return image
+
     @staticmethod
-    def _load_texture_rgba(path):
-        """Load a paint source into a compact RGBA8 NumPy image."""
+    def _read_texture_rgba(path):
         try:
             from PyQt5.QtGui import QImage
             image = QImage(path)
