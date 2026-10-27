@@ -157,8 +157,10 @@ class Character:
 
     @classmethod
     def create(cls_, name: str, race_id: str, class_id: str, birthsign_id: str = "none",
-               gender: str = "male", custom_class: cls.CharClass = None) -> "Character":
-        """Roll a fresh character from a race + class + birthsign."""
+               gender: str = "male", custom_class: cls.CharClass = None,
+               rng=None) -> "Character":
+        """Roll a fresh character from a race + class + birthsign. With an
+        *rng*, a starting Flare is now and then a Wisp (magic.awarded)."""
         c = cls_()
         c.name = (name[:1].upper() + name[1:]) if name else "Adventurer"
         c.gender = gender
@@ -192,15 +194,22 @@ class Character:
 
         # starting spells from race + birthsign + class (none for a class
         # that works no magic: a Warrior)
+        starting = []
         for sp in ((list(race.starting_spells) + list(sign.spells)
                     + list(getattr(klass, "starting_spells", [])))
                    if getattr(klass, "magic", True) else []):
-            if sp not in c.known_spells:
-                c.known_spells.append(sp)
+            if sp not in starting:
+                starting.append(sp)
         # Safety net: a spellcasting class (Mage, Sorcerer, Healer, Nightblade,
         # or a custom magic-specialised class) must never start with no spell.
-        if klass.specialisation == sk.MAGIC and not c.known_spells:
-            c.known_spells.append("flare")
+        if klass.specialisation == sk.MAGIC and not starting:
+            starting.append("flare")
+        from . import magic
+        for sp in starting:
+            if rng is not None:
+                sp = magic.awarded(sp, c.known_spells, rng)
+            if sp not in c.known_spells:
+                c.known_spells.append(sp)
         # Select the first known spell for the spellbook; casting requires
         # explicitly equipping it to a hand.
         if c.known_spells and not c.active_spell:

@@ -24,6 +24,7 @@ import math
 import threading
 import os
 import random
+import uuid
 from itertools import chain as _chain
 from typing import Dict, List, Optional
 
@@ -43,6 +44,7 @@ from .rpg import items as rpg_items
 from . import library
 from . import warrior_fist
 from . import held_weapons
+from . import party
 from .rpg import magic as rpg_magic
 from .rpg import guilds
 from .rpg import disposition as disp
@@ -319,6 +321,9 @@ CHARGE_SHOUTS = ("To arms!", "Raiders! With me!", "Not in my town!",
 WORLD_EDGE_MARGIN = 900.0
 #: How fast an over-encumbered player moves, as a fraction of normal.
 ENCUMBERED_SPEED = 0.33
+#: Spawn points' actors are given ids from this namespace and their spawner
+#: and slot, so each keeps the same uuid every time its map is entered.
+SPAWN_ID_NAMESPACE = uuid.UUID("6f1c2a8e-3b7d-4e59-9a0c-5d2e8b7f4a11")
 #: The light a spell bolt carries with it, in the spell's colour.
 BOLT_LIGHT_RADIUS = 420.0
 BOLT_LIGHT_INTENSITY = 2.2
@@ -939,6 +944,7 @@ class MiniwindSession(SettlementLaw):
         self.memory.load(self._map_key)
         self.spawn_creature_points()   # materialise CreatureSpawn points once
         self.memory.apply()            # the dead stay dead; lairs refill after a day
+        self._party_due = True         # raised followers arrive with the player (update)
         self._assign_npc_handedness()  # random handedness (left rare) where unset
         self._arm_fighters()           # a bow for the swordsman, a blade for the archer
         self.dragon_fire.install(fio.things(self.logic))
@@ -1207,6 +1213,7 @@ class MiniwindSession(SettlementLaw):
         # Author-granted starting spells (Game Settings → Player Spells).
         c = self.game.character
         for sid in (self._player_start_spells if c.can_use_magic() else ()):
+            sid = rpg_magic.awarded(sid, c.known_spells, self.rng)
             if rpg_magic.get(sid) and sid not in c.known_spells:
                 c.known_spells.append(sid)
         if c.known_spells and not c.active_spell:
@@ -1430,6 +1437,9 @@ class MiniwindSession(SettlementLaw):
         self.held.update()
         self.dragon_fire.update(delta)
         self.wildlife.update(delta)
+        if self.__dict__.get("_party_due") and self._player_pos() is not None:
+            self._party_due = False
+            party.arrive(self)
         self.memory.update(delta)
         self._check_pack()
         self.autosave.tick(delta)
@@ -2236,10 +2246,14 @@ class MiniwindSession(SettlementLaw):
                 ox = self.rng.uniform(-radius, radius) if radius else 0.0
                 oz = self.rng.uniform(-radius, radius) if radius else 0.0
                 pos = [sp.pos[0] + ox, sp.pos[1], sp.pos[2] + oz]
+                spawner = str(p.get("id") or p.get("name") or "")
                 props = {"npc_role": role,
+                         # The same uuid every time the map is entered, as
+                         # everything authored in it keeps its own.
+                         "id": str(uuid.uuid5(SPAWN_ID_NAMESPACE, f"{spawner}#{slot}")),
                          # Remembered by spawner and slot (game/map_memory.py):
                          # killed today, back in about a day.
-                         "_spawner": str(p.get("id") or p.get("name") or ""),
+                         "_spawner": spawner,
                          "_spawn_slot": slot,
                          "_spawner_respawn": p.get("respawn", True) is not False}
                 if faction:
@@ -2382,6 +2396,9 @@ class MiniwindSession(SettlementLaw):
             elif spell_id in c.known_spells:
                 self.notify(f"You already know {spell.name}")
             else:
+                # Flare is now and then Wisp instead (rpg_magic.awarded).
+                spell_id = rpg_magic.awarded(spell_id, c.known_spells, self.rng)
+                spell = rpg_magic.get(spell_id)
                 c.known_spells.append(spell_id)
                 if not c.active_spell:
                     c.active_spell = spell_id
@@ -6565,6 +6582,14 @@ class MiniwindSession(SettlementLaw):
         self._player_deed("resurrect")
         self.add_floater("RAISED", kind="heal")
         return True
+
+    def leave_map(self) -> None:
+        """The player leaves this map (play stops for a level change): its
+        living raised followers go with them (game/party.py)."""
+        try:
+            party.depart(self)
+        except Exception as exc:
+            print(f"[MiniWind] followers could not leave with the player: {exc}")
 
     @staticmethod
     def _restore_living_kit(p) -> None:

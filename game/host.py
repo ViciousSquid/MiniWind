@@ -867,6 +867,7 @@ class MiniwindGame:
         music.PLAYER.stop()
         session = getattr(logic, "_miniwind", None)
         if session is not None:
+            session.leave_map()            # raised followers go with the player
             session.persist(force=True)
             session.uninstall()
             logic._miniwind = None

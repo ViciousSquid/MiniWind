@@ -121,7 +121,9 @@ class GameState:
     @classmethod
     def new_game(cls, store, name, race_id, class_id, birthsign_id="none",
                  gender="male", custom_class=None, rng=None, head="") -> "GameState":
-        char = Character.create(name, race_id, class_id, birthsign_id, gender, custom_class)
+        rng = rng or random.Random()
+        char = Character.create(name, race_id, class_id, birthsign_id, gender, custom_class,
+                                rng=rng)
         if head:
             from . import heads
             char.head = heads.normalise(head)

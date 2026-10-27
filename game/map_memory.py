@@ -16,6 +16,9 @@ and the clock across level changes and saves):
   had its second life: it is never raised again, and it is no lair's stock
   (it does not come back on its own). While it lives it is the caster's
   follower, whenever the player is in its map.
+* **Departed** -- raised followers who left the map with the player
+  (game/party.py): they travel with the player now, and are never also
+  standing here.
 * **Kits** -- what a searched corpse still has on it, and what a raised
   follower carries and knows (:data:`KIT_FIELDS`), so neither is restocked
   from the map file.
@@ -30,9 +33,10 @@ the player: in the map they are standing in, a creature returns only while
 the player is out of sight of its home (:data:`HIDDEN_DISTANCE`); otherwise
 it returns the next time the map is entered.
 
-Spawner members are remembered by spawner and slot (they get new ids every
-load), so a spawner whose wolves were killed today spawns fewer of them until
-their day is up.
+Spawner members are remembered by spawner and slot (each slot's member also
+keeps the same uuid every load, game/runtime.py ``spawn_creature_points``),
+so a spawner whose wolves were killed today spawns fewer of them until their
+day is up.
 """
 
 from __future__ import annotations
@@ -97,7 +101,7 @@ class MapMemory:
         self.session = session
         self.key = ""
         self.record = {"dead": {}, "taken": [], "containers": {}, "locks": {},
-                       "raised": {}}
+                       "raised": {}, "departed": {}}
         self._originals: Dict[str, Dict] = {}     # memory key -> (props, pos)
         self._known_dead = set()
         self._accum = 0.0
@@ -139,7 +143,8 @@ class MapMemory:
                                    "taken": list(rec.get("taken") or []),
                                    "containers": dict(rec.get("containers") or {}),
                                    "locks": dict(rec.get("locks") or {}),
-                                   "raised": dict(rec.get("raised") or {})}
+                                   "raised": dict(rec.get("raised") or {}),
+                                   "departed": dict(rec.get("departed") or {})}
             except ValueError:
                 pass
 
@@ -165,6 +170,18 @@ class MapMemory:
         taken = set(self.record["taken"])
         conts = self.record["containers"]
         changed = False
+        departed = self.record["departed"]
+        if departed:
+            # (Not the follower itself, back home with the player.)
+            gone = [t for t in things
+                    if _kind(t) in ACTOR_TYPES and self.actor_key(t) in departed
+                    and not t.properties.get("travelling")]
+            if gone:
+                live = fio.things(self.session.logic)
+                for t in gone:
+                    live.remove(t)
+                    things.remove(t)
+                changed = True
         for t in things:
             kind = _kind(t)
             p = t.properties
@@ -314,6 +331,17 @@ class MapMemory:
         self._known_dead.discard(key)
         self.record["raised"][key] = _kit(actor.properties)
         actor.properties["_respawns"] = False
+        self._dirty = True
+
+    def departed(self, actor) -> None:
+        """*actor*, a raised follower, leaves the map with the player for good
+        (game/party.py)."""
+        key = self.actor_key(actor)
+        if not key:
+            return
+        self.record["departed"][key] = True
+        self.record["raised"].pop(key, None)
+        self.record["dead"].pop(key, None)
         self._dirty = True
 
     def taken(self, pickup) -> None:

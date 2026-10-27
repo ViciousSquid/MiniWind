@@ -234,6 +234,21 @@ def get(spell_id: str) -> Optional[Spell]:
     return SPELLS.get(str(spell_id))
 
 
+#: Given Flare, a player is now and then given Wisp instead.
+FLARE_WISP_CHANCE = 0.15
+
+
+def awarded(spell_id: str, known=(), rng=None) -> str:
+    """The spell a player is actually given when given *spell_id*: Flare is
+    Wisp instead :data:`FLARE_WISP_CHANCE` of the time (unless Wisp is known
+    already). Every other spell is itself."""
+    spell_id = str(spell_id)
+    if spell_id != "flare" or "wisp" in known or get("wisp") is None:
+        return spell_id
+    roll = (rng or random).random()
+    return "wisp" if roll < FLARE_WISP_CHANCE else spell_id
+
+
 def for_caster(character, spell_id: str) -> Optional[Spell]:
     """*spell_id* as *character* casts it: at the level they have raised it to."""
     spell = get(spell_id)
