@@ -11,7 +11,7 @@ import os
 from types import SimpleNamespace
 
 from PyQt5.QtCore import QRect, QRectF, Qt
-from PyQt5.QtGui import QColor, QFontMetrics, QPixmap, QPolygon, QPen, QConicalGradient
+from PyQt5.QtGui import QColor, QFontMetrics, QPixmap, QPolygon, QPolygonF, QPen, QConicalGradient
 from PyQt5.QtCore import QPoint, QPointF
 
 from .. import fio
@@ -1394,3 +1394,120 @@ def draw_time_tint(painter, session, width, height, viewport=None):
     only where lamps and torches burn (game/ui/daylight.py)."""
     from . import daylight
     daylight.draw(painter, session, viewport, width, height)
+
+
+# ------------------------------------------------------------------- gore
+#: Blood's colours: fresh and bright in flight, darker where it lies, and the
+#: near-black of a chunk.
+_BLOOD = (150, 6, 8)
+_BLOOD_DARK = (92, 2, 4)
+_BLOOD_CHUNK = (70, 6, 8)
+
+
+def _blob(painter, cx, cy, r, seed, color, alpha):
+    """A splash: a rough-edged blot with a few droplets thrown off it."""
+    import random as _random
+    rng = _random.Random(int(seed * 1e6))
+    pts = []
+    n = 9
+    for i in range(n):
+        a = i / n * 2 * math.pi + rng.uniform(-0.2, 0.2)
+        rr = r * rng.uniform(0.7, 1.15)
+        pts.append(QPointF(cx + math.cos(a) * rr, cy + math.sin(a) * rr * 0.8))
+    painter.setBrush(QColor(*color, int(alpha)))
+    painter.drawPolygon(QPolygonF(pts))
+    for _ in range(rng.randint(2, 5)):
+        a = rng.uniform(0, 2 * math.pi)
+        d = r * rng.uniform(1.1, 1.9)
+        painter.drawEllipse(QPointF(cx + math.cos(a) * d, cy + math.sin(a) * d * 0.8),
+                            r * rng.uniform(0.08, 0.22), r * rng.uniform(0.08, 0.2))
+
+
+def draw_gore(painter, session, viewport, width, height):
+    """The blood in the world (game/gore_fx.py) that is not yet part of it,
+    over the world and under the HUD. Blood at rest on the terrain is stamped
+    into the terrain itself and drawn by the renderer; what is drawn here is
+    blood in flight, a pool still spreading, blood waiting its turn to be
+    stamped and blood on a built floor (masked out under anyone standing in
+    it, so it never paints over the living), the red flash of a kill, and the
+    player's own blood on the screen's edge."""
+    gore = getattr(session, "gore", None)
+    if gore is None or viewport is None:
+        return
+    try:
+        import glm
+        proj, view = viewport.projection_matrix, viewport.view_matrix
+    except Exception:
+        return
+    particles, splats, screen = gore.snapshot()
+    now = gore.clock()
+
+    def to_screen(x, y, z):
+        return _world_to_screen(glm, proj, view, x, y, z, width, height)
+
+    def px_per_unit(x, y, z):
+        a, b = to_screen(x, y, z), to_screen(x + 100.0, y, z)
+        if a is None or b is None:
+            return None
+        return math.hypot(b[0] - a[0], b[1] - a[1]) / 100.0
+
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    painter.setPen(Qt.NoPen)
+    if splats:
+        # Never over the living: cut each standing actor's footprint out.
+        from PyQt5.QtGui import QPainterPath
+        clip = QPainterPath()
+        clip.addRect(QRectF(0, 0, width, height))
+        holes = QPainterPath()
+        actors = session._live_actors() if hasattr(session, "_live_actors") else ()
+        player = fio.player(getattr(session, "logic", None))
+        for t in list(actors) + ([player] if player is not None else []):
+            tp = getattr(t, "properties", {}) or {}
+            if tp.get("dead"):
+                continue
+            sp = to_screen(*t.pos)
+            k = px_per_unit(*t.pos)
+            if sp is None or k is None:
+                continue
+            r = float(tp.get("sprite_height", 112) or 112) * 0.42 * k
+            holes.addEllipse(QPointF(sp[0], sp[1]), r, r)
+        painter.setClipPath(clip.subtracted(holes))
+        for s in splats:
+            sp = to_screen(s["x"], s["y"], s["z"])
+            k = px_per_unit(s["x"], s["y"], s["z"])
+            if sp is None or k is None:
+                continue
+            alpha = gore.splat_alpha(s, now) * (225 if s["kind"] == "pool" else 205)
+            colour = _BLOOD_CHUNK if s["kind"] == "chunk" else _BLOOD_DARK
+            _blob(painter, sp[0], sp[1], max(1.5, gore.splat_size(s, now) * 0.5 * k),
+                  s["seed"], colour, alpha)
+        painter.setClipping(False)
+    for p in particles:
+        x, y, z = gore.position(p, now)
+        sp = to_screen(x, y, z)
+        k = px_per_unit(x, y, z)
+        if sp is None or k is None:
+            continue
+        r = max(1.2, p["size"] * 0.5 * k)
+        if p["kind"] == "chunk":
+            _blob(painter, sp[0], sp[1], r, p["seed"], _BLOOD_CHUNK, 240)
+        else:
+            painter.setBrush(QColor(*_BLOOD, 235))
+            painter.drawEllipse(QPointF(sp[0], sp[1]), r, r)
+    # The player's own blood, on the screen's edge.
+    from .. import gore_fx
+    for b in screen:
+        age = now - b["t0"]
+        alpha = 200 * max(0.0, 1.0 - age / gore_fx.SCREEN_BLOOD_SECONDS)
+        r = b["size"] * min(width, height)
+        _blob(painter, b["x"] * width, b["y"] * height, r, b["seed"], _BLOOD_DARK, alpha)
+    # The red pulse of a kill or a crit.
+    level = gore.flash_level()
+    if level > 0:
+        from PyQt5.QtGui import QRadialGradient, QBrush
+        g = QRadialGradient(QPointF(width / 2, height / 2), max(width, height) * 0.7)
+        g.setColorAt(0.55, QColor(140, 0, 0, 0))
+        g.setColorAt(1.0, QColor(140, 0, 0, int(170 * level)))
+        painter.fillRect(QRect(0, 0, width, height), QBrush(g))
+    painter.restore()

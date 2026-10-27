@@ -19,6 +19,7 @@ and the :mod:`game.ui` screens; this file is just the seam.
 """
 
 import json
+import math
 import time
 
 from PyQt5 import QtWidgets
@@ -229,6 +230,18 @@ def _miniwind_inspection(entity, logic):
     return {"title": snap.get("title", ""), "subtitle": snap.get("subtitle", ""),
             "sections": sections}
 
+
+
+def _hud_jolt(session, height):
+    """The HUD's share of a screen shake, in pixels (0, 0 when still)."""
+    cam = fio.camera(getattr(session, "logic", None))
+    level = getattr(cam, "shake_level", None)
+    strength = level() if callable(level) else 0.0
+    if strength <= 0.0:
+        return 0.0, 0.0
+    now = time.perf_counter()
+    amp = strength * height * 0.6
+    return (amp * math.sin(now * 67.0), amp * math.cos(now * 53.0))
 
 
 class MiniwindGame:
@@ -1166,6 +1179,8 @@ class MiniwindGame:
             self._sync_hud_window(session, viewport, w, h)
 
             if not session.needs_char_creation and session.open_screen != "charcreate":
+                # Blood on the world, under the night and the HUD.
+                hud.draw_gore(painter, session, viewport, w, h)
                 hud.draw_time_tint(painter, session, w, h, viewport)
                 # Magic's screen washes (a resurrection's dark red, a frost
                 # hit's rime) over the world, under the HUD.
@@ -1184,7 +1199,11 @@ class MiniwindGame:
                 if not getattr(session, "_worldmap_requested", False):
                     session._worldmap_requested = True
                     worldmap.ensure_for(logic, viewport)
+                # The HUD jolts with the screen (game/runtime.py shake()).
+                jolt = _hud_jolt(session, h)
+                painter.translate(*jolt)
                 hud.draw(painter, session, w, h)
+                painter.translate(-jolt[0], -jolt[1])
                 if getattr(session, "spell_aiming", False):
                     from .rpg import magic as rpg_magic
                     spell = rpg_magic.get(session.game.character.active_spell or "")

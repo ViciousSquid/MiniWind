@@ -269,6 +269,41 @@ BARK_RADIUS = 1800.0
 #: at or below this Charisma, and this much per point above it.
 CHARISMA_LEAD_FROM = 40
 CHARISMA_LEAD_PER_POINT = 0.006
+#: Screen shake (a fraction of the camera's height, seconds) for the player's
+#: critical hits, killing blows and gibs, and for a heavy blow taken -- which
+#: starts at this share of the player's health and peaks at half of it.
+CRIT_SHAKE = (0.010, 0.22)
+KILL_SHAKE = (0.016, 0.32)
+GIB_SHAKE = (0.028, 0.45)
+HURT_SHAKE = 0.012
+HURT_SHAKE_FROM = 0.2
+#: How near the terrain's surface the ground under blood must be for it to be
+#: stamped into the terrain (further, and it is lying on something built).
+STAMP_GROUND_TOLERANCE = 8.0
+#: The blood stamps, by kind (assets/sprites/miniwind/blood_stamps, made by
+#: game/tools/make_blood_stamps.py).
+_BLOOD_STAMP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "assets", "sprites", "miniwind", "blood_stamps")
+_BLOOD_STAMPS = {}
+
+
+def _blood_stamp(kind, seed):
+    """A stamp image for a splat of *kind*, picked stably by *seed*."""
+    kind = kind if kind in ("splash", "drop", "pool", "chunk") else "splash"
+    if kind not in _BLOOD_STAMPS:
+        try:
+            _BLOOD_STAMPS[kind] = sorted(
+                os.path.join(_BLOOD_STAMP_DIR, f) for f in os.listdir(_BLOOD_STAMP_DIR)
+                if f.startswith(kind + "_") and f.endswith(".png"))
+        except OSError:
+            _BLOOD_STAMPS[kind] = []
+    files = _BLOOD_STAMPS[kind]
+    return files[int(float(seed) * 1e6) % len(files)] if files else None
+
+
+#: A blow taken for this share of the player's health puts their blood on
+#: the screen's edge.
+HURT_SCREEN_BLOOD = 0.08
 #: How near townsfolk must be for a slain monster to count as defending them.
 DEFEND_RADIUS = 600.0
 #: How long a thought (what an NPC is thinking, not saying) hangs over a head.
@@ -692,6 +727,10 @@ class MiniwindSession(SettlementLaw):
         #: newest last, for the HUD's roll log; "success" is whether the roll
         #: went the player's way.
         self.roll_log: List[Dict] = []
+        #: The blood in the world: sprays, splats, pools, gibs (game/gore_fx.py).
+        from .gore_fx import GoreFX
+        self.gore = GoreFX()
+        self.gore.stamp = self._stamp_blood
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
         self._attack_anim_time = 0.0   # player stab animation remaining (seconds)
@@ -739,6 +778,23 @@ class MiniwindSession(SettlementLaw):
             return config.getboolean("GAME", "visualise_dice_rolls", fallback=False)
         except (AttributeError, TypeError, ValueError):
             return False
+
+    def _game_flag(self, key, default=True) -> bool:
+        try:
+            config = self._editor_config()
+            if config is None:
+                return default
+            return config.getboolean("GAME", key, fallback=default)
+        except (AttributeError, TypeError, ValueError):
+            return default
+
+    def gore_enabled(self) -> bool:
+        """Blood and gibs (GAME → "Gore"). On unless turned off."""
+        return self._game_flag("gore")
+
+    def screen_shake_enabled(self) -> bool:
+        """Killing blows and crits jolt the screen (GAME → "Screen shake")."""
+        return self._game_flag("screen_shake")
 
     def motivational_quotes_enabled(self) -> bool:
         """Whether the level-up page opens with a line of encouragement
@@ -827,6 +883,7 @@ class MiniwindSession(SettlementLaw):
         self.floaters = []
         self.dice_animation = None
         self.roll_log = []
+        self.gore.clear()
         self._deaths_seen = set()
         # A new game means a world with no history and nobody who remembers
         # anything: the store wipe above already erased every actor's knowledge,
@@ -967,6 +1024,7 @@ class MiniwindSession(SettlementLaw):
         final = self._lucky_escape(c, final)
         c.damage(final)
         if final > 0:
+            self._gore_player_hurt(final, attacker)
             # A lethal hit can stop engine ticks before the next UI update.
             # Release the lock UI here too, so it cannot cover the death flow.
             if self.open_screen == "lockpicking":
@@ -997,6 +1055,114 @@ class MiniwindSession(SettlementLaw):
         self.notify("Fortune smiles: the killing blow glances off. "
                     "(Luck and Charisma; once a day)", 5.0)
         return max(0.0, c.health - 1.0)
+
+    # ----------------------------------------------------------------- gore
+    #: Creatures with no blood to spill: bone and spirit.
+    BLOODLESS_ROLES = ("skeleton", "skeleton_archer", "wraith")
+
+    def _feet(self, thing):
+        p = thing.properties
+        half = float(p.get("sprite_height", 112) or 112) * 0.5
+        return [float(thing.pos[0]), float(thing.pos[1]) - half, float(thing.pos[2])]
+
+    def _gore_hit(self, target, damage, *, crit=False, killed=False, magical=False,
+                  source=None, by_player=True) -> None:
+        """Blood for a blow that landed on *target*, and -- for the player's
+        killing blows and criticals -- a jolt of the screen and a red flash.
+        Flung away from *source* (the player, unless said)."""
+        if target is None or float(damage or 0) <= 0:
+            return
+        p = target.properties
+        if source is None:
+            source = self._player_pos() if by_player else None
+        away = None
+        if source is not None:
+            away = (target.pos[0] - source[0], target.pos[2] - source[2])
+        gibbed = bool(p.get("gibbed"))
+        role = str(p.get("npc_role") or p.get("creature_role") or "").lower()
+        if self.gore_enabled() and role not in self.BLOODLESS_ROLES:
+            from .rpg import gore as _gore
+            feet = self._feet(target)
+            top = _gore.max_health(p) if not killed else max(
+                float(p.get("_max_health", 0) or 0), _gore.max_health(p), float(damage))
+            if gibbed and not magical:
+                self.gore.gib(feet, damage, away)
+            elif not (gibbed and magical):      # a disintegration leaves nothing
+                self.gore.wound(feet, damage, top, away, crit=crit)
+                if killed:
+                    self.gore.kill(feet, top)
+        if by_player and (killed or crit):
+            strength, seconds = ((GIB_SHAKE if gibbed else KILL_SHAKE) if killed
+                                 else CRIT_SHAKE)
+            self.shake(strength, seconds)
+            self.gore.flash_red(0.55 if killed else 0.35)
+
+    def _stamp_blood(self, splat) -> bool:
+        """Bake a splat of blood into the terrain under it -- the ground's own
+        paint, so it is part of the surface and cannot z-fight. Only where the
+        ground there *is* the terrain: on a floor, a bridge or a step (a brush)
+        it is left for the HUD to draw. True when it took."""
+        ter = fio.terrain(self.logic)
+        if ter is None or not getattr(ter, "enabled", False):
+            return False
+        x, y, z = splat["x"], splat["y"], splat["z"]
+        try:
+            surface = ter.get_height_at_safe(x, z)
+        except Exception:
+            surface = None
+        if surface is None:
+            return False
+        ground = fio.ground_height(self.logic, x, z, below=y + 60.0)
+        if ground is None or abs(float(ground) - float(surface)) > STAMP_GROUND_TOLERANCE:
+            return False                     # standing on something built
+        path = _blood_stamp(splat["kind"], splat.get("seed", 0.0))
+        if path is None:
+            return False
+        try:
+            return bool(ter.paint_texture_at(
+                x, z, max(2.0, float(splat["size"]) * 0.5), path, feather=0.2,
+                opacity=0.92, angle=float(splat.get("rot", 0.0))))
+        except Exception:
+            return False
+
+    def _gore_player_hurt(self, final, attacker=None) -> None:
+        """The player's own blood: a spray, blood on the screen's edge for a
+        real wound, and a jolt for a heavy one."""
+        c = self.game.character
+        frac = float(final) / max(1.0, float(c.max_health))
+        ppos = self._player_pos()
+        if ppos is None:
+            return
+        if self.gore_enabled():
+            src = getattr(attacker, "pos", None)
+            away = (ppos[0] - src[0], ppos[2] - src[2]) if src is not None else None
+            self.gore.wound([ppos[0], ppos[1] - 56.0, ppos[2]], final, c.max_health, away)
+            if frac >= HURT_SCREEN_BLOOD:
+                self.gore.hurt(frac)
+        if frac >= HURT_SHAKE_FROM:
+            self.shake(HURT_SHAKE * min(1.0, frac / 0.5), 0.3)
+
+    def gore_npc_hit(self, victim, damage, attacker=None) -> None:
+        """A blow between creatures (Fio's damage filter): they bleed too."""
+        props = getattr(victim, "properties", None)
+        if not isinstance(props, dict) or victim is fio.player(self.logic):
+            return
+        try:
+            killed = float(props.get("health", 1)) - float(damage) <= 0
+        except (TypeError, ValueError):
+            killed = False
+        src = getattr(attacker, "pos", None)
+        self._gore_hit(victim, damage, killed=killed, by_player=False,
+                       source=list(src) if src is not None else None)
+
+    def shake(self, strength, seconds=0.3) -> None:
+        """Jolt the screen (GAME → screen_shake turns it off)."""
+        if not self.screen_shake_enabled():
+            return
+        cam = fio.camera(self.logic)
+        jolt = getattr(cam, "shake", None)
+        if jolt is not None:
+            jolt(strength, seconds)
 
     def _attacker(self):
         """Who dealt the blow the player is taking, as the engine recorded
@@ -3019,6 +3185,8 @@ class MiniwindSession(SettlementLaw):
             f["t"] -= delta
             f["y"] -= 30 * delta
         self.floaters = [f for f in self.floaters if f["t"] > 0]
+        # Blood lands, and what has settled is stamped into the ground.
+        self.gore.update()
         for r in self.roll_log:
             r["t"] -= delta
         self.roll_log = [r for r in self.roll_log if r["t"] > 0]
@@ -5767,9 +5935,11 @@ class MiniwindSession(SettlementLaw):
 
     def _land_player_hit(self, target, res, heavy=False) -> None:
         """What a landed (or missed) melee blow does: the number over the
-        target, the target's anger, a kill."""
+        target, the blood, the target's anger, a kill."""
         _journal(target)     # a kill/gib changes how the target is drawn
         if res.get("hit"):
+            self._gore_hit(target, res.get("damage", 0.0),
+                           crit=bool(res.get("crit") or heavy), killed=bool(res.get("killed")))
             tag = ("sneak" if res.get("sneak")
                    else "crit" if (res.get("crit") or heavy) else "dmg")
             self.add_floater(f"-{int(res['damage'])}", kind=tag)
@@ -5813,6 +5983,8 @@ class MiniwindSession(SettlementLaw):
             res = game.resolve_arrow_hit(hit_monster.properties, hand=hand)
             _journal(hit_monster)
             if res.get("hit"):
+                self._gore_hit(hit_monster, res.get("damage", 0.0), crit=bool(res.get("crit")),
+                               killed=bool(res.get("killed")))
                 tag = "sneak" if res.get("sneak") else ("crit" if res.get("crit") else "dmg")
                 self.add_floater(f"-{int(res['damage'])}", kind=tag)
                 self._provoke(hit_monster)
@@ -5994,6 +6166,8 @@ class MiniwindSession(SettlementLaw):
         if target is not None:
             r = self.game.resolve_spell_on_creature(spell, target.properties)
             _journal(target)
+            self._gore_hit(target, r.get("damage", 0.0), killed=bool(r.get("killed")),
+                           magical=True)
             self.add_floater(f"-{int(r['damage'])}", kind="fire")
             self._provoke(target)
             if r.get("killed"):
@@ -6150,6 +6324,8 @@ class MiniwindSession(SettlementLaw):
                 r = self.game.resolve_spell_on_creature(spell, target.properties)
                 _journal(target)
                 if r.get("damage"):
+                    self._gore_hit(target, r["damage"], killed=bool(r.get("killed")),
+                                   magical=True)
                     self.add_floater(f"-{int(r['damage'])}", kind=spell.element)
                 self._apply_nondamage_spell(spell, target)
                 self._provoke(target)

@@ -277,7 +277,14 @@ class NpcMagic:
     def damage_filter(self, victim, damage, _attacker=None):
         """Fio's damage filter: a ward soaks part of each blow."""
         props = getattr(victim, "properties", None)
-        return ward_soak(props, damage) if isinstance(props, dict) else damage
+        dealt = ward_soak(props, damage) if isinstance(props, dict) else damage
+        bleed = getattr(self.session, "gore_npc_hit", None)
+        if bleed is not None:
+            try:
+                bleed(victim, dealt, _attacker)
+            except Exception:
+                pass
+        return dealt
 
     def try_heal(self, thing) -> bool:
         """Heal *thing* if it is badly hurt and can; True when it cast."""
