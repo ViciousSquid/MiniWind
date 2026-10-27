@@ -2119,6 +2119,18 @@ class QtGameView(QOpenGLWidget):
             _pmgr.emit("render.pre_scene", viewport=self, renderer=self.renderer,
                        projection=self.projection_matrix, view=self.view_matrix,
                        camera_pos=camera_pos, play_mode=self.play_mode)
+        # ``render.pre_sprites``: inside the scene pass, once the world is drawn
+        # and before the effects and sprites, with that view's own matrices
+        # (split-screen draws the scene once per view) -- for flat things on
+        # the floor that every actor must cover.
+        if _pmgr is not None and _pmgr.has_listeners("render.pre_sprites"):
+            def _pre_sprites(projection, view, cam_pos, _pmgr=_pmgr):
+                _pmgr.emit("render.pre_sprites", viewport=self, renderer=self.renderer,
+                           projection=projection, view=view, camera_pos=cam_pos,
+                           play_mode=self.play_mode)
+            self._render_config["pre_sprites"] = _pre_sprites
+        else:
+            self._render_config.pop("pre_sprites", None)
 
         if _splitscreen:
             _w, _h = self.width(), self.height()

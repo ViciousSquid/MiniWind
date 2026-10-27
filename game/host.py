@@ -759,13 +759,13 @@ class MiniwindGame:
         self._host = host
         host.on("render.overlay", self._on_overlay)
         host.on("render.post_scene", self._on_post_scene)
+        host.on("render.pre_sprites", self._on_pre_sprites)
 
-    def _on_post_scene(self, ev):
-        """Draw, in the 3D pass: blood lying on the floor under the actors
-        (game/ui/blood_gl.py), containers and things lying about
-        (game/ui/world_objects.py), magic (game/ui/magic_gl.py), the arrows in
-        flight and their fading flight paths (game/ui/arrows.py), and last the
-        fisheye lenses of heavy spell impacts, which bend all of it."""
+    def _on_pre_sprites(self, ev):
+        """Draw what lies on the floor, before Fio's effects and actors so they
+        all go over it: blood (game/ui/blood_gl.py), then containers and things
+        lying about, which Fio draws nothing for in Play (game/ui/
+        world_objects.py) -- flat, as seen from above."""
         if not ev.get("play_mode"):
             return
         host = getattr(self, "_host", None)
@@ -778,10 +778,20 @@ class MiniwindGame:
                 and getattr(session, "open_screen", None) != "charcreate"):
             from .ui import blood_gl
             blood_gl.draw_decals(projection, view, gore.floor_decals())
-        # Containers and things lying about, which Fio draws nothing for in
-        # Play: flat on the floor, as seen from above (game/ui/world_objects.py).
         from .ui import world_objects
         world_objects.draw(projection, view, world_objects.visible(session))
+
+    def _on_post_scene(self, ev):
+        """Draw, in the 3D pass: magic (game/ui/magic_gl.py), the arrows in
+        flight and their fading flight paths (game/ui/arrows.py), and last the
+        fisheye lenses of heavy spell impacts, which bend all of it."""
+        if not ev.get("play_mode"):
+            return
+        host = getattr(self, "_host", None)
+        session = getattr(getattr(host, "logic", None), "_miniwind", None)
+        if session is None:
+            return
+        projection, view = ev.get("projection"), ev.get("view")
         fx = getattr(session, "magic_fx", None)
         lenses = ()
         if fx is not None:

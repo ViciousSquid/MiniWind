@@ -4,8 +4,9 @@ Containers and things lying about, drawn as the top-down camera sees them.
 A container or an item pickup is an ordinary entity to Fio: in Play it draws
 nothing for it (only actors, props and models are drawn), so a chest could be
 opened that could not be seen. They are drawn here instead, in the 3D pass
-(Fio's ``render.post_scene`` hook), as flat quads lying on the floor they
-stand on:
+(Fio's ``render.pre_sprites`` hook: after the world, before the effects and
+actors, so every actor goes over them), as flat quads lying on the floor
+they stand on:
 
 * a **container** in its top-down art (``assets/sprites/miniwind/topdown/
   <kind>.png``, game/tools/make_container_art.py), turned by its ``angle``
@@ -71,15 +72,21 @@ def turn_of(props, square=False) -> float:
     return (h % 3600) / 3600.0 * math.tau
 
 
-def floor_of(logic, thing) -> float:
-    """The floor under *thing*, found once per place it stands."""
+def floor_of(logic, thing, reach=0.0) -> float:
+    """The floor *thing* rests on, found once per place it stands: the highest
+    ground under its footprint (its centre and four points *reach* out), as a
+    crate sits on a slope -- so no corner of it is buried in the terrain."""
     p = thing.properties
     x, y, z = float(thing.pos[0]), float(thing.pos[1]), float(thing.pos[2])
     cached = p.get("_floor_at")
     if cached and cached[0] == round(x) and cached[1] == round(z):
         return cached[2]
-    g = fio.ground_height(logic, x, z, below=y + 40.0)
-    floor = float(y if g is None else g)
+    found = []
+    for dx, dz in ((0.0, 0.0), (reach, 0.0), (-reach, 0.0), (0.0, reach), (0.0, -reach)):
+        g = fio.ground_height(logic, x + dx, z + dz, below=y + 40.0)
+        if g is not None:
+            found.append(float(g))
+    floor = max(found) if found else y
     p["_floor_at"] = (round(x), round(z), floor)
     return floor
 
@@ -106,13 +113,14 @@ def visible(session):
             dx, dz = float(t.pos[0]) - ppos[0], float(t.pos[2]) - ppos[2]
             if dx * dx + dz * dz > r2:
                 continue
-            floor = floor_of(logic, t)
             if kind == "container":
                 ck = str(p.get("container_kind") or "chest")
+                floor = floor_of(logic, t, CONTAINER_SIZE.get(ck, 130.0) * 0.35)
                 out.append(((t.pos[0], floor, t.pos[2]),
                             turn_of(p, square=ck in ("chest", "crate")),
                             container_art(ck), CONTAINER_SIZE.get(ck, 130.0), CONTAINER_Y))
             else:
+                floor = floor_of(logic, t, PICKUP_SIZE * 0.35)
                 icon = item_icons.icon_path(p.get("item_id"), p.get("_stack"))
                 if icon:
                     out.append(((t.pos[0], floor, t.pos[2]), turn_of(p), icon,

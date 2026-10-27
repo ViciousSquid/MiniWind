@@ -538,6 +538,18 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
             self.draw_portal_wireframes(
                 projection, view, etable, drawn_rows(etable.portal_slots),
                 config.get('play_mode', False))
+        # The world's floors and walls are drawn: a caller may lay its own flat
+        # things on them now (blood, a chest, an item on the floor), depth
+        # written, so the effects and actor sprites drawn next go over them.
+        pre_sprites = config.get('pre_sprites')
+        if pre_sprites is not None:
+            try:
+                pre_sprites(projection, view, camera_pos)
+            finally:
+                gl.glEnable(gl.GL_DEPTH_TEST)
+                gl.glDepthMask(gl.GL_TRUE)
+                gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+                gl.glUseProgram(0)
         gl.glEnable(gl.GL_BLEND)
         gl.glDepthMask(gl.GL_FALSE)
         # The sprite renderer has one path: dense EntityTable columns -> GL
