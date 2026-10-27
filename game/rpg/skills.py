@@ -38,15 +38,19 @@ BLOCK = "block"
 HEAVY_ARMOR = "heavy_armor"
 LIGHT_ARMOR = "light_armor"
 ATHLETICS = "athletics"
-# Magic: two schools -- what harms or commands, and what heals, wards and aids.
+# Magic: three schools, and no others -- what harms, what heals, wards and
+# aids, and the dark arts that raise, unmake and bind.
 OFFENSIVE = "offensive"
 DEFENSIVE = "defensive"
+OCCULT = "occult"
+#: The schools of magic, the only ones there are. Every spell belongs to one.
+SCHOOLS = (OFFENSIVE, DEFENSIVE, OCCULT)
 ALCHEMY = "alchemy"
 #: Magic skills that no longer exist, and the school each was folded into --
 #: for old saves, old custom classes and authored data that still name them.
-FOLDED = {"destruction": OFFENSIVE, "conjuration": OFFENSIVE,
+FOLDED = {"destruction": OFFENSIVE, "conjuration": OCCULT,
           "restoration": DEFENSIVE, "alteration": DEFENSIVE,
-          "illusion": DEFENSIVE, "mysticism": DEFENSIVE}
+          "illusion": DEFENSIVE, "mysticism": OCCULT, "necromancy": OCCULT}
 # Stealth
 SNEAK = "sneak"
 SECURITY = "security"        # lockpicking
@@ -88,11 +92,15 @@ SKILLS: Dict[str, SkillDef] = {s.id: s for s in [
              "Running and swimming; raises stamina with use."),
     # --- Magic ---
     SkillDef(OFFENSIVE, "Offensive", MAGIC, attr.INTELLIGENCE,
-             "Magic that harms or commands: fire, frost and shock, summoned "
-             "beasts and bound blades, beasts bent to your will."),
+             "Magic that harms: fire, frost and shock, and blades bound "
+             "from raw magicka."),
     SkillDef(DEFENSIVE, "Defensive", MAGIC, attr.ENDURANCE,
              "Magic that heals, wards and aids: mending, shields, light, "
              "invisibility, calming a foe, opening a lock."),
+    SkillDef(OCCULT, "Occult", MAGIC, attr.PERSONALITY,
+             "The dark arts: calling the dead back to their bodies, unmaking "
+             "the living, summoning spirit beasts, bending creatures to your "
+             "will and sensing the life around you."),
     SkillDef(ALCHEMY, "Alchemy", MAGIC, attr.INTELLIGENCE,
              "Brewing potions and poisons from ingredients."),
     # --- Stealth ---
@@ -123,6 +131,13 @@ def fold(skill_id: str) -> str:
     return FOLDED.get(str(skill_id), str(skill_id))
 
 
+def school(value) -> str:
+    """The school of magic *value* names: one of :data:`SCHOOLS`. An old
+    school folds into its successor; anything else is Offensive."""
+    value = fold(str(value or "").strip().lower())
+    return value if value in SCHOOLS else OFFENSIVE
+
+
 def label(skill_id: str) -> str:
     sd = SKILLS.get(skill_id)
     return sd.label if sd else str(skill_id).replace("_", " ").title()
@@ -136,6 +151,42 @@ def governing_attribute(skill_id: str) -> str:
 def new_skill_block(default: int = 5) -> Dict[str, int]:
     """A fresh {skill_id: value} dict, every skill at *default*."""
     return {sid: int(default) for sid in SKILL_IDS}
+
+
+# ---------------------------------------------------------------------------
+# Mastery ranks
+# ---------------------------------------------------------------------------
+#: Mastery ranks a skill passes on its way to 100: (from level, name). The
+#: skill tree draws them as pips; a trainer's rank caps what it can teach.
+RANKS = ((0, "Novice"), (25, "Apprentice"), (50, "Journeyman"), (75, "Expert"),
+         (100, "Master"))
+
+
+def rank(level) -> tuple:
+    """``(index, name)`` of the mastery rank *level* has reached."""
+    level = int(level)
+    out = (0, RANKS[0][1])
+    for i, (lo, name) in enumerate(RANKS):
+        if level >= lo:
+            out = (i, name)
+    return out
+
+
+def rank_name(level) -> str:
+    return rank(level)[1]
+
+
+def rank_level(value) -> int:
+    """A skill level from *value*: a number, or a rank's name ("Journeyman"
+    is 50). Unreadable, it is a Novice's 0."""
+    if isinstance(value, str):
+        named = {name.lower(): lo for lo, name in RANKS}
+        if value.strip().lower() in named:
+            return named[value.strip().lower()]
+    try:
+        return max(0, min(100, int(float(value))))
+    except (TypeError, ValueError):
+        return 0
 
 
 # ---------------------------------------------------------------------------

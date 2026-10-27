@@ -47,6 +47,7 @@ from . import held_weapons
 from . import party
 from .rpg import magic as rpg_magic
 from .rpg import guilds
+from .rpg import training as rpg_training
 from .rpg import disposition as disp
 from .rpg import needs as rpg_needs
 from .rpg import heads
@@ -296,6 +297,14 @@ HURT_SCREEN_BLOOD = 0.08
 DEFEND_RADIUS = 600.0
 #: How long a thought (what an NPC is thinking, not saying) hangs over a head.
 THOUGHT_SECONDS = 3.5
+#: What the player says to a teacher (game/rpg/training.py).
+TRAIN_PROMPT = "I'd like some training."
+TUTOR_PROMPT = "What spells can you teach me?"
+JOIN_CIRCLE_PROMPT = "I wish to join the Arcane Circle."
+#: What floats up over a caster -- the player or anyone else -- whose spell
+#: fizzles, and for how long.
+FIZZLE_TEXT = "*fizzled*"
+FIZZLE_SECONDS = 1.6
 #: Two townsfolk talking: how long a rumour's opener is up (longer than an
 #: ordinary bark: it says more), how close they must be to pass the time of
 #: day, how long before either does so again (s), and the chance per decision
@@ -432,6 +441,8 @@ class _PlayerActor:
 #: purchase or sale makes.
 SOUND_DIR = os.path.join("assets", "sounds")
 TRANSACTION_SOUND = "transaction.mp3"
+#: Heard whenever a potion is drunk (assets/sounds).
+DRINK_SOUND = "drink.mp3"
 #: A guard stopping the player to arrest them says one of these, at random.
 ARREST_SOUNDS = ("arrest1.mp3", "arrest2.mp3")
 
@@ -737,6 +748,7 @@ class MiniwindSession(SettlementLaw):
         self.gore.ground = lambda x, y, z: fio.ground_height(self.logic, x, z, below=y + 80.0)
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
+        self.game.add_drink_listener(self._on_drink)
         self._attack_anim_time = 0.0   # player stab animation remaining (seconds)
         self._offhand_anim_time = 0.0  # the off hand's, when dual wielding
 
@@ -869,11 +881,14 @@ class MiniwindSession(SettlementLaw):
         self.director.invalidate()
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
+        self.game.add_drink_listener(self._on_drink)
         self.needs_char_creation = True
         self.open_screen = "charcreate"
         self.dialogue = None
         self.dialogue_npc = None
         self.merchant_npc = None
+        #: Whoever is teaching the player on the "training" / "tutor" screen.
+        self.trainer_npc = None
         self.show_loadout = False
         #: The inventory strip along the bottom of the screen
         #: (game/ui/inventory_strip.py): always up in free play. Kept for
@@ -1210,6 +1225,7 @@ class MiniwindSession(SettlementLaw):
         self.game.character.handed = "left" if str(handed).lower() == "left" else "right"
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
+        self.game.add_drink_listener(self._on_drink)
         # Author-granted starting spells (Game Settings → Player Spells).
         c = self.game.character
         for sid in (self._player_start_spells if c.can_use_magic() else ()):
@@ -2360,9 +2376,12 @@ class MiniwindSession(SettlementLaw):
                     sim_own.mark_stolen(stack, sim_own.owner_of(p),
                                         sim_own.owner_name_of(p))
                     self.notify(f"Stole {name}")
-                else:
+                elif iid != rpg_items.GOLD:
                     self.notify(f"Picked up {name}")
-                inv.add_item(self.game.character.inventory, stack)
+                if iid == rpg_items.GOLD:
+                    self._credit_found_gold(qty, "Picked up")   # to the purse
+                else:
+                    inv.add_item(self.game.character.inventory, stack)
                 # Let a producer know one of its outstanding yields was taken so
                 # it starts making the next one.
                 producer = self._sim_producer_of(p)
@@ -3181,7 +3200,7 @@ class MiniwindSession(SettlementLaw):
         self._encumbered = heavy
 
     def _announce_skill_raises(self) -> None:
-        """Toast each skill that rose through use ("Destruction increased to
+        """Toast each skill that rose through use ("Offensive increased to
         12"), so learning by doing is something the player sees happen, and
         say so when the rises have earned a level."""
         c = getattr(getattr(self, "game", None), "character", None)
@@ -3225,6 +3244,11 @@ class MiniwindSession(SettlementLaw):
 
     def add_floater(self, text, kind="dmg", y=0.0):
         self.floaters.append({"text": text, "t": 1.2, "y": float(y), "kind": kind})
+
+    def _on_drink(self, _item) -> None:
+        """A potion drunk, however it was -- a strip slot's number key, the
+        heal key, the pack: the sound of it."""
+        self.play_ui_sound(DRINK_SOUND)
 
     def _on_xp(self, amount) -> None:
         """Experience earned (a kill, a quest): "+N XP" over the player, a
@@ -4402,6 +4426,38 @@ class MiniwindSession(SettlementLaw):
                 barks.pop(key, None)
                 continue
             out.append((thing, text, until - now))
+        return out
+
+    # -------------------------------------------------------------- floats
+    def float_text(self, thing, text, seconds: float = FIZZLE_SECONDS) -> None:
+        """Float *text* up from *thing*'s head and let it fade: a word about
+        what just happened to it (a fizzled spell), not something it says.
+        Like :meth:`bark`, only for those near enough to be on screen."""
+        if thing is None or not text or getattr(thing, "pos", None) is None:
+            return
+        ppos = self._player_pos()
+        if ppos is not None and self._dist2d(thing.pos, ppos) > BARK_RADIUS:
+            return
+        import time as _time
+        floats = self.__dict__.setdefault("floats", {})
+        floats[id(thing)] = (thing, str(text), _time.monotonic() + float(seconds),
+                             float(seconds))
+
+    def fizzled(self, thing) -> None:
+        """*thing*'s spell fizzled: say so over its head."""
+        self.float_text(thing, FIZZLE_TEXT, FIZZLE_SECONDS)
+
+    def live_floats(self):
+        """``[(thing, text, seconds_left, seconds_total)]`` still floating."""
+        import time as _time
+        now = _time.monotonic()
+        floats = self.__dict__.get("floats") or {}
+        out = []
+        for key, (thing, text, until, total) in list(floats.items()):
+            if until <= now or getattr(thing, "pos", None) is None:
+                floats.pop(key, None)
+                continue
+            out.append((thing, text, until - now, total))
         return out
 
     # ---------------------------------------------------------- conversation
@@ -6427,6 +6483,7 @@ class MiniwindSession(SettlementLaw):
             if res.reason == "not enough magicka":
                 self.notify("Not enough magicka")
             elif res.reason == "fizzle":
+                self.fizzled(self.player_actor)
                 roll = res.roll or {}
                 if roll:
                     self.notify(
@@ -7385,8 +7442,9 @@ class MiniwindSession(SettlementLaw):
 
     def pack_stacks(self) -> List[Dict]:
         """What the pack holds, slot by slot, in the order things came: every
-        carried stack not worn, and each copy of a weapon not in hand on its
-        own (as a stack of one). Coin is in the purse."""
+        carried stack not worn, at most :data:`inventory.MAX_STACK` to a slot
+        (twelve potions are 5, 5 and 2), and each copy of a weapon not in hand
+        on its own (as a stack of one). Coin is in the purse."""
         c = self.game.character
         worn = [v for v in (c.equipment or {}).values() if v]
         out = []
@@ -7407,7 +7465,11 @@ class MiniwindSession(SettlementLaw):
                 else:
                     out.extend(dict(stack, qty=1) for _ in range(max(0, loose)))
             elif iid not in worn:
-                out.append(stack)
+                sizes = inv.slot_sizes(iid, qty)
+                if len(sizes) == 1:
+                    out.append(stack)
+                else:
+                    out.extend(dict(stack, qty=n) for n in sizes)
         return out
 
     def pack_used(self) -> int:
@@ -7423,8 +7485,24 @@ class MiniwindSession(SettlementLaw):
         if d is not None and d.category == rpg_items.WEAPON:
             need = max(1, int(qty))
         else:
-            need = 0 if any(st.get("id") == item_id for st in self.pack_stacks()) else 1
+            # A slot for each stack of five it fills that it did not before.
+            worn = item_id in [v for v in (self.game.character.equipment or {}).values() if v]
+            have = 0 if worn else inv.quantity(self.game.character.inventory, item_id)
+            need = (len(inv.slot_sizes(item_id, have + int(qty)))
+                    - len(inv.slot_sizes(item_id, have)))
         return self.pack_used() - int(freed) + need <= self.pack_capacity()
+
+    def _credit_found_gold(self, amount: int, verb: str = "Found") -> int:
+        """Put *amount* gold found in the world in the purse -- more of it for
+        the lucky (game.rpg.fortune.lucky_gold) -- and say how much."""
+        c = self.game.character
+        got = rpg_fortune.lucky_gold(c, amount)
+        c.gold += got
+        if got > amount:
+            self.notify(f"{verb} {got} gold  (+{got - amount} by luck)")
+        elif got:
+            self.notify(f"{verb} {got} gold")
+        return got
 
     def _pack_full_note(self) -> None:
         import time as _time
@@ -7524,13 +7602,11 @@ class MiniwindSession(SettlementLaw):
     def _strip_copies(stack) -> int:
         """How many strip slots a carried *stack* may take: one per copy of a
         weapon -- each blade is drawn from a slot of its own, so a pair to
-        dual wield costs two -- and one for anything else (its count shows)."""
+        dual wield costs two -- and one per stack of five of anything else
+        (:func:`inventory.slot_sizes`; its count shows)."""
         if not stack:
             return 0
-        d = rpg_items.get(stack.get("id"))
-        if d is not None and d.category == rpg_items.WEAPON:
-            return max(1, int(stack.get("qty", 1) or 1))
-        return 1
+        return max(1, len(inv.slot_sizes(stack.get("id"), stack.get("qty", 1))))
 
     def strip_slots(self) -> List[Optional[Dict]]:
         """The strip's slots, each the carried stack in it or None. A weapon
@@ -7585,11 +7661,15 @@ class MiniwindSession(SettlementLaw):
         seen.intersection_update(carried)
         for iid in [k for k in offered if k not in carried]:
             del offered[iid]
-        out = []
+        out, shown = [], {}
         for iid in strip:
             stack = carried.get(iid) if iid else None
             if stack is not None and self._strip_copies(stack) > 1:
-                stack = dict(stack, qty=1)       # one copy per slot
+                # One copy of a weapon per slot; five at most of anything else.
+                sizes = inv.slot_sizes(iid, stack.get("qty", 1))
+                k = shown.get(iid, 0)
+                shown[iid] = k + 1
+                stack = dict(stack, qty=sizes[min(k, len(sizes) - 1)])
             out.append(stack)
         return out
 
@@ -8008,6 +8088,7 @@ class MiniwindSession(SettlementLaw):
         if getattr(self, "living", None) is not None:
             tree = self.living.prepare_tree(tree, npc)
         tree = self._with_mind_topic(tree, npc)
+        tree = self._with_training_topics(tree, npc)
         tree = self._with_fortune_topics(tree, npc)
         self.dialogue = DialogueRunner(
             tree, store=self.store,
@@ -8052,6 +8133,39 @@ class MiniwindSession(SettlementLaw):
             "responses": [{"text": "I see.", "goto": start}]}
         resp = tree["nodes"][start].setdefault("responses", [])
         resp.insert(max(0, len(resp) - 1), {"text": "What's on your mind?", "goto": "_mind"})
+        return tree
+
+    def _with_training_topics(self, tree, npc):
+        """*tree* with what this NPC teaches among the opening responses -- a
+        copy: training in its skills, its spells, and, for a teacher of the
+        Arcane Circle, joining it. Not offered by anyone hostile, or during
+        an arrest (game/rpg/training.py)."""
+        p = npc.properties
+        if (not isinstance(tree, dict) or str(p.get("aggression")) == "hostile"
+                or npc is self._arrest_guard):
+            return tree
+        start = tree.get("start")
+        if start not in (tree.get("nodes") or {}):
+            return tree
+        offers = []
+        if rpg_training.is_trainer(p):
+            offers.append({"text": TRAIN_PROMPT, "goto": "END",
+                           "actions": [{"op": "open_training"}]})
+        if rpg_training.is_tutor(p):
+            offers.append({"text": TUTOR_PROMPT, "goto": "END",
+                           "actions": [{"op": "open_tutor"}]})
+        c = self.game.character
+        if (offers and rpg_training.guild_of(p) == rpg_training.ARCANE_CIRCLE
+                and c.can_use_magic() and not guilds.is_member(c, rpg_training.ARCANE_CIRCLE)):
+            offers.append({"text": JOIN_CIRCLE_PROMPT, "goto": "END",
+                           "actions": [{"op": "join_guild",
+                                        "guild": rpg_training.ARCANE_CIRCLE}]})
+        if not offers:
+            return tree
+        import copy
+        tree = copy.deepcopy(tree)
+        resp = tree["nodes"][start].setdefault("responses", [])
+        resp[:0] = offers
         return tree
 
     def _fortune_key(self, npc, option) -> str:
@@ -8283,6 +8397,8 @@ class MiniwindSession(SettlementLaw):
         elif op == "join_guild":
             if guilds.join(self.game.character, action.get("guild", "")):
                 self.notify(f"You have joined the {guilds.get(action.get('guild','')).name}.")
+        elif op in ("open_training", "open_tutor"):
+            self.open_teaching(npc, "training" if op == "open_training" else "tutor")
 
     def choose(self, index: int) -> None:
         if self.dialogue is None:
@@ -8601,11 +8717,12 @@ class MiniwindSession(SettlementLaw):
                                 sim_own.owner_name_of(props))
             self.notify(f"Stole {name}")
         else:
-            self.notify(f"Took {name}" if stack.get("id") != rpg_items.GOLD
-                        else f"Took {int(stack.get('qty', 1))} gold")
+            if stack.get("id") != rpg_items.GOLD:
+                self.notify(f"Took {name}")
         if stack.get("id") == rpg_items.GOLD:
-            # Coin is counted, not carried as an item.
-            self.game.character.gold += int(stack.get("qty", 1) or 0)
+            # Coin is counted, not carried as an item -- and the lucky find
+            # more of it than lies there.
+            self._credit_found_gold(int(stack.get("qty", 1) or 0), "Took")
         else:
             inv.add_item(self.game.character.inventory, stack)
         return True
@@ -8735,6 +8852,69 @@ class MiniwindSession(SettlementLaw):
             return False
         queue({"file": name, "volume": float(volume), "global": True})
         return True
+
+    # -- trainers and tutors (game/rpg/training.py) ---------------------------
+    def open_teaching(self, npc, screen: str) -> bool:
+        """Open *npc*'s ``"training"`` or ``"tutor"`` screen. A Warrior is
+        told why not, if magic is all the teacher has."""
+        p = npc.properties
+        c = self.game.character
+        magic_only = (screen == "tutor" or all(
+            s in sk.SCHOOLS for s in (rpg_training.trainer_of(p) or {}).get("skills", ())))
+        self.end_dialogue()
+        if magic_only and not c.can_use_magic():
+            name = p.get("display_name", "The teacher")
+            self.notify(f'{name}: "{rpg_training.explain("warrior")}"', 4.5)
+            return False
+        self.trainer_npc = npc
+        self.open_screen = screen
+        return True
+
+    def close_teaching(self) -> None:
+        self.open_screen = None
+        self.trainer_npc = None
+
+    def _teacher_price(self, base) -> int:
+        """A teacher's fee: the merchant's price, for the merchant's reasons."""
+        return self._price(int(base), buying=True, npc=self.trainer_npc)
+
+    def train_with_teacher(self, skill_id: str) -> Dict:
+        """Buy one training session in *skill_id* from :attr:`trainer_npc`."""
+        npc = self.trainer_npc
+        if npc is None:
+            return {"ok": False, "reason": "not_taught"}
+        c = self.game.character
+        r = rpg_training.train(c, npc.properties, skill_id, price_of=self._teacher_price)
+        if not r["ok"]:
+            self.notify(rpg_training.explain(r["reason"]), 3.5)
+            return r
+        self.play_ui_sound(TRANSACTION_SOUND)
+        disp.remember(self.store, npc.properties, "traded")
+        # The rise itself is toasted as every rise is (_announce_skill_raises).
+        self.notify(f"Paid {r['price']} gold for a lesson in {sk.label(r['skill'])}.", 3.0)
+        self._announce_promotion(r)
+        return r
+
+    def learn_from_teacher(self, spell_id: str) -> Dict:
+        """Buy *spell_id* from :attr:`trainer_npc`."""
+        npc = self.trainer_npc
+        if npc is None:
+            return {"ok": False, "reason": "not_taught"}
+        c = self.game.character
+        r = rpg_training.learn(c, npc.properties, spell_id, price_of=self._teacher_price)
+        if not r["ok"]:
+            self.notify(rpg_training.explain(r["reason"]), 3.5)
+            return r
+        self.play_ui_sound(TRANSACTION_SOUND)
+        disp.remember(self.store, npc.properties, "traded")
+        self.notify(f"Learned {r['spell'].name}  (-{r['price']} gold)", 3.5)
+        self._announce_promotion(r)
+        return r
+
+    def _announce_promotion(self, result) -> None:
+        if result.get("promoted"):
+            title = guilds.rank_title(self.game.character, rpg_training.ARCANE_CIRCLE)
+            self.notify(f"The Arcane Circle names you {title}.", 4.5)
 
     def _remember_trade(self) -> None:
         """Honest business slowly warms a merchant to the player (memory), and

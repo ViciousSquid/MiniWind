@@ -68,6 +68,12 @@ MIN_FOG_BAND = 1.0
 #: uses, so switching fog on does not recolour a map that never configured it.
 DEFAULT_FOG_COLOR = (0.10, 0.10, 0.15)
 
+#: Default global ambient: light added to every lit surface from nowhere in
+#: particular, so a face no lamp reaches is dim, never black. The ``ambient``
+#: console command changes it and settings.ini ``[Renderer] ambient`` keeps
+#: the choice (:func:`ambient_from_setting`).
+DEFAULT_AMBIENT_LEVEL = 0.15
+
 #: Default exponential-squared density coefficient. Zero means "linear only":
 #: fog ramps evenly from start to end. A positive value adds an exp2 curve on
 #: top, which thickens the near half without moving the opaque point.
@@ -117,7 +123,7 @@ class ViewDistance:
         self._fog_end = None
         self._fog_density = DEFAULT_FOG_DENSITY
         self._fog_color = tuple(DEFAULT_FOG_COLOR)
-        self._ambient = (0.0, 0.0, 0.0)
+        self._ambient = (DEFAULT_AMBIENT_LEVEL,) * 3
         self._limit = None
 
     # -- view distance ----------------------------------------------------
@@ -257,8 +263,10 @@ class ViewDistance:
         Equivalent to a Light entity that reaches the whole level from no
         particular direction, but without one existing in the world -- it is
         never saved with the map, never selectable and casts no shadows. Added
-        on top of each shader's own baked ambient term, so the default of black
-        leaves every existing map looking exactly as it did.
+        on top of each shader's own baked ambient term. The default,
+        :data:`DEFAULT_AMBIENT_LEVEL`, keeps every surface faintly lit -- an
+        unlit face is dim, never black; black (``ambient 0``) is the stock
+        shaders' look alone.
         """
         return self._ambient
 
@@ -341,3 +349,31 @@ class ViewDistance:
             ("Fog Color", f"[{r:.2f}, {g:.2f}, {b:.2f}]"),
             ("Ambient Light", f"[{ar:.2f}, {ag:.2f}, {ab:.2f}]"),
         ]
+
+
+def ambient_from_setting(text, default=None):
+    """The ambient colour a settings.ini value names: one level (``0.15``, or
+    a 0-255 byte above 1) or three components (``0.2 0.1 0.4``). Unreadable
+    or absent, the default -- :data:`DEFAULT_AMBIENT_LEVEL` grey."""
+    if default is None:
+        default = (DEFAULT_AMBIENT_LEVEL,) * 3
+    try:
+        parts = [float(p) for p in str(text or "").replace(",", " ").split()]
+    except ValueError:
+        return tuple(default)
+    if len(parts) == 1:
+        lvl = parts[0] / 255.0 if parts[0] > 1.0 else parts[0]
+        lvl = _clamp(lvl, 0.0, 1.0)
+        return (lvl, lvl, lvl)
+    if len(parts) >= 3:
+        scale = 255.0 if max(parts[:3]) > 1.0 else 1.0
+        return tuple(_clamp(p / scale, 0.0, 1.0) for p in parts[:3])
+    return tuple(default)
+
+
+def ambient_setting(color) -> str:
+    """*color* as settings.ini keeps it: one level for a grey, else three."""
+    r, g, b = (float(c) for c in color)
+    if r == g == b:
+        return f"{r:.3g}"
+    return f"{r:.3g} {g:.3g} {b:.3g}"

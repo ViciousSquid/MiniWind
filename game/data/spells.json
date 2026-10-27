@@ -52,7 +52,7 @@
   {
     "id": "disintegrate",
     "name": "Disintegrate",
-    "school": "offensive",
+    "school": "occult",
     "cost": 60.0,
     "delivery": "projectile",
     "effects": [
@@ -321,7 +321,7 @@
   {
     "id": "resurrection",
     "name": "Resurrection",
-    "school": "defensive",
+    "school": "occult",
     "cost": 100.0,
     "delivery": "target",
     "effects": [
@@ -425,7 +425,7 @@
   {
     "id": "sp_commandcreature",
     "name": "Command Creature",
-    "school": "offensive",
+    "school": "occult",
     "cost": 26.0,
     "delivery": "target",
     "effects": [
@@ -450,7 +450,7 @@
   {
     "id": "sp_detect",
     "name": "Detect Life",
-    "school": "defensive",
+    "school": "occult",
     "cost": 16.0,
     "delivery": "self",
     "effects": [
@@ -725,7 +725,7 @@
   {
     "id": "summon_wolf",
     "name": "Summon Wolf",
-    "school": "offensive",
+    "school": "occult",
     "cost": 30.0,
     "delivery": "self",
     "effects": [

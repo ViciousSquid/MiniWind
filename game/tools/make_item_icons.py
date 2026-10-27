@@ -543,7 +543,7 @@ def shape_for(item_id, item):
             return lambda d: draw_crossbow(d, mat)
         if skill == "marksman" or "bow" in text:
             return lambda d: draw_bow(d, mat)
-        if skill == "destruction" or "staff" in text:
+        if skill in ("offensive", "destruction") or "staff" in text:
             return lambda d: draw_staff(d, mat)
         if "warhammer" in text or "hammer" in text:
             return lambda d: draw_hammer(d, mat)

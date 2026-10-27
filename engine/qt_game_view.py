@@ -371,6 +371,16 @@ class QtGameView(QOpenGLWidget):
         # attribute for existing callers and mirrors view_distance.distance.
         self.view_distance = ViewDistance()
         self.cull_distance = self.view_distance.distance
+        # The light added everywhere, so nothing is ever completely black:
+        # settings.ini [Renderer] ambient, as the `ambient` command left it.
+        try:
+            from engine.view_distance import ambient_from_setting
+            config = getattr(editor, "config", None)
+            if config is not None and config.has_option("Renderer", "ambient"):
+                self.view_distance.ambient = ambient_from_setting(
+                    config.get("Renderer", "ambient"))
+        except Exception:
+            pass
 
         self._proj_ptr = None
         self._view_ptr = None

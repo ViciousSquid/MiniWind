@@ -1014,7 +1014,7 @@ entity to drive them from the I/O system.</i><br>
 <b style="color:orange;">r_fogend</b> &lt;units&gt;{sep}<b style="color:orange;">auto</b> — Where fog is fully opaque<br>
 <b style="color:orange;">r_fogdensity</b> &lt;value&gt; — 0 = linear ramp; higher thickens the near half<br>
 <b style="color:orange;">r_fogcolor</b> &lt;R&gt; &lt;G&gt; &lt;B&gt; — Fog colour, and the sky behind it<br>
-<b style="color:orange;">ambient</b> &lt;level&gt;{sep}&lt;R&gt; &lt;G&gt; &lt;B&gt;{sep}<b style="color:orange;">off</b> — Global omnidirectional light (no entity added)<br>
+<b style="color:orange;">ambient</b> &lt;level&gt;{sep}&lt;R&gt; &lt;G&gt; &lt;B&gt;{sep}<b style="color:orange;">off</b> — Light added everywhere so nothing is ever black (default 0.15; remembered)<br>
 <b style="color:cyan;">=== Movement & Physics ===</b><br>
 <b style="color:orange;">physics</b> on/off/toggle — Player movement physics<br>
 <b style="color:orange;">phys_gravity</b> &lt;units/s²&gt; — Global dynamic-body gravity<br>
@@ -1448,7 +1448,11 @@ entity to drive them from the I/O system.</i><br>
         A level-wide Light entity in effect without one in the world: no
         position, no falloff, no shadows, nothing added to the map and nothing
         saved with it. Added on top of each shader's own baked ambient, so
-        ``ambient 0`` restores exactly the stock look.
+        every face is lit a little and nothing is ever completely black (the
+        default is :data:`engine.view_distance.DEFAULT_AMBIENT_LEVEL`);
+        ``ambient 0`` restores exactly the stock look. The amount set here is
+        the new default: settings.ini ``[Renderer] ambient`` remembers it
+        (unless a map's logic ran the command).
         """
         vd = self._get_view_distance()
         if vd is None:
@@ -1475,8 +1479,23 @@ entity to drive them from the I/O system.</i><br>
                 return
             vd.ambient = color
         self._refresh_view()
+        self._save_ambient(vd.ambient)
         r, g, b = vd.ambient
         debug_log("Info", f"Ambient light: [{r:.2f}, {g:.2f}, {b:.2f}]")
+
+    def _save_ambient(self, color):
+        """Keep *color* as the default ambient in settings.ini."""
+        if self._command_from_map:
+            return
+        try:
+            from engine.view_distance import ambient_setting
+            config = self.main_window.config
+            if not config.has_section("Renderer"):
+                config.add_section("Renderer")
+            config.set("Renderer", "ambient", ambient_setting(color))
+            self.main_window.save_config()
+        except Exception:
+            pass
 
     # ===================================================================
     # EXISTING COMMANDS (unchanged)

@@ -289,6 +289,54 @@ def draw_barks(painter, session, viewport, width, height):
     painter.restore()
 
 
+#: A float (a fizzled spell) rises this far (px) over its life as it fades.
+FLOAT_RISE_PX = 26.0
+_FLOAT_INK = (214, 200, 255)
+
+
+def draw_floats(painter, session, viewport, width, height):
+    """Words floating up from a head and fading -- "*fizzled*" over a caster,
+    the player or anyone else, whose spell came to nothing."""
+    if viewport is None:
+        return
+    floats = session.live_floats() if hasattr(session, "live_floats") else ()
+    if not floats:
+        return
+    try:
+        import glm
+        proj, view = viewport.projection_matrix, viewport.view_matrix
+    except Exception:
+        return
+    from . import fonts
+    font = fonts.dialogue_font(12)
+    font.setItalic(True)
+    font.setBold(True)
+    fm = QFontMetrics(font)
+    painter.save()
+    painter.setFont(font)
+    painter.setRenderHint(painter.Antialiasing, True)
+    for thing, text, left, total in floats[:12]:
+        pos = thing.pos
+        head_y = pos[1] + float(thing.properties.get("sprite_height", 112)) * 0.5 + 24.0
+        sp = _world_to_screen(glm, proj, view, pos[0], head_y, pos[2], width, height)
+        if sp is None and thing.properties.get("is_player"):
+            # Seen from inside the player's own head (first person): over
+            # the middle of the view, where their head would be.
+            sp = (width * 0.5, height * 0.4)
+        if sp is None:
+            continue
+        age = max(0.0, min(1.0, 1.0 - left / max(0.01, total)))
+        alpha = int(255 * max(0.0, min(1.0, left / 0.5)))
+        w = fm.horizontalAdvance(text) + 8
+        rect = QRect(int(sp[0] - w / 2), int(sp[1] - FLOAT_RISE_PX * age - fm.height()),
+                     w, fm.height())
+        painter.setPen(QColor(0, 0, 0, int(alpha * 0.8)))
+        painter.drawText(rect.translated(1, 1), int(Qt.AlignCenter), text)
+        painter.setPen(QColor(*_FLOAT_INK, alpha))
+        painter.drawText(rect, int(Qt.AlignCenter), text)
+    painter.restore()
+
+
 #: The widest a speech plate or thought bubble grows before its text wraps.
 PLATE_MAX_W = 340
 

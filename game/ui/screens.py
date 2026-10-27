@@ -73,6 +73,8 @@ _SCREEN_BODY_SIZE = {
     "container": (760, 500),
     "quest": (880, 540),
     "lockpicking": (820, 560),
+    "training": (760, 600),
+    "tutor": (820, 600),
 }
 
 
@@ -1197,7 +1199,7 @@ def _draw_spells(painter, session, w, h):
                       color=T.GOLD, align=T.ALIGN_LEFT, family="Segoe UI")
     else:
         T.text(painter, inner.x() + list_w + 20, ty + 18,
-               "You know no spells yet. Buy them from the Mages Guild.",
+               "You know no spells yet. Learn them from a tutor, or find a spellbook.",
                size=11, color=T.DIM, family="Segoe UI")
 
     _draw_spell_hands(painter, session,
@@ -2037,6 +2039,8 @@ _DRAW = {
     "spells": _draw_spells, "trade": _draw_trade, "levelup": _draw_levelup,
     "container": _draw_container, "quest": _draw_quest,
     "lockpicking": _draw_lockpicking,
+    "training": lambda p, s, w, h: _teaching().draw_training(p, s, w, h),
+    "tutor": lambda p, s, w, h: _teaching().draw_tutor(p, s, w, h),
 }
 _HANDLE = {
     "charcreate": _handle_charcreate, "inventory": _handle_inventory,
@@ -2046,7 +2050,16 @@ _HANDLE = {
     "lockpicking": _handle_lockpicking,
     "book": lambda session, key: _handle_book(session, key),
     "map": _handle_map,
+    "training": lambda session, key: _teaching().handle_training(session, key),
+    "tutor": lambda session, key: _teaching().handle_tutor(session, key),
 }
+
+
+def _teaching():
+    """The teacher's pages (game/ui/teaching.py), which draw with this
+    module's parchment and buttons."""
+    from . import teaching
+    return teaching
 
 
 def _handle_book(session, key):

@@ -13,7 +13,8 @@ from .test_cast_controls import _Logic, _Thing
 
 def _caster(**props):
     base = {"type": "npc", "combatant": True, "health": 40, "max_health": 40,
-            "spells": [{"id": "firebolt"}, {"id": "sp_shield"}]}
+            "spells": [{"id": "firebolt"}, {"id": "sp_shield"}],
+            "magic_skill": 100}     # a master: these tests are not about fizzles
     base.update(props)
     return {k: v for k, v in base.items() if v is not None}
 

@@ -1573,6 +1573,7 @@ _CARD_WELL = "rgba(255,255,255,22)"   # icon well fill
 _SCHOOL_ACCENT = {
     "offensive":   "#e8836f",
     "defensive":   "#7fd39b",
+    "occult":      "#b08cf0",
     "default":     "#b9b6c4",
 }
 
@@ -2205,8 +2206,8 @@ def open_spell_editor(parent=None):
         def _level_rows(self, root, _lab):
             row = QtWidgets.QHBoxLayout(); row.setSpacing(8)
             row.addWidget(_lab("School"))
-            school = QtWidgets.QComboBox(); school.addItems([sk.OFFENSIVE, sk.DEFENSIVE])
-            school.setCurrentText(sk.fold(self.d.get("school", sk.OFFENSIVE)))
+            school = QtWidgets.QComboBox(); school.addItems(list(sk.SCHOOLS))
+            school.setCurrentText(sk.school(self.d.get("school", sk.OFFENSIVE)))
             school.currentTextChanged.connect(lambda t: self.d.__setitem__("school", t))
             row.addWidget(school)
             row.addWidget(_lab("Rarity"))
