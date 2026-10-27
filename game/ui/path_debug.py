@@ -1,30 +1,17 @@
-"""
-Seeing where everyone is going (console ``paths``).
+"""Live pathfinding overlay and controls; console ``paths panel``.
 
-With it on, every walking actor near the player draws its way on the
-world, over the scene and under the HUD:
-
-* **cyan** -- a route round walls (game/navigation.py): the actor, each
-  corner still ahead, then the goal;
-* **yellow** -- a straight walk to a schedule destination (``_dest``) with
-  nothing in the way;
-* **red** -- a fight: a straight line to whatever it is chasing.
-
-A dot marks the goal. Off by default; costs nothing while off.
+Only consumes diagnostic snapshots. Drawing at the renderer's rate never
+requests a route. The same records can be exported for later investigation.
 """
 
-from __future__ import annotations
-
-from PyQt5.QtCore import QPointF, Qt
+from PyQt5.QtCore import QPointF, QRect, Qt
 from PyQt5.QtGui import QColor, QPen
 
-from .. import fio
+from engine.floating_windows import FloatingWindow
+from .. import pathfinding_debug as debug
 
-ROUTE = QColor(80, 220, 255, 230)
-STRAIGHT = QColor(255, 214, 90, 210)
-CHASE = QColor(255, 90, 80, 220)
-#: Only actors this near the player draw (world units).
-REACH = 3200.0
+COLOURS = {"route": QColor(80, 220, 255, 230), "direct": QColor(255, 214, 90, 210),
+           "chase": QColor(255, 155, 65, 220), "failed": QColor(255, 90, 80, 230)}
 WIDTH = 3.0
 
 
@@ -36,68 +23,125 @@ def _project(glm, proj, view, x, y, z, width, height):
                    (1.0 - (clip.y / clip.w * 0.5 + 0.5)) * height)
 
 
-def draw(painter, session, viewport, width, height) -> None:
-    """Draw every nearby actor's way (see the module docstring)."""
+def draw(painter, session, viewport, width, height):
     if not getattr(session, "show_paths", False) or viewport is None:
         return
-    try:
-        import glm
-        proj, view = viewport.projection_matrix, viewport.view_matrix
-    except Exception:
-        return
-    ppos = session._player_pos()
-    if ppos is None:
-        return
-    nav = getattr(session, "nav", None)
-    routes = dict(getattr(nav, "_routes", {}) or {})
-    by_id = {}
-    try:
-        actors = list(session._live_actors())
-    except Exception:
-        actors = []
+    import glm
+    proj, view = viewport.projection_matrix, viewport.view_matrix
+    config = debug.settings(session)
     painter.save()
-    painter.setRenderHint(painter.Antialiasing, True)
-    for t in actors:
-        p = t.properties
-        if p.get("dead") or p.get("hidden"):
-            continue
-        x, y, z = float(t.pos[0]), float(t.pos[1]), float(t.pos[2])
-        if (x - ppos[0]) ** 2 + (z - ppos[2]) ** 2 > REACH * REACH:
-            continue
-        by_id[id(t)] = t
-        route = routes.get(id(t))
-        if route is not None:
-            points = [(x, z)] + list(route.points) + [tuple(route.goal)]
-            colour = ROUTE
-        else:
-            goal = None
-            colour = STRAIGHT
-            if p.get("triggered") is False:
-                aggro = p.get("_aggro_target")
-                target = by_id.get(aggro) if aggro else None
-                if target is None and aggro:
-                    target = next((a for a in actors if id(a) == aggro), None)
-                if target is not None:
-                    goal, colour = (float(target.pos[0]), float(target.pos[2])), CHASE
-                elif str(p.get("aggression")) == "hostile" and p.get("awake"):
-                    goal, colour = (ppos[0], ppos[2]), CHASE
-            if goal is None:
-                dest = p.get("_dest")
-                if not dest:
-                    continue
-                goal = (float(dest[0]), float(dest[2]))
-            points = [(x, z), goal]
-        screen = [_project(glm, proj, view, px, y, pz, width, height) for px, pz in points]
-        screen = [s for s in screen if s is not None]
-        if len(screen) < 2:
-            continue
-        painter.setPen(QPen(colour, WIDTH, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        for a, b in zip(screen, screen[1:]):
-            painter.drawLine(a, b)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(colour)
-        for corner in screen[1:-1]:
-            painter.drawEllipse(corner, 3.0, 3.0)
-        painter.drawEllipse(screen[-1], 5.0, 5.0)
-        painter.setBrush(Qt.NoBrush)
-    painter.restore()
+    try:
+        painter.setRenderHint(painter.Antialiasing, True)
+        for actor in debug.actor_records(session):
+            x, y, z = actor["pos"]
+            goal = actor["goal"]
+            corners = actor["points"] or ((goal[0], goal[2]),)
+            points = [(x, z), *corners]
+            screen = [_project(glm, proj, view, px, y + 8.0, pz, width, height)
+                      for px, pz in points]
+            colour = COLOURS[actor["state"]]
+            if not actor["live_navigation"]:
+                colour = QColor(170, 175, 185, 180)
+            painter.setPen(QPen(colour, WIDTH, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            # Preserve adjacency: removing hidden points would join unrelated
+            # corners across the back of the camera.
+            for a, b in zip(screen, screen[1:]):
+                if a is not None and b is not None:
+                    painter.drawLine(a, b)
+            painter.setBrush(colour)
+            for corner in screen[1:]:
+                if corner is not None:
+                    painter.drawEllipse(corner, 4.0, 4.0)
+            # Show a blocked requested goal beyond the safe route endpoint.
+            if corners[-1] != (goal[0], goal[2]):
+                end = _project(glm, proj, view, goal[0], y + 8.0, goal[2], width, height)
+                painter.setPen(QPen(COLOURS["failed"], 1.5, Qt.DashLine))
+                if screen[-1] is not None and end is not None:
+                    painter.drawLine(screen[-1], end)
+            if config.labels and screen[0] is not None:
+                painter.setPen(colour)
+                label = (f"{actor['name']} · {actor['tier']} · {actor['decision']} · "
+                         f"{actor.get('searches', 0)} A* · "
+                         f"{actor.get('searches_per_second', 0.0):.2f}/s")
+                painter.drawText(screen[0] + QPointF(6, -10), label)
+            painter.setBrush(Qt.NoBrush)
+    finally:
+        painter.restore()
+
+
+class PathfindingWindow(FloatingWindow):
+    wants_cursor = True
+
+    def __init__(self, view):
+        super().__init__("Pathfinding Debug", x=20, y=110, width=400, body_height=330)
+        self.view = view
+        self.key = "debug:pathfinding"
+        self._buttons = []
+
+    def _session(self):
+        return getattr(getattr(self.view, "logic_thread", None), "_miniwind", None)
+
+    def _button(self, painter, rect, label, action, on=False):
+        painter.setPen(QColor(220, 225, 235))
+        painter.setBrush(QColor(65, 115, 170) if on else QColor(50, 55, 65))
+        painter.drawRoundedRect(rect, 3, 3)
+        painter.drawText(rect, Qt.AlignCenter, label)
+        self._buttons.append((rect, action))
+
+    def draw_body(self, painter, x, y, w):
+        self._buttons = []
+        session = self._session()
+        if session is None:
+            painter.drawText(x + 10, y + 20, "No active play session")
+            return
+        config = debug.settings(session)
+        enabled = bool(getattr(session, "show_paths", False))
+        painter.save()
+        painter.setFont(self.font)
+        self._button(painter, QRect(x + 10, y + 10, 180, 28),
+                     "Paths on" if enabled else "Paths off",
+                     lambda: debug.configure(session, enabled=not enabled), enabled)
+        self._button(painter, QRect(x + 200, y + 10, 190, 28),
+                     "Labels on" if config.labels else "Labels off",
+                     lambda: debug.configure(session, labels=not config.labels), config.labels)
+        painter.drawText(x + 10, y + 60, "Show route state")
+        for i, state in enumerate(debug.STATES):
+            self._button(painter, QRect(x + 10 + i * 77, y + 70, 72, 28), state.title(),
+                         lambda state=state: debug.configure(session, state=state), config.state == state)
+        painter.drawText(x + 10, y + 120, "BigWorld simulation layer (authoritative)")
+        for i, tier in enumerate(debug.TIERS):
+            self._button(painter, QRect(x + 10 + i * 77, y + 130, 72, 28), tier.title(),
+                         lambda tier=tier: debug.configure(session, tier=tier), config.tier == tier)
+        painter.drawText(x + 10, y + 180, "Display distance from player")
+        for i, radius in enumerate((800.0, 1600.0, 3200.0)):
+            self._button(painter, QRect(x + 10 + i * 128, y + 190, 120, 28), f"{radius:g}",
+                         lambda radius=radius: debug.configure(session, radius=radius), config.radius == radius)
+        painter.drawText(x + 10, y + 240, f"Actor: {config.actor or 'all'}")
+        self._button(painter, QRect(x + 10, y + 250, 180, 28), "All actors",
+                     lambda: debug.configure(session, actor=""))
+        self._button(painter, QRect(x + 200, y + 250, 190, 28), "Reset counters",
+                     session.nav.reset_search_stats)
+        painter.drawText(x + 10, y + 300, 'Console: paths actor "Name" / paths export')
+        painter.drawText(x + 10, y + 318, "Cyan route · red failed · grey BigWorld coarse")
+        painter.restore()
+
+    def handle_body_click(self, x, y):
+        for rect, action in self._buttons:
+            if rect.contains(x, y):
+                action()
+                return True
+        return False
+
+
+def open_panel(view):
+    manager = getattr(view, "window_manager", None)
+    if manager is None:
+        return None
+    win = manager.find(lambda w: isinstance(w, PathfindingWindow) and w.active)
+    if win is None:
+        win = PathfindingWindow(view)
+        manager.add(win)
+    else:
+        manager.raise_(win)
+    view.update()
+    return win

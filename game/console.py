@@ -17,6 +17,7 @@ session is running, and the editor window) plus the raw argument string.
 """
 
 import time
+import shlex
 from dataclasses import dataclass
 from typing import Any
 
@@ -500,21 +501,72 @@ def cmd_roads(ctx, args):
 
 
 def cmd_paths(ctx, args):
-    """paths [on|off] -- draw where every nearby actor is walking: cyan for a
-    route round walls, yellow for a straight walk, red for a chase."""
+    """paths [on|off|panel|report|reset|export [file]|state <kind>|tier <layer>|actor <name>|radius <units>|labels on|off].
+
+    Toggle real-time pathfinding diagnostics; filter by actor, route state or
+    distance. ``paths panel`` opens controls. ``paths export`` saves the same
+    structured report available through game.pathfinding_debug.report(session).
+    """
     session = getattr(ctx.logic_thread, "_miniwind", None)
-    if session is None:
+    if session is None or not ctx.play_mode:
         debug_log("Error", "paths: enter Play Mode first.")
         return None
-    want = (args[0].lower() if args else "")
-    if want in ("on", "1", "true"):
-        session.show_paths = True
-    elif want in ("off", "0", "false"):
-        session.show_paths = False
-    else:
-        session.show_paths = not getattr(session, "show_paths", False)
-    debug_log("Info", "Pathfinding lines " + ("on: cyan = route round walls, "
-              "yellow = straight walk, red = chase" if session.show_paths else "off"))
+    from . import pathfinding_debug as debug
+    try:
+        tokens = shlex.split(str(args or ""))
+        command = tokens[0].lower() if tokens else "toggle"
+        rest = tokens[1:]
+        if command in ("on", "off", "toggle", "1", "0", "true", "false") and not rest:
+            enabled = (not getattr(session, "show_paths", False) if command == "toggle"
+                       else command in ("on", "1", "true"))
+            debug.configure(session, enabled=enabled)
+        elif command == "panel" and not rest:
+            from .ui.path_debug import open_panel
+            if open_panel(getattr(ctx.main_window, "view_3d", None)) is None:
+                debug_log("Error", "paths panel: no game view available.")
+                return None
+            debug.configure(session, enabled=True)
+        elif command == "state" and len(rest) == 1:
+            debug.configure(session, state=rest[0].lower())
+        elif command == "tier" and len(rest) == 1:
+            debug.configure(session, tier=rest[0].lower())
+        elif command == "actor" and rest:
+            debug.configure(session, actor="" if rest == ["all"] else " ".join(rest))
+        elif command == "radius" and len(rest) == 1:
+            debug.configure(session, radius=float(rest[0]))
+        elif command == "labels" and rest in (["on"], ["off"]):
+            debug.configure(session, labels=rest == ["on"])
+        elif command == "reset" and not rest:
+            session.nav.reset_search_stats()
+            debug_log("Info", "Pathfinding observation counters reset; active routes retained.")
+            return None
+        elif command in ("report", "stats") and not rest:
+            snapshot = debug.report(session)
+            debug_log("Info", f"Pathfinding {'on' if snapshot['enabled'] else 'off'}: {snapshot['summary']}")
+            for actor in snapshot["actors"]:
+                debug_log("Info", f"{actor['name']} [{actor['key']}] {actor['tier']} {actor['state']}: "
+                          f"{actor.get('searches', 0)} searches, "
+                          f"{actor.get('searches_per_second', 0):.2f}/s, "
+                          f"{actor.get('failed_searches', 0)} failed; "
+                          f"{actor['decision']}; last={actor.get('last_search')}")
+            return None
+        elif command == "export" and len(rest) <= 1:
+            path = debug.export(session, *rest)
+            debug_log("Info", f"Pathfinding report saved to {path} (schema version 1).")
+            return None
+        else:
+            raise ValueError("use on|off|panel|report|reset|export [file]|state all|route|failed|direct|chase|"
+                             "tier all|near|active|distant|dormant|actor <name or id>|actor all|"
+                             "radius <units>|labels on|off")
+    except (ValueError, OSError) as exc:
+        debug_log("Error", f"paths: {exc}")
+        return None
+    config = debug.settings(session)
+    debug_log("Info", f"Pathfinding {'on' if getattr(session, 'show_paths', False) else 'off'}; "
+              f"state={config.state}, tier={config.tier}, actor={config.actor or 'all'}, "
+              f"radius={config.radius:g}. "
+              "Cyan=route, yellow=direct, orange=chase, red=failed. "
+              "Use 'paths panel', 'paths report' or 'paths export'.")
     return None
 
 
@@ -552,7 +604,8 @@ COMMANDS = (
     (("inspect", "mind"), cmd_inspect,
      "— Pause and click an actor: schedule, destination, AI state (Play Mode)"),
     (("paths", "pathfinding"), cmd_paths,
-     "[on|off] — Draw every nearby actor's path: routes, walks, chases (Play Mode)"),
+     "[on|off|panel|report|reset|export [file]|state <kind>|tier <layer>|actor <name>|radius <units>|labels on|off]"
+     " — Live pathfinding diagnostics (Play Mode)"),
     (("searchradius",), cmd_searchradius,
      "1|0 — Show or hide the search circle and orbiting Searching label (saved)"),
     (("roads", "travellers"), cmd_roads,

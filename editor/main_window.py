@@ -851,7 +851,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(self._play_console_frame)
         layout.setContentsMargins(8, 4, 8, 4)
 
-        self._play_console_input = CommandInput(self._play_console_frame)
+        self._play_console_input = CommandInput(self._play_console_frame, repeat_text=False)
         self._play_console_input.setPlaceholderText("Enter command...")
         self._play_console_input.setFont(QFont("Consolas", 12))
         self._play_console_input.setStyleSheet("""

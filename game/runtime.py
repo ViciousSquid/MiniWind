@@ -5253,7 +5253,7 @@ class MiniwindSession(SettlementLaw):
         nav = getattr(self, "nav", None)
         key = id(npc)
         if nav is not None and (p.get("_blocked_ticks") or nav.has_route(key)):
-            way = nav.steer(key, pos, dest)
+            way = nav.steer_actor(npc, pos, dest)
             wx, wz = way[0] - pos[0], way[2] - pos[2]
             wd = math.hypot(wx, wz)
             if wd > 1e-3:

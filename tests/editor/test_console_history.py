@@ -77,3 +77,46 @@ def test_up_in_the_play_console_repeats_a_command_typed_in_the_debug_console(mai
     finally:
         view._close_console_overlay()
         view.play_mode = False
+
+
+@pytest.mark.parametrize("console", ["viewport", "frame"])
+def test_play_console_ignores_printable_autorepeat_without_losing_real_double_letters(main_window, console):
+    """A brief key hold must not turn 'debug' into 'debbuug' in Play Mode."""
+    view = main_window.view_3d
+    view.play_mode = True
+    if console == "viewport":
+        view._open_console_overlay()
+        line = view._console_input
+    else:
+        main_window._show_play_console_overlay()
+        line = main_window._play_console_input
+    try:
+        for char in "debug":
+            key = getattr(Qt, "Key_" + char.upper())
+            QApplication.sendEvent(line, QKeyEvent(QEvent.KeyPress, key, Qt.NoModifier, char))
+            if char in "bu":
+                QApplication.sendEvent(line, QKeyEvent(QEvent.KeyPress, key, Qt.NoModifier, char, True))
+            QApplication.sendEvent(line, QKeyEvent(QEvent.KeyRelease, key, Qt.NoModifier, char))
+        assert line.text() == "debug"
+        line.clear()
+        for char in "coffee":
+            key = getattr(Qt, "Key_" + char.upper())
+            QApplication.sendEvent(line, QKeyEvent(QEvent.KeyPress, key, Qt.NoModifier, char))
+            QApplication.sendEvent(line, QKeyEvent(QEvent.KeyRelease, key, Qt.NoModifier, char))
+        assert line.text() == "coffee"
+        # Editing/navigation keys retain their normal held-key behaviour.
+        for repeat in (False, True, True):
+            QApplication.sendEvent(line, QKeyEvent(QEvent.KeyPress, Qt.Key_Backspace,
+                                                   Qt.NoModifier, "\b", repeat))
+        assert line.text() == "cof"
+    finally:
+        main_window._hide_play_console_overlay()
+        view.play_mode = False
+
+
+def test_editor_console_keeps_normal_text_autorepeat(main_window):
+    line = main_window.debug_console.command_input
+    line.clear()
+    for repeat in (False, True, True):
+        QApplication.sendEvent(line, QKeyEvent(QEvent.KeyPress, Qt.Key_A, Qt.NoModifier, "a", repeat))
+    assert line.text() == "aaa"

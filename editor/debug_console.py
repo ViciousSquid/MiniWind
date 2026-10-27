@@ -131,16 +131,27 @@ class CommandInput(QLineEdit):
     All command inputs share :data:`COMMAND_HISTORY` unless given their own
     list; each keeps its own place while browsing it.
     """
-    def __init__(self, parent=None, history=None):
+    def __init__(self, parent=None, history=None, *, repeat_text=True):
         super().__init__(parent)
         self.history = COMMAND_HISTORY if history is None else history
         self.history_idx = len(self.history)
+        self._repeat_text = repeat_text
+        if not repeat_text:
+            # Keep physical presses separate from repeats: compressed key
+            # events can contain a mixture with an ambiguous isAutoRepeat().
+            self.setAttribute(Qt.WA_KeyCompression, False)
 
     def reset_history_position(self):
         """Start browsing from the newest command again (on open/clear)."""
         self.history_idx = len(self.history)
 
     def keyPressEvent(self, event):
+        if (not self._repeat_text and event.isAutoRepeat()
+                and event.text() and event.text().isprintable()):
+            # Play consoles take one character per physical press. Repeated
+            # letters typed separately still work, as do held editing keys.
+            event.accept()
+            return
         if event.key() == Qt.Key_Up:
             if self.history and self.history_idx > 0:
                 self.history_idx -= 1

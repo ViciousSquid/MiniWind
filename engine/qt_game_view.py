@@ -129,7 +129,7 @@ def _window_wants_cursor(view) -> bool:
         and getattr(w, 'wants_cursor', False)
         and getattr(w, 'key', None) in (
             'screen:inventory', 'screen:character', 'screen:spells',
-            'screen:trade', 'debug:tools'
+            'screen:trade', 'debug:tools', 'debug:pathfinding'
         )
         for w in manager.windows
     )
@@ -430,7 +430,7 @@ class QtGameView(QOpenGLWidget):
         self.sound_volume = 1.0
         self.music_volume = 1.0
         # Up repeats the last command (the history every console shares).
-        self._console_input = CommandInput(self)
+        self._console_input = CommandInput(self, repeat_text=False)
         self._console_input.setPlaceholderText("Enter command…   Esc to close")
         self._console_input.setFont(QFont("Consolas", 11))
         self._console_input.setStyleSheet("""
