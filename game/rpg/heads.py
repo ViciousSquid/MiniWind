@@ -14,9 +14,10 @@ of switching to a generic role sprite.
 **Guard heads** (``guard01``…``guard26``) are a separate, NPC-only pool under
 the same directory. They are never offered at player character creation and
 are never picked by :func:`random_head`; they only become available in the
-editor's Appearance tab for an NPC whose ``npc_role`` is "guard" (see
-:mod:`game.editor_ui`), and an authored guard head is preserved for such NPCs
-by :meth:`game.runtime.GameRuntime._assign_npc_heads`.
+editor's Appearance tab for a guard or a town archer (``npc_role`` "guard" or
+"guard_archer", see :mod:`game.editor_ui`), and such NPCs always wear one: an
+authored guard head is kept, any other is swapped for a random guard head by
+:meth:`game.runtime.GameRuntime._assign_npc_heads`.
 """
 
 from __future__ import annotations
@@ -108,9 +109,14 @@ def is_guard_head(head_id) -> bool:
     return str(head_id) in GUARD_HEAD_IDS
 
 
+#: Roles that wear guard heads: the town guards and the town archers.
+GUARD_ROLES = frozenset({"guard", "guard_archer"})
+
+
 def is_guard(props) -> bool:
-    """Guard appearances are reserved for actors with the guard role."""
-    return str((props or {}).get("npc_role", "")).strip().lower() == "guard"
+    """Guard appearances are reserved for, and always worn by, the guards and
+    the town archers (:data:`GUARD_ROLES`)."""
+    return str((props or {}).get("npc_role", "")).strip().lower() in GUARD_ROLES
 
 
 #: Heads whose art may not be in place yet, and what stands in until it is

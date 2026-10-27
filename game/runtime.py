@@ -1243,8 +1243,9 @@ class MiniwindSession(SettlementLaw):
 
         * an animal gets a head of its own kind (:func:`heads.animal_head`):
           its own image once drawn, the placeholder head until then;
-        * an NPC whose role is "guard" gets a random *guard* head
-          (guard01…guard26), matching the editor's guard-head option;
+        * a guard or a town archer (:data:`heads.GUARD_ROLES`) always wears a
+          *guard* head: one set in the editor is kept, anything else (no head,
+          or a regular one) is swapped for a random guard head (guard01…guard26);
         * everyone else gets a random regular head that is never the player's.
         """
         from .rpg import heads
@@ -1267,9 +1268,10 @@ class MiniwindSession(SettlementLaw):
             # was drawn) looks again, so new art reaches it.
             stand_in = cur == heads.PLACEHOLDER_HEAD and role in heads.ANIMAL_ROLES
             guard = heads.is_guard(p)
-            forbidden_guard = heads.is_guard_head(cur) and not guard
+            # Guard heads are for the guards alone, and the guards wear nothing else.
+            fits = cur.lower().startswith("guard") == guard
             if (heads.is_any_head(cur) and cur != player_head and not stand_in
-                    and not forbidden_guard):
+                    and fits):
                 head = cur
             elif role in heads.ANIMAL_ROLES:
                 head = heads.animal_head(role, self.rng, deck)
