@@ -1114,11 +1114,15 @@ def _draw_spells(painter, session, w, h):
             painter.fillRect(row_rect, T.SELECT)
         active = c.active_spell == spell.id
         col = T.GOLD_BRIGHT if i == st["row"] else (T.MAGICKA.lighter(150) if active else T.INK)
-        cost = rpg_magic.cast_cost(c, spell)
+        cost = rpg_magic.cast_cost(c, rpg_magic.for_caster(c, spell.id) or spell)
+        painter.fillRect(QRect(inner.x() + 2, ry + 3, 3, 14), _rarity_color(spell.rarity))
         label = fm.elidedText(("✦ " if active else "") + spell.name,
-                              Qt.ElideRight, max(1, list_w - 76))
-        T.text(painter, inner.x() + 8, ry + 14, label,
+                              Qt.ElideRight, max(1, list_w - 126))
+        T.text(painter, inner.x() + 10, ry + 14, label,
                size=11, color=col, family="Segoe UI")
+        T.text_in(painter, QRect(inner.x(), ry - 2, list_w - 60, 22),
+                  f"Lv {c.spell_level(spell.id)}", size=9, color=T.GOLD, align=T.ALIGN_RIGHT,
+                  family="Segoe UI")
         T.text_in(painter, QRect(inner.x(), ry - 2, list_w - 8, 22),
                   f"{int(cost)} mp", size=9, color=T.DIM, align=T.ALIGN_RIGHT,
                   family="Segoe UI")
@@ -1139,14 +1143,40 @@ def _draw_spells(painter, session, w, h):
     if spells:
         spell = spells[st["row"]]
         dx = inner.x() + list_w + 20
+        dw = inner.width() - list_w - 20
+        level = c.spell_level(spell.id)
+        now = spell.at_level(level)
         T.text(painter, dx, ty + 18, spell.name, size=15, color=T.GOLD_BRIGHT, bold=True)
+        T.text(painter, dx, ty + 36, f"{spell.rarity.title()}  ·  Level {level} of "
+               f"{spell.max_level}", size=10, color=_rarity_color(spell.rarity),
+               bold=True, family="Segoe UI")
         info = (f"School: {sk.label(spell.school)}\nDelivery: {spell.delivery}\n"
-                f"Element: {spell.element}\nCost: {int(rpg_magic.cast_cost(c, spell))} magicka\n\n{spell.desc}")
-        T.text_in(painter, QRect(dx, ty + 34, inner.width() - list_w - 20,
-                                max(1, nav_y - ty - 42)),
+                f"Element: {spell.element}\n"
+                f"Now: {_spell_power(now)}{int(rpg_magic.cast_cost(c, now))} magicka")
+        if level < spell.max_level:
+            nxt = spell.at_level(level + 1)
+            info += (f"\nLevel {level + 1}: {_spell_power(nxt)}"
+                     f"{int(rpg_magic.cast_cost(c, nxt))} magicka")
+        info += f"\n\n{spell.desc}"
+        T.text_in(painter, QRect(dx, ty + 48, dw, max(1, nav_y - ty - 92)),
                   info, size=10, color=T.PARCH,
                   align=int(Qt.AlignTop | Qt.AlignLeft) | int(Qt.TextWordWrap),
                   family="Segoe UI")
+        # Raise the spell with experience -- the same pool character levels
+        # are paid from, so it is a real choice.
+        cost = c.spell_upgrade_cost(spell.id)
+        if cost > 0:
+            button(painter, QRect(dx, nav_y - 36, min(dw, 260), 28),
+                   f"Raise to level {level + 1}  ({cost} XP)",
+                   lambda s, sid=spell.id: _upgrade_spell(s, sid),
+                   enabled=c.xp >= cost, primary=True)
+            T.text_in(painter, QRect(dx, nav_y - 56, dw, 18),
+                      f"Experience: {c.xp}  ·  U raises the selected spell", size=8,
+                      color=T.DIM, align=T.ALIGN_LEFT, family="Segoe UI")
+        else:
+            T.text_in(painter, QRect(dx, nav_y - 30, dw, 20),
+                      "Mastered: this spell is at its highest level.", size=9,
+                      color=T.GOLD, align=T.ALIGN_LEFT, family="Segoe UI")
     else:
         T.text(painter, inner.x() + list_w + 20, ty + 18,
                "You know no spells yet. Buy them from the Mages Guild.",
@@ -1156,6 +1186,46 @@ def _draw_spells(painter, session, w, h):
               f"Click a spell to ready it · {K_CAST.upper()} cast · {K_SPELLS.upper()}/Esc close",
               size=9, color=T.DIM,
               align=T.ALIGN_CENTER, family="Segoe UI")
+
+
+#: Rarity colours for spells, commonest first (game.rpg.magic.RARITIES).
+_RARITY_COLORS = {"common": QColor(190, 186, 176), "uncommon": QColor(120, 210, 120),
+                  "rare": QColor(110, 160, 245), "epic": QColor(190, 120, 240),
+                  "legendary": QColor(245, 165, 70)}
+
+
+def _rarity_color(rarity):
+    return _RARITY_COLORS.get(str(rarity), _RARITY_COLORS["common"])
+
+
+def _spell_power(spell) -> str:
+    """The headline amount of a (levelled) spell: "17 damage, 30s, "."""
+    for e in spell.effects or []:
+        mag = float(e.get("magnitude", 0))
+        if 1 < mag < 99999:
+            kind = str(e.get("kind", ""))
+            what = ("damage" if kind.startswith("damage") else
+                    "healing" if kind.startswith("restore") else kind.replace("_", " "))
+            dur = float(e.get("duration", 0))
+            return f"{mag:g} {what}" + (f" for {dur:g}s" if dur > 0 else "") + ", "
+    for e in spell.effects or []:
+        dur = float(e.get("duration", 0))
+        if dur > 0:
+            return f"lasts {dur:g}s, "
+    return ""
+
+
+def _upgrade_spell(session, spell_id):
+    c = session.game.character
+    spell = rpg_magic.get(spell_id)
+    cost = c.spell_upgrade_cost(spell_id)
+    if spell is None or cost <= 0:
+        return
+    if c.upgrade_spell(spell_id):
+        session.notify(f"{spell.name} is now level {c.spell_level(spell_id)}.", 3.5)
+    else:
+        session.notify(f"Not enough experience: {spell.name} needs {cost} XP "
+                       f"(you have {c.xp}).", 3.5)
 
 
 def _handle_spells(session, key):
@@ -1169,6 +1239,8 @@ def _handle_spells(session, key):
         st["row"] = (st["row"] + 1) % max(1, len(spells)); return True
     if key in ("return", "enter") and spells:
         _ready_spell(session, spells[st["row"]].id); return True
+    if key == "u" and spells:
+        _upgrade_spell(session, spells[st["row"]].id); return True
     if key in (K_SPELLS, "escape", "esc"):
         session.open_screen = None
     return True

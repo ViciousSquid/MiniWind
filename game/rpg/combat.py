@@ -196,7 +196,7 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     elif kind == items.KIND_CROSSBOW:
         dmg += float(shot.get("damage", 0)) if shot else 0.0   # no draw: always full
     elif kind == items.KIND_STAFF:
-        dmg *= 0.7 + character.skill(sk.DESTRUCTION) / 100.0
+        dmg *= 0.7 + character.skill(sk.OFFENSIVE) / 100.0
 
     # --- sneak attack ---
     if sneaking:

@@ -34,7 +34,7 @@ def test_character_creation_applies_race_class_sign():
     assert c.attrs[attr.STRENGTH] >= 50
     # major skills start higher than minors
     assert c.skill(sk.BLADE) >= classes.MAJOR_SKILL_START
-    assert c.skill(sk.MYSTICISM) <= classes.MINOR_SKILL_START + classes.SPECIALISATION_BONUS
+    assert c.skill(sk.DEFENSIVE) <= classes.MINOR_SKILL_START + classes.SPECIALISATION_BONUS
     # derived pools are positive and endurance-driven
     assert c.max_health > 100 and c.max_stamina > 0
 
@@ -300,7 +300,7 @@ def test_character_full_roundtrip():
                             rng=random.Random(7))
     c = gs.character
     c.gold = 777
-    c.use_skill(sk.DESTRUCTION, 5.0)
+    c.use_skill(sk.OFFENSIVE, 5.0)
     c.damage(15)
     guilds.join(c, "mages")
     d = c.to_dict()

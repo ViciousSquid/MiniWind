@@ -25,12 +25,8 @@ S = SIZE * SS
 # Dark tile + a vivid per-school accent (bg, ink) — matches the editor's dark
 # spell cards (game.editor_ui._SCHOOL_ACCENT) so icons sit on the dark theme.
 SCHOOL_PASTEL = {
-    "destruction": ((40, 34, 38), (232, 131, 111)),
-    "restoration": ((32, 40, 35), (127, 211, 155)),
-    "alteration":  ((32, 36, 44), (127, 178, 240)),
-    "conjuration": ((38, 33, 46), (183, 155, 240)),
-    "illusion":    ((44, 33, 42), (240, 143, 214)),
-    "mysticism":   ((31, 42, 41), (111, 214, 207)),
+    "offensive":   ((40, 34, 38), (232, 131, 111)),
+    "defensive":   ((32, 40, 35), (127, 211, 155)),
     "default":     ((38, 35, 46), (185, 182, 196)),
 }
 

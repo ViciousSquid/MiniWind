@@ -96,6 +96,9 @@ class Character:
         #: Successful casts per spell id. Practice with one spell makes it
         #: steadier on top of the school skill (see magic.cast_chance).
         self.spell_practice: Dict[str, int] = {}
+        #: The level the player has raised each known spell to (1 if absent);
+        #: raised by spending experience (:meth:`upgrade_spell`).
+        self.spell_levels: Dict[str, int] = {}
         #: The 3d6 totals rolled at creation ({"strength", "endurance",
         #: "personality"}), which write the character's bio (game.rpg.bios).
         self.rolls: Dict[str, int] = {}
@@ -305,6 +308,27 @@ class Character:
         self._skill_raises.clear()
         return out
 
+    def spell_level(self, spell_id: str) -> int:
+        return int(self.spell_levels.get(str(spell_id), 1))
+
+    def spell_upgrade_cost(self, spell_id: str) -> int:
+        """Experience to raise *spell_id* one level (0 when it cannot rise)."""
+        from . import magic
+        spell = magic.get(spell_id)
+        if spell is None or spell_id not in self.known_spells:
+            return 0
+        return spell.xp_to_level(self.spell_level(spell_id))
+
+    def upgrade_spell(self, spell_id: str) -> bool:
+        """Spend experience to raise a known spell one level. The same pool
+        pays for character levels, so it is a real choice."""
+        cost = self.spell_upgrade_cost(spell_id)
+        if cost <= 0 or self.xp < cost:
+            return False
+        self.xp -= cost
+        self.spell_levels[str(spell_id)] = self.spell_level(spell_id) + 1
+        return True
+
     def add_xp(self, amount) -> int:
         """Earn *amount* experience points (kills, quests); returns it."""
         amount = max(0, int(amount or 0))
@@ -497,6 +521,7 @@ class Character:
             "factions": dict(self.factions), "bounty": self.bounty,
             "sign_stat_bonuses": dict(getattr(self, "_sign_stat_bonuses", {})),
             "spell_practice": dict(self.spell_practice),
+            "spell_levels": dict(self.spell_levels),
             "quick_weapons": list(self.quick_weapons),
             "strip": list(self.strip),
             "rolls": dict(self.rolls),
@@ -517,9 +542,22 @@ class Character:
         if isinstance(data.get("attrs"), dict):
             c.attrs.update({k: int(v) for k, v in data["attrs"].items() if k in c.attrs})
         if isinstance(data.get("skills"), dict):
-            c.skills.update({k: int(v) for k, v in data["skills"].items() if k in c.skills})
-        c.major_skills = list(data.get("major_skills", c.major_skills))
-        c._skill_xp = dict(data.get("skill_xp", {}))
+            # An old save's six magic schools fold into the two, keeping the best.
+            loaded = {}
+            for k, v in data["skills"].items():
+                k = sk.fold(k)
+                loaded[k] = max(loaded.get(k, 0), int(v))
+            c.skills.update({k: v for k, v in loaded.items() if k in c.skills})
+        majors = []
+        for s in data.get("major_skills", c.major_skills):
+            s = sk.fold(s)
+            if s not in majors:
+                majors.append(s)
+        c.major_skills = majors
+        c._skill_xp = {}
+        for k, v in dict(data.get("skill_xp", {})).items():
+            k = sk.fold(k)
+            c._skill_xp[k] = max(c._skill_xp.get(k, 0.0), float(v))
         c._level_attr_gains = {a: int(data.get("level_attr_gains", {}).get(a, 0))
                                for a in attr.ATTRIBUTES}
         c._accum_health = float(data.get("accum_health", 0.0))
@@ -561,6 +599,9 @@ class Character:
         practice = data.get("spell_practice")
         if isinstance(practice, dict):
             c.spell_practice = {str(k): int(v) for k, v in practice.items()}
+        levels = data.get("spell_levels")
+        if isinstance(levels, dict):
+            c.spell_levels = {str(k): max(1, int(v)) for k, v in levels.items()}
         c.recompute_derived(reset_current=False)
         c.health = float(data.get("health", c.max_health))
         c.magicka = float(data.get("magicka", c.max_magicka))

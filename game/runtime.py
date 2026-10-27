@@ -5850,7 +5850,7 @@ class MiniwindSession(SettlementLaw):
         if not c.spend_magicka(cost):
             self.notify("Not enough magicka")
             return False
-        c.use_skill("destruction", 1.0)
+        c.use_skill(sk.OFFENSIVE, 1.0)
         self._magic_cast_fx(spell, target)
         if target is not None:
             r = self.game.resolve_spell_on_creature(spell, target.properties)
@@ -5943,7 +5943,8 @@ class MiniwindSession(SettlementLaw):
         if c.is_dead or self._cast_cooldown > 0 or not c.active_spell:
             return False
         self._cast_cooldown = 0.7
-        spell = rpg_magic.get(c.active_spell)
+        # At the level the player has raised it to (rpg_magic.for_caster).
+        spell = rpg_magic.for_caster(c, c.active_spell)
         # Resurrection is special: it targets a *fallen* character, drains all
         # magicka and can be worked only once per in-game day.
         if spell is not None and any(e.get("kind") == "resurrect"

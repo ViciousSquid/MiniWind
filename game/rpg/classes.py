@@ -52,7 +52,7 @@ CLASSES: Dict[str, CharClass] = {c.id: c for c in [
               "A chivalrous warrior as comfortable at court as in the melee.",
               sk.COMBAT, [attr.STRENGTH, attr.PERSONALITY],
               [sk.BLADE, sk.BLUNT, sk.HEAVY_ARMOR, sk.BLOCK, sk.SPEECHCRAFT,
-               sk.ILLUSION, sk.RESTORATION]),
+               sk.DEFENSIVE, sk.ATHLETICS]),
     CharClass("barbarian", "Barbarian",
               "A savage brawler who trades armour for raw ferocity and speed.",
               sk.COMBAT, [attr.STRENGTH, attr.SPEED],
@@ -71,26 +71,26 @@ CLASSES: Dict[str, CharClass] = {c.id: c for c in [
     CharClass("mage", "Mage",
               "A student of all the arcane arts, weak of arm but deep of magicka.",
               sk.MAGIC, [attr.INTELLIGENCE, attr.ENDURANCE],
-              [sk.DESTRUCTION, sk.RESTORATION, sk.ALTERATION, sk.CONJURATION,
-               sk.ILLUSION, sk.MYSTICISM, sk.ALCHEMY],
+              [sk.OFFENSIVE, sk.DEFENSIVE, sk.ALCHEMY, sk.SPEECHCRAFT,
+               sk.MERCANTILE, sk.SECURITY, sk.ATHLETICS],
               starting_spells=["flare", "heal_minor"]),
     CharClass("sorcerer", "Sorcerer",
               "A battle-mage who binds armour and summoned blades to raw destruction.",
               sk.MAGIC, [attr.INTELLIGENCE, attr.ENDURANCE],
-              [sk.DESTRUCTION, sk.CONJURATION, sk.ALTERATION, sk.MYSTICISM,
-               sk.HEAVY_ARMOR, sk.BLADE, sk.RESTORATION],
+              [sk.OFFENSIVE, sk.DEFENSIVE, sk.HEAVY_ARMOR, sk.BLADE,
+               sk.BLOCK, sk.ALCHEMY, sk.ATHLETICS],
               starting_spells=["flare"]),
     CharClass("healer", "Healer",
               "A gentle spellcaster devoted to mending and warding.",
               sk.MAGIC, [attr.ENDURANCE, attr.PERSONALITY],
-              [sk.RESTORATION, sk.ALTERATION, sk.ILLUSION, sk.ALCHEMY,
-               sk.SPEECHCRAFT, sk.MYSTICISM, sk.BLUNT],
+              [sk.DEFENSIVE, sk.OFFENSIVE, sk.ALCHEMY, sk.SPEECHCRAFT,
+               sk.MERCANTILE, sk.BLUNT, sk.LIGHT_ARMOR],
               starting_spells=["heal_minor", "flare"]),
     CharClass("necromancer", "Necromancer",
               "A death-mage who binds spirits and calls the fallen back to life.",
               sk.MAGIC, [attr.ENDURANCE, attr.INTELLIGENCE],
-              [sk.CONJURATION, sk.MYSTICISM, sk.DESTRUCTION, sk.ALTERATION,
-               sk.RESTORATION, sk.SNEAK, sk.ALCHEMY],
+              [sk.OFFENSIVE, sk.DEFENSIVE, sk.SNEAK, sk.ALCHEMY,
+               sk.BLADE, sk.LIGHT_ARMOR, sk.SECURITY],
               starting_spells=["flare", "resurrection"]),
     CharClass("thief", "Thief",
               "Light fingers, lighter feet: locks, pockets and a quick blade.",
@@ -106,11 +106,11 @@ CLASSES: Dict[str, CharClass] = {c.id: c for c in [
               "A charming duellist who talks their way in and cuts their way out.",
               sk.STEALTH, [attr.SPEED, attr.PERSONALITY],
               [sk.BLADE, sk.LIGHT_ARMOR, sk.BLOCK, sk.SPEECHCRAFT,
-               sk.MERCANTILE, sk.ILLUSION, sk.ALCHEMY]),
+               sk.MERCANTILE, sk.DEFENSIVE, sk.ALCHEMY]),
     CharClass("bard", "Bard",
               "A jack-of-all-trades: a little steel, a little magic, a lot of charm.",
               sk.STEALTH, [attr.PERSONALITY, attr.INTELLIGENCE],
-              [sk.SPEECHCRAFT, sk.MERCANTILE, sk.ILLUSION, sk.BLADE,
+              [sk.SPEECHCRAFT, sk.MERCANTILE, sk.DEFENSIVE, sk.BLADE,
                sk.LIGHT_ARMOR, sk.ALCHEMY, sk.SECURITY]),
 ]}
 
@@ -149,7 +149,12 @@ def make_custom(label: str, spec: str, favored_attrs: List[str],
         if a in attr.ATTRIBUTES and a not in fav:
             fav.append(a)
     fav = fav[:2] or [attr.STRENGTH, attr.ENDURANCE]
-    majors = [s for s in major_skills if s in sk.SKILLS][:7]
+    majors = []
+    for s in major_skills:
+        s = sk.fold(s)                       # an old magic school
+        if s in sk.SKILLS and s not in majors:
+            majors.append(s)
+    majors = majors[:7]
     # pad to 7 with sensible defaults if short
     for s in sk.SKILL_IDS:
         if len(majors) >= 7:
