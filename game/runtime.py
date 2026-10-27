@@ -184,6 +184,11 @@ FOLLOW_DISTANCE = 220.0
 #: How far a companion will look for a target the *player* just struck
 #: before joining in (see _provoke's follower-alert pass).
 FOLLOW_ASSIST_RADIUS = 900.0
+#: Raised followers defend this close circle, with a larger return leash and
+#: an inner circle they keep clear so the caster can move freely.
+RAISED_DEFEND_RADIUS = 380.0
+RAISED_LEASH = 480.0
+RAISED_PERSONAL_SPACE = 110.0
 #: Guards notice a wanted player when the player enters this radius.
 BOUNTY_NOTICE_RADIUS = 700.0
 #: Maximum distance the player may get from the escort guard before resisting arrest.
@@ -638,6 +643,7 @@ class MiniwindSession(SettlementLaw):
         from .magic_fx import MagicFX
         self.magic_fx = MagicFX(player_pos=self._player_pos)
         self.magic_fx.wards = self._magic_wards
+        self.magic_fx.hands = self._magic_hands
         self._fx_tints = ()
         # Casters and archers keep their distance, but can be run down
         # (game/combat_tactics.py); everyone else is routed round walls.
@@ -1359,6 +1365,10 @@ class MiniwindSession(SettlementLaw):
             self._update_thoughts()
             self._update_small_talk()
         for i, npc in enumerate(npcs):
+            if npc.properties.get("resurrection_used") and npc.properties.get("follow_player"):
+                self._guard_raised_follower(npc)
+                self._move(npc, delta)
+                continue
             tier = npc_tiers[i]
             if tier >= TIER_DISTANT:
                 continue          # moved coarsely on the decision pass above
@@ -3080,6 +3090,10 @@ class MiniwindSession(SettlementLaw):
             tp = t.properties
             if not tp.get("dead"):
                 continue
+            if tp.get("resurrection_used") and tp.get("follow_player"):
+                tp["follow_player"] = False
+                tp.pop("_dest", None)
+                _journal(t)
             name = str(tp.get("name", ""))
             if name in self._deaths_seen:
                 continue
@@ -3791,6 +3805,8 @@ class MiniwindSession(SettlementLaw):
         (``_aggro_target``, ``_dest``, ``aggression``, ``sched_state``), so the
         simulation never needs its own mover or its own combat."""
         p = npc.properties
+        if p.get("resurrection_used") and p.get("follow_player"):
+            return False  # the raised follower's loyalty outlasts old grudges
         intent = self.director.top_intent(npc)
         if intent is None:
             p.pop("_sim_reason", None)
@@ -3902,6 +3918,9 @@ class MiniwindSession(SettlementLaw):
 
     def _decide(self, npc) -> None:
         p = npc.properties
+        if p.get("resurrection_used") and p.get("follow_player"):
+            self._guard_raised_follower(npc)
+            return
         if p.get("_journey") and not p.get("_arrest_state") and self.living is not None:
             return          # a traveller: its party is driven by game/living
         if p.get("away_on_journey"):
@@ -4544,12 +4563,53 @@ class MiniwindSession(SettlementLaw):
         dx = ppos[0] - npc.pos[0]
         dz = ppos[2] - npc.pos[2]
         dist = math.hypot(dx, dz)
+        if p.get("resurrection_used") and dist < RAISED_PERSONAL_SPACE:
+            if dist < 1e-3:
+                forward = self._player_forward()
+                ux, uz = -forward[0], -forward[2]
+            else:
+                ux, uz = -dx / dist, -dz / dist
+            p["_dest"] = [ppos[0] + ux * RAISED_PERSONAL_SPACE * 1.6,
+                          npc.pos[1], ppos[2] + uz * RAISED_PERSONAL_SPACE * 1.6]
+            return
         if dist <= leash:
             p.pop("_dest", None)
             return
         ux, uz = dx / dist, dz / dist
         stop_at = leash * 0.6
         p["_dest"] = [ppos[0] - ux * stop_at, npc.pos[1], ppos[2] - uz * stop_at]
+
+    def _guard_raised_follower(self, npc) -> None:
+        """Defend the caster's immediate area and break off any distant chase."""
+        p = npc.properties
+        pos = self._player_pos()
+        if pos is None or p.get("dead"):
+            return
+        distance = self._dist2d(pos, npc.pos)
+        enemy, best = None, RAISED_DEFEND_RADIUS
+        if RAISED_PERSONAL_SPACE <= distance <= RAISED_LEASH:
+            for actor in self._actors or fio.things(self.logic):
+                ap = actor.properties
+                if actor is npc or ap.get("dead") or ap.get("hidden"):
+                    continue
+                attacks_caster = (ap.get("aggression") == "hostile" or
+                                  ap.get("_aggro_target") in
+                                  (id(fio.player(self.logic)), id(self.player_actor), id(npc)))
+                hostile = factions.is_hostile(factions.PLAYER,
+                                              ap.get("team") or ap.get("faction"))
+                if not (attacks_caster or hostile):
+                    continue
+                near = self._dist2d(pos, actor.pos)
+                if near < best:
+                    enemy, best = actor, near
+        if enemy is not None:
+            self._engage(npc, enemy)
+            return
+        p.pop("_aggro_target", None)
+        p.pop("_subduing", None)
+        p.pop("_pursuit_range", None)
+        p["triggered"], p["awake"] = True, False
+        self._follow_player_dest(npc)
 
     def _advance_needs(self, npc, current_state) -> None:
         """Advance a civilian NPC's persistent needs by the in-game hours passed
@@ -4687,7 +4747,8 @@ class MiniwindSession(SettlementLaw):
         modded temple warden is a guard everywhere at once: refuge-seeking,
         arrests and crime reporting all ask the same question."""
         p = thing.properties
-        return sim_crime.is_lawful(p) and not p.get("dead")
+        return (sim_crime.is_lawful(p) and not p.get("dead")
+                and not (p.get("resurrection_used") and p.get("follow_player")))
 
     @staticmethod
     def _marker_kind(thing) -> str:
@@ -5644,7 +5705,8 @@ class MiniwindSession(SettlementLaw):
         One button per hand. Primary fire (left) uses the main hand -- a bow
         looses an arrow, a crossbow a bolt, a staff channels its spell, a blade
         swings. Secondary fire (right) uses the off hand: the weapon in the
-        shield slot, or a worn shield's bash. Spells are the cast key's (K).
+        shield slot, or a worn shield's bash. An equipped spell casts from
+        its own hand instead of using that hand's weapon.
         Returns True: MiniWind always owns the shot, so Fio's hitscan weapon
         path never runs underneath it.
         """
@@ -5652,6 +5714,10 @@ class MiniwindSession(SettlementLaw):
         if self.modal_input_active():
             return True
         if getattr(c, "is_dead", False):
+            return True
+        hand = "off" if mode == "secondary" else "main"
+        if eq.hand_spell(c, hand) is not None:
+            self.do_cast(aim="facing", hand=hand)
             return True
         if mode == "secondary":
             if eq.offhand_weapon(c) is not None:
@@ -5704,6 +5770,8 @@ class MiniwindSession(SettlementLaw):
         wielder's two blades each roll to hit, so an unpractised fighter can
         land one and miss with the other."""
         c = self.game.character
+        if eq.hand_spell(c, hand) is not None:
+            return self.do_cast(aim="facing", hand=hand)
         off = hand == "off"
         cooldown = self._offhand_cooldown if off else self._attack_cooldown
         if c.is_dead or cooldown > 0:
@@ -5761,7 +5829,8 @@ class MiniwindSession(SettlementLaw):
         """The attack key: strike with the main hand, then -- dual wielding --
         with the off hand as well, each a separate attack."""
         struck = self.do_attack()
-        if eq.offhand_weapon(self.game.character) is not None:
+        if (eq.offhand_weapon(self.game.character) is not None
+                or eq.hand_spell(self.game.character, "off") is not None):
             struck = self.do_attack("off") or struck
         return struck
 
@@ -5922,6 +5991,33 @@ class MiniwindSession(SettlementLaw):
                         getattr(spell, "element", "magic"),
                         getattr(spell, "visuals", None))
 
+    def _magic_hands(self):
+        """Live spell glows at the same physical hands as held weapons."""
+        c = self.game.character
+        pos = self._player_pos()
+        if c.is_dead or pos is None or fio.cutscene_active(self.logic):
+            return []
+        from engine.overhead_sprite import ACTOR_Y, WEAPON_Y_LIFT, WEAPON_RIGHT_OFFSET
+        player = fio.player(self.logic)
+        angle = float(getattr(player, "angle", 0.0))
+        forward = (math.sin(angle), math.cos(angle))
+        overhead = fio.is_overhead(self.logic)
+        height = ACTOR_Y + WEAPON_Y_LIFT if overhead else \
+            float(getattr(player, "camera_height", 48.0)) - 16.0
+        advance = 0.0 if overhead else 60.0
+        out = []
+        for hand in ("main", "off"):
+            spell = eq.hand_spell(c, hand)
+            if spell is None:
+                continue
+            physical = c.handed if hand == "main" else ("left" if c.handed == "right" else "right")
+            side = -1.0 if physical == "left" else 1.0
+            at = (pos[0] + forward[1] * side * WEAPON_RIGHT_OFFSET + forward[0] * advance,
+                  pos[1] + height,
+                  pos[2] - forward[0] * side * WEAPON_RIGHT_OFFSET + forward[1] * advance)
+            out.append((at, self.spell_look(spell)))
+        return out
+
     #: Ward effects drawn as a fresnel bubble round the player: kind -> colour.
     WARD_COLOURS = {"shield": (110, 190, 255), "fire_shield": (255, 130, 40),
                     "berserk": (255, 50, 40), "invisibility": (220, 230, 255)}
@@ -6001,9 +6097,8 @@ class MiniwindSession(SettlementLaw):
         return True
 
     # -------------------------------------------------------------- casting
-    #: How the cast key (K) aims, set in the pause menu's options
-    #: (GAME → cast_mode): "aimed" -- K, then click where the spell goes;
-    #: "facing" -- K casts at once, straight out along the player's facing.
+    #: Legacy programmatic aiming modes. Gameplay casts from equipped hands;
+    #: there is no separate keyboard cast binding.
     CAST_AIMED = "aimed"
     CAST_FACING = "facing"
 
@@ -6024,6 +6119,9 @@ class MiniwindSession(SettlementLaw):
         c = self.game.character
         if not c.can_use_magic():
             return False                # a class without magic: K does nothing
+        if not eq.spell_equipped(c, c.active_spell):
+            self.notify("Equip a spell to a hand first", 2.0)
+            return False
         if self.cast_mode() == self.CAST_FACING:
             return self.do_cast(aim="facing")
         spell = rpg_magic.get(c.active_spell) if c.active_spell else None
@@ -6066,7 +6164,7 @@ class MiniwindSession(SettlementLaw):
             return [float(aim[0]), start[1], float(aim[2])]   # level flight
         return None
 
-    def do_cast(self, aim=None, target=None) -> bool:
+    def do_cast(self, aim=None, target=None, hand=None) -> bool:
         """Cast the active spell. PROJECTILE spells launch a visible bolt that
         flies from the player and damages the first creature it strikes;
         TARGET/TOUCH spells resolve instantly on the aimed creature; SELF spells
@@ -6076,6 +6174,14 @@ class MiniwindSession(SettlementLaw):
         point (clicked), or None (the nearest creature in front, as before);
         *target* a creature clicked on."""
         c = self.game.character
+        if hand is not None:
+            held = eq.hand_spell(c, hand)
+            if held is None:
+                return False
+            c.active_spell = held.id
+        if not eq.spell_equipped(c, c.active_spell):
+            self.notify("Equip a spell to a hand first", 2.0)
+            return False
         if not c.can_use_magic():
             # A Warrior works no magic: the right hand does nothing.
             return False
@@ -6088,7 +6194,7 @@ class MiniwindSession(SettlementLaw):
         # magicka and can be worked only once per in-game day.
         if spell is not None and any(e.get("kind") == "resurrect"
                                      for e in (spell.effects or [])):
-            return self._do_resurrect(spell)
+            return self._do_resurrect(spell, target=target, aim=aim)
         knock = spell is not None and any(e.get("kind") == "knock" for e in spell.effects)
         knock_target = self.nearest_knock_target() if knock else None
         if knock and knock_target is None:
@@ -6164,7 +6270,7 @@ class MiniwindSession(SettlementLaw):
         except Exception:
             return 0
 
-    def _nearest_dead_actor(self, reach: float):
+    def _nearest_dead_actor(self, reach: float, aim=None):
         """The nearest slain (revivable) NPC/creature within *reach*.
 
         A gibbed body is destroyed — blown apart or disintegrated — so it is
@@ -6177,22 +6283,28 @@ class MiniwindSession(SettlementLaw):
             tp = t.properties
             if not tp.get("dead"):
                 continue
-            if tp.get("gibbed"):
+            if tp.get("gibbed") or tp.get("resurrection_used"):
                 continue          # gibbed corpses cannot be resurrected
             ttype = str(tp.get("type", "")).replace("_", "").lower()
             if ttype not in ("npc", "creature", "monster"):
                 continue
             d = self._dist2d(ppos, t.pos)
+            if aim == "facing" and d > 0:
+                forward = self._player_forward()
+                if forward is not None and ((t.pos[0] - ppos[0]) * forward[0]
+                        + (t.pos[2] - ppos[2]) * forward[2]) / d < AIM_DOT:
+                    continue
             if d < best_d:
                 best_d = d
                 best = t
         return best
 
-    def _do_resurrect(self, spell) -> bool:
+    def _do_resurrect(self, spell, target=None, aim=None) -> bool:
         """Cast Resurrection: revive the nearest fallen character.
 
         Special rules (not the normal cast pipeline): it drains ALL of the
-        caster's magicka and may be worked only once per in-game day."""
+        caster's magicka and may be worked only once per in-game day. Each
+        body can be raised once; it remains red and loyal until its next death."""
         c = self.game.character
         # Once per day.
         today = self._resurrect_day()
@@ -6206,23 +6318,44 @@ class MiniwindSession(SettlementLaw):
         if c.magicka < 1.0:
             self.notify("Not enough magicka to resurrect")
             return False
-        target = self._nearest_dead_actor(BOW_REACH)
+        if target is not None:
+            p = target.properties
+            if (not p.get("dead") or p.get("gibbed") or p.get("resurrection_used")
+                    or self._player_pos() is None
+                    or self._dist2d(self._player_pos(), target.pos) > BOW_REACH):
+                self.notify("That soul cannot be resurrected", 2.5)
+                return False
+        else:
+            target = self._nearest_dead_actor(BOW_REACH, aim)
         if target is None:
             self.notify("No fallen soul is close enough to resurrect")
             return False
-        # Drain all magicka and spend the day's single casting.
-        c.magicka = 0.0
-        self.store.set("resurrect.last_day", today)
-        c.use_skill(spell.school, 1.0 + spell.base_cost / 40.0)
         if not self._revive_actor(target):
             # Defensive: _nearest_dead_actor already skips gibbed bodies.
             self.notify("The body is too destroyed to resurrect")
             return False
+        c.magicka = 0.0
+        self.store.set("resurrect.last_day", today)
+        c.use_skill(spell.school, 1.0 + spell.base_cost / 40.0)
+        p = target.properties
+        p.update(resurrection_used=True, resurrected_by="player",
+                 sprite_tint=[1.0, 0.30, 0.30], follow_player=True,
+                 combatant=True, aggression="defensive", team=factions.PLAYER,
+                 faction=factions.PLAYER, triggered=True, awake=False,
+                 away_on_journey=False)
+        for key in ("_aggro_target", "_base_aggression", "_flee", "_dest",
+                    "_arrest_state", "_journey", "_death_noted"):
+            p.pop(key, None)
+        self._deaths_seen.discard(str(p.get("name", "")))
+        if p.get("name"):
+            self.store.set("dead." + str(p["name"]), "false")
+        _journal(target)
+        self._rebuild_entity_caches()
         name = target.properties.get("name") or target.properties.get("npc_role") \
             or target.properties.get("monster_type") or "The fallen"
         # The whole screen sinks into dark red as light pours up from the body.
         self.magic_fx.resurrection(_feet(target))
-        self.notify(f"{name} rises again!")
+        self.notify(f"{name} rises and follows you!")
         self._player_deed("resurrect")
         self.add_floater("RAISED", kind="heal")
         return True
@@ -6410,7 +6543,8 @@ class MiniwindSession(SettlementLaw):
 
     def overhead_pose(self):
         c = self.game.character
-        armed = bool(eq.equipped_id(c, "weapon")) or bool(c.active_spell)
+        armed = bool(eq.equipped_id(c, "weapon")) or any(
+            eq.hand_spell(c, hand) is not None for hand in ("main", "off"))
         attacking = (getattr(self, "_attack_anim_time", 0.0) > 0.0
                      or getattr(self, "_offhand_anim_time", 0.0) > 0.0
                      or getattr(self, "_cast_cooldown", 0.0) > 0.05)
@@ -6556,6 +6690,9 @@ class MiniwindSession(SettlementLaw):
         for npc in self.npcs():
             p = npc.properties
             if npc is target or not p.get("follow_player", False):
+                continue
+            if p.get("resurrection_used"):
+                self._guard_raised_follower(npc)
                 continue
             if self._dist2d(ppos, npc.pos) > FOLLOW_ASSIST_RADIUS:
                 continue
@@ -6723,6 +6860,23 @@ class MiniwindSession(SettlementLaw):
     def _inventory_move(self, source, target, item_id) -> bool:
         from .ui import inventory_window as iw
         c = self.game.character
+        if source[0] in ("spell", "spell_hand"):
+            if target[0] == "hand":
+                return self.equip_hand_spell(item_id, target[1], source)
+            if target[0] == "equip" and target[1] in ("weapon", "shield"):
+                return self.equip_hand_spell(item_id,
+                    "off" if target[1] == "shield" else "main", source)
+            if source[0] == "spell_hand" and target[0] in ("pack", "spells"):
+                held = eq.hand_spell(c, source[1])
+                if held is None or held.id != item_id:
+                    return False
+                changed = eq.unequip_spell(c, source[1])
+                self.cancel_spell_aim()
+                return changed
+            return False
+        if target[0] == "hand":
+            hand = eq.relative_hand(c, target[1])
+            target = ("equip", eq.hand_slot(hand))
         d = rpg_items.get(item_id)
         if d is None or not inv.has_item(c.inventory, item_id, 1):
             return False
@@ -6773,6 +6927,36 @@ class MiniwindSession(SettlementLaw):
                 self._cancel_bow_draw()
             return True
         return False
+
+    def equip_hand_spell(self, spell_id, hand, source=None) -> bool:
+        """Equip a spell atomically; displaced equipment must fit in the pack."""
+        c = self.game.character
+        hand = eq.relative_hand(c, hand)
+        if source is not None and source[0] == "spell_hand":
+            held = eq.hand_spell(c, source[1])
+            if held is None or held.id != spell_id:
+                return False
+        worn = dict(c.equipment)
+        spells = dict(c.hand_spells)
+        active, kind = c.active_spell, c.active_weapon_kind
+        used = self.pack_used()
+        if not eq.equip_spell(c, spell_id, hand):
+            return False
+        if self.pack_used() > max(self.pack_capacity(), used):
+            c.equipment = worn
+            c.hand_spells = spells
+            c.active_spell, c.active_weapon_kind = active, kind
+            self._pack_full_note()
+            return False
+        if source is not None and source[0] == "spell_hand":
+            old_hand = eq.relative_hand(c, source[1])
+            if old_hand != hand:
+                eq.unequip_spell(c, old_hand)
+        self._cancel_bow_draw()
+        self.cancel_spell_aim()
+        physical = c.handed if hand == "main" else ("left" if c.handed == "right" else "right")
+        self.notify(f"{rpg_magic.get(spell_id).name} equipped in {physical} hand", 2.0)
+        return True
 
     def inventory_use(self, item_id) -> bool:
         """Double-click / Use: wear or take off what is worn, draw a weapon,
@@ -7236,6 +7420,8 @@ class MiniwindSession(SettlementLaw):
         tkind, tkey = target[0], target[1]
         if not iid:
             return False
+        if skind in ("spell", "spell_hand") or tkind == "hand":
+            return self.inventory_move(source, target, iid)
         if skind == "container":
             if tkind == "container":
                 return False

@@ -156,13 +156,13 @@ class GamePointer:
             return True        # aiming a spell: the cursor says where it goes
         from . import hud_layout
         if hud_layout.arranging:
-            return True        # rearranging the HUD: panels are dragged about
-        # The character sheet, spellbook, merchant trade screen and level-up
-        # page release the captured mouse so their choices can be clicked.
-        # The quickbar, dialogue and other game screens keep normal
-        # mouse-look captured.
+            return True
+        # Every Statistics tab and the merchant trade screen release the
+        # captured mouse so their choices can be clicked. The quickbar,
+        # dialogue and other game screens keep normal mouse-look captured.
         open_screen = getattr(session, "open_screen", None)
-        interactive_screen = open_screen in ("character", "spells", "trade", "levelup")
+        from .screens import STATISTICS_SCREENS
+        interactive_screen = open_screen in (*STATISTICS_SCREENS, "trade", "levelup")
         # Initial character creation happens before normal play controls exist.
         needs_creation = bool(getattr(session, "needs_char_creation", False))
         return bool((interactive_screen or needs_creation) and has_targets())

@@ -97,6 +97,18 @@ def draw_ghost(painter, owner, pointer, size=52) -> None:
     if current is None or current.get("owner") is not owner or pointer is None:
         return
     iid = current["source"][2]
+    if current["source"][0] in ("spell", "spell_hand"):
+        from ..rpg import magic
+        from PyQt5.QtCore import QPointF
+        from PyQt5.QtGui import QColor
+        spell = magic.get(iid)
+        if spell is not None:
+            painter.save()
+            painter.setOpacity(0.85)
+            painter.setBrush(QColor(*spell.color))
+            painter.drawEllipse(QPointF(*pointer), size / 3, size / 3)
+            painter.restore()
+        return
     try:
         from .. import item_icons
         pm = item_icons.icon_pixmap(iid, None, size)

@@ -277,7 +277,7 @@ class LoadoutWindow(FloatingWindow):
         except Exception:
             pass
         try:
-            self.session.notify(f"Readied {self._name_of_spell(spell_id)}")
+            self.session.notify(f"Selected {self._name_of_spell(spell_id)}")
         except Exception:
             pass
 

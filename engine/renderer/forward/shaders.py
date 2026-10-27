@@ -287,10 +287,10 @@ layout (location = 10) in vec4 iPayload;
     #: Per-instance attributes: centre, world size, optional locked yaw, opacity.
     #: Per-instance attributes: centre (3), world size (2), locked yaw,
     #: opacity, the texture-array layer the entity pass samples, and a head
-    #: actor's spin (heading, on).  Ten floats; a pass that does not use a
+    #: actor's spin (heading, on), and RGB tint. Thirteen floats; a pass that does not use a
     #: column still writes it, because the staging array is shared and a
     #: stale value is somebody else's sprite.
-    SPRITE_INSTANCE_FLOATS = 10
+    SPRITE_INSTANCE_FLOATS = 13
 
     def _compile_instanced_sprite_shader(self):
         """Compile the billboard shader with its centre and size per instance.
@@ -323,6 +323,7 @@ layout (location = 10) in vec4 iPayload;
             'layout (location = 1) in vec3 iSpritePos;\n'
             'layout (location = 2) in vec2 iSpriteSize;\n'
             'layout (location = 4) in float iSpriteAlpha;\n'
+            'layout (location = 7) in vec3 iSpriteTint;\n'
         )
         if 'iSpritePos' not in source:
             source = source.replace(
@@ -338,22 +339,22 @@ layout (location = 10) in vec4 iPayload;
             return
         source = source.replace(
             'out vec2 TexCoords;',
-            'out vec2 TexCoords;\nflat out float InstanceAlpha;',
+            'out vec2 TexCoords;\nflat out float InstanceAlpha;\nflat out vec3 InstanceTint;',
             1,
         )
         source = source.replace(
             'void main() {',
-            'void main() {\n    InstanceAlpha = iSpriteAlpha;',
+            'void main() {\n    InstanceAlpha = iSpriteAlpha;\n    InstanceTint = iSpriteTint;',
             1,
         )
         frag = frag.replace(
             'in highp vec3 FragPos;',
-            'in highp vec3 FragPos;\nflat in float InstanceAlpha;',
+            'in highp vec3 FragPos;\nflat in float InstanceAlpha;\nflat in vec3 InstanceTint;',
             1,
         )
         frag = frag.replace(
             'FragColor = vec4(applyFog(texColor.rgb, FragPos), texColor.a);',
-            'FragColor = vec4(applyFog(texColor.rgb, FragPos), texColor.a * InstanceAlpha);',
+            'FragColor = vec4(applyFog(texColor.rgb * InstanceTint, FragPos), texColor.a * InstanceAlpha);',
             1,
         )
         if self._register_instanced_shader('sprite_instanced', source, frag,

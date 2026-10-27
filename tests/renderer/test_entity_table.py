@@ -33,6 +33,16 @@ def _synced(things, epoch=1):
     return table
 
 
+def test_persistent_sprite_tint_is_published_and_returns_to_white_when_cleared():
+    monster = make_thing(Monster, 'raised', sprite_tint=[1., .3, .3])
+    table = _synced([monster])
+    np.testing.assert_allclose(table.sprite_tint[0], [1., .3, .3])
+    monster.properties.pop('sprite_tint')
+    touch(monster)
+    table.begin_frame([monster], epoch=1)
+    np.testing.assert_allclose(table.sprite_tint[0], [1., 1., 1.])
+
+
 @pytest.fixture
 def renderer():
     pytest.importorskip("OpenGL", reason="renderer entity-slot tests require OpenGL")

@@ -198,6 +198,8 @@ class MagicFX:
         #: ``wards() -> [(feet, colour, kind)]`` read every frame: who wears a
         #: ward (shield, flame cloak, ...), drawn as a fresnel bubble.
         self.wards = None
+        #: ``hands() -> [(position, spell look)]`` for persistent equipped magic.
+        self.hands = None
 
     # -- spawning helpers -----------------------------------------------------
     def near(self, pos) -> bool:
@@ -479,6 +481,20 @@ class MagicFX:
                           0.0])
             extra.append([*at, look["orb"] * 2.4, *c, 0.35, FLASH, 0.35, 0.0, 0.0])
         ward_lenses = []
+        for at, look in (self.hands() if self.hands is not None else ()):
+            colour = look["colour"]
+            pulse = 1.0 + 0.10 * math.sin(now * 4.0)
+            size = max(16.0, min(30.0, look["orb"])) * pulse
+            extra.append([*at, size, *colour, 0.9, ORB, 0.25, 0.3, 0.0])
+            extra.append([*at, size * 2.1, *colour, 0.24, FLASH, 0.35, 0.0, 0.0])
+            mode = {"frost": SHARDS, "arcs": ARC}.get(look["trail"], MOTE)
+            for i in range(3):
+                phase = now * 2.4 + i * math.tau / 3
+                orbit = (at[0] + math.cos(phase) * 10.0,
+                         at[1] + math.sin(phase * 1.3) * 6.0,
+                         at[2] + math.sin(phase) * 10.0)
+                extra.append([*orbit, 10.0, *colour, 0.65, mode,
+                              0.4, i / 3.0, 0.0])
         for pos, colour, kind in (self._wards_now() or ()):
             c = _rgb(colour)
             # The ward is a lens: the world behind it bulges as through glass,
