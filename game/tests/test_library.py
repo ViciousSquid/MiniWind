@@ -275,3 +275,52 @@ def test_blood_lies_on_the_floor_it_fell_on():
     g._splat((0.0, 150.0, 0.0), 40.0)
     (pos, *_rest), = g.floor_decals()
     assert pos[1] == 208.0
+
+
+# ------------------------------------------------------- how a page looks
+def test_notes_are_plain_or_torn_and_books_plain_or_illuminated():
+    from ..ui import page_art as pa
+    seen = set()
+    for d in items.items_by_category(items.BOOK):
+        note = bool(d.get("note"))
+        style = pa.style_of(d.id, note=note)
+        seen.add((note, style))
+        if note:
+            assert style in (pa.PLAIN, pa.TORN, pa.NEWSPRINT), d.id
+            assert (style == pa.NEWSPRINT) == ("crier" in d.id), d.id
+        else:
+            assert style in (pa.PLAIN, pa.ILLUMINATED), d.id
+    assert {(True, pa.TORN), (True, pa.PLAIN), (False, pa.ILLUMINATED),
+            (False, pa.PLAIN)} <= seen
+
+
+def test_an_authored_style_wins_only_where_it_is_allowed(monkeypatch):
+    from ..ui import page_art as pa
+    note, book = items.get("note_iou"), items.get("book_lore")
+    monkeypatch.setitem(note.extra, "style", "illuminated")
+    assert pa.style_of("note_iou", note=True) in (pa.PLAIN, pa.TORN)
+    monkeypatch.setitem(book.extra, "style", "illuminated")
+    assert pa.style_of("book_lore") == pa.ILLUMINATED
+
+
+@pytest.mark.qt
+def test_an_illuminated_book_opens_with_an_initial_beside_its_first_lines(qt_app):
+    from ..ui import fonts
+    from ..ui.book_window import paginate
+    f = (fonts.dialogue_font(26), fonts.dialogue_font(14), fonts.dialogue_font(15))
+    pages = paginate(books.get("crossing_kingsfall"), f, 400, 600, cap=60)
+    kinds = [k for k, _t, _y in pages[0]]
+    assert kinds.count("dropcap") == 1
+    cap = next(t for k, t, _y in pages[0] if k == "dropcap")
+    first = next(t for k, t, _y in pages[0] if k == "indent")
+    assert cap + first.split()[0] == "How"
+    assert "dropcap" not in [k for k, _t, _y in paginate(
+        books.get("crossing_kingsfall"), f, 400, 600)[0]]
+
+
+@pytest.mark.qt
+def test_a_torn_scrap_is_ragged_and_see_through_outside_the_tear(qt_app):
+    from ..ui import page_art as pa
+    img = pa.torn_paper(300, 400, seed=5)
+    assert img.pixelColor(0, 0).alpha() == 0
+    assert img.pixelColor(150, 200).alpha() == 255

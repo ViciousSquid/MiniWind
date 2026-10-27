@@ -13,9 +13,11 @@ A / D); Esc, E or the ✕ closes the book. The book is read from
 ``session.reading`` (see MiniwindSession.open_book).
 
 A **note** (``"note": true`` on the item) is not a book: it is shown as one
-loose sheet of paper, folded once and a little worn, with its lines kept as
-they were written -- a list stays a list, a poem keeps its lines. A page of
-the Millbrook Crier is newsprint. A note longer than its sheet goes on to
+loose sheet of paper, folded once and a little worn -- or a torn scrap of
+brown paper -- with its lines kept as they were written: a list stays a
+list, a poem keeps its lines. A page of the Millbrook Crier is newsprint.
+Some books are illuminated: a painted vine in the margins and an initial at
+the head of the text (game/ui/page_art.py). A note longer than its sheet goes on to
 another; click the sheet (or ← / →) to turn it.
 """
 
@@ -23,9 +25,10 @@ from __future__ import annotations
 
 import math
 import random
+import zlib
 
 import numpy as np
-from PyQt5.QtCore import QPoint, QRect, Qt
+from PyQt5.QtCore import QPoint, QRect, QRectF, Qt
 from PyQt5.QtGui import QColor, QFontMetrics, QImage, QPainter, QPen
 
 from engine.floating_windows import FloatingWindow
@@ -190,9 +193,29 @@ def _wrap(text, metrics, width):
     return lines
 
 
-def paginate(book, fonts, width, height):
+def _wrap_beside(text, metrics, width, narrow, lines):
+    """Wrap *text*, its first *lines* lines *narrow* (beside an initial)."""
+    out, line = [], ""
+    for word in text.split():
+        w = narrow if len(out) < lines else width
+        trial = word if not line else line + " " + word
+        if metrics.horizontalAdvance(trial) <= w or not line:
+            line = trial
+        else:
+            out.append(line)
+            line = word
+    if line:
+        out.append(line)
+    return out
+
+
+def paginate(book, fonts, width, height, cap=0):
     """The book laid out in pages: each a list of ``(kind, text, y)`` where
-    kind is "title", "author" or "body" and y is the baseline offset."""
+    kind is "title", "author" or "body" and y is the baseline offset.
+
+    With *cap* (pixels), the text opens with an illuminated initial that
+    size: a ``("dropcap", letter, y)`` entry (y its top) and the first lines
+    of the paragraph beside it as ``"indent"``."""
     from .. import books as lib
     f_title, f_author, f_body = fonts
     mt, ma, mb = QFontMetrics(f_title), QFontMetrics(f_author), QFontMetrics(f_body)
@@ -212,10 +235,24 @@ def paginate(book, fonts, width, height):
             y += ma.lineSpacing() + 2
             page.append(("author", line, y))
     y += gap * 2
+    from .page_art import CAP_LINES
+    initial = bool(cap)
     for para in book.paragraphs:
         if para == lib.PAGE_BREAK:
             if page:
                 new_page()
+            continue
+        if initial and para[:1].isalpha():
+            initial = False
+            top = y
+            page.append(("dropcap", para[0], top))
+            lines = _wrap_beside(para[1:], mb, width, width - cap - 12, CAP_LINES)
+            for i, line in enumerate(lines):
+                if y + line_h > height and page:
+                    new_page()
+                y += line_h
+                page.append(("indent" if i < CAP_LINES else "body", line, y))
+            y = max(y, top + cap) + gap
             continue
         for line in _wrap(para, mb, width):
             if y + line_h > height and page:
@@ -283,11 +320,24 @@ class BookWindow(FloatingWindow):
         from .. import books as lib
         return lib.get(self._reading().get("book", ""))
 
+    def _style(self):
+        from .page_art import style_of
+        r = self._reading()
+        return style_of(r.get("item", ""), note=bool(r.get("note")))
+
+    def _cap(self):
+        """The illuminated initial's size, for an illuminated book; else 0."""
+        from .page_art import ILLUMINATED, cap_size
+        if self._style() != ILLUMINATED:
+            return 0
+        return cap_size(QFontMetrics(self.fonts[2]).lineSpacing())
+
     def _layout_pages(self, book, page_w, page_h):
-        key = (book.id, page_w, page_h)
+        cap = self._cap()
+        key = (book.id, page_w, page_h, cap)
         if self._layout != key:
             self._layout = key
-            self._pages = paginate(book, self.fonts, page_w, page_h)
+            self._pages = paginate(book, self.fonts, page_w, page_h, cap=cap)
             r = self._reading()
             if r is not None:
                 r["spreads"] = max(1, (len(self._pages) + 1) // 2)
@@ -295,14 +345,24 @@ class BookWindow(FloatingWindow):
 
     def _draw_note(self, painter, book, rect):
         """A note: one loose sheet, lines as written (module docstring)."""
-        newsprint = "crier" in str(self._reading().get("item", ""))
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(0, 0, 0, 110))
-        painter.drawRect(rect.adjusted(6, 10, 10, 12))
-        painter.drawImage(rect.topLeft(), note_paper(rect.width(), rect.height(), newsprint))
-        mx = int(rect.width() * 0.1)
-        top = int(rect.height() * 0.07)
-        bottom = int(rect.height() * 0.08)
+        from . import page_art
+        style = self._style()
+        newsprint = style == page_art.NEWSPRINT
+        if style == page_art.TORN:
+            # A scrap torn from something bigger: ragged all round.
+            seed = zlib.crc32(str(self._reading().get("item", "")).encode("utf-8"))
+            painter.drawImage(rect.topLeft(), page_art.torn_paper(rect.width(), rect.height(), seed))
+            mx = int(rect.width() * 0.14)
+            top = int(rect.height() * 0.13)
+            bottom = int(rect.height() * 0.12)
+        else:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 110))
+            painter.drawRect(rect.adjusted(6, 10, 10, 12))
+            painter.drawImage(rect.topLeft(), note_paper(rect.width(), rect.height(), newsprint))
+            mx = int(rect.width() * 0.1)
+            top = int(rect.height() * 0.07)
+            bottom = int(rect.height() * 0.08)
         page_w, page_h = rect.width() - 2 * mx, rect.height() - top - bottom
         key = ("note", book.id, page_w, page_h)
         if self._layout != key:
@@ -383,17 +443,29 @@ class BookWindow(FloatingWindow):
         spreads = max(1, (len(pages) + 1) // 2)
         spread = max(0, min(int(r.get("spread", 0)), spreads - 1))
         r["spread"] = spread
+        cap = self._cap()
+        from . import page_art
         for side, area in enumerate((left, right)):
             index = spread * 2 + side
             if index >= len(pages):
                 continue
+            if cap:
+                # An illuminated book: a vine climbs each page's outer margin.
+                page_art.draw_vine(
+                    painter, page_art.border_points(QRectF(area), "left" if side == 0 else "right",
+                                                    mx, zlib.crc32(f"{book.id}{index}".encode())),
+                    zlib.crc32(f"{book.id}:{index}".encode()), scale=max(0.7, area.height() / 700.0))
             ox = area.x() + mx + (mx // 4 if side == 0 else -mx // 4)
             oy = area.y() + top
             for kind, text, y in pages[index]:
+                if kind == "dropcap":
+                    page_art.draw_initial(painter, text, QRect(ox, oy + y + 4, cap, cap),
+                                          self._cap_font(cap), seed=zlib.crc32(book.id.encode()))
+                    continue
                 font = {"title": self.fonts[0], "author": self.fonts[1]}.get(kind, self.fonts[2])
                 painter.setFont(font)
                 painter.setPen(INK_SOFT if kind == "author" else INK)
-                painter.drawText(ox, oy + y, text)
+                painter.drawText(ox + (cap + 12 if kind == "indent" else 0), oy + y, text)
             # The page number at the foot.
             painter.setFont(self.f_small)
             painter.setPen(INK_SOFT)
@@ -413,6 +485,14 @@ class BookWindow(FloatingWindow):
                              Qt.AlignRight | Qt.AlignVCenter, "turn on ›")
         self._draw_close(painter, rect)
         painter.restore()
+
+    def _cap_font(self, cap):
+        """The illuminated initial's face, sized to its box (cached)."""
+        if getattr(self, "_cap_font_for", None) != cap:
+            from . import fonts
+            self._cap_font_for = cap
+            self._cap_font_face = fonts.dialogue_font_px(int(cap * 0.78))
+        return self._cap_font_face
 
     def _draw_close(self, painter, rect):
         self._close_rect = QRect(rect.right() - 8, rect.y() - 22, 30, 30)
