@@ -224,9 +224,10 @@ def _draw_charcreate(painter, session, w, h):
                  lambda i: classes.get(i).label, field="class")
         favs = ", ".join(attr.label(a) for a in k.favored_attrs)
         majors = ", ".join(sk.label(m) for m in k.major_skills)
+        no_magic = "" if k.magic else f"\n\n{classes.NO_MAGIC_NOTE}"
         _cc_detail(painter, inner.x() + list_w + 24, ty, inner.width() - list_w - 24,
                    k.label, k.desc + f"\n\nSpecialisation: {k.specialisation}"
-                   f"\nFavoured: {favs}\nMajor skills: {majors}")
+                   f"\nFavoured: {favs}\nMajor skills: {majors}{no_magic}")
         hint = "↑/↓ choose class    Enter next    Esc back"
     elif step == "birthsign":
         ids = birthsigns.CREATION_BIRTHSIGN_IDS
@@ -252,7 +253,9 @@ def _draw_charcreate(painter, session, w, h):
         bio = _cc_bio(s)
         totals = "   ".join(f"{label} {sum(s['rolls'][a])}"
                             for a, label in _cha.ROLLED) if s.get("rolls") else ""
-        summary = (f"Name: {name}\nClass: {k.label}\nBirthsign: {b.label}\n"
+        summary = (f"Name: {name}\nClass: {k.label}"
+                   + ("" if k.magic else "  (no magic: it does not reveal itself to you)")
+                   + f"\nBirthsign: {b.label}\n"
                    f"{totals}\n\n{bio['title']}\n\n"
                    "Begin your adventure, or go back to change anything.")
         _cc_detail(painter, tx, ty, inner.right() - tx, "Ready?", summary)

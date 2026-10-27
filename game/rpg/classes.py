@@ -22,10 +22,10 @@ from . import skills as sk
 
 class CharClass:
     __slots__ = ("id", "label", "desc", "specialisation", "favored_attrs",
-                 "major_skills", "starting_spells", "magic")
+                 "major_skills", "starting_spells", "magic", "damage_mult")
 
     def __init__(self, cid, label, desc, spec, favored_attrs, major_skills,
-                 starting_spells=None, magic=True):
+                 starting_spells=None, magic=True, damage_mult=1.0):
         self.id = cid
         self.label = label
         self.desc = desc
@@ -39,15 +39,29 @@ class CharClass:
         # Whether the class can work magic at all. A Warrior cannot: no
         # magicka, no spells, no casting (see can_use_magic).
         self.magic = bool(magic)
+        # How hard the class hits with every attack it makes. The Warrior's
+        # is the highest of any class (see WARRIOR_DAMAGE).
+        self.damage_mult = float(damage_mult)
+
+
+#: The Warrior's damage multiplier: no class hits harder.
+WARRIOR_DAMAGE = 1.25
+
+#: What character creation tells a player choosing a class that works no magic.
+NO_MAGIC_NOTE = ("No magic. Magic does not reveal itself to this class: you will "
+                 "have no magicka, cannot learn or cast spells, and are never "
+                 "offered Magicka when you level up. Steel, strength and nerve "
+                 "will have to carry you.")
 
 
 CLASSES: Dict[str, CharClass] = {c.id: c for c in [
     CharClass("warrior", "Warrior",
-              "A front-line fighter: heavy armour, a strong arm, a blade or a mace.",
+              "A front-line fighter: heavy armour, a strong arm, a blade or a mace. "
+              "No class hits harder: every attack a Warrior makes deals +25% damage.",
               sk.COMBAT, [attr.STRENGTH, attr.ENDURANCE],
               [sk.BLADE, sk.BLUNT, sk.HEAVY_ARMOR, sk.BLOCK, sk.ATHLETICS,
                sk.MARKSMAN, sk.LIGHT_ARMOR],
-              magic=False),
+              magic=False, damage_mult=WARRIOR_DAMAGE),
     CharClass("knight", "Knight",
               "A chivalrous warrior as comfortable at court as in the melee.",
               sk.COMBAT, [attr.STRENGTH, attr.PERSONALITY],
@@ -133,6 +147,13 @@ def can_use_magic(character) -> bool:
         return bool(get(getattr(character, "class_id", "")).magic)
     except Exception:
         return True
+
+
+def damage_mult(character) -> float:
+    """How hard *character*'s class hits (1.0 for a class with no bonus, or
+    a custom class)."""
+    klass = CLASSES.get(str(getattr(character, "class_id", "")).lower())
+    return klass.damage_mult if klass is not None else 1.0
 
 
 def get(class_id: str) -> CharClass:

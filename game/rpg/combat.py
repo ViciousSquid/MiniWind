@@ -198,6 +198,10 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     elif kind == items.KIND_STAFF:
         dmg *= 0.7 + character.skill(sk.OFFENSIVE) / 100.0
 
+    # --- class: a Warrior hits harder than anyone (classes.WARRIOR_DAMAGE) ---
+    from . import classes as _classes
+    dmg *= _classes.damage_mult(character)
+
     # --- sneak attack ---
     if sneaking:
         mult = 3.0 if kind == items.KIND_MELEE else 2.0

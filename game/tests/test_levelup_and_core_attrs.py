@@ -247,3 +247,21 @@ def test_a_watchman_can_be_talked_out_of_half_a_lesser_writ():
     w.charge("vale", 2, 500, 0.0, grave=True)
     assert w.forgive("vale", 0.5) == 50
     assert w.bounty("vale") == 550                    # the blood writ stands
+
+
+def test_a_warrior_hits_harder_than_any_other_class():
+    import random as _random
+    from ..rpg import inventory as inv, items, equipment as eq
+    damage = {}
+    for class_id in classes.CLASSES:
+        c = Character()
+        c.class_id = class_id
+        inv.add_item(c.inventory, items.make("iron_shortsword"))
+        eq.equip(c, "iron_shortsword")
+        res = combat.player_attack(c, {"health": 500, "endurance": 40}, guaranteed_hit=True,
+                                   rng=_random.Random(1))
+        damage[class_id] = res["damage"] / (1.5 if res["crit"] else 1.0)
+    best = max(v for k, v in damage.items() if k != "warrior")
+    assert damage["warrior"] == pytest.approx(best * classes.WARRIOR_DAMAGE, rel=0.02)
+    assert classes.damage_mult(type("C", (), {"class_id": "custom"})()) == 1.0
+    assert classes.NO_MAGIC_NOTE and not classes.CLASSES["warrior"].magic
