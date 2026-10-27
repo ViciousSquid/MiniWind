@@ -11,6 +11,12 @@ paragraph running on over the turn of a page as it would in a real book, a
 Click the left page to turn back and the right page to turn on (or ← / →,
 A / D); Esc, E or the ✕ closes the book. The book is read from
 ``session.reading`` (see MiniwindSession.open_book).
+
+A **note** (``"note": true`` on the item) is not a book: it is shown as one
+loose sheet of paper, folded once and a little worn, with its lines kept as
+they were written -- a list stays a list, a poem keeps its lines. A page of
+the Millbrook Crier is newsprint. A note longer than its sheet goes on to
+another; click the sheet (or ← / →) to turn it.
 """
 
 from __future__ import annotations
@@ -86,6 +92,89 @@ def parchment(w, h):
     return qimg
 
 
+_sheet_cache = {}
+
+
+def note_paper(w, h, newsprint=False):
+    """A loose sheet: grained paper, a soft worn rim, the crease of one fold
+    across the middle (cached). Newsprint is greyer and smoother."""
+    key = (int(w), int(h), bool(newsprint))
+    if key in _sheet_cache:
+        return _sheet_cache[key]
+    rng = np.random.default_rng(11)
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
+    grain = (rng.random((h, w)).astype(np.float32) - 0.5) * (5 if newsprint else 8)
+    # Soft blotches: a coarse field, smoothly enlarged (no blocks).
+    from PIL import Image
+    blotch = rng.random((h // 40 + 2, w // 40 + 2)).astype(np.float32)
+    big = np.asarray(Image.fromarray((blotch * 255).astype(np.uint8)).resize(
+        (w, h), Image.BICUBIC), np.float32) / 255.0 - 0.5
+    base = np.array([214, 210, 196] if newsprint else [238, 226, 194], np.float32)
+    img = base[None, None, :] + (grain + big * (6 if newsprint else 14))[..., None]
+    edge = np.minimum(np.minimum(xs, w - 1 - xs), np.minimum(ys, h - 1 - ys))
+    rim = np.clip(1.0 - edge / (min(w, h) * 0.06), 0.0, 1.0) ** 2
+    img = img * (1 - rim[..., None] * 0.25) + np.array([170, 140, 95]) * rim[..., None] * 0.25
+    # The fold: a light ridge and its shadow across the middle.
+    d = (ys - h * 0.5) / max(1.0, h * 0.004)
+    img *= (1.0 - 0.10 * np.exp(-(d - 1.5) ** 2) + 0.06 * np.exp(-(d + 1.5) ** 2))[..., None]
+    arr = np.clip(img, 0, 255).astype(np.uint8)
+    rgba = np.dstack([arr, np.full((h, w), 255, np.uint8)])
+    qimg = QImage(np.ascontiguousarray(rgba).data, w, h, w * 4, QImage.Format_RGBA8888).copy()
+    _sheet_cache[key] = qimg
+    return qimg
+
+
+def paginate_note(book, fonts, width, height):
+    """A note laid out in sheets, as :func:`paginate` lays out pages, but
+    line by line as it was written: each written line wraps on its own."""
+    from .. import books as lib
+    f_title, f_author, f_body = fonts
+    mt, ma, mb = QFontMetrics(f_title), QFontMetrics(f_author), QFontMetrics(f_body)
+    line_h = mb.lineSpacing()
+    gap = int(line_h * 0.55)
+    pages, page, y = [], [], 0
+
+    def new_page():
+        nonlocal page, y
+        pages.append(page)
+        page, y = [], 0
+    for line in _wrap(book.title, mt, width):
+        y += mt.lineSpacing()
+        page.append(("title", line, y))
+    if book.author:
+        for line in _wrap(book.author, ma, width):
+            y += ma.lineSpacing() + 2
+            page.append(("author", line, y))
+    y += gap * 2
+    for para in book.lines:
+        if para == [lib.PAGE_BREAK]:
+            if page:
+                new_page()
+            continue
+        for written in para:
+            for line in _wrap(written, mb, width):
+                if y + line_h > height and page:
+                    new_page()
+                y += line_h
+                page.append(("body", line, y))
+        y += gap
+    if page:
+        pages.append(page)
+    return pages
+
+
+def byline(author) -> str:
+    """The line under a book's title: "By <author>", unless the author line
+    already says how the book came to be ("As told by ...", "Collected in
+    ...", "(no name ...)"), when it stands as written."""
+    a = str(author or "").strip()
+    first = a.split(" ", 1)[0].lower() if a else ""
+    if a.startswith("(") or first in ("as", "by", "collected", "kept", "copied",
+                                       "written", "anonymous,", "anonymous"):
+        return a
+    return f"By {a}"
+
+
 def _wrap(text, metrics, width):
     words = text.split()
     lines, line = [], ""
@@ -119,8 +208,9 @@ def paginate(book, fonts, width, height):
         y += mt.lineSpacing()
         page.append(("title", line, y))
     if book.author:
-        y += ma.lineSpacing() + 4
-        page.append(("author", f"By {book.author}", y))
+        for line in _wrap(byline(book.author), ma, width):
+            y += ma.lineSpacing() + 2
+            page.append(("author", line, y))
     y += gap * 2
     for para in book.paragraphs:
         if para == lib.PAGE_BREAK:
@@ -156,11 +246,21 @@ class BookWindow(FloatingWindow):
         self.fonts = (fonts.dialogue_font(26), fonts.dialogue_font(14),
                       fonts.dialogue_font(15))
         self.f_small = fonts.dialogue_font(11)
+        self.note_fonts = (fonts.dialogue_font(21), fonts.dialogue_font(13),
+                           fonts.dialogue_font(15))
 
     # -- size and place --------------------------------------------------
+    def _is_note(self):
+        return bool(self._reading().get("note"))
+
     def place(self, view_w, view_h):
-        w = int(min(1180, view_w * 0.9, (view_h * 0.9) * ASPECT))
-        h = int(w / ASPECT)
+        if self._is_note():
+            # One sheet, a little taller than it is wide.
+            h = int(min(view_h * 0.86, 760))
+            w = int(min(view_w * 0.9, h * 0.74))
+        else:
+            w = int(min(1180, view_w * 0.9, (view_h * 0.9) * ASPECT))
+            h = int(w / ASPECT)
         self.book_w, self.book_h = w, h
         self.width = w
         self._body_height = h
@@ -193,11 +293,62 @@ class BookWindow(FloatingWindow):
                 r["spreads"] = max(1, (len(self._pages) + 1) // 2)
         return self._pages
 
+    def _draw_note(self, painter, book, rect):
+        """A note: one loose sheet, lines as written (module docstring)."""
+        newsprint = "crier" in str(self._reading().get("item", ""))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 110))
+        painter.drawRect(rect.adjusted(6, 10, 10, 12))
+        painter.drawImage(rect.topLeft(), note_paper(rect.width(), rect.height(), newsprint))
+        mx = int(rect.width() * 0.1)
+        top = int(rect.height() * 0.07)
+        bottom = int(rect.height() * 0.08)
+        page_w, page_h = rect.width() - 2 * mx, rect.height() - top - bottom
+        key = ("note", book.id, page_w, page_h)
+        if self._layout != key:
+            self._layout = key
+            self._pages = paginate_note(book, self.note_fonts, page_w, page_h)
+        pages = self._pages
+        r = self._reading()
+        r["spreads"] = max(1, len(pages))
+        sheet = max(0, min(int(r.get("spread", 0)), len(pages) - 1))
+        r["spread"] = sheet
+        self._page_rects = (QRect(rect.x(), rect.y(), rect.width() // 2, rect.height()),
+                            QRect(rect.x() + rect.width() // 2, rect.y(),
+                                  rect.width() - rect.width() // 2, rect.height()))
+        ink = QColor(30, 28, 26) if newsprint else INK
+        for kind, text, y in (pages[sheet] if pages else ()):
+            font = {"title": self.note_fonts[0], "author": self.note_fonts[1]}.get(
+                kind, self.note_fonts[2])
+            painter.setFont(font)
+            painter.setPen(INK_SOFT if kind == "author" else ink)
+            painter.drawText(rect.x() + mx, rect.y() + top + y, text)
+        if newsprint and pages:
+            # The rule under a newspaper's masthead.
+            painter.setPen(QPen(ink, 2))
+            title_y = max((y for kind, _t, y in pages[0] if kind == "title"), default=0)
+            if sheet == 0 and title_y:
+                yy = rect.y() + top + title_y + 8
+                painter.drawLine(rect.x() + mx, yy, rect.right() - mx, yy)
+        if len(pages) > 1:
+            painter.setFont(self.f_small)
+            painter.setPen(INK_SOFT)
+            painter.drawText(QRect(rect.x(), rect.bottom() - bottom + 8, rect.width(), 20),
+                             Qt.AlignCenter, f"{sheet + 1} / {len(pages)}   (click to turn)")
+
     def draw(self, painter, focused=False):
         if not self.active:
             return
         book = self._book()
         rect = self._full_rect()
+        if book is not None and self._is_note():
+            painter.save()
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setRenderHint(QPainter.TextAntialiasing, True)
+            self._draw_note(painter, book, rect)
+            self._draw_close(painter, rect)
+            painter.restore()
+            return
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
@@ -260,6 +411,10 @@ class BookWindow(FloatingWindow):
             painter.setPen(INK if hot else INK_SOFT)
             painter.drawText(QRect(right.right() - mx // 2 - 140, right.bottom() - bottom + 10, 140, 24),
                              Qt.AlignRight | Qt.AlignVCenter, "turn on ›")
+        self._draw_close(painter, rect)
+        painter.restore()
+
+    def _draw_close(self, painter, rect):
         self._close_rect = QRect(rect.right() - 8, rect.y() - 22, 30, 30)
         painter.setBrush(COVER.lighter(140) if hits.hovered(self._close_rect) else COVER)
         painter.setPen(QPen(QColor(200, 170, 110), 1.5))
@@ -267,7 +422,6 @@ class BookWindow(FloatingWindow):
         painter.setFont(self.f_small)
         painter.setPen(QColor(235, 215, 170))
         painter.drawText(self._close_rect, Qt.AlignCenter, "✕")
-        painter.restore()
 
     # -- mouse -------------------------------------------------------------
     def handle_mouse_press(self, event):

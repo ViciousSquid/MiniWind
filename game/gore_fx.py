@@ -85,6 +85,10 @@ class GoreFX:
         #: ``stamp(splat) -> bool``: bake a splat into the surface under it;
         #: True when it took (it is then forgotten here). None: never stamp.
         self.stamp = None
+        #: ``ground(x, y, z) -> height or None``: the floor a splat at
+        #: (x, y, z) lies on -- a built floor's top, not the terrain under
+        #: it. None: a splat lies where it landed.
+        self.ground = None
 
     # ---------------------------------------------------------- spawning
     def wound(self, pos, damage, max_health=30.0, away=None, crit=False):
@@ -245,9 +249,24 @@ class GoreFX:
             opacity = STAMP_OPACITY * self.splat_alpha(s, now)
             if image is None or opacity <= 0.0:
                 continue
-            out.append(((s["x"], s["y"], s["z"]), float(s.get("rot", 0.0)), image,
+            out.append(((s["x"], self.floor_of(s), s["z"]), float(s.get("rot", 0.0)), image,
                         self.splat_size(s, now), opacity))
         return out
+
+    def floor_of(self, s) -> float:
+        """The height of the floor splat *s* lies on, found once and kept: a
+        decal laid at the height a body's feet were given can be under a
+        built floor, hidden by it."""
+        floor = s.get("floor")
+        if floor is None:
+            found = None
+            if self.ground is not None:
+                try:
+                    found = self.ground(s["x"], s["y"], s["z"])
+                except Exception:
+                    found = None
+            floor = s["floor"] = float(s["y"] if found is None else found)
+        return floor
 
     def snapshot(self):
         """``(particles, splats, screen)`` copies to draw from."""

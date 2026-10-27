@@ -1332,24 +1332,34 @@ def _draw_trade(painter, session, w, h):
     col_w = (inner.width() - 24) // 2
     rows_bottom = inner.bottom() - 70          # room for the buttons below
 
+    # Each row shows the item's thumbnail: half the size of its inventory
+    # icon (game/ui/inventory_window.py). A list longer than the column scrolls
+    # to keep the selected row in view.
+    row_h = TRADE_THUMB + 6
+    list_top = ty + 22
+    fits = max(1, (rows_bottom - list_top) // row_h)
+    tops = st.setdefault("tops", [0, 0])
     for side, (title, lst, buying) in enumerate([("Buy", stock, True), ("Sell", sell, False)]):
         cx = inner.x() + side * (col_w + 24)
+        if st["side"] == side:
+            row = min(st["row"], max(0, len(lst) - 1))
+            tops[side] = min(max(tops[side], row - fits + 1), row)
+        tops[side] = max(0, min(tops[side], max(0, len(lst) - fits)))
+        top = tops[side]
         T.text(painter, cx, ty + 4, title, size=13,
                color=T.GOLD_BRIGHT if st["side"] == side else T.DIM, bold=True)
         if not lst:
             T.text(painter, cx + 8, ty + 36, "Nothing to sell" if side else
                    "Nothing for sale", size=10, color=T.DIM, family="Segoe UI")
         shown = 0
-        for i, entry in enumerate(lst):
-            ry = ty + 24 + i * 22
-            if ry > rows_bottom - 20:
-                break
-            shown = i + 1
+        for i, entry in enumerate(lst[top:top + fits], start=top):
+            ry = list_top + (i - top) * row_h
+            shown = i - top + 1
             iid = entry["id"] if isinstance(entry, dict) else entry
             d = rpg_items.get(iid)
             price = session._price(d.value if d else 0, buying, npc=npc)
             selected = st["side"] == side and st["row"] == i
-            row = QRect(cx, ry - 2, col_w, 20)
+            row = QRect(cx, ry, col_w, row_h - 2)
             trade_anim.record_row(side, iid, row)
             _row_target(painter, row, _trade_select(side, i),
                         f"{'sell' if side else 'buy'}:{iid}")
@@ -1366,13 +1376,27 @@ def _draw_trade(painter, session, w, h):
             elif left is not None:
                 nm += f" ×{left}"
             colour = T.GOLD_BRIGHT if selected else T.INK
-            T.text(painter, cx + 8, ry + 12, nm, size=10,
+            pm = _trade_thumb(iid, entry if isinstance(entry, dict) else None)
+            if pm is not None and not pm.isNull():
+                if left == 0:
+                    painter.setOpacity(0.45)
+                painter.drawPixmap(cx + 4 + (TRADE_THUMB - pm.width()) // 2,
+                                   ry + (row_h - 2 - pm.height()) // 2, pm)
+                painter.setOpacity(1.0)
+            T.text(painter, cx + TRADE_THUMB + 12, ry + row_h // 2 + 4, nm, size=10,
                    color=T.DIM if left == 0 else colour, family="Segoe UI")
-            T.text_in(painter, QRect(cx, ry - 2, col_w - 8, 20), f"{price}g", size=9,
+            T.text_in(painter, QRect(cx, ry, col_w - 8, row_h - 2), f"{price}g", size=9,
                       color=T.GOLD, align=T.ALIGN_RIGHT, family="Segoe UI")
         # Where a new row would appear: a card with no row to land on (an
         # item sold into stock the merchant does not list) lands here.
-        trade_anim.record_column(side, QRect(cx, ty + 24 + shown * 22 - 2, col_w, 20))
+        trade_anim.record_column(side, QRect(cx, list_top + shown * row_h, col_w, row_h - 2))
+        # More above or below the rows shown.
+        if top > 0:
+            T.text_in(painter, QRect(cx, list_top - 18, col_w - 8, 16), "▲ more", size=8,
+                      color=T.DIM, align=T.ALIGN_RIGHT, family="Segoe UI")
+        if top + fits < len(lst):
+            T.text_in(painter, QRect(cx, list_top + fits * row_h - 2, col_w - 8, 16),
+                      "▼ more", size=8, color=T.DIM, align=T.ALIGN_RIGHT, family="Segoe UI")
 
     # The trade button names what it will do; Leave ends the trade.
     lst = stock if st["side"] == 0 else sell
@@ -1387,6 +1411,8 @@ def _draw_trade(painter, session, w, h):
         can = (c.gold >= price and not sold_out) if buying else True
         label = (f"Buy {name_} for {price}g" if buying
                  else f"Sell {name_} for {price}g")
+        if not buying and not session.merchant_will_buy(d.id if d else ""):
+            label = f"{name_}: not wanted here"
         if sold_out:
             label = f"{name_}: sold out until tomorrow"
         elif buying and not can:
@@ -1396,13 +1422,31 @@ def _draw_trade(painter, session, w, h):
            label, lambda sess: _handle_trade(sess, "return"), enabled=can, primary=True)
     button(painter, QRect(inner.right() - 110, by, 110, 34), "Leave",
            lambda sess: _handle_trade(sess, "escape"))
+    if lst and _book_with_text(entry["id"] if isinstance(entry, dict) else entry):
+        # A book on the shelf (or in your pack) can be read before it is bought.
+        button(painter, QRect(inner.x(), by, 110, 34), "Read (R)",
+               lambda sess: _handle_trade(sess, "r"))
 
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              "Click or ↑/↓ select   ←/→ buy|sell   Enter trade   Esc leave", size=9,
+              "Click or ↑/↓ select   ←/→ buy|sell   Enter trade   R read   Esc leave", size=9,
               color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
 
     # Items changing hands, over everything else on the screen.
     trade_anim.draw(painter)
+
+
+#: Trade rows show the item's thumbnail at half its inventory icon
+#: (inventory_window.CELL less its margin).
+TRADE_THUMB = (58 - 10) // 2
+
+
+def _trade_thumb(item_id, stack=None):
+    """The item's thumbnail for a trade row, or None."""
+    try:
+        from .. import item_icons
+        return item_icons.icon_pixmap(item_id, stack, TRADE_THUMB)
+    except Exception:
+        return None
 
 
 def _sell_list(c):
@@ -1430,9 +1474,7 @@ def _merchant_stock(npc):
     defaults = {
         "merchant": ["potion_heal_minor", "potion_magicka", "torch", "lockpick",
                      "cloth_robe", "cloth_hood", "sandals", "hide_boots", "copper_ring",
-                     "iron_arrow", "bread" if rpg_items.get("bread") else "book_lore",
-                     "book_lore", "book_last_ferryman", "book_lament_greywood",
-                     "book_marksman", "book_blade"],
+                     "iron_arrow", "bread"],
         "blacksmith": ["iron_longsword", "iron_mace", "steel_longsword", "iron_shield",
                        "iron_cuirass", "iron_helmet", "short_bow", "iron_arrow",
                        "crossbow", "iron_bolt",
@@ -1442,7 +1484,11 @@ def _merchant_stock(npc):
                      "chain_shirt", "scale_mail", "plate_armour", "plate_helm",
                      "plate_greaves", "round_shield", "kite_shield"],
     }
-    return [{"id": i} for i in defaults.get(role, defaults["merchant"])]
+    # A merchant who deals in books keeps a few titles of their own
+    # (game/library.py); a smith or a brewer keeps none.
+    from .. import library
+    shelf = defaults.get(role, defaults["merchant"]) + library.shop_books(npc.properties)
+    return [{"id": i} for i in shelf]
 
 
 def _handle_trade(session, key):
@@ -1478,9 +1524,26 @@ def _handle_trade(session, key):
                               gold_text=f"{'-' if buying else '+'}{price}g",
                               gold_gain=not buying)
         return True
+    if key == "r" and lst:
+        entry = lst[min(st["row"], len(lst) - 1)]
+        _read_in_place(session, entry["id"] if isinstance(entry, dict) else entry)
+        return True
     if key in ("escape", "esc", "e"):
         close_trade(session)
     return True
+
+
+def _book_with_text(item_id) -> bool:
+    """Whether *item_id* is a book there is something to read in."""
+    from .. import books
+    return books.book_of_item(item_id) is not None
+
+
+def _read_in_place(session, item_id) -> None:
+    """Open a book where it lies -- on a merchant's shelf, in a chest -- to
+    read it without taking it (the screen comes back when it closes)."""
+    if _book_with_text(item_id):
+        session.open_book(item_id)
 
 
 def close_trade(session):
@@ -1890,6 +1953,10 @@ def _draw_container(painter, session, w, h):
     button(painter, QRect(inner.right() - bw, by, bw, bh), "Close",
            lambda sess: sess.close_container())
     hint = "Enter: take →" if st["side"] == 0 else "← Enter: store"
+    sel = (citems[st["row_c"]] if st["side"] == 0 and citems
+           else pitems[st["row_p"]] if st["side"] == 1 and pitems else None)
+    if sel and _book_with_text(sel.get("id")):
+        hint += "    ·    R: read"
     T.text_in(painter, QRect(inner.x() + bw, by, inner.width() - 2 * bw, bh),
               hint, size=9, color=T.DIM, align=T.ALIGN_CENTER, family="Segoe UI")
 
@@ -1928,6 +1995,13 @@ def _handle_container(session, key):
             session.take_from_container(st["row_c"])
         else:
             session.store_in_container(st["row_p"])
+        return True
+    if key == "r":
+        # Read a book where it lies, without taking it.
+        items = citems if st["side"] == 0 else pitems
+        row = st["row_c"] if st["side"] == 0 else st["row_p"]
+        if items:
+            _read_in_place(session, items[min(row, len(items) - 1)].get("id"))
         return True
     if key in ("e", "escape", "esc", "i"):
         session.close_container()

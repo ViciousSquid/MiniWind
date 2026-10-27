@@ -39,6 +39,7 @@ from .rpg import schedule as sched
 from .rpg import combat as rpg_combat
 from .rpg import equipment as eq
 from .rpg import items as rpg_items
+from . import library
 from . import warrior_fist
 from . import held_weapons
 from .rpg import magic as rpg_magic
@@ -520,6 +521,8 @@ class MiniwindSession(SettlementLaw):
             _ps = [s.strip() for s in _ps.split(",") if s.strip()]
         self._player_start_spells = list(_ps) if isinstance(_ps, list) else []
         self.region_name = str(cfg.get("region_name", "The Vale of Miniwind"))
+        #: A cave or dungeon (Game Settings): it has cave music (game/music.py).
+        self.underground = bool(cfg.get("underground", False))
         self.store = StateStore(globals_store, str(cfg.get("state_store", "miniwind")))
 
         self.rng = random.Random()
@@ -720,6 +723,8 @@ class MiniwindSession(SettlementLaw):
         from .gore_fx import GoreFX
         self.gore = GoreFX()
         self.gore.stamp = self._stamp_blood
+        # Blood not stamped lies on the floor it fell on, built or not.
+        self.gore.ground = lambda x, y, z: fio.ground_height(self.logic, x, z, below=y + 80.0)
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
         self._attack_anim_time = 0.0   # player stab animation remaining (seconds)
@@ -6155,12 +6160,14 @@ class MiniwindSession(SettlementLaw):
         pos = self._player_pos()
         if c.is_dead or pos is None or fio.cutscene_active(self.logic):
             return []
-        from engine.overhead_sprite import ACTOR_Y, WEAPON_Y_LIFT, WEAPON_RIGHT_OFFSET
+        from engine.overhead_sprite import WEAPON_RIGHT_OFFSET
         player = fio.player(self.logic)
         angle = float(getattr(player, "angle", 0.0))
         forward = (math.sin(angle), math.cos(angle))
         overhead = fio.is_overhead(self.logic)
-        height = ACTOR_Y + WEAPON_Y_LIFT if overhead else \
+        # From above the hands lie where the weapons are drawn: at the actor,
+        # never lifted toward the camera (engine/overhead_sprite.py).
+        height = 0.0 if overhead else \
             float(getattr(player, "camera_height", 48.0)) - 16.0
         advance = 0.0 if overhead else 60.0
         out = []
@@ -7166,7 +7173,10 @@ class MiniwindSession(SettlementLaw):
         if book is None:
             self.notify("The pages are blank", 2.0)
             return False
-        self.reading = {"item": item_id, "book": book.id, "spread": 0, "spreads": 1}
+        d = rpg_items.get(item_id)
+        self.reading = {"item": item_id, "book": book.id, "spread": 0, "spreads": 1,
+                        # A note is a loose sheet, not a bound book (book_window.py).
+                        "note": bool(d is not None and d.get("note"))}
         self._book_return = self.open_screen if self.open_screen != "book" else None
         self.open_screen = "book"
         self.play_ui_sound("page")
@@ -8528,6 +8538,9 @@ class MiniwindSession(SettlementLaw):
         if warrior_fist.innate(item_id):
             self.notify("Your fists are not for sale")
             return False
+        if not self.merchant_will_buy(item_id):
+            self.notify(library.NOT_INTERESTED)
+            return False
         price = self._price(d.value, buying=False, npc=self.merchant_npc)
         inv.remove_item(c.inventory, item_id, 1)
         c.gold += price
@@ -8535,6 +8548,13 @@ class MiniwindSession(SettlementLaw):
         self._remember_trade()
         self.play_ui_sound(TRANSACTION_SOUND)
         return True
+
+    def merchant_will_buy(self, item_id) -> bool:
+        """Whether the merchant being traded with will take *item_id*: not
+        everyone has a shelf for books (game/library.py)."""
+        npc = self.merchant_npc
+        return library.will_buy(getattr(npc, "properties", None) if npc is not None
+                                else None, item_id)
 
     def play_ui_sound(self, name: str, volume: float = 1.0) -> bool:
         """Play an interface sound from ``assets/sounds`` (heard everywhere).

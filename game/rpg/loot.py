@@ -182,6 +182,10 @@ register(LootTable("bandit", [
     LootEntry("buckler", 0.12),
     LootEntry("potion_heal_minor", 0.25),
     LootEntry("lockpick", 0.3, (1, 3)),
+    # What a brigand reads, when a brigand reads (game/library.py).
+    LootEntry("book_bandit_ledger", 0.1),
+    LootEntry("book_black_jory", 0.05),
+    LootEntry("book_lockwright", 0.04),
 ], gold_range=(2, 25)))
 
 register(LootTable("bandit_chief", [
@@ -194,6 +198,8 @@ register(LootTable("bandit_chief", [
     LootEntry("potion_heal", 0.5),
     LootEntry("long_bow", 0.3),
     LootEntry("steel_arrow", 0.6, (5, 15)),
+    LootEntry("book_bandit_ledger", 0.4),
+    LootEntry("book_lockwright", 0.15),
 ], gold_range=(25, 120)))
 
 register(LootTable("cultist", [
@@ -202,6 +208,7 @@ register(LootTable("cultist", [
     LootEntry("ingr_nightshade", 0.3, (1, 2)),
     LootEntry("scroll_flare" if items.get("scroll_flare") else "book_lore", 0.15),
     LootEntry("iron_dagger", 0.3),
+    LootEntry("book_ash_that_speaks", 0.3),
 ], gold_range=(5, 40)))
 
 register(LootTable("skeleton", [
@@ -210,6 +217,9 @@ register(LootTable("skeleton", [
     LootEntry("iron_shield", 0.2),
     LootEntry("chain_leggings", 0.08, min_level=3),
     LootEntry("copper_ring", 0.1),
+    # What the dead were carrying when they came down here.
+    LootEntry("book_aldous_penn", 0.04),
+    LootEntry("book_barrows", 0.04),
 ], gold_range=(0, 10)))
 
 register(LootTable("chest_common", [
@@ -217,6 +227,8 @@ register(LootTable("chest_common", [
     LootEntry("lockpick", 0.5, (1, 4)),
     LootEntry("iron_dagger", 0.2),
     LootEntry("book_lore", 0.1),
+    LootEntry("book_downwind", 0.05),
+    LootEntry("book_eight_legs", 0.05),
     LootEntry("cloth_robe", 0.12),
     LootEntry("copper_ring", 0.1),
 ], gold_range=(5, 40)))
@@ -231,4 +243,7 @@ register(LootTable("chest_rich", [
     LootEntry("ring_of_protection", 0.08, min_level=4),
     LootEntry("amulet_of_warding", 0.03, min_level=8),
     LootEntry("elven_arrow", 0.3, (5, 20)),
+    LootEntry("book_greenskin", 0.08),
+    LootEntry("book_lockwright", 0.08),
+    LootEntry("book_ember_wyrm", 0.06),
 ], gold_range=(40, 200)))
