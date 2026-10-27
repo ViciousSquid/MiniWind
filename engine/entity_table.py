@@ -634,6 +634,8 @@ _COLUMNS = (
     ('sprite_size', (2,), np.float32, 0.0),
     #: Runtime opacity (a respawning Prop fades in).
     ('render_alpha', (), np.float32, 1.0),
+    #: Persistent RGB multiplier for a sprite (1 leaves a channel unchanged).
+    ('sprite_tint', (3,), np.float32, 1.0),
     #: Locked world-facing yaw for a carried billboard; -10000 means an
     #: ordinary camera-facing billboard.
     ('sprite_fixed_yaw', (), np.float32, -10000.0),
@@ -1306,6 +1308,12 @@ class EntityTable:
         # sprite recipe without changing the entity row itself.
         self.sprite_size[slot] = sprite_size(thing)
         self.render_alpha[slot] = _render_alpha(thing)
+        try:
+            tint = np.asarray(props.get('sprite_tint', (1, 1, 1)), dtype=np.float32)
+            self.sprite_tint[slot] = np.clip(tint, 0, 1) if tint.shape == (3,) \
+                and np.all(np.isfinite(tint)) else 1.0
+        except (TypeError, ValueError):
+            self.sprite_tint[slot] = 1.0
         carry_yaw = _carry_sprite_yaw(thing)
         self.sprite_fixed_yaw[slot] = carry_yaw
         self.sprite_spin[slot] = (_sprite_spin(thing) if self.class_bits[slot] & ENT_MONSTER

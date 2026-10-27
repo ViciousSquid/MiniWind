@@ -48,6 +48,42 @@ class LogicCamera:
         # glides to and holds instead of the player, and glides back from.
         self.reset_camera_focus()
 
+        # Screen shake (shake()): strength as a fraction of the overhead
+        # camera's height, when it started and how long it lasts.
+        self._shake = (0.0, 0.0, 0.0)
+
+    # ------------------------------------------------------------------
+    # Screen shake
+    # ------------------------------------------------------------------
+
+    def shake(self, strength: float, seconds: float = 0.3) -> None:
+        """Jolt the play camera: *strength* is how far it jumps, as a fraction
+        of the overhead camera's height (0.02 is a hard knock), dying away
+        over *seconds*. A stronger shake replaces a weaker one in progress."""
+        now = time.perf_counter()
+        if self.shake_level(now) > float(strength):
+            return
+        self._shake = (float(strength), now, max(0.05, float(seconds)))
+
+    def shake_level(self, now=None) -> float:
+        """How strong the shake is right now (0 when still)."""
+        strength, start, seconds = self._shake
+        if strength <= 0.0:
+            return 0.0
+        now = time.perf_counter() if now is None else now
+        left = 1.0 - (now - start) / seconds
+        return strength * left * left if left > 0.0 else 0.0
+
+    def shake_offset(self, now=None):
+        """The world-space jolt to add to the camera this frame (x, z)."""
+        now = time.perf_counter() if now is None else now
+        level = self.shake_level(now)
+        if level <= 0.0:
+            return 0.0, 0.0
+        amp = level * self.effective_overhead_height()
+        return (amp * math.sin(now * 71.0) * math.cos(now * 23.0),
+                amp * math.sin(now * 59.0 + 1.3) * math.cos(now * 31.0))
+
     # ------------------------------------------------------------------
     # Editor/frustum configuration
     # ------------------------------------------------------------------
@@ -159,13 +195,16 @@ class LogicCamera:
         blend = (min(1.0, blend + step) if self._camera_focus is not None
                  else max(0.0, blend - step))
         self._camera_focus_blend = blend
+        sx, sz = self.shake_offset(now)
         if blend <= 0.0 or self._camera_focus_from is None:
+            if sx or sz:
+                return glm.vec3(player_pos.x + sx, player_pos.y, player_pos.z + sz)
             return player_pos
         k = blend * blend * (3.0 - 2.0 * blend)
         fx, fy, fz = self._camera_focus_from
-        return glm.vec3(player_pos.x + (fx - player_pos.x) * k,
+        return glm.vec3(player_pos.x + (fx - player_pos.x) * k + sx,
                         player_pos.y + (fy - player_pos.y) * k,
-                        player_pos.z + (fz - player_pos.z) * k)
+                        player_pos.z + (fz - player_pos.z) * k + sz)
 
     # ------------------------------------------------------------------
     # Overhead camera geometry

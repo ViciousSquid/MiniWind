@@ -314,7 +314,8 @@ register(Spell("bound_blade", "Bound Blade", sk.OFFENSIVE, 25, SELF,
 register(Spell("resurrection", "Resurrection", sk.DEFENSIVE, 100, TARGET,
                [{"kind": "resurrect", "magnitude": 1, "duration": 0}],
                "Call a fallen soul back into its body. Drains all your magicka "
-               "and can be worked only once each day.",
+               "and can be worked only once each day. Each body can be raised "
+               "only once; it keeps a red tint and follows you until killed again.",
                element="magic", color=[120, 255, 170]))
 register(Spell("sp_detect", "Detect Life", sk.DEFENSIVE, 16, SELF,
                [{"kind": "detect_life", "magnitude": 1, "duration": 30}],

@@ -11,7 +11,7 @@ import os
 from types import SimpleNamespace
 
 from PyQt5.QtCore import QRect, QRectF, Qt
-from PyQt5.QtGui import QColor, QFontMetrics, QPixmap, QPolygon, QPen, QConicalGradient
+from PyQt5.QtGui import QColor, QFontMetrics, QPixmap, QPolygon, QPolygonF, QPen, QConicalGradient
 from PyQt5.QtCore import QPoint, QPointF
 
 from .. import fio
@@ -637,59 +637,38 @@ ACTIVE_ICON = 26
 
 
 def _draw_active(painter, session, c, width, height):
-    """Top right, under the clock: active weapon and active spell chips, each
-    with an icon so the equipped weapon and readied spell read at a glance."""
-    w = eq.weapon(c)
-    wname = w.name if w else "Unarmed"
-    a = eq.ammo_for(c, w) if w and w.get("kind") in rpg_items.RANGED_KINDS else None
-    if a:
-        from ..rpg import inventory as inv
-        wname += f"  ({inv.quantity(c.inventory, a.id)} {a.name.split()[0].lower()})"
-    spell = rpg_magic.get(c.active_spell) if c.active_spell else None
-    sname = spell.name if spell else "—"
-    # Dual wielding, the right mouse is the second weapon, not the spell.
-    off = eq.offhand_weapon(c)
-
+    """The two equipped hands and the mouse button that uses each one."""
     x = width - ACTIVE_W - ACTIVE_MARGIN
     y = ACTIVE_TOP
     rect = QRect(x, y, ACTIVE_W, ACTIVE_H)
     T.panel(painter, x, y, ACTIVE_W, ACTIVE_H, radius=8, shadow=False)
-    row1, row2 = y + 24, y + 51        # text baselines
-    hint_x = x + ACTIVE_W - 38
-
-    # Weapon row: icon + name (left mouse hint).
-    tx = x + 14
-    pm = _weapon_icon_pixmap(w, ACTIVE_ICON)
-    if pm is not None and not pm.isNull():
-        painter.drawPixmap(x + 10, y + 3, pm)
-        tx = x + 44
-    T.text(painter, tx, row1, wname, size=11,
-           color=T.GOLD_BRIGHT if w else T.DIM, family="Segoe UI")
-    T.text(painter, hint_x, row1, "LMB", size=8, color=T.DIM, family="Segoe UI")
-
-    # Spell row: element-coloured swatch + name (right mouse hint); the
-    # second weapon instead, when the off hand holds one.
-    if off is not None:
+    for i, (hand, mouse) in enumerate((("main", "LMB"), ("off", "RMB"))):
+        spell = eq.hand_spell(c, hand)
+        item = eq.hand_weapon(c, hand)
+        if hand == "off" and item is None:
+            item = eq.shield(c) or eq.light_source(c)
+        top = y + 5 + i * 27
         tx = x + 14
-        opm = _weapon_icon_pixmap(off, ACTIVE_ICON)
-        if opm is not None and not opm.isNull():
-            painter.drawPixmap(x + 10, y + 31, opm)
-            tx = x + 44
-        T.text(painter, tx, row2, off.name, size=11, color=T.GOLD_BRIGHT,
-               family="Segoe UI")
-        T.text(painter, hint_x, row2, "RMB", size=8, color=T.DIM, family="Segoe UI")
-        return rect
-    scol = T.MAGICKA.lighter(140) if spell else T.DIM
-    if spell is not None:
-        col = spell.color
-        painter.setBrush(QColor(col[0], col[1], col[2]))
-        painter.setPen(QPen(QColor(col[0], col[1], col[2]).darker(160), 1))
-        painter.drawEllipse(x + 14, y + 35, 18, 18)
-        tx = x + 44
-    else:
-        tx = x + 14
-    T.text(painter, tx, row2, sname, size=11, color=scol, family="Segoe UI")
-    T.text(painter, hint_x + 10, row2, "K", size=8, color=T.DIM, family="Segoe UI")
+        if spell is not None:
+            painter.setBrush(QColor(*spell.color))
+            painter.setPen(QPen(QColor(*spell.color).darker(160), 1))
+            painter.drawEllipse(x + 14, top + 2, 16, 16)
+            tx = x + 40
+        else:
+            icon = _weapon_icon_pixmap(item, 22)
+            if icon is not None and not icon.isNull():
+                painter.drawPixmap(x + 12, top, icon)
+                tx = x + 40
+        label = spell.name if spell else item.name if item else "Unarmed" if hand == "main" else "Empty"
+        if item is not None and item.get("kind") in rpg_items.RANGED_KINDS:
+            ammo = eq.ammo_for(c, item)
+            if ammo is not None:
+                from ..rpg import inventory as inv
+                label += f" ({inv.quantity(c.inventory, ammo.id)})"
+        T.text_in(painter, QRect(tx, top, x + ACTIVE_W - 52 - tx, 21), label, size=10,
+                  color=T.GOLD_BRIGHT if spell or item else T.DIM,
+                  family="Segoe UI", align=int(Qt.AlignLeft | Qt.AlignVCenter))
+        T.text(painter, x + ACTIVE_W - 38, top + 16, mouse, size=8, color=T.DIM, family="Segoe UI")
     return rect
 
 
@@ -1394,3 +1373,120 @@ def draw_time_tint(painter, session, width, height, viewport=None):
     only where lamps and torches burn (game/ui/daylight.py)."""
     from . import daylight
     daylight.draw(painter, session, viewport, width, height)
+
+
+# ------------------------------------------------------------------- gore
+#: Blood's colours: fresh and bright in flight, darker where it lies, and the
+#: near-black of a chunk.
+_BLOOD = (150, 6, 8)
+_BLOOD_DARK = (92, 2, 4)
+_BLOOD_CHUNK = (70, 6, 8)
+
+
+def _blob(painter, cx, cy, r, seed, color, alpha):
+    """A splash: a rough-edged blot with a few droplets thrown off it."""
+    import random as _random
+    rng = _random.Random(int(seed * 1e6))
+    pts = []
+    n = 9
+    for i in range(n):
+        a = i / n * 2 * math.pi + rng.uniform(-0.2, 0.2)
+        rr = r * rng.uniform(0.7, 1.15)
+        pts.append(QPointF(cx + math.cos(a) * rr, cy + math.sin(a) * rr * 0.8))
+    painter.setBrush(QColor(*color, int(alpha)))
+    painter.drawPolygon(QPolygonF(pts))
+    for _ in range(rng.randint(2, 5)):
+        a = rng.uniform(0, 2 * math.pi)
+        d = r * rng.uniform(1.1, 1.9)
+        painter.drawEllipse(QPointF(cx + math.cos(a) * d, cy + math.sin(a) * d * 0.8),
+                            r * rng.uniform(0.08, 0.22), r * rng.uniform(0.08, 0.2))
+
+
+def draw_gore(painter, session, viewport, width, height):
+    """The blood in the world (game/gore_fx.py) that is not yet part of it,
+    over the world and under the HUD. Blood at rest on the terrain is stamped
+    into the terrain itself and drawn by the renderer; what is drawn here is
+    blood in flight, a pool still spreading, blood waiting its turn to be
+    stamped and blood on a built floor (masked out under anyone standing in
+    it, so it never paints over the living), the red flash of a kill, and the
+    player's own blood on the screen's edge."""
+    gore = getattr(session, "gore", None)
+    if gore is None or viewport is None:
+        return
+    try:
+        import glm
+        proj, view = viewport.projection_matrix, viewport.view_matrix
+    except Exception:
+        return
+    particles, splats, screen = gore.snapshot()
+    now = gore.clock()
+
+    def to_screen(x, y, z):
+        return _world_to_screen(glm, proj, view, x, y, z, width, height)
+
+    def px_per_unit(x, y, z):
+        a, b = to_screen(x, y, z), to_screen(x + 100.0, y, z)
+        if a is None or b is None:
+            return None
+        return math.hypot(b[0] - a[0], b[1] - a[1]) / 100.0
+
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    painter.setPen(Qt.NoPen)
+    if splats:
+        # Never over the living: cut each standing actor's footprint out.
+        from PyQt5.QtGui import QPainterPath
+        clip = QPainterPath()
+        clip.addRect(QRectF(0, 0, width, height))
+        holes = QPainterPath()
+        actors = session._live_actors() if hasattr(session, "_live_actors") else ()
+        player = fio.player(getattr(session, "logic", None))
+        for t in list(actors) + ([player] if player is not None else []):
+            tp = getattr(t, "properties", {}) or {}
+            if tp.get("dead"):
+                continue
+            sp = to_screen(*t.pos)
+            k = px_per_unit(*t.pos)
+            if sp is None or k is None:
+                continue
+            r = float(tp.get("sprite_height", 112) or 112) * 0.42 * k
+            holes.addEllipse(QPointF(sp[0], sp[1]), r, r)
+        painter.setClipPath(clip.subtracted(holes))
+        for s in splats:
+            sp = to_screen(s["x"], s["y"], s["z"])
+            k = px_per_unit(s["x"], s["y"], s["z"])
+            if sp is None or k is None:
+                continue
+            alpha = gore.splat_alpha(s, now) * (225 if s["kind"] == "pool" else 205)
+            colour = _BLOOD_CHUNK if s["kind"] == "chunk" else _BLOOD_DARK
+            _blob(painter, sp[0], sp[1], max(1.5, gore.splat_size(s, now) * 0.5 * k),
+                  s["seed"], colour, alpha)
+        painter.setClipping(False)
+    for p in particles:
+        x, y, z = gore.position(p, now)
+        sp = to_screen(x, y, z)
+        k = px_per_unit(x, y, z)
+        if sp is None or k is None:
+            continue
+        r = max(1.2, p["size"] * 0.5 * k)
+        if p["kind"] == "chunk":
+            _blob(painter, sp[0], sp[1], r, p["seed"], _BLOOD_CHUNK, 240)
+        else:
+            painter.setBrush(QColor(*_BLOOD, 235))
+            painter.drawEllipse(QPointF(sp[0], sp[1]), r, r)
+    # The player's own blood, on the screen's edge.
+    from .. import gore_fx
+    for b in screen:
+        age = now - b["t0"]
+        alpha = 200 * max(0.0, 1.0 - age / gore_fx.SCREEN_BLOOD_SECONDS)
+        r = b["size"] * min(width, height)
+        _blob(painter, b["x"] * width, b["y"] * height, r, b["seed"], _BLOOD_DARK, alpha)
+    # The red pulse of a kill or a crit.
+    level = gore.flash_level()
+    if level > 0:
+        from PyQt5.QtGui import QRadialGradient, QBrush
+        g = QRadialGradient(QPointF(width / 2, height / 2), max(width, height) * 0.7)
+        g.setColorAt(0.55, QColor(140, 0, 0, 0))
+        g.setColorAt(1.0, QColor(140, 0, 0, int(170 * level)))
+        painter.fillRect(QRect(0, 0, width, height), QBrush(g))
+    painter.restore()

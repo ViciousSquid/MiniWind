@@ -40,8 +40,7 @@ def test_inventory_strip_alone_keeps_mouse_look_captured():
 
 
 @pytest.mark.parametrize("key", [
-    "screen:inventory", "screen:character", "screen:spells", "screen:trade",
-    "debug:tools",
+    "screen:statistics", "screen:character", "screen:spells", "screen:trade", "debug:tools", "debug:pathfinding",
 ])
 def test_interactive_windows_release_cursor(key):
     assert _window_wants_cursor(_View(_Window(key)))
@@ -91,7 +90,9 @@ def test_game_pointer_is_requested_for_clickable_game_screens(monkeypatch):
     assert pointer_for(screen="character")
     assert pointer_for(screen="trade")
     assert pointer_for(screen="spells")
-    assert not pointer_for(screen="inventory")
+    assert pointer_for(screen="inventory")
+    assert pointer_for(screen="journal")
+    assert pointer_for(screen="map")
     assert not pointer_for(screen="container")
     assert not pointer_for(dialogue=object())
     # Character creation is a pre-game modal, not free-play mouse-look.

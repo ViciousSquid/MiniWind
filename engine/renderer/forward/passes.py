@@ -1077,6 +1077,7 @@ class PassesMixin:
         else:
             data[:, 7] = 0.0
         np.take(table.sprite_spin, sorted_slots, axis=0, out=data[:, 8:10])
+        np.take(table.sprite_tint, sorted_slots, axis=0, out=data[:, 10:13])
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._sprite_instance_vbo)
         gl.glBufferSubData(gl.GL_ARRAY_BUFFER, 0, data)
 
@@ -1139,6 +1140,7 @@ class PassesMixin:
         data[:, 6] = 1.0
         data[:, 7] = 0.0
         data[:, 8:10] = 0.0
+        data[:, 10:13] = 1.0
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._sprite_instance_vbo)
         gl.glBufferSubData(gl.GL_ARRAY_BUFFER, 0, data)
         shader, uniforms = (self.shaders['sprite_instanced'],
@@ -1520,6 +1522,7 @@ class PassesMixin:
         data[:, 6] = 1.0
         data[:, 7] = 0.0
         data[:, 8:10] = 0.0
+        data[:, 10:13] = 1.0
 
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self._sprite_instance_vbo)
         gl.glBufferSubData(gl.GL_ARRAY_BUFFER, 0, data)

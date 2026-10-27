@@ -236,6 +236,8 @@ def _knock(s):
     c.class_id = "mage"
     c.known_spells = ["knock"]
     c.active_spell = "knock"
+    from ..rpg import equipment
+    equipment.equip_spell(c, "knock", "main")
     c.magicka = 500
     c.max_magicka = 500
     c.skills[skills.DEFENSIVE] = 100

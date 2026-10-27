@@ -21,8 +21,6 @@ from PyQt5.QtGui import QBrush, QColor, QPen
 
 #: How far one step of the volume slider moves (Left / Right).
 VOLUME_STEP = 0.05
-#: The cast key's two ways of aiming (game.runtime.MiniwindSession.cast_mode).
-CAST_MODES = {"aimed": "Aim with the mouse", "facing": "Straight ahead"}
 
 _ACCENT = QColor(196, 30, 58)
 _TEXT = QColor(220, 216, 210)
@@ -107,7 +105,6 @@ class OptionsPage:
         volume = self._volume()
         rows.append(("volume", "Music volume",
                      "OFF" if volume <= 0.0 else f"{int(round(volume * 100))}%", True))
-        rows.append(("cast", "Spell casting", CAST_MODES.get(self._cast_mode(), ""), True))
         rows.append(("keys", "Key bindings", "▸", True))
         rows.append(("hud", "Rearrange HUD", "▸", True))
         rows.append(("back", "Back", "", True))
@@ -137,19 +134,7 @@ class OptionsPage:
                     if self.capture else "Enter or click, then press the new key.")
         if key == "keys_reset":
             return "Every action back on its usual key."
-        if key == "cast":
-            return ("K, then click where the spell goes (Esc or right-click puts it away)."
-                    if self._cast_mode() == "aimed"
-                    else "K casts at once, straight out the way you face.")
         return ""
-
-    def _cast_mode(self) -> str:
-        reader = getattr(self.menu.actions, "pause_menu_cast_mode", None)
-        try:
-            mode = reader() if reader is not None else "aimed"
-        except Exception:
-            mode = "aimed"
-        return mode if mode in CAST_MODES else "aimed"
 
     # -- changes ----------------------------------------------------------
     def _save(self, mode=None, res=None, vsync=None, hidpi=None):
@@ -192,12 +177,6 @@ class OptionsPage:
             return
         if key.startswith("bind:"):
             self.capture = key[5:]
-            self.menu.view.update()
-            return
-        if key == "cast":
-            modes = list(CAST_MODES)
-            mode = modes[(modes.index(self._cast_mode()) + step) % len(modes)]
-            self.menu._call_action("pause_menu_set_cast_mode", mode)
             self.menu.view.update()
             return
         if s is None:
@@ -355,7 +334,7 @@ class OptionsPage:
         middle = QRectF(left.right(), rect.y(), rect.width() - 2 * arrow_w, rect.height())
         painter.setPen(colour if selected else (_TEXT if enabled else _DIM))
         painter.drawText(middle, int(Qt.AlignCenter), value)
-        if key in ("mode", "res", "cast"):
+        if key in ("mode", "res"):
             painter.setPen(_ACCENT if (selected and enabled) else colour)
             painter.drawText(left, int(Qt.AlignCenter), "◀")
             painter.drawText(right, int(Qt.AlignCenter), "▶")

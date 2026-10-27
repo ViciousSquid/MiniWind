@@ -19,6 +19,7 @@ and the :mod:`game.ui` screens; this file is just the seam.
 """
 
 import json
+import math
 import time
 
 from PyQt5 import QtWidgets
@@ -34,7 +35,7 @@ from .runtime import MiniwindSession, TALK_RADIUS, DICE_DISPLAY_DURATION
 # key vocabulary we translate raw Qt codes back into (for menu/dialogue nav)
 _NAV_NAMES = (list("abcdefghijklmnopqrstuvwxyz") + [str(d) for d in range(0, 10)] +
               ["up", "down", "left", "right", "return", "enter", "escape",
-               "space", "tab", "shift", "backspace"])
+               "space", "tab", "shift", "backspace", "+", "=", "-", "_"])
 
 
 def _names_by_code():
@@ -52,7 +53,6 @@ _NAV_BY_CODE = _names_by_code()
 
 # action bindings (single-press unless noted)
 K_ATTACK = "f"
-K_CAST = "k"
 K_BLOCK = "b"          # held
 K_INTERACT = "e"       # talk to / trade with / use the nearest NPC
 K_SNEAK = "v"
@@ -229,6 +229,18 @@ def _miniwind_inspection(entity, logic):
     return {"title": snap.get("title", ""), "subtitle": snap.get("subtitle", ""),
             "sections": sections}
 
+
+
+def _hud_jolt(session, height):
+    """The HUD's share of a screen shake, in pixels (0, 0 when still)."""
+    cam = fio.camera(getattr(session, "logic", None))
+    level = getattr(cam, "shake_level", None)
+    strength = level() if callable(level) else 0.0
+    if strength <= 0.0:
+        return 0.0, 0.0
+    now = time.perf_counter()
+    amp = strength * height * 0.6
+    return (amp * math.sin(now * 67.0), amp * math.cos(now * 53.0))
 
 
 class MiniwindGame:
@@ -957,8 +969,6 @@ class MiniwindGame:
         if K_ATTACK in just or "space" in just:
             # Both hands, one after the other, when dual wielding.
             session.attack_with_both()
-        if K_CAST in just:
-            session.cast_key()
         if getattr(session, "spell_aiming", False) and "escape" in just:
             session.cancel_spell_aim()
         if K_NEXT_SPELL in just:
@@ -974,12 +984,9 @@ class MiniwindGame:
             session.toggle_sneak()
         if K_HEAL in just:
             session.use_health_potion()
-        # The inventory strip along the bottom is always up; I opens the
-        # inventory window (game/ui/inventory_window.py).
+        # I and C open different tabs in the shared Statistics window.
         if K_INVENTORY in just:
             session.open_screen = "inventory"
-        # C opens the character window: paperdoll, pack and sheet, all drag
-        # and drop (game/ui/inventory_window.py); it pauses the world.
         elif K_CHARACTER in just:
             session.open_screen = "character"
         elif K_JOURNAL in just:
@@ -997,6 +1004,21 @@ class MiniwindGame:
 
     def _handle_screen_input(self, session, just, ctx):
         from .ui import screens
+        if session.open_screen in screens.STATISTICS_SCREENS:
+            # Select another tab without replacing the window. Pressing the
+            # current tab's shortcut again closes it, as before.
+            for shortcut, screen in ((K_INVENTORY, "inventory"),
+                                     (K_CHARACTER, "character"),
+                                     (K_JOURNAL, "journal"),
+                                     (K_SPELLS, "spells"), (K_MAP, "map")):
+                if shortcut in just:
+                    if screen == "spells":
+                        session.cancel_spell_aim()
+                    session.open_screen = None if session.open_screen == screen else screen
+                    return
+            if just & {"escape", "esc"}:
+                session.open_screen = None
+                return
         if session.open_screen == "lockpicking":
             from .ui.lockpicking import handle_input
             handle_input(session, just, ctx)
@@ -1022,7 +1044,7 @@ class MiniwindGame:
             from .rpg import magic as rpg_magic
             spell = rpg_magic.get(session.game.character.active_spell or "")
             name = spell.name if spell is not None else "the spell"
-            session.interact_prompt = f"Click to cast {name}  ·  K, Esc or right-click to cancel"
+            session.interact_prompt = f"Click to cast {name}  ·  Esc or right-click to cancel"
             return
         if ctx.interaction_consumed:
             # MiniWind suppresses the stock HUD. Show the core's cave/door
@@ -1149,6 +1171,7 @@ class MiniwindGame:
             # floating windows through the viewport's WindowManager (same chrome
             # as SysMon and the NPC inspector). Falls back to the legacy
             # full-screen draw where no window manager exists (e.g. headless).
+            self._serve_map_request(session, viewport)
             windowed = self._sync_overlay_windows(session, viewport, w, h)
             # One of Fio's cutscenes owns the view: no game HUD and no
             # loadout popup over it (Fio hides its own HUD likewise).
@@ -1166,6 +1189,8 @@ class MiniwindGame:
             self._sync_hud_window(session, viewport, w, h)
 
             if not session.needs_char_creation and session.open_screen != "charcreate":
+                # Blood on the world, under the night and the HUD.
+                hud.draw_gore(painter, session, viewport, w, h)
                 hud.draw_time_tint(painter, session, w, h, viewport)
                 # Magic's screen washes (a resurrection's dark red, a frost
                 # hit's rime) over the world, under the HUD.
@@ -1184,7 +1209,11 @@ class MiniwindGame:
                 if not getattr(session, "_worldmap_requested", False):
                     session._worldmap_requested = True
                     worldmap.ensure_for(logic, viewport)
+                # The HUD jolts with the screen (game/runtime.py shake()).
+                jolt = _hud_jolt(session, h)
+                painter.translate(*jolt)
                 hud.draw(painter, session, w, h)
+                painter.translate(-jolt[0], -jolt[1])
                 if getattr(session, "spell_aiming", False):
                     from .rpg import magic as rpg_magic
                     spell = rpg_magic.get(session.game.character.active_spell or "")
@@ -1196,7 +1225,6 @@ class MiniwindGame:
                 # The armed pick's highlight goes over the HUD, so its name
                 # label is never hidden under a toast.
                 inspector.draw_pick_hover(painter, viewport, w, h)
-                self._serve_map_request(session, viewport)
                 self._serve_autosave(session, viewport)
                 # Speech bubbles over nearby NPCs (only during free play, not
                 # while a menu or conversation is open).
@@ -1269,21 +1297,18 @@ class MiniwindGame:
 
     @staticmethod
     def _serve_map_request(session, viewport):
-        """Open the pause menu's MAP page when the game asked for it (M, or a
-        quest's *Show on map*): ``session.map_request`` is ``"player"`` or a
-        ``(x, z, label)`` to ring. Deferred out of the paint pass, because
-        opening the menu grabs the frame."""
+        """Select Statistics' Map tab for M or a quest's *Show on map*.
+
+        This stays in the existing overlay and never opens the pause menu or
+        captures the framebuffer from inside a paint pass.
+        """
         request = getattr(session, "map_request", None)
         if not request:
             return
         session.map_request = None
-        menu = getattr(viewport, "play_menu", None)
-        if menu is None or not hasattr(menu, "open_map"):
-            return
-        focus = None if request == "player" else tuple(request)
-        session.open_screen = None
-        from PyQt5.QtCore import QTimer
-        QTimer.singleShot(0, lambda: menu.open_map(focus))
+        session._statistics_map_focus = None if request == "player" else tuple(request)
+        session._statistics_map_revision = getattr(session, "_statistics_map_revision", 0) + 1
+        session.open_screen = "map"
 
     def _sync_loadout_window(self, session, viewport, w, h):
         """Create / remove the non-modal loadout popup on the viewport's window
@@ -1428,6 +1453,8 @@ class MiniwindGame:
             key = None
         elif session.dialogue is not None:
             key = "dialogue"
+        elif session.open_screen in screens.STATISTICS_SCREENS:
+            key = "screen:statistics"
         elif session.open_screen is not None:
             key = f"screen:{session.open_screen}"
         else:
@@ -1439,6 +1466,8 @@ class MiniwindGame:
         # Tear down when nothing should show or the popup changed identity.
         if cur is not None and (key is None or key != cur_key):
             cur.active = False
+            from .ui import drag
+            drag.forget(cur)
             try:
                 wm.remove(cur)
             except Exception:
@@ -1460,21 +1489,16 @@ class MiniwindGame:
             session._overlay_key = key
             return True
 
-        if cur is None and key in ("screen:inventory", "screen:character"):
-            # C is the character window: drag and drop onto the paperdoll,
-            # with the sheet beside it (game/ui/inventory_window.py). I is the
-            # pack, Deus Ex-style: a big grid, Equip / Use / Drop, the item's
-            # details (game/ui/pack_window.py).
-            if key == "screen:inventory":
+        if key == "screen:statistics":
+            if cur is None:
                 from .ui.pack_window import PackWindow
-                win = PackWindow(session)
+                cur = PackWindow(session, viewport=viewport)
+                cur.place(w, h)
+                wm.add(cur)
+                session._overlay_win = cur
+                session._overlay_key = key
             else:
-                from .ui.inventory_window import InventoryWindow
-                win = InventoryWindow(session, view="character")
-            win.place(w, h)
-            wm.add(win)
-            session._overlay_win = win
-            session._overlay_key = key
+                cur.set_screen(session.open_screen)
             return True
 
         if cur is None:
