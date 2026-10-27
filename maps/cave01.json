@@ -2418,7 +2418,8 @@
     "start_scenario": "prompt",
     "region_name": "Wolfmaw Cave",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -2455,6 +2456,333 @@
     "pickup_radius": 70.0,
     "respawn": false,
     "custom_idle": "assets/sprites/miniwind/spellbook_green.png"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    576.0,
+    48.0,
+    -1472.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave01_f0",
+    "id": "440e8934-ad19-582d-8736-1b3dd368f5be",
+    "container_kind": "sack",
+    "display_name": "Cocooned Bundle",
+    "inventory": [
+     {
+      "id": "leather_gauntlets",
+      "name": "Leather Bracers",
+      "qty": 1,
+      "type": "armour",
+      "value": 10,
+      "weight": 1.5,
+      "description": "Leather bracers."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 34,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 250.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -832.0,
+    48.0,
+    1600.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave01_f1",
+    "id": "e158687d-c171-5413-91ef-036bf66c6d03",
+    "container_kind": "sack",
+    "display_name": "Cocooned Bundle",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 19,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "note_poem_dark",
+      "name": "Lines Scratched on a Scrap",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "A few lines in pencil, pressed hard."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 59.6
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    64.0,
+    48.0,
+    -1472.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave01_f2",
+    "id": "b32d23a8-df6d-5d4f-aa0b-ef8963f35e82",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "elven_arrow",
+      "name": "Elven Arrow",
+      "qty": 7,
+      "type": "ammo",
+      "value": 4,
+      "weight": 0.1,
+      "description": "A keen elven arrow that flies true."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 19,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 2.7
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1088.0,
+    48.0,
+    -320.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave01_f3",
+    "id": "86450456-88d0-57bb-97c4-a3d427b1e81f",
+    "container_kind": "sack",
+    "display_name": "Cocooned Bundle",
+    "inventory": [
+     {
+      "id": "torch",
+      "name": "Torch",
+      "qty": 1,
+      "type": "light",
+      "value": 5,
+      "weight": 1.0,
+      "description": "A pitch-soaked torch that throws a warm circle of light. Equip it in the off hand to see in the dark."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 41,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_eight_legs",
+      "name": "Eight Legs in the Dark",
+      "qty": 1,
+      "type": "book",
+      "value": 30,
+      "weight": 1.0,
+      "description": "A cave-walker's notes on the spiders under the hills."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 102.3
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1088.0,
+    48.0,
+    960.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave01_f4",
+    "id": "47742e58-b306-501b-a296-b56523d2417a",
+    "container_kind": "sack",
+    "display_name": "Cocooned Bundle",
+    "inventory": [
+     {
+      "id": "leather_gauntlets",
+      "name": "Leather Bracers",
+      "qty": 1,
+      "type": "armour",
+      "value": 10,
+      "weight": 1.5,
+      "description": "Leather bracers."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 17.9
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1344.0,
+    48.0,
+    192.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave01_f5",
+    "id": "94084c4d-8a32-5195-8c97-f280a75ac0db",
+    "container_kind": "sack",
+    "display_name": "Cocooned Bundle",
+    "inventory": [
+     {
+      "id": "elven_arrow",
+      "name": "Elven Arrow",
+      "qty": 11,
+      "type": "ammo",
+      "value": 4,
+      "weight": 0.1,
+      "description": "A keen elven arrow that flies true."
+     },
+     {
+      "id": "iron_shortsword",
+      "name": "Iron Shortsword",
+      "qty": 1,
+      "type": "weapon",
+      "value": 25,
+      "weight": 8.0,
+      "description": "An iron shortsword."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 359.0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1216.0,
+    48.0,
+    1216.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave01_f6",
+    "id": "4109154e-4d11-5fe3-a607-d3f85033714b",
+    "container_kind": "sack",
+    "display_name": "Adventurer's Pack",
+    "inventory": [
+     {
+      "id": "torch",
+      "name": "Torch",
+      "qty": 2,
+      "type": "light",
+      "value": 5,
+      "weight": 1.0,
+      "description": "A pitch-soaked torch that throws a warm circle of light. Equip it in the off hand to see in the dark."
+     },
+     {
+      "id": "iron_dagger",
+      "name": "Iron Dagger",
+      "qty": 1,
+      "type": "weapon",
+      "value": 10,
+      "weight": 4.0,
+      "description": "An iron dagger."
+     },
+     {
+      "id": "bread",
+      "name": "Bread",
+      "qty": 2,
+      "type": "potion",
+      "value": 1,
+      "weight": 0.2,
+      "description": "A heel of bread. Restores a little health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 12,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 173.2
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    832.0,
+    40.0,
+    832.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Book_cave01_f",
+    "id": "526433d9-974d-545a-abac-1eb175a3e697",
+    "item_id": "note_crier_smoke",
+    "quantity": 1,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/note_crier_smoke.png",
+    "display_name": "Clipping from the Crier",
+    "angle": 237.0,
+    "_furnished": true
    },
    "io_connections": []
   }

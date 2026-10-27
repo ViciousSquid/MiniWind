@@ -9,6 +9,12 @@ the pause menu's options and Settings > Play Modes > Audio set the same one);
 in ``settings.ini``, so they hold for the next game too.
 Leaving play for the editor stops the music.
 
+**Caves have their own music.** A track whose file name begins with ``cave``
+(``assets/music/cave_01.mp3`` ...) is cave music: it plays only underground
+-- a map whose Game Settings say ``underground`` (every cave does) -- and the
+rest of the soundtrack plays only above ground. With no cave tracks yet, a
+cave is silent. Going in or coming out changes the music at once.
+
 Playback streams through ``pygame.mixer.music``, the one music channel of the
 mixer the engine already opens for its sound effects, so music and effects
 never compete for a channel. When the mixer is not available (no audio device,
@@ -35,6 +41,12 @@ _ARCHIVE_TRACK_PREFIX = "fiopak://"
 SETTING = ("GAME", "music")
 VOLUME_SETTING = ("Audio", "music_volume")
 DEFAULT_VOLUME = 0.5
+
+#: The two places with music of their own, and the file-name prefix of the
+#: cave's tracks.
+WORLD = "world"
+CAVE = "cave"
+CAVE_PREFIX = "cave"
 
 #: How often, at most, :meth:`MusicPlayer.poll` looks for the end of a track.
 POLL_SECONDS = 1.0
@@ -87,6 +99,8 @@ class MusicPlayer:
         self.session_active = False
         #: The track playing now (a path), or None.
         self.current = None
+        #: Where the player is: WORLD or CAVE, each with its own tracks.
+        self.place = WORLD
         self._queue = []
         self._last_poll = 0.0
         self._lock = threading.RLock()
@@ -174,6 +188,31 @@ class MusicPlayer:
                       if n.lower().endswith(".mp3")
                       and os.path.isfile(os.path.join(self.music_dir, n)))
 
+    @staticmethod
+    def is_cave_track(track) -> bool:
+        """Whether *track* is cave music (its file name begins ``cave``)."""
+        name = str(track).replace("\\", "/").rsplit("/", 1)[-1]
+        return name.lower().startswith(CAVE_PREFIX)
+
+    def place_tracks(self):
+        """The tracks that play where the player is (module docstring)."""
+        cave = self.place == CAVE
+        return [t for t in self.tracks() if self.is_cave_track(t) == cave]
+
+    def set_place(self, place) -> None:
+        """The player is now in *place* (WORLD or CAVE): when that changes,
+        the other place's music stops and this one's begins."""
+        place = CAVE if place == CAVE else WORLD
+        with self._lock:
+            if place == self.place:
+                return
+            self.place = place
+            self._queue = []
+            if self.playing:
+                self._silence()
+            if self.session_active and self.enabled:
+                self._play_next()
+
     def _load_track(self, music, track):
         """Load a loose path or keep an archive member open for streaming."""
         if not track.startswith(_ARCHIVE_TRACK_PREFIX):
@@ -234,7 +273,7 @@ class MusicPlayer:
         same song is never heard twice in a row.
         """
         if not self._queue:
-            tracks = self.tracks()
+            tracks = self.place_tracks()
             if not tracks:
                 return None
             self._rng.shuffle(tracks)
@@ -253,7 +292,7 @@ class MusicPlayer:
             return False
         # A track that will not load (corrupt, unsupported) is skipped; give
         # up after one pass over the folder rather than spinning.
-        for _ in range(max(1, len(self.tracks()))):
+        for _ in range(max(1, len(self.place_tracks()))):
             track = self._next_track()
             if track is None:
                 return False

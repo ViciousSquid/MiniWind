@@ -5,10 +5,10 @@ Blood that comes to rest on the terrain is stamped into it (see
 ``MiniwindSession._stamp_blood``). Blood on a built floor -- a dungeon, a
 house, a bridge -- cannot be, and neither can a pool still spreading or a
 splat waiting its turn to be stamped. Those are drawn here, in Fio's
-``render.post_scene`` hook, as flat decals of the same stamp art lying just
-above the floor: depth-tested, so the actors standing on them (drawn higher
-in the ground stack, see ``engine.overhead_sprite``) and the weapons in their
-hands always cover them, whatever their shape or turn.
+``render.post_scene`` hook, as flat decals of the same stamp art lying on
+the floor: depth-tested, at the bottom of the ground stack (a depth layer,
+see ``engine.overhead_sprite``), so the actors standing on them and the
+weapons in their hands always cover them, whatever their shape or turn.
 """
 
 from __future__ import annotations

@@ -33,11 +33,13 @@ WEAPON_SIZE_MULTIPLIER = 2.0
 # and EFFECT_Y is reserved above all of it for the fire and explosion decals to
 # come, which are the one thing allowed to cover an actor.
 #
-# The gaps are generous in world units (64 per metre) but a few centimetres in
-# world terms, so nothing visibly floats — an overhead camera sees the stack
-# flat on the ground, in the right order, without a flicker.
+# A layer is a *depth bias*, not a height: every quad is drawn exactly where it
+# is, and its layer only decides which wins the depth test against the floor
+# and the quads beside it (``glPolygonOffset``, in depth-buffer units). Nothing
+# is ever lifted toward the camera, which from above would magnify it and move
+# it off the spot it stands on.
 
-#: Every ground quad clears the floor by at least this much.
+#: Every ground quad wins against the floor by at least this much.
 GROUND_CLEARANCE = 6.0
 #: Blood pools and other wound decals — the bottom of the stack.
 DECAL_Y = GROUND_CLEARANCE
@@ -45,7 +47,7 @@ DECAL_Y = GROUND_CLEARANCE
 GIB_Y = DECAL_Y + 8.0
 #: Actors — NPCs, monsters and the player. Always above every decal.
 ACTOR_Y = GIB_Y + 24.0
-#: An equipped weapon, lifted clear of the actor holding it.
+#: An equipped weapon, over the actor holding it.
 WEAPON_Y_LIFT = 4.0
 #: The dead.png cross laid over a slain head.
 CORPSE_MARK_Y = ACTOR_Y + WEAPON_Y_LIFT + 4.0
@@ -397,17 +399,35 @@ class OverheadSpriteRenderer:
                 gl.GL_CLAMP_TO_EDGE,
             )
 
-            gl.glTexImage2D(
-                gl.GL_TEXTURE_2D,
-                0,
-                gl.GL_RGBA,
-                image.width,
-                image.height,
-                0,
-                gl.GL_RGBA,
-                gl.GL_UNSIGNED_BYTE,
-                data,
+            # A texture first loaded mid-frame (a game's post-scene pass) finds
+            # whatever unpack state the renderer's own uploads left: a bound
+            # pixel buffer or a row length reads the image as garbage. Upload
+            # from plain defaults, then put the state back as it was.
+            unpack = (
+                (gl.GL_UNPACK_ALIGNMENT, 4), (gl.GL_UNPACK_ROW_LENGTH, 0),
+                (gl.GL_UNPACK_SKIP_ROWS, 0), (gl.GL_UNPACK_SKIP_PIXELS, 0),
             )
+            saved = [(name, gl.glGetIntegerv(name)) for name, _ in unpack]
+            saved_pbo = gl.glGetIntegerv(gl.GL_PIXEL_UNPACK_BUFFER_BINDING)
+            gl.glBindBuffer(gl.GL_PIXEL_UNPACK_BUFFER, 0)
+            for name, value in unpack:
+                gl.glPixelStorei(name, value)
+            try:
+                gl.glTexImage2D(
+                    gl.GL_TEXTURE_2D,
+                    0,
+                    gl.GL_RGBA,
+                    image.width,
+                    image.height,
+                    0,
+                    gl.GL_RGBA,
+                    gl.GL_UNSIGNED_BYTE,
+                    data,
+                )
+            finally:
+                for name, value in saved:
+                    gl.glPixelStorei(name, int(value))
+                gl.glBindBuffer(gl.GL_PIXEL_UNPACK_BUFFER, int(saved_pbo))
 
             gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
             return int(texture)
@@ -438,13 +458,11 @@ class OverheadSpriteRenderer:
                 + float(rotation_offset)
             )
 
+            # Exactly where it is: *y_offset* is its layer in the ground stack,
+            # a depth bias, never a lift toward the camera (see the top).
             model = glm.translate(
                 glm.mat4(1.0),
-                glm.vec3(
-                    float(pos[0]),
-                    float(pos[1]) + float(y_offset),
-                    float(pos[2]),
-                ),
+                glm.vec3(float(pos[0]), float(pos[1]), float(pos[2])),
             )
 
             model = glm.rotate(
@@ -499,11 +517,18 @@ class OverheadSpriteRenderer:
             # draw order against its neighbours instead of fighting them.
             if not depth_write:
                 gl.glDepthMask(gl.GL_FALSE)
+            bias = float(y_offset)
+            if bias:
+                gl.glEnable(gl.GL_POLYGON_OFFSET_FILL)
+                gl.glPolygonOffset(0.0, -bias)
             try:
                 gl.glBindVertexArray(self._vao)
                 gl.glDrawArrays(gl.GL_TRIANGLES, 0, 6)
                 gl.glBindVertexArray(0)
             finally:
+                if bias:
+                    gl.glPolygonOffset(0.0, 0.0)
+                    gl.glDisable(gl.GL_POLYGON_OFFSET_FILL)
                 if not depth_write:
                     gl.glDepthMask(gl.GL_TRUE)
             gl.glUseProgram(0)

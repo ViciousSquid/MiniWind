@@ -2358,7 +2358,8 @@
     "start_scenario": "prompt",
     "region_name": "Greenskin Hole",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -2375,6 +2376,447 @@
     "id": "354e9fd9-6cdf-42a5-a02b-c6796b63a710",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -960.0,
+    48.0,
+    1600.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Crate_cave04_f0",
+    "id": "a1e3cc09-b222-5921-9609-4aac7fa9daee",
+    "container_kind": "crate",
+    "display_name": "Crate",
+    "inventory": [
+     {
+      "id": "club",
+      "name": "Wooden Club",
+      "qty": 1,
+      "type": "weapon",
+      "value": 4,
+      "weight": 10.0,
+      "description": "A wood wooden club."
+     },
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 1,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_crate.png",
+    "_furnished": true,
+    "angle": 271.9
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    960.0,
+    48.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Crate_cave04_f1",
+    "id": "b4a4119d-7481-5d35-bfa8-4b70429dc5c2",
+    "container_kind": "crate",
+    "display_name": "Crate",
+    "inventory": [
+     {
+      "id": "club",
+      "name": "Wooden Club",
+      "qty": 1,
+      "type": "weapon",
+      "value": 4,
+      "weight": 10.0,
+      "description": "A wood wooden club."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_crate.png",
+    "_furnished": true,
+    "angle": 7.9
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    448.0,
+    48.0,
+    320.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave04_f2",
+    "id": "a1f7ecb8-9812-583c-bc6d-0651801c3876",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 23,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_ember_wyrm",
+      "name": "The Ember Wyrm of Whisperdeep",
+      "qty": 1,
+      "type": "book",
+      "value": 60,
+      "weight": 1.0,
+      "description": "A monk's account of a journey into the red hills, and what he found there."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 161.7
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -448.0,
+    48.0,
+    1600.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Barrel_cave04_f3",
+    "id": "5c8e9944-3292-5a8f-844a-c8777f99d69b",
+    "container_kind": "barrel",
+    "display_name": "Barrel",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 40,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_eight_legs",
+      "name": "Eight Legs in the Dark",
+      "qty": 1,
+      "type": "book",
+      "value": 30,
+      "weight": 1.0,
+      "description": "A cave-walker's notes on the spiders under the hills."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_barrel.png",
+    "_furnished": true,
+    "angle": 202.1
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    576.0,
+    48.0,
+    -192.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave04_f4",
+    "id": "29140ca3-82d1-5443-ad2d-9e0c7711424d",
+    "container_kind": "chest",
+    "display_name": "War Chest",
+    "inventory": [
+     {
+      "id": "ingr_wolf_pelt",
+      "name": "Wolf Pelt",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 6,
+      "weight": 2.0,
+      "description": "A rough grey pelt worth a few coins."
+     },
+     {
+      "id": "iron_arrow",
+      "name": "Iron Arrow",
+      "qty": 6,
+      "type": "ammo",
+      "value": 1,
+      "weight": 0.1,
+      "description": "A plain iron-tipped arrow."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 5,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 273.1
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1344.0,
+    48.0,
+    320.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Crate_cave04_f5",
+    "id": "0e2007a4-433b-5f93-8790-8f28090b202a",
+    "container_kind": "crate",
+    "display_name": "Crate",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 28,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_crate.png",
+    "_furnished": true,
+    "angle": 174.0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    704.0,
+    48.0,
+    -704.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Barrel_cave04_f6",
+    "id": "eb350065-f9a8-53d2-a1dc-b27c196ca5f4",
+    "container_kind": "barrel",
+    "display_name": "Barrel",
+    "inventory": [
+     {
+      "id": "hide_armour",
+      "name": "Hide Armour",
+      "qty": 1,
+      "type": "armour",
+      "value": 30,
+      "weight": 9.0,
+      "description": "Layered, cured hides stitched over a wool jerkin."
+     },
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 1,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 42,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_last_ferryman",
+      "name": "The Last Ferryman of Mirrormere",
+      "qty": 1,
+      "type": "book",
+      "value": 35,
+      "weight": 1.0,
+      "description": "A worn volume of Reedhollow tales, its pages stained by lake water."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_barrel.png",
+    "_furnished": true,
+    "angle": 308.0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -704.0,
+    48.0,
+    832.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Barrel_cave04_f7",
+    "id": "04257b2b-73bc-5d1e-b91d-2c5bee4a4eb7",
+    "container_kind": "barrel",
+    "display_name": "Barrel",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 48,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_barrel.png",
+    "_furnished": true,
+    "angle": 145.8
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1088.0,
+    48.0,
+    -320.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave04_f8",
+    "id": "06ecdf95-24c0-56c2-8d37-bd3c41541888",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "club",
+      "name": "Wooden Club",
+      "qty": 1,
+      "type": "weapon",
+      "value": 4,
+      "weight": 10.0,
+      "description": "A wood wooden club."
+     },
+     {
+      "id": "hide_armour",
+      "name": "Hide Armour",
+      "qty": 1,
+      "type": "armour",
+      "value": 30,
+      "weight": 9.0,
+      "description": "Layered, cured hides stitched over a wool jerkin."
+     },
+     {
+      "id": "ingr_wolf_pelt",
+      "name": "Wolf Pelt",
+      "qty": 3,
+      "type": "ingredient",
+      "value": 6,
+      "weight": 2.0,
+      "description": "A rough grey pelt worth a few coins."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 247.0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1728.0,
+    48.0,
+    -64.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave04_f9",
+    "id": "b8c8c511-d92d-5cc7-8e16-90833085184b",
+    "container_kind": "sack",
+    "display_name": "Adventurer's Pack",
+    "inventory": [
+     {
+      "id": "torch",
+      "name": "Torch",
+      "qty": 2,
+      "type": "light",
+      "value": 5,
+      "weight": 1.0,
+      "description": "A pitch-soaked torch that throws a warm circle of light. Equip it in the off hand to see in the dark."
+     },
+     {
+      "id": "book_last_ferryman",
+      "name": "The Last Ferryman of Mirrormere",
+      "qty": 1,
+      "type": "book",
+      "value": 35,
+      "weight": 1.0,
+      "description": "A worn volume of Reedhollow tales, its pages stained by lake water."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 79.1
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -1344.0,
+    40.0,
+    1344.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Book_cave04_f",
+    "id": "3f7f027e-e104-577d-a6ee-52e1671d76c7",
+    "item_id": "book_barrows",
+    "quantity": 1,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/book_barrows.png",
+    "display_name": "Let the Barrows Lie",
+    "angle": 174.0,
+    "_furnished": true
    },
    "io_connections": []
   }

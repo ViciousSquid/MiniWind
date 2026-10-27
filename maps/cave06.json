@@ -2089,7 +2089,7 @@
     "portrait": "assets/portraits/miniwind/monster.png",
     "display_name": "Vharzul the Ember Wyrm",
     "head": "dragon",
-    "head_scale": 8.0,
+    "head_scale": 5.0,
     "health": 3000,
     "max_health": 3000,
     "damage": 45,
@@ -4479,7 +4479,8 @@
     "start_scenario": "prompt",
     "region_name": "Whisperdeep",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -4496,6 +4497,456 @@
     "id": "bf87f436-2ae5-4744-9c6d-6d819c9e83bf",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1088.0,
+    48.0,
+    -64.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave06_f0",
+    "id": "7f69740e-be7f-5a8f-a5e6-610c00576b12",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 4,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 280.1
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1472.0,
+    48.0,
+    -1472.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave06_f1",
+    "id": "692f3849-08ed-5c90-9765-d2435c999989",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "potion_heal",
+      "name": "Healing Potion",
+      "qty": 1,
+      "type": "potion",
+      "value": 40,
+      "weight": 0.5,
+      "description": "Restores 75 health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 28,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 17.9
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -576.0,
+    48.0,
+    1088.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave06_f2",
+    "id": "bb213455-c1e8-515d-9494-402cd48212de",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 3,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 75.2
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1344.0,
+    48.0,
+    320.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave06_f3",
+    "id": "0d336cc6-5575-5da4-86dc-19e15c103021",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "chain_leggings",
+      "name": "Chain Leggings",
+      "qty": 1,
+      "type": "armour",
+      "value": 60,
+      "weight": 10.0,
+      "description": "Mail chausses laced over the legs."
+     },
+     {
+      "id": "potion_heal",
+      "name": "Healing Potion",
+      "qty": 1,
+      "type": "potion",
+      "value": 40,
+      "weight": 0.5,
+      "description": "Restores 75 health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 32,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 231.1
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1344.0,
+    48.0,
+    -576.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave06_f4",
+    "id": "b75ecf0a-c93e-5363-96ec-73c7d5a092ec",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 4,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 45,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "note_crier_smoke",
+      "name": "Clipping from the Crier",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "The Millbrook Crier on the smoke over the Emberpeaks."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 47.1
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1600.0,
+    48.0,
+    -320.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave06_f5",
+    "id": "216c50bd-e10c-5150-945c-91ecd0253b07",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 4,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 42,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 218.6
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    448.0,
+    48.0,
+    576.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave06_f6",
+    "id": "eb827839-258d-50d4-a9fe-665e23b67529",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "copper_ring",
+      "name": "Copper Ring",
+      "qty": 1,
+      "type": "armour",
+      "value": 8,
+      "weight": 0.2,
+      "description": "A plain copper band."
+     },
+     {
+      "id": "potion_heal",
+      "name": "Healing Potion",
+      "qty": 2,
+      "type": "potion",
+      "value": 40,
+      "weight": 0.5,
+      "description": "Restores 75 health."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 89.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1472.0,
+    48.0,
+    448.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave06_f7",
+    "id": "06fe6b47-5fa5-5c34-91eb-d2f69b526100",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 4,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 219.8
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1216.0,
+    48.0,
+    -1600.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave06_f8",
+    "id": "24e3b767-839b-57db-b6fc-c00ceb2644f0",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 4,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "copper_ring",
+      "name": "Copper Ring",
+      "qty": 1,
+      "type": "armour",
+      "value": 8,
+      "weight": 0.2,
+      "description": "A plain copper band."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 27,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 311.6
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1472.0,
+    48.0,
+    -576.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave06_f9",
+    "id": "0479d885-1e9d-5f48-a651-e6189a842a9f",
+    "container_kind": "sack",
+    "display_name": "Adventurer's Pack",
+    "inventory": [
+     {
+      "id": "torch",
+      "name": "Torch",
+      "qty": 2,
+      "type": "light",
+      "value": 5,
+      "weight": 1.0,
+      "description": "A pitch-soaked torch that throws a warm circle of light. Equip it in the off hand to see in the dark."
+     },
+     {
+      "id": "lockpick",
+      "name": "Lockpick",
+      "qty": 3,
+      "type": "misc",
+      "value": 5,
+      "weight": 0.0,
+      "description": "For coaxing open stubborn locks."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 113.0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -1216.0,
+    40.0,
+    1216.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Book_cave06_f",
+    "id": "35e45eda-5b76-5dac-a197-76f0f37d220b",
+    "item_id": "book_barrows",
+    "quantity": 1,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/book_barrows.png",
+    "display_name": "Let the Barrows Lie",
+    "angle": 272.0,
+    "_furnished": true
    },
    "io_connections": []
   }

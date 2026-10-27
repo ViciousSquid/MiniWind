@@ -561,6 +561,10 @@ class MiniwindGame:
         api.register_properties("miniwindsettings", [
             prop("region_name", "string", "Region name",
                  default="The Vale of Miniwind", group="WORLD"),
+            prop("underground", "bool", "Underground (cave music)", default=False,
+                 group="WORLD",
+                 help="A cave or dungeon: only cave music plays here "
+                      "(assets/music/cave*.mp3), and none until there is some."),
             prop("start_scenario", "enum", "Start", default="prompt",
                  choices=["prompt", "quick"], group="WORLD",
                  help="'prompt' opens character creation; 'quick' drops in as a default hero."),
@@ -758,7 +762,8 @@ class MiniwindGame:
 
     def _on_post_scene(self, ev):
         """Draw, in the 3D pass: blood lying on the floor under the actors
-        (game/ui/blood_gl.py), magic (game/ui/magic_gl.py), the arrows in
+        (game/ui/blood_gl.py), containers and things lying about
+        (game/ui/world_objects.py), magic (game/ui/magic_gl.py), the arrows in
         flight and their fading flight paths (game/ui/arrows.py), and last the
         fisheye lenses of heavy spell impacts, which bend all of it."""
         if not ev.get("play_mode"):
@@ -773,6 +778,10 @@ class MiniwindGame:
                 and getattr(session, "open_screen", None) != "charcreate"):
             from .ui import blood_gl
             blood_gl.draw_decals(projection, view, gore.floor_decals())
+        # Containers and things lying about, which Fio draws nothing for in
+        # Play: flat on the floor, as seen from above (game/ui/world_objects.py).
+        from .ui import world_objects
+        world_objects.draw(projection, view, world_objects.visible(session))
         fx = getattr(session, "magic_fx", None)
         lenses = ()
         if fx is not None:
@@ -817,6 +826,8 @@ class MiniwindGame:
         keybinds.apply(runtime._editor_config)
         self._prev_keys = frozenset()
         from . import music
+        # A cave has its own music (game/music.py).
+        music.PLAYER.set_place(music.CAVE if session.underground else music.WORLD)
         if music.PLAYER.configured:
             music.PLAYER.start()
         if host is not None:

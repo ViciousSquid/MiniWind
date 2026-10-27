@@ -164,6 +164,55 @@ def test_no_mixer_means_no_music_and_no_error(music_dir):
     player.stop()
 
 
+def _cave_folder(tmp_path, cave_tracks=("cave_drip.mp3",)):
+    for name in ("a.mp3", "b.mp3") + tuple(cave_tracks):
+        (tmp_path / name).write_bytes(b"")
+    return str(tmp_path)
+
+
+def test_cave_music_plays_only_underground(tmp_path):
+    from ..music import CAVE, WORLD
+    mixer = _Mixer()
+    player = _player(_cave_folder(tmp_path), mixer)
+    player.start()
+    for n in range(6):
+        mixer.busy = False
+        player.poll(now=1000.0 + n * 10)
+    assert "cave_drip.mp3" not in mixer.loaded         # never above ground
+    player.set_place(CAVE)
+    assert mixer.loaded[-1] == "cave_drip.mp3"         # at once, going in
+    for n in range(3):
+        mixer.busy = False
+        player.poll(now=2000.0 + n * 10)
+    assert set(mixer.loaded[-4:]) == {"cave_drip.mp3"}
+    player.set_place(WORLD)
+    assert mixer.loaded[-1] in ("a.mp3", "b.mp3")      # and back out
+
+
+def test_a_cave_with_no_cave_music_is_silent(tmp_path):
+    from ..music import CAVE
+    mixer = _Mixer()
+    player = _player(_cave_folder(tmp_path, cave_tracks=()), mixer)
+    player.set_place(CAVE)
+    player.start()
+    mixer.busy = False
+    player.poll(now=1000.0)
+    assert mixer.loaded == [] and player.current is None
+
+
+def test_every_cave_map_is_underground():
+    import glob
+    import json
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
+    caves = sorted(glob.glob(os.path.join(root, "maps", "cave[0-9][0-9].json")))
+    assert caves
+    for path in caves:
+        with open(path) as f:
+            things = json.load(f)["things"]
+        settings, = [t for t in things if t["type"] == "miniwindsettings"]
+        assert settings["properties"]["underground"] is True, path
+
+
 def test_an_empty_folder_is_silence(tmp_path):
     mixer = _Mixer()
     player = _player(str(tmp_path / "missing"), mixer)
