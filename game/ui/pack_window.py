@@ -33,10 +33,11 @@ GAP = 6
 COLS = 5
 ROWS = 4
 #: The screens along the top: (label, open_screen).
-TABS = (("Inventory", "inventory"), ("Skills", "skills"), ("Character", "character"),
-        ("Journal", "journal"), ("Spells", "spells"), ("Map", "map"))
+TABS = (("Inventory", "inventory"), ("Skills", "skills"), ("Fortune", "fortune"),
+        ("Character", "character"), ("Journal", "journal"), ("Spells", "spells"),
+        ("Map", "map"))
 #: Tabs that are pages of this window rather than screens of their own.
-PAGES = ("inventory", "skills")
+PAGES = ("inventory", "skills", "fortune")
 
 _STEEL_TOP = QColor(64, 66, 70, 245)
 _STEEL_BOT = QColor(30, 31, 34, 245)
@@ -73,8 +74,12 @@ class PackWindow(InventoryWindow):
         painter.setRenderHint(painter.Antialiasing, True)
         painter.fillRect(QRect(x, y, w, h), QColor(14, 15, 17, 235))
         self._draw_tabs(painter, QRect(x + 10, y + 8, w - 20, 34))
-        if self.showing == "skills":
-            self._draw_skills(painter, QRect(x + 10, y + 52, w - 20, h - 62))
+        if self.showing in ("skills", "fortune"):
+            page = QRect(x + 10, y + 52, w - 20, h - 62)
+            if self.showing == "skills":
+                self._draw_skills(painter, page)
+            else:
+                self._draw_fortune(painter, page)
             from . import drag
             drag.set_zones(self, [])
             painter.restore()
@@ -139,6 +144,46 @@ class PackWindow(InventoryWindow):
             selected=self.selected_skill, pointer=hits.pointer)
         for r, sid in self._skill_nodes:
             self._buttons.append((QRect(r), self._pick_skill(sid)))
+
+    def _draw_fortune(self, painter, rect):
+        """Everything Charisma and Luck are doing for the character, with the
+        number and the reason (game.rpg.fortune.benefits)."""
+        from ..rpg import fortune
+        inner = self._panel(painter, rect, "Fortune")
+        c = self._character()
+        if c is None:
+            return
+        painter.setFont(self.f_body)
+        painter.setPen(_TEXT)
+        _fit(painter, QRect(inner.x(), inner.y(), inner.width(), 24),
+             Qt.AlignLeft | Qt.AlignVCenter,
+             f"Fortune {fortune.score(c)}  =  (Charisma {c.attrs.get('personality', 40)}"
+             f" + Luck {c.attrs.get('luck', 40)}) / 2   ·   the fair of face and the "
+             "lucky have an easier road, and here is exactly how.")
+        y = inner.y() + 34
+        row_h = 40
+        for name, value, why, good in fortune.benefits(c):
+            if y + row_h > inner.bottom():
+                break
+            band = QRect(inner.x(), y, inner.width(), row_h - 6)
+            painter.fillRect(band, QColor(26, 25, 24, 230))
+            mark = (QColor(110, 210, 120) if good else QColor(225, 105, 95)
+                    if good is False else _DIM)
+            painter.fillRect(QRect(band.x(), band.y(), 5, band.height()), mark)
+            painter.setFont(self.f_body)
+            painter.setPen(_TEXT)
+            _fit(painter, QRect(band.x() + 16, band.y(), int(band.width() * 0.4), band.height()),
+                 Qt.AlignLeft | Qt.AlignVCenter, name)
+            painter.setPen(mark if good is not None else _TEXT)
+            _fit(painter, QRect(band.x() + int(band.width() * 0.4), band.y(),
+                                int(band.width() * 0.25), band.height()),
+                 Qt.AlignLeft | Qt.AlignVCenter, value)
+            painter.setFont(self.f_small)
+            painter.setPen(_DIM)
+            _fit(painter, QRect(band.x() + int(band.width() * 0.65), band.y(),
+                                int(band.width() * 0.35) - 10, band.height()),
+                 Qt.AlignLeft | Qt.AlignVCenter, why)
+            y += row_h
 
     def _pick_skill(self, sid):
         def act():

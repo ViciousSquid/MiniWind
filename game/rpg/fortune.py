@@ -83,3 +83,68 @@ def why(character) -> str:
     a = getattr(character, "attrs", {}) or {}
     return (f"Charisma {int(a.get(attr.PERSONALITY, 40))} + Luck "
             f"{int(a.get(attr.LUCK, 40))} — fortune {score(character)}")
+
+
+# ---------------------------------------------------------------------------
+# What fortune does for a character, said plainly
+# ---------------------------------------------------------------------------
+#: How much faster rumours of the player's crimes fade -- and how much slower
+#: their kindnesses -- by how they look (game.rpg.charisma tiers).
+RUMOUR_CHARM = {"repulsive": 0.5, "ugly": 0.75, "plain": 1.0, "fair": 1.3,
+                "striking": 1.6}
+
+
+def lucky_escape_chance(character) -> float:
+    """The chance, once a day, that a blow which would kill survives on a
+    sliver of health: 1% per point of fortune over 40, up to 60%."""
+    return max(0.0, min(0.60, (score(character) - 40) * 0.01))
+
+
+def benefits(character):
+    """``[(name, value, why, good)]``: everything Charisma and Luck are doing
+    for (or against) *character* right now, in numbers -- the Fortune page
+    lists these, so a fortunate player can see why the Vale is kinder to them.
+    *good* is True for an advantage, False for a handicap, None for neutral."""
+    from . import charisma as cha
+    from . import combat
+    a = getattr(character, "attrs", {}) or {}
+    charm = int(a.get(attr.PERSONALITY, 40))
+    luck = int(a.get(attr.LUCK, 40))
+    looks = cha.tier(charm)
+    out = []
+
+    def sign(v):
+        return None if abs(v) < 1e-9 else v > 0
+
+    buy = cha.price_multiplier(charm, True)
+    out.append(("Merchant prices", f"x{buy:.2f}", f"Charisma {charm}: you look {looks}",
+                sign(1.0 - buy)))
+    greet = {"repulsive": "they recoil", "ugly": "they wince", "plain": "no remark",
+             "fair": "a warm welcome", "striking": "they want to help"}[looks]
+    out.append(("Strangers' first words", greet, f"Charisma {charm}",
+                sign({"repulsive": -1, "ugly": -1, "plain": 0}.get(looks, 1))))
+    repel = cha.repel_chance(charm)
+    if repel > 0:
+        out.append(("Brigands who won't fight you", f"{repel * 100:.0f}%",
+                    f"Charisma {charm}: some want no part of a face like that", True))
+    fade = RUMOUR_CHARM.get(looks, 1.0)
+    out.append(("Rumours of your crimes fade", f"x{fade:.2f}",
+                f"Charisma {charm}: people doubt ill of the charming", sign(fade - 1.0)))
+    crit = combat.critical_chance(character)
+    out.append(("Critical hits", f"{crit * 100:.0f}%", f"Luck {luck}", sign(luck - 40)))
+    out.append(("Loot drop chance", f"{(luck - 40) * 0.2:+.0f}%", f"Luck {luck}",
+                sign(luck - 40)))
+    out.append(("Special finds", f"{(luck - 40) * 0.1:+.0f}%", f"Luck {luck}",
+                sign(luck - 40)))
+    out.append(("Learning skills", f"{(luck - 40) * 0.2:+.0f}% skill experience",
+                f"Luck {luck}", sign(luck - 40)))
+    fortune = score(character)
+    out.append(("Charm & Luck conversations",
+                "open" if fortune >= UNLOCK else f"closed (need {UNLOCK})",
+                f"Fortune {fortune} = (Charisma {charm} + Luck {luck}) / 2",
+                fortune >= UNLOCK))
+    escape = lucky_escape_chance(character)
+    out.append(("Lucky escape from a killing blow",
+                f"{escape * 100:.0f}% once a day" if escape else "none",
+                f"Fortune {fortune}", True if escape else None))
+    return out

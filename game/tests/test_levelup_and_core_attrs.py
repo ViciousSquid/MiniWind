@@ -276,3 +276,30 @@ def test_a_warrior_takes_the_same_damage_as_anyone():
         c.attrs[attr.ENDURANCE] = 40                  # no Armour Class bonus
         taken.add(combat.resolve_incoming(c, 30.0, rng=_random.Random(2))["final"])
     assert len(taken) == 1
+
+
+# ---------------------------------------------- fortune, seen and felt
+def test_the_fortunate_see_every_advantage_and_why():
+    from ..rpg import fortune
+    lucky = {name: (value, why, good) for name, value, why, good
+             in fortune.benefits(_fortunate(80, 80))}
+    plain = {name: good for name, _v, _w, good in fortune.benefits(_fortunate(40, 40))}
+    assert lucky["Merchant prices"][2] is True and "Charisma 80" in lucky["Merchant prices"][1]
+    assert lucky["Critical hits"][2] is True
+    assert lucky["Charm & Luck conversations"][0] == "open"
+    assert lucky["Lucky escape from a killing blow"][2] is True
+    assert plain["Critical hits"] is None and plain["Lucky escape from a killing blow"] is None
+
+
+def test_a_lucky_escape_happens_once_a_day(config, monkeypatch):
+    from .. import diceroll
+    s = _talk_session(_FakeThing_npc())
+    c = s.game.character
+    c.attrs[attr.PERSONALITY] = 90
+    c.attrs[attr.LUCK] = 90
+    c.health = 10.0
+    monkeypatch.setattr(diceroll, "roll_check",
+                        lambda *a, **kw: {"success": True, "roll_result": 20, "target": 2})
+    assert s._lucky_escape(c, 50.0) == pytest.approx(9.0)
+    assert s._lucky_escape(c, 50.0) == 50.0           # spent for today
+    assert s._lucky_escape(c, 5.0) == 5.0             # not a killing blow

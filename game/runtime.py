@@ -268,10 +268,6 @@ BARK_RADIUS = 1800.0
 #: at or below this Charisma, and this much per point above it.
 CHARISMA_LEAD_FROM = 40
 CHARISMA_LEAD_PER_POINT = 0.006
-#: How much faster rumours of the player's crimes fade -- and how much slower
-#: their kindnesses -- by how they look (game.rpg.charisma tiers).
-RUMOUR_CHARM = {"repulsive": 0.5, "ugly": 0.75, "plain": 1.0, "fair": 1.3,
-                "striking": 1.6}
 #: How long a thought (what an NPC is thinking, not saying) hangs over a head.
 THOUGHT_SECONDS = 3.5
 #: Two townsfolk talking: how long a rumour's opener is up (longer than an
@@ -963,6 +959,7 @@ class MiniwindSession(SettlementLaw):
         if res.get("deflected"):
             self.add_floater("Deflected", kind="miss")
             return 0.0
+        final = self._lucky_escape(c, final)
         c.damage(final)
         if final > 0:
             # A lethal hit can stop engine ticks before the next UI update.
@@ -974,6 +971,27 @@ class MiniwindSession(SettlementLaw):
             c._last_harm = getattr(fio.player_runtime(self.logic), "last_damage", None)
         self.add_floater(f"-{int(round(final))}", kind="hurt")
         return final
+
+    def _lucky_escape(self, c, final):
+        """A blow that would kill may, once a day, leave the fortunate on a
+        sliver of health instead (rpg_fortune.lucky_escape_chance) -- a
+        labelled roll, so the player sees that Luck and Charisma did it."""
+        if final < c.health or c.health <= 1:
+            return final
+        chance = rpg_fortune.lucky_escape_chance(c)
+        day = str(self.clock.day)
+        if chance <= 0 or self.store.get("fortune.escape_day", "") == day:
+            return final
+        from .diceroll import roll_check
+        roll = roll_check(self.game.dice, chance, "Lucky escape from a killing blow",
+                          source="fortune.escape", why=rpg_fortune.why(c),
+                          context={"quiet": True})
+        if not roll["success"]:
+            return final
+        self.store.set("fortune.escape_day", day)
+        self.notify("Fortune smiles: the killing blow glances off. "
+                    "(Luck and Charisma; once a day)", 5.0)
+        return max(0.0, c.health - 1.0)
 
     def _attacker(self):
         """Who dealt the blow the player is taking, as the engine recorded
@@ -4181,7 +4199,8 @@ class MiniwindSession(SettlementLaw):
         if fact.get("actor") != PLAYER_KEY:
             return None
         from .sim import events as sim_events
-        mult = RUMOUR_CHARM.get(rpg_cha.tier(rpg_cha.charisma_of(self.game.character)), 1.0)
+        mult = rpg_fortune.RUMOUR_CHARM.get(
+            rpg_cha.tier(rpg_cha.charisma_of(self.game.character)), 1.0)
         tags = sim_events.kind_spec(fact.get("kind", ""))["tags"]
         if "crime" in tags:
             return sim_knowledge.TELL_DECAY * mult
