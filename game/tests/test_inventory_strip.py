@@ -240,6 +240,26 @@ def test_a_click_on_a_weapon_in_the_strip_takes_it_in_hand(qt_app):
     assert _hands(s) == ("iron_shortsword", None)
 
 
+def test_a_click_on_the_number_under_a_slot_picks_that_slot(qt_app):
+    from PyQt5.QtCore import QPoint
+    from ..ui import hits
+    from ..ui.inventory_strip import InventoryStrip
+    s = _session()
+    _give(s, "potion_heal_minor", "iron_shortsword")
+    strip = InventoryStrip(s)
+    strip.place(1280, 720)
+    strip._slots = list(s.strip_slots())
+    strip._layout()
+    r = strip._rects[1]
+    p = QPoint(r.center().x(), r.bottom() + 8)       # on the "2"
+    assert not r.contains(p)
+    strip.handle_mouse_press(_Ev(p))
+    strip.handle_mouse_release(_Ev(p))
+    hits.run_clicks(s)
+    assert s.strip_selected == 1
+    assert _hands(s) == ("iron_shortsword", None)
+
+
 # ------------------------------------------------------------- the mouse
 
 class _Ev:
