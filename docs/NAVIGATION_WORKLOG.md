@@ -140,3 +140,32 @@ committed in `docs/NAVIGATION_WORKLOG.md` and `docs/PATHFINDING_DEBUG.md`.
   before representative comparisons. Runtime actor IDs are session-local.
 - No native backend is added. The measured gains come from avoiding searches,
   reducing smoothing probes and following BigWorld's existing simulation layers.
+
+## Follow-up: repeated letters in the Play Mode console
+
+User report: command text sometimes becomes `debbuug` instead of `debug`.
+Investigation found no duplicate event-forwarding path. The exact text is
+reproducible by sending printable OS/Qt autorepeat events to the real Play
+Mode console inputs. The physical keyboard/platform cause has not been
+confirmed; the user was asked which OS and whether quick taps also repeat.
+
+`CommandInput` now accepts a `repeat_text` option. Both Play Mode inputs (the
+viewport input and the older frame input) disable printable autorepeat and
+key compression. Each physical press still inserts text, so intentionally
+typed double letters work. Held Backspace/navigation, command history, input
+methods and normal editor-console text repeat keep their existing handling.
+There is no time-based deduplication that could discard fast typing.
+
+Regression tests reproduced the reported `debbuug` string before the fix in
+both Play Mode inputs. After the fix, they also verify `coffee`, held
+Backspace and the editor console's normal autorepeat. Validation:
+
+```bash
+SDL_AUDIODRIVER=dummy /workspace/.venvs/miniwind/bin/python -m pytest \
+  tests/editor/test_console_history.py tests/editor/test_console_key.py \
+  tests/editor/test_held_keys.py tests/editor/test_debug_console.py \
+  game/tests/test_console.py -q --tb=short
+```
+
+Result: **38 passed**. `git diff --check` also passed. This follow-up changes
+console input only; BigWorld and navigation scheduling are untouched.
