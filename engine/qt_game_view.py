@@ -129,7 +129,7 @@ def _window_wants_cursor(view) -> bool:
         and getattr(w, 'wants_cursor', False)
         and getattr(w, 'key', None) in (
             'screen:inventory', 'screen:character', 'screen:spells',
-            'screen:trade', 'debug:tools'
+            'screen:trade', 'debug:tools', 'debug:pathfinding'
         )
         for w in manager.windows
     )
