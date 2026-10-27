@@ -109,6 +109,7 @@ class OptionsPage:
                      "OFF" if volume <= 0.0 else f"{int(round(volume * 100))}%", True))
         rows.append(("cast", "Spell casting", CAST_MODES.get(self._cast_mode(), ""), True))
         rows.append(("keys", "Key bindings", "▸", True))
+        rows.append(("hud", "Rearrange HUD", "▸", True))
         rows.append(("back", "Back", "", True))
         return rows
 
@@ -129,6 +130,8 @@ class OptionsPage:
             return "Drag or use ← →.  0% turns the music off."
         if key == "keys":
             return "Choose the key for each action."
+        if key == "hud":
+            return "Drag the HUD's panels where you want them; ▼ hides one."
         if key.startswith("bind:"):
             return ("Press the new key (Esc cancels). A key already in use swaps over."
                     if self.capture else "Enter or click, then press the new key.")
@@ -171,6 +174,11 @@ class OptionsPage:
         if key == "keys":
             self.keys_mode, self.capture, self.index = True, None, 0
             self.menu.view.update()
+            return
+        if key == "hud":
+            # Back to the game, in rearrange mode (game/ui/hud_layout.py).
+            if self.menu._call_action("pause_menu_rearrange_hud"):
+                self.menu.close()
             return
         if key == "keys_back":
             self.keys_mode, self.capture, self.index = False, None, 0

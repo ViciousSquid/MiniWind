@@ -11,7 +11,7 @@ they need nothing beyond a QPainter and the session. Selection lives in
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QRect, Qt
+from PyQt5.QtCore import QRect, QRectF, Qt
 from PyQt5.QtGui import QColor, QFontMetrics, QPen
 
 from . import drag, fonts, hits, trade_anim
@@ -62,7 +62,7 @@ _SCREEN_BODY_SIZE = {
     "character": (720, 520),
     "journal": (700, 470),
     "spells": (700, 470),
-    "levelup": (640, 470),
+    "levelup": (820, 600),
     "trade": (760, 520),
     "container": (760, 500),
     "quest": (880, 540),
@@ -224,9 +224,10 @@ def _draw_charcreate(painter, session, w, h):
                  lambda i: classes.get(i).label, field="class")
         favs = ", ".join(attr.label(a) for a in k.favored_attrs)
         majors = ", ".join(sk.label(m) for m in k.major_skills)
+        no_magic = "" if k.magic else f"\n\n{classes.NO_MAGIC_NOTE}"
         _cc_detail(painter, inner.x() + list_w + 24, ty, inner.width() - list_w - 24,
                    k.label, k.desc + f"\n\nSpecialisation: {k.specialisation}"
-                   f"\nFavoured: {favs}\nMajor skills: {majors}")
+                   f"\nFavoured: {favs}\nMajor skills: {majors}{no_magic}")
         hint = "↑/↓ choose class    Enter next    Esc back"
     elif step == "birthsign":
         ids = birthsigns.CREATION_BIRTHSIGN_IDS
@@ -252,7 +253,9 @@ def _draw_charcreate(painter, session, w, h):
         bio = _cc_bio(s)
         totals = "   ".join(f"{label} {sum(s['rolls'][a])}"
                             for a, label in _cha.ROLLED) if s.get("rolls") else ""
-        summary = (f"Name: {name}\nClass: {k.label}\nBirthsign: {b.label}\n"
+        summary = (f"Name: {name}\nClass: {k.label}"
+                   + ("" if k.magic else "  (no magic: it does not reveal itself to you)")
+                   + f"\nBirthsign: {b.label}\n"
                    f"{totals}\n\n{bio['title']}\n\n"
                    "Begin your adventure, or go back to change anything.")
         _cc_detail(painter, tx, ty, inner.right() - tx, "Ready?", summary)
@@ -871,7 +874,7 @@ def _objective_rows(session, q):
 
 
 def _draw_quest(painter, session, w, h):
-    """A Skyrim-style quest journal: a clickable list of every quest the player
+    """The quest journal: a clickable list of every quest the player
     knows (active, then completed) down the left, the selected quest's story and
     objectives on the right, and a "Make Active Quest" box that pins the quest
     so only its arrow shows. Mouse-driven (see :func:`handle_click`); the arrow
@@ -1114,11 +1117,15 @@ def _draw_spells(painter, session, w, h):
             painter.fillRect(row_rect, T.SELECT)
         active = c.active_spell == spell.id
         col = T.GOLD_BRIGHT if i == st["row"] else (T.MAGICKA.lighter(150) if active else T.INK)
-        cost = rpg_magic.cast_cost(c, spell)
+        cost = rpg_magic.cast_cost(c, rpg_magic.for_caster(c, spell.id) or spell)
+        painter.fillRect(QRect(inner.x() + 2, ry + 3, 3, 14), _rarity_color(spell.rarity))
         label = fm.elidedText(("✦ " if active else "") + spell.name,
-                              Qt.ElideRight, max(1, list_w - 76))
-        T.text(painter, inner.x() + 8, ry + 14, label,
+                              Qt.ElideRight, max(1, list_w - 126))
+        T.text(painter, inner.x() + 10, ry + 14, label,
                size=11, color=col, family="Segoe UI")
+        T.text_in(painter, QRect(inner.x(), ry - 2, list_w - 60, 22),
+                  f"Lv {c.spell_level(spell.id)}", size=9, color=T.GOLD, align=T.ALIGN_RIGHT,
+                  family="Segoe UI")
         T.text_in(painter, QRect(inner.x(), ry - 2, list_w - 8, 22),
                   f"{int(cost)} mp", size=9, color=T.DIM, align=T.ALIGN_RIGHT,
                   family="Segoe UI")
@@ -1139,14 +1146,40 @@ def _draw_spells(painter, session, w, h):
     if spells:
         spell = spells[st["row"]]
         dx = inner.x() + list_w + 20
+        dw = inner.width() - list_w - 20
+        level = c.spell_level(spell.id)
+        now = spell.at_level(level)
         T.text(painter, dx, ty + 18, spell.name, size=15, color=T.GOLD_BRIGHT, bold=True)
+        T.text(painter, dx, ty + 36, f"{spell.rarity.title()}  ·  Level {level} of "
+               f"{spell.max_level}", size=10, color=_rarity_color(spell.rarity),
+               bold=True, family="Segoe UI")
         info = (f"School: {sk.label(spell.school)}\nDelivery: {spell.delivery}\n"
-                f"Element: {spell.element}\nCost: {int(rpg_magic.cast_cost(c, spell))} magicka\n\n{spell.desc}")
-        T.text_in(painter, QRect(dx, ty + 34, inner.width() - list_w - 20,
-                                max(1, nav_y - ty - 42)),
+                f"Element: {spell.element}\n"
+                f"Now: {_spell_power(now)}{int(rpg_magic.cast_cost(c, now))} magicka")
+        if level < spell.max_level:
+            nxt = spell.at_level(level + 1)
+            info += (f"\nLevel {level + 1}: {_spell_power(nxt)}"
+                     f"{int(rpg_magic.cast_cost(c, nxt))} magicka")
+        info += f"\n\n{spell.desc}"
+        T.text_in(painter, QRect(dx, ty + 48, dw, max(1, nav_y - ty - 92)),
                   info, size=10, color=T.PARCH,
                   align=int(Qt.AlignTop | Qt.AlignLeft) | int(Qt.TextWordWrap),
                   family="Segoe UI")
+        # Raise the spell with experience -- the same pool character levels
+        # are paid from, so it is a real choice.
+        cost = c.spell_upgrade_cost(spell.id)
+        if cost > 0:
+            button(painter, QRect(dx, nav_y - 36, min(dw, 260), 28),
+                   f"Raise to level {level + 1}  ({cost} XP)",
+                   lambda s, sid=spell.id: _upgrade_spell(s, sid),
+                   enabled=c.xp >= cost, primary=True)
+            T.text_in(painter, QRect(dx, nav_y - 56, dw, 18),
+                      f"Experience: {c.xp}  ·  U raises the selected spell", size=8,
+                      color=T.DIM, align=T.ALIGN_LEFT, family="Segoe UI")
+        else:
+            T.text_in(painter, QRect(dx, nav_y - 30, dw, 20),
+                      "Mastered: this spell is at its highest level.", size=9,
+                      color=T.GOLD, align=T.ALIGN_LEFT, family="Segoe UI")
     else:
         T.text(painter, inner.x() + list_w + 20, ty + 18,
                "You know no spells yet. Buy them from the Mages Guild.",
@@ -1156,6 +1189,46 @@ def _draw_spells(painter, session, w, h):
               f"Click a spell to ready it · {K_CAST.upper()} cast · {K_SPELLS.upper()}/Esc close",
               size=9, color=T.DIM,
               align=T.ALIGN_CENTER, family="Segoe UI")
+
+
+#: Rarity colours for spells, commonest first (game.rpg.magic.RARITIES).
+_RARITY_COLORS = {"common": QColor(190, 186, 176), "uncommon": QColor(120, 210, 120),
+                  "rare": QColor(110, 160, 245), "epic": QColor(190, 120, 240),
+                  "legendary": QColor(245, 165, 70)}
+
+
+def _rarity_color(rarity):
+    return _RARITY_COLORS.get(str(rarity), _RARITY_COLORS["common"])
+
+
+def _spell_power(spell) -> str:
+    """The headline amount of a (levelled) spell: "17 damage, 30s, "."""
+    for e in spell.effects or []:
+        mag = float(e.get("magnitude", 0))
+        if 1 < mag < 99999:
+            kind = str(e.get("kind", ""))
+            what = ("damage" if kind.startswith("damage") else
+                    "healing" if kind.startswith("restore") else kind.replace("_", " "))
+            dur = float(e.get("duration", 0))
+            return f"{mag:g} {what}" + (f" for {dur:g}s" if dur > 0 else "") + ", "
+    for e in spell.effects or []:
+        dur = float(e.get("duration", 0))
+        if dur > 0:
+            return f"lasts {dur:g}s, "
+    return ""
+
+
+def _upgrade_spell(session, spell_id):
+    c = session.game.character
+    spell = rpg_magic.get(spell_id)
+    cost = c.spell_upgrade_cost(spell_id)
+    if spell is None or cost <= 0:
+        return
+    if c.upgrade_spell(spell_id):
+        session.notify(f"{spell.name} is now level {c.spell_level(spell_id)}.", 3.5)
+    else:
+        session.notify(f"Not enough experience: {spell.name} needs {cost} XP "
+                       f"(you have {c.xp}).", 3.5)
 
 
 def _handle_spells(session, key):
@@ -1169,6 +1242,8 @@ def _handle_spells(session, key):
         st["row"] = (st["row"] + 1) % max(1, len(spells)); return True
     if key in ("return", "enter") and spells:
         _ready_spell(session, spells[st["row"]].id); return True
+    if key == "u" and spells:
+        _upgrade_spell(session, spells[st["row"]].id); return True
     if key in (K_SPELLS, "escape", "esc"):
         session.open_screen = None
     return True
@@ -1359,102 +1434,282 @@ def close_trade(session):
 
 
 # ===========================================================================
-# Level up — Skyrim-style: three pillars, pick one to grow.
+# Level up — a parchment page: a line of encouragement, then STRENGTH,
+# ENDURANCE or MAGICKA (MAGICKA only for those who work magic).
 # ===========================================================================
-#: (pool id, label, colour, what it does) in the order the cards are laid out.
-_LEVEL_POOLS = (
-    ("health", "HEALTH", T.HEALTH, "Stand longer in a fight"),
-    ("magicka", "MAGICKA", T.MAGICKA, "Cast more, cast longer"),
-    ("stamina", "STAMINA", T.STAMINA, "Run, swing and draw for longer"),
+#: (choice, label, what it does) in the order the rows are listed.
+_LEVEL_ROWS = (
+    ("strength", "Strength",
+     "How hard you strike with blade, axe and fist, and how much you can "
+     "carry. Every creature in the Vale has a Strength; yours decides who is "
+     "still standing after the blow."),
+    ("endurance", "Endurance",
+     "Maximum health and stamina, the health each level brings, and your "
+     "Armour Class. It steadies your aim, hastens your magicka's return and "
+     "lets you shrug off hostile magic."),
+    ("charisma", "Charisma",
+     "How the Vale sees you: merchants' prices, how strangers greet you, how "
+     "kindly the town's gossip treats you -- and, with Luck, the Charm & Luck "
+     "words that open doors."),
+    ("magicka", "Magicka",
+     "The depth of your well of magic: how many spells you can cast before "
+     "you must rest and let it fill again."),
 )
+#: Parchment and its inks.
+_PARCH_LIGHT = QColor(238, 226, 196)
+_PARCH_DARK = QColor(208, 188, 146)
+_INK = QColor(64, 34, 22)
+_INK_BLUE = QColor(36, 40, 104)
+_INK_RED = QColor(122, 40, 30)
 
 
-def _pools_for(c):
-    """The pools this character may grow: no Magicka for a Warrior, who
-    works no magic."""
-    can = getattr(c, "can_use_magic", None)
-    if can is not None and not can():
-        return tuple(p for p in _LEVEL_POOLS if p[0] != "magicka")
-    return _LEVEL_POOLS
+def _level_rows(c):
+    choices = c.level_choices()
+    return tuple(r for r in _LEVEL_ROWS if r[0] in choices)
 
 
 def _levelup_state(session):
     return _sel(session).setdefault("levelup", {"row": 0})
 
 
-def _pool_values(c, pool):
-    cur = {"health": c.max_health, "magicka": c.max_magicka,
-           "stamina": c.max_stamina}[pool]
-    from ..rpg.character import LEVEL_POOL_GAIN
-    return cur, cur + LEVEL_POOL_GAIN
+def _quotes_enabled(session) -> bool:
+    check = getattr(session, "motivational_quotes_enabled", None)
+    return bool(check()) if callable(check) else True
+
+
+def _level_preview(c, choice):
+    """``[(label, before, after)]`` of what *choice* changes, worked out on a
+    copy of the character so the page shows real numbers."""
+    import copy
+    from ..rpg.character import LEVEL_CHOICES, LEVEL_ATTR_GAIN
+    a = LEVEL_CHOICES[choice]
+    after = copy.deepcopy(c)
+    after.attrs[a] = attr.clamp(after.attrs[a] + LEVEL_ATTR_GAIN)
+    after.recompute_derived(reset_current=False)
+    rows = [(attr.label(a) if choice != "magicka" else "Intelligence",
+             c.attrs[a], after.attrs[a])]
+    for label, fn in (("Max health", lambda x: x.max_health),
+                      ("Max stamina", lambda x: x.max_stamina),
+                      ("Max magicka", lambda x: x.max_magicka),
+                      ("Armour Class", eq.armour_class)):
+        before, now = int(fn(c)), int(fn(after))
+        if now != before:
+            rows.append((label, before, now))
+    if choice == "strength":
+        rows.append(("Melee damage", f"x{0.7 + c.attrs[a] / 100.0:.2f}",
+                     f"x{0.7 + after.attrs[a] / 100.0:.2f}"))
+    if choice == "charisma":
+        from ..rpg import fortune
+        rows.append(("Prices", f"x{_cha.price_multiplier(c.attrs[a], True):.2f}",
+                     f"x{_cha.price_multiplier(after.attrs[a], True):.2f}"))
+        rows.append(("Looks", _cha.tier(c.attrs[a]), _cha.tier(after.attrs[a])))
+        rows.append(("Fortune (Charm & Luck)", fortune.score(c), fortune.score(after)))
+    return rows
+
+
+def _paint_parchment(painter, rect):
+    """An old page: warm in the middle, browning to the edges, flecked."""
+    import random as _random
+    from PyQt5.QtGui import QRadialGradient, QBrush
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    grad = QRadialGradient(rect.center(), max(rect.width(), rect.height()) * 0.7)
+    grad.setColorAt(0.0, _PARCH_LIGHT)
+    grad.setColorAt(0.75, _PARCH_LIGHT.darker(104))
+    grad.setColorAt(1.0, _PARCH_DARK)
+    painter.setPen(QPen(QColor(120, 92, 54), 2))
+    painter.setBrush(QBrush(grad))
+    painter.drawRoundedRect(rect, 6, 6)
+    rng = _random.Random(rect.width() * 31 + rect.height())
+    painter.setPen(Qt.NoPen)
+    for _ in range(rect.width() * rect.height() // 900):
+        painter.setBrush(QColor(120, 90, 50, rng.randint(10, 32)))
+        r = rng.uniform(0.6, 2.2)
+        painter.drawEllipse(QRectF(rect.x() + rng.uniform(0, rect.width()),
+                                   rect.y() + rng.uniform(0, rect.height()), r, r))
+    painter.restore()
+
+
+def _paint_level_icon(painter, rect, choice, ink=_INK_RED):
+    """A woodcut-style glyph for a choice: a sword, a shield, a star."""
+    from PyQt5.QtGui import QPainterPath, QPolygonF
+    from PyQt5.QtCore import QPointF
+    import math as _math
+    painter.save()
+    painter.setRenderHint(painter.Antialiasing, True)
+    x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+    cx, cy, s = x + w / 2.0, y + h / 2.0, min(w, h) / 2.0
+    painter.setPen(QPen(ink.darker(130), max(1.0, s * 0.06)))
+    painter.setBrush(ink)
+    if choice == "strength":
+        blade = QPolygonF([QPointF(cx - s * 0.10, cy + s * 0.25), QPointF(cx - s * 0.10, cy - s * 0.65),
+                           QPointF(cx, cy - s * 0.88), QPointF(cx + s * 0.10, cy - s * 0.65),
+                           QPointF(cx + s * 0.10, cy + s * 0.25)])
+        painter.drawPolygon(blade)
+        painter.drawRect(QRectF(cx - s * 0.42, cy + s * 0.25, s * 0.84, s * 0.12))
+        painter.drawRect(QRectF(cx - s * 0.07, cy + s * 0.37, s * 0.14, s * 0.36))
+        painter.drawEllipse(QPointF(cx, cy + s * 0.80), s * 0.11, s * 0.11)
+    elif choice == "endurance":
+        path = QPainterPath()
+        path.moveTo(cx, cy - s * 0.80)
+        path.cubicTo(cx + s * 0.45, cy - s * 0.65, cx + s * 0.70, cy - s * 0.70,
+                     cx + s * 0.70, cy - s * 0.70)
+        path.cubicTo(cx + s * 0.72, cy + s * 0.10, cx + s * 0.40, cy + s * 0.60, cx, cy + s * 0.85)
+        path.cubicTo(cx - s * 0.40, cy + s * 0.60, cx - s * 0.72, cy + s * 0.10,
+                     cx - s * 0.70, cy - s * 0.70)
+        path.cubicTo(cx - s * 0.70, cy - s * 0.70, cx - s * 0.45, cy - s * 0.65, cx, cy - s * 0.80)
+        painter.drawPath(path)
+        painter.setPen(QPen(_PARCH_LIGHT, max(1.5, s * 0.08)))
+        painter.drawLine(QPointF(cx, cy - s * 0.55), QPointF(cx, cy + s * 0.55))
+        painter.drawLine(QPointF(cx - s * 0.42, cy - s * 0.15), QPointF(cx + s * 0.42, cy - s * 0.15))
+    elif choice == "charisma":
+        # A crown.
+        crown = QPolygonF([QPointF(cx - s * 0.75, cy + s * 0.45), QPointF(cx - s * 0.80, cy - s * 0.45),
+                           QPointF(cx - s * 0.40, cy - s * 0.05), QPointF(cx, cy - s * 0.70),
+                           QPointF(cx + s * 0.40, cy - s * 0.05), QPointF(cx + s * 0.80, cy - s * 0.45),
+                           QPointF(cx + s * 0.75, cy + s * 0.45)])
+        painter.drawPolygon(crown)
+        painter.drawRect(QRectF(cx - s * 0.78, cy + s * 0.50, s * 1.56, s * 0.22))
+        painter.setBrush(_PARCH_LIGHT)
+        painter.setPen(Qt.NoPen)
+        for dx in (-0.80, 0.0, 0.80):
+            painter.drawEllipse(QPointF(cx + s * dx, cy - s * (0.70 if dx == 0 else 0.45)),
+                                s * 0.09, s * 0.09)
+    else:
+        pts = []
+        for i in range(16):
+            r = s * (0.85 if i % 2 == 0 else 0.32)
+            ang = _math.radians(i * 22.5 - 90)
+            pts.append(QPointF(cx + _math.cos(ang) * r, cy + _math.sin(ang) * r))
+        painter.drawPolygon(QPolygonF(pts))
+        painter.setBrush(_PARCH_LIGHT)
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(QPointF(cx, cy), s * 0.16, s * 0.16)
+    painter.restore()
 
 
 def _draw_levelup(painter, session, w, h):
-    """The level-up choice: Health, Magicka or Stamina, as three tall cards.
-
-    The skills you trained this level have already raised their attributes
-    (listed at the foot of the screen); the only decision left to the player
-    is which pool to grow — the one moment Skyrim stops to ask."""
+    """The level-up page, after the old tomes: "You have ascended to level
+    N", a line of encouragement (unless ``[GAME] motivational_quotes`` is off),
+    then STRENGTH, ENDURANCE or MAGICKA, with what the highlighted one does
+    and what it would change, in real numbers."""
+    from ..rpg import quotes
+    from ..rpg.character import LEVEL_ATTR_GAIN, LEVEL_CHOICES
     c = session.game.character
     st = _levelup_state(session)
-    x, y, bw, bh = _panel_rect(w, h, 0.6, 0.7)
-    inner = T.panel(painter, x, y, bw, bh)
-    ty = T.heading(painter, inner, f"Level {c.level + 1}",
-                   "Choose one to increase")
-    gap = 14
-    pools = _pools_for(c)
-    card_w = max(90, (inner.width() - (len(pools) - 1) * gap) // len(pools))
-    card_top = ty + 14
-    card_h = max(120, inner.bottom() - 96 - card_top)
-    for i, (pool, label, colour, blurb) in enumerate(pools):
-        cx = inner.x() + i * (card_w + gap)
-        rect = QRect(cx, card_top, card_w, card_h)
-        chosen = st["row"] == i
-        hot = hits.hovered(rect)
-        painter.save()
-        painter.setRenderHint(painter.Antialiasing, True)
-        fill = QColor(colour)
-        fill.setAlpha(150 if chosen else 70 if hot else 40)
-        painter.setBrush(fill)
-        painter.setPen(QPen(T.GOLD_BRIGHT if chosen else T.GILD, 3 if chosen else 1.5))
-        painter.drawRoundedRect(rect, 8, 8)
-        painter.restore()
-        # The pillar: a column of light that rises higher on the chosen card.
-        bar_h = int(card_h * (0.55 if chosen else 0.4))
-        bar = QRect(cx + card_w // 2 - 6, card_top + card_h - 52 - bar_h, 12, bar_h)
-        glow = QColor(colour).lighter(150 if chosen else 115)
-        painter.fillRect(bar, glow)
-        T.text_in(painter, QRect(cx, card_top + 12, card_w, 30), label, size=17,
-                  color=T.GOLD_BRIGHT if chosen else T.INK, align=T.ALIGN_CENTER,
-                  bold=True)
-        before, after = _pool_values(c, pool)
-        T.text_in(painter, QRect(cx, card_top + card_h - 48, card_w, 22),
-                  f"{int(before)}  →  {int(after)}", size=13,
-                  color=T.GOLD_BRIGHT if chosen else T.INK, align=T.ALIGN_CENTER,
-                  family="Segoe UI", bold=chosen)
-        T.text_in(painter, QRect(cx + 4, card_top + card_h - 26, card_w - 8, 20),
-                  blurb, size=9, color=T.DIM, align=T.ALIGN_CENTER,
-                  family="Segoe UI")
-        T.text_in(painter, QRect(cx + 6, card_top + 6, 24, 18), str(i + 1), size=9,
-                  color=T.DIM, family="Segoe UI")
-        _row_target(painter, rect, _levelup_pick(i), f"levelup:{pool}")
+    rows = _level_rows(c)
+    st["row"] %= len(rows)
+    x, y, bw, bh = _panel_rect(w, h, 0.72, 0.84)
+    page = QRect(x, y, bw, bh)
+    _paint_parchment(painter, page)
+    pad = 24
+    inner = page.adjusted(pad, 16, -pad, -14)
+    level = c.level + 1
 
-    # What training has already earned, shown so the level feels deserved.
+    T.text_in(painter, QRect(inner.x(), inner.y(), inner.width(), 34),
+              f"You have ascended to level {level}", size=20, color=_INK_BLUE,
+              align=T.ALIGN_CENTER, family=fonts.dialogue_family())
+    top = inner.y() + 42
+    if _quotes_enabled(session):
+        painter.save()
+        painter.setFont(fonts.dialogue_font(13))
+        painter.setPen(_INK)
+        qrect = QRect(inner.x(), top, inner.width(), 78)
+        painter.drawText(qrect, int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap),
+                         quotes.for_level(level))
+        used = painter.fontMetrics().boundingRect(
+            qrect, int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap),
+            quotes.for_level(level)).height()
+        painter.restore()
+        top += min(78, used) + 14
+    T.text_in(painter, QRect(inner.x(), top, inner.width(), 20),
+              "Choose an attribute to increase", size=11, color=_INK_BLUE,
+              bold=True, family="Segoe UI")
+    top += 28
+
+    # The choices, down the left.
+    list_w = int(inner.width() * 0.52)
+    row_h = 58
+    tile = row_h - 8
+    for i, (choice, label, _desc) in enumerate(rows):
+        ry = top + i * (row_h + 6)
+        chosen = st["row"] == i
+        tile_r = QRect(inner.x(), ry + 4, tile, tile)
+        painter.fillRect(tile_r, QColor(122, 40, 30, 230) if chosen else QColor(196, 170, 128))
+        painter.setPen(QPen(QColor(90, 52, 30), 1))
+        painter.drawRect(tile_r)
+        _paint_level_icon(painter, tile_r.adjusted(6, 6, -6, -6), choice,
+                          ink=_PARCH_LIGHT if chosen else QColor(150, 110, 80))
+        band = QRect(tile_r.right() + 10, ry + 6, list_w - tile - 10, row_h - 12)
+        if chosen:
+            from PyQt5.QtGui import QLinearGradient, QBrush
+            g = QLinearGradient(band.topLeft(), band.bottomLeft())
+            g.setColorAt(0.0, QColor(214, 222, 236))
+            g.setColorAt(0.5, QColor(150, 170, 204))
+            g.setColorAt(1.0, QColor(118, 140, 182))
+            painter.save()
+            painter.setPen(QPen(QColor(40, 40, 60), 1.5))
+            painter.setBrush(QBrush(g))
+            painter.drawRect(band)
+            painter.restore()
+        a = LEVEL_CHOICES[choice]
+        ink = _INK if chosen else QColor(120, 98, 84)
+        T.text_in(painter, band.adjusted(14, 0, 0, 0), label, size=17, color=ink,
+                  align=T.ALIGN_LEFT, family=fonts.dialogue_family())
+        value = (f"{int(c.max_magicka)}" if choice == "magicka" else str(c.attrs[a]))
+        T.text_in(painter, QRect(band.right() - 120, band.y(), 60, band.height()), value,
+                  size=16, color=ink, align=int(Qt.AlignVCenter | Qt.AlignRight),
+                  family=fonts.dialogue_family())
+        T.text_in(painter, QRect(band.right() - 52, band.y(), 48, band.height()),
+                  f"+{LEVEL_ATTR_GAIN}", size=16, color=_INK_RED if chosen else ink,
+                  align=T.ALIGN_CENTER, family=fonts.dialogue_family())
+        _row_target(painter, QRect(tile_r.x(), ry, list_w, row_h), _levelup_pick(i),
+                    f"levelup:{choice}")
+
+    # The highlighted choice, on the right: its picture, what it does, and
+    # what it would change.
+    choice, label, desc = rows[st["row"]]
+    right = QRect(inner.x() + list_w + 24, top - 28, inner.width() - list_w - 24,
+                  inner.bottom() - 60 - (top - 28))
+    frame = min(right.width(), 150)
+    fr = QRect(right.x() + (right.width() - frame) // 2, right.y(), frame, frame)
+    painter.fillRect(fr, QColor(190, 196, 206))
+    painter.setPen(QPen(QColor(90, 52, 30), 3))
+    painter.drawRect(fr)
+    painter.setPen(QPen(QColor(90, 52, 30), 1))
+    painter.drawRect(fr.adjusted(6, 6, -6, -6))
+    _paint_level_icon(painter, fr.adjusted(18, 18, -18, -18), choice)
+    painter.save()
+    painter.setFont(T.font(10, bold=True, family="Segoe UI"))
+    painter.setPen(_INK)
+    drect = QRect(right.x(), fr.bottom() + 10, right.width(), 76)
+    painter.drawText(drect, int(Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap), desc)
+    painter.restore()
+    ey = drect.bottom() + 6
+    for name, before, after in _level_preview(c, choice):
+        if ey > right.bottom() - 14:
+            break
+        T.text_in(painter, QRect(right.x(), ey, right.width(), 18),
+                  f"{name}:  {before}  →  {after}", size=9, color=_INK_BLUE,
+                  align=T.ALIGN_LEFT, bold=True, family="Segoe UI")
+        ey += 18
+
+    # The foot: what training has already earned, and the confirm button.
     trained = [(a, c._level_attr_gains.get(a, 0)) for a in attr.ATTRIBUTES]
     trained = [f"{attr.label(a)} +{1 + min(4, g // 2)}" for a, g in
                sorted(trained, key=lambda t: -t[1]) if g > 0][:3]
+    foot = (f"Every level: health +{int(c.attrs.get(attr.ENDURANCE, 40) * 0.1)} "
+            f"and full restoration.")
     if trained:
-        T.text_in(painter, QRect(inner.x(), inner.bottom() - 88, inner.width(), 18),
-                  "Your training also raises: " + ",  ".join(trained), size=9,
-                  color=T.STAMINA.lighter(140), align=T.ALIGN_CENTER, family="Segoe UI")
-    pool, label, _c, _b = pools[st["row"] % len(pools)]
-    button(painter, QRect(inner.x() + (inner.width() - 260) // 2,
-                          inner.bottom() - 62, 260, 34),
-           f"Increase {label.title()}", lambda sess: _handle_levelup(sess, "return"),
+        foot += "  Your training also raises: " + ",  ".join(trained) + "."
+    T.text_in(painter, QRect(inner.x(), inner.bottom() - 54, inner.width(), 18), foot,
+              size=9, color=_INK, align=T.ALIGN_LEFT, family="Segoe UI")
+    button(painter, QRect(inner.right() - 250, inner.bottom() - 32, 250, 32),
+           f"Increase {label}", lambda sess: _handle_levelup(sess, "return"),
            primary=True)
-    T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              f"Click, 1–{len(pools)} or ←/→ to choose   Enter confirm", size=9, color=T.DIM,
-              align=T.ALIGN_CENTER, family="Segoe UI")
+    T.text_in(painter, QRect(inner.x(), inner.bottom() - 26, inner.width() - 260, 20),
+              f"Click, 1–{len(rows)} or ↑/↓ to choose   ·   Enter to confirm", size=9,
+              color=QColor(110, 86, 60), align=T.ALIGN_LEFT, family="Segoe UI")
 
 
 def _levelup_pick(i):
@@ -1466,19 +1721,19 @@ def _levelup_pick(i):
 def _handle_levelup(session, key):
     c = session.game.character
     st = _levelup_state(session)
-    pools = _pools_for(c)
-    n = len(pools)
+    rows = _level_rows(c)
+    n = len(rows)
     if key in ("left", "a", "up", "w"):
         st["row"] = (st["row"] - 1) % n; return True
     if key in ("right", "d", "down", "s", "tab"):
         st["row"] = (st["row"] + 1) % n; return True
-    if key in ("1", "2", "3") and int(key) <= n:
+    if key in ("1", "2", "3", "4") and int(key) <= n:
         st["row"] = int(key) - 1; return True
     if key in ("return", "enter", "space"):
-        pool = pools[st["row"] % n][0]
-        res = c.level_up(pool=pool)
+        choice, label, _desc = rows[st["row"] % n]
+        res = c.level_up(choice=choice)
         session.notify(f"Welcome to level {res['level']}!  "
-                       f"{pool.title()} +{int(res.get('pool_gain', 0))}", 5.0)
+                       f"{label} +{int(res.get('choice_gain', 0))}", 5.0)
         st["row"] = 0
         session.open_screen = None
         session._sync_engine_health(full=True)

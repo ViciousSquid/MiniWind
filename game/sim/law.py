@@ -77,6 +77,25 @@ class Writs:
             self.charge(region, "legacy", legacy_bounty, 0.0,
                         grave=legacy_bounty >= 1000)
 
+    def forgive(self, region, fraction):
+        """Let *fraction* of the region's lesser charges go (a watchman talked
+        round). A blood writ is never forgiven. Returns the gold forgiven."""
+        row = self.record(region)
+        forgiven = 0
+        for key, c in list(row["charges"].items()):
+            if c.get("grave"):
+                continue
+            cut = int(round(int(c["amount"]) * float(fraction)))
+            c["amount"] = int(c["amount"]) - cut
+            forgiven += cut
+            if c["amount"] <= 0:
+                del row["charges"][key]
+                self.store.set(f"crime.{key}.settled", "1")
+        if not row["charges"]:
+            row["phase"] = "clear"
+        self.persist()
+        return forgiven
+
     def settle(self, region):
         row = self.record(region)
         amount = self.bounty(region)

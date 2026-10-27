@@ -1,15 +1,15 @@
 """
 The top-left status frame: a bronze ring holding the minimap, four small fins
-fanned round its lower left, and the health, magicka and stamina bars running
-out from behind the ring to the right: health and stamina always, magicka
-under them for anyone who works magic.
+fanned round its lower left, and the health and magicka bars running out from
+behind the ring to the right: health always, with stamina a thin line along its
+bottom edge, and magicka under them for anyone who works magic.
 
 Everything is drawn with QPainter -- no artwork asset -- in three layers:
 
 .. code-block:: text
 
     back    the four fins                        cached pixmap
-    bars    health, stamina, magicka             live, every frame
+    bars    health (stamina a line beneath), magicka   live, every frame
     map     the minimap, clipped to the circle   game.ui.worldmap
     ring    the bronze ring and its "N"          cached pixmap
 
@@ -38,6 +38,8 @@ from . import theme as T
 MARGIN = 14
 #: The minimap's radius, as a fraction of the ring's outer radius.
 INNER = 0.82
+#: The stamina line's thickness (px), on the bottom edge of the health bar.
+STAMINA_LINE = 2.0
 
 _BRONZE_DARK = QColor(52, 28, 10)
 _BRONZE_EDGE = QColor(34, 18, 6)
@@ -63,13 +65,16 @@ def layout(width, height, magical=True):
     bar_x = cx + 0.55 * R
     bar_w = max(190.0, min(280.0, 2.4 * R))
     gap = 0.07 * R
-    y = cy - 0.84 * R
-    bars = []
-    # Magicka is a slim strip under the two main bars.
-    rows = [("health", 0.34 * R), ("stamina", 0.32 * R), ("magicka", 0.13 * R)]
-    for name, h in rows if magical else [row for row in rows if row[0] != "magicka"]:
-        bars.append((name, QRectF(bar_x, y, bar_w, h)))
-        y += h + gap
+    y = cy - 0.70 * R
+    health_h = 0.22 * R
+    # Stamina is a thin line on the bottom edge of the health bar; magicka
+    # a slim strip a little below them.
+    bars = [("health", QRectF(bar_x, y, bar_w, health_h)),
+            ("stamina", QRectF(bar_x, y + health_h, bar_w, STAMINA_LINE))]
+    y += health_h + STAMINA_LINE + gap
+    if magical:
+        bars.append(("magicka", QRectF(bar_x, y, bar_w, 0.09 * R)))
+        y += 0.09 * R + gap
     return SimpleNamespace(cx=cx, cy=cy, R=R, r=INNER * R, bars=bars,
                            text_y=y + 0.12 * R)
 
@@ -224,6 +229,20 @@ def _bar(p, rect, frac, fill, value=""):
         p.drawText(area, int(Qt.AlignVCenter | Qt.AlignRight), value)
 
 
+def _stamina_line(p, rect, health, frac):
+    """Stamina: a flat line under the straight run of the health bar, so it
+    reads as part of that bar rather than a bar of its own."""
+    inset = health.height() / 2.4          # clear of the health bar's rounded ends
+    track = QRectF(rect.left() + inset, rect.top(), rect.width() - 2 * inset, rect.height())
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(6, 8, 10))
+    p.drawRect(track)
+    if frac > 0.0:
+        p.setBrush(QColor(*_FILLS["stamina"][1]))
+        p.drawRect(QRectF(track.left(), track.top(),
+                          track.width() * min(1.0, frac), track.height()))
+
+
 def _magical(c):
     """Whether *c* works magic: a Warrior has no magicka and no bar for it."""
     can = getattr(c, "can_use_magic", None)
@@ -234,8 +253,8 @@ def _draw_bars(p, f, c):
     rects = dict(f.bars)
     _bar(p, rects["health"], c.health / c.max_health if c.max_health else 0.0,
          _FILLS["health"], value=f"{int(c.health)} / {int(c.max_health)}")
-    _bar(p, rects["stamina"], c.stamina / c.max_stamina if c.max_stamina else 0.0,
-         _FILLS["stamina"], value=f"{int(c.stamina)} / {int(c.max_stamina)}")
+    _stamina_line(p, rects["stamina"], rects["health"],
+                  c.stamina / c.max_stamina if c.max_stamina else 0.0)
     if "magicka" in rects:
         # Too slim for numbers; the fill says it.
         _bar(p, rects["magicka"], c.magicka / c.max_magicka if c.max_magicka else 0.0,
@@ -248,15 +267,16 @@ def _draw_identity(p, f, c):
     y = f.text_y
     # Clear of the ring at this height: without a magicka bar the text sits
     # higher, where the ring reaches further right.
-    top, bottom = y - 12.0, y + 20.0          # both lines of text
+    top, bottom = y - 12.0, y + 36.0          # every line of text
     dy = 0.0 if top <= f.cy <= bottom else min(abs(top - f.cy), abs(bottom - f.cy))
     x = max(f.bars[0][1].left() + 0.45 * f.R,
             f.cx + math.sqrt(max(0.0, f.R * f.R - dy * dy)) + 8.0)
     sub = (f"Level {c.level}  ·  {races.get(c.race_id).label} "
-           f"{classes.get(c.class_id).label}  ·  ⦿ {c.gold} gold")
+           f"{classes.get(c.class_id).label}")
     T.text(p, x, y, sub, size=9, color=T.PARCH, family="Segoe UI")
+    T.text(p, x, y + 16, f"⦿ {c.gold} gold", size=9, color=T.PARCH, family="Segoe UI")
     if c.can_level_up:
-        T.text(p, x, y + 16, "Level up! (press L)", size=9,
+        T.text(p, x, y + 32, "Level up! (press L)", size=9,
                color=QColor(120, 220, 130), bold=True, family="Segoe UI")
 
 

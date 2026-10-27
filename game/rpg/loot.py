@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..diceroll import DiceRoller
 
-from ..diceroll import CHECK_NOTATION, DICE_TYPES, check_threshold
+from ..diceroll import DICE_TYPES, roll_check
 from . import items
 
 
@@ -46,10 +46,13 @@ class LootTable:
             if dice is not None:
                 # d20, like every other chance in the game — there is no d100
                 # die to show the player (see diceroll.CHECK_DIE).
-                chance_roll = dice.request_roll(
-                    CHECK_NOTATION, source="loot.drop",
+                chance = e.chance + luck_bonus
+                chance_roll = roll_check(
+                    dice, chance, f"Roll to find {_item_name(e.item_id)}",
+                    source="loot.drop",
+                    why=f"{chance * 100:.0f}% drop chance, Luck {luck}",
                     context={"table": self.id, "item_id": e.item_id})
-                if chance_roll["roll_result"] > check_threshold(e.chance + luck_bonus):
+                if not chance_roll["success"]:
                     continue
             elif rng.random() > min(1.0, e.chance + luck_bonus):
                 continue
@@ -63,6 +66,11 @@ class LootTable:
         return stacks, gold
 
 
+def _item_name(item_id: str) -> str:
+    d = items.get(item_id)
+    return d.name if d else str(item_id).replace("_", " ")
+
+
 def _roll_range(lo: int, hi: int, rng, dice, table_id: str, item_id: str) -> int:
     """Roll an inclusive integer range through the shared service."""
     lo, hi = int(lo), int(hi)
@@ -73,9 +81,12 @@ def _roll_range(lo: int, hi: int, rng, dice, table_id: str, item_id: str) -> int
     # real dice: every roll is put on screen, and a 37-sided die is not one
     # anybody owns. Odd spans fall back to a plain random pick, unshown.
     if dice is not None and span in DICE_TYPES:
+        what = "gold" if item_id == "gold" else _item_name(item_id)
         result = dice.request_roll(
             f"1d{span}", source="loot.quantity",
-            context={"table": table_id, "item_id": item_id})
+            context={"table": table_id, "item_id": item_id,
+                     "label": f"Roll for how much {what}",
+                     "why": f"between {lo} and {hi}"})
         return lo + result["roll_result"] - 1
     return rng.randint(lo, hi)
 
@@ -94,10 +105,11 @@ def _roll_rarity(stack, player_level, rng, luck, dice=None, table_id=""):
         return
     chance = 0.06 + player_level * 0.01 + (luck - 40) * 0.001
     if dice is not None:
-        rarity_roll = dice.request_roll(
-            CHECK_NOTATION, source="loot.rarity",
+        rarity_roll = roll_check(
+            dice, chance, f"Roll for a special {d.name}", source="loot.rarity",
+            why=f"Level {player_level}, Luck {luck} — {chance * 100:.0f}%",
             context={"table": table_id, "item_id": stack.get("id")})
-        if rarity_roll["roll_result"] > check_threshold(chance):
+        if not rarity_roll["success"]:
             return
     elif rng.random() >= chance:
         return

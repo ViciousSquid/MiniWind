@@ -557,6 +557,10 @@ GAME_SETTINGS = (
     ("show_dialogue_heads", "Show dialogue heads",
      "Show the character's head beside the conversation window when talking "
      "to an NPC. The head always matches the NPC's world sprite.", True),
+    ("show_npc_thoughts", "Show NPC thoughts",
+     "Show a thought bubble over a nearby NPC whenever its reason for what "
+     "it is doing changes: heading home hungry, running from a fight, going "
+     "to tell the watch what it saw.", True),
     ("torch_shadows", "Torch shadows",
      "Carried torches near you (the NEAR simulation distance) are dynamic "
      "lights that cast shadows. Costs some frame time; the renderer's shadow "
@@ -677,6 +681,9 @@ def install_play_menu(view):
         # the same config by the play session.
         from . import runtime
         runtime.set_editor_config(config)
+        # Where the player has put the HUD's panels (game/ui/hud_layout.py).
+        from .ui import hud_layout
+        hud_layout.configure(config, getattr(editor, "save_config", None))
 
 
 def install_wheel_zoom(view):

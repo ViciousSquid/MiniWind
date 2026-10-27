@@ -1,10 +1,15 @@
 """
-Core character attributes (the eight primary stats).
+Core character attributes (the six primary stats).
 
-Modelled on the Elder Scrolls line (Morrowind/Oblivion): eight attributes on a
-0-100 scale that every derived statistic, skill cap and combat formula reads
-from. Attributes are raised at level-up (driven by which skills you trained) and
-by races/birthsigns; they are *not* raised directly by use — skills are.
+Six attributes on a 0-100 scale that every derived statistic, skill cap and
+combat formula reads from. Three of them -- STRENGTH, ENDURANCE and CHARISMA
+(Personality) -- are rolled at character creation and belong to every living
+thing in the world, not just the player (:func:`of_creature`). Attributes are
+raised at level-up and by races/birthsigns; they are *not* raised directly by
+use — skills are.
+
+There were eight: Agility and Willpower are folded into Endurance, which now
+carries hit chance, dodging, magicka regeneration and resisting magic too.
 
 Pure data + helpers, no engine dependencies.
 """
@@ -14,30 +19,31 @@ from __future__ import annotations
 from typing import Dict, List
 
 # ---------------------------------------------------------------------------
-# The eight attributes
+# The six attributes
 # ---------------------------------------------------------------------------
 STRENGTH = "strength"
 ENDURANCE = "endurance"
-AGILITY = "agility"
 SPEED = "speed"
 INTELLIGENCE = "intelligence"
-WILLPOWER = "willpower"
 PERSONALITY = "personality"
 LUCK = "luck"
 
 ATTRIBUTES: List[str] = [
-    STRENGTH, ENDURANCE, AGILITY, SPEED,
-    INTELLIGENCE, WILLPOWER, PERSONALITY, LUCK,
+    STRENGTH, ENDURANCE, SPEED, INTELLIGENCE, PERSONALITY, LUCK,
 ]
+
+#: Attributes that no longer exist, and the one each was folded into -- for
+#: authored data and old saves that still name them.
+FOLDED = {"agility": ENDURANCE, "willpower": ENDURANCE}
 
 #: Human-readable labels + one-line descriptions for the character sheet.
 ATTRIBUTE_INFO: Dict[str, Dict[str, str]] = {
     STRENGTH:     {"label": "Strength",     "desc": "Melee damage and how much you can carry."},
-    ENDURANCE:    {"label": "Endurance",    "desc": "Maximum health and stamina; health gained per level."},
-    AGILITY:      {"label": "Agility",      "desc": "Hit chance, dodge, and resistance to being staggered."},
+    ENDURANCE:    {"label": "Endurance",    "desc": "Maximum health and stamina, health gained "
+                   "per level, hit chance and dodging, magicka regeneration and "
+                   "resisting magic."},
     SPEED:        {"label": "Speed",        "desc": "How fast you move."},
     INTELLIGENCE: {"label": "Intelligence", "desc": "Maximum magicka."},
-    WILLPOWER:    {"label": "Willpower",    "desc": "Magicka regeneration and resistance to magic."},
     PERSONALITY:  {"label": "Charisma",  "desc": "How others see you: their disposition, "
                    "merchants' prices, and whether they can bear to deal with you."},
     LUCK:         {"label": "Luck",         "desc": "A small thumb on the scale of every roll."},

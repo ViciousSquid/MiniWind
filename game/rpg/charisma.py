@@ -146,3 +146,67 @@ def repel_chance(charisma: int) -> float:
     if c >= 20:
         return 0.0
     return max(0.0, min(0.7, (20 - c) / 20.0 * 0.7))
+
+
+# ---------------------------------------------------------------------------
+# Every living thing has the same three
+# ---------------------------------------------------------------------------
+#: The property names the three core attributes live under on an actor.
+CORE_KEYS = {attr.STRENGTH: "strength", attr.ENDURANCE: "endurance",
+             attr.PERSONALITY: "charisma"}
+
+#: (STRENGTH, ENDURANCE, CHARISMA) a kind of creature is rolled around, by
+#: role. Anything unlisted is an ordinary 40 / 40 / 40.
+CORE_BASELINE = {
+    "guard": (55, 55, 45), "guard_archer": (50, 50, 45),
+    "bandit": (50, 45, 30), "bandit_archer": (45, 45, 30), "bandit_chief": (65, 60, 40),
+    "cultist": (40, 40, 35), "merchant": (35, 40, 60), "blacksmith": (65, 55, 40),
+    "farmer": (50, 50, 45), "villager": (40, 40, 45), "beggar": (30, 30, 25),
+    "skeleton": (45, 50, 5), "skeleton_archer": (40, 45, 5), "wraith": (40, 60, 5),
+    "monster": (55, 55, 10), "dragon": (100, 100, 40),
+    "wolf": (45, 40, 10), "bear": (75, 70, 10), "boar": (55, 55, 10),
+    "mudcrab": (30, 60, 5), "sheep": (25, 30, 25), "cow": (55, 50, 20),
+    "hen": (10, 20, 20),
+}
+
+#: How far a creature's 3d6 moves each attribute: half what a player's does,
+#: so a wolf is still a wolf.
+CREATURE_PIP = POINTS_PER_PIP * 0.5
+
+
+def _kind(props) -> str:
+    return str(props.get("npc_role") or props.get("creature_role") or "").lower()
+
+
+def core(props, attr_id) -> int:
+    """STRENGTH, ENDURANCE or CHARISMA of any living thing, player aside.
+
+    An authored value wins. Otherwise the creature rolls 3d6 for each, once,
+    around the baseline for its kind (:data:`CORE_BASELINE`) -- the same roll
+    the player makes at character creation, at half the swing -- and the
+    result is written onto it, so it persists with the world and a save.
+    Stable: the roll is seeded by who and where the creature is.
+    """
+    key = CORE_KEYS.get(attr_id)
+    if key is None or not isinstance(props, dict):
+        return attr.BASE_ATTRIBUTE
+    if key == "charisma" and "charisma" not in props and "personality" in props:
+        props["charisma"] = props["personality"]
+    if key not in props:
+        _roll_core(props)
+    try:
+        return attr.clamp(int(props[key]))
+    except (TypeError, ValueError):
+        return attr.BASE_ATTRIBUTE
+
+
+def _roll_core(props) -> None:
+    import zlib
+    base = CORE_BASELINE.get(_kind(props), (40, 40, 40))
+    seed = "|".join(str(props.get(k, "")) for k in ("name", "display_name", "npc_role",
+                                                    "creature_role", "home"))
+    rng = random.Random(zlib.crc32(seed.encode()))
+    for (attr_id, key), value in zip(CORE_KEYS.items(), base):
+        total = sum(roll_3d6(rng))
+        if key not in props:
+            props[key] = attr.clamp(int(round(value + (total - 10.5) * CREATURE_PIP)))

@@ -84,7 +84,7 @@ class ItemDef:
 
 
 # ---------------------------------------------------------------------------
-# Rarity tiers (an ARPG touch — Diablo/Gothic flavour on top of the sim).
+# Rarity tiers: coloured loot on top of the sim.
 # A dropped stack may carry a "rarity" key; rarer finds are worth more and are
 # tinted in the UI. Weapons/armour of a higher rarity also hit / protect harder.
 # ---------------------------------------------------------------------------

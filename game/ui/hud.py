@@ -15,6 +15,8 @@ from PyQt5.QtGui import QColor, QFontMetrics, QPixmap, QPolygon, QPen, QConicalG
 from PyQt5.QtCore import QPoint, QPointF
 
 from .. import fio
+from ..diceroll import check_target, describe_roll
+from . import hud_layout as layout
 from . import theme as T
 from ..rpg import equipment as eq
 from ..rpg import items as rpg_items
@@ -66,17 +68,24 @@ def draw(painter, session, width, height):
     # Name, health, magicka and the minimap, in the bronze frame top left.
     from . import hud_frame
     hud_frame.draw(painter, session, c, width, height)
-    _draw_clock(painter, session, width)
-    _draw_law(painter, session, width)
-    _draw_active(painter, session, c, width, height)
+    # Every other panel can be moved and folded away (game/ui/hud_layout.py).
+    layout.begin_frame()
+
+    def panel(pid, draw):
+        layout.panel(painter, pid, draw, width, height)
+
+    panel("clock", lambda: _draw_clock(painter, session, width))
+    panel("law", lambda: _draw_law(painter, session, width))
+    panel("active", lambda: _draw_active(painter, session, c, width, height))
     if not menu_open:
-        _draw_quest_tracker(painter, session, width)
+        panel("quest", lambda: _draw_quest_tracker(painter, session, width))
         _draw_quest_arrow(painter, session, width, height)
-        _draw_compass(painter, session, width, height)
-        _draw_target(painter, session, width, height)
-    _draw_status_flags(painter, session, c, width, height)
-    _draw_dice_roll(painter, session, width, height)
-    _draw_notifications(painter, session, width, height)
+        panel("compass", lambda: _draw_compass(painter, session, width, height))
+        panel("target", lambda: _draw_target(painter, session, width, height))
+    panel("status", lambda: _draw_status_flags(painter, session, c, width, height))
+    panel("dice", lambda: _draw_dice_roll(painter, session, width, height))
+    panel("rolls", lambda: _draw_roll_log(painter, session, width, height))
+    panel("toasts", lambda: _draw_notifications(painter, session, width, height))
     _draw_floaters(painter, session, width, height)
     if not menu_open:
         _draw_interact_prompt(painter, session, width, height)
@@ -268,14 +277,87 @@ def draw_barks(painter, session, viewport, width, height):
         if sp is None:
             continue
         alpha = int(255 * max(0.0, min(1.0, left / 0.4)))
-        w = min(320, fm.horizontalAdvance(text) + 16)
-        rect = QRect(int(sp[0] - w / 2), int(sp[1] - 26), w, 22)
+        lines = _plate_lines(fm, text, PLATE_MAX_W - 16)
+        w = max(fm.horizontalAdvance(line) for line in lines) + 16
+        h = 6 + fm.height() * len(lines)
+        rect = QRect(int(sp[0] - w / 2), int(sp[1] - 4 - h), w, h)
         painter.setPen(QPen(QColor(168, 142, 84, alpha), 1))
         painter.setBrush(QColor(0, 0, 0, int(alpha * 0.72)))
         painter.drawRoundedRect(rect, 6, 6)
         painter.setPen(QColor(247, 238, 214, alpha))
-        painter.drawText(rect, int(Qt.AlignCenter),
-                         fm.elidedText(text, Qt.ElideRight, w - 10))
+        painter.drawText(rect, int(Qt.AlignCenter), "\n".join(lines))
+    painter.restore()
+
+
+#: The widest a speech plate or thought bubble grows before its text wraps.
+PLATE_MAX_W = 340
+
+
+def _plate_lines(fm, text, max_w, max_lines=2):
+    """*text* word-wrapped to *max_w* pixels, at most *max_lines* lines (the
+    last elided if it still does not fit)."""
+    lines, line = [], ""
+    for word in str(text).split():
+        trial = f"{line} {word}".strip()
+        if line and fm.horizontalAdvance(trial) > max_w:
+            lines.append(line)
+            line = word
+        else:
+            line = trial
+    lines.append(line)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines - 1] + [" ".join(lines[max_lines - 1:])]
+    return [fm.elidedText(l, Qt.ElideRight, max_w) for l in lines]
+
+
+#: Thought bubbles: a pale cloud trailing two small puffs down to the
+#: head, so a thought never reads as something said aloud (draw_barks).
+_THOUGHT_FILL = (232, 232, 244)
+_THOUGHT_INK = (52, 48, 70)
+
+
+def draw_thoughts(painter, session, viewport, width, height):
+    """What people are thinking, in a thought bubble over their heads: the
+    farmer heading home hungry, the witness going to the watch, the coward
+    running. Sits above anything the same person is saying aloud."""
+    if viewport is None:
+        return
+    thoughts = session.live_thoughts() if hasattr(session, "live_thoughts") else ()
+    if not thoughts:
+        return
+    try:
+        import glm
+        proj, view = viewport.projection_matrix, viewport.view_matrix
+    except Exception:
+        return
+    from . import fonts
+    font = fonts.dialogue_font(10)
+    fm = QFontMetrics(font)
+    speaking = {id(thing) for thing, _t, _l in
+                (session.live_barks() if hasattr(session, "live_barks") else ())}
+    painter.save()
+    painter.setFont(font)
+    painter.setRenderHint(painter.Antialiasing, True)
+    r, g, b = _THOUGHT_FILL
+    for thing, text, left in thoughts[:8]:
+        head_y = thing.pos[1] + float(thing.properties.get("sprite_height", 112)) * 0.5 + 40.0
+        sp = _world_to_screen(glm, proj, view, thing.pos[0], head_y, thing.pos[2],
+                              width, height)
+        if sp is None:
+            continue
+        alpha = int(255 * max(0.0, min(1.0, left / 0.4)))
+        cx, cy = int(sp[0]), int(sp[1]) - (30 if id(thing) in speaking else 0)
+        lines = _plate_lines(fm, text, PLATE_MAX_W - 22)
+        w = max(fm.horizontalAdvance(line) for line in lines) + 22
+        h = 6 + fm.height() * len(lines)
+        rect = QRect(cx - w // 2, cy - 16 - h, w, h)
+        painter.setPen(QPen(QColor(120, 116, 150, alpha), 1))
+        painter.setBrush(QColor(r, g, b, int(alpha * 0.92)))
+        painter.drawRoundedRect(rect, 12, 12)
+        painter.drawEllipse(QPoint(cx - 6, cy - 10), 5, 4)
+        painter.drawEllipse(QPoint(cx - 1, cy - 2), 3, 2)
+        painter.setPen(QColor(*_THOUGHT_INK, alpha))
+        painter.drawText(rect, int(Qt.AlignCenter), "\n".join(lines))
     painter.restore()
 
 
@@ -478,6 +560,7 @@ def _draw_clock(painter, session, width):
         painter.drawPixmap(left, top, pm)
     else:
         _paint_clock(painter, cx, cy, radius, h_int, m_int, day_line)
+    return QRect(left, top, w, h)
 
 
 def _paint_clock(painter, cx, cy, radius, h_int, m_int, day_line):
@@ -546,9 +629,16 @@ def _weapon_icon_pixmap(weapon_def, size=26):
         return None
 
 
+#: The weapon/spell box: top right, under the clock (_draw_clock).
+ACTIVE_W, ACTIVE_H = 268, 60
+ACTIVE_TOP = 132
+ACTIVE_MARGIN = 16
+ACTIVE_ICON = 26
+
+
 def _draw_active(painter, session, c, width, height):
-    """Bottom-right: active weapon and active spell chips, each with an icon so
-    the equipped weapon and readied spell read at a glance."""
+    """Top right, under the clock: active weapon and active spell chips, each
+    with an icon so the equipped weapon and readied spell read at a glance."""
     w = eq.weapon(c)
     wname = w.name if w else "Unarmed"
     a = eq.ammo_for(c, w) if w and w.get("kind") in rpg_items.RANGED_KINDS else None
@@ -560,43 +650,47 @@ def _draw_active(painter, session, c, width, height):
     # Dual wielding, the right mouse is the second weapon, not the spell.
     off = eq.offhand_weapon(c)
 
-    x = width - 250
-    y = height - 64
-    T.panel(painter, x, y, 232, 52, radius=8, shadow=False)
+    x = width - ACTIVE_W - ACTIVE_MARGIN
+    y = ACTIVE_TOP
+    rect = QRect(x, y, ACTIVE_W, ACTIVE_H)
+    T.panel(painter, x, y, ACTIVE_W, ACTIVE_H, radius=8, shadow=False)
+    row1, row2 = y + 24, y + 51        # text baselines
+    hint_x = x + ACTIVE_W - 38
 
     # Weapon row: icon + name (left mouse hint).
     tx = x + 14
-    pm = _weapon_icon_pixmap(w, 22)
+    pm = _weapon_icon_pixmap(w, ACTIVE_ICON)
     if pm is not None and not pm.isNull():
-        painter.drawPixmap(x + 12, y + 6, pm)
-        tx = x + 40
-    T.text(painter, tx, y + 21, wname, size=10,
+        painter.drawPixmap(x + 10, y + 3, pm)
+        tx = x + 44
+    T.text(painter, tx, row1, wname, size=11,
            color=T.GOLD_BRIGHT if w else T.DIM, family="Segoe UI")
-    T.text(painter, x + 200, y + 21, "LMB", size=8, color=T.DIM, family="Segoe UI")
+    T.text(painter, hint_x, row1, "LMB", size=8, color=T.DIM, family="Segoe UI")
 
     # Spell row: element-coloured swatch + name (right mouse hint); the
     # second weapon instead, when the off hand holds one.
     if off is not None:
         tx = x + 14
-        opm = _weapon_icon_pixmap(off, 22)
+        opm = _weapon_icon_pixmap(off, ACTIVE_ICON)
         if opm is not None and not opm.isNull():
-            painter.drawPixmap(x + 12, y + 29, opm)
-            tx = x + 40
-        T.text(painter, tx, y + 44, off.name, size=10, color=T.GOLD_BRIGHT,
+            painter.drawPixmap(x + 10, y + 31, opm)
+            tx = x + 44
+        T.text(painter, tx, row2, off.name, size=11, color=T.GOLD_BRIGHT,
                family="Segoe UI")
-        T.text(painter, x + 200, y + 44, "RMB", size=8, color=T.DIM, family="Segoe UI")
-        return
+        T.text(painter, hint_x, row2, "RMB", size=8, color=T.DIM, family="Segoe UI")
+        return rect
     scol = T.MAGICKA.lighter(140) if spell else T.DIM
     if spell is not None:
         col = spell.color
         painter.setBrush(QColor(col[0], col[1], col[2]))
         painter.setPen(QPen(QColor(col[0], col[1], col[2]).darker(160), 1))
-        painter.drawEllipse(x + 14, y + 30, 16, 16)
-        tx = x + 40
+        painter.drawEllipse(x + 14, y + 35, 18, 18)
+        tx = x + 44
     else:
         tx = x + 14
-    T.text(painter, tx, y + 44, sname, size=10, color=scol, family="Segoe UI")
-    T.text(painter, x + 210, y + 44, "K", size=8, color=T.DIM, family="Segoe UI")
+    T.text(painter, tx, row2, sname, size=11, color=scol, family="Segoe UI")
+    T.text(painter, hint_x + 10, row2, "K", size=8, color=T.DIM, family="Segoe UI")
+    return rect
 
 
 def _draw_law(painter, session, width):
@@ -624,6 +718,7 @@ def _draw_law(painter, session, width):
         painter.fillRect(QRect(box.x(), 103, 340, 3), QColor(70, 42, 38))
         painter.fillRect(QRect(box.x(), 103, int(340 * status["remaining"]), 3),
                          QColor(215, 110, 70))
+    return QRect(box.x(), box.y(), box.width(), 51)
 
 
 def _draw_status_flags(painter, session, c, width, height):
@@ -635,12 +730,16 @@ def _draw_status_flags(painter, session, c, width, height):
     for eff in ("shield", "invisibility", "night_eye", "berserk"):
         if c.effect_magnitude(eff) > 0:
             flags.append((eff.upper().replace("_", " "), QColor(180, 150, 220)))
+    if not flags:
+        return None
     cx = width // 2 - len(flags) * 45
+    y = height - layout.STATUS_BOTTOM        # clear of the inventory strip
     for i, (label, col) in enumerate(flags):
         rx = cx + i * 92
-        painter.fillRect(QRect(rx, height - 92, 84, 20), QColor(10, 10, 16, 180))
-        T.text_in(painter, QRect(rx, height - 92, 84, 20), label, size=9,
+        painter.fillRect(QRect(rx, y, 84, 20), QColor(10, 10, 16, 180))
+        T.text_in(painter, QRect(rx, y, 84, 20), label, size=9,
                   color=col, align=T.ALIGN_CENTER, bold=True, family="Segoe UI")
+    return QRect(cx, y, len(flags) * 92 - 8, 20)
 
 
 def _draw_quest_tracker(painter, session, width):
@@ -669,6 +768,8 @@ def _draw_quest_tracker(painter, session, width):
     else:
         T.text(painter, x + 6, y + 34, "press Q for details",
                size=8, color=T.DIM, family="Segoe UI")
+    # Up to the clock's left edge (_draw_clock), so its button clears the clock.
+    return QRect(x - 4, y - 16, 192, 56)
 
 
 def _draw_quest_arrow(painter, session, width, height):
@@ -807,6 +908,7 @@ def _draw_compass(painter, session, width, height):
     painter.setPen(QColor(255, 230, 160))
     painter.drawLine(cx, y, cx, y + 22)
     painter.restore()
+    return QRect(x, y, cw, 23)
 
 
 def _wrap(a):
@@ -843,6 +945,39 @@ def _draw_target(painter, session, width, height):
     T.text_in(painter, QRect(cx - 150, y, 300, 18), name, size=12,
               color=T.GOLD_BRIGHT, align=T.ALIGN_CENTER, bold=True)
     T.bar(painter, cx - 110, y + 20, 220, 10, hp / maxhp if maxhp else 0, T.HEALTH)
+    odds = _target_odds(c, tp)
+    if odds:
+        T.text_in(painter, QRect(cx - 220, y + 33, 440, 16), odds, size=9,
+                  color=QColor(255, 214, 130), align=T.ALIGN_CENTER, family="Segoe UI")
+    return QRect(cx - 220, y, 440, 50 if odds else 32)
+
+
+def _target_odds(c, target_props):
+    """What the player needs to roll against the target under the crosshair,
+    before acting: "To hit: need 14+ (35%)  ·  Critical: need 18+ (15%)".
+
+    A lone melee weapon in reach always connects (see do_attack), so it reads
+    "Sure hit"; a readied spell shows its cast check instead."""
+    from ..rpg import combat
+    try:
+        if c.active_weapon_kind == "spell":
+            spell = rpg_magic.get(c.active_spell or "")
+            if spell is None or spell.base_cost <= 0:
+                return ""
+            chance = rpg_magic.cast_chance(c, spell)
+            return (f"Cast {spell.name}: need {check_target(chance)}+ "
+                    f"({chance * 100:.0f}%)")
+        if c.active_weapon_kind == rpg_items.KIND_STAFF:
+            return ""                    # a staff looses its bound spell
+        ranged = c.active_weapon_kind in rpg_items.RANGED_KINDS
+        odds = combat.attack_odds(c, target_props,
+                                  sure_hit=not ranged and not eq.dual_wielding(c))
+    except (AttributeError, TypeError, ValueError, ZeroDivisionError):
+        return ""
+    hit = ("Sure hit" if odds["sure_hit"] else
+           f"To hit: need {odds['hit_target']}+ ({odds['hit_chance'] * 100:.0f}%)")
+    return (f"{hit}  ·  Critical: need {odds['crit_target']}+ "
+            f"({odds['crit_chance'] * 100:.0f}%)")
 
 def draw_dice_preview(painter, animation, width, height):
     """Draw the dice panel for an editor-side preview animation."""
@@ -978,15 +1113,21 @@ def _draw_dice_roll(painter, session, width, height):
         return
 
     notation = str(result.get("dice_notation", "1d20"))
+    label = str(result.get("label") or "")
+    target = result.get("target")
+    followups = [r for r in animation.get("followups", ()) if r.get("label")]
+    shown_followups = followups[:DICE_FOLLOWUP_LINES]
     count = len(visuals)
     columns = min(_DICE_MAX_COLUMNS, max(1, count))
     rows = (count + columns - 1) // columns
     die_size = 86 if count <= 4 else 72
     gap = 12
-    panel_w = max(340, columns * die_size + (columns - 1) * gap + 40)
-    panel_h = 76 + rows * (die_size + gap) + 34
-    panel_x = (width - panel_w) // 2
-    panel_y = max(58, height - panel_h - 34)
+    panel_w = max(380 if label else 340, columns * die_size + (columns - 1) * gap + 40)
+    extra_h = len(shown_followups) * 18 + (18 if len(followups) > len(shown_followups) else 0)
+    panel_h = 76 + rows * (die_size + gap) + 34 + extra_h
+    # Far right, just above the weapon/spell chips (_draw_active).
+    panel_x = width - panel_w - DICE_PANEL_MARGIN
+    panel_y = max(58, height - panel_h - DICE_PANEL_BOTTOM)
 
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
@@ -994,16 +1135,33 @@ def _draw_dice_roll(painter, session, width, height):
     painter.setPen(QPen(QColor(150, 122, 64, alpha), 2))
     painter.setBrush(panel_col)
     painter.drawRoundedRect(QRect(panel_x, panel_y, panel_w, panel_h), 10, 10)
-    T.text_in(painter, QRect(panel_x + 12, panel_y + 10, panel_w - 24, 20),
-              f"DICE  {notation}", size=10,
+    # What the roll is for, what it needs, and why the odds are what they are:
+    #   ROLL TO HIT BANDIT
+    #   d20 — need 14 or higher
+    #   Blade 35 vs their Agility 30 — 35%
+    title = label.upper() if label else f"DICE  {notation}"
+    T.text_in(painter, QRect(panel_x + 12, panel_y + 8, panel_w - 24, 20),
+              title, size=10,
               color=QColor(226, 224, 236, alpha), align=T.ALIGN_CENTER,
               bold=True, family="Segoe UI")
+    if target is not None:
+        need = (f"{notation} — need {target} or higher" if target <= _notation_max(notation)
+                else f"{notation} — cannot succeed")
+        T.text_in(painter, QRect(panel_x + 12, panel_y + 28, panel_w - 24, 16),
+                  need, size=9, color=QColor(255, 214, 130, alpha),
+                  align=T.ALIGN_CENTER, family="Segoe UI")
+    why = str(result.get("why") or "")
+    if why:
+        T.text_in(painter, QRect(panel_x + 12, panel_y + 45, panel_w - 24, 16),
+                  why, size=8, color=QColor(170, 166, 184, alpha),
+                  align=T.ALIGN_CENTER, italic=True, family="Segoe UI")
 
     settled = True
     start_y = panel_y + 68
+    row_left = panel_x + (panel_w - (columns * die_size + (columns - 1) * gap)) // 2
     for index, die in enumerate(visuals):
         row, column = divmod(index, columns)
-        center_x = panel_x + 20 + die_size // 2 + column * (die_size + gap)
+        center_x = row_left + die_size // 2 + column * (die_size + gap)
         center_y = start_y + die_size // 2 + row * (die_size + gap)
         local = elapsed - die["delay"]
         rolling = local < die["roll_duration"]
@@ -1044,12 +1202,95 @@ def _draw_dice_roll(painter, session, width, height):
                       bold=True, family="Segoe UI")
 
     if settled:
-        T.text_in(painter, QRect(panel_x + 12, panel_y + panel_h - 30,
-                                panel_w - 24, 22),
-                  f"TOTAL  {result.get('roll_result', 0)}", size=12,
-                  color=QColor(255, 214, 130, alpha), align=T.ALIGN_CENTER,
-                  bold=True, family="Segoe UI")
+        total_y = panel_y + panel_h - 30 - extra_h
+        total = result.get("roll_result", 0)
+        if target is not None:
+            # The verdict, in the colour of the outcome: "Rolled 7 — FAILED".
+            passed = bool(result.get("success"))
+            T.text_in(painter, QRect(panel_x + 12, total_y, panel_w - 24, 22),
+                      f"ROLLED {total}  —  {'SUCCESS' if passed else 'FAILED'}",
+                      size=12, color=_verdict_color(passed, alpha),
+                      align=T.ALIGN_CENTER, bold=True, family="Segoe UI")
+        else:
+            T.text_in(painter, QRect(panel_x + 12, total_y, panel_w - 24, 22),
+                      f"TOTAL  {total}", size=12,
+                      color=QColor(255, 214, 130, alpha), align=T.ALIGN_CENTER,
+                      bold=True, family="Segoe UI")
+        # The rolls that came with it (a hit's critical, a kill's loot).
+        line_y = total_y + 24
+        for extra in shown_followups:
+            color = (_verdict_color(bool(extra.get("success")), alpha)
+                     if extra.get("target") is not None
+                     else QColor(226, 224, 236, alpha))
+            T.text_in(painter, QRect(panel_x + 12, line_y, panel_w - 24, 18),
+                      describe_roll(extra), size=9, color=color,
+                      align=T.ALIGN_CENTER, family="Segoe UI")
+            line_y += 18
+        if len(followups) > len(shown_followups):
+            T.text_in(painter, QRect(panel_x + 12, line_y, panel_w - 24, 18),
+                      f"+ {len(followups) - len(shown_followups)} more (see roll log)",
+                      size=8, color=QColor(170, 166, 184, alpha),
+                      align=T.ALIGN_CENTER, family="Segoe UI")
     painter.restore()
+    return QRect(panel_x, panel_y, panel_w, panel_h)
+
+
+#: The dice panel's gap from the right edge, and from the bottom (clear of
+#: the inventory strip along the bottom edge).
+DICE_PANEL_MARGIN = 18
+DICE_PANEL_BOTTOM = 100
+#: How many same-instant follow-up rolls the dice panel lists under the main one.
+DICE_FOLLOWUP_LINES = 3
+_VERDICT_PASS = (130, 220, 130)
+_VERDICT_FAIL = (235, 110, 100)
+
+
+def _verdict_color(passed, alpha=255):
+    r, g, b = _VERDICT_PASS if passed else _VERDICT_FAIL
+    return QColor(r, g, b, alpha)
+
+
+def _notation_max(notation):
+    """The highest total *notation* can roll (20 for ``1d20``)."""
+    try:
+        from ..diceroll import parse_dice_notation
+        terms, _src = parse_dice_notation(notation)
+    except ValueError:
+        return 0
+    return sum(t.sign * (t.count * t.sides if t.sides else t.modifier) for t in terms)
+
+
+#: The roll log: bottom-left, above the inventory strip.
+ROLL_LOG_LINE = 18
+ROLL_LOG_BOTTOM = 128
+ROLL_LOG_FADE = 1.0
+
+
+def _draw_roll_log(painter, session, width, height):
+    """The last few explained rolls, newest at the bottom, each one in the
+    colour of its outcome: "Roll to hit Bandit: 7 (need 14+) — FAILED"."""
+    log = getattr(session, "roll_log", None)
+    if not log:
+        return
+    x = 16
+    y = height - ROLL_LOG_BOTTOM - len(log) * ROLL_LOG_LINE
+    fm = QFontMetrics(T.font(9, family="Segoe UI"))
+    drawn = QRect()
+    painter.save()
+    for entry in log:
+        alpha = int(255 * max(0.0, min(1.0, entry["t"] / ROLL_LOG_FADE)))
+        success = entry.get("success")
+        color = (QColor(226, 224, 236, alpha) if success is None
+                 else _verdict_color(bool(success), alpha))
+        rect = QRect(x, y, fm.horizontalAdvance(entry["text"]) + 14, ROLL_LOG_LINE)
+        painter.fillRect(rect, QColor(0, 0, 0, int(alpha * 0.55)))
+        T.text_in(painter, rect.adjusted(6, 0, -6, 0), entry["text"], size=9,
+                  color=color, align=T.ALIGN_LEFT,
+                  family="Segoe UI")
+        drawn = drawn.united(rect)
+        y += ROLL_LOG_LINE
+    painter.restore()
+    return drawn
 
 
 
@@ -1094,6 +1335,7 @@ def _draw_notifications(painter, session, width, height):
         if status["bounty"] or status["curfew"]:
             y = 118  # keep the new watch status readable above the notices
 
+    drawn = QRect()
     for n in reversed(notes):
         text = str(n["text"])
         alpha = max(0, min(255, int(255 * min(1.0, float(n["t"]) / TOAST_FADE))))
@@ -1123,8 +1365,10 @@ def _draw_notifications(painter, session, width, height):
         painter.setPen(cream)
         painter.setFont(font)
         painter.drawText(rect, T.ALIGN_CENTER, shown)
+        drawn = drawn.united(rect)
         y += h + gap
     painter.restore()
+    return drawn
 
 
 def _draw_floaters(painter, session, width, height):

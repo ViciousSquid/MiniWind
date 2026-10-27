@@ -231,7 +231,7 @@
     "weight": 6.0,
     "desc": "A staff that channels a bolt of flame.",
     "kind": "staff",
-    "skill": "destruction",
+    "skill": "offensive",
     "damage": 8,
     "reach": 1400,
     "speed": 1.0,

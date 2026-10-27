@@ -125,7 +125,8 @@ class Director:
                  disposition: Optional[Callable[[Dict, str], int]] = None,
                  on_bounty: Optional[Callable[[int, WorldEvent, str], None]] = None,
                  on_message: Optional[Callable[[str], None]] = None,
-                 on_witness=None, sight_test=None, region_for=None):
+                 on_witness=None, sight_test=None, region_for=None,
+                 on_gossip=None):
         self.store = store
         self.clock = clock
         self.rng = rng
@@ -135,6 +136,12 @@ class Director:
         self.on_witness = on_witness
         self.sight_test = sight_test
         self.region_for = region_for
+        #: ``on_gossip(speaker, listener, fact)``: somebody just told somebody
+        #: something they did not know (the game voices it).
+        self.on_gossip = on_gossip
+        #: ``rumour_decay(fact) -> float | None``: how much certainty a fact
+        #: loses each time it is retold (None: the usual amount).
+        self.rumour_decay = None
         self.ctx = appraisal.Context(hostile=hostile, disposition=disposition,
                                      store=store)
         #: actor key -> ranked intents (recomputed when their knowledge changes)
@@ -383,14 +390,21 @@ class Director:
                     continue
                 if perception.dist2d(_pos(speaker), _pos(listener)) > GOSSIP_RADIUS:
                     continue
-                passed = knowledge.gossip(self.store, skey, lkey, self.rng)
-                back = knowledge.gossip(self.store, lkey, skey, self.rng)
+                passed = knowledge.gossip(self.store, skey, lkey, self.rng,
+                                          decay=self.rumour_decay)
+                back = knowledge.gossip(self.store, lkey, skey, self.rng,
+                                        decay=self.rumour_decay)
                 if passed:
                     self._dirty.add(lkey)
                     self._on_learned(listener, lkey, passed[0])
                 if back:
                     self._dirty.add(skey)
                     self._on_learned(speaker, skey, back[0])
+                if self.on_gossip is not None:
+                    if passed:
+                        self.on_gossip(speaker, listener, passed[0])
+                    elif back:
+                        self.on_gossip(listener, speaker, back[0])
                 if passed or back:
                     exchanges += 1
                     ev = self.bus.get((passed or back)[0].get("e", 0))

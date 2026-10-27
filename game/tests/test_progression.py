@@ -1,5 +1,5 @@
 """
-Skyrim-style levelling, learning by doing, and archery by one set of rules.
+Levelling, learning by doing, and archery by one set of rules.
 
 Run:  python -m pytest game/tests/test_progression.py -q
 """

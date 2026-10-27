@@ -105,6 +105,12 @@ def mood(props, target=None, confidence=None) -> Tuple[str, str]:
     return "calm", ""
 
 
+def _alignment_text(props) -> str:
+    from .rpg import alignment
+    value = alignment.of_npc(props)
+    return f"{alignment.tier(value)} ({value:+.0f})"
+
+
 def snapshot(thing, monster_state: Optional[dict] = None,
              session: Optional[object] = None,
              target_name: Optional[str] = None) -> Dict[str, Any]:
@@ -142,7 +148,12 @@ def snapshot(thing, monster_state: Optional[dict] = None,
     ]
 
     # ---- Vitals / combat --------------------------------------------
+    from .rpg import attributes as _attr, charisma as _cha
     vitals = [
+        ("Strength", _fmt(_cha.core(props, _attr.STRENGTH))),
+        ("Endurance", _fmt(_cha.core(props, _attr.ENDURANCE))),
+        ("Charisma", _fmt(_cha.core(props, _attr.PERSONALITY))),
+        ("Alignment", _alignment_text(props)),
         ("Health", _fmt(_get(props, "health", default="?"))),
         ("Courage", _fmt(_get(props, "courage", default="?"))),
         ("Attack style", _fmt(_get(props, "attack_style", default="?"))),
@@ -383,3 +394,182 @@ def _build_tasks(props, sched_state, target, investigating, confidence):
     top_pri = tasks[0][0]
     tasks = [(p, label, p == top_pri) for (p, label, _a) in tasks]
     return tasks
+
+
+# ---------------------------------------------------------------------------
+# Thoughts: what an actor is thinking, in its own words, for the overhead HUD
+# ---------------------------------------------------------------------------
+#: First-person lines per situation. One is picked per actor and situation
+#: (stable, not random) so an NPC does not change its mind about how to put it.
+_THOUGHTS = {
+    "flee": ("Too dangerous — I'm getting out of here!", "Run! Run!",
+             "I'm no fighter. I need to hide."),
+    "rally": ("There are enough of us — we can take them!",
+              "Together! Drive them off!"),
+    "alert": ("Something's wrong... I'll keep my distance.",
+              "Easy now. Watch them closely."),
+    "subdue": ("Enough brawling — break it up!",),
+    "combat": ("{target} — you'll regret this!", "Have at you, {target}!",
+               "{target}! To arms!"),
+    "hunt": ("Fresh meat...", "There — prey!", "Easy pickings."),
+    "pursue": ("You won't escape the law!", "After them!"),
+    "search": ("Where did they go?", "They can't have gone far..."),
+    "arrest": ("Stop right there, criminal!",),
+    "escort": ("Come quietly now.",),
+    "follow": ("Right behind you.", "Lead on."),
+    "exhausted": ("So tired... I need to lie down.", "Can barely keep my eyes open."),
+    "hungry": ("My stomach's growling — time to eat.", "Can't work on an empty belly."),
+    "GOING_TO_WORK": ("Time to get to work.", "Another day, another coin."),
+    "WORKING": ("Back to it.", "Busy, busy."),
+    "GOING_HOME": ("That's enough for today.", "Home for the night."),
+    "SLEEPING": ("Zzz...",),
+    "PATROL": ("All quiet. Keep walking.", "Eyes open, stay sharp."),
+}
+
+#: Situations urgent enough to think aloud the moment an actor is first seen,
+#: rather than waiting for its state to change.
+URGENT_THOUGHTS = frozenset(("flee", "rally", "alert", "subdue", "combat", "hunt",
+                             "pursue", "search", "arrest", "intent"))
+
+
+def _pick(options, *salt) -> str:
+    import zlib
+    return options[zlib.crc32("|".join(str(s) for s in salt).encode()) % len(options)]
+
+
+def _plain_reason(reason: str) -> str:
+    """A simulation reason as a thought: its working - "(courage 0.42)" - is
+    for the inspector, not the thought bubble."""
+    reason = str(reason).strip()
+    if reason.endswith(")") and " (" in reason:
+        reason = reason[:reason.rindex(" (")]
+    return reason
+
+
+def thought(props, target_name: Optional[str] = None) -> Tuple[str, str]:
+    """``(situation, text)``: what an actor is thinking right now.
+
+    *situation* is a stable key that changes only when the actor's reason for
+    what it is doing changes — the HUD shows a fresh thought on each change.
+    *text* is the first-person line to show ("Somebody must tell the watch
+    what Rufus did."), empty when there is nothing worth saying (idling,
+    wandering). Pure: reads only the actor's properties.
+    """
+    if not isinstance(props, dict) or props.get("dead"):
+        return "", ""
+    name = str(_get(props, "display_name", "name", default=""))
+    state = str(_get(props, "sched_state", default="")).upper()
+    target = target_name or "you"
+    aggression = str(props.get("aggression", "passive"))
+
+    def line(key, **fmt):
+        return key, _pick(_THOUGHTS[key], name, key).format(**fmt)
+
+    if props.get("_flee") or state == "FLEE":
+        reason = props.get("_sim_reason") if props.get("_sim_intent") == "FLEE" else ""
+        if reason:
+            return "flee:" + str(reason), _plain_reason(reason) + "."
+        return line("flee")
+    if props.get("_subduing"):
+        return line("subdue")
+    if state == "RALLY":
+        return line("rally")
+    if state == "ALERT":
+        return line("alert")
+    if state in ("PURSUE", "ARREST_APPROACH"):
+        return line("arrest" if state == "ARREST_APPROACH" else "pursue")
+    if state == "SEARCH":
+        return line("search")
+    if state == "ESCORT":
+        return line("escort")
+    # Something the actor knows is driving it: say it in the decision's words.
+    intent = str(props.get("_sim_intent") or "")
+    reason = props.get("_sim_reason")
+    acting_on_it = state in ("REPORT", "CONFRONT", "INVESTIGATE", "COMBAT")
+    if reason and (intent == "MOURN" or (acting_on_it and intent not in ("IGNORE", "WARM"))):
+        return "intent:" + intent + ":" + str(reason), _plain_reason(reason) + "."
+    if state == "COMBAT" and props.get("_aggro_target") is not None:
+        return "combat:" + str(props.get("_aggro_target")), line(
+            "combat", target=target)[1]
+    if (aggression == "hostile" and props.get("awake")
+            and not props.get("triggered")):
+        return line("hunt")
+    if state == "FOLLOW":
+        return line("follow")
+    need = props.get("_need_reason")
+    if need in ("exhausted", "hungry"):
+        return line(need)
+    if state in _THOUGHTS:
+        return line(state)
+    return state.lower(), ""
+
+
+# ---------------------------------------------------------------------------
+# "What's on your mind?": an actor explaining itself to the player
+# ---------------------------------------------------------------------------
+#: What somebody busy with nothing in particular says they are about.
+_ROUTINE_MIND = {
+    "WORKING": "Just working. Somebody has to.",
+    "GOING_TO_WORK": "Off to work, same as every day.",
+    "GOING_HOME": "Heading home. It's been a long day.",
+    "IDLE": "Not much. Taking it easy for a moment.",
+    "WANDER": "Just stretching my legs.",
+    "PATROL": "Keeping the peace, as ever.",
+    "SLEEPING": "I was asleep, if you must know.",
+}
+
+#: How a known fact is brought up, by how the actor came to know it.
+_KNOWN_FROM = {
+    "witnessed": "I saw it with my own eyes: {what}.",
+    "heard": "I heard it happen: {what}.",
+    "told": "People are saying {what}.",
+}
+
+
+def speak_mind(props, facts=(), intents=(), player_key: str = "player") -> str:
+    """What an actor says when the player asks what is on its mind: what it
+    is doing and why, what is pressing on it, and the most notable thing it
+    knows -- the same reasons that drive its behaviour, in its own words.
+
+    *facts* are its knowledge (:func:`game.sim.knowledge.facts`), *intents*
+    its ranked intents; both optional. Pure.
+    """
+    if not isinstance(props, dict):
+        return "..."
+    parts = []
+    key, now = thought(props)
+    state = str(_get(props, "sched_state", default="")).upper()
+    if not now or key == state:
+        # Plain routine: the overhead thought is a word or two ("Busy,
+        # busy."); asked to their face, people say a little more.
+        now = _ROUTINE_MIND.get(state, now or "Nothing much.")
+    parts.append(now)
+    said = {now}
+
+    hunger = float(_get(props, "need_hunger", default=0.0) or 0.0)
+    fatigue = float(_get(props, "need_fatigue", default=0.0) or 0.0)
+    if hunger >= MOOD_NEED_LEVEL and props.get("_need_reason") != "hungry":
+        parts.append("I could eat a horse, mind.")
+    if fatigue >= MOOD_NEED_LEVEL and props.get("_need_reason") != "exhausted":
+        parts.append("And I'm dead on my feet.")
+
+    for intent in intents or ():
+        reason = _plain_reason(getattr(intent, "reason", "")) + "."
+        if getattr(intent, "reaction", "") != "IGNORE" and reason not in said and reason != ".":
+            parts.append(reason)
+            said.add(reason)
+            break
+
+    from .sim import events, knowledge
+    notable = [f for f in facts or () if knowledge.shareable(f)]
+    if notable:
+        top = max(notable, key=lambda f: float(f.get("certainty", 0.0))
+                  * float(events.kind_spec(f.get("kind", ""))["severity"]))
+        if top.get("actor") == player_key:
+            top = dict(top, actor_name="you")
+        what = knowledge.phrase(top)
+        line = _KNOWN_FROM.get(str(top.get("source")), _KNOWN_FROM["told"]).format(what=what)
+        if float(top.get("certainty", 0.0)) < 0.5:
+            line = line[:-1] + " — though I can't swear to it."
+        parts.append(line)
+    return " ".join(parts)

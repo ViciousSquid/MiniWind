@@ -22,10 +22,10 @@ from . import skills as sk
 
 class CharClass:
     __slots__ = ("id", "label", "desc", "specialisation", "favored_attrs",
-                 "major_skills", "starting_spells", "magic")
+                 "major_skills", "starting_spells", "magic", "damage_mult")
 
     def __init__(self, cid, label, desc, spec, favored_attrs, major_skills,
-                 starting_spells=None, magic=True):
+                 starting_spells=None, magic=True, damage_mult=1.0):
         self.id = cid
         self.label = label
         self.desc = desc
@@ -39,20 +39,35 @@ class CharClass:
         # Whether the class can work magic at all. A Warrior cannot: no
         # magicka, no spells, no casting (see can_use_magic).
         self.magic = bool(magic)
+        # How hard the class hits with every attack it makes. The Warrior's
+        # is the highest of any class (see WARRIOR_DAMAGE).
+        self.damage_mult = float(damage_mult)
+
+
+#: The Warrior's multiplier on the damage it deals (not damage taken, which
+#: is the same for every class): no class hits harder.
+WARRIOR_DAMAGE = 1.10
+
+#: What character creation tells a player choosing a class that works no magic.
+NO_MAGIC_NOTE = ("No magic. Magic does not reveal itself to this class: you will "
+                 "have no magicka, cannot learn or cast spells, and are never "
+                 "offered Magicka when you level up. Steel, strength and nerve "
+                 "will have to carry you.")
 
 
 CLASSES: Dict[str, CharClass] = {c.id: c for c in [
     CharClass("warrior", "Warrior",
-              "A front-line fighter: heavy armour, a strong arm, a blade or a mace.",
+              "A front-line fighter: heavy armour, a strong arm, a blade or a mace. "
+              "No class hits harder: every attack a Warrior makes deals +10% damage.",
               sk.COMBAT, [attr.STRENGTH, attr.ENDURANCE],
               [sk.BLADE, sk.BLUNT, sk.HEAVY_ARMOR, sk.BLOCK, sk.ATHLETICS,
                sk.MARKSMAN, sk.LIGHT_ARMOR],
-              magic=False),
+              magic=False, damage_mult=WARRIOR_DAMAGE),
     CharClass("knight", "Knight",
               "A chivalrous warrior as comfortable at court as in the melee.",
               sk.COMBAT, [attr.STRENGTH, attr.PERSONALITY],
               [sk.BLADE, sk.BLUNT, sk.HEAVY_ARMOR, sk.BLOCK, sk.SPEECHCRAFT,
-               sk.ILLUSION, sk.RESTORATION]),
+               sk.DEFENSIVE, sk.ATHLETICS]),
     CharClass("barbarian", "Barbarian",
               "A savage brawler who trades armour for raw ferocity and speed.",
               sk.COMBAT, [attr.STRENGTH, attr.SPEED],
@@ -65,36 +80,36 @@ CLASSES: Dict[str, CharClass] = {c.id: c for c in [
                sk.SNEAK, sk.ALCHEMY]),
     CharClass("archer", "Archer",
               "Death from a distance; a bow, light feet and just enough steel.",
-              sk.COMBAT, [attr.AGILITY, attr.STRENGTH],
+              sk.COMBAT, [attr.ENDURANCE, attr.STRENGTH],
               [sk.MARKSMAN, sk.BLADE, sk.LIGHT_ARMOR, sk.SNEAK, sk.ACROBATICS,
                sk.ATHLETICS, sk.ALCHEMY]),
     CharClass("mage", "Mage",
               "A student of all the arcane arts, weak of arm but deep of magicka.",
-              sk.MAGIC, [attr.INTELLIGENCE, attr.WILLPOWER],
-              [sk.DESTRUCTION, sk.RESTORATION, sk.ALTERATION, sk.CONJURATION,
-               sk.ILLUSION, sk.MYSTICISM, sk.ALCHEMY],
+              sk.MAGIC, [attr.INTELLIGENCE, attr.ENDURANCE],
+              [sk.OFFENSIVE, sk.DEFENSIVE, sk.ALCHEMY, sk.SPEECHCRAFT,
+               sk.MERCANTILE, sk.SECURITY, sk.ATHLETICS],
               starting_spells=["flare", "heal_minor"]),
     CharClass("sorcerer", "Sorcerer",
               "A battle-mage who binds armour and summoned blades to raw destruction.",
               sk.MAGIC, [attr.INTELLIGENCE, attr.ENDURANCE],
-              [sk.DESTRUCTION, sk.CONJURATION, sk.ALTERATION, sk.MYSTICISM,
-               sk.HEAVY_ARMOR, sk.BLADE, sk.RESTORATION],
+              [sk.OFFENSIVE, sk.DEFENSIVE, sk.HEAVY_ARMOR, sk.BLADE,
+               sk.BLOCK, sk.ALCHEMY, sk.ATHLETICS],
               starting_spells=["flare"]),
     CharClass("healer", "Healer",
               "A gentle spellcaster devoted to mending and warding.",
-              sk.MAGIC, [attr.WILLPOWER, attr.PERSONALITY],
-              [sk.RESTORATION, sk.ALTERATION, sk.ILLUSION, sk.ALCHEMY,
-               sk.SPEECHCRAFT, sk.MYSTICISM, sk.BLUNT],
+              sk.MAGIC, [attr.ENDURANCE, attr.PERSONALITY],
+              [sk.DEFENSIVE, sk.OFFENSIVE, sk.ALCHEMY, sk.SPEECHCRAFT,
+               sk.MERCANTILE, sk.BLUNT, sk.LIGHT_ARMOR],
               starting_spells=["heal_minor", "flare"]),
     CharClass("necromancer", "Necromancer",
               "A death-mage who binds spirits and calls the fallen back to life.",
-              sk.MAGIC, [attr.WILLPOWER, attr.INTELLIGENCE],
-              [sk.CONJURATION, sk.MYSTICISM, sk.DESTRUCTION, sk.ALTERATION,
-               sk.RESTORATION, sk.SNEAK, sk.ALCHEMY],
+              sk.MAGIC, [attr.ENDURANCE, attr.INTELLIGENCE],
+              [sk.OFFENSIVE, sk.DEFENSIVE, sk.SNEAK, sk.ALCHEMY,
+               sk.BLADE, sk.LIGHT_ARMOR, sk.SECURITY],
               starting_spells=["flare", "resurrection"]),
     CharClass("thief", "Thief",
               "Light fingers, lighter feet: locks, pockets and a quick blade.",
-              sk.STEALTH, [attr.AGILITY, attr.SPEED],
+              sk.STEALTH, [attr.ENDURANCE, attr.SPEED],
               [sk.SECURITY, sk.SNEAK, sk.LIGHT_FINGERS, sk.ACROBATICS,
                sk.LIGHT_ARMOR, sk.BLADE, sk.MERCANTILE]),
     CharClass("assassin", "Assassin",
@@ -106,11 +121,11 @@ CLASSES: Dict[str, CharClass] = {c.id: c for c in [
               "A charming duellist who talks their way in and cuts their way out.",
               sk.STEALTH, [attr.SPEED, attr.PERSONALITY],
               [sk.BLADE, sk.LIGHT_ARMOR, sk.BLOCK, sk.SPEECHCRAFT,
-               sk.MERCANTILE, sk.ILLUSION, sk.ALCHEMY]),
+               sk.MERCANTILE, sk.DEFENSIVE, sk.ALCHEMY]),
     CharClass("bard", "Bard",
               "A jack-of-all-trades: a little steel, a little magic, a lot of charm.",
               sk.STEALTH, [attr.PERSONALITY, attr.INTELLIGENCE],
-              [sk.SPEECHCRAFT, sk.MERCANTILE, sk.ILLUSION, sk.BLADE,
+              [sk.SPEECHCRAFT, sk.MERCANTILE, sk.DEFENSIVE, sk.BLADE,
                sk.LIGHT_ARMOR, sk.ALCHEMY, sk.SECURITY]),
 ]}
 
@@ -135,6 +150,13 @@ def can_use_magic(character) -> bool:
         return True
 
 
+def damage_mult(character) -> float:
+    """How hard *character*'s class hits (1.0 for a class with no bonus, or
+    a custom class)."""
+    klass = CLASSES.get(str(getattr(character, "class_id", "")).lower())
+    return klass.damage_mult if klass is not None else 1.0
+
+
 def get(class_id: str) -> CharClass:
     return CLASSES.get(str(class_id).lower(), CLASSES["warrior"])
 
@@ -143,8 +165,18 @@ def make_custom(label: str, spec: str, favored_attrs: List[str],
                 major_skills: List[str], desc: str = "A custom class.") -> CharClass:
     """Build a one-off custom class (character-creation 'design your own')."""
     spec = spec if spec in (sk.COMBAT, sk.MAGIC, sk.STEALTH) else sk.COMBAT
-    fav = [a for a in favored_attrs if a in attr.ATTRIBUTES][:2] or [attr.STRENGTH, attr.ENDURANCE]
-    majors = [s for s in major_skills if s in sk.SKILLS][:7]
+    fav = []
+    for a in favored_attrs:
+        a = attr.FOLDED.get(a, a)            # an old Agility/Willpower pick
+        if a in attr.ATTRIBUTES and a not in fav:
+            fav.append(a)
+    fav = fav[:2] or [attr.STRENGTH, attr.ENDURANCE]
+    majors = []
+    for s in major_skills:
+        s = sk.fold(s)                       # an old magic school
+        if s in sk.SKILLS and s not in majors:
+            majors.append(s)
+    majors = majors[:7]
     # pad to 7 with sensible defaults if short
     for s in sk.SKILL_IDS:
         if len(majors) >= 7:

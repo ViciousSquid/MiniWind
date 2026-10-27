@@ -34,12 +34,18 @@ from . import birthsigns
 
 #: Major-skill increases needed to earn one character level.
 SKILL_UPS_PER_LEVEL = 10
-#: The three pools a level-up can grow, Skyrim-style: the player picks one.
+#: The three pools a level-up could grow (the older, pool-based level-up).
 LEVEL_POOLS = ("health", "magicka", "stamina")
 #: Stamina a second of sprinting costs (a fresh 100 lasts about eight seconds).
 SPRINT_STAMINA_PER_SECOND = 12.0
 #: How much the chosen pool grows per level.
 LEVEL_POOL_GAIN = 10.0
+#: The level-up choice: which attribute grows, by :data:`LEVEL_ATTR_GAIN`.
+#: MAGICKA is the well of magic -- Intelligence underneath, which sets
+#: maximum magicka -- and is only offered to those who work magic.
+LEVEL_CHOICES = {"strength": attr.STRENGTH, "endurance": attr.ENDURANCE,
+                 "charisma": attr.PERSONALITY, "magicka": attr.INTELLIGENCE}
+LEVEL_ATTR_GAIN = 5
 #: How many quick-weapon slots there are (keys 1-4).
 QUICK_WEAPON_SLOTS = 4
 #: Experience points (kills, quests) per level: level L needs L times this.
@@ -90,6 +96,13 @@ class Character:
         #: Successful casts per spell id. Practice with one spell makes it
         #: steadier on top of the school skill (see magic.cast_chance).
         self.spell_practice: Dict[str, int] = {}
+        #: The level the player has raised each known spell to (1 if absent);
+        #: raised by spending experience (:meth:`upgrade_spell`).
+        self.spell_levels: Dict[str, int] = {}
+        #: -100 (Villainous) .. +100 (Saintly), moved by deeds (game.rpg.alignment),
+        #: and the deeds that moved it, newest last.
+        self.alignment: float = 0.0
+        self.alignment_log: List[Dict] = []
         #: The 3d6 totals rolled at creation ({"strength", "endurance",
         #: "personality"}), which write the character's bio (game.rpg.bios).
         self.rolls: Dict[str, int] = {}
@@ -205,8 +218,6 @@ class Character:
         sign_bonus = getattr(self, "_sign_stat_bonuses", {}) or {}
         end = a.get(attr.ENDURANCE, 40)
         stg = a.get(attr.STRENGTH, 40)
-        wil = a.get(attr.WILLPOWER, 40)
-        agi = a.get(attr.AGILITY, 40)
         intel = a.get(attr.INTELLIGENCE, 40)
 
         # Health: endurance-driven, plus accumulated per-level gains.
@@ -217,7 +228,7 @@ class Character:
         self.max_magicka = (intel * 1.5 + self._accum_magicka
                             + sign_bonus.get("magicka", 0))
         # Stamina/fatigue: the "can I keep swinging/running" pool.
-        self.max_stamina = ((stg + wil + agi + end) * 0.5 + self._accum_stamina
+        self.max_stamina = ((stg + end * 3) * 0.5 + self._accum_stamina
                             + sign_bonus.get("stamina", 0))
 
         self.max_health = max(1.0, self.max_health)
@@ -301,6 +312,27 @@ class Character:
         self._skill_raises.clear()
         return out
 
+    def spell_level(self, spell_id: str) -> int:
+        return int(self.spell_levels.get(str(spell_id), 1))
+
+    def spell_upgrade_cost(self, spell_id: str) -> int:
+        """Experience to raise *spell_id* one level (0 when it cannot rise)."""
+        from . import magic
+        spell = magic.get(spell_id)
+        if spell is None or spell_id not in self.known_spells:
+            return 0
+        return spell.xp_to_level(self.spell_level(spell_id))
+
+    def upgrade_spell(self, spell_id: str) -> bool:
+        """Spend experience to raise a known spell one level. The same pool
+        pays for character levels, so it is a real choice."""
+        cost = self.spell_upgrade_cost(spell_id)
+        if cost <= 0 or self.xp < cost:
+            return False
+        self.xp -= cost
+        self.spell_levels[str(spell_id)] = self.spell_level(spell_id) + 1
+        return True
+
     def add_xp(self, amount) -> int:
         """Earn *amount* experience points (kills, quests); returns it."""
         amount = max(0, int(amount or 0))
@@ -318,13 +350,27 @@ class Character:
         return (self.xp_progress >= SKILL_UPS_PER_LEVEL
                 or self.xp >= self.xp_needed)
 
+    def level_choices(self) -> List[str]:
+        """What this character may grow at a level-up: STRENGTH, ENDURANCE,
+        CHARISMA and, for anyone who works magic, MAGICKA."""
+        out = ["strength", "endurance", "charisma"]
+        if self.can_use_magic():
+            out.append("magicka")
+        return out
+
     def level_up(self, chosen_attrs: Optional[List[str]] = None,
-                 pool: Optional[str] = None) -> Dict:
+                 pool: Optional[str] = None, choice: Optional[str] = None) -> Dict:
         """Advance one character level.
 
-        *pool* is the Skyrim-style choice: ``"health"``, ``"magicka"`` or
+        *choice* is the level-up screen's question: ``"strength"``,
+        ``"endurance"``, ``"charisma"`` or ``"magicka"`` grows by :data:`LEVEL_ATTR_GAIN`
+        (see :data:`LEVEL_CHOICES`), and health grows by a tenth of Endurance
+        as every level. A *choice* the character may not make (MAGICKA for a
+        Warrior) is ignored.
+
+        *pool* is the older pool choice: ``"health"``, ``"magicka"`` or
         ``"stamina"`` grows by :data:`LEVEL_POOL_GAIN`. Attributes still rise
-        as well, from what was actually trained (Oblivion-style): if
+        as well, from what was actually trained: if
         *chosen_attrs* (up to 3) is given those are raised; otherwise the two
         favoured attributes plus the most-trained attribute this level. With no
         *pool* the old Endurance-based health gain applies. Returns a summary.
@@ -362,6 +408,17 @@ class Character:
             raised[a] = new_val - self.attrs[a]
             self.attrs[a] = new_val
 
+        choice = str(choice or "").lower()
+        choice_gain = 0
+        if choice in self.level_choices():
+            a = LEVEL_CHOICES[choice]
+            new_val = attr.clamp(self.attrs[a] + LEVEL_ATTR_GAIN)
+            choice_gain = new_val - self.attrs[a]
+            raised[a] = raised.get(a, 0) + choice_gain
+            self.attrs[a] = new_val
+        else:
+            choice = ""
+
         pool = str(pool or "").lower()
         gains = {"health": 0.0, "magicka": 0.0, "stamina": 0.0}
         if pool in LEVEL_POOLS:
@@ -374,13 +431,14 @@ class Character:
         self._accum_stamina += gains["stamina"]
         self._level_attr_gains = {a: 0 for a in attr.ATTRIBUTES}
         self.recompute_derived(reset_current=False)
-        # A level-up restores you fully, as in Skyrim.
+        # A level-up restores you fully.
         self.health = self.max_health
         self.magicka = self.max_magicka
         self.stamina = self.max_stamina
         return {"level": self.level, "attrs_raised": raised,
                 "health_gain": gains["health"], "pool": pool if pool in LEVEL_POOLS else "",
-                "pool_gain": gains.get(pool, 0.0) if pool in LEVEL_POOLS else 0.0}
+                "pool_gain": gains.get(pool, 0.0) if pool in LEVEL_POOLS else 0.0,
+                "choice": choice, "choice_gain": choice_gain}
 
     # --------------------------------------------------------------- pools help
     def damage(self, amount: float) -> float:
@@ -417,7 +475,7 @@ class Character:
         # Atronach sign: magicka does not regenerate.
         golem = self.birthsign_id == "golem"
         if not golem and self.max_magicka > 0:
-            rate = self.max_magicka * 0.02 * (0.5 + self.attrs.get(attr.WILLPOWER, 40) / 100.0)
+            rate = self.max_magicka * 0.02 * (0.5 + self.attrs.get(attr.ENDURANCE, 40) / 100.0)
             self.restore_magicka(rate * dt)
         if sprinting:
             self.spend_stamina(SPRINT_STAMINA_PER_SECOND * dt)
@@ -467,6 +525,9 @@ class Character:
             "factions": dict(self.factions), "bounty": self.bounty,
             "sign_stat_bonuses": dict(getattr(self, "_sign_stat_bonuses", {})),
             "spell_practice": dict(self.spell_practice),
+            "spell_levels": dict(self.spell_levels),
+            "alignment": round(self.alignment, 2),
+            "alignment_log": [dict(e) for e in self.alignment_log],
             "quick_weapons": list(self.quick_weapons),
             "strip": list(self.strip),
             "rolls": dict(self.rolls),
@@ -487,9 +548,22 @@ class Character:
         if isinstance(data.get("attrs"), dict):
             c.attrs.update({k: int(v) for k, v in data["attrs"].items() if k in c.attrs})
         if isinstance(data.get("skills"), dict):
-            c.skills.update({k: int(v) for k, v in data["skills"].items() if k in c.skills})
-        c.major_skills = list(data.get("major_skills", c.major_skills))
-        c._skill_xp = dict(data.get("skill_xp", {}))
+            # An old save's six magic schools fold into the two, keeping the best.
+            loaded = {}
+            for k, v in data["skills"].items():
+                k = sk.fold(k)
+                loaded[k] = max(loaded.get(k, 0), int(v))
+            c.skills.update({k: v for k, v in loaded.items() if k in c.skills})
+        majors = []
+        for s in data.get("major_skills", c.major_skills):
+            s = sk.fold(s)
+            if s not in majors:
+                majors.append(s)
+        c.major_skills = majors
+        c._skill_xp = {}
+        for k, v in dict(data.get("skill_xp", {})).items():
+            k = sk.fold(k)
+            c._skill_xp[k] = max(c._skill_xp.get(k, 0.0), float(v))
         c._level_attr_gains = {a: int(data.get("level_attr_gains", {}).get(a, 0))
                                for a in attr.ATTRIBUTES}
         c._accum_health = float(data.get("accum_health", 0.0))
@@ -531,6 +605,12 @@ class Character:
         practice = data.get("spell_practice")
         if isinstance(practice, dict):
             c.spell_practice = {str(k): int(v) for k, v in practice.items()}
+        c.alignment = float(data.get("alignment", 0.0) or 0.0)
+        c.alignment_log = [dict(e) for e in (data.get("alignment_log") or [])
+                           if isinstance(e, dict)]
+        levels = data.get("spell_levels")
+        if isinstance(levels, dict):
+            c.spell_levels = {str(k): max(1, int(v)) for k, v in levels.items()}
         c.recompute_derived(reset_current=False)
         c.health = float(data.get("health", c.max_health))
         c.magicka = float(data.get("magicka", c.max_magicka))

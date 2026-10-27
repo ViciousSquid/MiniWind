@@ -46,7 +46,10 @@ from .rpg import guilds
 from .rpg import disposition as disp
 from .rpg import needs as rpg_needs
 from .rpg import heads
+from .rpg import attributes as attr
 from .rpg import charisma as rpg_cha
+from .rpg import fortune as rpg_fortune
+from .rpg import alignment as rpg_align
 from .ui.arrows import arrow_sprite
 from .rpg import daily as rpg_daily
 from .rpg import quests as _quests
@@ -65,6 +68,9 @@ from .rpg.dialogue import DialogueRunner
 from .rpg import inventory as inv
 from .rpg import skills as sk
 from .rpg.game_state import GameState
+from .diceroll import describe_roll
+from . import chatter
+from . import mental_state
 from .diceroll_anim import SHAKE_DURATION, ROLL_DURATION, FADE_DURATION
 from . import npc_archery
 from . import npc_stamina
@@ -225,6 +231,9 @@ DICE_ANIMATION_ROLL = ROLL_DURATION
 DICE_ANIMATION_FADE = FADE_DURATION
 DICE_DISPLAY_DURATION = DICE_ANIMATION_SHAKE + DICE_ANIMATION_ROLL + DICE_ANIMATION_FADE + 1.0
 DICE_TYPES = ("d4", "d6", "d8", "d10", "d12", "d20")
+#: How long an explained roll stays in the HUD's roll log, and how many it keeps.
+ROLL_LOG_SECONDS = 8.0
+ROLL_LOG_MAX = 6
 
 #: Probability an NPC/creature with no authored handedness is left-handed. Left
 #: handedness is deliberately rare, so most actors wield on the right.
@@ -256,6 +265,27 @@ SUBDUE_FRACTION = 0.45
 #: be said to be shown.
 BARK_SECONDS = 3.0
 BARK_RADIUS = 1800.0
+#: A civilian's confidence from the most charismatic guard in sight: nothing
+#: at or below this Charisma, and this much per point above it.
+CHARISMA_LEAD_FROM = 40
+CHARISMA_LEAD_PER_POINT = 0.006
+#: How near townsfolk must be for a slain monster to count as defending them.
+DEFEND_RADIUS = 600.0
+#: How long a thought (what an NPC is thinking, not saying) hangs over a head.
+THOUGHT_SECONDS = 3.5
+#: Two townsfolk talking: how long a rumour's opener is up (longer than an
+#: ordinary bark: it says more), how close they must be to pass the time of
+#: day, how long before either does so again (s), and the chance per decision
+#: pass that some nearby pair does. A reply comes as the opener fades, so the
+#: two lines read in turn rather than at once.
+GOSSIP_SECONDS = 4.5
+BARK_FADE = 0.4
+CHAT_RADIUS = 160.0
+CHAT_COOLDOWN = 60.0
+CHAT_CHANCE = 0.04
+#: The routines in which somebody has time to chat.
+CHAT_STATES = frozenset(("", "IDLE", "WANDER", "WORKING", "GOING_TO_WORK",
+                         "GOING_HOME", "PATROL"))
 STOP_SHOUTS = ("Stop right there!", "Halt! In the name of the law!",
                "You there! Stop!", "That's far enough, criminal.")
 BREAK_UP_SHOUTS = ("Break it up!", "Oi! Enough of that!", "Stop this at once!",
@@ -658,6 +688,10 @@ class MiniwindSession(SettlementLaw):
         self._torch_flicker_t = 0.0
         self.dice_type_index = len(DICE_TYPES) - 1
         self.dice_animation: Optional[Dict] = None
+        #: Recent explained rolls ("Roll to hit: 7 (need 14+) — FAILED"),
+        #: newest last, for the HUD's roll log; "success" is whether the roll
+        #: went the player's way.
+        self.roll_log: List[Dict] = []
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
         self._attack_anim_time = 0.0   # player stab animation remaining (seconds)
@@ -679,7 +713,11 @@ class MiniwindSession(SettlementLaw):
             on_witness=lambda event, seen: self.notify(
                 "Someone witnessed your crime." if seen else
                 "Someone heard the disturbance.", 4.0),
-            sight_test=self._law_visible, region_for=self._law_region)
+            sight_test=self._law_visible, region_for=self._law_region,
+            on_gossip=self._on_gossip)
+        self.director.rumour_decay = self._rumour_decay
+        # The player's crimes and kindnesses move their alignment.
+        self.director.bus.subscribe(self._alignment_event)
         #: Accumulated game-hours since the last simulation tick, so rumour
         #: propagation and production advance on world time rather than frames.
         self._sim_hours = 0.0
@@ -702,6 +740,18 @@ class MiniwindSession(SettlementLaw):
         except (AttributeError, TypeError, ValueError):
             return False
 
+    def motivational_quotes_enabled(self) -> bool:
+        """Whether the level-up page opens with a line of encouragement
+        (``[GAME] motivational_quotes`` in settings.ini; deliberately not in
+        the in-game settings). Defaults to on when unset."""
+        try:
+            config = self._editor_config()
+            if config is None:
+                return True
+            return config.getboolean("GAME", "motivational_quotes", fallback=True)
+        except (AttributeError, TypeError, ValueError):
+            return True
+
     def dialogue_heads_enabled(self) -> bool:
         """Whether to show the character head beside the conversation window
         (GAME → "Show dialogue heads"). Defaults to on when unset."""
@@ -713,9 +763,26 @@ class MiniwindSession(SettlementLaw):
         except (AttributeError, TypeError, ValueError):
             return True
 
-    def _on_dice_roll(self, result: Dict, _source: str, _context: Dict) -> None:
-        """Start the HUD presentation for every roll when visualisation is enabled."""
-        if not self._visualise_dice_rolls_enabled():
+    def _on_dice_roll(self, result: Dict, _source: str, context: Dict) -> None:
+        """Log what a labelled roll was for and whether it passed, and start
+        the HUD presentation for every roll when visualisation is enabled. A
+        ``quiet`` roll (somebody else's, against the player) is logged only."""
+        if result.get("label"):
+            line = describe_roll(result)
+            self.game.message(line)
+            good = result.get("success")
+            if good is not None and (context or {}).get("against_player"):
+                good = not good          # their roll succeeding is bad news
+            self.roll_log.append({"text": line, "why": str(result.get("why", "")),
+                                  "success": good, "t": ROLL_LOG_SECONDS})
+            del self.roll_log[:-ROLL_LOG_MAX]
+        if (context or {}).get("quiet") or not self._visualise_dice_rolls_enabled():
+            return
+        current = self.dice_animation
+        if current is not None and current.get("elapsed", 0.0) == 0.0:
+            # Rolled in the same instant as the one about to be shown (a hit
+            # and its critical, a kill's loot): listed under it, not over it.
+            current.setdefault("followups", []).append(result)
             return
         self.dice_animation = {
             "result": result,
@@ -759,6 +826,7 @@ class MiniwindSession(SettlementLaw):
         self.notifications = []
         self.floaters = []
         self.dice_animation = None
+        self.roll_log = []
         self._deaths_seen = set()
         # A new game means a world with no history and nobody who remembers
         # anything: the store wipe above already erased every actor's knowledge,
@@ -872,9 +940,17 @@ class MiniwindSession(SettlementLaw):
         c = self.game.character
         if getattr(fio.player_runtime(self.logic), "god_mode", False):
             return 0.0
-        res = rpg_combat.resolve_incoming(c, float(raw_damage) * self.incoming_mult,
+        raw_damage = float(raw_damage) * self.incoming_mult
+        attacker = self._attacker()
+        if attacker is not None and damage_kind == "physical":
+            # Every living thing has a Strength: a bear hits harder than a hen.
+            raw_damage *= rpg_combat.strength_factor(
+                rpg_cha.core(attacker.properties, attr.STRENGTH))
+        res = rpg_combat.resolve_incoming(c, raw_damage,
                                           damage_kind=damage_kind,
-                                          blocking=self._blocking, rng=self.rng)
+                                          blocking=self._blocking, rng=self.rng,
+                                          dice=self.game.dice,
+                                          attacker=self._attacker_name())
         final = res["final"]
         # armour training whenever armour is tested -- a deflected blow too
         worn = res["armor_class"]
@@ -888,6 +964,7 @@ class MiniwindSession(SettlementLaw):
         if res.get("deflected"):
             self.add_floater("Deflected", kind="miss")
             return 0.0
+        final = self._lucky_escape(c, final)
         c.damage(final)
         if final > 0:
             # A lethal hit can stop engine ticks before the next UI update.
@@ -899,6 +976,41 @@ class MiniwindSession(SettlementLaw):
             c._last_harm = getattr(fio.player_runtime(self.logic), "last_damage", None)
         self.add_floater(f"-{int(round(final))}", kind="hurt")
         return final
+
+    def _lucky_escape(self, c, final):
+        """A blow that would kill may, once a day, leave the fortunate on a
+        sliver of health instead (rpg_fortune.lucky_escape_chance) -- a
+        labelled roll, so the player sees that Luck and Charisma did it."""
+        if final < c.health or c.health <= 1:
+            return final
+        chance = rpg_fortune.lucky_escape_chance(c)
+        day = str(self.clock.day)
+        if chance <= 0 or self.store.get("fortune.escape_day", "") == day:
+            return final
+        from .diceroll import roll_check
+        roll = roll_check(self.game.dice, chance, "Lucky escape from a killing blow",
+                          source="fortune.escape", why=rpg_fortune.why(c),
+                          context={"quiet": True})
+        if not roll["success"]:
+            return final
+        self.store.set("fortune.escape_day", day)
+        self.notify("Fortune smiles: the killing blow glances off. "
+                    "(Luck and Charisma; once a day)", 5.0)
+        return max(0.0, c.health - 1.0)
+
+    def _attacker(self):
+        """Who dealt the blow the player is taking, as the engine recorded
+        it -- an actor, or None for a trap, a fall or a spell with no caster."""
+        last = getattr(fio.player_runtime(self.logic), "last_damage", None)
+        source = last[0] if isinstance(last, tuple) and last else None
+        return source if isinstance(getattr(source, "properties", None), dict) else None
+
+    def _attacker_name(self) -> str:
+        source = self._attacker()
+        if source is None:
+            return ""
+        props = source.properties
+        return str(props.get("display_name") or props.get("name") or "")
 
     def _sync_engine_health(self, full=False) -> None:
         c = self.game.character
@@ -1244,6 +1356,8 @@ class MiniwindSession(SettlementLaw):
                     elif (i & 1) != phase:
                         continue
                 self._decide(npc)
+            self._update_thoughts()
+            self._update_small_talk()
         for i, npc in enumerate(npcs):
             tier = npc_tiers[i]
             if tier >= TIER_DISTANT:
@@ -2905,6 +3019,9 @@ class MiniwindSession(SettlementLaw):
             f["t"] -= delta
             f["y"] -= 30 * delta
         self.floaters = [f for f in self.floaters if f["t"] > 0]
+        for r in self.roll_log:
+            r["t"] -= delta
+        self.roll_log = [r for r in self.roll_log if r["t"] > 0]
         self._tick_dice_animation(delta)
 
     def notify(self, text, seconds=3.0):
@@ -3018,11 +3135,13 @@ class MiniwindSession(SettlementLaw):
         killer = (self.player_actor if by_player
                   else self._sim_actor_by_key(self._slug(p.get("_killed_by", "")))
                   or self._nearest_hostile(npc, DEFEND_SIGHT))
+        crime = (self._sim_is_crime_against(npc) if by_player else
+                 bool(killer is not None and self._sim_is_crime_against(npc)))
         self.director.emit(
             "death", actor=killer, target=npc, pos=list(npc.pos),
-            observers=self._sim_observers(),
-            crime=(self._sim_is_crime_against(npc) if by_player else
-                   bool(killer is not None and self._sim_is_crime_against(npc))))
+            observers=self._sim_observers(), crime=crime)
+        # What the killing makes of the killer (game/rpg/alignment.py).
+        self._alignment_kill(killer, npc, by_player, crime)
         # The kin-grief wound stays: it is the *authored relationship* reacting,
         # which the settlement already models, and it applies even to relatives
         # who were nowhere near and only hear of it later.
@@ -3315,6 +3434,7 @@ class MiniwindSession(SettlementLaw):
         self.game.character.bounty = self.law.total
         self.director.invalidate()
         self.notify(f"You pay {amount} gold to the watch of {region}. Your writ is sealed.", 4.0)
+        self._player_deed("atone")
         self._clear_arrest()
 
     def _begin_escort(self) -> None:
@@ -3468,8 +3588,10 @@ class MiniwindSession(SettlementLaw):
         return 50
 
     def _sim_on_bounty(self, amount: int, event, reporter_key: str) -> None:
-        """Testimony, including delayed rumours, opens a local writ."""
-        amount = max(0, int(amount))
+        """Testimony, including delayed rumours, opens a local writ -- dearer
+        for the wicked, cheaper for the good (rpg_align.bounty_mult)."""
+        amount = max(0, int(round(int(amount) * rpg_align.bounty_mult(
+            self.game.character.alignment))))
         if amount <= 0 or event is None:
             return
         self._law_sync()
@@ -4052,10 +4174,24 @@ class MiniwindSession(SettlementLaw):
         barks = self.__dict__.setdefault("barks", {})
         barks[id(thing)] = (thing, str(text), _time.monotonic() + float(seconds))
 
+    def bark_later(self, thing, text, delay: float) -> None:
+        """Have *thing* say *text* after *delay* seconds -- the reply in an
+        exchange, so the two lines are not said at once."""
+        import time as _time
+        self.__dict__.setdefault("_bark_queue", []).append(
+            (_time.monotonic() + float(delay), thing, str(text)))
+
     def live_barks(self):
         """``[(thing, text, seconds_left)]`` still being said."""
         import time as _time
         now = _time.monotonic()
+        queue = self.__dict__.get("_bark_queue")
+        if queue:
+            due = [q for q in queue if q[0] <= now]
+            self._bark_queue = [q for q in queue if q[0] > now]
+            for _at, thing, text in due:
+                if not thing.properties.get("dead"):
+                    self.bark(thing, text)
         barks = self.__dict__.get("barks") or {}
         out = []
         for key, (thing, text, until) in list(barks.items()):
@@ -4064,6 +4200,240 @@ class MiniwindSession(SettlementLaw):
                 continue
             out.append((thing, text, until - now))
         return out
+
+    # ---------------------------------------------------------- conversation
+    # ------------------------------------------------------------ alignment
+    def _player_deed(self, deed, note=""):
+        """Move the player's alignment by *deed*; a big shift is announced."""
+        c = self.game.character
+        before = rpg_align.tier(c.alignment)
+        delta = rpg_align.player_deed(c, deed, self.clock.day, note)
+        if not delta:
+            return 0.0
+        text = rpg_align.DEEDS[deed][1]
+        self.game.message(f"Alignment {delta:+.1f}: you {text}.")
+        after = rpg_align.tier(c.alignment)
+        if after != before:
+            self.notify(f"You are now {after}.", 5.0)
+        elif abs(delta) >= 3:
+            self.notify(f"Alignment {delta:+.0f}: you {text}.", 3.0)
+        return delta
+
+    def _alignment_event(self, event) -> None:
+        """The simulation's record of what the player did (theft, assault,
+        healing, gifts) moves their alignment. Killings are judged in
+        :meth:`_alignment_kill`, where both bodies are to hand."""
+        if event.actor != PLAYER_KEY:
+            return
+        deed = {"theft": "theft", "lockpick": "lockpick", "attack": "assault"}.get(event.kind)
+        if deed is not None and not event.is_crime:
+            deed = None
+        if event.kind == "heal" and event.target and event.target != PLAYER_KEY:
+            deed = "heal_other"
+        elif event.kind == "gift":
+            deed = "gift"
+        if deed is not None:
+            self._player_deed(deed)
+
+    def _alignment_kill(self, killer, victim, by_player, crime) -> None:
+        """A death moves its killer's alignment -- the player's or an NPC's
+        -- by what the victim was. Killing something that was menacing the
+        defenceless counts double, and an NPC who sinks far enough falls from
+        grace and turns outlaw."""
+        vp = victim.properties
+        hostile = str(vp.get("aggression")) == "hostile"
+        if by_player:
+            deed = rpg_align.kill_deed(vp, hostile_to_killer=hostile, crime=crime)
+            if deed:
+                self._player_deed(deed)
+            if deed in ("slay_brigand", "slay_monster") and self._menaced_innocents(victim):
+                self._player_deed("defend")
+            return
+        kp = getattr(killer, "properties", None)
+        if not isinstance(kp, dict):
+            return
+        enemy = factions.is_hostile(kp.get("faction") or kp.get("team"),
+                                    vp.get("faction") or vp.get("team"))
+        deed = rpg_align.kill_deed(vp, hostile_to_killer=enemy or hostile)
+        if not deed:
+            return
+        _value, fell = rpg_align.npc_deed(kp, deed)
+        if fell:
+            self._fall_from_grace(killer)
+
+    def _menaced_innocents(self, victim) -> bool:
+        """Whether *victim* fell among townsfolk it threatened."""
+        for t in self.npcs():
+            tp = t.properties
+            if (t is victim or tp.get("dead") or self._is_combatant(t)
+                    or str(tp.get("aggression")) == "hostile"
+                    or str(tp.get("type", "")).lower() != "npc"):
+                continue
+            if self._dist2d(t.pos, victim.pos) <= DEFEND_RADIUS:
+                return True
+        return False
+
+    def _fall_from_grace(self, npc) -> None:
+        """An NPC whose deeds have made them evil leaves their people and
+        turns outlaw: a brigand from now on, hostile to their old friends."""
+        p = npc.properties
+        p["faction"] = p["team"] = "bandits"
+        p["aggression"] = "hostile"
+        p["combatant"] = True
+        p["triggered"] = False
+        p["awake"] = True
+        name = p.get("display_name") or p.get("name") or "Someone"
+        self.bark(npc, "No more pretending.")
+        ppos = self._player_pos()
+        if ppos is not None and self._dist2d(npc.pos, ppos) <= BARK_RADIUS:
+            self.notify(f"{name} has fallen from grace and turned outlaw.", 5.0)
+
+    def _with_reputation(self, tree, npc):
+        """*tree* with what this NPC has heard of the player's deeds before its
+        opening line -- a copy; nothing for an unremarkable reputation."""
+        line = rpg_align.greeting(self.game.character.alignment,
+                                  rpg_align.of_npc(npc.properties))
+        if not line or not isinstance(tree, dict):
+            return tree
+        start = tree.get("start")
+        node = (tree.get("nodes") or {}).get(start)
+        if not isinstance(node, dict):
+            return tree
+        import copy
+        tree = copy.deepcopy(tree)
+        node = tree["nodes"][start]
+        node["text"] = f"{line} {node.get('text', '')}".strip()
+        return tree
+
+    def _rumour_decay(self, fact):
+        """How fast talk about the player fades, by the player's Charisma:
+        people doubt ill of the charming and repeat their kindnesses, and
+        believe the worst of the repulsive."""
+        if fact.get("actor") != PLAYER_KEY:
+            return None
+        from .sim import events as sim_events
+        mult = rpg_fortune.RUMOUR_CHARM.get(
+            rpg_cha.tier(rpg_cha.charisma_of(self.game.character)), 1.0)
+        tags = sim_events.kind_spec(fact.get("kind", ""))["tags"]
+        if "crime" in tags:
+            return sim_knowledge.TELL_DECAY * mult
+        if "social" in tags:
+            return sim_knowledge.TELL_DECAY / mult
+        return None
+
+    def _on_gossip(self, speaker, listener, fact) -> None:
+        """The simulation just had *speaker* tell *listener* something new:
+        say it aloud, and the reply after it, when the player is near."""
+        if self.__dict__.get("barks", {}).get(id(speaker)):
+            return                          # already mid-sentence
+        names = [str(t.properties.get("display_name") or t.properties.get("name") or "")
+                 for t in (speaker, listener)]
+        opener, reply = chatter.gossip_lines(fact, *names)
+        self.bark(speaker, opener, GOSSIP_SECONDS)
+        if id(speaker) in self.__dict__.get("barks", {}):
+            self.bark_later(listener, reply, GOSSIP_SECONDS - BARK_FADE)
+
+    def _update_small_talk(self) -> None:
+        """Now and then two townsfolk near the player who pass each other,
+        with nothing more pressing on, pass the time of day."""
+        rng = self.__dict__.setdefault("_chat_rng", random.Random())
+        if rng.random() >= CHAT_CHANCE:
+            return
+        import time as _time
+        now = _time.monotonic()
+        talking = self.__dict__.get("barks") or {}
+        free = []
+        for npc in self._things_of_type("npc"):
+            p = npc.properties
+            if (p.get("dead") or p.get("_sim_tier", TIER_NEAR) > TIER_NEAR
+                    or str(p.get("aggression")) == "hostile"
+                    or str(p.get("sched_state", "")).upper() not in CHAT_STATES
+                    or p.get("_chat_until", 0.0) > now or id(npc) in talking):
+                continue
+            free.append(npc)
+        rng.shuffle(free)
+        for i, a in enumerate(free):
+            for b in free[i + 1:]:
+                if self._dist2d(a.pos, b.pos) > CHAT_RADIUS:
+                    continue
+                names = [str(t.properties.get("display_name")
+                             or t.properties.get("name") or "friend") for t in (a, b)]
+                opener, reply = chatter.small_talk(names[0], names[1], self.clock.hour)
+                self.bark(a, opener)
+                if id(a) not in self.__dict__.get("barks", {}):
+                    return                  # too far from the player to be heard
+                self.bark_later(b, reply, BARK_SECONDS - BARK_FADE)
+                a.properties["_chat_until"] = b.properties["_chat_until"] = now + CHAT_COOLDOWN
+                return
+
+    # -------------------------------------------------------------- thoughts
+    def _npc_thoughts_enabled(self) -> bool:
+        """Whether to show what nearby NPCs are thinking (GAME → "Show NPC
+        thoughts"). Defaults to on when unset."""
+        try:
+            config = self._editor_config()
+            if config is None:
+                return True
+            return config.getboolean("GAME", "show_npc_thoughts", fallback=True)
+        except (AttributeError, TypeError, ValueError):
+            return True
+
+    def think(self, thing, text, seconds: float = THOUGHT_SECONDS) -> None:
+        """Show what *thing* is thinking for a moment, in a thought bubble
+        over its head. Like :meth:`bark`, only those near enough to be on
+        screen bother."""
+        if thing is None or not text:
+            return
+        ppos = self._player_pos()
+        if ppos is not None and self._dist2d(thing.pos, ppos) > BARK_RADIUS:
+            return
+        import time as _time
+        thoughts = self.__dict__.setdefault("thoughts", {})
+        thoughts[id(thing)] = (thing, str(text), _time.monotonic() + float(seconds))
+
+    def live_thoughts(self):
+        """``[(thing, text, seconds_left)]`` still being thought."""
+        import time as _time
+        now = _time.monotonic()
+        thoughts = self.__dict__.get("thoughts") or {}
+        out = []
+        for key, (thing, text, until) in list(thoughts.items()):
+            if until <= now or thing.properties.get("dead"):
+                thoughts.pop(key, None)
+                continue
+            out.append((thing, text, until - now))
+        return out
+
+    def _update_thoughts(self) -> None:
+        """Give each actor near the player a thought whenever its reason for
+        what it is doing changes: the farmer heading home because he is
+        hungry, the witness going to the watch, the coward running.
+
+        Runs on the decision pass, after the decisions it explains. An actor
+        first seen mid-routine keeps quiet until something changes; one first
+        seen in the middle of something urgent says so at once."""
+        if not self._npc_thoughts_enabled():
+            return
+        for actor in self._live_actors():
+            p = actor.properties
+            if p.get("_sim_tier", TIER_NEAR) > TIER_NEAR or p.get("dead"):
+                continue
+            key, _text = mental_state.thought(p)
+            previous = p.get("_thought_key")
+            if key == previous:
+                continue
+            p["_thought_key"] = key
+            if previous is None and key.split(":", 1)[0] not in mental_state.URGENT_THOUGHTS:
+                continue
+            target = None
+            tid = p.get("_aggro_target")
+            if tid is not None:
+                other = next((t for t in self._actors if id(t) == tid), None)
+                if other is not None:
+                    op = other.properties
+                    target = op.get("display_name") or op.get("name")
+            _key, text = mental_state.thought(p, target)
+            self.think(actor, text)
 
     def _decide_distant(self, npc) -> None:
         """The reduced decision path for an actor outside the player's vicinity.
@@ -4779,7 +5149,9 @@ class MiniwindSession(SettlementLaw):
             friendly = self._rel_mask(wi, my_faction, "friendly")[rows]
             n_hostile = int(_np.count_nonzero(hostile))
             n_friendly = int(_np.count_nonzero(friendly))
-            n_guards = int(_np.count_nonzero(friendly & self._combatant_mask(wi)[rows]))
+            guard_rows = rows[friendly & self._combatant_mask(wi)[rows]]
+            n_guards = int(guard_rows.size)
+            guards = [wi.actors[r] for r in guard_rows.tolist()]
             n_rallied = int(_np.count_nonzero(friendly & self._rally_mask(wi)[rows]))
             # Casualties are corpses of his own side in sight — `alive` excludes
             # them, so they need the dead mask and their own friendliness test.
@@ -4795,6 +5167,7 @@ class MiniwindSession(SettlementLaw):
             n_rallied = 0
             n_friendly = 0
             n_hostile = 0
+            guards = []
             pool = self._actors or []
             for t in pool:
                 if t is npc:
@@ -4811,6 +5184,7 @@ class MiniwindSession(SettlementLaw):
                     n_friendly += 1
                     if self._is_combatant(t):
                         n_guards += 1
+                        guards.append(t)
                     if tp.get("_rally"):
                         n_rallied += 1
 
@@ -4830,8 +5204,21 @@ class MiniwindSession(SettlementLaw):
         # double-count them; their extra influence is applied separately below
         # via the explicit n_rallied social-contagion term.
         group_bonus = min(n_friendly * 0.1, 0.45) if n_friendly >= 2 else 0.0
+        # A guard people look up to steadies them more: the most charismatic
+        # fighter in sight lends up to +0.36 at Charisma 100.
+        lead = max((rpg_cha.core(g.properties, attr.PERSONALITY) for g in guards),
+                   default=CHARISMA_LEAD_FROM)
+        leadership = max(0, lead - CHARISMA_LEAD_FROM) * CHARISMA_LEAD_PER_POINT
+
+        # The player's reputation: a hero steadies people, a butcher unnerves.
+        hearten = 0.0
+        ppos = self._player_pos()
+        if ppos is not None and self._dist2d(npc.pos, ppos) <= FLEE_SIGHT:
+            hearten = rpg_align.heartens(self.game.character.alignment)
 
         return (courage
+                + leadership
+                + hearten
                 + distance_factor
                 + n_guards * 0.35
                 + n_rallied * 0.2
@@ -5602,7 +5989,7 @@ class MiniwindSession(SettlementLaw):
         if not c.spend_magicka(cost):
             self.notify("Not enough magicka")
             return False
-        c.use_skill("destruction", 1.0)
+        c.use_skill(sk.OFFENSIVE, 1.0)
         self._magic_cast_fx(spell, target)
         if target is not None:
             r = self.game.resolve_spell_on_creature(spell, target.properties)
@@ -5695,7 +6082,8 @@ class MiniwindSession(SettlementLaw):
         if c.is_dead or self._cast_cooldown > 0 or not c.active_spell:
             return False
         self._cast_cooldown = 0.7
-        spell = rpg_magic.get(c.active_spell)
+        # At the level the player has raised it to (rpg_magic.for_caster).
+        spell = rpg_magic.for_caster(c, c.active_spell)
         # Resurrection is special: it targets a *fallen* character, drains all
         # magicka and can be worked only once per in-game day.
         if spell is not None and any(e.get("kind") == "resurrect"
@@ -5835,6 +6223,7 @@ class MiniwindSession(SettlementLaw):
         # The whole screen sinks into dark red as light pours up from the body.
         self.magic_fx.resurrection(_feet(target))
         self.notify(f"{name} rises again!")
+        self._player_deed("resurrect")
         self.add_floater("RAISED", kind="heal")
         return True
 
@@ -7091,8 +7480,11 @@ class MiniwindSession(SettlementLaw):
         if self._is_arrest_guard(npc) and npc is not self._arrest_guard:
             tree = self._law_payment_tree(npc, tree)
         tree = self._with_first_impression(tree, npc)
+        tree = self._with_reputation(tree, npc)
         if getattr(self, "living", None) is not None:
             tree = self.living.prepare_tree(tree, npc)
+        tree = self._with_mind_topic(tree, npc)
+        tree = self._with_fortune_topics(tree, npc)
         self.dialogue = DialogueRunner(
             tree, store=self.store,
             give_item=lambda item: inv.add_item(self.game.character.inventory, item),
@@ -7107,6 +7499,120 @@ class MiniwindSession(SettlementLaw):
         # Note the conversation for any quest 'talk to X' objective.
         self.record_talk(npc)
         return True
+
+    def _with_mind_topic(self, tree, npc):
+        """*tree* with "What's on your mind?" among the opening responses -- a
+        copy -- answered by the NPC explaining what it is doing and why, from
+        the same state and knowledge its behaviour runs on. Not offered by
+        anyone hostile, or during an arrest."""
+        p = npc.properties
+        if (not isinstance(tree, dict) or str(p.get("aggression")) == "hostile"
+                or npc is self._arrest_guard):
+            return tree
+        start = tree.get("start")
+        nodes = tree.get("nodes") or {}
+        if start not in nodes:
+            return tree
+        try:
+            facts = sim_knowledge.facts(self.store, actor_key(npc))
+        except Exception:
+            facts = []
+        try:
+            intents = self.director.intents(npc)
+        except Exception:
+            intents = []
+        import copy
+        tree = copy.deepcopy(tree)
+        tree["nodes"]["_mind"] = {
+            "text": mental_state.speak_mind(p, facts, intents, PLAYER_KEY),
+            "responses": [{"text": "I see.", "goto": start}]}
+        resp = tree["nodes"][start].setdefault("responses", [])
+        resp.insert(max(0, len(resp) - 1), {"text": "What's on your mind?", "goto": "_mind"})
+        return tree
+
+    def _fortune_key(self, npc, option) -> str:
+        return f"fortune.{disp.mem_key(npc.properties)}.{option}"
+
+    def _facts_about_player(self, npc):
+        """What *npc* believes about the player, most certain first."""
+        try:
+            facts = sim_knowledge.facts(self.store, actor_key(npc))
+        except Exception:
+            return []
+        mine = [f for f in facts if PLAYER_KEY in (f.get("actor"), f.get("target"))]
+        return sorted(mine, key=lambda f: -float(f.get("certainty", 0.0)))
+
+    def _with_fortune_topics(self, tree, npc):
+        """*tree* with the Charm & Luck responses this NPC offers today (see
+        game/rpg/fortune.py) among the opening ones -- a copy. Not for anyone
+        hostile, during an arrest, or once used today."""
+        p = npc.properties
+        if (not isinstance(tree, dict) or str(p.get("aggression")) == "hostile"
+                or npc is self._arrest_guard):
+            return tree
+        start = tree.get("start")
+        if start not in (tree.get("nodes") or {}):
+            return tree
+        c = self.game.character
+        options = rpg_fortune.available(
+            c, merchant=bool(p.get("merchant")), guard=self._is_guard(npc),
+            bounty=self.law.bounty(self._law_region(npc.pos, npc)),
+            knows_of_player=bool(self._facts_about_player(npc)))
+        today = str(self.clock.day)
+        options = [o for o in options
+                   if self.store.get(self._fortune_key(npc, o), "") != today]
+        if not options:
+            return tree
+        import copy
+        tree = copy.deepcopy(tree)
+        tree["nodes"]["_fortune"] = {"text": "...",
+                                     "responses": [{"text": "Of course.", "goto": start}]}
+        resp = tree["nodes"][start].setdefault("responses", [])
+        for option in options:
+            pct = int(round(rpg_fortune.chance(c, option) * 100))
+            resp.insert(max(0, len(resp) - 1), {
+                "text": f"{rpg_fortune.TAG} {rpg_fortune.OPTIONS[option][0]}  ({pct}%)",
+                "goto": "_fortune", "actions": [{"op": "fortune", "option": option}]})
+        return tree
+
+    def _fortune_action(self, npc, option) -> None:
+        """Roll a Charm & Luck response, apply what it wins, and put the
+        NPC's answer on the page the conversation turns to next."""
+        from .diceroll import roll_check
+        c = self.game.character
+        p = npc.properties
+        text, _difficulty, win, lose = rpg_fortune.OPTIONS[option]
+        name = p.get("display_name") or p.get("name") or "them"
+        roll = roll_check(self.game.dice, rpg_fortune.chance(c, option),
+                          f"Charm & Luck: {name}", source="dialogue.fortune",
+                          why=rpg_fortune.why(c), context={"option": option})
+        self.store.set(self._fortune_key(npc, option), str(self.clock.day))
+        line = win if roll["success"] else lose
+        if roll["success"]:
+            if option == "haggle":
+                disp.remember(self.store, p, "charmed")
+            elif option == "pardon":
+                region = self._law_region(npc.pos, npc)
+                forgiven = self.law.forgive(region, 0.5)
+                self.notify(f"Bounty reduced by {forgiven} gold.", 4.0)
+            elif option == "favour":
+                gold = self.rng.randint(5, 25)
+                c.gold += gold
+                self.notify(f"{name} gave you {gold} gold.", 3.5)
+            elif option == "rumours":
+                heard = []
+                for fact in self._facts_about_player(npc)[:3]:
+                    told = dict(fact)
+                    for k in ("actor", "target"):
+                        if told.get(k) == PLAYER_KEY:
+                            told[k + "_name"] = "you"
+                    heard.append(sim_knowledge.phrase(told))
+                line = ("They say " + "; and that ".join(heard) + "." if heard
+                        else lose)
+        node = (self.dialogue.tree.get("nodes") or {}).get("_fortune") \
+            if self.dialogue is not None else None
+        if node is not None:
+            node["text"] = line
 
     def _with_first_impression(self, tree, npc):
         """*tree* with the NPC's reaction to the player's face put in front of
@@ -7139,7 +7645,9 @@ class MiniwindSession(SettlementLaw):
         do not care what anyone looks like."""
         c = self.game.character
         chance = rpg_cha.repel_chance(rpg_cha.charisma_of(c))
-        if chance <= 0.0:
+        # An evil soul is one of their own (game/rpg/alignment.py).
+        kin = rpg_align.kinship(c.alignment)
+        if chance <= 0.0 and not kin:
             return
         ppos = self._player_pos()
         if ppos is None:
@@ -7159,7 +7667,8 @@ class MiniwindSession(SettlementLaw):
             if p.get("_repel_judged"):
                 continue
             p["_repel_judged"] = True
-            if self.rng.random() >= chance:
+            kindred = kin and rpg_align.of_npc(p) <= -30
+            if not kindred and (chance <= 0.0 or self.rng.random() >= chance):
                 continue
             p["aggression"] = "passive"
             p["triggered"] = True
@@ -7167,7 +7676,11 @@ class MiniwindSession(SettlementLaw):
             p.pop("_aggro_target", None)
             p["_repelled_until"] = now + REPEL_HOURS
             name = p.get("display_name", "The brigand")
-            self.notify(f"{name} takes one look at your face and wants no part of you.", 3.5)
+            if kindred:
+                self.notify(f"{name} nods to you: one of their own.", 3.5)
+            else:
+                self.notify(f"{name} takes one look at your face and wants no part of you.",
+                            3.5)
         # Courage returns with time.
         for t in self._actors:
             p = t.properties
@@ -7204,7 +7717,9 @@ class MiniwindSession(SettlementLaw):
 
     def _dialogue_action(self, npc, action):
         op = action.get("op")
-        if op == "pay_bounty":
+        if op == "fortune":
+            self._fortune_action(npc, str(action.get("option", "")))
+        elif op == "pay_bounty":
             self._pay_bounty()
         elif op == "begin_escort":
             self._begin_escort()

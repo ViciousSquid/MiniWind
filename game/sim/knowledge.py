@@ -229,7 +229,7 @@ def tell(store, speaker_key: str, listener_key: str, fact: Dict,
 
 
 def gossip(store, speaker_key: str, listener_key: str, rng=None,
-           limit: int = 1) -> List[Dict]:
+           limit: int = 1, decay=None) -> List[Dict]:
     """One conversation: the speaker passes on up to *limit* of their most
     interesting shareable facts. Returns the facts that were genuinely news.
 
@@ -254,7 +254,11 @@ def gossip(store, speaker_key: str, listener_key: str, rng=None,
         pool = head + pool[3:]
     passed = []
     for f in pool[:max(1, int(limit))]:
-        if tell(store, speaker_key, listener_key, f):
+        # *decay(fact)* may say how much certainty this retelling loses
+        # (None: the usual TELL_DECAY) -- how believable the subject is.
+        d = decay(f) if callable(decay) else None
+        if tell(store, speaker_key, listener_key, f,
+                TELL_DECAY if d is None else float(d)):
             passed.append(f)
     return passed
 
@@ -278,16 +282,21 @@ def decay(store, key: str, days: int = 1) -> int:
     return len(kept)
 
 
-def describe(fact: Dict) -> str:
-    """A display-ready line for the inspector and gossip dialogue."""
+def phrase(fact: Dict) -> str:
+    """What a fact says happened: "Rufus stole bread from Bram"."""
     from .events import WorldEvent
     ev = WorldEvent(fact.get("kind", ""), actor_name=fact.get("actor_name", ""),
                     target_name=fact.get("target_name", ""),
                     data={"item": fact.get("item", "")})
-    phrase = ev.describe()
+    return ev.describe()
+
+
+def describe(fact: Dict) -> str:
+    """A display-ready line for the inspector and gossip dialogue."""
+    phrase_ = phrase(fact)
     src = SOURCE_PHRASE.get(fact.get("source", ""), fact.get("source", ""))
     pct = int(round(float(fact.get("certainty", 0.0)) * 100))
-    return f"{phrase} — {src}, {pct}% sure (day {fact.get('day', 0)})"
+    return f"{phrase_} — {src}, {pct}% sure (day {fact.get('day', 0)})"
 
 
 def summary(store, key: str, limit: int = 8) -> List[str]:

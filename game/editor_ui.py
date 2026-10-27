@@ -1571,12 +1571,8 @@ _CARD_WELL = "rgba(255,255,255,22)"   # icon well fill
 #: Vivid per-school ACCENT (used for the border, school label and icon rim) —
 #: keeps cards distinguishable by school while staying readable on dark.
 _SCHOOL_ACCENT = {
-    "destruction": "#e8836f",
-    "restoration": "#7fd39b",
-    "alteration":  "#7fb2f0",
-    "conjuration": "#b79bf0",
-    "illusion":    "#f08fd6",
-    "mysticism":   "#6fd6cf",
+    "offensive":   "#e8836f",
+    "defensive":   "#7fd39b",
     "default":     "#b9b6c4",
 }
 
@@ -2107,7 +2103,7 @@ def open_spell_editor(parent=None):
             self.d = d
             self._on_select = on_select
             self.selected = False
-            self.bg, self.ink = _school_pastel(d.get("school", sk.DESTRUCTION))
+            self.bg, self.ink = _school_pastel(d.get("school", sk.OFFENSIVE))
             self.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
                                QtWidgets.QSizePolicy.Fixed)
             self.setCursor(Qt.PointingHandCursor)
@@ -2193,8 +2189,83 @@ def open_spell_editor(parent=None):
             nums.addWidget(self.spd)
             nums.addStretch(1)
             root.addLayout(nums)
+            self._level_rows(root, _lab)
             self._effects_rows(root, _lab)
             self._restyle()
+
+        # -- School, rarity and how the spell grows with its level ----------
+        def _level_rows(self, root, _lab):
+            row = QtWidgets.QHBoxLayout(); row.setSpacing(8)
+            row.addWidget(_lab("School"))
+            school = QtWidgets.QComboBox(); school.addItems([sk.OFFENSIVE, sk.DEFENSIVE])
+            school.setCurrentText(sk.fold(self.d.get("school", sk.OFFENSIVE)))
+            school.currentTextChanged.connect(lambda t: self.d.__setitem__("school", t))
+            row.addWidget(school)
+            row.addWidget(_lab("Rarity"))
+            rarity = QtWidgets.QComboBox(); rarity.addItems(list(magic.RARITIES))
+            rarity.setCurrentText(self.d.get("rarity")
+                                  or magic.default_rarity(self.d.get("cost", 0)))
+            rarity.currentTextChanged.connect(lambda t: self.d.__setitem__("rarity", t))
+            row.addWidget(rarity)
+            row.addWidget(_lab("Max level"))
+            top = QtWidgets.QSpinBox(); top.setRange(1, 20)
+            top.setValue(int(self.d.get("max_level", magic.DEFAULT_MAX_LEVEL)))
+            top.valueChanged.connect(lambda v: self._set("max_level", int(v)))
+            row.addWidget(top)
+            row.addWidget(_lab("XP / level"))
+            xp = QtWidgets.QSpinBox(); xp.setRange(0, 100000)
+            xp.setToolTip("Experience to raise the spell from level N to N+1 is this x N")
+            xp.setValue(int(self.d.get("xp_per_level")
+                            or magic.RARITY_XP.get(rarity.currentText(), 30)))
+            xp.valueChanged.connect(lambda v: self._set("xp_per_level", int(v)))
+            row.addWidget(xp)
+            row.addStretch(1)
+            root.addLayout(row)
+
+            grow = QtWidgets.QHBoxLayout(); grow.setSpacing(8)
+
+            def pct(key, default, tip):
+                box = QtWidgets.QSpinBox(); box.setRange(0, 500); box.setSuffix("%")
+                box.setToolTip(tip)
+                box.setValue(int(round(float(self.d.get(key, default)) * 100)))
+                box.valueChanged.connect(lambda v, k=key: self._set(k, round(v / 100.0, 3)))
+                return box
+
+            grow.addWidget(_lab("Per level:  power"))
+            grow.addWidget(pct("level_power", magic.DEFAULT_LEVEL_POWER,
+                               "Extra damage / healing / strength per level above the first"))
+            grow.addWidget(_lab("duration"))
+            grow.addWidget(pct("level_duration", magic.DEFAULT_LEVEL_DURATION,
+                               "Extra duration per level above the first"))
+            grow.addWidget(_lab("magicka cost"))
+            grow.addWidget(pct("level_cost", magic.DEFAULT_LEVEL_COST,
+                               "Extra magicka per level above the first"))
+            grow.addStretch(1)
+            root.addLayout(grow)
+            self.preview = _lab("")
+            root.addWidget(self.preview)
+            self.dmg.valueChanged.connect(lambda _v: self._update_preview())
+            self.cost.valueChanged.connect(lambda _v: self._update_preview())
+            self._update_preview()
+
+        def _set(self, key, value):
+            self.d[key] = value
+            self._update_preview()
+
+        def _update_preview(self):
+            """Damage (or the main amount) and cost at every level."""
+            try:
+                sp = magic.Spell.from_dict(self.d)
+            except Exception:
+                return
+            parts = []
+            for lv in range(1, sp.max_level + 1):
+                s = sp.at_level(lv)
+                amount = next((float(e.get("magnitude", 0)) for e in s.effects
+                               if float(e.get("magnitude", 0)) > 1), 0.0)
+                parts.append(f"L{lv}: {amount:g} / {s.base_cost:g}mp"
+                             + (f" ({sp.xp_to_level(lv)} XP)" if lv < sp.max_level else ""))
+            self.preview.setText("  ·  ".join(parts))
 
         # -- Effects: how the spell looks (game/magic_fx.py) ------------------
         def _vis(self, key, value):
@@ -2368,7 +2439,7 @@ def open_spell_editor(parent=None):
             self.selected_card = card
 
         def _add(self):
-            base = {"id": "new_spell", "name": "New Spell", "school": sk.DESTRUCTION,
+            base = {"id": "new_spell", "name": "New Spell", "school": sk.OFFENSIVE,
                     "cost": 15, "delivery": magic.PROJECTILE,
                     "effects": [{"kind": "damage_health", "magnitude": 20, "duration": 0}],
                     "desc": "", "element": "magic", "projectile_speed": 900.0,

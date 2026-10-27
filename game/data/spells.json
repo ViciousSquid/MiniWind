@@ -1,0 +1,775 @@
+[
+  {
+    "id": "bound_blade",
+    "name": "Bound Blade",
+    "school": "offensive",
+    "cost": 25.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "bound_weapon",
+        "magnitude": 18,
+        "duration": 60
+      }
+    ],
+    "desc": "Summon a blade of pure magicka.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "uncommon",
+    "max_level": 5,
+    "xp_per_level": 45,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "cure_disease_spell",
+    "name": "Cure Disease",
+    "school": "defensive",
+    "cost": 30.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "cure_disease",
+        "magnitude": 1,
+        "duration": 0
+      }
+    ],
+    "desc": "Purge disease from your body.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "rare",
+    "max_level": 5,
+    "xp_per_level": 60,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "disintegrate",
+    "name": "Disintegrate",
+    "school": "offensive",
+    "cost": 60.0,
+    "delivery": "projectile",
+    "effects": [
+      {
+        "kind": "damage_health",
+        "magnitude": 99999,
+        "duration": 0
+      }
+    ],
+    "desc": "A bolt of pure annihilation \u2014 kills instantly on contact.",
+    "element": "magic",
+    "projectile_speed": 1400.0,
+    "color": [
+      255,
+      0,
+      0
+    ],
+    "visuals": {},
+    "rarity": "epic",
+    "max_level": 5,
+    "xp_per_level": 80,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "firebolt",
+    "name": "Firebolt",
+    "school": "offensive",
+    "cost": 28.0,
+    "delivery": "projectile",
+    "effects": [
+      {
+        "kind": "damage_health",
+        "magnitude": 30,
+        "duration": 0
+      }
+    ],
+    "desc": "A searing bolt of flame.",
+    "element": "fire",
+    "projectile_speed": 1100,
+    "color": null,
+    "visuals": {},
+    "rarity": "uncommon",
+    "max_level": 5,
+    "xp_per_level": 45,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "flare",
+    "name": "Flare",
+    "school": "offensive",
+    "cost": 12.0,
+    "delivery": "projectile",
+    "effects": [
+      {
+        "kind": "damage_health",
+        "magnitude": 14,
+        "duration": 0
+      }
+    ],
+    "desc": "A bolt of fire.",
+    "element": "fire",
+    "projectile_speed": 1000,
+    "color": null,
+    "visuals": {},
+    "rarity": "common",
+    "max_level": 5,
+    "xp_per_level": 30,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "frostbite",
+    "name": "Frostbite",
+    "school": "offensive",
+    "cost": 20.0,
+    "delivery": "projectile",
+    "effects": [
+      {
+        "kind": "damage_health",
+        "magnitude": 18,
+        "duration": 0
+      },
+      {
+        "kind": "drain_stamina",
+        "magnitude": 15,
+        "duration": 0
+      }
+    ],
+    "desc": "Frost that saps the limbs.",
+    "element": "frost",
+    "projectile_speed": 950,
+    "color": null,
+    "visuals": {},
+    "rarity": "uncommon",
+    "max_level": 5,
+    "xp_per_level": 45,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "heal",
+    "name": "Healing",
+    "school": "defensive",
+    "cost": 34.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "restore_health",
+        "magnitude": 75,
+        "duration": 0
+      }
+    ],
+    "desc": "Close deep wounds.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "rare",
+    "max_level": 5,
+    "xp_per_level": 60,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "heal_minor",
+    "name": "Minor Healing",
+    "school": "defensive",
+    "cost": 15.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "restore_health",
+        "magnitude": 30,
+        "duration": 0
+      }
+    ],
+    "desc": "Knit minor wounds.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "common",
+    "max_level": 5,
+    "xp_per_level": 30,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "heal_over_time",
+    "name": "Mending",
+    "school": "defensive",
+    "cost": 24.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "restore_health",
+        "magnitude": 8,
+        "duration": 8
+      }
+    ],
+    "desc": "Steady regeneration over time.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "uncommon",
+    "max_level": 5,
+    "xp_per_level": 45,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "invisibility_minor",
+    "name": "Invisibility",
+    "school": "defensive",
+    "cost": 40.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "invisibility",
+        "magnitude": 1,
+        "duration": 20
+      }
+    ],
+    "desc": "Vanish from sight for a while.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "rare",
+    "max_level": 5,
+    "xp_per_level": 60,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "knock",
+    "name": "Knock",
+    "school": "defensive",
+    "cost": 45.0,
+    "delivery": "touch",
+    "effects": [
+      {
+        "kind": "knock",
+        "magnitude": 1,
+        "duration": 0
+      }
+    ],
+    "desc": "Open a nearby locked container. Frees even a lock jammed by a sheared pick.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": [
+      133,
+      203,
+      187
+    ],
+    "visuals": {},
+    "rarity": "rare",
+    "max_level": 5,
+    "xp_per_level": 60,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "lightning",
+    "name": "Lightning Bolt",
+    "school": "offensive",
+    "cost": 30.0,
+    "delivery": "projectile",
+    "effects": [
+      {
+        "kind": "damage_health",
+        "magnitude": 26,
+        "duration": 0
+      },
+      {
+        "kind": "damage_magicka",
+        "magnitude": 15,
+        "duration": 0
+      }
+    ],
+    "desc": "A crackling arc of shock.",
+    "element": "shock",
+    "projectile_speed": 1600,
+    "color": null,
+    "visuals": {},
+    "rarity": "rare",
+    "max_level": 5,
+    "xp_per_level": 60,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "resurrection",
+    "name": "Resurrection",
+    "school": "defensive",
+    "cost": 100.0,
+    "delivery": "target",
+    "effects": [
+      {
+        "kind": "resurrect",
+        "magnitude": 1,
+        "duration": 0
+      }
+    ],
+    "desc": "Call a fallen soul back into its body. Drains all your magicka and can be worked only once each day.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": [
+      120,
+      255,
+      170
+    ],
+    "visuals": {},
+    "rarity": "legendary",
+    "max_level": 5,
+    "xp_per_level": 120,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "sp_adrenaline",
+    "name": "Adrenaline Rush",
+    "school": "defensive",
+    "cost": 0.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "fortify_speed",
+        "magnitude": 40,
+        "duration": 20
+      }
+    ],
+    "desc": "Redguard surge.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "common",
+    "max_level": 5,
+    "xp_per_level": 30,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "sp_berserk",
+    "name": "Berserk",
+    "school": "offensive",
+    "cost": 0.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "berserk",
+        "magnitude": 30,
+        "duration": 20
+      }
+    ],
+    "desc": "Orc rage.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "common",
+    "max_level": 5,
+    "xp_per_level": 30,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "sp_calm",
+    "name": "Calm",
+    "school": "defensive",
+    "cost": 22.0,
+    "delivery": "target",
+    "effects": [
+      {
+        "kind": "calm",
+        "magnitude": 30,
+        "duration": 15
+      }
+    ],
+    "desc": "Soothe a foe into stopping its attack.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "uncommon",
+    "max_level": 5,
+    "xp_per_level": 45,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "sp_commandcreature",
+    "name": "Command Creature",
+    "school": "offensive",
+    "cost": 26.0,
+    "delivery": "target",
+    "effects": [
+      {
+        "kind": "command",
+        "magnitude": 30,
+        "duration": 20
+      }
+    ],
+    "desc": "Bend a beast to your will.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "uncommon",
+    "max_level": 5,
+    "xp_per_level": 45,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "sp_detect",
+    "name": "Detect Life",
+    "school": "defensive",
+    "cost": 16.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "detect_life",
+        "magnitude": 1,
+        "duration": 30
+      }
+    ],
+    "desc": "Sense living things nearby.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "common",
+    "max_level": 5,
+    "xp_per_level": 30,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "sp_dragonskin",
+    "name": "Dragon Skin",
+    "school": "defensive",
+    "cost": 60.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "shield",
+        "magnitude": 50,
+        "duration": 30
+      }
+    ],
+    "desc": "A powerful magical hide.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "epic",
+    "max_level": 5,
+    "xp_per_level": 80,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "sp_feather",
+    "name": "Feather",
+    "school": "defensive",
+    "cost": 18.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "feather",
+        "magnitude": 100,
+        "duration": 60
+      }
+    ],
+    "desc": "Lighten your burden.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "uncommon",
+    "max_level": 5,
+    "xp_per_level": 45,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "sp_flameshield",
+    "name": "Ancestor's Wrath",
+    "school": "defensive",
+    "cost": 0.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "fire_shield",
+        "magnitude": 15,
+        "duration": 20
+      }
+    ],
+    "desc": "Ashfolk flame cloak.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "common",
+    "max_level": 5,
+    "xp_per_level": 30,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "sp_histskin",
+    "name": "Histskin",
+    "school": "defensive",
+    "cost": 0.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "restore_health",
+        "magnitude": 10,
+        "duration": 10
+      }
+    ],
+    "desc": "Marshborn regeneration.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "common",
+    "max_level": 5,
+    "xp_per_level": 30,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "sp_light",
+    "name": "Light",
+    "school": "defensive",
+    "cost": 8.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "light",
+        "magnitude": 1,
+        "duration": 60
+      }
+    ],
+    "desc": "Conjure a floating light.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "common",
+    "max_level": 5,
+    "xp_per_level": 30,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "sp_nighteye",
+    "name": "Night Eye",
+    "school": "defensive",
+    "cost": 14.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "night_eye",
+        "magnitude": 1,
+        "duration": 60
+      }
+    ],
+    "desc": "See in the dark.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "common",
+    "max_level": 5,
+    "xp_per_level": 30,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "sp_restoremagicka",
+    "name": "Highborn",
+    "school": "defensive",
+    "cost": 0.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "restore_magicka",
+        "magnitude": 100,
+        "duration": 0
+      }
+    ],
+    "desc": "Highkin magicka burst.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "common",
+    "max_level": 5,
+    "xp_per_level": 30,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "sp_shield",
+    "name": "Shield",
+    "school": "defensive",
+    "cost": 20.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "shield",
+        "magnitude": 20,
+        "duration": 30
+      }
+    ],
+    "desc": "A protective ward.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "uncommon",
+    "max_level": 5,
+    "xp_per_level": 45,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "sp_telekinesis",
+    "name": "Telekinesis",
+    "school": "defensive",
+    "cost": 18.0,
+    "delivery": "target",
+    "effects": [
+      {
+        "kind": "telekinesis",
+        "magnitude": 1,
+        "duration": 10
+      }
+    ],
+    "desc": "Grasp an object from afar.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "uncommon",
+    "max_level": 5,
+    "xp_per_level": 45,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "sp_woad",
+    "name": "Woad",
+    "school": "defensive",
+    "cost": 0.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "shield",
+        "magnitude": 30,
+        "duration": 30
+      }
+    ],
+    "desc": "Nord racial shield.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "common",
+    "max_level": 5,
+    "xp_per_level": 30,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "summon_wolf",
+    "name": "Summon Wolf",
+    "school": "offensive",
+    "cost": 30.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "summon",
+        "magnitude": 1,
+        "duration": 45,
+        "creature": "wolf"
+      }
+    ],
+    "desc": "Call a spectral wolf to fight for you.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "rare",
+    "max_level": 5,
+    "xp_per_level": 60,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  },
+  {
+    "id": "wisp",
+    "name": "Wisp",
+    "school": "defensive",
+    "cost": 15.0,
+    "delivery": "self",
+    "effects": [
+      {
+        "kind": "wisp",
+        "magnitude": 1,
+        "duration": 120
+      }
+    ],
+    "desc": "Conjure a wandering fairy light that flits about you, lighting your way. Its hue is a whim of the moment.",
+    "element": "magic",
+    "projectile_speed": 900.0,
+    "color": null,
+    "visuals": {},
+    "rarity": "common",
+    "max_level": 5,
+    "xp_per_level": 30,
+    "level_power": 0.25,
+    "level_duration": 0.125,
+    "level_cost": 0.1
+  }
+]

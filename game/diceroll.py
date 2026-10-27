@@ -49,6 +49,45 @@ def check_threshold(chance: float, sides: int = CHECK_DIE) -> int:
     return max(1, min(sides - 1, int(round(chance * sides))))
 
 
+def check_target(chance: float, sides: int = CHECK_DIE) -> int:
+    """The lowest roll that succeeds: "need N or higher" on a *sides* die.
+
+    The same odds as :func:`check_threshold`, counted from the top of the die
+    so every check reads the way the player expects of a tabletop roll —
+    higher is better. A target above *sides* (an impossible check) can never
+    be met.
+    """
+    return int(sides) - check_threshold(chance, sides) + 1
+
+
+def roll_check(dice, chance: float, label: str, source: str = "gameplay",
+               why: str = "", context: Optional[Dict] = None) -> Dict:
+    """Roll a d20 check for *chance* and say what it was for.
+
+    The result carries ``target`` (the lowest winning roll), ``success``, and
+    the ``label`` ("Roll to hit") and ``why`` ("Blade 35 vs Agility 30") the
+    HUD and the message log use to explain the roll to the player.
+    """
+    ctx = dict(context or {})
+    ctx["label"] = str(label)
+    ctx["chance"] = float(chance)
+    if why:
+        ctx["why"] = str(why)
+    return dice.request_roll(CHECK_NOTATION, target=check_target(chance),
+                             source=source, context=ctx)
+
+
+def describe_roll(result: Dict) -> str:
+    """One line explaining a roll: ``Roll to hit: 7 (need 14+) — FAILED``."""
+    label = str(result.get("label") or result.get("dice_notation", "Roll"))
+    total = result.get("roll_result", 0)
+    target = result.get("target")
+    if target is None:
+        return f"{label}: {total}"
+    verdict = "SUCCESS" if result.get("success") else "FAILED"
+    return f"{label}: {total} (need {target}+) — {verdict}"
+
+
 class DiceColor:
     """Named colour values retained for callers of the supplied API."""
 
@@ -273,6 +312,11 @@ class DiceRoller:
             "components": components,
             "modifier": modifier_total,
         }
+        # What the roll was for and why the odds are what they are, so
+        # whoever shows the roll can explain it rather than print a number.
+        for key in ("label", "why", "chance"):
+            if context and context.get(key) not in (None, ""):
+                result[key] = context[key]
         if target is not None:
             result["target"] = int(target)
             result["success"] = total >= int(target)
@@ -574,5 +618,6 @@ class dicerollAPI:
 
 __all__ = [
     "AnimationStyle", "DiceColor", "DiceNotationError", "DiceRoller", "DiceTerm",
-    "DiceType", "dicerollAPI", "parse_dice_notation",
+    "DiceType", "dicerollAPI", "parse_dice_notation", "check_target",
+    "roll_check", "describe_roll",
 ]

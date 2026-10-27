@@ -510,6 +510,11 @@ class GameState:
             guilds.add_reputation(self.character, fac, amt)
         self.award_xp(getattr(q, "xp", 0))
         self.message(f"Quest complete: {q.name}")
+        # Helping someone in need is a good deed (game.rpg.alignment).
+        from . import alignment
+        delta = alignment.player_deed(self.character, "quest")
+        if delta:
+            self.message(f"Alignment {delta:+.1f}: you helped someone in need.")
 
     def award_xp(self, amount) -> int:
         """Give the character *amount* experience; tells the XP listeners."""

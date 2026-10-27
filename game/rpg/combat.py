@@ -8,7 +8,7 @@ Pure, deterministic-ish formulas (an optional RNG is injected for tests). Covers
   luck-weighted critical chance;
 * **incoming damage mitigation** for the player — armour rating, active shield
   effects, blocking, and elemental resistances from the character;
-* **hit chance** — fatigue/agility/weapon-skill vs a target's agility.
+* **hit chance** — fatigue/endurance/weapon-skill vs a target's endurance.
 
 Creature-vs-creature and creature ranged travel are handled by the engine's
 :class:`~engine.monster_ai.MonsterAI` (now fantasy: melee & arrows, no guns);
@@ -25,7 +25,8 @@ from . import attributes as attr
 from . import skills as sk
 from . import items
 from . import equipment as eq
-from ..diceroll import CHECK_NOTATION, DiceRoller, check_threshold
+from . import charisma
+from ..diceroll import DiceRoller, check_target, roll_check
 
 
 # ---------------------------------------------------------------------------
@@ -38,20 +39,72 @@ DUAL_WIELD_ACCURACY = 0.8
 DUAL_WIELD_SPREAD = 5.0
 
 
-def hit_chance(character, weapon_skill: int, target_agility: int = 30,
+def hit_chance(character, weapon_skill: int, target_endurance: int = 40,
                fatigue_frac: float = 1.0) -> float:
     """Probability [0.05, 0.95] that a swing/shot lands.
 
-    Classic Morrowind-ish: weapon skill + agility/luck + fatigue, minus the
-    target's agility. Fatigue below full drags the chance down.
+    Weapon skill + endurance/luck + fatigue, minus the
+    target's endurance (every living thing has one, see
+    :func:`charisma.core`). Fatigue below full drags the chance down.
     """
-    agi = character.attrs.get(attr.AGILITY, 40)
+    end = character.attrs.get(attr.ENDURANCE, 40)
     luck = character.attrs.get(attr.LUCK, 40)
-    attack = weapon_skill + agi * 0.2 + luck * 0.1
+    attack = weapon_skill + end * 0.2 + luck * 0.1
     attack *= (0.5 + 0.5 * max(0.0, min(1.0, fatigue_frac)))
-    defend = target_agility * 0.25
+    defend = target_endurance * 0.15
     chance = (attack - defend) / 100.0
     return max(0.05, min(0.95, chance))
+
+
+def _target_name(target_props: Dict) -> str:
+    return str(target_props.get("display_name") or target_props.get("name") or "")
+
+
+def _hit_why(character, skill_id: str, skill: int, target_endurance: int,
+             fatigue_frac: float, chance: float) -> str:
+    """What went into a hit chance, in the player's terms:
+    ``Blade 35 vs their Endurance 40, winded — 48%``."""
+    parts = [f"{sk.label(skill_id)} {skill} vs their Endurance {target_endurance}"]
+    if fatigue_frac < 0.75:
+        parts.append("winded")
+    if eq.dual_wielding(character):
+        parts.append("two weapons")
+    return f"{', '.join(parts)} — {chance * 100:.0f}%"
+
+
+def strength_factor(strength: int) -> float:
+    """How a creature's Strength scales the physical damage it deals: x1.0 at
+    50, from x0.7 at 0 to x1.3 at 100."""
+    return 0.7 + max(0, min(100, int(strength))) * 0.006
+
+
+def critical_chance(character) -> float:
+    """Probability a landed blow is a critical (x1.5 damage), from Luck."""
+    return 0.05 + character.attrs.get(attr.LUCK, 40) * 0.0015
+
+
+def attack_odds(character, target_props: Dict, hand: str = "main",
+                sure_hit: bool = False) -> Dict:
+    """The odds of attacking *target_props* right now, before the swing, as
+    the HUD shows them over a target.
+
+    ``{"hit_chance", "hit_target", "sure_hit", "crit_chance", "crit_target",
+    "why"}`` -- the same numbers :func:`player_attack` will roll against. A
+    *sure_hit* (a lone melee weapon in reach) needs no hit roll at all.
+    """
+    w = eq.hand_weapon(character, hand)
+    skill_id = w.get("skill", sk.BLADE) if w else sk.BLADE
+    skill = character.skill(skill_id)
+    target_end = charisma.core(target_props, attr.ENDURANCE)
+    fatigue = character.stamina / character.max_stamina if character.max_stamina else 1.0
+    chance = hit_chance(character, skill, target_end, fatigue)
+    if eq.dual_wielding(character):
+        chance *= DUAL_WIELD_ACCURACY
+    crit = critical_chance(character)
+    return {"hit_chance": chance, "hit_target": check_target(chance),
+            "sure_hit": bool(sure_hit),
+            "crit_chance": crit, "crit_target": check_target(crit),
+            "why": _hit_why(character, skill_id, skill, target_end, fatigue, chance)}
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +148,7 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         base = float(w.get("damage", 5)) * eq.rarity_stat(character, eq.hand_slot(hand))
 
     skill = character.skill(skill_id)
-    target_agi = int(target_props.get("agility", 24))
+    target_end = charisma.core(target_props, attr.ENDURANCE)
     fatigue_frac = character.stamina / character.max_stamina if character.max_stamina else 1.0
 
     result = {"hit": False, "damage": 0.0, "crit": False, "sneak": False,
@@ -107,7 +160,7 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         result["no_ammo"] = True
         return result
 
-    hit_probability = hit_chance(character, skill, target_agi, fatigue_frac)
+    hit_probability = hit_chance(character, skill, target_end, fatigue_frac)
     if eq.dual_wielding(character):
         hit_probability *= DUAL_WIELD_ACCURACY
     if guaranteed_hit and kind == items.KIND_MELEE:
@@ -116,11 +169,14 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     elif dice is not None:
         # Resolved on a d20, not a percentile die: every roll is shown to the
         # player and there is no d100 in this game (see diceroll.CHECK_DIE).
-        hit_roll = dice.request_roll(
-            CHECK_NOTATION, source="combat.hit",
+        hit_roll = roll_check(
+            dice, hit_probability, f"Roll to hit {_target_name(target_props)}".strip(),
+            source="combat.hit",
+            why=_hit_why(character, skill_id, skill, target_end, fatigue_frac,
+                         hit_probability),
             context={"skill": skill_id, "target": target_props.get("name", "")})
         result["hit_roll"] = hit_roll
-        if hit_roll["roll_result"] > check_threshold(hit_probability):
+        if not hit_roll["success"]:
             return result
     elif rng.random() > hit_probability:
         return result  # miss
@@ -140,7 +196,11 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     elif kind == items.KIND_CROSSBOW:
         dmg += float(shot.get("damage", 0)) if shot else 0.0   # no draw: always full
     elif kind == items.KIND_STAFF:
-        dmg *= 0.7 + character.skill(sk.DESTRUCTION) / 100.0
+        dmg *= 0.7 + character.skill(sk.OFFENSIVE) / 100.0
+
+    # --- class: a Warrior hits harder than anyone (classes.WARRIOR_DAMAGE) ---
+    from . import classes as _classes
+    dmg *= _classes.damage_mult(character)
 
     # --- sneak attack ---
     if sneaking:
@@ -152,13 +212,15 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         result["sneak"] = True
 
     # --- critical (luck-weighted) ---
-    crit_chance = 0.05 + character.attrs.get(attr.LUCK, 40) * 0.0015
+    crit_chance = critical_chance(character)
     if dice is not None:
-        crit_roll = dice.request_roll(
-            CHECK_NOTATION, source="combat.critical",
+        crit_roll = roll_check(
+            dice, crit_chance, "Roll for a critical hit", source="combat.critical",
+            why=f"Luck {character.attrs.get(attr.LUCK, 40)}: "
+                f"{crit_chance * 100:.0f}% chance of x1.5 damage",
             context={"skill": skill_id, "target": target_props.get("name", "")})
         result["critical_roll"] = crit_roll
-        is_critical = crit_roll["roll_result"] <= check_threshold(crit_chance)
+        is_critical = crit_roll["success"]
     else:
         is_critical = rng.random() < crit_chance
     if is_critical:
@@ -175,12 +237,18 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
 # Player incoming damage mitigation
 # ---------------------------------------------------------------------------
 def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physical",
-                     blocking: bool = False, rng: Optional[random.Random] = None) -> Dict:
+                     blocking: bool = False, rng: Optional[random.Random] = None,
+                     dice: Optional[DiceRoller] = None, attacker: str = "") -> Dict:
     """Apply armour, shield, block and resistance to *raw_damage*.
 
     Returns ``{"final", "blocked", "armor", "resisted", "armor_class"}``. Does
     **not** subtract from health (the caller does, so it can also fire death
     logic); does return the armour class worn so the caller can train the skill.
+
+    With *dice*, the Armour Class check is shown as the *attacker* rolling to
+    hit the player ("Bandit rolls to hit you: 9 (need 13+)"): a miss is a blow
+    the armour turned aside. A ``quiet`` roll -- the roll log, not the dice
+    panel, so the player's own rolls stay on screen mid-fight.
     """
     from . import races
     rng = rng or random
@@ -192,7 +260,18 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
     # completely before anything else is weighed.
     if damage_kind == "physical" and dmg > 0:
         result["ac"] = eq.armour_class(character)
-        if rng.random() < eq.deflect_chance(character):
+        deflect = eq.deflect_chance(character)
+        if dice is not None and deflect > 0.0:
+            roll = roll_check(
+                dice, 1.0 - deflect, f"{attacker or 'Your foe'} rolls to hit you",
+                source="combat.incoming",
+                why=f"against your Armour Class {result['ac']}",
+                context={"quiet": True, "against_player": True})
+            result["defence_roll"] = roll
+            deflected = not roll["success"]
+        else:
+            deflected = rng.random() < deflect
+        if deflected:
             result["deflected"] = True
             result["final"] = 0.0
             return result
@@ -228,7 +307,7 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
     resist += race.resistances.get(damage_kind, 0.0)
     resist += character.effect_magnitude("resist_" + damage_kind) / 100.0
     if damage_kind == "magic":
-        resist += character.attrs.get(attr.WILLPOWER, 40) * 0.002
+        resist += character.attrs.get(attr.ENDURANCE, 40) * 0.002
     resist = max(-1.0, min(1.0, resist))
     if resist:
         before = dmg

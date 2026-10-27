@@ -21,16 +21,16 @@ def test_element_colours_are_distinct_and_have_a_default():
 
 
 def test_spell_colour_defaults_to_element_but_override_wins():
-    frost = magic.Spell("t_frost", "T", magic.sk.DESTRUCTION, 10, magic.PROJECTILE,
+    frost = magic.Spell("t_frost", "T", magic.sk.OFFENSIVE, 10, magic.PROJECTILE,
                         [{"kind": "damage_health", "magnitude": 5}], element="frost")
     assert frost.color == magic.element_color("frost")
-    custom = magic.Spell("t_c", "T", magic.sk.DESTRUCTION, 10, magic.PROJECTILE,
+    custom = magic.Spell("t_c", "T", magic.sk.OFFENSIVE, 10, magic.PROJECTILE,
                          [], element="fire", color=[1, 2, 3])
     assert custom.color == [1, 2, 3]          # explicit override beats element
 
 
 def test_spell_damage_sums_damage_effects_only():
-    sp = magic.Spell("t_d", "T", magic.sk.DESTRUCTION, 10, magic.PROJECTILE,
+    sp = magic.Spell("t_d", "T", magic.sk.OFFENSIVE, 10, magic.PROJECTILE,
                      [{"kind": "damage_health", "magnitude": 12},
                       {"kind": "restore_health", "magnitude": 99}])
     assert sp.damage == 12
@@ -60,7 +60,7 @@ def test_save_and_load_custom_spells_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setattr(magic, "_spells_data_path", lambda: str(path))
 
     rows = [{
-        "id": "gibblast", "name": "Gib Blast", "school": magic.sk.DESTRUCTION,
+        "id": "gibblast", "name": "Gib Blast", "school": magic.sk.OFFENSIVE,
         "cost": 40, "delivery": magic.PROJECTILE,
         "effects": [{"kind": "damage_health", "magnitude": 999, "duration": 0}],
         "element": "fire", "projectile_speed": 1200.0, "color": [0, 255, 0],

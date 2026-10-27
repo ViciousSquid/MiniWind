@@ -38,14 +38,15 @@ BLOCK = "block"
 HEAVY_ARMOR = "heavy_armor"
 LIGHT_ARMOR = "light_armor"
 ATHLETICS = "athletics"
-# Magic
-DESTRUCTION = "destruction"
-RESTORATION = "restoration"
-ALTERATION = "alteration"
-CONJURATION = "conjuration"
-ILLUSION = "illusion"
-MYSTICISM = "mysticism"
+# Magic: two schools -- what harms or commands, and what heals, wards and aids.
+OFFENSIVE = "offensive"
+DEFENSIVE = "defensive"
 ALCHEMY = "alchemy"
+#: Magic skills that no longer exist, and the school each was folded into --
+#: for old saves, old custom classes and authored data that still name them.
+FOLDED = {"destruction": OFFENSIVE, "conjuration": OFFENSIVE,
+          "restoration": DEFENSIVE, "alteration": DEFENSIVE,
+          "illusion": DEFENSIVE, "mysticism": DEFENSIVE}
 # Stealth
 SNEAK = "sneak"
 SECURITY = "security"        # lockpicking
@@ -75,9 +76,9 @@ SKILLS: Dict[str, SkillDef] = {s.id: s for s in [
              "Swords, daggers and other edged weapons."),
     SkillDef(BLUNT, "Blunt", COMBAT, attr.STRENGTH,
              "Maces, axes, hammers and warhammers."),
-    SkillDef(MARKSMAN, "Marksman", COMBAT, attr.AGILITY,
+    SkillDef(MARKSMAN, "Marksman", COMBAT, attr.ENDURANCE,
              "Bows and thrown weapons."),
-    SkillDef(BLOCK, "Block", COMBAT, attr.AGILITY,
+    SkillDef(BLOCK, "Block", COMBAT, attr.ENDURANCE,
              "Deflecting blows with a shield or weapon."),
     SkillDef(HEAVY_ARMOR, "Heavy Armor", COMBAT, attr.ENDURANCE,
              "Wearing plate, chain and other heavy protection."),
@@ -86,24 +87,18 @@ SKILLS: Dict[str, SkillDef] = {s.id: s for s in [
     SkillDef(ATHLETICS, "Athletics", COMBAT, attr.SPEED,
              "Running and swimming; raises stamina with use."),
     # --- Magic ---
-    SkillDef(DESTRUCTION, "Destruction", MAGIC, attr.WILLPOWER,
-             "Fire, frost and shock — offensive magic."),
-    SkillDef(RESTORATION, "Restoration", MAGIC, attr.WILLPOWER,
-             "Healing, warding and curing."),
-    SkillDef(ALTERATION, "Alteration", MAGIC, attr.WILLPOWER,
-             "Shields, feather, water-walking, telekinesis."),
-    SkillDef(CONJURATION, "Conjuration", MAGIC, attr.INTELLIGENCE,
-             "Summoning creatures and bound weapons."),
-    SkillDef(ILLUSION, "Illusion", MAGIC, attr.PERSONALITY,
-             "Light, calm, frenzy, invisibility and command."),
-    SkillDef(MYSTICISM, "Mysticism", MAGIC, attr.INTELLIGENCE,
-             "Detection, soul trap, telekinesis and dispel."),
+    SkillDef(OFFENSIVE, "Offensive", MAGIC, attr.INTELLIGENCE,
+             "Magic that harms or commands: fire, frost and shock, summoned "
+             "beasts and bound blades, beasts bent to your will."),
+    SkillDef(DEFENSIVE, "Defensive", MAGIC, attr.ENDURANCE,
+             "Magic that heals, wards and aids: mending, shields, light, "
+             "invisibility, calming a foe, opening a lock."),
     SkillDef(ALCHEMY, "Alchemy", MAGIC, attr.INTELLIGENCE,
              "Brewing potions and poisons from ingredients."),
     # --- Stealth ---
-    SkillDef(SNEAK, "Sneak", STEALTH, attr.AGILITY,
+    SkillDef(SNEAK, "Sneak", STEALTH, attr.ENDURANCE,
              "Moving unseen; enables devastating sneak attacks."),
-    SkillDef(SECURITY, "Security", STEALTH, attr.AGILITY,
+    SkillDef(SECURITY, "Security", STEALTH, attr.ENDURANCE,
              "Picking locks and disarming traps."),
     SkillDef(MERCANTILE, "Mercantile", STEALTH, attr.PERSONALITY,
              "Buying low and selling high."),
@@ -111,7 +106,7 @@ SKILLS: Dict[str, SkillDef] = {s.id: s for s in [
              "Persuading, bribing and intimidating."),
     SkillDef(ACROBATICS, "Acrobatics", STEALTH, attr.SPEED,
              "Jumping and cushioning falls."),
-    SkillDef(LIGHT_FINGERS, "Light Fingers", STEALTH, attr.AGILITY,
+    SkillDef(LIGHT_FINGERS, "Light Fingers", STEALTH, attr.ENDURANCE,
              "Pickpocketing and sleight of hand."),
 ]}
 
@@ -121,6 +116,11 @@ SKILL_IDS: List[str] = list(SKILLS.keys())
 BY_SPEC: Dict[str, List[str]] = {}
 for _sid, _sd in SKILLS.items():
     BY_SPEC.setdefault(_sd.spec, []).append(_sid)
+
+
+def fold(skill_id: str) -> str:
+    """*skill_id*, or the school an old magic skill was folded into."""
+    return FOLDED.get(str(skill_id), str(skill_id))
 
 
 def label(skill_id: str) -> str:

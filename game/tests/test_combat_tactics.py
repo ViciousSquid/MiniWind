@@ -294,7 +294,7 @@ def test_dual_wielding_costs_the_player_accuracy():
     p = combat.hit_chance(c, c.skill("blade"), 30, c.stamina / c.max_stamina)
     # A roll just under the lone sword's chance, but over the pair's.
     roll = SimpleNamespace(random=lambda: p * 0.9)
-    assert combat.player_attack(c, {"health": 50, "agility": 30}, rng=roll)["hit"]
+    assert combat.player_attack(c, {"health": 50, "endurance": 30}, rng=roll)["hit"]
     equipment.equip(c, "iron_shortsword", items.SLOT_SHIELD)
     assert equipment.dual_wielding(c)
-    assert not combat.player_attack(c, {"health": 50, "agility": 30}, rng=roll)["hit"]
+    assert not combat.player_attack(c, {"health": 50, "endurance": 30}, rng=roll)["hit"]

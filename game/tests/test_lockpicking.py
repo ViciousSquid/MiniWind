@@ -238,7 +238,7 @@ def _knock(s):
     c.active_spell = "knock"
     c.magicka = 500
     c.max_magicka = 500
-    c.skills[skills.ALTERATION] = 100
+    c.skills[skills.DEFENSIVE] = 100
     return c
 
 
