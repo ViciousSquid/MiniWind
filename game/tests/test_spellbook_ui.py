@@ -13,7 +13,7 @@ from engine.floating_windows import WindowManager
 from engine.qt_game_view import _window_wants_cursor
 from plugins.api import TickContext
 from game import host, keybinds
-from game.rpg import magic
+from game.rpg import magic, equipment as eq
 from game.runtime import MiniwindSession
 from game.ui import hits, screens
 from .fio_logic import FioLogic
@@ -92,9 +92,9 @@ def test_clicking_a_known_spell_readies_it_without_casting(session):
     magicka = session.game.character.magicka
     _click(session, targets, "spell:lightning")
     assert session.game.character.active_spell == "lightning"
-    assert session.game.character.active_weapon_kind == "spell"
+    assert not eq.spell_equipped(session.game.character, "lightning")
     assert session.game.character.magicka == magicka
-    assert session.notifications[-1]["text"] == "Readied Lightning Bolt"
+    assert session.notifications[-1]["text"] == "Selected Lightning Bolt"
     _click(session, _paint(session), "Close")
     assert session.open_screen is None
     assert session.game.character.active_spell == "lightning"
@@ -182,5 +182,6 @@ def test_hosted_spellbook_releases_cursor_and_routes_mouse_selection(session):
     hits.run_clicks(session)
     assert session.game.character.active_spell == "heal_minor"
     win.on_close()
+    hits.run_clicks(session)  # Statistics queues UI changes for the game tick.
     game._sync_overlay_windows(session, view, 1280, 720)
     assert not _window_wants_cursor(view)

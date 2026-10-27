@@ -547,56 +547,37 @@ def _weapon_icon_pixmap(weapon_def, size=26):
 
 
 def _draw_active(painter, session, c, width, height):
-    """Bottom-right: active weapon and active spell chips, each with an icon so
-    the equipped weapon and readied spell read at a glance."""
-    w = eq.weapon(c)
-    wname = w.name if w else "Unarmed"
-    a = eq.ammo_for(c, w) if w and w.get("kind") in rpg_items.RANGED_KINDS else None
-    if a:
-        from ..rpg import inventory as inv
-        wname += f"  ({inv.quantity(c.inventory, a.id)} {a.name.split()[0].lower()})"
-    spell = rpg_magic.get(c.active_spell) if c.active_spell else None
-    sname = spell.name if spell else "—"
-    # Dual wielding, the right mouse is the second weapon, not the spell.
-    off = eq.offhand_weapon(c)
-
+    """The two equipped hands and the mouse button that uses each one."""
     x = width - 250
     y = height - 64
     T.panel(painter, x, y, 232, 52, radius=8, shadow=False)
-
-    # Weapon row: icon + name (left mouse hint).
-    tx = x + 14
-    pm = _weapon_icon_pixmap(w, 22)
-    if pm is not None and not pm.isNull():
-        painter.drawPixmap(x + 12, y + 6, pm)
-        tx = x + 40
-    T.text(painter, tx, y + 21, wname, size=10,
-           color=T.GOLD_BRIGHT if w else T.DIM, family="Segoe UI")
-    T.text(painter, x + 200, y + 21, "LMB", size=8, color=T.DIM, family="Segoe UI")
-
-    # Spell row: element-coloured swatch + name (right mouse hint); the
-    # second weapon instead, when the off hand holds one.
-    if off is not None:
+    for i, (hand, mouse) in enumerate((("main", "LMB"), ("off", "RMB"))):
+        spell = eq.hand_spell(c, hand)
+        item = eq.hand_weapon(c, hand)
+        if hand == "off" and item is None:
+            item = eq.shield(c) or eq.light_source(c)
+        top = y + 5 + i * 23
         tx = x + 14
-        opm = _weapon_icon_pixmap(off, 22)
-        if opm is not None and not opm.isNull():
-            painter.drawPixmap(x + 12, y + 29, opm)
+        if spell is not None:
+            painter.setBrush(QColor(*spell.color))
+            painter.setPen(QPen(QColor(*spell.color).darker(160), 1))
+            painter.drawEllipse(x + 14, top + 2, 16, 16)
             tx = x + 40
-        T.text(painter, tx, y + 44, off.name, size=10, color=T.GOLD_BRIGHT,
-               family="Segoe UI")
-        T.text(painter, x + 200, y + 44, "RMB", size=8, color=T.DIM, family="Segoe UI")
-        return
-    scol = T.MAGICKA.lighter(140) if spell else T.DIM
-    if spell is not None:
-        col = spell.color
-        painter.setBrush(QColor(col[0], col[1], col[2]))
-        painter.setPen(QPen(QColor(col[0], col[1], col[2]).darker(160), 1))
-        painter.drawEllipse(x + 14, y + 30, 16, 16)
-        tx = x + 40
-    else:
-        tx = x + 14
-    T.text(painter, tx, y + 44, sname, size=10, color=scol, family="Segoe UI")
-    T.text(painter, x + 210, y + 44, "K", size=8, color=T.DIM, family="Segoe UI")
+        else:
+            icon = _weapon_icon_pixmap(item, 22)
+            if icon is not None and not icon.isNull():
+                painter.drawPixmap(x + 12, top, icon)
+                tx = x + 40
+        label = spell.name if spell else item.name if item else "Unarmed" if hand == "main" else "Empty"
+        if item is not None and item.get("kind") in rpg_items.RANGED_KINDS:
+            ammo = eq.ammo_for(c, item)
+            if ammo is not None:
+                from ..rpg import inventory as inv
+                label += f" ({inv.quantity(c.inventory, ammo.id)})"
+        T.text_in(painter, QRect(tx, top, x + 192 - tx, 21), label, size=10,
+                  color=T.GOLD_BRIGHT if spell or item else T.DIM,
+                  family="Segoe UI", align=int(Qt.AlignLeft | Qt.AlignVCenter))
+        T.text(painter, x + 200, top + 16, mouse, size=8, color=T.DIM, family="Segoe UI")
 
 
 def _draw_law(painter, session, width):

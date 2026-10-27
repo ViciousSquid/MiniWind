@@ -304,7 +304,7 @@ def _row(page, key):
 def test_options_show_the_launchers_display_settings_and_the_music_volume(app):
     page = _options(_menu())
     rows = {key: (label, value) for key, label, value, _on in page.rows()}
-    assert set(rows) == {"mode", "res", "vsync", "hidpi", "volume", "cast", "back"}
+    assert set(rows) == {"mode", "res", "vsync", "hidpi", "volume", "keys", "back"}
     assert rows["mode"][1] == "Fullscreen"         # the launcher's default
     assert rows["volume"][1] == "50%"
     _draw(page.menu)                                # paints without error

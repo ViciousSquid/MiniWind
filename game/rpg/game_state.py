@@ -360,8 +360,8 @@ class GameState:
 
     def cast_active_spell(self) -> magic.CastResult:
         char = self.character
-        if not char.active_spell:
-            return magic.CastResult(False, "no spell selected")
+        if not eq.spell_equipped(char, char.active_spell):
+            return magic.CastResult(False, "spell not equipped")
         res = magic.try_cast(char, char.active_spell, self.rng, dice=self.dice)
         spell = res.spell
         if res.cast:

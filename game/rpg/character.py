@@ -121,6 +121,7 @@ class Character:
         self.equipment: Dict[str, Optional[str]] = {}  # slot -> item id
         self.known_spells: List[str] = []
         self.active_spell: Optional[str] = None
+        self.hand_spells: Dict[str, str] = {}  # main/off -> equipped spell id
         self.active_weapon_kind = "unarmed"  # 'melee' | 'bow' | 'unarmed' | 'spell'
         #: Chosen head id (e.g. "head07") — the player's whole appearance and a
         #: future audio key. Set at character creation; no NPC reuses it.
@@ -187,7 +188,8 @@ class Character:
         # or a custom magic-specialised class) must never start with no spell.
         if klass.specialisation == sk.MAGIC and not c.known_spells:
             c.known_spells.append("flare")
-        # Ready the first known spell so right-mouse can cast immediately.
+        # Select the first known spell for the spellbook; casting requires
+        # explicitly equipping it to a hand.
         if c.known_spells and not c.active_spell:
             c.active_spell = c.known_spells[0]
 
@@ -228,6 +230,7 @@ class Character:
             self.magicka = 0.0
             self.known_spells = []
             self.active_spell = None
+            self.hand_spells = {}
         self.max_stamina = max(1.0, self.max_stamina)
         if reset_current:
             self.health = self.max_health
@@ -462,6 +465,7 @@ class Character:
             "gold": self.gold, "inventory": list(self.inventory),
             "equipment": dict(self.equipment), "known_spells": list(self.known_spells),
             "active_spell": self.active_spell,
+            "hand_spells": dict(self.hand_spells),
             "active_weapon_kind": self.active_weapon_kind,
             "head": self.head,
             "factions": dict(self.factions), "bounty": self.bounty,
@@ -532,6 +536,15 @@ class Character:
         if isinstance(practice, dict):
             c.spell_practice = {str(k): int(v) for k, v in practice.items()}
         c.recompute_derived(reset_current=False)
+        from . import equipment
+        saved_hands = data.get("hand_spells", {})
+        if isinstance(saved_hands, dict):
+            for hand in ("main", "off"):
+                if saved_hands.get(hand):
+                    equipment.equip_spell(c, saved_hands[hand], hand)
+        if data.get("active_spell") in c.known_spells:
+            c.active_spell = data["active_spell"]
+        equipment._refresh_weapon_kind(c)
         c.health = float(data.get("health", c.max_health))
         c.magicka = float(data.get("magicka", c.max_magicka))
         c.stamina = float(data.get("stamina", c.max_stamina))

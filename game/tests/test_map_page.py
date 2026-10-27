@@ -170,13 +170,16 @@ def test_the_host_opens_the_map_for_a_request(app):
     view, session = _ViewWithMenu(), _S()
     session.map_request = (30.0, 40.0, "The Lost Ring")
     serve(session, view)
-    assert session.map_request is None and session.open_screen is None
+    assert session.map_request is None and session.open_screen == "map"
+    assert session._statistics_map_focus == (30.0, 40.0, "The Lost Ring")
     app.processEvents()
-    assert view.play_menu.opened == [(30.0, 40.0, "The Lost Ring")]
+    assert view.play_menu.opened == []
     session.map_request = "player"
     serve(session, view)
     app.processEvents()
-    assert view.play_menu.opened[-1] is None
+    assert session._statistics_map_focus is None
+    assert session._statistics_map_revision == 2
+    assert view.play_menu.opened == []
 
 
 def test_the_quest_screen_m_key_asks_for_the_objective():

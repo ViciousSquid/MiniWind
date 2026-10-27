@@ -71,6 +71,56 @@ def _slot_for(item_def) -> Optional[str]:
 # the three, never two. A two-handed weapon (every bow, the big hammers and
 # farm tools) takes both hands.
 # ---------------------------------------------------------------------------
+def relative_hand(character, hand: str) -> str:
+    """Resolve a physical left/right hand, or an existing main/off name."""
+    if hand in ("main", "off"):
+        return hand
+    if hand in ("left", "right"):
+        return "main" if hand == getattr(character, "handed", "right") else "off"
+    raise ValueError(f"Unknown hand: {hand}")
+
+
+def hand_spell(character, hand="main"):
+    """The learned spell equipped in a hand, or None."""
+    from . import magic
+    sid = getattr(character, "hand_spells", {}).get(relative_hand(character, hand))
+    return magic.get(sid) if sid in getattr(character, "known_spells", ()) else None
+
+
+def spell_equipped(character, spell_id) -> bool:
+    return bool(spell_id) and any(
+        spell is not None and spell.id == spell_id
+        for spell in (hand_spell(character, "main"), hand_spell(character, "off")))
+
+
+def equip_spell(character, spell_id, hand="main") -> bool:
+    """Fill one hand with a learned spell, putting its held items away."""
+    from . import magic
+    hand = relative_hand(character, hand)
+    if spell_id not in character.known_spells or magic.get(spell_id) is None:
+        return False
+    if not character.can_use_magic():
+        return False
+    if not hasattr(character, "hand_spells"):
+        character.hand_spells = {}
+    if hand == "main":
+        character.equipment.pop(items.SLOT_WEAPON, None)
+    else:
+        character.equipment.pop(items.SLOT_SHIELD, None)
+        character.equipment.pop(items.SLOT_LIGHT, None)
+        _free_off_hand_of_two_hander(character)
+    character.hand_spells[hand] = spell_id
+    character.active_spell = spell_id
+    _refresh_weapon_kind(character)
+    return True
+
+
+def unequip_spell(character, hand) -> bool:
+    removed = getattr(character, "hand_spells", {}).pop(relative_hand(character, hand), None)
+    _refresh_weapon_kind(character)
+    return removed is not None
+
+
 def equip(character, item_id: str, slot: Optional[str] = None) -> bool:
     """Equip *item_id* from the inventory. Returns success.
 
@@ -120,6 +170,13 @@ def equip(character, item_id: str, slot: Optional[str] = None) -> bool:
         _free_off_hand_of_two_hander(character)
     else:
         worn[slot] = item_id
+    spells = getattr(character, "hand_spells", {})
+    if slot == items.SLOT_WEAPON:
+        spells.pop("main", None)
+        if is_two_handed(d):
+            spells.pop("off", None)
+    elif slot in (items.SLOT_SHIELD, items.SLOT_LIGHT):
+        spells.pop("off", None)
     _refresh_weapon_kind(character)
     return True
 
@@ -172,10 +229,12 @@ def can_dual_wield(item_def) -> bool:
 
 def _refresh_weapon_kind(character) -> None:
     d = equipped_def(character, items.SLOT_WEAPON)
-    if character.active_spell:
+    if hand_spell(character, "main") is not None:
         character.active_weapon_kind = "spell"
     elif d is None:
-        character.active_weapon_kind = "unarmed"
+        off = offhand_weapon(character)
+        character.active_weapon_kind = (off.get("kind", items.KIND_MELEE) if off else
+                                       "spell" if hand_spell(character, "off") else "unarmed")
     else:
         character.active_weapon_kind = d.get("kind", items.KIND_MELEE)
 

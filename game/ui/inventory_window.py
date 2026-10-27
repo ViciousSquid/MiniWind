@@ -177,6 +177,13 @@ def why_not(target, item_def) -> str:
     return f"{name} can't go there."
 
 
+def source_fits(target, source):
+    if source[0] in ("spell", "spell_hand"):
+        return (target[0] == "hand" or target in (("equip", "weapon"), ("equip", "shield"))
+                or source[0] == "spell_hand" and target[0] in ("pack", "spells"))
+    return fits(target, _item(source[2]))
+
+
 class InventoryWindow(FloatingWindow):
     """The Baldur's Gate-style inventory (see the module docstring)."""
 
@@ -304,9 +311,12 @@ class InventoryWindow(FloatingWindow):
         return self._body_height
 
     def draw_body(self, painter, x, y, w):
+        self._draw_content(painter, x, y, w, self.content_height())
+
+    def _draw_content(self, painter, x, y, w, h):
+        """Equipment, pack and sheet within the supplied body rectangle."""
         self._cells, self._targets, self._buttons = [], [], []
         self.hover = None
-        h = self.content_height()
         painter.save()
         painter.setRenderHint(painter.Antialiasing, True)
         painter.fillRect(QRect(x, y, w, h), _STONE_DARK)
@@ -389,7 +399,7 @@ class InventoryWindow(FloatingWindow):
         border = _SLOT_EDGE
         fill = _SLOT
         if dragging and target is not None:
-            ok = fits(target, drag_def)
+            ok = source_fits(target, dragging)
             border = _OK if ok else QColor(70, 60, 55)
             if ok and target == ("equip", "shield") and drag_def is not None \
                     and drag_def.category == "weapon":
@@ -523,8 +533,14 @@ class InventoryWindow(FloatingWindow):
             r = QRect(int(doll.x() + fx * doll.width() - s / 2),
                       int(doll.y() + fy * doll.height() - s / 2), s, s)
             iid = worn.get(slot)
+            from ..rpg import equipment as eq
+            spell = eq.hand_spell(c, "off" if slot == "shield" else "main") \
+                if c is not None and slot in ("weapon", "shield") else None
             self._slot_box(painter, r, iid, target=("equip", slot),
                            source=("equip", slot, iid) if iid else None, label=label)
+            if spell is not None:
+                self._draw_spell_slot(painter, r, spell,
+                                      ("spell_hand", "off" if slot == "shield" else "main", spell.id))
         # Quick weapons and quiver.
         y = doll.bottom() + 22
         painter.setFont(self.f_body)
@@ -544,7 +560,7 @@ class InventoryWindow(FloatingWindow):
         ammo = worn.get("ammo")
         self._slot_box(painter, rq, ammo, target=("equip", "ammo"),
                        source=("equip", "ammo", ammo) if ammo else None, label="Arrows")
-        # Readied spell, one click to change.
+        # Known spells can be dragged straight onto either hand.
         y2 = y + s + 34
         painter.setFont(self.f_body)
         painter.setPen(_GOLD)
@@ -623,7 +639,18 @@ class InventoryWindow(FloatingWindow):
             painter.drawEllipse(r.adjusted(9, 9, -9, -9))
             if hits.hovered(r):
                 self.hover = ("spell", sid)
-            self._buttons.append((QRect(r), self._ready_spell(sid)))
+            self._cells.append((QRect(r), ("spell", None, sid)))
+
+    def _draw_spell_slot(self, painter, rect, spell, source):
+        painter.fillRect(rect.adjusted(2, 2, -2, -2), _SLOT)
+        painter.setBrush(QColor(*spell.color))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(rect.adjusted(12, 5, -12, -19))
+        painter.setFont(self.f_small)
+        painter.setPen(_INK)
+        _fit(painter, rect.adjusted(3, rect.height() - 18, -3, -2),
+             Qt.AlignCenter, spell.name)
+        self._cells.append((QRect(rect), source))
 
     def _draw_pack(self, painter, rect):
         inner = self._panel(painter, rect, "Pack")
@@ -729,7 +756,7 @@ class InventoryWindow(FloatingWindow):
         painter.setFont(self.f_small)
         painter.setPen(_DIM)
         _fit(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-                         Qt.AlignCenter, "Double-click a spell to ready it  ·  right mouse casts")
+                         Qt.AlignCenter, "Drag a spell to a hand to equip it  ·  mouse buttons use each hand")
 
     def _draw_spell_details(self, painter, inner, sid):
         from ..rpg import magic
@@ -775,7 +802,7 @@ class InventoryWindow(FloatingWindow):
             self._draw_spell_details(painter, inner, spell)
             by = inner.bottom() - 34
             bw = (inner.width() - 6) // 2
-            for k, (label, action) in enumerate((("Ready", self._ready_spell(spell)),
+            for k, (label, action) in enumerate((("Select", self._ready_spell(spell)),
                                                  ("Exit", self._close_action))):
                 r = QRect(inner.x() + k * (bw + 6), by, bw, 30)
                 hot = hits.hovered(r)
@@ -1049,7 +1076,7 @@ class InventoryWindow(FloatingWindow):
                 try:
                     from ..rpg import equipment as eq, magic
                     eq._refresh_weapon_kind(c)
-                    session.notify(f"Readied {magic.get(sid).name}", 1.5)
+                    session.notify(f"Selected {magic.get(sid).name}", 1.5)
                 except Exception:
                     pass
             self._queue(run)
@@ -1094,7 +1121,7 @@ class InventoryWindow(FloatingWindow):
         source = self._at(self._cells, p)
         if source is not None:
             self._press = (QPoint(p), source)
-            if source[0] == "spell":
+            if source[0] in ("spell", "spell_hand"):
                 self.selected_spell = source[2]
             else:
                 self.selected = source[2]
@@ -1111,8 +1138,7 @@ class InventoryWindow(FloatingWindow):
         hits.pointer = (event.x(), event.y())
         if self._press is not None and self._drag is None:
             start, source = self._press
-            if (source[0] != "spell"
-                    and (event.pos() - start).manhattanLength() >= DRAG_START):
+            if (event.pos() - start).manhattanLength() >= DRAG_START:
                 self._drag = source
                 drag.start(self, source)
         return self._press is not None
@@ -1133,7 +1159,7 @@ class InventoryWindow(FloatingWindow):
             self._last_click = (now, source)
             if last_src == source and now - last_t <= DOUBLE_CLICK:
                 iid = source[2]
-                if source[0] == "spell":
+                if source[0] in ("spell", "spell_hand"):
                     self._ready_spell(iid)()
                 else:
                     self._queue(lambda session: session.inventory_use(iid))
@@ -1146,7 +1172,7 @@ class InventoryWindow(FloatingWindow):
             target = drag.target_at(event.x(), event.y(), exclude=self)
             if target is not None:
                 self._queue(lambda session: session.item_drop(dragged, target))
-            elif dragged[0] != "spell" and not drag.over_window(event.x(), event.y()):
+            elif dragged[0] not in ("spell", "spell_hand") and not drag.over_window(event.x(), event.y()):
                 # Out over the world: on the floor.
                 self._queue(lambda session: session.drop_item(iid))
             return True

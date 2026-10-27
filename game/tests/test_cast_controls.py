@@ -39,6 +39,9 @@ def _session(mode, *things):
     c = s.game.character
     c.active_spell = "flare"
     c.can_use_magic = lambda: True
+    c.known_spells = ["flare", "heal_minor"]
+    from ..rpg import equipment
+    equipment.equip_spell(c, "flare", "main")
     c.health = c.max_health
     s.casts = []
     s.game.cast_active_spell = lambda: SimpleNamespace(cast=True, reason="", roll=None)
@@ -77,6 +80,8 @@ def test_k_again_puts_the_spell_away():
 def test_a_spell_cast_on_oneself_needs_no_aim():
     s = _session("aimed")
     s.game.character.active_spell = "heal_minor"
+    from ..rpg import equipment
+    equipment.equip_spell(s.game.character, "heal_minor", "main")
     assert s.cast_key()
     assert not s.spell_aiming
 

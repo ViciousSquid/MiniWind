@@ -727,7 +727,7 @@ def install_bow_draw(view):
     MiniwindSession._update_bow_draw). A quick click looses a short shot. The
     button is the game's then, so the engine does not also fire on it; with a
     blade in hand a left click is an ordinary stab. The right mouse is the off
-    hand (its weapon or a shield bash); spells are the cast key's (K)."""
+    hand (its weapon, equipped spell or a shield bash)."""
     from PyQt5.QtCore import QEvent, QObject, Qt
 
     class _BowDraw(QObject):

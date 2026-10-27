@@ -21,6 +21,10 @@ from ..rpg import (races, classes, birthsigns, attributes as attr, skills as sk,
                    magic as rpg_magic, guilds, quests, heads)
 from ..rpg import charisma as _cha
 
+STATISTICS_TABS = (("Inventory", "inventory"), ("Character", "character"),
+                   ("Journal", "journal"), ("Spells", "spells"), ("Map", "map"))
+STATISTICS_SCREENS = tuple(screen for _label, screen in STATISTICS_TABS)
+
 
 def _sel(session):
     if not hasattr(session, "sel"):
@@ -80,6 +84,7 @@ def window_body_size(screen):
 #: "make active quest" box rect for ``toggle_qid``.
 _QUEST_HITS = {"rows": [], "toggle": None, "toggle_qid": None,
                "map": None, "map_focus": None}
+_SPELL_HITS = {"cells": [], "targets": []}
 
 
 def button(painter, rect, label, action, enabled=True, primary=False):
@@ -782,6 +787,9 @@ def _draw_journal(painter, session, w, h):
     list_w = int(inner.width() * 0.4)
     for i, q in enumerate(allq):
         ry = ty + 8 + i * 24
+        _row_target(painter, QRect(inner.x(), ry - 2, list_w, 22),
+                    lambda s, row=i: _sel(s)["journal"].update(row=row),
+                    f"journal:{q.id}")
         if i == st["row"]:
             painter.fillRect(QRect(inner.x(), ry - 2, list_w, 22), T.SELECT)
         complete = log.is_complete(q.id)
@@ -1077,7 +1085,7 @@ def _ready_spell(session, spell_id):
     c = session.game.character
     c.active_spell = spell_id
     eq._refresh_weapon_kind(c)
-    session.notify(f"Readied {spells[index].name}", 1.5)
+    session.notify(f"Selected {spells[index].name}", 1.5)
 
 
 def _spellbook_page(session, step, page_size):
@@ -1088,8 +1096,9 @@ def _spellbook_page(session, step, page_size):
 
 
 def _draw_spells(painter, session, w, h):
-    from ..host import K_CAST, K_SPELLS
+    from ..host import K_SPELLS
 
+    _SPELL_HITS["cells"], _SPELL_HITS["targets"] = [], []
     c = session.game.character
     spells = _spellbook_spells(session)
     st = _spellbook_selection(session, spells)
@@ -1124,6 +1133,10 @@ def _draw_spells(painter, session, w, h):
                   family="Segoe UI")
         _row_target(painter, row_rect,
                     lambda s, sid=spell.id: _ready_spell(s, sid), f"spell:{spell.id}")
+        _SPELL_HITS["cells"].append((QRect(row_rect), ("spell", None, spell.id)))
+
+    _SPELL_HITS["targets"].append((QRect(inner.x(), top - 2, list_w,
+                                         max(1, nav_y - top)), ("spells", None)))
 
     if pages > 1:
         button(painter, QRect(inner.x(), nav_y, 80, 26), "Previous",
@@ -1143,7 +1156,7 @@ def _draw_spells(painter, session, w, h):
         info = (f"School: {sk.label(spell.school)}\nDelivery: {spell.delivery}\n"
                 f"Element: {spell.element}\nCost: {int(rpg_magic.cast_cost(c, spell))} magicka\n\n{spell.desc}")
         T.text_in(painter, QRect(dx, ty + 34, inner.width() - list_w - 20,
-                                max(1, nav_y - ty - 42)),
+                                max(1, nav_y - ty - 170)),
                   info, size=10, color=T.PARCH,
                   align=int(Qt.AlignTop | Qt.AlignLeft) | int(Qt.TextWordWrap),
                   family="Segoe UI")
@@ -1152,10 +1165,52 @@ def _draw_spells(painter, session, w, h):
                "You know no spells yet. Buy them from the Mages Guild.",
                size=11, color=T.DIM, family="Segoe UI")
 
+    _draw_spell_hands(painter, session,
+                      QRect(inner.x() + list_w + 20, nav_y - 126,
+                            inner.width() - list_w - 20, 118),
+                      spells[st["row"]].id if spells else None)
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              f"Click a spell to ready it · {K_CAST.upper()} cast · {K_SPELLS.upper()}/Esc close",
+              f"Drag a spell to a hand · LMB/RMB use equipped hands · {K_SPELLS.upper()}/Esc close",
               size=9, color=T.DIM,
               align=T.ALIGN_CENTER, family="Segoe UI")
+
+
+def _draw_spell_hands(painter, session, area, selected):
+    c = session.game.character
+    width = (area.width() - 12) // 2
+    for i, physical in enumerate(("left", "right")):
+        hand = eq.relative_hand(c, physical)
+        spell = eq.hand_spell(c, hand)
+        slot = eq.hand_slot(hand)
+        iid = eq.equipped_id(c, slot)
+        if hand == "off" and not iid:
+            iid = eq.equipped_id(c, "light")
+            if iid:
+                slot = "light"
+        item = rpg_items.get(iid) if iid else None
+        rect = QRect(area.x() + i * (width + 12), area.y(), width, 78)
+        painter.save()
+        painter.setBrush(QColor(30, 28, 36, 245))
+        painter.setPen(QPen(T.GOLD_BRIGHT if hits.hovered(rect) else T.GILD, 1.5))
+        painter.drawRoundedRect(rect, 5, 5)
+        mouse = "LMB" if hand == "main" else "RMB"
+        T.text_in(painter, rect.adjusted(6, 4, -6, -48),
+                  f"{physical.title()} hand · {mouse}", size=11, color=T.GOLD_BRIGHT,
+                  align=T.ALIGN_CENTER)
+        T.text_in(painter, rect.adjusted(6, 30, -6, -6),
+                  spell.name if spell else item.name if item else "Empty",
+                  size=10, color=QColor(*spell.color) if spell else T.INK,
+                  align=int(Qt.AlignCenter | Qt.TextWordWrap))
+        painter.restore()
+        _SPELL_HITS["targets"].append((QRect(rect), ("hand", physical)))
+        if spell:
+            _SPELL_HITS["cells"].append((QRect(rect), ("spell_hand", hand, spell.id)))
+        elif iid:
+            _SPELL_HITS["cells"].append((QRect(rect), ("equip", slot, iid)))
+        button(painter, QRect(rect.x(), rect.bottom() + 6, width, 28),
+               f"Equip {physical}",
+               lambda s, sid=selected, h=physical: s.equip_hand_spell(sid, h),
+               enabled=selected is not None)
 
 
 def _handle_spells(session, key):
@@ -1634,6 +1689,17 @@ def _handle_lockpicking(session, key):
 
 
 # dispatch tables
+def _handle_map(session, key):
+    if key in ("escape", "esc", "m"):
+        session.open_screen = None
+    else:
+        from collections import deque
+        # Map painting and interaction belong to the UI thread. The tick only
+        # publishes key names; the window applies them on its next paint.
+        _sel(session).setdefault("map", {}).setdefault("keys", deque(maxlen=32)).append(key)
+    return True
+
+
 _DRAW = {
     "charcreate": _draw_charcreate, "inventory": _draw_inventory,
     "character": _draw_character, "journal": _draw_journal,
@@ -1648,6 +1714,7 @@ _HANDLE = {
     "container": _handle_container, "quest": _handle_quest,
     "lockpicking": _handle_lockpicking,
     "book": lambda session, key: _handle_book(session, key),
+    "map": _handle_map,
 }
 
 

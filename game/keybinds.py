@@ -17,7 +17,6 @@ from __future__ import annotations
 #: (action, label, host constant, default key), in the order they are listed.
 ACTIONS = (
     ("attack", "Attack (both hands)", "K_ATTACK", "f"),
-    ("cast", "Cast spell", "K_CAST", "k"),
     ("block", "Block (hold)", "K_BLOCK", "b"),
     ("next_spell", "Next spell", "K_NEXT_SPELL", "x"),
     ("heal", "Drink a healing potion", "K_HEAL", "h"),

@@ -98,6 +98,23 @@ def _render(renderer, context, things, eye=glh.CAMERA_EYE,
     return context.read_pixels()
 
 
+@pytest.mark.parametrize('layered', [True, False])
+def test_persistent_sprite_tint_reaches_the_rendered_pixels(renderer, context, layered):
+    if not layered:
+        renderer.shaders.pop('sprite_layered', None)
+    white = _solid((240, 240, 240))
+    raised = _billboard(renderer, 'raised', (0, 64, 0), white, size=(100, 100))
+    raised.properties['sprite_tint'] = [1., .3, .3]
+    image = _render(renderer, context, [raised], eye=(0, 64, 200), target=(0, 64, 0))
+    red, green, blue = image[SIZE // 2, SIZE // 2]
+    assert red > 180 and green < 100 and blue < 100
+    ordinary = _billboard(renderer, 'ordinary', (0, 64, 0), white, size=(100, 100))
+    image = _render(renderer, context, [ordinary], eye=(0, 64, 200), target=(0, 64, 0))
+    red, green, blue = map(int, image[SIZE // 2, SIZE // 2])
+    assert min(red, green, blue) > 180
+    assert max(red, green, blue) - min(red, green, blue) < 5
+
+
 def _count_sprite_draws(renderer):
     """Wrap the sprite pass and count the instanced draws issued inside it."""
     import OpenGL.GL as gl

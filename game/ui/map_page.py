@@ -40,10 +40,14 @@ _CAPTION = QColor(170, 166, 160)
 
 
 class MapPage:
-    """State, input and painting of the full map; owned by a PauseMenu."""
+    """State, input and painting of the map in Statistics or a PauseMenu."""
 
-    def __init__(self, menu):
+    def __init__(self, menu=None, *, read_data=None, update=None, on_close=None):
         self.menu = menu
+        self._read_data = (read_data if read_data is not None else
+                           getattr(getattr(menu, "actions", None), "pause_menu_map_data", None))
+        self._update = update if update is not None else menu.view.update
+        self._close = on_close if on_close is not None else getattr(menu, "_leave_map", lambda: None)
         self.world = None
         self.features = {"player": None, "places": [], "quests": []}
         self.centre = None        # (x, z) world point at the middle
@@ -55,7 +59,7 @@ class MapPage:
 
     # -- data -------------------------------------------------------------
     def refresh(self):
-        reader = getattr(self.menu.actions, "pause_menu_map_data", None)
+        reader = self._read_data
         try:
             self.world, self.features = reader() if reader is not None else (None, None)
         except Exception:
@@ -81,7 +85,7 @@ class MapPage:
             self.centre = (player[0], player[1])
         elif self.centre is None:
             self.centre = self._world_centre()
-        self.menu.view.update()
+        self._update()
 
     def _bounds(self):
         world = self.world
@@ -128,13 +132,13 @@ class MapPage:
             after = self.to_world(rect, about)
             cx, cz = self.centre
             self.centre = (cx + before[0] - after[0], cz + before[1] - after[1])
-        self.menu.view.update()
+        self._update()
 
     def pan(self, fx, fz):
         cx, cz = self.centre or (0.0, 0.0)
         step = self.span * PAN_STEP
         self.centre = (cx + fx * step, cz + fz * step)
-        self.menu.view.update()
+        self._update()
 
     # -- input ------------------------------------------------------------
     def handle_key(self, key):
@@ -153,7 +157,7 @@ class MapPage:
         elif key in (Qt.Key_Space, Qt.Key_Home):
             self.centre_on_player()
         elif key in (Qt.Key_Escape, Qt.Key_M, Qt.Key_Backspace):
-            self.menu._leave_map()
+            self._close()
 
     def handle_mouse_press(self, pos):
         self._drag = (QPointF(pos), self.centre)
@@ -167,7 +171,7 @@ class MapPage:
         point = QPointF(pos)
         self.centre = (centre[0] - (point.x() - start.x()) / s,
                        centre[1] - (point.y() - start.y()) / s)
-        self.menu.view.update()
+        self._update()
 
     def handle_mouse_release(self):
         self._drag = None
@@ -177,11 +181,11 @@ class MapPage:
             self.zoom(ZOOM_STEP ** (delta / 120.0), QPointF(pos))
 
     # -- painting ---------------------------------------------------------
-    def draw(self, painter, w, h, text_font, display_font):
+    def draw(self, painter, w, h, text_font, display_font, x=0, y=0):
         margin = max(16, w // 40)
         top = max(56, h // 11)
         bottom = max(44, h // 14)
-        rect = QRectF(margin, top, w - 2 * margin, h - top - bottom)
+        rect = QRectF(x + margin, y + top, w - 2 * margin, h - top - bottom)
         self._rect = rect
         if self.centre is None:
             self.centre = self._world_centre()
@@ -193,7 +197,7 @@ class MapPage:
         # Heading.
         painter.setFont(display_font(max(16, min(30, w // 45))))
         painter.setPen(_GOLD_BRIGHT)
-        painter.drawText(QRectF(0, 0, w, top - 6), int(Qt.AlignHCenter | Qt.AlignBottom), "Map")
+        painter.drawText(QRectF(x, y, w, top - 6), int(Qt.AlignHCenter | Qt.AlignBottom), "Map")
 
         window = QPainterPath()
         window.addRect(rect)
@@ -206,7 +210,7 @@ class MapPage:
                     lambda x, z: self.to_screen(rect, x, z), self._scale(rect))
         status = self.features.get("law") or {}
         if status.get("phase") == "search" and status.get("show_radius", True):
-            self.menu.view.update()  # the rim's Searching label keeps orbiting while paused
+            self._update()  # the rim's Searching label keeps orbiting while paused
         self._draw_places(painter, rect, text_font)
         self._draw_quests(painter, rect, text_font)
         self._draw_witnesses(painter, rect, text_font)
@@ -226,7 +230,7 @@ class MapPage:
 
         painter.setFont(text_font(max(9, min(12, w // 130))))
         painter.setPen(_CAPTION)
-        painter.drawText(QRectF(0, rect.bottom() + 4, w, bottom - 4),
+        painter.drawText(QRectF(x, rect.bottom() + 4, w, bottom - 4),
                          int(Qt.AlignCenter),
                          "Drag  pan      Wheel  zoom      Space  you      Esc  back")
         painter.restore()
@@ -265,7 +269,7 @@ class MapPage:
                    if world is None or not getattr(world, "error", None) else "No map of this land.")
             painter.drawText(rect, int(Qt.AlignCenter), msg)
             if world is not None and getattr(world, "building", False):
-                self.menu.view.update()          # repaint until it is ready
+                self._update()          # repaint until it is ready
             return
         (min_x, max_x), (min_z, max_z) = world.bounds
         a = self.to_screen(rect, min_x, min_z)
@@ -344,7 +348,7 @@ class MapPage:
         painter.setBrush(Qt.NoBrush)
         painter.setPen(QPen(QColor(250, 214, 70, 220), 2.5))
         painter.drawEllipse(p, r, r)
-        self.menu.view.update()                  # keep the ring breathing
+        self._update()                  # keep the ring breathing
 
     def _draw_player(self, painter, rect):
         player = self.features.get("player")
