@@ -4,8 +4,9 @@ The inventory (I), laid out after Deus Ex's: what you carry, not what you wear.
 The character window (C) is the paperdoll: equipment, attributes, the sheet.
 The inventory is the pack, and reads differently at a glance:
 
-* a row of tabs along the top -- Inventory, Character, Journal, Spells, Map --
-  and Exit, so the screens are one click apart;
+* a row of tabs along the top -- Inventory, Skills, Character, Journal,
+  Spells, Map -- and Exit, so the screens are one click apart (Skills is a
+  page of this window: the skill tree, game/ui/skill_tree.py);
 * on the left a grid of large cells, each with its icon, its count in the
   corner and its name along the bottom, under a header with the gold carried;
   Equip, Use and Drop beneath it act on the item picked;
@@ -32,8 +33,10 @@ GAP = 6
 COLS = 5
 ROWS = 4
 #: The screens along the top: (label, open_screen).
-TABS = (("Inventory", "inventory"), ("Character", "character"), ("Journal", "journal"),
-        ("Spells", "spells"), ("Map", "map"))
+TABS = (("Inventory", "inventory"), ("Skills", "skills"), ("Character", "character"),
+        ("Journal", "journal"), ("Spells", "spells"), ("Map", "map"))
+#: Tabs that are pages of this window rather than screens of their own.
+PAGES = ("inventory", "skills")
 
 _STEEL_TOP = QColor(64, 66, 70, 245)
 _STEEL_BOT = QColor(30, 31, 34, 245)
@@ -56,6 +59,10 @@ class PackWindow(InventoryWindow):
         self.key = "screen:inventory"
         self.width = 1020
         self._body_height = 620
+        #: Which page is showing: the pack ("inventory") or the skill tree.
+        self.showing = "inventory"
+        self.selected_skill = None
+        self._skill_nodes = []
 
     # ------------------------------------------------------------- drawing
     def draw_body(self, painter, x, y, w):
@@ -66,6 +73,12 @@ class PackWindow(InventoryWindow):
         painter.setRenderHint(painter.Antialiasing, True)
         painter.fillRect(QRect(x, y, w, h), QColor(14, 15, 17, 235))
         self._draw_tabs(painter, QRect(x + 10, y + 8, w - 20, 34))
+        if self.showing == "skills":
+            self._draw_skills(painter, QRect(x + 10, y + 52, w - 20, h - 62))
+            from . import drag
+            drag.set_zones(self, [])
+            painter.restore()
+            return
         grid_w = COLS * (CELL + GAP) + 24
         left = QRect(x + 10, y + 52, grid_w, h - 62)
         right = QRect(left.right() + 12, y + 52, x + w - left.right() - 22, h - 62)
@@ -97,17 +110,40 @@ class PackWindow(InventoryWindow):
         painter.setFont(self.f_button)
         for i, (label, screen) in enumerate(TABS):
             r = QRect(bar.x() + i * tab_w, bar.y(), tab_w - 6, bar.height())
-            on = screen == "inventory"
+            on = screen == self.showing
             self._bevel(painter, r, on)
             painter.setPen(_ON if on else _TEXT)
             _fit(painter, r, Qt.AlignCenter, label)
             if not on:
-                self._buttons.append((QRect(r), self._open(screen)))
+                self._buttons.append((QRect(r), self._set_page(screen) if screen in PAGES
+                                      else self._open(screen)))
         r = QRect(bar.right() - exit_w, bar.y(), exit_w, bar.height())
         self._bevel(painter, r)
         painter.setPen(_TEXT)
         _fit(painter, r, Qt.AlignCenter, "Exit")
         self._buttons.append((QRect(r), self._close_action))
+
+    def _set_page(self, page):
+        def act():
+            self.showing = page
+        return act
+
+    def _draw_skills(self, painter, rect):
+        from . import hits, skill_tree
+        inner = self._panel(painter, rect, "Skills")
+        c = self._character()
+        if c is None:
+            return
+        self._skill_nodes = skill_tree.draw(
+            painter, inner, c, (self.f_name, self.f_body, self.f_small),
+            selected=self.selected_skill, pointer=hits.pointer)
+        for r, sid in self._skill_nodes:
+            self._buttons.append((QRect(r), self._pick_skill(sid)))
+
+    def _pick_skill(self, sid):
+        def act():
+            self.selected_skill = sid
+        return act
 
     def _open(self, screen):
         def act():
