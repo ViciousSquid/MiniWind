@@ -1372,6 +1372,10 @@ _LEVEL_ROWS = (
      "Maximum health and stamina, the health each level brings, and your "
      "Armour Class. It steadies your aim, hastens your magicka's return and "
      "lets you shrug off hostile magic."),
+    ("charisma", "Charisma",
+     "How the Vale sees you: merchants' prices, how strangers greet you, how "
+     "kindly the town's gossip treats you -- and, with Luck, the Charm & Luck "
+     "words that open doors."),
     ("magicka", "Magicka",
      "The depth of your well of magic: how many spells you can cast before "
      "you must rest and let it fill again."),
@@ -1419,6 +1423,12 @@ def _level_preview(c, choice):
     if choice == "strength":
         rows.append(("Melee damage", f"x{0.7 + c.attrs[a] / 100.0:.2f}",
                      f"x{0.7 + after.attrs[a] / 100.0:.2f}"))
+    if choice == "charisma":
+        from ..rpg import fortune
+        rows.append(("Prices", f"x{_cha.price_multiplier(c.attrs[a], True):.2f}",
+                     f"x{_cha.price_multiplier(after.attrs[a], True):.2f}"))
+        rows.append(("Looks", _cha.tier(c.attrs[a]), _cha.tier(after.attrs[a])))
+        rows.append(("Fortune (Charm & Luck)", fortune.score(c), fortune.score(after)))
     return rows
 
 
@@ -1477,6 +1487,19 @@ def _paint_level_icon(painter, rect, choice, ink=_INK_RED):
         painter.setPen(QPen(_PARCH_LIGHT, max(1.5, s * 0.08)))
         painter.drawLine(QPointF(cx, cy - s * 0.55), QPointF(cx, cy + s * 0.55))
         painter.drawLine(QPointF(cx - s * 0.42, cy - s * 0.15), QPointF(cx + s * 0.42, cy - s * 0.15))
+    elif choice == "charisma":
+        # A crown.
+        crown = QPolygonF([QPointF(cx - s * 0.75, cy + s * 0.45), QPointF(cx - s * 0.80, cy - s * 0.45),
+                           QPointF(cx - s * 0.40, cy - s * 0.05), QPointF(cx, cy - s * 0.70),
+                           QPointF(cx + s * 0.40, cy - s * 0.05), QPointF(cx + s * 0.80, cy - s * 0.45),
+                           QPointF(cx + s * 0.75, cy + s * 0.45)])
+        painter.drawPolygon(crown)
+        painter.drawRect(QRectF(cx - s * 0.78, cy + s * 0.50, s * 1.56, s * 0.22))
+        painter.setBrush(_PARCH_LIGHT)
+        painter.setPen(Qt.NoPen)
+        for dx in (-0.80, 0.0, 0.80):
+            painter.drawEllipse(QPointF(cx + s * dx, cy - s * (0.70 if dx == 0 else 0.45)),
+                                s * 0.09, s * 0.09)
     else:
         pts = []
         for i in range(16):
@@ -1629,7 +1652,7 @@ def _handle_levelup(session, key):
         st["row"] = (st["row"] - 1) % n; return True
     if key in ("right", "d", "down", "s", "tab"):
         st["row"] = (st["row"] + 1) % n; return True
-    if key in ("1", "2", "3") and int(key) <= n:
+    if key in ("1", "2", "3", "4") and int(key) <= n:
         st["row"] = int(key) - 1; return True
     if key in ("return", "enter", "space"):
         choice, label, _desc = rows[st["row"] % n]

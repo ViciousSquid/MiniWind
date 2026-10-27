@@ -229,7 +229,7 @@ def tell(store, speaker_key: str, listener_key: str, fact: Dict,
 
 
 def gossip(store, speaker_key: str, listener_key: str, rng=None,
-           limit: int = 1) -> List[Dict]:
+           limit: int = 1, decay=None) -> List[Dict]:
     """One conversation: the speaker passes on up to *limit* of their most
     interesting shareable facts. Returns the facts that were genuinely news.
 
@@ -254,7 +254,11 @@ def gossip(store, speaker_key: str, listener_key: str, rng=None,
         pool = head + pool[3:]
     passed = []
     for f in pool[:max(1, int(limit))]:
-        if tell(store, speaker_key, listener_key, f):
+        # *decay(fact)* may say how much certainty this retelling loses
+        # (None: the usual TELL_DECAY) -- how believable the subject is.
+        d = decay(f) if callable(decay) else None
+        if tell(store, speaker_key, listener_key, f,
+                TELL_DECAY if d is None else float(d)):
             passed.append(f)
     return passed
 

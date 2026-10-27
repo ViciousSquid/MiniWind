@@ -44,7 +44,7 @@ LEVEL_POOL_GAIN = 10.0
 #: MAGICKA is the well of magic -- Intelligence underneath, which sets
 #: maximum magicka -- and is only offered to those who work magic.
 LEVEL_CHOICES = {"strength": attr.STRENGTH, "endurance": attr.ENDURANCE,
-                 "magicka": attr.INTELLIGENCE}
+                 "charisma": attr.PERSONALITY, "magicka": attr.INTELLIGENCE}
 LEVEL_ATTR_GAIN = 5
 #: How many quick-weapon slots there are (keys 1-4).
 QUICK_WEAPON_SLOTS = 4
@@ -323,9 +323,9 @@ class Character:
                 or self.xp >= self.xp_needed)
 
     def level_choices(self) -> List[str]:
-        """What this character may grow at a level-up: STRENGTH, ENDURANCE
-        and, for anyone who works magic, MAGICKA."""
-        out = ["strength", "endurance"]
+        """What this character may grow at a level-up: STRENGTH, ENDURANCE,
+        CHARISMA and, for anyone who works magic, MAGICKA."""
+        out = ["strength", "endurance", "charisma"]
         if self.can_use_magic():
             out.append("magicka")
         return out
@@ -335,7 +335,7 @@ class Character:
         """Advance one character level.
 
         *choice* is the level-up screen's question: ``"strength"``,
-        ``"endurance"`` or ``"magicka"`` grows by :data:`LEVEL_ATTR_GAIN`
+        ``"endurance"``, ``"charisma"`` or ``"magicka"`` grows by :data:`LEVEL_ATTR_GAIN`
         (see :data:`LEVEL_CHOICES`), and health grows by a tenth of Endurance
         as every level. A *choice* the character may not make (MAGICKA for a
         Warrior) is ignored.

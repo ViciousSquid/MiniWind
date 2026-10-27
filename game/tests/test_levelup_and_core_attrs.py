@@ -82,8 +82,9 @@ def _ready(class_id):
 
 
 def test_magic_users_choose_from_three_and_warriors_from_two():
-    assert _ready("sorcerer").level_choices() == ["strength", "endurance", "magicka"]
-    assert _ready("warrior").level_choices() == ["strength", "endurance"]
+    assert _ready("sorcerer").level_choices() == ["strength", "endurance", "charisma",
+                                                  "magicka"]
+    assert _ready("warrior").level_choices() == ["strength", "endurance", "charisma"]
 
 
 def test_the_choice_grows_its_attribute():
@@ -135,7 +136,7 @@ def test_the_level_up_page_offers_what_the_character_may_choose(qt_app):
     from types import SimpleNamespace
     from PyQt5 import QtGui
     from ..ui import hits, screens
-    for class_id, expected in (("sorcerer", 3), ("warrior", 2)):
+    for class_id, expected in (("sorcerer", 4), ("warrior", 3)):
         c = _ready(class_id)
         s = SimpleNamespace(game=SimpleNamespace(character=c), open_screen="levelup",
                             motivational_quotes_enabled=lambda: True, sel={})
@@ -160,3 +161,89 @@ def test_the_level_up_page_takes_the_mouse(monkeypatch):
                               open_screen="levelup", needs_char_creation=False)
     view = SimpleNamespace(logic_thread=SimpleNamespace(_miniwind=session))
     assert hits.GamePointer(view).wants_pointer()
+
+
+# ------------------------------------------------------ Charm & Luck
+def _fortunate(charisma=70, luck=70):
+    c = Character()
+    c.attrs[attr.PERSONALITY] = charisma
+    c.attrs[attr.LUCK] = luck
+    return c
+
+
+def test_charm_and_luck_opens_doors_only_for_the_fortunate():
+    from ..rpg import fortune
+    assert fortune.available(_fortunate(30, 30), merchant=True) == []
+    lucky = _fortunate()
+    assert fortune.available(lucky, merchant=True) == ["haggle"]
+    assert fortune.available(lucky, guard=True, bounty=40) == ["pardon"]
+    assert fortune.available(lucky, guard=True, bounty=0) == []
+    assert "rumours" in fortune.available(lucky, knows_of_player=True)
+    assert fortune.chance(_fortunate(90, 90), "haggle") > fortune.chance(lucky, "haggle")
+
+
+def test_charisma_can_be_chosen_at_a_level_up():
+    c = _ready("warrior")
+    before = c.attrs[attr.PERSONALITY]
+    c.level_up(choice="charisma")
+    assert c.attrs[attr.PERSONALITY] == min(100, before + LEVEL_ATTR_GAIN)
+
+
+def _talk_session(npc):
+    from .test_ember_tome import _FakePlayer, _session
+    return _session([npc], _FakePlayer([0, 0, 0]))
+
+
+def test_a_fortunate_player_sees_the_marked_options_once_a_day(config):
+    from .test_ember_tome import _FakeThing
+    merchant = _FakeThing([50.0, 0.0, 0.0], {"type": "npc", "name": "Bram",
+                                              "merchant": True})
+    s = _talk_session(merchant)
+    s.game.character.attrs[attr.PERSONALITY] = 80
+    s.game.character.attrs[attr.LUCK] = 80
+    tree = {"start": "g", "nodes": {"g": {"text": "Hi.", "responses": [
+        {"text": "Bye.", "goto": "END"}]}}}
+    out = s._with_fortune_topics(tree, merchant)
+    texts = [r["text"] for r in out["nodes"]["g"]["responses"]]
+    assert any(t.startswith("[Charm & Luck]") for t in texts)
+    assert texts[-1] == "Bye."
+    from ..rpg.dialogue import DialogueRunner
+    s.dialogue = DialogueRunner(out, store=s.store,
+                                on_action=lambda a: s._dialogue_action(merchant, a))
+    s.dialogue.start()
+    view = s.dialogue.choose(0)
+    assert view["text"] in (fortune_lines("haggle"))
+    again = s._with_fortune_topics(tree, merchant)
+    assert again is tree                              # used for today
+
+
+def fortune_lines(option):
+    from ..rpg import fortune
+    return fortune.OPTIONS[option][2:]
+
+
+def test_a_charming_player_is_forgotten_faster(config):
+    from ..sim import knowledge
+    s = _talk_session(_FakeThing_npc())
+    crime = {"kind": "theft", "actor": "player"}
+    s.game.character.attrs[attr.PERSONALITY] = 90
+    charming = s._rumour_decay(crime)
+    s.game.character.attrs[attr.PERSONALITY] = 5
+    repulsive = s._rumour_decay(crime)
+    assert charming > knowledge.TELL_DECAY > repulsive
+    assert s._rumour_decay({"kind": "theft", "actor": "bram"}) is None
+
+
+def _FakeThing_npc():
+    from .test_ember_tome import _FakeThing
+    return _FakeThing([50.0, 0.0, 0.0], {"type": "npc", "name": "Ann"})
+
+
+def test_a_watchman_can_be_talked_out_of_half_a_lesser_writ():
+    from ..sim.law import Writs
+    from ..rpg.dialogue import DictStore
+    w = Writs(DictStore())
+    w.charge("vale", 1, 100, 0.0)
+    w.charge("vale", 2, 500, 0.0, grave=True)
+    assert w.forgive("vale", 0.5) == 50
+    assert w.bounty("vale") == 550                    # the blood writ stands

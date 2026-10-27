@@ -42,6 +42,7 @@ EVENTS: Dict[str, Tuple[int, bool]] = {
     "quest_helped": (15, False),   # finished a quest for them
     "gift": (0, False),            # amount supplied by the caller (value-scaled)
     "healed": (8, False),          # mended them with restorative magic
+    "charmed": (12, False),        # talked round by Charm & Luck (game.rpg.fortune)
     "assaulted": (-30, False),     # struck them
     "robbed": (-20, False),        # stole from them / their home
     "kin_slain": (-35, False),     # the player killed one of their relatives
@@ -61,6 +62,7 @@ _EVENT_PHRASE = {
     "quest_helped": "you did them a great service",
     "gift": "you gave them a gift",
     "healed": "you healed them",
+    "charmed": "you charmed them",
     "assaulted": "you attacked them",
     "robbed": "you stole from them",
     "kin_slain": "you killed their kin",

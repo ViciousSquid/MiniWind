@@ -139,6 +139,9 @@ class Director:
         #: ``on_gossip(speaker, listener, fact)``: somebody just told somebody
         #: something they did not know (the game voices it).
         self.on_gossip = on_gossip
+        #: ``rumour_decay(fact) -> float | None``: how much certainty a fact
+        #: loses each time it is retold (None: the usual amount).
+        self.rumour_decay = None
         self.ctx = appraisal.Context(hostile=hostile, disposition=disposition,
                                      store=store)
         #: actor key -> ranked intents (recomputed when their knowledge changes)
@@ -387,8 +390,10 @@ class Director:
                     continue
                 if perception.dist2d(_pos(speaker), _pos(listener)) > GOSSIP_RADIUS:
                     continue
-                passed = knowledge.gossip(self.store, skey, lkey, self.rng)
-                back = knowledge.gossip(self.store, lkey, skey, self.rng)
+                passed = knowledge.gossip(self.store, skey, lkey, self.rng,
+                                          decay=self.rumour_decay)
+                back = knowledge.gossip(self.store, lkey, skey, self.rng,
+                                        decay=self.rumour_decay)
                 if passed:
                     self._dirty.add(lkey)
                     self._on_learned(listener, lkey, passed[0])

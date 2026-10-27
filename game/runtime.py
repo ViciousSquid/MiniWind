@@ -48,6 +48,7 @@ from .rpg import needs as rpg_needs
 from .rpg import heads
 from .rpg import attributes as attr
 from .rpg import charisma as rpg_cha
+from .rpg import fortune as rpg_fortune
 from .ui.arrows import arrow_sprite
 from .rpg import daily as rpg_daily
 from .rpg import quests as _quests
@@ -267,6 +268,10 @@ BARK_RADIUS = 1800.0
 #: at or below this Charisma, and this much per point above it.
 CHARISMA_LEAD_FROM = 40
 CHARISMA_LEAD_PER_POINT = 0.006
+#: How much faster rumours of the player's crimes fade -- and how much slower
+#: their kindnesses -- by how they look (game.rpg.charisma tiers).
+RUMOUR_CHARM = {"repulsive": 0.5, "ugly": 0.75, "plain": 1.0, "fair": 1.3,
+                "striking": 1.6}
 #: How long a thought (what an NPC is thinking, not saying) hangs over a head.
 THOUGHT_SECONDS = 3.5
 #: Two townsfolk talking: how long a rumour's opener is up (longer than an
@@ -711,6 +716,7 @@ class MiniwindSession(SettlementLaw):
                 "Someone heard the disturbance.", 4.0),
             sight_test=self._law_visible, region_for=self._law_region,
             on_gossip=self._on_gossip)
+        self.director.rumour_decay = self._rumour_decay
         #: Accumulated game-hours since the last simulation tick, so rumour
         #: propagation and production advance on world time rather than frames.
         self._sim_hours = 0.0
@@ -4168,6 +4174,21 @@ class MiniwindSession(SettlementLaw):
         return out
 
     # ---------------------------------------------------------- conversation
+    def _rumour_decay(self, fact):
+        """How fast talk about the player fades, by the player's Charisma:
+        people doubt ill of the charming and repeat their kindnesses, and
+        believe the worst of the repulsive."""
+        if fact.get("actor") != PLAYER_KEY:
+            return None
+        from .sim import events as sim_events
+        mult = RUMOUR_CHARM.get(rpg_cha.tier(rpg_cha.charisma_of(self.game.character)), 1.0)
+        tags = sim_events.kind_spec(fact.get("kind", ""))["tags"]
+        if "crime" in tags:
+            return sim_knowledge.TELL_DECAY * mult
+        if "social" in tags:
+            return sim_knowledge.TELL_DECAY / mult
+        return None
+
     def _on_gossip(self, speaker, listener, fact) -> None:
         """The simulation just had *speaker* tell *listener* something new:
         say it aloud, and the reply after it, when the player is near."""
@@ -7321,6 +7342,7 @@ class MiniwindSession(SettlementLaw):
         if getattr(self, "living", None) is not None:
             tree = self.living.prepare_tree(tree, npc)
         tree = self._with_mind_topic(tree, npc)
+        tree = self._with_fortune_topics(tree, npc)
         self.dialogue = DialogueRunner(
             tree, store=self.store,
             give_item=lambda item: inv.add_item(self.game.character.inventory, item),
@@ -7365,6 +7387,90 @@ class MiniwindSession(SettlementLaw):
         resp = tree["nodes"][start].setdefault("responses", [])
         resp.insert(max(0, len(resp) - 1), {"text": "What's on your mind?", "goto": "_mind"})
         return tree
+
+    def _fortune_key(self, npc, option) -> str:
+        return f"fortune.{disp.mem_key(npc.properties)}.{option}"
+
+    def _facts_about_player(self, npc):
+        """What *npc* believes about the player, most certain first."""
+        try:
+            facts = sim_knowledge.facts(self.store, actor_key(npc))
+        except Exception:
+            return []
+        mine = [f for f in facts if PLAYER_KEY in (f.get("actor"), f.get("target"))]
+        return sorted(mine, key=lambda f: -float(f.get("certainty", 0.0)))
+
+    def _with_fortune_topics(self, tree, npc):
+        """*tree* with the Charm & Luck responses this NPC offers today (see
+        game/rpg/fortune.py) among the opening ones -- a copy. Not for anyone
+        hostile, during an arrest, or once used today."""
+        p = npc.properties
+        if (not isinstance(tree, dict) or str(p.get("aggression")) == "hostile"
+                or npc is self._arrest_guard):
+            return tree
+        start = tree.get("start")
+        if start not in (tree.get("nodes") or {}):
+            return tree
+        c = self.game.character
+        options = rpg_fortune.available(
+            c, merchant=bool(p.get("merchant")), guard=self._is_guard(npc),
+            bounty=self.law.bounty(self._law_region(npc.pos, npc)),
+            knows_of_player=bool(self._facts_about_player(npc)))
+        today = str(self.clock.day)
+        options = [o for o in options
+                   if self.store.get(self._fortune_key(npc, o), "") != today]
+        if not options:
+            return tree
+        import copy
+        tree = copy.deepcopy(tree)
+        tree["nodes"]["_fortune"] = {"text": "...",
+                                     "responses": [{"text": "Of course.", "goto": start}]}
+        resp = tree["nodes"][start].setdefault("responses", [])
+        for option in options:
+            pct = int(round(rpg_fortune.chance(c, option) * 100))
+            resp.insert(max(0, len(resp) - 1), {
+                "text": f"{rpg_fortune.TAG} {rpg_fortune.OPTIONS[option][0]}  ({pct}%)",
+                "goto": "_fortune", "actions": [{"op": "fortune", "option": option}]})
+        return tree
+
+    def _fortune_action(self, npc, option) -> None:
+        """Roll a Charm & Luck response, apply what it wins, and put the
+        NPC's answer on the page the conversation turns to next."""
+        from .diceroll import roll_check
+        c = self.game.character
+        p = npc.properties
+        text, _difficulty, win, lose = rpg_fortune.OPTIONS[option]
+        name = p.get("display_name") or p.get("name") or "them"
+        roll = roll_check(self.game.dice, rpg_fortune.chance(c, option),
+                          f"Charm & Luck: {name}", source="dialogue.fortune",
+                          why=rpg_fortune.why(c), context={"option": option})
+        self.store.set(self._fortune_key(npc, option), str(self.clock.day))
+        line = win if roll["success"] else lose
+        if roll["success"]:
+            if option == "haggle":
+                disp.remember(self.store, p, "charmed")
+            elif option == "pardon":
+                region = self._law_region(npc.pos, npc)
+                forgiven = self.law.forgive(region, 0.5)
+                self.notify(f"Bounty reduced by {forgiven} gold.", 4.0)
+            elif option == "favour":
+                gold = self.rng.randint(5, 25)
+                c.gold += gold
+                self.notify(f"{name} gave you {gold} gold.", 3.5)
+            elif option == "rumours":
+                heard = []
+                for fact in self._facts_about_player(npc)[:3]:
+                    told = dict(fact)
+                    for k in ("actor", "target"):
+                        if told.get(k) == PLAYER_KEY:
+                            told[k + "_name"] = "you"
+                    heard.append(sim_knowledge.phrase(told))
+                line = ("They say " + "; and that ".join(heard) + "." if heard
+                        else lose)
+        node = (self.dialogue.tree.get("nodes") or {}).get("_fortune") \
+            if self.dialogue is not None else None
+        if node is not None:
+            node["text"] = line
 
     def _with_first_impression(self, tree, npc):
         """*tree* with the NPC's reaction to the player's face put in front of
@@ -7462,7 +7568,9 @@ class MiniwindSession(SettlementLaw):
 
     def _dialogue_action(self, npc, action):
         op = action.get("op")
-        if op == "pay_bounty":
+        if op == "fortune":
+            self._fortune_action(npc, str(action.get("option", "")))
+        elif op == "pay_bounty":
             self._pay_bounty()
         elif op == "begin_escort":
             self._begin_escort()
