@@ -757,7 +757,8 @@ class MiniwindGame:
         host.on("render.post_scene", self._on_post_scene)
 
     def _on_post_scene(self, ev):
-        """Draw, in the 3D pass: magic (game/ui/magic_gl.py), the arrows in
+        """Draw, in the 3D pass: blood lying on the floor under the actors
+        (game/ui/blood_gl.py), magic (game/ui/magic_gl.py), the arrows in
         flight and their fading flight paths (game/ui/arrows.py), and last the
         fisheye lenses of heavy spell impacts, which bend all of it."""
         if not ev.get("play_mode"):
@@ -767,6 +768,11 @@ class MiniwindGame:
         if session is None:
             return
         projection, view = ev.get("projection"), ev.get("view")
+        gore = getattr(session, "gore", None)
+        if (gore is not None and not getattr(session, "needs_char_creation", False)
+                and getattr(session, "open_screen", None) != "charcreate"):
+            from .ui import blood_gl
+            blood_gl.draw_decals(projection, view, gore.floor_decals())
         fx = getattr(session, "magic_fx", None)
         lenses = ()
         if fx is not None:

@@ -285,27 +285,6 @@ HURT_SHAKE_FROM = 0.2
 #: How near the terrain's surface the ground under blood must be for it to be
 #: stamped into the terrain (further, and it is lying on something built).
 STAMP_GROUND_TOLERANCE = 8.0
-#: The blood stamps, by kind (assets/sprites/miniwind/blood_stamps, made by
-#: game/tools/make_blood_stamps.py).
-_BLOOD_STAMP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                "assets", "sprites", "miniwind", "blood_stamps")
-_BLOOD_STAMPS = {}
-
-
-def _blood_stamp(kind, seed):
-    """A stamp image for a splat of *kind*, picked stably by *seed*."""
-    kind = kind if kind in ("splash", "drop", "pool", "chunk") else "splash"
-    if kind not in _BLOOD_STAMPS:
-        try:
-            _BLOOD_STAMPS[kind] = sorted(
-                os.path.join(_BLOOD_STAMP_DIR, f) for f in os.listdir(_BLOOD_STAMP_DIR)
-                if f.startswith(kind + "_") and f.endswith(".png"))
-        except OSError:
-            _BLOOD_STAMPS[kind] = []
-    files = _BLOOD_STAMPS[kind]
-    return files[int(float(seed) * 1e6) % len(files)] if files else None
-
-
 #: A blow taken for this share of the player's health puts their blood on
 #: the screen's edge.
 HURT_SCREEN_BLOOD = 0.08
@@ -1125,13 +1104,14 @@ class MiniwindSession(SettlementLaw):
         ground = fio.ground_height(self.logic, x, z, below=y + 60.0)
         if ground is None or abs(float(ground) - float(surface)) > STAMP_GROUND_TOLERANCE:
             return False                     # standing on something built
-        path = _blood_stamp(splat["kind"], splat.get("seed", 0.0))
+        from . import gore_fx
+        path = gore_fx.stamp_image(splat["kind"], splat.get("seed", 0.0))
         if path is None:
             return False
         try:
             return bool(ter.paint_texture_at(
                 x, z, max(2.0, float(splat["size"]) * 0.5), path, feather=0.2,
-                opacity=0.92, angle=float(splat.get("rot", 0.0))))
+                opacity=gore_fx.STAMP_OPACITY, angle=float(splat.get("rot", 0.0))))
         except Exception:
             return False
 

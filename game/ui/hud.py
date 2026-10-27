@@ -1403,13 +1403,11 @@ def _blob(painter, cx, cy, r, seed, color, alpha):
 
 
 def draw_gore(painter, session, viewport, width, height):
-    """The blood in the world (game/gore_fx.py) that is not yet part of it,
-    over the world and under the HUD. Blood at rest on the terrain is stamped
-    into the terrain itself and drawn by the renderer; what is drawn here is
-    blood in flight, a pool still spreading, blood waiting its turn to be
-    stamped and blood on a built floor (masked out under anyone standing in
-    it, so it never paints over the living), the red flash of a kill, and the
-    player's own blood on the screen's edge."""
+    """The blood in the air (game/gore_fx.py), over the world and under the
+    HUD: droplets and chunks in flight, the red flash of a kill, and the
+    player's own blood on the screen's edge. Blood lying on the ground is not
+    drawn here, over everything, but in the 3D pass under the actors standing
+    in it (game/ui/blood_gl.py) or stamped into the terrain."""
     gore = getattr(session, "gore", None)
     if gore is None or viewport is None:
         return
@@ -1418,7 +1416,7 @@ def draw_gore(painter, session, viewport, width, height):
         proj, view = viewport.projection_matrix, viewport.view_matrix
     except Exception:
         return
-    particles, splats, screen = gore.snapshot()
+    particles, _splats, screen = gore.snapshot()
     now = gore.clock()
 
     def to_screen(x, y, z):
@@ -1433,35 +1431,6 @@ def draw_gore(painter, session, viewport, width, height):
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
     painter.setPen(Qt.NoPen)
-    if splats:
-        # Never over the living: cut each standing actor's footprint out.
-        from PyQt5.QtGui import QPainterPath
-        clip = QPainterPath()
-        clip.addRect(QRectF(0, 0, width, height))
-        holes = QPainterPath()
-        actors = session._live_actors() if hasattr(session, "_live_actors") else ()
-        player = fio.player(getattr(session, "logic", None))
-        for t in list(actors) + ([player] if player is not None else []):
-            tp = getattr(t, "properties", {}) or {}
-            if tp.get("dead"):
-                continue
-            sp = to_screen(*t.pos)
-            k = px_per_unit(*t.pos)
-            if sp is None or k is None:
-                continue
-            r = float(tp.get("sprite_height", 112) or 112) * 0.42 * k
-            holes.addEllipse(QPointF(sp[0], sp[1]), r, r)
-        painter.setClipPath(clip.subtracted(holes))
-        for s in splats:
-            sp = to_screen(s["x"], s["y"], s["z"])
-            k = px_per_unit(s["x"], s["y"], s["z"])
-            if sp is None or k is None:
-                continue
-            alpha = gore.splat_alpha(s, now) * (225 if s["kind"] == "pool" else 205)
-            colour = _BLOOD_CHUNK if s["kind"] == "chunk" else _BLOOD_DARK
-            _blob(painter, sp[0], sp[1], max(1.5, gore.splat_size(s, now) * 0.5 * k),
-                  s["seed"], colour, alpha)
-        painter.setClipping(False)
     for p in particles:
         x, y, z = gore.position(p, now)
         sp = to_screen(x, y, z)
