@@ -44,8 +44,9 @@ class CharClass:
         self.damage_mult = float(damage_mult)
 
 
-#: The Warrior's damage multiplier: no class hits harder.
-WARRIOR_DAMAGE = 1.25
+#: The Warrior's multiplier on the damage it deals (not damage taken, which
+#: is the same for every class): no class hits harder.
+WARRIOR_DAMAGE = 1.10
 
 #: What character creation tells a player choosing a class that works no magic.
 NO_MAGIC_NOTE = ("No magic. Magic does not reveal itself to this class: you will "
@@ -57,7 +58,7 @@ NO_MAGIC_NOTE = ("No magic. Magic does not reveal itself to this class: you will
 CLASSES: Dict[str, CharClass] = {c.id: c for c in [
     CharClass("warrior", "Warrior",
               "A front-line fighter: heavy armour, a strong arm, a blade or a mace. "
-              "No class hits harder: every attack a Warrior makes deals +25% damage.",
+              "No class hits harder: every attack a Warrior makes deals +10% damage.",
               sk.COMBAT, [attr.STRENGTH, attr.ENDURANCE],
               [sk.BLADE, sk.BLUNT, sk.HEAVY_ARMOR, sk.BLOCK, sk.ATHLETICS,
                sk.MARKSMAN, sk.LIGHT_ARMOR],

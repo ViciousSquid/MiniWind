@@ -265,3 +265,14 @@ def test_a_warrior_hits_harder_than_any_other_class():
     assert damage["warrior"] == pytest.approx(best * classes.WARRIOR_DAMAGE, rel=0.02)
     assert classes.damage_mult(type("C", (), {"class_id": "custom"})()) == 1.0
     assert classes.NO_MAGIC_NOTE and not classes.CLASSES["warrior"].magic
+
+
+def test_a_warrior_takes_the_same_damage_as_anyone():
+    import random as _random
+    taken = set()
+    for class_id in classes.CLASSES:
+        c = Character()
+        c.class_id = class_id
+        c.attrs[attr.ENDURANCE] = 40                  # no Armour Class bonus
+        taken.add(combat.resolve_incoming(c, 30.0, rng=_random.Random(2))["final"])
+    assert len(taken) == 1
