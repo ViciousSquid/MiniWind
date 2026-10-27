@@ -2518,7 +2518,8 @@
     "start_scenario": "prompt",
     "region_name": "Wightfall Barrow",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -2535,6 +2536,330 @@
     "id": "14f5310a-0969-40ff-bd0f-2f96d7238833",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    64.0,
+    48.0,
+    -1216.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave12_f0",
+    "id": "055dd485-974b-50f7-a4f9-23135f58737c",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "silver_sword",
+      "name": "Silver Sword",
+      "qty": 1,
+      "type": "weapon",
+      "value": 220,
+      "weight": 13.0,
+      "description": "Silvered steel; bites deep into the undead."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 53,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 73.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -576.0,
+    48.0,
+    -64.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave12_f1",
+    "id": "47e2a01b-47a3-5d22-830c-ac2f1ceda766",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 42,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 287.1
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    576.0,
+    48.0,
+    192.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave12_f2",
+    "id": "50e13357-8987-5d04-b5f3-feb7bcef359c",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 3,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 13,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_barrows",
+      "name": "Let the Barrows Lie",
+      "qty": 1,
+      "type": "book",
+      "value": 25,
+      "weight": 1.0,
+      "description": "A priest of Saint Aldric's warning against opening the barrows."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": -6.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -704.0,
+    48.0,
+    -1600.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave12_f3",
+    "id": "b9429cba-0ec1-5125-b516-439dd5a31252",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "iron_shield",
+      "name": "Iron Shield",
+      "qty": 1,
+      "type": "armour",
+      "value": 55,
+      "weight": 18.0,
+      "description": "Iron shield."
+     },
+     {
+      "id": "silver_sword",
+      "name": "Silver Sword",
+      "qty": 1,
+      "type": "weapon",
+      "value": 220,
+      "weight": 13.0,
+      "description": "Silvered steel; bites deep into the undead."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 338.8
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -448.0,
+    48.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave12_f4",
+    "id": "94e3cedb-9c02-5170-84db-20cc16045fa4",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 3,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "book_marksman",
+      "name": "A Hunter's Eye",
+      "qty": 1,
+      "type": "book",
+      "value": 50,
+      "weight": 1.0,
+      "description": "Reading this treatise sharpens your aim."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 180.4
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    960.0,
+    48.0,
+    1344.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave12_f5",
+    "id": "83e9df4a-02ab-5e0b-8045-a3c70f3d9b79",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 3,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "potion_magicka",
+      "name": "Potion of Magicka",
+      "qty": 1,
+      "type": "potion",
+      "value": 35,
+      "weight": 0.5,
+      "description": "Restores 60 magicka."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": true,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 172.6,
+    "lock_difficulty": "adept"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1088.0,
+    48.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave12_f6",
+    "id": "d409d8f0-39cb-57b2-9dc5-5e0183a727d2",
+    "container_kind": "sack",
+    "display_name": "Adventurer's Pack",
+    "inventory": [
+     {
+      "id": "torch",
+      "name": "Torch",
+      "qty": 1,
+      "type": "light",
+      "value": 5,
+      "weight": 1.0,
+      "description": "A pitch-soaked torch that throws a warm circle of light. Equip it in the off hand to see in the dark."
+     },
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 2,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 5,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_barrows",
+      "name": "Let the Barrows Lie",
+      "qty": 1,
+      "type": "book",
+      "value": 25,
+      "weight": 1.0,
+      "description": "A priest of Saint Aldric's warning against opening the barrows."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 135.0
    },
    "io_connections": []
   }

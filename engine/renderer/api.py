@@ -65,6 +65,10 @@ FRAME_INPUT = {
                            'outlines) draws only these rows. The editor\'s view '
                            'filters leave rows out; a light left out still lights',
     'thing_hidden': 'bool per entity row: hidden or collected in the running world',
+    'pre_sprites': 'optional callable(projection, view, camera_pos), called once the '
+                   'world is drawn and before the effects and sprites: a caller lays '
+                   'flat things on the floor there (depth written) for every actor '
+                   'to go over',
     'light_focus': 'optional (x, y, z): only lights within light_range of this '
                    'point light the frame, nearest first, so every shader\'s '
                    'light cap keeps the closest (the host passes the player in play)',

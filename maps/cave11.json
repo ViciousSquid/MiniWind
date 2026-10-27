@@ -2488,7 +2488,8 @@
     "start_scenario": "prompt",
     "region_name": "The Ashen Deep",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -2505,6 +2506,505 @@
     "id": "f1c8845b-e559-48e8-88cc-b30904578c3b",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    320.0,
+    48.0,
+    -1600.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave11_f0",
+    "id": "060078a9-5734-55f8-af23-7b82983ebe50",
+    "container_kind": "chest",
+    "display_name": "Ashen Coffer",
+    "inventory": [
+     {
+      "id": "cloth_hood",
+      "name": "Cloth Hood",
+      "qty": 1,
+      "type": "armour",
+      "value": 6,
+      "weight": 0.5,
+      "description": "A plain woollen hood. Keeps the rain off, not much else."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 31,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "note_death_list",
+      "name": "A List in Small Neat Writing",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "Names, and what is to become of them. Ash along the edge."
+     },
+     {
+      "id": "book_ash_that_speaks",
+      "name": "The Ash That Speaks",
+      "qty": 1,
+      "type": "book",
+      "value": 25,
+      "weight": 1.0,
+      "description": "A tract of the Ashen Circle, bound in grey cloth and smelling of smoke."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": -6.7
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -960.0,
+    48.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave11_f1",
+    "id": "80d048d1-7989-55dc-8e01-75d8a368a784",
+    "container_kind": "urn",
+    "display_name": "Urn",
+    "inventory": [
+     {
+      "id": "potion_magicka",
+      "name": "Potion of Magicka",
+      "qty": 1,
+      "type": "potion",
+      "value": 35,
+      "weight": 0.5,
+      "description": "Restores 60 magicka."
+     },
+     {
+      "id": "ingr_nightshade",
+      "name": "Nightshade",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 3,
+      "weight": 0.1,
+      "description": "A poisonous purple bloom."
+     },
+     {
+      "id": "cloth_hood",
+      "name": "Cloth Hood",
+      "qty": 1,
+      "type": "armour",
+      "value": 6,
+      "weight": 0.5,
+      "description": "A plain woollen hood. Keeps the rain off, not much else."
+     },
+     {
+      "id": "potion_shield",
+      "name": "Potion of Warding",
+      "qty": 1,
+      "type": "potion",
+      "value": 50,
+      "weight": 0.5,
+      "description": "Grants 20 points of shield for 30 seconds."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 59,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 229.4
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1216.0,
+    48.0,
+    -1344.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave11_f2",
+    "id": "d7fe004f-0837-5099-983a-383eadc7cfe9",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "potion_magicka",
+      "name": "Potion of Magicka",
+      "qty": 1,
+      "type": "potion",
+      "value": 35,
+      "weight": 0.5,
+      "description": "Restores 60 magicka."
+     },
+     {
+      "id": "ingr_nightshade",
+      "name": "Nightshade",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 3,
+      "weight": 0.1,
+      "description": "A poisonous purple bloom."
+     },
+     {
+      "id": "iron_dagger",
+      "name": "Iron Dagger",
+      "qty": 1,
+      "type": "weapon",
+      "value": 10,
+      "weight": 4.0,
+      "description": "An iron dagger."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 33,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_ember_wyrm",
+      "name": "The Ember Wyrm of Whisperdeep",
+      "qty": 1,
+      "type": "book",
+      "value": 60,
+      "weight": 1.0,
+      "description": "A monk's account of a journey into the red hills, and what he found there."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 344.6
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1344.0,
+    48.0,
+    -1216.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave11_f3",
+    "id": "fd55cf1a-ac54-563a-93f3-9126540bf27c",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_nightshade",
+      "name": "Nightshade",
+      "qty": 3,
+      "type": "ingredient",
+      "value": 3,
+      "weight": 0.1,
+      "description": "A poisonous purple bloom."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 26,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_ash_that_speaks",
+      "name": "The Ash That Speaks",
+      "qty": 1,
+      "type": "book",
+      "value": 25,
+      "weight": 1.0,
+      "description": "A tract of the Ashen Circle, bound in grey cloth and smelling of smoke."
+     },
+     {
+      "id": "book_ember_wyrm",
+      "name": "The Ember Wyrm of Whisperdeep",
+      "qty": 1,
+      "type": "book",
+      "value": 60,
+      "weight": 1.0,
+      "description": "A monk's account of a journey into the red hills, and what he found there."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 47.6
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1344.0,
+    48.0,
+    960.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave11_f4",
+    "id": "7258e8e4-2eed-5388-8a2b-e8dce00a314d",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 25,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 139.1
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    192.0,
+    48.0,
+    -960.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave11_f5",
+    "id": "4d3d569d-5689-56ea-a333-efc10eea6f59",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "potion_magicka",
+      "name": "Potion of Magicka",
+      "qty": 1,
+      "type": "potion",
+      "value": 35,
+      "weight": 0.5,
+      "description": "Restores 60 magicka."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 299.4
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1216.0,
+    48.0,
+    -1728.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave11_f6",
+    "id": "1a222c4f-be3f-5bf3-9624-15ab67c5bb74",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "potion_magicka",
+      "name": "Potion of Magicka",
+      "qty": 2,
+      "type": "potion",
+      "value": 35,
+      "weight": 0.5,
+      "description": "Restores 60 magicka."
+     },
+     {
+      "id": "ingr_nightshade",
+      "name": "Nightshade",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 3,
+      "weight": 0.1,
+      "description": "A poisonous purple bloom."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 36,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 144.2
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -448.0,
+    48.0,
+    1216.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave11_f7",
+    "id": "386a13bc-1ebb-5c05-baa3-efaea567e87f",
+    "container_kind": "chest",
+    "display_name": "Ashen Coffer",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 53,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_ash_that_speaks",
+      "name": "The Ash That Speaks",
+      "qty": 1,
+      "type": "book",
+      "value": 25,
+      "weight": 1.0,
+      "description": "A tract of the Ashen Circle, bound in grey cloth and smelling of smoke."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": -5.4
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1472.0,
+    48.0,
+    -576.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave11_f8",
+    "id": "cb3eeabd-46af-5c31-8662-32334d37dfd3",
+    "container_kind": "sack",
+    "display_name": "Adventurer's Pack",
+    "inventory": [
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 2,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     },
+     {
+      "id": "bread",
+      "name": "Bread",
+      "qty": 2,
+      "type": "potion",
+      "value": 1,
+      "weight": 0.2,
+      "description": "A heel of bread. Restores a little health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 10,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_eight_legs",
+      "name": "Eight Legs in the Dark",
+      "qty": 1,
+      "type": "book",
+      "value": 30,
+      "weight": 1.0,
+      "description": "A cave-walker's notes on the spiders under the hills."
+     },
+     {
+      "id": "book_aldous_penn",
+      "name": "The Journal of Aldous Penn",
+      "qty": 1,
+      "type": "book",
+      "value": 5,
+      "weight": 0.5,
+      "description": "An adventurer's journal. It ends mid-sentence."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 96.8
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -1216.0,
+    40.0,
+    448.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Book_cave11_f",
+    "id": "f24c3301-768c-5ccc-be0b-467930f6c05e",
+    "item_id": "note_death_list",
+    "quantity": 1,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/note_death_list.png",
+    "display_name": "A List in Small Neat Writing",
+    "angle": 344.0,
+    "_furnished": true
    },
    "io_connections": []
   }

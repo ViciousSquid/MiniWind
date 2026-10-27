@@ -136,7 +136,7 @@ def test_exactly_one_dragon_in_one_shipped_cave():
             locations.append(path.stem)
             assert dragon['properties']['respawn'] is False
             assert dragon['properties']['persistent'] is True
-            assert size_for(dragon['properties']) == HEAD_SIZE * 8
+            assert size_for(dragon["properties"]) == HEAD_SIZE * 5
     assert locations == [DRAGON_CAVE]
 
 
@@ -152,7 +152,7 @@ def test_regenerating_all_caves_still_creates_only_one_dragon(overworld):
                               protos, seed=101 + k * 17)
         for dragon in _dragons(cave['things']):
             locations.append(slug)
-            assert size_for(dragon['properties']) == HEAD_SIZE * 8
+            assert size_for(dragon["properties"]) == HEAD_SIZE * 5
     assert locations == [DRAGON_CAVE]
 
 

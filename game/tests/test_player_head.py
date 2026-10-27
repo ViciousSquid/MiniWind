@@ -131,6 +131,19 @@ def test_only_guard_roles_can_keep_or_receive_guard_heads():
     assert heads.is_guard_head(unassigned_guard.properties["head"])
 
 
+def test_guards_and_town_archers_always_wear_guard_heads():
+    guard = _actor("Alice", head="head05", role="guard")
+    archer = _actor("Town Archer", head="head06", role="guard_archer")
+    bare_archer = _actor("Town Archer", role="guard_archer")
+    kept = _actor("Carol", head="guard03", role="guard_archer")
+    s = _session([guard, archer, bare_archer, kept])
+    s.begin_new_character("Tester", "imperial", "warrior", head="head13")
+    for npc in (guard, archer, bare_archer):
+        assert npc.properties["head"].startswith("guard")
+        assert heads.is_guard_head(npc.properties["head"])
+    assert kept.properties["head"] == "guard03"
+
+
 def test_a_loaded_character_keeps_its_head_and_npcs_avoid_it():
     saved = _Globals()
     s = _session([], globals_store=saved)

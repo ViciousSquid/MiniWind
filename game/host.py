@@ -304,6 +304,18 @@ class MiniwindGame:
                             if item_def.category == rpg_items.WEAPON)
         light_ids = sorted(item_id for item_id, item_def in rpg_items.ITEMS.items()
                            if rpg_items.is_light_source(item_def))
+        from .rpg import magic as rpg_magic
+        spell_ids = sorted(rpg_magic.SPELLS)
+        # The spells an actor holds in its hands (game/npc_magic.py): left
+        # empty, it readies its own from the spells it knows.
+        hand_spell_props = [
+            prop("hand_spell_main", "enum", "Spell in main hand", default="",
+                 choices=[""] + spell_ids, group="MAGIC",
+                 help="Cast with this hand; empty readies the actor's own choice."),
+            prop("hand_spell_off", "enum", "Spell in off hand", default="",
+                 choices=[""] + spell_ids, group="MAGIC",
+                 help="Cast with this hand; empty readies the actor's own choice."),
+        ]
         factions = ["player", "villagers", "guards", "bandits", "cultists",
                     "wildlife", "monsters"]
         styles = ["melee", "bow", "magic"]
@@ -490,6 +502,7 @@ class MiniwindGame:
                  help="How slowly fatigue builds (>1 tires slower). Drives naps."),
             prop("equipped_weapon", "enum", "Equipped weapon", default="", choices=[""] + weapon_ids,
                  group="INVENTORY", help="Weapon drawn in front of this actor in overhead mode."),
+            *hand_spell_props,
             prop("merchant", "bool", "Is a merchant", default=False, group="INVENTORY"),
             prop("merchant_gold", "int", "Merchant gold", default=0, min=0, max=1000000,
                  group="INVENTORY"),
@@ -530,6 +543,7 @@ class MiniwindGame:
                  choices=styles, group="BEHAVIOUR"),
             prop("equipped_weapon", "enum", "Equipped weapon", default="", choices=[""] + weapon_ids,
                  group="BEHAVIOUR", help="Weapon drawn in front of this actor in overhead mode."),
+            *hand_spell_props,
             prop("sight_range", "int", "Sight range", default=1024, min=0, max=100000,
                  group="BEHAVIOUR", help="How far it perceives enemies before engaging."),
             prop("wake_on_sight", "bool", "Wakes on sight", default=True,
@@ -561,6 +575,10 @@ class MiniwindGame:
         api.register_properties("miniwindsettings", [
             prop("region_name", "string", "Region name",
                  default="The Vale of Miniwind", group="WORLD"),
+            prop("underground", "bool", "Underground (cave music)", default=False,
+                 group="WORLD",
+                 help="A cave or dungeon: only cave music plays here "
+                      "(assets/music/cave*.mp3), and none until there is some."),
             prop("start_scenario", "enum", "Start", default="prompt",
                  choices=["prompt", "quick"], group="WORLD",
                  help="'prompt' opens character creation; 'quick' drops in as a default hero."),
@@ -755,6 +773,27 @@ class MiniwindGame:
         self._host = host
         host.on("render.overlay", self._on_overlay)
         host.on("render.post_scene", self._on_post_scene)
+        host.on("render.pre_sprites", self._on_pre_sprites)
+
+    def _on_pre_sprites(self, ev):
+        """Draw what lies on the floor, before Fio's effects and actors so they
+        all go over it: blood (game/ui/blood_gl.py), then containers and things
+        lying about, which Fio draws nothing for in Play (game/ui/
+        world_objects.py) -- flat, as seen from above."""
+        if not ev.get("play_mode"):
+            return
+        host = getattr(self, "_host", None)
+        session = getattr(getattr(host, "logic", None), "_miniwind", None)
+        if session is None:
+            return
+        projection, view = ev.get("projection"), ev.get("view")
+        gore = getattr(session, "gore", None)
+        if (gore is not None and not getattr(session, "needs_char_creation", False)
+                and getattr(session, "open_screen", None) != "charcreate"):
+            from .ui import blood_gl
+            blood_gl.draw_decals(projection, view, gore.floor_decals())
+        from .ui import world_objects
+        world_objects.draw(projection, view, world_objects.visible(session))
 
     def _on_post_scene(self, ev):
         """Draw, in the 3D pass: magic (game/ui/magic_gl.py), the arrows in
@@ -811,6 +850,8 @@ class MiniwindGame:
         keybinds.apply(runtime._editor_config)
         self._prev_keys = frozenset()
         from . import music
+        # A cave has its own music (game/music.py).
+        music.PLAYER.set_place(music.CAVE if session.underground else music.WORLD)
         if music.PLAYER.configured:
             music.PLAYER.start()
         if host is not None:
@@ -826,6 +867,7 @@ class MiniwindGame:
         music.PLAYER.stop()
         session = getattr(logic, "_miniwind", None)
         if session is not None:
+            session.leave_map()            # raised followers go with the player
             session.persist(force=True)
             session.uninstall()
             logic._miniwind = None

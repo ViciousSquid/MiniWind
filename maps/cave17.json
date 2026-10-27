@@ -2058,7 +2058,8 @@
     "start_scenario": "prompt",
     "region_name": "Rimeclaw Den",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -2075,6 +2076,297 @@
     "id": "b4b17d3c-8f20-4d1a-bacb-0905b95c6569",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -576.0,
+    48.0,
+    1344.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave17_f0",
+    "id": "66ab3f34-c65c-5608-b359-1c0c964aefa5",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_wolf_pelt",
+      "name": "Wolf Pelt",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 6,
+      "weight": 2.0,
+      "description": "A rough grey pelt worth a few coins."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 22,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 237.1
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -320.0,
+    48.0,
+    448.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave17_f1",
+    "id": "f2e22260-0100-5141-b488-9b7901f5ca26",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 278.0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1216.0,
+    48.0,
+    1600.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave17_f2",
+    "id": "65d128ed-b5e6-548a-b5f8-a93fe733cd51",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_wolf_pelt",
+      "name": "Wolf Pelt",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 6,
+      "weight": 2.0,
+      "description": "A rough grey pelt worth a few coins."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 286.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -576.0,
+    48.0,
+    -448.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave17_f3",
+    "id": "e4fc9b54-5116-5f3b-9d51-392040c5f3b9",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_wolf_pelt",
+      "name": "Wolf Pelt",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 6,
+      "weight": 2.0,
+      "description": "A rough grey pelt worth a few coins."
+     },
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "leather_boots",
+      "name": "Leather Boots",
+      "qty": 1,
+      "type": "armour",
+      "value": 12,
+      "weight": 3.0,
+      "description": "Leather boots."
+     },
+     {
+      "id": "iron_arrow",
+      "name": "Iron Arrow",
+      "qty": 3,
+      "type": "ammo",
+      "value": 1,
+      "weight": 0.1,
+      "description": "A plain iron-tipped arrow."
+     },
+     {
+      "id": "note_crier_greenskins",
+      "name": "Clipping from the Crier",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "The Millbrook Crier on greenskins near the warcamp."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 310.6
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -192.0,
+    48.0,
+    -576.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave17_f4",
+    "id": "95f63194-0921-5742-8856-f23df98fd52d",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 344.2
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1088.0,
+    48.0,
+    -64.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave17_f5",
+    "id": "a6b7d070-4b42-518f-86e0-2a83880f1a0f",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 28.9
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -832.0,
+    48.0,
+    1472.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave17_f6",
+    "id": "78c7ac6e-6fdf-5a58-8fcd-60e965eca6dc",
+    "container_kind": "sack",
+    "display_name": "Adventurer's Pack",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 39,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 7.9
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    192.0,
+    40.0,
+    -448.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Book_cave17_f",
+    "id": "738c6da0-ab12-56f1-a65c-fa27050000a5",
+    "item_id": "book_last_ferryman",
+    "quantity": 1,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/book_last_ferryman.png",
+    "display_name": "The Last Ferryman of Mirrormere",
+    "angle": 282.0,
+    "_furnished": true
    },
    "io_connections": []
   }

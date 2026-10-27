@@ -96,7 +96,7 @@ def test_an_authored_head_scale_still_wins():
     assert heads.size_for({"head": "head03"}) == heads.HEAD_SIZE
 
 
-def test_the_shipped_dragon_is_eight_times_the_player_size():
+def test_the_shipped_dragon_is_five_times_the_player_size():
     import json
     from pathlib import Path
     from ..entities import Creature
@@ -106,7 +106,7 @@ def test_the_shipped_dragon_is_eight_times_the_player_size():
     dragon = next(t for t in cave['things']
                   if t['properties'].get('npc_role') == 'dragon')
     actor = Creature(pos=dragon['pos'], properties=dragon['properties'])
-    assert _size(actor) == (heads.HEAD_SIZE * 8, heads.HEAD_SIZE * 8)
+    assert _size(actor) == (heads.HEAD_SIZE * 5, heads.HEAD_SIZE * 5)
 
 
 def test_a_hen_wears_the_chicken_head(tmp_path, monkeypatch):

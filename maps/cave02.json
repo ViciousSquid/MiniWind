@@ -1942,7 +1942,8 @@
     "start_scenario": "prompt",
     "region_name": "The Bonepit",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -1959,6 +1960,331 @@
     "id": "16440861-3fbf-4e2a-9fe3-6d7db958aa90",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    320.0,
+    48.0,
+    320.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave02_f0",
+    "id": "d7de8cc5-03fd-5d56-a247-71d964574e5c",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "silver_sword",
+      "name": "Silver Sword",
+      "qty": 1,
+      "type": "weapon",
+      "value": 220,
+      "weight": 13.0,
+      "description": "Silvered steel; bites deep into the undead."
+     },
+     {
+      "id": "copper_ring",
+      "name": "Copper Ring",
+      "qty": 1,
+      "type": "armour",
+      "value": 8,
+      "weight": 0.2,
+      "description": "A plain copper band."
+     },
+     {
+      "id": "potion_magicka",
+      "name": "Potion of Magicka",
+      "qty": 1,
+      "type": "potion",
+      "value": 35,
+      "weight": 0.5,
+      "description": "Restores 60 magicka."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 64,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 332.1
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -832.0,
+    48.0,
+    1216.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave02_f1",
+    "id": "3d9565ea-d05c-5582-a541-d4703da69bb1",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "iron_shield",
+      "name": "Iron Shield",
+      "qty": 1,
+      "type": "armour",
+      "value": 55,
+      "weight": 18.0,
+      "description": "Iron shield."
+     },
+     {
+      "id": "potion_magicka",
+      "name": "Potion of Magicka",
+      "qty": 1,
+      "type": "potion",
+      "value": 35,
+      "weight": 0.5,
+      "description": "Restores 60 magicka."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 49,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": true,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 82.5,
+    "lock_difficulty": "adept"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    320.0,
+    48.0,
+    832.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave02_f2",
+    "id": "ab71838f-cf42-5b64-b647-6d00ae5c2be2",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 4,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 267.8
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1088.0,
+    48.0,
+    576.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave02_f3",
+    "id": "54373c58-9721-519e-8159-ae631eb58965",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "potion_heal",
+      "name": "Healing Potion",
+      "qty": 2,
+      "type": "potion",
+      "value": 40,
+      "weight": 0.5,
+      "description": "Restores 75 health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 22,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 216.9
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1088.0,
+    48.0,
+    64.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave02_f4",
+    "id": "b10a99e5-0f10-5392-85a2-66e1739eda50",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 4,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 53,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 322.8
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1088.0,
+    48.0,
+    64.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave02_f5",
+    "id": "9c6f5f10-5aa4-58bd-8b62-034f4c7d5d8d",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": true,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 1.2,
+    "lock_difficulty": "adept"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -576.0,
+    48.0,
+    1600.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave02_f6",
+    "id": "cd6f7186-d136-5621-998e-fd358101e7fc",
+    "container_kind": "sack",
+    "display_name": "Adventurer's Pack",
+    "inventory": [
+     {
+      "id": "lockpick",
+      "name": "Lockpick",
+      "qty": 3,
+      "type": "misc",
+      "value": 5,
+      "weight": 0.0,
+      "description": "For coaxing open stubborn locks."
+     },
+     {
+      "id": "book_ember_wyrm",
+      "name": "The Ember Wyrm of Whisperdeep",
+      "qty": 1,
+      "type": "book",
+      "value": 60,
+      "weight": 1.0,
+      "description": "A monk's account of a journey into the red hills, and what he found there."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 17.0
    },
    "io_connections": []
   }

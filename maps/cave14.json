@@ -2849,7 +2849,8 @@
     "start_scenario": "prompt",
     "region_name": "Hollowguard Crypt",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -2866,6 +2867,369 @@
     "id": "4ccf1ab3-a563-49f8-a6a7-c5e2c2924b2c",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1600.0,
+    48.0,
+    320.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave14_f0",
+    "id": "641a2ddd-83e8-50ed-8c7e-a261e4f50adc",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "chain_leggings",
+      "name": "Chain Leggings",
+      "qty": 1,
+      "type": "armour",
+      "value": 60,
+      "weight": 10.0,
+      "description": "Mail chausses laced over the legs."
+     },
+     {
+      "id": "copper_ring",
+      "name": "Copper Ring",
+      "qty": 1,
+      "type": "armour",
+      "value": 8,
+      "weight": 0.2,
+      "description": "A plain copper band."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 61,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 191.6
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -576.0,
+    48.0,
+    -576.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave14_f1",
+    "id": "bca8d20b-7424-5820-a56c-66ad9942bef0",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 3,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "iron_shield",
+      "name": "Iron Shield",
+      "qty": 1,
+      "type": "armour",
+      "value": 55,
+      "weight": 18.0,
+      "description": "Iron shield."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 26,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": -2.4
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1728.0,
+    48.0,
+    -1344.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave14_f2",
+    "id": "c6c00734-1269-521d-b5c2-7ca046b4ac53",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "iron_shield",
+      "name": "Iron Shield",
+      "qty": 1,
+      "type": "armour",
+      "value": 55,
+      "weight": 18.0,
+      "description": "Iron shield."
+     },
+     {
+      "id": "copper_ring",
+      "name": "Copper Ring",
+      "qty": 1,
+      "type": "armour",
+      "value": 8,
+      "weight": 0.2,
+      "description": "A plain copper band."
+     },
+     {
+      "id": "potion_heal",
+      "name": "Healing Potion",
+      "qty": 1,
+      "type": "potion",
+      "value": 40,
+      "weight": 0.5,
+      "description": "Restores 75 health."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 16.9
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    832.0,
+    48.0,
+    -1088.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave14_f3",
+    "id": "13e098ef-7106-53ed-b1e2-df513f0c5b35",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "iron_shield",
+      "name": "Iron Shield",
+      "qty": 1,
+      "type": "armour",
+      "value": 55,
+      "weight": 18.0,
+      "description": "Iron shield."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 191.7
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    576.0,
+    48.0,
+    -704.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave14_f4",
+    "id": "339a6385-507c-537c-92aa-e760f25eefa6",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 47,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 51.2
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -320.0,
+    48.0,
+    1344.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave14_f5",
+    "id": "2800ccb8-98fb-52b9-8927-59363db7b59d",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "potion_heal",
+      "name": "Healing Potion",
+      "qty": 2,
+      "type": "potion",
+      "value": 40,
+      "weight": 0.5,
+      "description": "Restores 75 health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 20,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 1.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1600.0,
+    48.0,
+    -960.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave14_f6",
+    "id": "adb58e0f-1de1-54e6-a8df-dc6d85945093",
+    "container_kind": "sack",
+    "display_name": "Adventurer's Pack",
+    "inventory": [
+     {
+      "id": "torch",
+      "name": "Torch",
+      "qty": 1,
+      "type": "light",
+      "value": 5,
+      "weight": 1.0,
+      "description": "A pitch-soaked torch that throws a warm circle of light. Equip it in the off hand to see in the dark."
+     },
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 2,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 36,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_ember_wyrm",
+      "name": "The Ember Wyrm of Whisperdeep",
+      "qty": 1,
+      "type": "book",
+      "value": 60,
+      "weight": 1.0,
+      "description": "A monk's account of a journey into the red hills, and what he found there."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 327.9
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -1216.0,
+    40.0,
+    -1600.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Book_cave14_f",
+    "id": "2dbc7342-f725-53f2-a2c6-4515674c9f58",
+    "item_id": "note_adventurer_list",
+    "quantity": 1,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/note_adventurer_list.png",
+    "display_name": "Things to Bring",
+    "angle": 315.0,
+    "_furnished": true
    },
    "io_connections": []
   }

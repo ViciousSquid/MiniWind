@@ -267,6 +267,8 @@ class HeldWeapons:
                 continue
             if p.get("_reaper") and float(p.get("_opacity", 1.0) or 0.0) < 0.3:
                 continue          # Death's scythe comes and goes with him
+            if str(p.get("head") or "").lower().startswith("spider"):
+                continue          # a spider's weapon is never seen in its legs
             x, y, z = float(t.pos[0]), float(t.pos[1]), float(t.pos[2])
             if (x - ppos[0]) ** 2 + (z - ppos[2]) ** 2 > r2:
                 continue

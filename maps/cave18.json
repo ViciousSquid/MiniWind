@@ -2551,7 +2551,8 @@
     "start_scenario": "prompt",
     "region_name": "Cinderfall Hollow",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -2568,6 +2569,548 @@
     "id": "36097c2d-1103-49ea-99c1-64e9e0f3d7fc",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1216.0,
+    48.0,
+    960.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave18_f0",
+    "id": "32bd608a-6ca9-5190-a094-15c030cfaaa3",
+    "container_kind": "chest",
+    "display_name": "Ashen Coffer",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 20,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "note_death_list",
+      "name": "A List in Small Neat Writing",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "Names, and what is to become of them. Ash along the edge."
+     },
+     {
+      "id": "book_ash_that_speaks",
+      "name": "The Ash That Speaks",
+      "qty": 1,
+      "type": "book",
+      "value": 25,
+      "weight": 1.0,
+      "description": "A tract of the Ashen Circle, bound in grey cloth and smelling of smoke."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 181.6
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -704.0,
+    48.0,
+    1088.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave18_f1",
+    "id": "f6be1d33-1e59-5154-a132-88e52f2410de",
+    "container_kind": "urn",
+    "display_name": "Urn",
+    "inventory": [
+     {
+      "id": "iron_dagger",
+      "name": "Iron Dagger",
+      "qty": 1,
+      "type": "weapon",
+      "value": 10,
+      "weight": 4.0,
+      "description": "An iron dagger."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 273.7
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1088.0,
+    48.0,
+    192.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave18_f2",
+    "id": "e3987932-a419-56dd-878f-bf5953a4c62c",
+    "container_kind": "chest",
+    "display_name": "Ashen Coffer",
+    "inventory": [
+     {
+      "id": "cloth_hood",
+      "name": "Cloth Hood",
+      "qty": 1,
+      "type": "armour",
+      "value": 6,
+      "weight": 0.5,
+      "description": "A plain woollen hood. Keeps the rain off, not much else."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 56,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 83.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1728.0,
+    48.0,
+    -1216.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave18_f3",
+    "id": "e526d007-1ada-52d9-a897-285dff751c75",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 32,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "note_death_list",
+      "name": "A List in Small Neat Writing",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "Names, and what is to become of them. Ash along the edge."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 165.4
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    448.0,
+    48.0,
+    -192.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave18_f4",
+    "id": "b38b1a9a-a32e-52c6-978e-8600c01ef49d",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "potion_magicka",
+      "name": "Potion of Magicka",
+      "qty": 1,
+      "type": "potion",
+      "value": 35,
+      "weight": 0.5,
+      "description": "Restores 60 magicka."
+     },
+     {
+      "id": "iron_dagger",
+      "name": "Iron Dagger",
+      "qty": 1,
+      "type": "weapon",
+      "value": 10,
+      "weight": 4.0,
+      "description": "An iron dagger."
+     },
+     {
+      "id": "cloth_hood",
+      "name": "Cloth Hood",
+      "qty": 1,
+      "type": "armour",
+      "value": 6,
+      "weight": 0.5,
+      "description": "A plain woollen hood. Keeps the rain off, not much else."
+     },
+     {
+      "id": "note_death_list",
+      "name": "A List in Small Neat Writing",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "Names, and what is to become of them. Ash along the edge."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 313.1
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    960.0,
+    48.0,
+    -448.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave18_f5",
+    "id": "e674ae78-639b-576f-a701-41bf144e9f4e",
+    "container_kind": "chest",
+    "display_name": "Ashen Coffer",
+    "inventory": [
+     {
+      "id": "potion_magicka",
+      "name": "Potion of Magicka",
+      "qty": 2,
+      "type": "potion",
+      "value": 35,
+      "weight": 0.5,
+      "description": "Restores 60 magicka."
+     },
+     {
+      "id": "iron_dagger",
+      "name": "Iron Dagger",
+      "qty": 1,
+      "type": "weapon",
+      "value": 10,
+      "weight": 4.0,
+      "description": "An iron dagger."
+     },
+     {
+      "id": "cloth_robe",
+      "name": "Traveller's Robe",
+      "qty": 1,
+      "type": "armour",
+      "value": 18,
+      "weight": 3.0,
+      "description": "A long robe of undyed wool. Favoured by pilgrims and mages who need their arms free."
+     },
+     {
+      "id": "cloth_hood",
+      "name": "Cloth Hood",
+      "qty": 1,
+      "type": "armour",
+      "value": 6,
+      "weight": 0.5,
+      "description": "A plain woollen hood. Keeps the rain off, not much else."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 29,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_ash_that_speaks",
+      "name": "The Ash That Speaks",
+      "qty": 1,
+      "type": "book",
+      "value": 25,
+      "weight": 1.0,
+      "description": "A tract of the Ashen Circle, bound in grey cloth and smelling of smoke."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": true,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 85.4,
+    "lock_difficulty": "expert"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    576.0,
+    48.0,
+    1344.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave18_f6",
+    "id": "aac54d97-9500-5774-810f-a95025ee83a5",
+    "container_kind": "chest",
+    "display_name": "Ashen Coffer",
+    "inventory": [
+     {
+      "id": "ingr_nightshade",
+      "name": "Nightshade",
+      "qty": 3,
+      "type": "ingredient",
+      "value": 3,
+      "weight": 0.1,
+      "description": "A poisonous purple bloom."
+     },
+     {
+      "id": "iron_dagger",
+      "name": "Iron Dagger",
+      "qty": 1,
+      "type": "weapon",
+      "value": 10,
+      "weight": 4.0,
+      "description": "An iron dagger."
+     },
+     {
+      "id": "cloth_robe",
+      "name": "Traveller's Robe",
+      "qty": 1,
+      "type": "armour",
+      "value": 18,
+      "weight": 3.0,
+      "description": "A long robe of undyed wool. Favoured by pilgrims and mages who need their arms free."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 264.6
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -960.0,
+    48.0,
+    448.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave18_f7",
+    "id": "ad60975b-abef-54d2-a708-6e80995be69c",
+    "container_kind": "urn",
+    "display_name": "Urn",
+    "inventory": [
+     {
+      "id": "potion_magicka",
+      "name": "Potion of Magicka",
+      "qty": 2,
+      "type": "potion",
+      "value": 35,
+      "weight": 0.5,
+      "description": "Restores 60 magicka."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 39,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_ash_that_speaks",
+      "name": "The Ash That Speaks",
+      "qty": 1,
+      "type": "book",
+      "value": 25,
+      "weight": 1.0,
+      "description": "A tract of the Ashen Circle, bound in grey cloth and smelling of smoke."
+     },
+     {
+      "id": "book_ember_wyrm",
+      "name": "The Ember Wyrm of Whisperdeep",
+      "qty": 1,
+      "type": "book",
+      "value": 60,
+      "weight": 1.0,
+      "description": "A monk's account of a journey into the red hills, and what he found there."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 75.2
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1216.0,
+    48.0,
+    -1600.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave18_f8",
+    "id": "bb79f547-f712-569a-858c-1e651f3173df",
+    "container_kind": "chest",
+    "display_name": "Ashen Coffer",
+    "inventory": [
+     {
+      "id": "potion_magicka",
+      "name": "Potion of Magicka",
+      "qty": 1,
+      "type": "potion",
+      "value": 35,
+      "weight": 0.5,
+      "description": "Restores 60 magicka."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 59,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_ash_that_speaks",
+      "name": "The Ash That Speaks",
+      "qty": 1,
+      "type": "book",
+      "value": 25,
+      "weight": 1.0,
+      "description": "A tract of the Ashen Circle, bound in grey cloth and smelling of smoke."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": true,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 82.2,
+    "lock_difficulty": "expert"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    320.0,
+    48.0,
+    -1088.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave18_f9",
+    "id": "b4fe51f5-2b06-5b04-9524-8aed5f7c4e68",
+    "container_kind": "sack",
+    "display_name": "Adventurer's Pack",
+    "inventory": [
+     {
+      "id": "torch",
+      "name": "Torch",
+      "qty": 2,
+      "type": "light",
+      "value": 5,
+      "weight": 1.0,
+      "description": "A pitch-soaked torch that throws a warm circle of light. Equip it in the off hand to see in the dark."
+     },
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 1,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     },
+     {
+      "id": "bread",
+      "name": "Bread",
+      "qty": 1,
+      "type": "potion",
+      "value": 1,
+      "weight": 0.2,
+      "description": "A heel of bread. Restores a little health."
+     },
+     {
+      "id": "note_crier_smoke",
+      "name": "Clipping from the Crier",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "The Millbrook Crier on the smoke over the Emberpeaks."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 167.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    704.0,
+    40.0,
+    64.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Book_cave18_f",
+    "id": "e6bf0881-1382-58a1-b097-3aa7a5405f77",
+    "item_id": "book_ember_wyrm",
+    "quantity": 1,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/book_ember_wyrm.png",
+    "display_name": "The Ember Wyrm of Whisperdeep",
+    "angle": 279.0,
+    "_furnished": true
    },
    "io_connections": []
   }

@@ -126,7 +126,8 @@
     "xp_per_level": 30,
     "level_power": 0.25,
     "level_duration": 0.125,
-    "level_cost": 0.1
+    "level_cost": 0.1,
+    "linger": 20.0
   },
   {
     "id": "frostbite",

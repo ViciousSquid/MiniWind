@@ -93,8 +93,8 @@ LAIRS = {
     DRAGON_CAVE: {
         "dragon": {
             "display_name": "Vharzul the Ember Wyrm", "head": "dragon",
-            # Eight times the player's head size, and hit points to match.
-            "head_scale": 8.0, "health": 3000, "max_health": 3000,
+            # Five times the player's head size, and hit points to match.
+            "head_scale": 5.0, "health": 3000, "max_health": 3000,
             # It bites what is close; what is not, it burns (game/dragon_fire.py).
             "damage": 45, "attack_style": "melee", "creature_level": 30,
             "breathes_fire": True, "breath_damage": 14,
@@ -482,7 +482,9 @@ def build_cave_map(slug, name, monsters, count, loot, settings, camera, protos,
     things.append(_light("Light_hoard", (x, 160.0, z), 520.0, (255, 210, 120), 2.0))
     s = copy.deepcopy(settings)
     s["pos"] = [0.0, 400.0, 0.0]
-    s["properties"].update({"id": _uid(), "region_name": name})
+    s["properties"].update({"id": _uid(), "region_name": name,
+                            # Underground: cave music only (game/music.py).
+                            "underground": True})
     s["io_connections"] = []
     things.append(s)
     if camera is not None:

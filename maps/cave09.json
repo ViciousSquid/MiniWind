@@ -2404,7 +2404,8 @@
     "start_scenario": "prompt",
     "region_name": "Wrecker's Hole",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -2421,6 +2422,533 @@
     "id": "f936017d-36c3-408f-9f9d-15962b947072",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    448.0,
+    48.0,
+    -1600.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Crate_cave09_f0",
+    "id": "1dee3de3-0e7d-54f2-b400-b9d8fc8a3d02",
+    "container_kind": "crate",
+    "display_name": "Stolen Goods",
+    "inventory": [
+     {
+      "id": "lockpick",
+      "name": "Lockpick",
+      "qty": 3,
+      "type": "misc",
+      "value": 5,
+      "weight": 0.0,
+      "description": "For coaxing open stubborn locks."
+     },
+     {
+      "id": "iron_dagger",
+      "name": "Iron Dagger",
+      "qty": 1,
+      "type": "weapon",
+      "value": 10,
+      "weight": 4.0,
+      "description": "An iron dagger."
+     },
+     {
+      "id": "bread",
+      "name": "Bread",
+      "qty": 3,
+      "type": "potion",
+      "value": 1,
+      "weight": 0.2,
+      "description": "A heel of bread. Restores a little health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 31,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "note_crier_wanted",
+      "name": "Wanted Notice",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "A notice torn from a post: the brigands of Cutthroat Ridge."
+     },
+     {
+      "id": "book_lockwright",
+      "name": "The Lockwright's Patience",
+      "qty": 1,
+      "type": "book",
+      "value": 55,
+      "weight": 1.0,
+      "description": "A locksmith's manual. Not for thieves, it insists."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_crate.png",
+    "_furnished": true,
+    "angle": 271.0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    448.0,
+    48.0,
+    -960.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave09_f1",
+    "id": "d4ecceca-38e5-50e3-b950-d4a77480cfbb",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "steel_arrow",
+      "name": "Steel Arrow",
+      "qty": 11,
+      "type": "ammo",
+      "value": 2,
+      "weight": 0.1,
+      "description": "A sharp steel arrow."
+     },
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 1,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     },
+     {
+      "id": "iron_dagger",
+      "name": "Iron Dagger",
+      "qty": 1,
+      "type": "weapon",
+      "value": 10,
+      "weight": 4.0,
+      "description": "An iron dagger."
+     },
+     {
+      "id": "bread",
+      "name": "Bread",
+      "qty": 1,
+      "type": "potion",
+      "value": 1,
+      "weight": 0.2,
+      "description": "A heel of bread. Restores a little health."
+     },
+     {
+      "id": "silver_amulet",
+      "name": "Silver Amulet",
+      "qty": 1,
+      "type": "misc",
+      "value": 60,
+      "weight": 0.2,
+      "description": "An old silver amulet, warm to the touch. Elowen is looking for this."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 51,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "note_iou",
+      "name": "An IOU",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "Fen owes Wil. Fen owes Wil a goat."
+     },
+     {
+      "id": "book_black_jory",
+      "name": "The Ballad of Black Jory",
+      "qty": 1,
+      "type": "book",
+      "value": 15,
+      "weight": 0.5,
+      "description": "The brigand chief's ballad, sung two ways."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 256.4
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    448.0,
+    48.0,
+    1216.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Barrel_cave09_f2",
+    "id": "133ca69e-fec4-57eb-9a8a-10e63b58c83d",
+    "container_kind": "barrel",
+    "display_name": "Barrel",
+    "inventory": [
+     {
+      "id": "steel_arrow",
+      "name": "Steel Arrow",
+      "qty": 10,
+      "type": "ammo",
+      "value": 2,
+      "weight": 0.1,
+      "description": "A sharp steel arrow."
+     },
+     {
+      "id": "lockpick",
+      "name": "Lockpick",
+      "qty": 4,
+      "type": "misc",
+      "value": 5,
+      "weight": 0.0,
+      "description": "For coaxing open stubborn locks."
+     },
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 1,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     },
+     {
+      "id": "book_bandit_ledger",
+      "name": "A Ledger, Water-Stained",
+      "qty": 1,
+      "type": "book",
+      "value": 3,
+      "weight": 0.5,
+      "description": "A brigand's accounts. There is a goat now."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_barrel.png",
+    "_furnished": true,
+    "angle": 333.7
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -960.0,
+    48.0,
+    320.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Crate_cave09_f3",
+    "id": "11871e5a-40ab-5d84-8203-682f24f4eb37",
+    "container_kind": "crate",
+    "display_name": "Stolen Goods",
+    "inventory": [
+     {
+      "id": "steel_arrow",
+      "name": "Steel Arrow",
+      "qty": 11,
+      "type": "ammo",
+      "value": 2,
+      "weight": 0.1,
+      "description": "A sharp steel arrow."
+     },
+     {
+      "id": "bread",
+      "name": "Bread",
+      "qty": 2,
+      "type": "potion",
+      "value": 1,
+      "weight": 0.2,
+      "description": "A heel of bread. Restores a little health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 51,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_bandit_ledger",
+      "name": "A Ledger, Water-Stained",
+      "qty": 1,
+      "type": "book",
+      "value": 3,
+      "weight": 0.5,
+      "description": "A brigand's accounts. There is a goat now."
+     },
+     {
+      "id": "note_crier_wanted",
+      "name": "Wanted Notice",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "A notice torn from a post: the brigands of Cutthroat Ridge."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_crate.png",
+    "_furnished": true,
+    "angle": 86.3
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    192.0,
+    48.0,
+    -1344.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave09_f4",
+    "id": "439094ec-234d-559b-8035-4fa9ee82b018",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 2,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 230.3
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1472.0,
+    48.0,
+    -320.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave09_f5",
+    "id": "bd091ef6-59ef-5ebd-992e-fddc0db4e1f9",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "lockpick",
+      "name": "Lockpick",
+      "qty": 2,
+      "type": "misc",
+      "value": 5,
+      "weight": 0.0,
+      "description": "For coaxing open stubborn locks."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 56,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": true,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 183.1,
+    "lock_difficulty": "apprentice"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1216.0,
+    48.0,
+    192.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Barrel_cave09_f6",
+    "id": "3b883ca1-3188-50d7-8a74-15b4ca39ff46",
+    "container_kind": "barrel",
+    "display_name": "Barrel",
+    "inventory": [
+     {
+      "id": "steel_arrow",
+      "name": "Steel Arrow",
+      "qty": 13,
+      "type": "ammo",
+      "value": 2,
+      "weight": 0.1,
+      "description": "A sharp steel arrow."
+     },
+     {
+      "id": "lockpick",
+      "name": "Lockpick",
+      "qty": 4,
+      "type": "misc",
+      "value": 5,
+      "weight": 0.0,
+      "description": "For coaxing open stubborn locks."
+     },
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 1,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     },
+     {
+      "id": "leather_cuirass",
+      "name": "Leather Cuirass",
+      "qty": 1,
+      "type": "armour",
+      "value": 40,
+      "weight": 8.0,
+      "description": "Leather cuirass."
+     },
+     {
+      "id": "bread",
+      "name": "Bread",
+      "qty": 1,
+      "type": "potion",
+      "value": 1,
+      "weight": 0.2,
+      "description": "A heel of bread. Restores a little health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 18,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_black_jory",
+      "name": "The Ballad of Black Jory",
+      "qty": 1,
+      "type": "book",
+      "value": 15,
+      "weight": 0.5,
+      "description": "The brigand chief's ballad, sung two ways."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_barrel.png",
+    "_furnished": true,
+    "angle": 2.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -832.0,
+    48.0,
+    1088.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave09_f7",
+    "id": "fa3b184d-5907-52a6-b0e6-aa32de060ace",
+    "container_kind": "sack",
+    "display_name": "Adventurer's Pack",
+    "inventory": [
+     {
+      "id": "torch",
+      "name": "Torch",
+      "qty": 1,
+      "type": "light",
+      "value": 5,
+      "weight": 1.0,
+      "description": "A pitch-soaked torch that throws a warm circle of light. Equip it in the off hand to see in the dark."
+     },
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 2,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     },
+     {
+      "id": "lockpick",
+      "name": "Lockpick",
+      "qty": 3,
+      "type": "misc",
+      "value": 5,
+      "weight": 0.0,
+      "description": "For coaxing open stubborn locks."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 13,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_aldous_penn",
+      "name": "The Journal of Aldous Penn",
+      "qty": 1,
+      "type": "book",
+      "value": 5,
+      "weight": 0.5,
+      "description": "An adventurer's journal. It ends mid-sentence."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 224.0
    },
    "io_connections": []
   }
