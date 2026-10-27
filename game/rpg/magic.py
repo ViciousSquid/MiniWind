@@ -309,8 +309,8 @@ def cast_chance(character, spell: Spell) -> float:
 
     Learn-by-doing: the school skill carries most of it, so every point a
     caster earns by casting shows up as fewer fizzles. A novice (skill 5,
-    average Willpower) lands a cheap spell a little under half the time; by
-    skill 50 three casts in four; a master almost never fizzles. Willpower
+    average Endurance) lands a cheap spell a little under half the time; by
+    skill 50 three casts in four; a master almost never fizzles. Endurance
     and Luck nudge it, an expensive spell is harder, and practice with one
     particular spell (successful casts of it) steadies it by up to
     :data:`PRACTICE_BONUS_MAX`.
@@ -318,11 +318,11 @@ def cast_chance(character, spell: Spell) -> float:
     if spell.base_cost <= 0:
         return 1.0
     skill = character.skill(spell.school)
-    wil = character.attrs.get(attr.WILLPOWER, 40)
+    end = character.attrs.get(attr.ENDURANCE, 40)
     luck = character.attrs.get(attr.LUCK, 40)
     practice = int(getattr(character, "spell_practice", {}).get(spell.id, 0))
     chance = (0.42 + skill * 0.0065
-              + (wil - 40) * 0.004 + (luck - 40) * 0.002
+              + (end - 40) * 0.004 + (luck - 40) * 0.002
               - spell.base_cost * 0.008
               + min(PRACTICE_BONUS_MAX, practice * PRACTICE_PER_CAST))
     return max(0.10, min(0.98, chance))
@@ -350,7 +350,7 @@ def cast_check(character, spell: Spell, rng: Optional[random.Random] = None,
 
 def cast_success(character, spell: Spell, rng: Optional[random.Random] = None,
                  dice: Optional["DiceRoller"] = None) -> bool:
-    """Roll whether a cast succeeds (skill + willpower + luck vs difficulty)."""
+    """Roll whether a cast succeeds (skill + endurance + luck vs difficulty)."""
     return cast_check(character, spell, rng=rng, dice=dice)[0]
 
 

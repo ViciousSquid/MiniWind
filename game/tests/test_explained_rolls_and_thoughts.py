@@ -57,12 +57,12 @@ def test_an_attack_roll_names_its_target_and_its_odds():
     seen = []
     roller.add_roll_listener(lambda result, source, ctx: seen.append((source, result)))
     res = combat.player_attack(Character(), {"name": "bandit", "display_name": "Bandit",
-                                             "agility": 30, "health": 30},
+                                             "endurance": 30, "health": 30},
                                dice=roller)
     source, hit = seen[0]
     assert source == "combat.hit"
     assert hit["label"] == "Roll to hit Bandit"
-    assert "vs their Agility 30" in hit["why"]
+    assert "vs their Endurance 30" in hit["why"]
     assert hit["success"] == res["hit"]
     if res["hit"]:
         source, crit = seen[1]
@@ -172,7 +172,7 @@ def test_thoughts_can_be_turned_off(config):
 def _armoured():
     from ..rpg.character import Character
     c = Character()
-    c.attrs["agility"] = 100          # Armour Class from agility, no armour needed
+    c.attrs["endurance"] = 100        # Armour Class from endurance, no armour needed
     return c
 
 
@@ -201,7 +201,7 @@ def test_with_no_armour_class_to_beat_nothing_is_rolled():
     seen = []
     roller.add_roll_listener(lambda *a: seen.append(a))
     c = Character()
-    c.attrs["agility"] = 40
+    c.attrs["endurance"] = 40
     combat.resolve_incoming(c, 10.0, dice=roller, attacker="Wolf")
     assert seen == []
 
@@ -221,7 +221,7 @@ def test_the_odds_shown_are_the_odds_rolled():
     from ..rpg import combat
     from ..rpg.character import Character
     c = Character()
-    target = {"agility": 30}
+    target = {"endurance": 30}
     odds = combat.attack_odds(c, target)
     fatigue = c.stamina / c.max_stamina
     assert odds["hit_chance"] == combat.hit_chance(c, c.skill("blade"), 30, fatigue)
@@ -234,10 +234,10 @@ def test_the_nameplate_says_what_the_player_needs(qt_app):
     from ..rpg.character import Character
     from ..ui import hud
     c = Character()
-    line = hud._target_odds(c, {"agility": 30})
+    line = hud._target_odds(c, {"endurance": 30})
     assert line.startswith("Sure hit") and "Critical: need" in line
     c.active_weapon_kind = "bow"
-    assert hud._target_odds(c, {"agility": 30}).startswith("To hit: need ")
+    assert hud._target_odds(c, {"endurance": 30}).startswith("To hit: need ")
 
 
 # ------------------------------------------------------------ conversations

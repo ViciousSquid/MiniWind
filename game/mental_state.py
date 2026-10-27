@@ -142,7 +142,11 @@ def snapshot(thing, monster_state: Optional[dict] = None,
     ]
 
     # ---- Vitals / combat --------------------------------------------
+    from .rpg import attributes as _attr, charisma as _cha
     vitals = [
+        ("Strength", _fmt(_cha.core(props, _attr.STRENGTH))),
+        ("Endurance", _fmt(_cha.core(props, _attr.ENDURANCE))),
+        ("Charisma", _fmt(_cha.core(props, _attr.PERSONALITY))),
         ("Health", _fmt(_get(props, "health", default="?"))),
         ("Courage", _fmt(_get(props, "courage", default="?"))),
         ("Attack style", _fmt(_get(props, "attack_style", default="?"))),

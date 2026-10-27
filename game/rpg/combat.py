@@ -8,7 +8,7 @@ Pure, deterministic-ish formulas (an optional RNG is injected for tests). Covers
   luck-weighted critical chance;
 * **incoming damage mitigation** for the player — armour rating, active shield
   effects, blocking, and elemental resistances from the character;
-* **hit chance** — fatigue/agility/weapon-skill vs a target's agility.
+* **hit chance** — fatigue/endurance/weapon-skill vs a target's endurance.
 
 Creature-vs-creature and creature ranged travel are handled by the engine's
 :class:`~engine.monster_ai.MonsterAI` (now fantasy: melee & arrows, no guns);
@@ -25,6 +25,7 @@ from . import attributes as attr
 from . import skills as sk
 from . import items
 from . import equipment as eq
+from . import charisma
 from ..diceroll import DiceRoller, check_target, roll_check
 
 
@@ -38,18 +39,19 @@ DUAL_WIELD_ACCURACY = 0.8
 DUAL_WIELD_SPREAD = 5.0
 
 
-def hit_chance(character, weapon_skill: int, target_agility: int = 30,
+def hit_chance(character, weapon_skill: int, target_endurance: int = 40,
                fatigue_frac: float = 1.0) -> float:
     """Probability [0.05, 0.95] that a swing/shot lands.
 
-    Classic Morrowind-ish: weapon skill + agility/luck + fatigue, minus the
-    target's agility. Fatigue below full drags the chance down.
+    Classic Morrowind-ish: weapon skill + endurance/luck + fatigue, minus the
+    target's endurance (every living thing has one, see
+    :func:`charisma.core`). Fatigue below full drags the chance down.
     """
-    agi = character.attrs.get(attr.AGILITY, 40)
+    end = character.attrs.get(attr.ENDURANCE, 40)
     luck = character.attrs.get(attr.LUCK, 40)
-    attack = weapon_skill + agi * 0.2 + luck * 0.1
+    attack = weapon_skill + end * 0.2 + luck * 0.1
     attack *= (0.5 + 0.5 * max(0.0, min(1.0, fatigue_frac)))
-    defend = target_agility * 0.25
+    defend = target_endurance * 0.15
     chance = (attack - defend) / 100.0
     return max(0.05, min(0.95, chance))
 
@@ -58,16 +60,22 @@ def _target_name(target_props: Dict) -> str:
     return str(target_props.get("display_name") or target_props.get("name") or "")
 
 
-def _hit_why(character, skill_id: str, skill: int, target_agility: int,
+def _hit_why(character, skill_id: str, skill: int, target_endurance: int,
              fatigue_frac: float, chance: float) -> str:
     """What went into a hit chance, in the player's terms:
-    ``Blade 35 vs their Agility 30, winded — 48%``."""
-    parts = [f"{sk.label(skill_id)} {skill} vs their Agility {target_agility}"]
+    ``Blade 35 vs their Endurance 40, winded — 48%``."""
+    parts = [f"{sk.label(skill_id)} {skill} vs their Endurance {target_endurance}"]
     if fatigue_frac < 0.75:
         parts.append("winded")
     if eq.dual_wielding(character):
         parts.append("two weapons")
     return f"{', '.join(parts)} — {chance * 100:.0f}%"
+
+
+def strength_factor(strength: int) -> float:
+    """How a creature's Strength scales the physical damage it deals: x1.0 at
+    50, from x0.7 at 0 to x1.3 at 100."""
+    return 0.7 + max(0, min(100, int(strength))) * 0.006
 
 
 def critical_chance(character) -> float:
@@ -87,16 +95,16 @@ def attack_odds(character, target_props: Dict, hand: str = "main",
     w = eq.hand_weapon(character, hand)
     skill_id = w.get("skill", sk.BLADE) if w else sk.BLADE
     skill = character.skill(skill_id)
-    target_agi = int(target_props.get("agility", 24))
+    target_end = charisma.core(target_props, attr.ENDURANCE)
     fatigue = character.stamina / character.max_stamina if character.max_stamina else 1.0
-    chance = hit_chance(character, skill, target_agi, fatigue)
+    chance = hit_chance(character, skill, target_end, fatigue)
     if eq.dual_wielding(character):
         chance *= DUAL_WIELD_ACCURACY
     crit = critical_chance(character)
     return {"hit_chance": chance, "hit_target": check_target(chance),
             "sure_hit": bool(sure_hit),
             "crit_chance": crit, "crit_target": check_target(crit),
-            "why": _hit_why(character, skill_id, skill, target_agi, fatigue, chance)}
+            "why": _hit_why(character, skill_id, skill, target_end, fatigue, chance)}
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +148,7 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         base = float(w.get("damage", 5)) * eq.rarity_stat(character, eq.hand_slot(hand))
 
     skill = character.skill(skill_id)
-    target_agi = int(target_props.get("agility", 24))
+    target_end = charisma.core(target_props, attr.ENDURANCE)
     fatigue_frac = character.stamina / character.max_stamina if character.max_stamina else 1.0
 
     result = {"hit": False, "damage": 0.0, "crit": False, "sneak": False,
@@ -152,7 +160,7 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         result["no_ammo"] = True
         return result
 
-    hit_probability = hit_chance(character, skill, target_agi, fatigue_frac)
+    hit_probability = hit_chance(character, skill, target_end, fatigue_frac)
     if eq.dual_wielding(character):
         hit_probability *= DUAL_WIELD_ACCURACY
     if guaranteed_hit and kind == items.KIND_MELEE:
@@ -164,7 +172,7 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         hit_roll = roll_check(
             dice, hit_probability, f"Roll to hit {_target_name(target_props)}".strip(),
             source="combat.hit",
-            why=_hit_why(character, skill_id, skill, target_agi, fatigue_frac,
+            why=_hit_why(character, skill_id, skill, target_end, fatigue_frac,
                          hit_probability),
             context={"skill": skill_id, "target": target_props.get("name", "")})
         result["hit_roll"] = hit_roll
@@ -295,7 +303,7 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
     resist += race.resistances.get(damage_kind, 0.0)
     resist += character.effect_magnitude("resist_" + damage_kind) / 100.0
     if damage_kind == "magic":
-        resist += character.attrs.get(attr.WILLPOWER, 40) * 0.002
+        resist += character.attrs.get(attr.ENDURANCE, 40) * 0.002
     resist = max(-1.0, min(1.0, resist))
     if resist:
         before = dmg

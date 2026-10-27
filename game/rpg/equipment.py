@@ -268,9 +268,10 @@ ARMOUR_WEIGHTS = (LIGHT, MEDIUM, HEAVY)
 BASE_AC = 10
 #: Armour rating points per point of Armour Class.
 RATING_PER_AC = 4.0
-#: How many points of Agility bonus each weight of armour still lets through
-#: (None: all of it). Agility gives +1 AC per 10 points above 40.
-AGILITY_CAP = {LIGHT: None, MEDIUM: 2, HEAVY: 0}
+#: How many points of Endurance bonus each weight of armour still lets through
+#: (None: all of it). Endurance gives +1 AC per 10 points above 40 -- a hardy
+#: body rolls with a blow, as far as its armour lets it move.
+ENDURANCE_CAP = {LIGHT: None, MEDIUM: 2, HEAVY: 0}
 #: Chance per point of AC above :data:`BASE_AC` that a blow glances off
 #: entirely, and the most that can ever do.
 DEFLECT_PER_AC = 0.025
@@ -329,9 +330,9 @@ def armor_class_worn(character) -> str:
 def armour_class(character) -> int:
     """The character's Armour Class: how hard they are to hurt at all.
 
-    ``10 + armour + agility + charms``: each worn piece adds one per
+    ``10 + armour + endurance + charms``: each worn piece adds one per
     :data:`RATING_PER_AC` points of its (skill-scaled) rating, rounded, and
-    never less than one -- so putting on a helmet always shows; Agility adds one per ten points above
+    never less than one -- so putting on a helmet always shows; Endurance adds one per ten points above
     40, as much as the heaviest armour worn allows (all of it in light armour,
     two in medium, none in heavy); and protective rings and amulets add their
     ``ac_bonus``. Shown on the inventory and character sheet, and rolled
@@ -340,10 +341,10 @@ def armour_class(character) -> int:
     from . import attributes as attr
     armour = sum(max(1, int(round(r / RATING_PER_AC)))
                  for r in piece_ratings(character).values() if r > 0)
-    agility = max(0, (int(character.attrs.get(attr.AGILITY, 40)) - 40) // 10)
-    cap = AGILITY_CAP.get(armor_class_worn(character))
+    hardy = max(0, (int(character.attrs.get(attr.ENDURANCE, 40)) - 40) // 10)
+    cap = ENDURANCE_CAP.get(armor_class_worn(character))
     if cap is not None:
-        agility = min(agility, cap)
+        hardy = min(hardy, cap)
     charms = 0
     for slot in (items.SLOT_RING, items.SLOT_AMULET):
         d = equipped_def(character, slot)
@@ -352,7 +353,7 @@ def armour_class(character) -> int:
                 charms += int(d.get("ac_bonus", 0) or 0)
             except (TypeError, ValueError):
                 pass
-    return BASE_AC + armour + agility + charms
+    return BASE_AC + armour + hardy + charms
 
 
 def deflect_chance(character) -> float:

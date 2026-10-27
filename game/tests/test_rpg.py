@@ -121,11 +121,11 @@ def test_armor_rating_scales_with_skill():
 def test_player_melee_hits_and_kills():
     c = Character.create("T", "nord", "warrior", "warrior")
     c.skills[sk.BLADE] = 100
-    c.attrs[attr.AGILITY] = 100
+    c.attrs[attr.ENDURANCE] = 100
     inv.add_item(c.inventory, items.make("steel_longsword"))
     eq.equip(c, "steel_longsword")
     rng = random.Random(1)
-    tgt = {"health": 30, "agility": 10}
+    tgt = {"health": 30, "endurance": 10}
     total = 0
     for _ in range(20):
         r = combat.player_attack(c, tgt, rng=rng)
@@ -139,16 +139,17 @@ def test_bow_requires_ammo():
     inv.add_item(c.inventory, items.make("short_bow"))
     eq.equip(c, "short_bow")
     # no ammo equipped
-    r = combat.player_attack(c, {"health": 20, "agility": 5}, rng=random.Random(0))
+    r = combat.player_attack(c, {"health": 20, "endurance": 5}, rng=random.Random(0))
     assert r.get("no_ammo")
     inv.add_item(c.inventory, items.make("iron_arrow", 5))
     eq.equip(c, "iron_arrow")
-    r = combat.player_attack(c, {"health": 20, "agility": 5}, rng=random.Random(0))
+    r = combat.player_attack(c, {"health": 20, "endurance": 5}, rng=random.Random(0))
     assert "no_ammo" not in r
 
 
 def test_armor_reduces_incoming_damage():
     c = Character.create("T", "orc", "warrior", "warrior")
+    c.attrs[attr.ENDURANCE] = 40      # no Armour Class from a hardy body
     bare = combat.resolve_incoming(c, 40, damage_kind="physical")["final"]
     inv.add_item(c.inventory, items.make("iron_cuirass"))
     inv.add_item(c.inventory, items.make("iron_helmet"))
@@ -169,12 +170,12 @@ def test_race_resistance_applies():
 def test_sneak_attack_multiplies():
     c = Character.create("T", "khajiit", "assassin", "thief")
     c.skills[sk.BLADE] = 80
-    c.attrs[attr.AGILITY] = 100
+    c.attrs[attr.ENDURANCE] = 100
     inv.add_item(c.inventory, items.make("iron_dagger"))
     eq.equip(c, "iron_dagger")
     rng = random.Random(4)
-    normal = combat.player_attack(c, {"health": 100, "agility": 0}, sneaking=False, rng=random.Random(4))
-    sneak = combat.player_attack(c, {"health": 100, "agility": 0}, sneaking=True, rng=random.Random(4))
+    normal = combat.player_attack(c, {"health": 100, "endurance": 0}, sneaking=False, rng=random.Random(4))
+    sneak = combat.player_attack(c, {"health": 100, "endurance": 0}, sneaking=True, rng=random.Random(4))
     if normal["hit"] and sneak["hit"]:
         assert sneak["damage"] > normal["damage"]
 

@@ -46,6 +46,7 @@ from .rpg import guilds
 from .rpg import disposition as disp
 from .rpg import needs as rpg_needs
 from .rpg import heads
+from .rpg import attributes as attr
 from .rpg import charisma as rpg_cha
 from .ui.arrows import arrow_sprite
 from .rpg import daily as rpg_daily
@@ -262,6 +263,10 @@ SUBDUE_FRACTION = 0.45
 #: be said to be shown.
 BARK_SECONDS = 3.0
 BARK_RADIUS = 1800.0
+#: A civilian's confidence from the most charismatic guard in sight: nothing
+#: at or below this Charisma, and this much per point above it.
+CHARISMA_LEAD_FROM = 40
+CHARISMA_LEAD_PER_POINT = 0.006
 #: How long a thought (what an NPC is thinking, not saying) hangs over a head.
 THOUGHT_SECONDS = 3.5
 #: Two townsfolk talking: how long a rumour's opener is up (longer than an
@@ -728,6 +733,18 @@ class MiniwindSession(SettlementLaw):
         except (AttributeError, TypeError, ValueError):
             return False
 
+    def motivational_quotes_enabled(self) -> bool:
+        """Whether the level-up page opens with a line of encouragement
+        (``[GAME] motivational_quotes`` in settings.ini; deliberately not in
+        the in-game settings). Defaults to on when unset."""
+        try:
+            config = self._editor_config()
+            if config is None:
+                return True
+            return config.getboolean("GAME", "motivational_quotes", fallback=True)
+        except (AttributeError, TypeError, ValueError):
+            return True
+
     def dialogue_heads_enabled(self) -> bool:
         """Whether to show the character head beside the conversation window
         (GAME → "Show dialogue heads"). Defaults to on when unset."""
@@ -916,7 +933,13 @@ class MiniwindSession(SettlementLaw):
         c = self.game.character
         if getattr(fio.player_runtime(self.logic), "god_mode", False):
             return 0.0
-        res = rpg_combat.resolve_incoming(c, float(raw_damage) * self.incoming_mult,
+        raw_damage = float(raw_damage) * self.incoming_mult
+        attacker = self._attacker()
+        if attacker is not None and damage_kind == "physical":
+            # Every living thing has a Strength: a bear hits harder than a hen.
+            raw_damage *= rpg_combat.strength_factor(
+                rpg_cha.core(attacker.properties, attr.STRENGTH))
+        res = rpg_combat.resolve_incoming(c, raw_damage,
                                           damage_kind=damage_kind,
                                           blocking=self._blocking, rng=self.rng,
                                           dice=self.game.dice,
@@ -946,14 +969,19 @@ class MiniwindSession(SettlementLaw):
         self.add_floater(f"-{int(round(final))}", kind="hurt")
         return final
 
-    def _attacker_name(self) -> str:
-        """Who dealt the blow the player is taking, as the engine recorded it."""
+    def _attacker(self):
+        """Who dealt the blow the player is taking, as the engine recorded
+        it -- an actor, or None for a trap, a fall or a spell with no caster."""
         last = getattr(fio.player_runtime(self.logic), "last_damage", None)
         source = last[0] if isinstance(last, tuple) and last else None
-        props = getattr(source, "properties", None)
-        if isinstance(props, dict):
-            return str(props.get("display_name") or props.get("name") or "")
-        return ""
+        return source if isinstance(getattr(source, "properties", None), dict) else None
+
+    def _attacker_name(self) -> str:
+        source = self._attacker()
+        if source is None:
+            return ""
+        props = source.properties
+        return str(props.get("display_name") or props.get("name") or "")
 
     def _sync_engine_health(self, full=False) -> None:
         c = self.game.character
@@ -4968,7 +4996,9 @@ class MiniwindSession(SettlementLaw):
             friendly = self._rel_mask(wi, my_faction, "friendly")[rows]
             n_hostile = int(_np.count_nonzero(hostile))
             n_friendly = int(_np.count_nonzero(friendly))
-            n_guards = int(_np.count_nonzero(friendly & self._combatant_mask(wi)[rows]))
+            guard_rows = rows[friendly & self._combatant_mask(wi)[rows]]
+            n_guards = int(guard_rows.size)
+            guards = [wi.actors[r] for r in guard_rows.tolist()]
             n_rallied = int(_np.count_nonzero(friendly & self._rally_mask(wi)[rows]))
             # Casualties are corpses of his own side in sight — `alive` excludes
             # them, so they need the dead mask and their own friendliness test.
@@ -4984,6 +5014,7 @@ class MiniwindSession(SettlementLaw):
             n_rallied = 0
             n_friendly = 0
             n_hostile = 0
+            guards = []
             pool = self._actors or []
             for t in pool:
                 if t is npc:
@@ -5000,6 +5031,7 @@ class MiniwindSession(SettlementLaw):
                     n_friendly += 1
                     if self._is_combatant(t):
                         n_guards += 1
+                        guards.append(t)
                     if tp.get("_rally"):
                         n_rallied += 1
 
@@ -5019,8 +5051,14 @@ class MiniwindSession(SettlementLaw):
         # double-count them; their extra influence is applied separately below
         # via the explicit n_rallied social-contagion term.
         group_bonus = min(n_friendly * 0.1, 0.45) if n_friendly >= 2 else 0.0
+        # A guard people look up to steadies them more: the most charismatic
+        # fighter in sight lends up to +0.36 at Charisma 100.
+        lead = max((rpg_cha.core(g.properties, attr.PERSONALITY) for g in guards),
+                   default=CHARISMA_LEAD_FROM)
+        leadership = max(0, lead - CHARISMA_LEAD_FROM) * CHARISMA_LEAD_PER_POINT
 
         return (courage
+                + leadership
                 + distance_factor
                 + n_guards * 0.35
                 + n_rallied * 0.2

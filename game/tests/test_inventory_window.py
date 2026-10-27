@@ -121,7 +121,7 @@ def test_assign_fills_the_first_free_quick_slot():
 def test_unarmoured_is_armour_class_ten():
     s = _session()
     c = s.game.character
-    c.attrs["agility"] = 40
+    c.attrs["endurance"] = 40
     assert eq.armour_class(c) == eq.BASE_AC
     assert eq.deflect_chance(c) == 0.0
 
@@ -130,17 +130,17 @@ def test_plate_raises_armour_class_more_than_cloth():
     plate = _session("plate_armour").game.character
     cloth = _session("cloth_robe").game.character
     for c in (plate, cloth):
-        c.attrs["agility"] = 40
+        c.attrs["endurance"] = 40
     plate_char = plate
     eq.equip(plate_char, "plate_armour")
     eq.equip(cloth, "cloth_robe")
     assert eq.armour_class(plate_char) > eq.armour_class(cloth)
 
 
-def test_heavy_armour_spends_your_agility_bonus():
+def test_heavy_armour_spends_your_endurance_bonus():
     s = _session("plate_armour")
     c = s.game.character
-    c.attrs["agility"] = 80                       # +4 out of armour
+    c.attrs["endurance"] = 80                       # +4 out of armour
     nimble = eq.armour_class(c)
     eq.equip(c, "plate_armour")
     assert eq.armor_class_worn(c) == eq.HEAVY
@@ -149,15 +149,15 @@ def test_heavy_armour_spends_your_agility_bonus():
     assert nimble == eq.BASE_AC + 4
 
 
-def test_medium_armour_lets_two_points_of_agility_through():
+def test_medium_armour_lets_two_points_of_endurance_through():
     s = _session("chain_shirt")
     c = s.game.character
     eq.equip(c, "chain_shirt")
     assert eq.armor_class_worn(c) == eq.MEDIUM
-    c.attrs["agility"] = 40
-    without_agility = eq.armour_class(c)
-    c.attrs["agility"] = 90
-    assert eq.armour_class(c) == without_agility + 2
+    c.attrs["endurance"] = 40
+    without_bonus = eq.armour_class(c)
+    c.attrs["endurance"] = 90
+    assert eq.armour_class(c) == without_bonus + 2
 
 
 def test_a_ring_of_protection_adds_to_armour_class():

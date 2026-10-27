@@ -40,6 +40,12 @@ LEVEL_POOLS = ("health", "magicka", "stamina")
 SPRINT_STAMINA_PER_SECOND = 12.0
 #: How much the chosen pool grows per level.
 LEVEL_POOL_GAIN = 10.0
+#: The level-up choice: which attribute grows, by :data:`LEVEL_ATTR_GAIN`.
+#: MAGICKA is the well of magic -- Intelligence underneath, which sets
+#: maximum magicka -- and is only offered to those who work magic.
+LEVEL_CHOICES = {"strength": attr.STRENGTH, "endurance": attr.ENDURANCE,
+                 "magicka": attr.INTELLIGENCE}
+LEVEL_ATTR_GAIN = 5
 #: How many quick-weapon slots there are (keys 1-4).
 QUICK_WEAPON_SLOTS = 4
 #: Experience points (kills, quests) per level: level L needs L times this.
@@ -205,8 +211,6 @@ class Character:
         sign_bonus = getattr(self, "_sign_stat_bonuses", {}) or {}
         end = a.get(attr.ENDURANCE, 40)
         stg = a.get(attr.STRENGTH, 40)
-        wil = a.get(attr.WILLPOWER, 40)
-        agi = a.get(attr.AGILITY, 40)
         intel = a.get(attr.INTELLIGENCE, 40)
 
         # Health: endurance-driven, plus accumulated per-level gains.
@@ -217,7 +221,7 @@ class Character:
         self.max_magicka = (intel * 1.5 + self._accum_magicka
                             + sign_bonus.get("magicka", 0))
         # Stamina/fatigue: the "can I keep swinging/running" pool.
-        self.max_stamina = ((stg + wil + agi + end) * 0.5 + self._accum_stamina
+        self.max_stamina = ((stg + end * 3) * 0.5 + self._accum_stamina
                             + sign_bonus.get("stamina", 0))
 
         self.max_health = max(1.0, self.max_health)
@@ -318,9 +322,23 @@ class Character:
         return (self.xp_progress >= SKILL_UPS_PER_LEVEL
                 or self.xp >= self.xp_needed)
 
+    def level_choices(self) -> List[str]:
+        """What this character may grow at a level-up: STRENGTH, ENDURANCE
+        and, for anyone who works magic, MAGICKA."""
+        out = ["strength", "endurance"]
+        if self.can_use_magic():
+            out.append("magicka")
+        return out
+
     def level_up(self, chosen_attrs: Optional[List[str]] = None,
-                 pool: Optional[str] = None) -> Dict:
+                 pool: Optional[str] = None, choice: Optional[str] = None) -> Dict:
         """Advance one character level.
+
+        *choice* is the level-up screen's question: ``"strength"``,
+        ``"endurance"`` or ``"magicka"`` grows by :data:`LEVEL_ATTR_GAIN`
+        (see :data:`LEVEL_CHOICES`), and health grows by a tenth of Endurance
+        as every level. A *choice* the character may not make (MAGICKA for a
+        Warrior) is ignored.
 
         *pool* is the Skyrim-style choice: ``"health"``, ``"magicka"`` or
         ``"stamina"`` grows by :data:`LEVEL_POOL_GAIN`. Attributes still rise
@@ -362,6 +380,17 @@ class Character:
             raised[a] = new_val - self.attrs[a]
             self.attrs[a] = new_val
 
+        choice = str(choice or "").lower()
+        choice_gain = 0
+        if choice in self.level_choices():
+            a = LEVEL_CHOICES[choice]
+            new_val = attr.clamp(self.attrs[a] + LEVEL_ATTR_GAIN)
+            choice_gain = new_val - self.attrs[a]
+            raised[a] = raised.get(a, 0) + choice_gain
+            self.attrs[a] = new_val
+        else:
+            choice = ""
+
         pool = str(pool or "").lower()
         gains = {"health": 0.0, "magicka": 0.0, "stamina": 0.0}
         if pool in LEVEL_POOLS:
@@ -380,7 +409,8 @@ class Character:
         self.stamina = self.max_stamina
         return {"level": self.level, "attrs_raised": raised,
                 "health_gain": gains["health"], "pool": pool if pool in LEVEL_POOLS else "",
-                "pool_gain": gains.get(pool, 0.0) if pool in LEVEL_POOLS else 0.0}
+                "pool_gain": gains.get(pool, 0.0) if pool in LEVEL_POOLS else 0.0,
+                "choice": choice, "choice_gain": choice_gain}
 
     # --------------------------------------------------------------- pools help
     def damage(self, amount: float) -> float:
@@ -417,7 +447,7 @@ class Character:
         # Atronach sign: magicka does not regenerate.
         golem = self.birthsign_id == "golem"
         if not golem and self.max_magicka > 0:
-            rate = self.max_magicka * 0.02 * (0.5 + self.attrs.get(attr.WILLPOWER, 40) / 100.0)
+            rate = self.max_magicka * 0.02 * (0.5 + self.attrs.get(attr.ENDURANCE, 40) / 100.0)
             self.restore_magicka(rate * dt)
         if sprinting:
             self.spend_stamina(SPRINT_STAMINA_PER_SECOND * dt)
