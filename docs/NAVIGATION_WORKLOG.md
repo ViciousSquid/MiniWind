@@ -127,8 +127,8 @@ git diff HEAD --check
 Local evidence: `work/baseline.xml`, `work/final.xml`, `work/final.log`,
 `work/benchmark-final.txt`, `work/pathfinding-debug-preview.png` and
 `work/pathfinding-debug-sample.json`. `work/` contains originals and scratch
-assets and must not be committed. User-facing handoff/guide copies are in the
-chat output directory.
+assets and must not be committed. The durable handoff and debugger guide are
+committed in `docs/NAVIGATION_WORKLOG.md` and `docs/PATHFINDING_DEBUG.md`.
 
 ## Known limits and follow-up scope
 
