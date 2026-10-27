@@ -24,6 +24,7 @@ from editor.things import (
 from engine.player import Player
 from engine.game_input import modal_input_active as _game_modal_input_active
 from engine.game_input import modal_escape_active as _game_modal_escape_active
+from engine.game_input import owns_number_keys as _game_owns_number_keys
 
 from engine.renderer import DEFAULT_RENDERER, available_renderers, create_renderer
 from editor.selection_overlay import describe_selection
@@ -5019,7 +5020,8 @@ class QtGameView(QOpenGLWidget):
         # the game-session capability rather than hard-coding MiniWind here.
         game_modal_input = _game_modal_input_active(self.logic_thread) if self.play_mode else False
         if (self.play_mode and not self.show_render_menu
-                and event.key() in self._SLOT_KEYS and not game_modal_input):
+                and event.key() in self._SLOT_KEYS and not game_modal_input
+                and not _game_owns_number_keys(self.logic_thread)):
             # Weapon slots 1-4 (gun1, gun2, custom1, custom2): the logic thread
             # takes the weapon in hand if the player has it.
             self.game_state.queue_weapon_slot(self._SLOT_KEYS[event.key()])

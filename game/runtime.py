@@ -518,6 +518,10 @@ class StateStore:
 class MiniwindSession(SettlementLaw):
     """Owns the clock, the player character, NPC AI and dialogue state."""
 
+    #: The number keys pick inventory strip slots (game/host.py), so the
+    #: engine leaves 1-4 alone rather than reading them as its weapon slots.
+    owns_number_keys = True
+
     def __init__(self, logic, cfg: Dict = None, globals_store=None):
         self.logic = logic
         cfg = cfg or {}
