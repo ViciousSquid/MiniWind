@@ -34,7 +34,7 @@ from PyQt5.QtGui import QBrush, QColor, QLinearGradient, QPainterPath, QPen
 
 from engine.floating_windows import FloatingWindow
 
-from . import drag, hits
+from . import drag, hits, hud_layout
 
 # Forged iron and old bronze, after the dark ornate action bars of ARPGs: a
 # bevelled tile per slot on a riveted backing bar, an ember rim on the one
@@ -142,6 +142,12 @@ class InventoryStrip(FloatingWindow):
         vw, vh = self._view
         self._rects = layout(n, vw, vh) if vw and vh else []
         if self._rects:
+            # Wherever the player has put it (game/ui/hud_layout.py).
+            natural = _bar_rect(self._rects)
+            hud_layout.note("strip", natural)
+            moved = hud_layout.screen_rect("strip", vw, vh)
+            dx, dy = moved.x() - natural.x(), moved.y() - natural.y()
+            self._rects = [r.translated(dx, dy) for r in self._rects]
             self.window_rect = _bar_rect(self._rects)
             self.width = self.window_rect.width()
 
@@ -157,6 +163,9 @@ class InventoryStrip(FloatingWindow):
             self._slots = list(self.session.strip_slots())
         except Exception:
             self._slots = []
+        if hud_layout.collapsed("strip"):
+            self._rects = []          # folded away: nothing drawn, nothing to hit
+            return
         self._layout()
         if not self._rects:
             return

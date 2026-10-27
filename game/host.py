@@ -1156,12 +1156,14 @@ class MiniwindGame:
                 session.show_loadout = False
                 self._sync_loadout_window(session, viewport, w, h)
                 self._sync_strip_window(session, viewport, w, h, cutscene=True)
+                self._sync_hud_window(session, viewport, w, h, cutscene=True)
                 hud.draw_fade(painter, session, w, h)
                 return
             # The non-modal loadout popup (weapons + spells) lives alongside the
             # modal popups; it stays open while the player fights.
             self._sync_loadout_window(session, viewport, w, h)
             self._sync_strip_window(session, viewport, w, h)
+            self._sync_hud_window(session, viewport, w, h)
 
             if not session.needs_char_creation and session.open_screen != "charcreate":
                 hud.draw_time_tint(painter, session, w, h, viewport)
@@ -1368,6 +1370,45 @@ class MiniwindGame:
             # tall window can reach on a small screen.
             if not any(getattr(o, "dragging", False) or getattr(o, "mouse_captured", False)
                        for o in wm.windows):
+                wm.raise_(win)
+
+    def _sync_hud_window(self, session, viewport, w, h, cutscene=False):
+        """The HUD's ▼ / ▲ buttons and rearrange mode (game/ui/hud_layout.py):
+        a window over all the others in free play, holding the world paused
+        while the player rearranges."""
+        from .ui import hud_layout
+        if not getattr(session, "_hud_seen", False):
+            session._hud_seen = True
+            hud_layout.arranging = False       # a new session never opens rearranging
+        wm = getattr(viewport, "window_manager", None) if viewport is not None else None
+        free_play = (not cutscene and not session.needs_char_creation
+                     and not session.game.character.is_dead
+                     and session.dialogue is None and session.open_screen is None)
+        if not free_play and hud_layout.arranging:
+            hud_layout.stop_arranging()
+        arranging = hud_layout.arranging
+        if arranging != getattr(session, "_hud_pause_held", False):
+            session._hud_pause_held = arranging
+            fio.set_world_paused(session.logic, "hud_arrange", arranging)
+        if wm is None:
+            return
+        win = getattr(session, "_hud_win", None)
+        for existing in list(wm.windows):
+            if isinstance(existing, hud_layout.HudWindow) and existing is not win:
+                existing.active = False          # a previous session's
+                wm.remove(existing)
+        if free_play and win is None:
+            win = hud_layout.HudWindow()
+            wm.add(win)
+            session._hud_win = win
+        elif not free_play and win is not None:
+            win.active = False
+            wm.remove(win)
+            session._hud_win = win = None
+        if win is not None:
+            win.place(w, h)
+            if not any(getattr(o, "dragging", False) or getattr(o, "mouse_captured", False)
+                       for o in wm.windows if o is not win):
                 wm.raise_(win)
 
     def _sync_overlay_windows(self, session, viewport, w, h):

@@ -107,6 +107,9 @@ class _Editor:
     def pause_menu_apply_display(self):
         self.applied += 1
 
+    def pause_menu_rearrange_hud(self):
+        self.calls.append(("hud",))
+
 
 class _View:
     """A viewport stand-in: the menu only asks it for size, repaint and a frame."""
@@ -304,10 +307,20 @@ def _row(page, key):
 def test_options_show_the_launchers_display_settings_and_the_music_volume(app):
     page = _options(_menu())
     rows = {key: (label, value) for key, label, value, _on in page.rows()}
-    assert set(rows) == {"mode", "res", "vsync", "hidpi", "volume", "cast", "back"}
+    assert set(rows) == {"mode", "res", "vsync", "hidpi", "volume", "cast", "keys",
+                         "hud", "back"}
     assert rows["mode"][1] == "Fullscreen"         # the launcher's default
     assert rows["volume"][1] == "50%"
     _draw(page.menu)                                # paints without error
+
+
+def test_rearrange_hud_leaves_the_menu_for_rearrange_mode(app):
+    page = _options(_menu())
+    menu = page.menu
+    _row(page, "hud")
+    page.change("hud")
+    assert ("hud",) in menu.editor.calls
+    assert not menu.active                         # back to the game to arrange
 
 
 def test_the_window_mode_cycles_through_the_launchers_modes_and_applies(app):

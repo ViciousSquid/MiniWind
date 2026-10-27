@@ -154,6 +154,9 @@ class GamePointer:
             return death_screen.has_button()
         if getattr(session, "spell_aiming", False):
             return True        # aiming a spell: the cursor says where it goes
+        from . import hud_layout
+        if hud_layout.arranging:
+            return True        # rearranging the HUD: panels are dragged about
         # The character sheet, spellbook and merchant trade screen release
         # the captured mouse so their choices can be clicked. The quickbar,
         # dialogue and other game screens keep normal mouse-look captured.

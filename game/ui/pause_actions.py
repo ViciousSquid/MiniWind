@@ -333,6 +333,11 @@ class PauseActions:
     def pause_menu_set_cast_mode(self, mode):
         self._set_game_option("cast_mode", mode)
 
+    def pause_menu_rearrange_hud(self):
+        """Leave the menu for the HUD's rearrange mode (game/ui/hud_layout.py)."""
+        from . import hud_layout
+        hud_layout.start_arranging()
+
     def pause_menu_display_settings(self):
         """The launcher's display settings, on the editor window's own config.
 

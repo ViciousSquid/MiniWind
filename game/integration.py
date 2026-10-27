@@ -681,6 +681,9 @@ def install_play_menu(view):
         # the same config by the play session.
         from . import runtime
         runtime.set_editor_config(config)
+        # Where the player has put the HUD's panels (game/ui/hud_layout.py).
+        from .ui import hud_layout
+        hud_layout.configure(config, getattr(editor, "save_config", None))
 
 
 def install_wheel_zoom(view):
