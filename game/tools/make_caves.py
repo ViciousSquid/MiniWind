@@ -527,7 +527,7 @@ def _furnish_lair(things, lair, hall, open_, slug):
     for k in range(int(lair.get("flames", 0))):
         things.append(_thing("effect", (x, -3000.0, z), name=f"DragonFire_{slug}_{k}",
                              effect_type="FIRE", preview=False, silent=True,
-                             fire_texture="assets/textures/effects/fire01.gif",
+                             fire_texture="assets/textures/effects/fire02.gif",
                              orb_texture="assets/textures/effects/orb01.gif",
                              custom_gif="", custom_loop=True, width=60.0, height=90.0,
                              intensity=1.0, colour=[255, 110, 25], lifetime=0.5,

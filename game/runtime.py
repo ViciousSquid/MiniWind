@@ -48,6 +48,7 @@ from . import party
 from .rpg import magic as rpg_magic
 from .rpg import guilds
 from .rpg import training as rpg_training
+from . import burning as burning_mod
 from .rpg import disposition as disp
 from .rpg import needs as rpg_needs
 from .rpg import heads
@@ -701,6 +702,9 @@ class MiniwindSession(SettlementLaw):
         self.memory = MapMemory(self)
         self.wildlife = Wildlife(self)
         self.dragon_fire = DragonFire(self)
+        #: Flare's fires: who is burning, and fires on the ground (game/burning.py).
+        from .burning import Burning
+        self.burning = Burning(self)
         #: Spell bolts in flight that carry a light: Fio tag -> Light, and
         #: where each lit bolt was last published (tag -> (x, y, z)).
         self._bolt_lights = {}
@@ -994,6 +998,8 @@ class MiniwindSession(SettlementLaw):
         self._bolt_positions = {}
         self._update_bolt_lights()          # no bolt is live: every light goes out
         self._clear_lingering_lights()
+        if getattr(self, "burning", None) is not None:
+            self.burning.clear()
         if getattr(self.logic, "_player_damage_filter", None) is self._mitigate_incoming:
             self.logic._player_damage_filter = None
         if getattr(self.logic, "player_fire_handler", None) == self.fire_player_weapon:
@@ -1020,6 +1026,12 @@ class MiniwindSession(SettlementLaw):
             return 0.0
         raw_damage = float(raw_damage) * self.incoming_mult
         attacker = self._attacker()
+        last = getattr(fio.player_runtime(self.logic), "last_damage", None)
+        if attacker is not None and last and last[1] == "projectile":
+            burn = attacker.properties.get("_bolt_burn")
+            if burn:
+                # An enemy's Flare found the player: they burn.
+                self.burning.ignite(burning_mod.PLAYER, burn[0], burn[1], by=attacker)
         if attacker is not None and damage_kind == "physical":
             # Every living thing has a Strength: a bear hits harder than a hen.
             raw_damage *= rpg_combat.strength_factor(
@@ -1452,6 +1464,7 @@ class MiniwindSession(SettlementLaw):
         warrior_fist.clear_spent(self)
         self.held.update()
         self.dragon_fire.update(delta)
+        self.burning.update(delta)
         self.wildlife.update(delta)
         if self.__dict__.get("_party_due") and self._player_pos() is not None:
             self._party_due = False
@@ -6774,10 +6787,16 @@ class MiniwindSession(SettlementLaw):
         # with the spell's damage.
         # A no-op impact hook gives the bolt a tag, so its light and its
         # trail can follow it.
+        # A bolt that burns (Flare) sets alight what it strikes, or the
+        # ground where it lands (game/burning.py).
+        on_impact = _bolt_landed
+        if burning_mod.burn_of(spell) is not None:
+            def on_impact(pos, target, spell=spell):
+                self.burning.landed(spell, list(pos), target, by=None)
         row = fio.spawn_projectile(lt, start, vel,
                                    lifetime=MONSTER_PROJECTILE_MAX_DIST / speed,
                                    damage=int(getattr(spell, "damage", 0) or 0),
-                                   on_impact=_bolt_landed)
+                                   on_impact=on_impact)
         self._attach_bolt_light(row, start, spell)
         if row is not None:
             self.magic_fx.bolt(fio.projectile_tag(lt, row), self.spell_look(spell))

@@ -541,9 +541,21 @@ class NpcMagic:
             if ai is not None:
                 ai._apply_monster_damage(victim, dmg, attacker=caster)
 
+        # A bolt that burns (Flare) sets alight what it strikes, or the ground
+        # where it lands (game/burning.py); the player, hit by it, is set
+        # alight through the damage path, which reads ``_bolt_burn``.
+        from .burning import burn_of
+        burn = burn_of(spell)
+        on_impact = None
+        p["_bolt_burn"] = burn
+        burner = getattr(session, "burning", None)
+        if burn is not None and burner is not None:
+            def on_impact(pos, victim, caster=thing, spell=spell):
+                burner.landed(spell, list(pos), victim, by=caster)
         row = fio.spawn_projectile(logic, start, vel, lifetime=SPELL_MAX_RANGE / speed,
                                    damage=damage, owner_id=id(thing),
-                                   max_dist=SPELL_MAX_RANGE, on_hit=_on_hit)
+                                   max_dist=SPELL_MAX_RANGE, on_hit=_on_hit,
+                                   on_impact=on_impact)
         attach = getattr(session, "_attach_bolt_light", None)
         if row is not None and attach is not None:
             attach(row, start, SimpleNamespace(
