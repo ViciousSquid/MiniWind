@@ -871,7 +871,7 @@ def _objective_rows(session, q):
 
 
 def _draw_quest(painter, session, w, h):
-    """A Skyrim-style quest journal: a clickable list of every quest the player
+    """The quest journal: a clickable list of every quest the player
     knows (active, then completed) down the left, the selected quest's story and
     objectives on the right, and a "Make Active Quest" box that pins the quest
     so only its arrow shows. Mouse-driven (see :func:`handle_click`); the arrow

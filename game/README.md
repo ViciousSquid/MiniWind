@@ -1,11 +1,10 @@
 # Miniwind — a first-party fantasy RPG for Fio
 
 **Miniwind** is a complete, top-down, open-world fantasy role-playing game built
-on Fio, set in its own world, the **Vale of Miniwind**. It draws on the broad
-well of fantasy RPGs — the learn-by-doing progression of the Elder Scrolls, the
-grounded factions and reputation of *Gothic*, the coloured loot rarity of
-*Diablo*-style ARPGs, and the attributes-and-skills backbone of tabletop D&D —
-recast as its own setting rather than a copy of any one of them.
+on Fio, set in its own world, the **Vale of Miniwind**: learn-by-doing
+progression, grounded factions and reputation, coloured loot rarity, and an
+attributes-and-skills backbone with every roll on the table, in the spirit of
+tabletop roleplaying.
 
 It began as a small plugin "taste" of what Fio could host; this is the full game:
 character creation, a deep skill/attribute system that improves through use,

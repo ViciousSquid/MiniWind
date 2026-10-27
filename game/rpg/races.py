@@ -6,8 +6,7 @@ resistances/weaknesses and a once-a-day racial power. Values are deltas applied
 on top of :data:`attributes.BASE_ATTRIBUTE` / the base skill block during
 character creation.
 
-Ten races drawing on the broad well of fantasy RPGs (a little of the Elder
-Scrolls, a little of Gothic and D&D), recast for the world of Miniwind.
+Ten races of the world of Miniwind.
 """
 
 from __future__ import annotations

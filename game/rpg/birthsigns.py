@@ -1,8 +1,8 @@
 """
 Birthsigns — a small permanent bonus chosen at character creation.
 
-Each sign grants a flat stat bonus and/or a granted spell/power, in the tradition
-of the Elder Scrolls "sign under which you were born". Kept intentionally light:
+Each sign grants a flat stat bonus and/or a granted spell/power -- the star
+you were born under. Kept intentionally light:
 one meaningful pick, no ongoing bookkeeping.
 """
 

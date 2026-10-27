@@ -4,11 +4,10 @@
 # Miniwind — a first-party fantasy RPG for Fio
 
 **Miniwind** is a complete, top-down, open-world fantasy role-playing game built
-on Fio, set in its own world, the **Vale of Miniwind**. It draws on the broad
-well of fantasy RPGs — the learn-by-doing progression of the Elder Scrolls, the
-grounded factions and reputation of *Gothic*, the coloured loot rarity of
-*Diablo*-style ARPGs, and the attributes-and-skills backbone of tabletop D&D —
-recast as its own setting rather than a copy of any one of them.
+on Fio, set in its own world, the **Vale of Miniwind**: learn-by-doing
+progression, grounded factions and reputation, coloured loot rarity, and an
+attributes-and-skills backbone with every roll on the table, in the spirit of
+tabletop roleplaying.
 
 Fio is treated here as the **engine powering a total conversion** — a first-party
 title, not an optional plugin. It ships enabled and is the canonical
@@ -75,7 +74,7 @@ editor, including **§** on ISO Mac keyboards and **` / ~** on US keyboards.
 | System | Summary |
 |--------|---------|
 | **Character creation** | 10 races (each with attribute/skill bonuses, resistances and a daily power), 13 classes, 10 birthsigns, or your own custom class. |
-| **8 attributes** | Strength, Endurance, Agility, Speed, Intelligence, Willpower, Personality, Luck — driving every derived stat and roll. |
+| **6 attributes** | Strength, Endurance, Speed, Intelligence, Charisma, Luck — driving every derived stat and roll. Strength, Endurance and Charisma are rolled at creation and belong to every living thing in the Vale. |
 | **20 skills, leveled by use** | Blade, Blunt, Marksman, Block, Heavy/Light Armor, Destruction, Restoration, Alteration, Conjuration, Illusion, Mysticism, Alchemy, Sneak, Security, Mercantile, Speechcraft, Acrobatics, Athletics, Light Fingers. Doing raises them; raising *major* skills levels you up. |
 | **Derived pools** | Health, Magicka and Stamina, recomputed from attributes; passive magicka/stamina regen. |
 | **Combat** | Melee (charge weapons, dual wield, off-hand strikes), archery with a real draw for NPCs and player alike, spells; hit chance, criticals, sneak attacks, blocking, armour mitigation and elemental resistance — all through the engine-native dice service. |

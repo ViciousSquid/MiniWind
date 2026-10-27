@@ -43,7 +43,7 @@ def hit_chance(character, weapon_skill: int, target_endurance: int = 40,
                fatigue_frac: float = 1.0) -> float:
     """Probability [0.05, 0.95] that a swing/shot lands.
 
-    Classic Morrowind-ish: weapon skill + endurance/luck + fatigue, minus the
+    Weapon skill + endurance/luck + fatigue, minus the
     target's endurance (every living thing has one, see
     :func:`charisma.core`). Fatigue below full drags the chance down.
     """

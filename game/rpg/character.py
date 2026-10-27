@@ -34,7 +34,7 @@ from . import birthsigns
 
 #: Major-skill increases needed to earn one character level.
 SKILL_UPS_PER_LEVEL = 10
-#: The three pools a level-up can grow, Skyrim-style: the player picks one.
+#: The three pools a level-up could grow (the older, pool-based level-up).
 LEVEL_POOLS = ("health", "magicka", "stamina")
 #: Stamina a second of sprinting costs (a fresh 100 lasts about eight seconds).
 SPRINT_STAMINA_PER_SECOND = 12.0
@@ -340,9 +340,9 @@ class Character:
         as every level. A *choice* the character may not make (MAGICKA for a
         Warrior) is ignored.
 
-        *pool* is the Skyrim-style choice: ``"health"``, ``"magicka"`` or
+        *pool* is the older pool choice: ``"health"``, ``"magicka"`` or
         ``"stamina"`` grows by :data:`LEVEL_POOL_GAIN`. Attributes still rise
-        as well, from what was actually trained (Oblivion-style): if
+        as well, from what was actually trained: if
         *chosen_attrs* (up to 3) is given those are raised; otherwise the two
         favoured attributes plus the most-trained attribute this level. With no
         *pool* the old Endurance-based health gain applies. Returns a summary.
@@ -403,7 +403,7 @@ class Character:
         self._accum_stamina += gains["stamina"]
         self._level_attr_gains = {a: 0 for a in attr.ATTRIBUTES}
         self.recompute_derived(reset_current=False)
-        # A level-up restores you fully, as in Skyrim.
+        # A level-up restores you fully.
         self.health = self.max_health
         self.magicka = self.max_magicka
         self.stamina = self.max_stamina

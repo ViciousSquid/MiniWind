@@ -264,7 +264,7 @@ MEDIUM = "medium"
 HEAVY = "heavy"
 ARMOUR_WEIGHTS = (LIGHT, MEDIUM, HEAVY)
 
-#: Base Armour Class with nothing on, D&D-style.
+#: Base Armour Class with nothing on.
 BASE_AC = 10
 #: Armour rating points per point of Armour Class.
 RATING_PER_AC = 4.0
