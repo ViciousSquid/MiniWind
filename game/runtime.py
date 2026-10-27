@@ -322,6 +322,9 @@ ENCUMBERED_SPEED = 0.33
 #: The light a spell bolt carries with it, in the spell's colour.
 BOLT_LIGHT_RADIUS = 420.0
 BOLT_LIGHT_INTENSITY = 2.2
+#: A lingering bolt light (a spell's ``linger``, Flare's) holds where the
+#: bolt landed for its time, then fades out over this many seconds.
+BOLT_LINGER_FADE = 3.0
 
 #: Wisp companion light — how far it may wander from the player, and its four
 #: possible hues (RGB 0-255). One is picked at cast time and never changes.
@@ -686,6 +689,7 @@ class MiniwindSession(SettlementLaw):
         #: where each lit bolt was last published (tag -> (x, y, z)).
         self._bolt_lights = {}
         self._bolt_positions = {}
+        self._lingering_lights = []     # [{light, hold, fade, base}], see _update_bolt_lights
         #: ``((x, y, z), (vx, vy, vz), sprite)`` per arrow in flight, as last
         #: published for the renderer (read by game/ui/arrows.py).
         self.arrows_in_flight = ()
@@ -968,6 +972,7 @@ class MiniwindSession(SettlementLaw):
         self.magic_fx.clear()
         self._bolt_positions = {}
         self._update_bolt_lights()          # no bolt is live: every light goes out
+        self._clear_lingering_lights()
         if getattr(self.logic, "_player_damage_filter", None) is self._mitigate_incoming:
             self.logic._player_damage_filter = None
         if getattr(self.logic, "player_fire_handler", None) == self.fire_player_weapon:
@@ -1429,7 +1434,7 @@ class MiniwindSession(SettlementLaw):
         self._check_pack()
         self.autosave.tick(delta)
         self.rewind.tick(delta)
-        self._update_bolt_lights()
+        self._update_bolt_lights(delta)
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
             # Fio does not publish an empty store, so the last arrow to land
             # is cleared here.
@@ -1682,6 +1687,8 @@ class MiniwindSession(SettlementLaw):
             pos[0] = ppos[0] + dx * k
             pos[2] = ppos[2] + dz * k
             w["retarget"] = 0.0   # pick a fresh inward target next tick
+        # Assigned, not only changed in place: the renderer is told it moved.
+        light.pos = pos
 
     def _remove_wisp(self) -> None:
         w = self._wisp
@@ -6697,8 +6704,11 @@ class MiniwindSession(SettlementLaw):
         """Give a spell bolt its own moving light, in the spell's colour.
 
         The light rides the bolt (see :meth:`_split_projectiles`, which reads
-        where every lit bolt is as Fio publishes the projectiles) and goes out
-        the moment the bolt strikes or fizzles out of range."""
+        where every lit bolt is as Fio publishes the projectiles). When the
+        bolt strikes or fizzles out of range the light goes out with it, or,
+        for a spell that lingers (Flare), stays where the bolt landed for the
+        spell's ``linger`` seconds and then fades. A higher level reaches a
+        little further and burns brighter (``Spell.light_scale``)."""
         if row is None:
             return
         tag = fio.projectile_tag(self.logic, row)
@@ -6708,10 +6718,15 @@ class MiniwindSession(SettlementLaw):
             colour = list(spell.color)
         except Exception:
             colour = list(rpg_magic.DEFAULT_SPELL_COLOR)
+        try:
+            k_radius, k_bright = spell.light_scale()
+        except Exception:
+            k_radius = k_bright = 1.0
         light = self._make_light(start, {
-            "colour": colour, "intensity": BOLT_LIGHT_INTENSITY,
-            "radius": BOLT_LIGHT_RADIUS, "state": "on", "casts_shadows": False,
-            "hidden_in_game": False, "_bolt": True})
+            "colour": colour, "intensity": BOLT_LIGHT_INTENSITY * k_bright,
+            "radius": BOLT_LIGHT_RADIUS * k_radius, "state": "on",
+            "casts_shadows": False, "hidden_in_game": False, "_bolt": True,
+            "_linger": float(getattr(spell, "linger", 0.0) or 0.0)})
         if light is None:
             return
         try:
@@ -6721,29 +6736,65 @@ class MiniwindSession(SettlementLaw):
         self._bolt_lights[tag] = light
         self._rebuild_entity_caches()
 
-    def _update_bolt_lights(self) -> None:
-        """Move each spell bolt's light onto its bolt; put out the spent ones."""
+    def _update_bolt_lights(self, delta: float = 0.0) -> None:
+        """Move each spell bolt's light onto its bolt; put out the spent ones,
+        or leave a lingering one where its bolt landed, and fade those out."""
+        changed = self._update_lingering_lights(delta)
         lights = self._bolt_lights
-        if not lights:
-            return
-        live = self._bolt_positions if fio.projectile_count(self.logic) else {}
-        changed = False
+        live = self._bolt_positions if lights and fio.projectile_count(self.logic) else {}
         for tag in list(lights):
             light = lights[tag]
             pos = live.get(tag)
             if pos is None:
                 del lights[tag]
-                try:
-                    things = fio.things(self.logic)
-                    if light in things:
-                        things.remove(light)
-                except Exception:
-                    pass
+                linger = float(light.properties.get("_linger", 0.0) or 0.0)
+                if linger > 0.0:
+                    # Burning where it landed (it already stands there).
+                    self._lingering_lights.append({
+                        "light": light, "hold": linger, "fade": BOLT_LINGER_FADE,
+                        "base": float(light.properties.get("intensity",
+                                                           BOLT_LIGHT_INTENSITY))})
+                    continue
+                self._drop_light(light)
                 changed = True
                 continue
-            lp = light.pos
-            lp[0], lp[1], lp[2] = pos[0], pos[1], pos[2]
+            # Assigned, not changed in place: the renderer is told it moved.
+            light.pos = [pos[0], pos[1], pos[2]]
         if changed:
+            self._rebuild_entity_caches()
+
+    def _update_lingering_lights(self, delta: float) -> bool:
+        """Count down each lingering bolt light: it holds, then fades out and
+        is put out. True if any went out."""
+        gone = False
+        for entry in list(self._lingering_lights):
+            light = entry["light"]
+            if entry["hold"] > 0.0:
+                entry["hold"] -= delta
+                continue
+            entry["fade"] -= delta
+            if entry["fade"] <= 0.0:
+                self._lingering_lights.remove(entry)
+                self._drop_light(light)
+                gone = True
+                continue
+            light.properties["intensity"] = entry["base"] * entry["fade"] / BOLT_LINGER_FADE
+            _journal(light)
+        return gone
+
+    def _drop_light(self, light) -> None:
+        try:
+            things = fio.things(self.logic)
+            if light in things:
+                things.remove(light)
+        except Exception:
+            pass
+
+    def _clear_lingering_lights(self) -> None:
+        for entry in self._lingering_lights:
+            self._drop_light(entry["light"])
+        if self._lingering_lights:
+            self._lingering_lights = []
             self._rebuild_entity_caches()
 
     def overhead_player_weapon(self):

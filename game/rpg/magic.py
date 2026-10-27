@@ -63,6 +63,10 @@ DEFAULT_MAX_LEVEL = 5
 DEFAULT_LEVEL_POWER = 0.25
 DEFAULT_LEVEL_DURATION = 0.125
 DEFAULT_LEVEL_COST = 0.10
+#: A bolt's light at each level above the first: a slightly wider reach
+#: (+8%) and brighter (+15%). How long it lingers grows as a duration does.
+LIGHT_RADIUS_PER_LEVEL = 0.08
+LIGHT_BRIGHTNESS_PER_LEVEL = 0.15
 #: Effect kinds whose magnitude is an on/off switch (or "kill outright"), not
 #: an amount: a level never scales them.
 _FLAG_KINDS = {"knock", "wisp", "summon", "resurrect", "light", "night_eye",
@@ -88,7 +92,7 @@ class Spell:
                  element="magic", projectile_speed=900.0, color=None, visuals=None,
                  rarity=None, max_level=DEFAULT_MAX_LEVEL, xp_per_level=None,
                  level_power=DEFAULT_LEVEL_POWER, level_duration=DEFAULT_LEVEL_DURATION,
-                 level_cost=DEFAULT_LEVEL_COST, level=1):
+                 level_cost=DEFAULT_LEVEL_COST, level=1, linger=0.0):
         self.id = sid
         self.name = name
         self.school = sk.fold(school)  # sk.OFFENSIVE or sk.DEFENSIVE
@@ -114,6 +118,9 @@ class Spell:
         self.level_cost = float(level_cost)
         #: Which level these numbers are for (1 for the definition itself).
         self.level = int(level)
+        #: Seconds a bolt's light stays where the bolt lands before it fades
+        #: (0: it goes out with the bolt).
+        self.linger = max(0.0, float(linger or 0.0))
 
     def at_level(self, level: int) -> "Spell":
         """This spell as it is cast at *level* (1..max_level): each level above
@@ -140,7 +147,15 @@ class Spell:
         d["effects"] = effects
         d["cost"] = round(self.base_cost * (1.0 + self.level_cost * steps), 1)
         d["level"] = level
+        d["linger"] = round(self.linger * longer, 1)
         return Spell.from_dict(d)
+
+    def light_scale(self):
+        """``(radius, brightness)`` multipliers for this spell's bolt light at
+        its level: 1 at the first."""
+        steps = max(0, self.level - 1)
+        return (1.0 + LIGHT_RADIUS_PER_LEVEL * steps,
+                1.0 + LIGHT_BRIGHTNESS_PER_LEVEL * steps)
 
     def empowered(self, factor: float) -> "Spell":
         """A copy with every amount (not switches, not instant kills) x *factor*."""
@@ -187,6 +202,7 @@ class Spell:
             "rarity": self.rarity, "max_level": self.max_level,
             "xp_per_level": self.xp_per_level, "level_power": self.level_power,
             "level_duration": self.level_duration, "level_cost": self.level_cost,
+            "linger": self.linger,
         }
 
     @classmethod
@@ -203,7 +219,7 @@ class Spell:
             level_power=d.get("level_power", DEFAULT_LEVEL_POWER),
             level_duration=d.get("level_duration", DEFAULT_LEVEL_DURATION),
             level_cost=d.get("level_cost", DEFAULT_LEVEL_COST),
-            level=d.get("level", 1))
+            level=d.get("level", 1), linger=d.get("linger", 0.0))
 
 
 SPELLS: Dict[str, Spell] = {}
@@ -238,7 +254,7 @@ def for_caster(character, spell_id: str) -> Optional[Spell]:
 # Offensive: what harms or commands
 register(Spell("flare", "Flare", sk.OFFENSIVE, 12, PROJECTILE,
                [{"kind": "damage_health", "magnitude": 14, "duration": 0}],
-               "A bolt of fire.", element="fire", projectile_speed=1000))
+               "A bolt of fire.", element="fire", projectile_speed=1000, linger=20.0))
 register(Spell("firebolt", "Firebolt", sk.OFFENSIVE, 28, PROJECTILE,
                [{"kind": "damage_health", "magnitude": 30, "duration": 0}],
                "A searing bolt of flame.", element="fire", projectile_speed=1100))

@@ -484,7 +484,9 @@ class NpcMagic:
                                    max_dist=SPELL_MAX_RANGE, on_hit=_on_hit)
         attach = getattr(session, "_attach_bolt_light", None)
         if row is not None and attach is not None:
-            attach(row, start, SimpleNamespace(color=colour))
+            attach(row, start, SimpleNamespace(
+                color=colour, linger=getattr(spell, "linger", 0.0),
+                light_scale=getattr(spell, "light_scale", lambda: (1.0, 1.0))))
         # The cast and the bolt, as the player's look (game/magic_fx.py).
         fx = getattr(session, "magic_fx", None)
         if fx is not None:
