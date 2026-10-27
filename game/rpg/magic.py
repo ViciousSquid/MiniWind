@@ -142,6 +142,20 @@ class Spell:
         d["level"] = level
         return Spell.from_dict(d)
 
+    def empowered(self, factor: float) -> "Spell":
+        """A copy with every amount (not switches, not instant kills) x *factor*."""
+        d = self.to_dict()
+        effects = []
+        for e in self.effects or []:
+            e = dict(e)
+            mag = float(e.get("magnitude", 0))
+            if e.get("kind") not in _FLAG_KINDS and 1 < mag < 99999:
+                e["magnitude"] = round(mag * float(factor), 1)
+            effects.append(e)
+        d["effects"] = effects
+        d["level"] = self.level
+        return Spell.from_dict(d)
+
     def xp_to_level(self, level: int) -> int:
         """Experience it costs to raise this spell from *level* to the next
         (0 once it is at :attr:`max_level`)."""
@@ -210,7 +224,12 @@ def for_caster(character, spell_id: str) -> Optional[Spell]:
     if spell is None:
         return None
     levels = getattr(character, "spell_levels", None) or {}
-    return spell.at_level(int(levels.get(spell.id, 1)))
+    spell = spell.at_level(int(levels.get(spell.id, 1)))
+    # Alignment empowers a school: the good's healing and wards, the wicked's
+    # strikes (game.rpg.alignment.magic_power).
+    from . import alignment
+    factor = alignment.magic_power(getattr(character, "alignment", 0.0), spell.school)
+    return spell.empowered(factor) if factor != 1.0 else spell
 
 
 # ---------------------------------------------------------------------------

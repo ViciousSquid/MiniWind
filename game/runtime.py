@@ -49,6 +49,7 @@ from .rpg import heads
 from .rpg import attributes as attr
 from .rpg import charisma as rpg_cha
 from .rpg import fortune as rpg_fortune
+from .rpg import alignment as rpg_align
 from .ui.arrows import arrow_sprite
 from .rpg import daily as rpg_daily
 from .rpg import quests as _quests
@@ -268,6 +269,8 @@ BARK_RADIUS = 1800.0
 #: at or below this Charisma, and this much per point above it.
 CHARISMA_LEAD_FROM = 40
 CHARISMA_LEAD_PER_POINT = 0.006
+#: How near townsfolk must be for a slain monster to count as defending them.
+DEFEND_RADIUS = 600.0
 #: How long a thought (what an NPC is thinking, not saying) hangs over a head.
 THOUGHT_SECONDS = 3.5
 #: Two townsfolk talking: how long a rumour's opener is up (longer than an
@@ -713,6 +716,8 @@ class MiniwindSession(SettlementLaw):
             sight_test=self._law_visible, region_for=self._law_region,
             on_gossip=self._on_gossip)
         self.director.rumour_decay = self._rumour_decay
+        # The player's crimes and kindnesses move their alignment.
+        self.director.bus.subscribe(self._alignment_event)
         #: Accumulated game-hours since the last simulation tick, so rumour
         #: propagation and production advance on world time rather than frames.
         self._sim_hours = 0.0
@@ -3130,11 +3135,13 @@ class MiniwindSession(SettlementLaw):
         killer = (self.player_actor if by_player
                   else self._sim_actor_by_key(self._slug(p.get("_killed_by", "")))
                   or self._nearest_hostile(npc, DEFEND_SIGHT))
+        crime = (self._sim_is_crime_against(npc) if by_player else
+                 bool(killer is not None and self._sim_is_crime_against(npc)))
         self.director.emit(
             "death", actor=killer, target=npc, pos=list(npc.pos),
-            observers=self._sim_observers(),
-            crime=(self._sim_is_crime_against(npc) if by_player else
-                   bool(killer is not None and self._sim_is_crime_against(npc))))
+            observers=self._sim_observers(), crime=crime)
+        # What the killing makes of the killer (game/rpg/alignment.py).
+        self._alignment_kill(killer, npc, by_player, crime)
         # The kin-grief wound stays: it is the *authored relationship* reacting,
         # which the settlement already models, and it applies even to relatives
         # who were nowhere near and only hear of it later.
@@ -3427,6 +3434,7 @@ class MiniwindSession(SettlementLaw):
         self.game.character.bounty = self.law.total
         self.director.invalidate()
         self.notify(f"You pay {amount} gold to the watch of {region}. Your writ is sealed.", 4.0)
+        self._player_deed("atone")
         self._clear_arrest()
 
     def _begin_escort(self) -> None:
@@ -3580,8 +3588,10 @@ class MiniwindSession(SettlementLaw):
         return 50
 
     def _sim_on_bounty(self, amount: int, event, reporter_key: str) -> None:
-        """Testimony, including delayed rumours, opens a local writ."""
-        amount = max(0, int(amount))
+        """Testimony, including delayed rumours, opens a local writ -- dearer
+        for the wicked, cheaper for the good (rpg_align.bounty_mult)."""
+        amount = max(0, int(round(int(amount) * rpg_align.bounty_mult(
+            self.game.character.alignment))))
         if amount <= 0 or event is None:
             return
         self._law_sync()
@@ -4192,6 +4202,109 @@ class MiniwindSession(SettlementLaw):
         return out
 
     # ---------------------------------------------------------- conversation
+    # ------------------------------------------------------------ alignment
+    def _player_deed(self, deed, note=""):
+        """Move the player's alignment by *deed*; a big shift is announced."""
+        c = self.game.character
+        before = rpg_align.tier(c.alignment)
+        delta = rpg_align.player_deed(c, deed, self.clock.day, note)
+        if not delta:
+            return 0.0
+        text = rpg_align.DEEDS[deed][1]
+        self.game.message(f"Alignment {delta:+.1f}: you {text}.")
+        after = rpg_align.tier(c.alignment)
+        if after != before:
+            self.notify(f"You are now {after}.", 5.0)
+        elif abs(delta) >= 3:
+            self.notify(f"Alignment {delta:+.0f}: you {text}.", 3.0)
+        return delta
+
+    def _alignment_event(self, event) -> None:
+        """The simulation's record of what the player did (theft, assault,
+        healing, gifts) moves their alignment. Killings are judged in
+        :meth:`_alignment_kill`, where both bodies are to hand."""
+        if event.actor != PLAYER_KEY:
+            return
+        deed = {"theft": "theft", "lockpick": "lockpick", "attack": "assault"}.get(event.kind)
+        if deed is not None and not event.is_crime:
+            deed = None
+        if event.kind == "heal" and event.target and event.target != PLAYER_KEY:
+            deed = "heal_other"
+        elif event.kind == "gift":
+            deed = "gift"
+        if deed is not None:
+            self._player_deed(deed)
+
+    def _alignment_kill(self, killer, victim, by_player, crime) -> None:
+        """A death moves its killer's alignment -- the player's or an NPC's
+        -- by what the victim was. Killing something that was menacing the
+        defenceless counts double, and an NPC who sinks far enough falls from
+        grace and turns outlaw."""
+        vp = victim.properties
+        hostile = str(vp.get("aggression")) == "hostile"
+        if by_player:
+            deed = rpg_align.kill_deed(vp, hostile_to_killer=hostile, crime=crime)
+            if deed:
+                self._player_deed(deed)
+            if deed in ("slay_brigand", "slay_monster") and self._menaced_innocents(victim):
+                self._player_deed("defend")
+            return
+        kp = getattr(killer, "properties", None)
+        if not isinstance(kp, dict):
+            return
+        enemy = factions.is_hostile(kp.get("faction") or kp.get("team"),
+                                    vp.get("faction") or vp.get("team"))
+        deed = rpg_align.kill_deed(vp, hostile_to_killer=enemy or hostile)
+        if not deed:
+            return
+        _value, fell = rpg_align.npc_deed(kp, deed)
+        if fell:
+            self._fall_from_grace(killer)
+
+    def _menaced_innocents(self, victim) -> bool:
+        """Whether *victim* fell among townsfolk it threatened."""
+        for t in self.npcs():
+            tp = t.properties
+            if (t is victim or tp.get("dead") or self._is_combatant(t)
+                    or str(tp.get("aggression")) == "hostile"
+                    or str(tp.get("type", "")).lower() != "npc"):
+                continue
+            if self._dist2d(t.pos, victim.pos) <= DEFEND_RADIUS:
+                return True
+        return False
+
+    def _fall_from_grace(self, npc) -> None:
+        """An NPC whose deeds have made them evil leaves their people and
+        turns outlaw: a brigand from now on, hostile to their old friends."""
+        p = npc.properties
+        p["faction"] = p["team"] = "bandits"
+        p["aggression"] = "hostile"
+        p["combatant"] = True
+        p["triggered"] = False
+        p["awake"] = True
+        name = p.get("display_name") or p.get("name") or "Someone"
+        self.bark(npc, "No more pretending.")
+        ppos = self._player_pos()
+        if ppos is not None and self._dist2d(npc.pos, ppos) <= BARK_RADIUS:
+            self.notify(f"{name} has fallen from grace and turned outlaw.", 5.0)
+
+    def _with_reputation(self, tree, npc):
+        """*tree* with what this NPC has heard of the player's deeds before its
+        opening line -- a copy; nothing for an unremarkable reputation."""
+        line = rpg_align.greeting(self.game.character.alignment,
+                                  rpg_align.of_npc(npc.properties))
+        if not line or not isinstance(tree, dict):
+            return tree
+        start = tree.get("start")
+        node = (tree.get("nodes") or {}).get(start)
+        if not isinstance(node, dict):
+            return tree
+        import copy
+        tree = copy.deepcopy(tree)
+        node = tree["nodes"][start]
+        node["text"] = f"{line} {node.get('text', '')}".strip()
+        return tree
+
     def _rumour_decay(self, fact):
         """How fast talk about the player fades, by the player's Charisma:
         people doubt ill of the charming and repeat their kindnesses, and
@@ -5097,8 +5210,15 @@ class MiniwindSession(SettlementLaw):
                    default=CHARISMA_LEAD_FROM)
         leadership = max(0, lead - CHARISMA_LEAD_FROM) * CHARISMA_LEAD_PER_POINT
 
+        # The player's reputation: a hero steadies people, a butcher unnerves.
+        hearten = 0.0
+        ppos = self._player_pos()
+        if ppos is not None and self._dist2d(npc.pos, ppos) <= FLEE_SIGHT:
+            hearten = rpg_align.heartens(self.game.character.alignment)
+
         return (courage
                 + leadership
+                + hearten
                 + distance_factor
                 + n_guards * 0.35
                 + n_rallied * 0.2
@@ -6103,6 +6223,7 @@ class MiniwindSession(SettlementLaw):
         # The whole screen sinks into dark red as light pours up from the body.
         self.magic_fx.resurrection(_feet(target))
         self.notify(f"{name} rises again!")
+        self._player_deed("resurrect")
         self.add_floater("RAISED", kind="heal")
         return True
 
@@ -7359,6 +7480,7 @@ class MiniwindSession(SettlementLaw):
         if self._is_arrest_guard(npc) and npc is not self._arrest_guard:
             tree = self._law_payment_tree(npc, tree)
         tree = self._with_first_impression(tree, npc)
+        tree = self._with_reputation(tree, npc)
         if getattr(self, "living", None) is not None:
             tree = self.living.prepare_tree(tree, npc)
         tree = self._with_mind_topic(tree, npc)
@@ -7523,7 +7645,9 @@ class MiniwindSession(SettlementLaw):
         do not care what anyone looks like."""
         c = self.game.character
         chance = rpg_cha.repel_chance(rpg_cha.charisma_of(c))
-        if chance <= 0.0:
+        # An evil soul is one of their own (game/rpg/alignment.py).
+        kin = rpg_align.kinship(c.alignment)
+        if chance <= 0.0 and not kin:
             return
         ppos = self._player_pos()
         if ppos is None:
@@ -7543,7 +7667,8 @@ class MiniwindSession(SettlementLaw):
             if p.get("_repel_judged"):
                 continue
             p["_repel_judged"] = True
-            if self.rng.random() >= chance:
+            kindred = kin and rpg_align.of_npc(p) <= -30
+            if not kindred and (chance <= 0.0 or self.rng.random() >= chance):
                 continue
             p["aggression"] = "passive"
             p["triggered"] = True
@@ -7551,7 +7676,11 @@ class MiniwindSession(SettlementLaw):
             p.pop("_aggro_target", None)
             p["_repelled_until"] = now + REPEL_HOURS
             name = p.get("display_name", "The brigand")
-            self.notify(f"{name} takes one look at your face and wants no part of you.", 3.5)
+            if kindred:
+                self.notify(f"{name} nods to you: one of their own.", 3.5)
+            else:
+                self.notify(f"{name} takes one look at your face and wants no part of you.",
+                            3.5)
         # Courage returns with time.
         for t in self._actors:
             p = t.properties

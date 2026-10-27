@@ -99,6 +99,10 @@ class Character:
         #: The level the player has raised each known spell to (1 if absent);
         #: raised by spending experience (:meth:`upgrade_spell`).
         self.spell_levels: Dict[str, int] = {}
+        #: -100 (Villainous) .. +100 (Saintly), moved by deeds (game.rpg.alignment),
+        #: and the deeds that moved it, newest last.
+        self.alignment: float = 0.0
+        self.alignment_log: List[Dict] = []
         #: The 3d6 totals rolled at creation ({"strength", "endurance",
         #: "personality"}), which write the character's bio (game.rpg.bios).
         self.rolls: Dict[str, int] = {}
@@ -522,6 +526,8 @@ class Character:
             "sign_stat_bonuses": dict(getattr(self, "_sign_stat_bonuses", {})),
             "spell_practice": dict(self.spell_practice),
             "spell_levels": dict(self.spell_levels),
+            "alignment": round(self.alignment, 2),
+            "alignment_log": [dict(e) for e in self.alignment_log],
             "quick_weapons": list(self.quick_weapons),
             "strip": list(self.strip),
             "rolls": dict(self.rolls),
@@ -599,6 +605,9 @@ class Character:
         practice = data.get("spell_practice")
         if isinstance(practice, dict):
             c.spell_practice = {str(k): int(v) for k, v in practice.items()}
+        c.alignment = float(data.get("alignment", 0.0) or 0.0)
+        c.alignment_log = [dict(e) for e in (data.get("alignment_log") or [])
+                           if isinstance(e, dict)]
         levels = data.get("spell_levels")
         if isinstance(levels, dict):
             c.spell_levels = {str(k): max(1, int(v)) for k, v in levels.items()}

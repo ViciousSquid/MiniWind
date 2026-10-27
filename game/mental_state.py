@@ -105,6 +105,12 @@ def mood(props, target=None, confidence=None) -> Tuple[str, str]:
     return "calm", ""
 
 
+def _alignment_text(props) -> str:
+    from .rpg import alignment
+    value = alignment.of_npc(props)
+    return f"{alignment.tier(value)} ({value:+.0f})"
+
+
 def snapshot(thing, monster_state: Optional[dict] = None,
              session: Optional[object] = None,
              target_name: Optional[str] = None) -> Dict[str, Any]:
@@ -147,6 +153,7 @@ def snapshot(thing, monster_state: Optional[dict] = None,
         ("Strength", _fmt(_cha.core(props, _attr.STRENGTH))),
         ("Endurance", _fmt(_cha.core(props, _attr.ENDURANCE))),
         ("Charisma", _fmt(_cha.core(props, _attr.PERSONALITY))),
+        ("Alignment", _alignment_text(props)),
         ("Health", _fmt(_get(props, "health", default="?"))),
         ("Courage", _fmt(_get(props, "courage", default="?"))),
         ("Attack style", _fmt(_get(props, "attack_style", default="?"))),
