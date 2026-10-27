@@ -40,14 +40,14 @@ def test_inventory_strip_alone_keeps_mouse_look_captured():
 
 
 @pytest.mark.parametrize("key", [
-    "screen:character", "screen:spells", "screen:trade", "debug:tools",
+    "screen:inventory", "screen:character", "screen:spells", "screen:trade",
+    "debug:tools",
 ])
 def test_interactive_windows_release_cursor(key):
     assert _window_wants_cursor(_View(_Window(key)))
 
 
 @pytest.mark.parametrize("key", [
-    "screen:inventory",
     "screen:container",
     "screen:book",
     "dialogue",
