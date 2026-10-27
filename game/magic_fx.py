@@ -64,6 +64,9 @@ WARD_RIM = 0.9
 WARD_PULSE = 0.06
 WARD_PULSE_HZ = 0.7
 WARD_SHIMMER = 1.0
+#: The colours of fire, from the white-gold heart to the deep orange tips.
+FLAME_HOT = (1.0, 0.86, 0.42)
+FLAME_DEEP = (1.0, 0.36, 0.06)
 #: A hostile bolt ending this near the player struck the player.
 PLAYER_HIT_REACH = 110.0
 #: The resurrection's dark red wash: in, held, out (3 seconds in all).
@@ -373,6 +376,36 @@ class MagicFX:
         self._emit(rows)
         self._burst(pos, look["sparks"], c, 420.0, 0.7, 16.0, now=now)
         self._lens(pos, look.get("lens", 0.0), look["ring"] * 0.9, c, now=now)
+
+    def flames(self, pos, strength=1.0, size=1.0) -> None:
+        """A moment of fire at *pos* (a burning body, a fire on the ground):
+        tongues of flame licking upward, embers and a hot glow. Called a few
+        dozen times a second for as long as it burns; *strength* (0..1)
+        thins and shrinks the flames as the fire dies, so it fades out
+        rather than going out at once."""
+        strength = max(0.0, min(1.0, float(strength)))
+        if strength <= 0.0 or not self.near(pos):
+            return
+        now = self._clock()
+        r = self._rng
+        rows = []
+        for _ in range(1 + int(round(2 * strength))):
+            j = (r.uniform(-18, 18) * size, r.uniform(-6, 10) * size, r.uniform(-18, 18) * size)
+            p = (pos[0] + j[0], pos[1] + j[1], pos[2] + j[2])
+            hot = _mix(FLAME_HOT, FLAME_DEEP, r.random())
+            rows.append(self._row(p, MOTE, r.uniform(0.35, 0.6), 30.0 * size * (0.5 + strength / 2),
+                                  4.0, hot, 0.95 * strength,
+                                  (r.uniform(-12, 12), r.uniform(70, 130) * size,
+                                   r.uniform(-12, 12)), grav=60.0, now=now))
+        if r.random() < 0.35 * strength:
+            rows.append(self._row((pos[0], pos[1] + 30.0 * size, pos[2]), MOTE, 1.1, 6.0, 1.0,
+                                  FLAME_HOT, strength,
+                                  (r.uniform(-40, 40), r.uniform(90, 170), r.uniform(-40, 40)),
+                                  grav=-40.0, drag=0.8, now=now))
+        if r.random() < 0.25:
+            rows.append(self._row(pos, FLASH, 0.2, 60.0 * size, 80.0 * size, FLAME_DEEP,
+                                  0.35 * strength, now=now))
+        self._emit(rows)
 
     def heal(self, feet, colour=(120, 255, 150)) -> None:
         """Healing light: a ring at the *feet* and motes spiralling up."""

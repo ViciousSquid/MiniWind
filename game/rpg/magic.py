@@ -73,6 +73,10 @@ LIGHT_BRIGHTNESS_PER_LEVEL = 0.15
 #: an amount: a level never scales them.
 _FLAG_KINDS = {"knock", "wisp", "summon", "resurrect", "light", "night_eye",
                "invisibility", "cure_disease", "detect_life", "telekinesis"}
+#: Effect kinds whose magnitude is so much *per level* and whose duration is
+#: fixed: a level-3 Flare's fire burns 3 x 2 a second, still for 5 seconds
+#: (game/burning.py).
+_PER_LEVEL_KINDS = {"burn"}
 
 
 def default_rarity(cost) -> str:
@@ -140,6 +144,10 @@ class Spell:
         for e in self.effects or []:
             e = dict(e)
             mag = float(e.get("magnitude", 0))
+            if e.get("kind") in _PER_LEVEL_KINDS:
+                e["magnitude"] = round(mag * level, 1)
+                effects.append(e)
+                continue
             if e.get("kind") not in _FLAG_KINDS and 1 < mag < 99999:
                 e["magnitude"] = round(mag * power, 1)
             if float(e.get("duration", 0)) > 0:
@@ -270,8 +278,11 @@ def for_caster(character, spell_id: str) -> Optional[Spell]:
 # ---------------------------------------------------------------------------
 # Offensive: what harms
 register(Spell("flare", "Flare", sk.OFFENSIVE, 12, PROJECTILE,
-               [{"kind": "damage_health", "magnitude": 14, "duration": 0}],
-               "A bolt of fire.", element="fire", projectile_speed=1000, linger=20.0))
+               [{"kind": "damage_health", "magnitude": 14, "duration": 0},
+                {"kind": "burn", "magnitude": 2, "duration": 5}],
+               "A bolt of fire that sets alight whatever it strikes, or starts "
+               "a small fire where it lands.",
+               element="fire", projectile_speed=1000, linger=20.0))
 register(Spell("firebolt", "Firebolt", sk.OFFENSIVE, 28, PROJECTILE,
                [{"kind": "damage_health", "magnitude": 30, "duration": 0}],
                "A searing bolt of flame.", element="fire", projectile_speed=1100))
