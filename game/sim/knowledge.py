@@ -278,16 +278,21 @@ def decay(store, key: str, days: int = 1) -> int:
     return len(kept)
 
 
-def describe(fact: Dict) -> str:
-    """A display-ready line for the inspector and gossip dialogue."""
+def phrase(fact: Dict) -> str:
+    """What a fact says happened: "Rufus stole bread from Bram"."""
     from .events import WorldEvent
     ev = WorldEvent(fact.get("kind", ""), actor_name=fact.get("actor_name", ""),
                     target_name=fact.get("target_name", ""),
                     data={"item": fact.get("item", "")})
-    phrase = ev.describe()
+    return ev.describe()
+
+
+def describe(fact: Dict) -> str:
+    """A display-ready line for the inspector and gossip dialogue."""
+    phrase_ = phrase(fact)
     src = SOURCE_PHRASE.get(fact.get("source", ""), fact.get("source", ""))
     pct = int(round(float(fact.get("certainty", 0.0)) * 100))
-    return f"{phrase} — {src}, {pct}% sure (day {fact.get('day', 0)})"
+    return f"{phrase_} — {src}, {pct}% sure (day {fact.get('day', 0)})"
 
 
 def summary(store, key: str, limit: int = 8) -> List[str]:

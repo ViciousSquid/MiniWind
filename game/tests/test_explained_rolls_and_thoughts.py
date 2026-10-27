@@ -166,3 +166,156 @@ def test_thoughts_can_be_turned_off(config):
     s = _session([npc], _FakePlayer([0, 0, 0]))
     s._update_thoughts()
     assert s.live_thoughts() == []
+
+
+# ----------------------------------------------------- the other side's dice
+def _armoured():
+    from ..rpg.character import Character
+    c = Character()
+    c.attrs["agility"] = 100          # Armour Class from agility, no armour needed
+    return c
+
+
+def test_a_blow_against_the_player_is_the_attacker_rolling_to_hit():
+    from ..rpg import combat, equipment as eq
+    c = _armoured()
+    deflect = eq.deflect_chance(c)
+    assert deflect > 0
+    roller = diceroll.DiceRoller(rng=random.Random(5))
+    seen = []
+    roller.add_roll_listener(lambda result, source, ctx: seen.append((result, ctx)))
+    for _ in range(60):
+        res = combat.resolve_incoming(c, 10.0, dice=roller, attacker="Bandit",
+                                      rng=random.Random(1))
+        roll, ctx = seen[-1]
+        assert roll["label"] == "Bandit rolls to hit you"
+        assert roll["target"] == check_target(1.0 - deflect)
+        assert ctx["quiet"] and ctx["against_player"]
+        assert res.get("deflected", False) == (not roll["success"])
+
+
+def test_with_no_armour_class_to_beat_nothing_is_rolled():
+    from ..rpg import combat
+    from ..rpg.character import Character
+    roller = diceroll.DiceRoller(rng=random.Random(5))
+    seen = []
+    roller.add_roll_listener(lambda *a: seen.append(a))
+    c = Character()
+    c.attrs["agility"] = 40
+    combat.resolve_incoming(c, 10.0, dice=roller, attacker="Wolf")
+    assert seen == []
+
+
+def test_their_rolls_go_in_the_log_coloured_for_the_player_not_the_panel(config):
+    config.read_dict({"GAME": {"visualise_dice_rolls": "True"}})
+    s = _session([], _FakePlayer([0, 0, 0]))
+    s.game.dice.request_roll("1d20", target=30, source="combat.incoming",
+                             context={"label": "Bandit rolls to hit you", "quiet": True,
+                                      "against_player": True})
+    assert s.dice_animation is None
+    assert s.roll_log[-1]["success"] is True        # they missed: good news
+
+
+# ------------------------------------------------------ odds before acting
+def test_the_odds_shown_are_the_odds_rolled():
+    from ..rpg import combat
+    from ..rpg.character import Character
+    c = Character()
+    target = {"agility": 30}
+    odds = combat.attack_odds(c, target)
+    fatigue = c.stamina / c.max_stamina
+    assert odds["hit_chance"] == combat.hit_chance(c, c.skill("blade"), 30, fatigue)
+    assert odds["hit_target"] == check_target(odds["hit_chance"])
+    assert odds["crit_target"] == check_target(combat.critical_chance(c))
+
+
+@pytest.mark.qt
+def test_the_nameplate_says_what_the_player_needs(qt_app):
+    from ..rpg.character import Character
+    from ..ui import hud
+    c = Character()
+    line = hud._target_odds(c, {"agility": 30})
+    assert line.startswith("Sure hit") and "Critical: need" in line
+    c.active_weapon_kind = "bow"
+    assert hud._target_odds(c, {"agility": 30}).startswith("To hit: need ")
+
+
+# ------------------------------------------------------------ conversations
+def _fact(**kw):
+    base = {"kind": "theft", "actor": "player", "actor_name": "Rufus",
+            "target": "bram", "target_name": "Bram", "item": "bread",
+            "source": "told", "certainty": 0.8, "e": 4}
+    base.update(kw)
+    return base
+
+
+def test_a_rumour_is_passed_on_in_words():
+    from .. import chatter
+    opener, reply = chatter.gossip_lines(_fact(), "Ann", "Tom")
+    assert "Rufus stole bread from Bram" in opener or "rufus stole bread" in opener.lower()
+    assert reply in chatter._REPLIES["property"]
+    _o, reply = chatter.gossip_lines(_fact(kind="death"), "Ann", "Tom")
+    assert reply in chatter._REPLIES["grave"]
+
+
+def test_gossip_is_said_aloud_with_a_reply(config):
+    ann = _npc({"name": "Ann"})
+    tom = _npc({"name": "Tom"})
+    s = _session([ann, tom], _FakePlayer([0, 0, 0]))
+    s._on_gossip(ann, tom, _fact())
+    s.__dict__["_bark_queue"] = [(0.0, t, x) for _at, t, x in s._bark_queue]  # due now
+    said = {id(thing): text for thing, text, _left in s.live_barks()}
+    assert "Bram" in said[id(ann)]
+    assert id(tom) in said
+
+
+def test_small_talk_suits_the_hour():
+    from .. import chatter
+    opener, reply = chatter.small_talk("Ann", "Tom", 7.0)
+    assert (opener, reply) in [(o.format(a="Ann", b="Tom"), r.format(a="Ann", b="Tom"))
+                               for o, r in chatter._SMALL_TALK["morning"]]
+
+
+def test_two_idle_neighbours_pass_the_time_of_day(config):
+    ann = _npc({"name": "Ann", "sched_state": "IDLE"})
+    tom = _npc({"name": "Tom", "sched_state": "IDLE"})
+    s = _session([ann, tom], _FakePlayer([0, 0, 0]))
+    s._chat_rng = random.Random(0)
+    s._chat_rng.random = lambda: 0.0           # this pass, somebody chats
+    s._update_small_talk()
+    talkers = [thing for thing, _text, _left in s.live_barks()]
+    assert len(talkers) == 1 and len(s._bark_queue) == 1
+    s._update_small_talk()                      # both on cooldown now
+    assert len(s._bark_queue) == 1
+
+
+# ---------------------------------------------------- what's on your mind?
+def test_an_npc_explains_what_it_is_doing_and_what_it_knows():
+    text = mental_state.speak_mind(
+        {"name": "Tom", "sched_state": "GOING_HOME", "_need_reason": "hungry",
+         "need_fatigue": 0.9},
+        facts=[_fact(source="witnessed", certainty=0.9)])
+    assert text.split(". ")[0] + "." in mental_state._THOUGHTS["hungry"] or \
+        any(line in text for line in mental_state._THOUGHTS["hungry"])
+    assert "dead on my feet" in text
+    assert "I saw it with my own eyes: you stole bread from Bram." in text
+
+
+def test_an_idle_npc_with_nothing_on_its_mind_says_so():
+    assert mental_state.speak_mind({"sched_state": "WORKING"}) == \
+        "Just working. Somebody has to."
+
+
+def test_whats_on_your_mind_is_offered_in_conversation(config):
+    tom = _npc({"name": "Tom", "sched_state": "WORKING"})
+    s = _session([tom], _FakePlayer([0, 0, 0]))
+    tree = {"start": "g", "nodes": {"g": {"text": "Hello.", "responses": [
+        {"text": "Bye.", "goto": "END"}]}}}
+    out = s._with_mind_topic(tree, tom)
+    responses = out["nodes"]["g"]["responses"]
+    assert responses[0] == {"text": "What's on your mind?", "goto": "_mind"}
+    assert responses[-1]["text"] == "Bye."
+    assert out["nodes"]["_mind"]["text"] == "Just working. Somebody has to."
+    assert tree["nodes"]["g"]["responses"] == [{"text": "Bye.", "goto": "END"}]
+    hostile = _npc({"name": "Brute", "aggression": "hostile"})
+    assert s._with_mind_topic(tree, hostile) is tree

@@ -491,3 +491,74 @@ def thought(props, target_name: Optional[str] = None) -> Tuple[str, str]:
     if state in _THOUGHTS:
         return line(state)
     return state.lower(), ""
+
+
+# ---------------------------------------------------------------------------
+# "What's on your mind?": an actor explaining itself to the player
+# ---------------------------------------------------------------------------
+#: What somebody busy with nothing in particular says they are about.
+_ROUTINE_MIND = {
+    "WORKING": "Just working. Somebody has to.",
+    "GOING_TO_WORK": "Off to work, same as every day.",
+    "GOING_HOME": "Heading home. It's been a long day.",
+    "IDLE": "Not much. Taking it easy for a moment.",
+    "WANDER": "Just stretching my legs.",
+    "PATROL": "Keeping the peace, as ever.",
+    "SLEEPING": "I was asleep, if you must know.",
+}
+
+#: How a known fact is brought up, by how the actor came to know it.
+_KNOWN_FROM = {
+    "witnessed": "I saw it with my own eyes: {what}.",
+    "heard": "I heard it happen: {what}.",
+    "told": "People are saying {what}.",
+}
+
+
+def speak_mind(props, facts=(), intents=(), player_key: str = "player") -> str:
+    """What an actor says when the player asks what is on its mind: what it
+    is doing and why, what is pressing on it, and the most notable thing it
+    knows -- the same reasons that drive its behaviour, in its own words.
+
+    *facts* are its knowledge (:func:`game.sim.knowledge.facts`), *intents*
+    its ranked intents; both optional. Pure.
+    """
+    if not isinstance(props, dict):
+        return "..."
+    parts = []
+    key, now = thought(props)
+    state = str(_get(props, "sched_state", default="")).upper()
+    if not now or key == state:
+        # Plain routine: the overhead thought is a word or two ("Busy,
+        # busy."); asked to their face, people say a little more.
+        now = _ROUTINE_MIND.get(state, now or "Nothing much.")
+    parts.append(now)
+    said = {now}
+
+    hunger = float(_get(props, "need_hunger", default=0.0) or 0.0)
+    fatigue = float(_get(props, "need_fatigue", default=0.0) or 0.0)
+    if hunger >= MOOD_NEED_LEVEL and props.get("_need_reason") != "hungry":
+        parts.append("I could eat a horse, mind.")
+    if fatigue >= MOOD_NEED_LEVEL and props.get("_need_reason") != "exhausted":
+        parts.append("And I'm dead on my feet.")
+
+    for intent in intents or ():
+        reason = _plain_reason(getattr(intent, "reason", "")) + "."
+        if getattr(intent, "reaction", "") != "IGNORE" and reason not in said and reason != ".":
+            parts.append(reason)
+            said.add(reason)
+            break
+
+    from .sim import events, knowledge
+    notable = [f for f in facts or () if knowledge.shareable(f)]
+    if notable:
+        top = max(notable, key=lambda f: float(f.get("certainty", 0.0))
+                  * float(events.kind_spec(f.get("kind", ""))["severity"]))
+        if top.get("actor") == player_key:
+            top = dict(top, actor_name="you")
+        what = knowledge.phrase(top)
+        line = _KNOWN_FROM.get(str(top.get("source")), _KNOWN_FROM["told"]).format(what=what)
+        if float(top.get("certainty", 0.0)) < 0.5:
+            line = line[:-1] + " — though I can't swear to it."
+        parts.append(line)
+    return " ".join(parts)

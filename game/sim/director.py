@@ -125,7 +125,8 @@ class Director:
                  disposition: Optional[Callable[[Dict, str], int]] = None,
                  on_bounty: Optional[Callable[[int, WorldEvent, str], None]] = None,
                  on_message: Optional[Callable[[str], None]] = None,
-                 on_witness=None, sight_test=None, region_for=None):
+                 on_witness=None, sight_test=None, region_for=None,
+                 on_gossip=None):
         self.store = store
         self.clock = clock
         self.rng = rng
@@ -135,6 +136,9 @@ class Director:
         self.on_witness = on_witness
         self.sight_test = sight_test
         self.region_for = region_for
+        #: ``on_gossip(speaker, listener, fact)``: somebody just told somebody
+        #: something they did not know (the game voices it).
+        self.on_gossip = on_gossip
         self.ctx = appraisal.Context(hostile=hostile, disposition=disposition,
                                      store=store)
         #: actor key -> ranked intents (recomputed when their knowledge changes)
@@ -391,6 +395,11 @@ class Director:
                 if back:
                     self._dirty.add(skey)
                     self._on_learned(speaker, skey, back[0])
+                if self.on_gossip is not None:
+                    if passed:
+                        self.on_gossip(speaker, listener, passed[0])
+                    elif back:
+                        self.on_gossip(listener, speaker, back[0])
                 if passed or back:
                     exchanges += 1
                     ev = self.bus.get((passed or back)[0].get("e", 0))

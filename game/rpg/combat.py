@@ -25,7 +25,7 @@ from . import attributes as attr
 from . import skills as sk
 from . import items
 from . import equipment as eq
-from ..diceroll import DiceRoller, roll_check
+from ..diceroll import DiceRoller, check_target, roll_check
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +68,35 @@ def _hit_why(character, skill_id: str, skill: int, target_agility: int,
     if eq.dual_wielding(character):
         parts.append("two weapons")
     return f"{', '.join(parts)} — {chance * 100:.0f}%"
+
+
+def critical_chance(character) -> float:
+    """Probability a landed blow is a critical (x1.5 damage), from Luck."""
+    return 0.05 + character.attrs.get(attr.LUCK, 40) * 0.0015
+
+
+def attack_odds(character, target_props: Dict, hand: str = "main",
+                sure_hit: bool = False) -> Dict:
+    """The odds of attacking *target_props* right now, before the swing, as
+    the HUD shows them over a target.
+
+    ``{"hit_chance", "hit_target", "sure_hit", "crit_chance", "crit_target",
+    "why"}`` -- the same numbers :func:`player_attack` will roll against. A
+    *sure_hit* (a lone melee weapon in reach) needs no hit roll at all.
+    """
+    w = eq.hand_weapon(character, hand)
+    skill_id = w.get("skill", sk.BLADE) if w else sk.BLADE
+    skill = character.skill(skill_id)
+    target_agi = int(target_props.get("agility", 24))
+    fatigue = character.stamina / character.max_stamina if character.max_stamina else 1.0
+    chance = hit_chance(character, skill, target_agi, fatigue)
+    if eq.dual_wielding(character):
+        chance *= DUAL_WIELD_ACCURACY
+    crit = critical_chance(character)
+    return {"hit_chance": chance, "hit_target": check_target(chance),
+            "sure_hit": bool(sure_hit),
+            "crit_chance": crit, "crit_target": check_target(crit),
+            "why": _hit_why(character, skill_id, skill, target_agi, fatigue, chance)}
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +200,7 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         result["sneak"] = True
 
     # --- critical (luck-weighted) ---
-    crit_chance = 0.05 + character.attrs.get(attr.LUCK, 40) * 0.0015
+    crit_chance = critical_chance(character)
     if dice is not None:
         crit_roll = roll_check(
             dice, crit_chance, "Roll for a critical hit", source="combat.critical",
@@ -196,12 +225,18 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
 # Player incoming damage mitigation
 # ---------------------------------------------------------------------------
 def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physical",
-                     blocking: bool = False, rng: Optional[random.Random] = None) -> Dict:
+                     blocking: bool = False, rng: Optional[random.Random] = None,
+                     dice: Optional[DiceRoller] = None, attacker: str = "") -> Dict:
     """Apply armour, shield, block and resistance to *raw_damage*.
 
     Returns ``{"final", "blocked", "armor", "resisted", "armor_class"}``. Does
     **not** subtract from health (the caller does, so it can also fire death
     logic); does return the armour class worn so the caller can train the skill.
+
+    With *dice*, the Armour Class check is shown as the *attacker* rolling to
+    hit the player ("Bandit rolls to hit you: 9 (need 13+)"): a miss is a blow
+    the armour turned aside. A ``quiet`` roll -- the roll log, not the dice
+    panel, so the player's own rolls stay on screen mid-fight.
     """
     from . import races
     rng = rng or random
@@ -213,7 +248,18 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
     # completely before anything else is weighed.
     if damage_kind == "physical" and dmg > 0:
         result["ac"] = eq.armour_class(character)
-        if rng.random() < eq.deflect_chance(character):
+        deflect = eq.deflect_chance(character)
+        if dice is not None and deflect > 0.0:
+            roll = roll_check(
+                dice, 1.0 - deflect, f"{attacker or 'Your foe'} rolls to hit you",
+                source="combat.incoming",
+                why=f"against your Armour Class {result['ac']}",
+                context={"quiet": True, "against_player": True})
+            result["defence_roll"] = roll
+            deflected = not roll["success"]
+        else:
+            deflected = rng.random() < deflect
+        if deflected:
             result["deflected"] = True
             result["final"] = 0.0
             return result

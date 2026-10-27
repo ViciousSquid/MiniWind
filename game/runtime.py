@@ -66,6 +66,7 @@ from .rpg import inventory as inv
 from .rpg import skills as sk
 from .rpg.game_state import GameState
 from .diceroll import describe_roll
+from . import chatter
 from . import mental_state
 from .diceroll_anim import SHAKE_DURATION, ROLL_DURATION, FADE_DURATION
 from . import npc_archery
@@ -263,6 +264,19 @@ BARK_SECONDS = 3.0
 BARK_RADIUS = 1800.0
 #: How long a thought (what an NPC is thinking, not saying) hangs over a head.
 THOUGHT_SECONDS = 3.5
+#: Two townsfolk talking: how long a rumour's opener is up (longer than an
+#: ordinary bark: it says more), how close they must be to pass the time of
+#: day, how long before either does so again (s), and the chance per decision
+#: pass that some nearby pair does. A reply comes as the opener fades, so the
+#: two lines read in turn rather than at once.
+GOSSIP_SECONDS = 4.5
+BARK_FADE = 0.4
+CHAT_RADIUS = 160.0
+CHAT_COOLDOWN = 60.0
+CHAT_CHANCE = 0.04
+#: The routines in which somebody has time to chat.
+CHAT_STATES = frozenset(("", "IDLE", "WANDER", "WORKING", "GOING_TO_WORK",
+                         "GOING_HOME", "PATROL"))
 STOP_SHOUTS = ("Stop right there!", "Halt! In the name of the law!",
                "You there! Stop!", "That's far enough, criminal.")
 BREAK_UP_SHOUTS = ("Break it up!", "Oi! Enough of that!", "Stop this at once!",
@@ -666,7 +680,8 @@ class MiniwindSession(SettlementLaw):
         self.dice_type_index = len(DICE_TYPES) - 1
         self.dice_animation: Optional[Dict] = None
         #: Recent explained rolls ("Roll to hit: 7 (need 14+) — FAILED"),
-        #: newest last, for the HUD's roll log.
+        #: newest last, for the HUD's roll log; "success" is whether the roll
+        #: went the player's way.
         self.roll_log: List[Dict] = []
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
@@ -689,7 +704,8 @@ class MiniwindSession(SettlementLaw):
             on_witness=lambda event, seen: self.notify(
                 "Someone witnessed your crime." if seen else
                 "Someone heard the disturbance.", 4.0),
-            sight_test=self._law_visible, region_for=self._law_region)
+            sight_test=self._law_visible, region_for=self._law_region,
+            on_gossip=self._on_gossip)
         #: Accumulated game-hours since the last simulation tick, so rumour
         #: propagation and production advance on world time rather than frames.
         self._sim_hours = 0.0
@@ -723,17 +739,20 @@ class MiniwindSession(SettlementLaw):
         except (AttributeError, TypeError, ValueError):
             return True
 
-    def _on_dice_roll(self, result: Dict, _source: str, _context: Dict) -> None:
+    def _on_dice_roll(self, result: Dict, _source: str, context: Dict) -> None:
         """Log what a labelled roll was for and whether it passed, and start
-        the HUD presentation for every roll when visualisation is enabled."""
+        the HUD presentation for every roll when visualisation is enabled. A
+        ``quiet`` roll (somebody else's, against the player) is logged only."""
         if result.get("label"):
             line = describe_roll(result)
             self.game.message(line)
+            good = result.get("success")
+            if good is not None and (context or {}).get("against_player"):
+                good = not good          # their roll succeeding is bad news
             self.roll_log.append({"text": line, "why": str(result.get("why", "")),
-                                  "success": result.get("success"),
-                                  "t": ROLL_LOG_SECONDS})
+                                  "success": good, "t": ROLL_LOG_SECONDS})
             del self.roll_log[:-ROLL_LOG_MAX]
-        if not self._visualise_dice_rolls_enabled():
+        if (context or {}).get("quiet") or not self._visualise_dice_rolls_enabled():
             return
         current = self.dice_animation
         if current is not None and current.get("elapsed", 0.0) == 0.0:
@@ -899,7 +918,9 @@ class MiniwindSession(SettlementLaw):
             return 0.0
         res = rpg_combat.resolve_incoming(c, float(raw_damage) * self.incoming_mult,
                                           damage_kind=damage_kind,
-                                          blocking=self._blocking, rng=self.rng)
+                                          blocking=self._blocking, rng=self.rng,
+                                          dice=self.game.dice,
+                                          attacker=self._attacker_name())
         final = res["final"]
         # armour training whenever armour is tested -- a deflected blow too
         worn = res["armor_class"]
@@ -924,6 +945,15 @@ class MiniwindSession(SettlementLaw):
             c._last_harm = getattr(fio.player_runtime(self.logic), "last_damage", None)
         self.add_floater(f"-{int(round(final))}", kind="hurt")
         return final
+
+    def _attacker_name(self) -> str:
+        """Who dealt the blow the player is taking, as the engine recorded it."""
+        last = getattr(fio.player_runtime(self.logic), "last_damage", None)
+        source = last[0] if isinstance(last, tuple) and last else None
+        props = getattr(source, "properties", None)
+        if isinstance(props, dict):
+            return str(props.get("display_name") or props.get("name") or "")
+        return ""
 
     def _sync_engine_health(self, full=False) -> None:
         c = self.game.character
@@ -1270,6 +1300,7 @@ class MiniwindSession(SettlementLaw):
                         continue
                 self._decide(npc)
             self._update_thoughts()
+            self._update_small_talk()
         for i, npc in enumerate(npcs):
             tier = npc_tiers[i]
             if tier >= TIER_DISTANT:
@@ -4081,10 +4112,24 @@ class MiniwindSession(SettlementLaw):
         barks = self.__dict__.setdefault("barks", {})
         barks[id(thing)] = (thing, str(text), _time.monotonic() + float(seconds))
 
+    def bark_later(self, thing, text, delay: float) -> None:
+        """Have *thing* say *text* after *delay* seconds -- the reply in an
+        exchange, so the two lines are not said at once."""
+        import time as _time
+        self.__dict__.setdefault("_bark_queue", []).append(
+            (_time.monotonic() + float(delay), thing, str(text)))
+
     def live_barks(self):
         """``[(thing, text, seconds_left)]`` still being said."""
         import time as _time
         now = _time.monotonic()
+        queue = self.__dict__.get("_bark_queue")
+        if queue:
+            due = [q for q in queue if q[0] <= now]
+            self._bark_queue = [q for q in queue if q[0] > now]
+            for _at, thing, text in due:
+                if not thing.properties.get("dead"):
+                    self.bark(thing, text)
         barks = self.__dict__.get("barks") or {}
         out = []
         for key, (thing, text, until) in list(barks.items()):
@@ -4093,6 +4138,52 @@ class MiniwindSession(SettlementLaw):
                 continue
             out.append((thing, text, until - now))
         return out
+
+    # ---------------------------------------------------------- conversation
+    def _on_gossip(self, speaker, listener, fact) -> None:
+        """The simulation just had *speaker* tell *listener* something new:
+        say it aloud, and the reply after it, when the player is near."""
+        if self.__dict__.get("barks", {}).get(id(speaker)):
+            return                          # already mid-sentence
+        names = [str(t.properties.get("display_name") or t.properties.get("name") or "")
+                 for t in (speaker, listener)]
+        opener, reply = chatter.gossip_lines(fact, *names)
+        self.bark(speaker, opener, GOSSIP_SECONDS)
+        if id(speaker) in self.__dict__.get("barks", {}):
+            self.bark_later(listener, reply, GOSSIP_SECONDS - BARK_FADE)
+
+    def _update_small_talk(self) -> None:
+        """Now and then two townsfolk near the player who pass each other,
+        with nothing more pressing on, pass the time of day."""
+        rng = self.__dict__.setdefault("_chat_rng", random.Random())
+        if rng.random() >= CHAT_CHANCE:
+            return
+        import time as _time
+        now = _time.monotonic()
+        talking = self.__dict__.get("barks") or {}
+        free = []
+        for npc in self._things_of_type("npc"):
+            p = npc.properties
+            if (p.get("dead") or p.get("_sim_tier", TIER_NEAR) > TIER_NEAR
+                    or str(p.get("aggression")) == "hostile"
+                    or str(p.get("sched_state", "")).upper() not in CHAT_STATES
+                    or p.get("_chat_until", 0.0) > now or id(npc) in talking):
+                continue
+            free.append(npc)
+        rng.shuffle(free)
+        for i, a in enumerate(free):
+            for b in free[i + 1:]:
+                if self._dist2d(a.pos, b.pos) > CHAT_RADIUS:
+                    continue
+                names = [str(t.properties.get("display_name")
+                             or t.properties.get("name") or "friend") for t in (a, b)]
+                opener, reply = chatter.small_talk(names[0], names[1], self.clock.hour)
+                self.bark(a, opener)
+                if id(a) not in self.__dict__.get("barks", {}):
+                    return                  # too far from the player to be heard
+                self.bark_later(b, reply, BARK_SECONDS - BARK_FADE)
+                a.properties["_chat_until"] = b.properties["_chat_until"] = now + CHAT_COOLDOWN
+                return
 
     # -------------------------------------------------------------- thoughts
     def _npc_thoughts_enabled(self) -> bool:
@@ -7191,6 +7282,7 @@ class MiniwindSession(SettlementLaw):
         tree = self._with_first_impression(tree, npc)
         if getattr(self, "living", None) is not None:
             tree = self.living.prepare_tree(tree, npc)
+        tree = self._with_mind_topic(tree, npc)
         self.dialogue = DialogueRunner(
             tree, store=self.store,
             give_item=lambda item: inv.add_item(self.game.character.inventory, item),
@@ -7205,6 +7297,36 @@ class MiniwindSession(SettlementLaw):
         # Note the conversation for any quest 'talk to X' objective.
         self.record_talk(npc)
         return True
+
+    def _with_mind_topic(self, tree, npc):
+        """*tree* with "What's on your mind?" among the opening responses -- a
+        copy -- answered by the NPC explaining what it is doing and why, from
+        the same state and knowledge its behaviour runs on. Not offered by
+        anyone hostile, or during an arrest."""
+        p = npc.properties
+        if (not isinstance(tree, dict) or str(p.get("aggression")) == "hostile"
+                or npc is self._arrest_guard):
+            return tree
+        start = tree.get("start")
+        nodes = tree.get("nodes") or {}
+        if start not in nodes:
+            return tree
+        try:
+            facts = sim_knowledge.facts(self.store, actor_key(npc))
+        except Exception:
+            facts = []
+        try:
+            intents = self.director.intents(npc)
+        except Exception:
+            intents = []
+        import copy
+        tree = copy.deepcopy(tree)
+        tree["nodes"]["_mind"] = {
+            "text": mental_state.speak_mind(p, facts, intents, PLAYER_KEY),
+            "responses": [{"text": "I see.", "goto": start}]}
+        resp = tree["nodes"][start].setdefault("responses", [])
+        resp.insert(max(0, len(resp) - 1), {"text": "What's on your mind?", "goto": "_mind"})
+        return tree
 
     def _with_first_impression(self, tree, npc):
         """*tree* with the NPC's reaction to the player's face put in front of

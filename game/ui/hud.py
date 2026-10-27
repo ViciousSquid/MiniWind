@@ -15,7 +15,7 @@ from PyQt5.QtGui import QColor, QFontMetrics, QPixmap, QPolygon, QPen, QConicalG
 from PyQt5.QtCore import QPoint, QPointF
 
 from .. import fio
-from ..diceroll import describe_roll
+from ..diceroll import check_target, describe_roll
 from . import theme as T
 from ..rpg import equipment as eq
 from ..rpg import items as rpg_items
@@ -270,15 +270,37 @@ def draw_barks(painter, session, viewport, width, height):
         if sp is None:
             continue
         alpha = int(255 * max(0.0, min(1.0, left / 0.4)))
-        w = min(320, fm.horizontalAdvance(text) + 16)
-        rect = QRect(int(sp[0] - w / 2), int(sp[1] - 26), w, 22)
+        lines = _plate_lines(fm, text, PLATE_MAX_W - 16)
+        w = max(fm.horizontalAdvance(line) for line in lines) + 16
+        h = 6 + fm.height() * len(lines)
+        rect = QRect(int(sp[0] - w / 2), int(sp[1] - 4 - h), w, h)
         painter.setPen(QPen(QColor(168, 142, 84, alpha), 1))
         painter.setBrush(QColor(0, 0, 0, int(alpha * 0.72)))
         painter.drawRoundedRect(rect, 6, 6)
         painter.setPen(QColor(247, 238, 214, alpha))
-        painter.drawText(rect, int(Qt.AlignCenter),
-                         fm.elidedText(text, Qt.ElideRight, w - 10))
+        painter.drawText(rect, int(Qt.AlignCenter), "\n".join(lines))
     painter.restore()
+
+
+#: The widest a speech plate or thought bubble grows before its text wraps.
+PLATE_MAX_W = 340
+
+
+def _plate_lines(fm, text, max_w, max_lines=2):
+    """*text* word-wrapped to *max_w* pixels, at most *max_lines* lines (the
+    last elided if it still does not fit)."""
+    lines, line = [], ""
+    for word in str(text).split():
+        trial = f"{line} {word}".strip()
+        if line and fm.horizontalAdvance(trial) > max_w:
+            lines.append(line)
+            line = word
+        else:
+            line = trial
+    lines.append(line)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines - 1] + [" ".join(lines[max_lines - 1:])]
+    return [fm.elidedText(l, Qt.ElideRight, max_w) for l in lines]
 
 
 #: Thought bubbles: a pale cloud trailing two small puffs down to the
@@ -318,16 +340,17 @@ def draw_thoughts(painter, session, viewport, width, height):
             continue
         alpha = int(255 * max(0.0, min(1.0, left / 0.4)))
         cx, cy = int(sp[0]), int(sp[1]) - (30 if id(thing) in speaking else 0)
-        w = min(340, fm.horizontalAdvance(text) + 22)
-        rect = QRect(cx - w // 2, cy - 40, w, 24)
+        lines = _plate_lines(fm, text, PLATE_MAX_W - 22)
+        w = max(fm.horizontalAdvance(line) for line in lines) + 22
+        h = 6 + fm.height() * len(lines)
+        rect = QRect(cx - w // 2, cy - 16 - h, w, h)
         painter.setPen(QPen(QColor(120, 116, 150, alpha), 1))
         painter.setBrush(QColor(r, g, b, int(alpha * 0.92)))
         painter.drawRoundedRect(rect, 12, 12)
         painter.drawEllipse(QPoint(cx - 6, cy - 10), 5, 4)
         painter.drawEllipse(QPoint(cx - 1, cy - 2), 3, 2)
         painter.setPen(QColor(*_THOUGHT_INK, alpha))
-        painter.drawText(rect, int(Qt.AlignCenter),
-                         fm.elidedText(text, Qt.ElideRight, w - 14))
+        painter.drawText(rect, int(Qt.AlignCenter), "\n".join(lines))
     painter.restore()
 
 
@@ -895,6 +918,38 @@ def _draw_target(painter, session, width, height):
     T.text_in(painter, QRect(cx - 150, y, 300, 18), name, size=12,
               color=T.GOLD_BRIGHT, align=T.ALIGN_CENTER, bold=True)
     T.bar(painter, cx - 110, y + 20, 220, 10, hp / maxhp if maxhp else 0, T.HEALTH)
+    odds = _target_odds(c, tp)
+    if odds:
+        T.text_in(painter, QRect(cx - 220, y + 33, 440, 16), odds, size=9,
+                  color=QColor(255, 214, 130), align=T.ALIGN_CENTER, family="Segoe UI")
+
+
+def _target_odds(c, target_props):
+    """What the player needs to roll against the target under the crosshair,
+    before acting: "To hit: need 14+ (35%)  ·  Critical: need 18+ (15%)".
+
+    A lone melee weapon in reach always connects (see do_attack), so it reads
+    "Sure hit"; a readied spell shows its cast check instead."""
+    from ..rpg import combat
+    try:
+        if c.active_weapon_kind == "spell":
+            spell = rpg_magic.get(c.active_spell or "")
+            if spell is None or spell.base_cost <= 0:
+                return ""
+            chance = rpg_magic.cast_chance(c, spell)
+            return (f"Cast {spell.name}: need {check_target(chance)}+ "
+                    f"({chance * 100:.0f}%)")
+        if c.active_weapon_kind == rpg_items.KIND_STAFF:
+            return ""                    # a staff looses its bound spell
+        ranged = c.active_weapon_kind in rpg_items.RANGED_KINDS
+        odds = combat.attack_odds(c, target_props,
+                                  sure_hit=not ranged and not eq.dual_wielding(c))
+    except (AttributeError, TypeError, ValueError, ZeroDivisionError):
+        return ""
+    hit = ("Sure hit" if odds["sure_hit"] else
+           f"To hit: need {odds['hit_target']}+ ({odds['hit_chance'] * 100:.0f}%)")
+    return (f"{hit}  ·  Critical: need {odds['crit_target']}+ "
+            f"({odds['crit_chance'] * 100:.0f}%)")
 
 def draw_dice_preview(painter, animation, width, height):
     """Draw the dice panel for an editor-side preview animation."""
