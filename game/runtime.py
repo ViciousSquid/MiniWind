@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import copy
 import json
 import math
 import threading
@@ -6181,6 +6182,36 @@ class MiniwindSession(SettlementLaw):
                   pos[1] + height,
                   pos[2] - forward[0] * side * WEAPON_RIGHT_OFFSET + forward[1] * advance)
             out.append((at, self.spell_look(spell)))
+        return out + self._npc_magic_hands(pos)
+
+    #: How far from the player an NPC's readied spells are drawn in its hands.
+    NPC_HAND_GLOW_RADIUS = 2400.0
+
+    def _npc_magic_hands(self, ppos):
+        """The spells fighting NPCs hold ready, glowing in their hands as the
+        player's do (game/npc_magic.py)."""
+        from engine.overhead_sprite import WEAPON_RIGHT_OFFSET
+        from . import npc_magic
+        out = []
+        r2 = self.NPC_HAND_GLOW_RADIUS ** 2
+        for t in self._actors or ():
+            p = t.properties
+            if p.get("dead") or p.get("hidden") or not p.get("spells"):
+                continue
+            if (t.pos[0] - ppos[0]) ** 2 + (t.pos[2] - ppos[2]) ** 2 > r2:
+                continue
+            glows = npc_magic.hand_glows(p)
+            if not glows:
+                continue
+            facing = float(p.get("_facing", 0.0) or 0.0)
+            forward = (math.sin(facing), math.cos(facing))
+            handed = str(p.get("handed", "right") or "right")
+            for hand, spell in glows:
+                physical = handed if hand == "main" else ("left" if handed == "right" else "right")
+                side = -1.0 if physical == "left" else 1.0
+                at = (t.pos[0] + forward[1] * side * WEAPON_RIGHT_OFFSET, t.pos[1],
+                      t.pos[2] - forward[0] * side * WEAPON_RIGHT_OFFSET)
+                out.append((at, self.spell_look(spell)))
         return out
 
     #: Ward effects drawn as a fresnel bubble round the player: kind -> colour.
@@ -6507,14 +6538,13 @@ class MiniwindSession(SettlementLaw):
         self.store.set("resurrect.last_day", today)
         c.use_skill(spell.school, 1.0 + spell.base_cost / 40.0)
         p = target.properties
-        p.update(resurrection_used=True, resurrected_by="player",
-                 sprite_tint=[1.0, 0.30, 0.30], follow_player=True,
-                 combatant=True, aggression="defensive", team=factions.PLAYER,
-                 faction=factions.PLAYER, triggered=True, awake=False,
-                 away_on_journey=False)
-        for key in ("_aggro_target", "_base_aggression", "_flee", "_dest",
-                    "_arrest_state", "_journey", "_death_noted"):
-            p.pop(key, None)
+        self._restore_living_kit(p)
+        self._bind_raised(p)
+        # The map forgets it among its dead and remembers it was raised
+        # (game/map_memory.py): its second life holds when the map is left.
+        memory = getattr(self, "memory", None)
+        if memory is not None:
+            memory.raised(target)
         self._deaths_seen.discard(str(p.get("name", "")))
         if p.get("name"):
             self.store.set("dead." + str(p["name"]), "false")
@@ -6528,6 +6558,66 @@ class MiniwindSession(SettlementLaw):
         self._player_deed("resurrect")
         self.add_floater("RAISED", kind="heal")
         return True
+
+    @staticmethod
+    def _restore_living_kit(p) -> None:
+        """Give the raised body *p* back what it carried in life, less what the
+        player took from its corpse: the loot rolled onto it at death
+        (``stock_corpse``) was never its own and goes. Its spells were never
+        lost. A weapon it held that was looted is no longer in its hand."""
+        living = p.pop("living_inventory", None)
+        if not isinstance(living, list):
+            return                      # never stocked: its pack is untouched
+        carried = p.get("inventory")
+        left = {}
+        for st in carried if isinstance(carried, list) else ():
+            if isinstance(st, dict):
+                iid = str(st.get("id", ""))
+                left[iid] = left.get(iid, 0) + int(st.get("qty", 1) or 0)
+        kept = []
+        for st in living:
+            iid = str(st.get("id", ""))
+            if warrior_fist.innate(iid):
+                kept.append(copy.deepcopy(st))   # fists never leave a body
+                continue
+            n = min(int(st.get("qty", 1) or 0), left.get(iid, 0))
+            if n <= 0:
+                continue
+            left[iid] -= n
+            stack = copy.deepcopy(st)
+            if "qty" in stack or n != 1:
+                stack["qty"] = n
+            kept.append(stack)
+        p["inventory"] = kept
+        had = {str(st.get("id", "")) for st in living}
+        have = {str(st.get("id", "")) for st in kept}
+        disarmed = False
+        for field in ("equipped_weapon", "offhand_weapon"):
+            wid = str(p.get(field) or "")
+            if wid and wid in had and wid not in have:
+                p.pop(field, None)
+                disarmed = True
+        p.pop("_active_weapon", None)
+        from . import npc_magic
+        if disarmed and not any(p.get(f"hand_spell_{h}") for h in npc_magic.HANDS):
+            p.pop("hand_spells", None)   # readied again for the hands now free
+
+    @staticmethod
+    def _bind_raised(p) -> None:
+        """Make the raised body *p* the caster's: tinted red, on the player's
+        side, following and defending them (see _guard_raised_follower)."""
+        p.update(resurrection_used=True, resurrected_by="player",
+                 sprite_tint=[1.0, 0.30, 0.30], follow_player=True,
+                 combatant=True, aggression="defensive", team=factions.PLAYER,
+                 faction=factions.PLAYER, triggered=True, awake=False,
+                 away_on_journey=False,
+                 # It has what it had in life, no more: the map's arming
+                 # rolls (game/held_weapons.py) never add to it again.
+                 _ward_rolled=True, _second_weapon_rolled=True,
+                 _caster_sidearm_rolled=True)
+        for key in ("_aggro_target", "_base_aggression", "_flee", "_dest",
+                    "_arrest_state", "_journey", "_death_noted"):
+            p.pop(key, None)
 
     def _revive_actor(self, thing) -> bool:
         """Bring a slain actor back to life: clear death flags, restore health

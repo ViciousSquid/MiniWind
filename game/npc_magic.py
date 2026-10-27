@@ -20,6 +20,18 @@ kit are what it can cast. When the combat AI says a shot is due
   spell as a real bolt -- the player's projectile pipeline, lit in the spell's
   colour -- at whoever it is fighting.
 
+**Spells are held in the hands.** As the player's are, an actor's spells are
+readied in its hands (``hand_spells``: ``{"main": id, "off": id}``), and it
+casts only what is in them; the spell glows in that hand while it fights.
+Authored hands win (the editor's Spell in main/off hand); otherwise they are
+readied the first time the actor
+fights or at play start (:func:`ready_hands`): a caster with no weapon drawn
+holds its strongest attack spell in its main hand and a ward or a heal in
+its off hand; an armed fighter keeps its weapon and holds one spell in its
+off hand -- an attack when it carries no bow or staff (its way to fight at
+range), else a ward or a heal. A staff channels its own spell regardless. An empty ``hand_spells`` means it casts nothing.
+Raised followers keep the spells they knew in life, and fight with them.
+
 Spells cost magicka. An actor's pool is its authored ``max_magicka`` (else
 :data:`MAGICKA_BASE` plus :data:`MAGICKA_PER_LEVEL` a level) and refills at
 :data:`MAGICKA_REGEN` a second. It is settled only when asked about, so idle
@@ -75,8 +87,11 @@ def _float(value, default=0.0) -> float:
         return float(default)
 
 
-def _known(props):
-    """``(spell, entry)`` for every spell *props*' actor knows."""
+HANDS = ("main", "off")
+
+
+def _all_known(props):
+    """``(spell, entry)`` for every spell *props*' actor knows, in hand or not."""
     from .rpg import magic
     spells = props.get("spells")
     if not isinstance(spells, list):
@@ -89,6 +104,109 @@ def _known(props):
         spell = magic.get(entry.get("id", ""))
         if spell is not None:
             yield spell, entry
+
+
+def _known(props):
+    """``(spell, entry)`` for every spell *props*' actor holds in a hand: the
+    ones it can cast (see the module doc)."""
+    held = set(hands(props).values())
+    for spell, entry in _all_known(props):
+        if spell.id in held:
+            yield spell, entry
+
+
+def hands(props) -> dict:
+    """``{"main": id, "off": id}``: the spells *props*' actor holds, readied
+    now if it has never had any (:func:`ready_hands`)."""
+    held = props.get("hand_spells")
+    if not isinstance(held, dict):
+        ready_hands(props)
+        held = props.get("hand_spells")
+    return {h: str(sid) for h, sid in (held or {}).items() if h in HANDS and sid}
+
+
+def _ranked(props):
+    """*props*' known spells sorted into attacks, wards and heals, best first."""
+    from .rpg import magic
+    attack, ward, heal = [], [], []
+    for spell, entry in _all_known(props):
+        damage = _float(entry.get("damage", spell.damage))
+        if spell.delivery == magic.PROJECTILE and damage > 0:
+            attack.append((damage, spell.id))
+        elif spell.delivery == magic.SELF:
+            power = max((_float(e.get("magnitude")) for e in spell.effects or ()
+                         if e.get("kind") in WARD_KINDS), default=0.0)
+            if power > 0:
+                ward.append((power, spell.id))
+            elif _heals(spell) > 0:
+                heal.append((_heals(spell), spell.id))
+    return [[sid for _v, sid in sorted(group, reverse=True)] for group in (attack, ward, heal)]
+
+
+def ready_hands(props) -> dict:
+    """Ready *props*' actor's spells in its hands, unless authored (see the
+    module doc). Returns the hands."""
+    held = props.get("hand_spells")
+    if isinstance(held, dict):
+        return held
+    held = {h: str(props.get(f"hand_spell_{h}") or "") for h in HANDS}
+    held = {h: sid for h, sid in held.items() if sid}
+    if held:
+        # Authored in the editor: those are the hands, and what is in them
+        # is known.
+        spells = props.get("spells")
+        if not isinstance(spells, list):
+            spells = props["spells"] = []
+        have = {e.get("id") if isinstance(e, dict) else e for e in spells}
+        spells.extend({"id": sid} for sid in held.values() if sid not in have)
+        props["hand_spells"] = held
+        return held
+    attack, ward, heal = _ranked(props)
+    held = {}
+    if attack or ward or heal:
+        from . import combat_loadout
+        if not props.get("equipped_weapon"):
+            # Hands free: the strongest attack leads; the other hand guards.
+            first = (attack or ward or heal)[0]
+            held["main"] = first
+            rest = [sid for sid in ward + heal + attack[1:] if sid != first]
+            if rest:
+                held["off"] = rest[0]
+        else:
+            # A weapon in the main hand: one spell in the other.
+            styles = {combat_loadout._item_style(combat_loadout._stack_id(st))
+                      for st in props.get("inventory") or ()}
+            styles.add(combat_loadout._item_style(props.get("equipped_weapon")))
+            # A bow or a staff (which channels its own spell) already
+            # reaches the enemy: the free hand guards instead.
+            if attack and not styles & {combat_loadout.BOW, combat_loadout.MAGIC}:
+                held["off"] = attack[0]
+            else:
+                held["off"] = (ward + heal + attack)[0]
+    props["hand_spells"] = held
+    return held
+
+
+def hand_glows(props):
+    """``[(hand, spell)]`` for the spells *props*' actor shows in its hands
+    now: only while it fights, and not in a hand a weapon has taken."""
+    from .rpg import magic
+    if props.get("dead") or not (props.get("awake") or props.get("_aggro_target") is not None):
+        return []
+    out = []
+    held = hands(props)
+    from . import combat_loadout
+    wielding = combat_loadout._item_style(props.get("_active_weapon") or "")
+    for hand in HANDS:
+        spell = magic.get(held.get(hand, ""))
+        if spell is None:
+            continue
+        if hand == "main" and wielding in (combat_loadout.MELEE, combat_loadout.BOW):
+            continue          # the blade or bow is drawn: the spell is put by
+        if hand == "off" and (props.get("_torch_lit") or props.get("offhand_weapon")):
+            continue
+        out.append((hand, spell))
+    return out
 
 
 def _heals(spell) -> float:
@@ -159,7 +277,8 @@ def roll_ward(props, rng) -> bool:
     if props.get("_ward_rolled"):
         return False
     props["_ward_rolled"] = True
-    if not props.get("combatant") or wards(props) or not attacks(props):
+    if not props.get("combatant") or any(True for _ in _wards_known(props)) \
+            or not attacks(props):
         return False
     if rng.random() >= WARD_CHANCE:
         return False
@@ -167,7 +286,22 @@ def roll_ward(props, rng) -> bool:
     if not isinstance(spells, list):
         spells = props["spells"] = []
     spells.append({"id": WARD_SPELL})
+    # Learned now, readied in a free hand if there is one.
+    held = props.get("hand_spells")
+    if isinstance(held, dict) and len(held) < len(HANDS):
+        free = next(h for h in HANDS if h not in held)
+        if not (free == "main" and props.get("equipped_weapon")):
+            held[free] = WARD_SPELL
     return True
+
+
+def _wards_known(props):
+    """Every ward *props*' actor knows, in hand or not."""
+    from .rpg import magic
+    for spell, _entry in _all_known(props):
+        if spell.delivery == magic.SELF and any(
+                e.get("kind") in WARD_KINDS for e in spell.effects or ()):
+            yield spell
 
 
 def warded(props, now=None):

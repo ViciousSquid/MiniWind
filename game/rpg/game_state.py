@@ -11,6 +11,7 @@ reward a finished quest, and award kill XP + loot. Combat maths live in
 
 from __future__ import annotations
 
+import copy
 import json
 import random
 from html import escape
@@ -443,6 +444,13 @@ class GameState:
         if target_props.get("loot_rolled"):
             return False
         target_props["loot_rolled"] = True
+        # What it carried in life, before the loot table is laid over it: a
+        # body raised by necromancy gets back what of this the player left.
+        carried = target_props.get("inventory")
+        if isinstance(carried, str):
+            target_props["inventory"] = _stacks_from_text(carried)
+        target_props["living_inventory"] = copy.deepcopy(
+            [s for s in target_props.get("inventory") or () if isinstance(s, dict)])
         role = str(target_props.get("npc_role") or target_props.get("monster_role") or "").lower()
         creature = bestiary.get(role)
         table = target_props.get("loot") or (creature.loot if creature else "")
@@ -459,10 +467,6 @@ class GameState:
             stacks += potions
         if not stacks and not gold and not table:
             return True
-        carried = target_props.get("inventory")
-        if isinstance(carried, str):
-            # Authored shorthand ("id:qty, id"): expand it rather than lose it.
-            target_props["inventory"] = _stacks_from_text(carried)
         carried = inv.get_inventory(target_props)
         for s in stacks:
             inv.add_item(carried, s)
