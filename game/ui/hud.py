@@ -1042,8 +1042,9 @@ def _draw_dice_roll(painter, session, width, height):
     panel_w = max(380 if label else 340, columns * die_size + (columns - 1) * gap + 40)
     extra_h = len(shown_followups) * 18 + (18 if len(followups) > len(shown_followups) else 0)
     panel_h = 76 + rows * (die_size + gap) + 34 + extra_h
-    panel_x = (width - panel_w) // 2
-    panel_y = max(58, height - panel_h - 34)
+    # Far right, just above the weapon/spell chips (_draw_active).
+    panel_x = width - panel_w - DICE_PANEL_MARGIN
+    panel_y = max(58, height - panel_h - DICE_PANEL_BOTTOM)
 
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
@@ -1150,6 +1151,10 @@ def _draw_dice_roll(painter, session, width, height):
     painter.restore()
 
 
+#: The dice panel's gap from the right edge, and from the bottom (clear of
+#: the weapon/spell chips in the bottom-right corner).
+DICE_PANEL_MARGIN = 18
+DICE_PANEL_BOTTOM = 80
 #: How many same-instant follow-up rolls the dice panel lists under the main one.
 DICE_FOLLOWUP_LINES = 3
 _VERDICT_PASS = (130, 220, 130)
