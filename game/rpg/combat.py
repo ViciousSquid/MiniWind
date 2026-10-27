@@ -25,7 +25,7 @@ from . import attributes as attr
 from . import skills as sk
 from . import items
 from . import equipment as eq
-from ..diceroll import CHECK_NOTATION, DiceRoller, check_threshold
+from ..diceroll import DiceRoller, roll_check
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +52,22 @@ def hit_chance(character, weapon_skill: int, target_agility: int = 30,
     defend = target_agility * 0.25
     chance = (attack - defend) / 100.0
     return max(0.05, min(0.95, chance))
+
+
+def _target_name(target_props: Dict) -> str:
+    return str(target_props.get("display_name") or target_props.get("name") or "")
+
+
+def _hit_why(character, skill_id: str, skill: int, target_agility: int,
+             fatigue_frac: float, chance: float) -> str:
+    """What went into a hit chance, in the player's terms:
+    ``Blade 35 vs their Agility 30, winded — 48%``."""
+    parts = [f"{sk.label(skill_id)} {skill} vs their Agility {target_agility}"]
+    if fatigue_frac < 0.75:
+        parts.append("winded")
+    if eq.dual_wielding(character):
+        parts.append("two weapons")
+    return f"{', '.join(parts)} — {chance * 100:.0f}%"
 
 
 # ---------------------------------------------------------------------------
@@ -116,11 +132,14 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     elif dice is not None:
         # Resolved on a d20, not a percentile die: every roll is shown to the
         # player and there is no d100 in this game (see diceroll.CHECK_DIE).
-        hit_roll = dice.request_roll(
-            CHECK_NOTATION, source="combat.hit",
+        hit_roll = roll_check(
+            dice, hit_probability, f"Roll to hit {_target_name(target_props)}".strip(),
+            source="combat.hit",
+            why=_hit_why(character, skill_id, skill, target_agi, fatigue_frac,
+                         hit_probability),
             context={"skill": skill_id, "target": target_props.get("name", "")})
         result["hit_roll"] = hit_roll
-        if hit_roll["roll_result"] > check_threshold(hit_probability):
+        if not hit_roll["success"]:
             return result
     elif rng.random() > hit_probability:
         return result  # miss
@@ -154,11 +173,13 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
     # --- critical (luck-weighted) ---
     crit_chance = 0.05 + character.attrs.get(attr.LUCK, 40) * 0.0015
     if dice is not None:
-        crit_roll = dice.request_roll(
-            CHECK_NOTATION, source="combat.critical",
+        crit_roll = roll_check(
+            dice, crit_chance, "Roll for a critical hit", source="combat.critical",
+            why=f"Luck {character.attrs.get(attr.LUCK, 40)}: "
+                f"{crit_chance * 100:.0f}% chance of x1.5 damage",
             context={"skill": skill_id, "target": target_props.get("name", "")})
         result["critical_roll"] = crit_roll
-        is_critical = crit_roll["roll_result"] <= check_threshold(crit_chance)
+        is_critical = crit_roll["success"]
     else:
         is_critical = rng.random() < crit_chance
     if is_critical:

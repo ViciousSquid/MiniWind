@@ -15,6 +15,7 @@ from PyQt5.QtGui import QColor, QFontMetrics, QPixmap, QPolygon, QPen, QConicalG
 from PyQt5.QtCore import QPoint, QPointF
 
 from .. import fio
+from ..diceroll import describe_roll
 from . import theme as T
 from ..rpg import equipment as eq
 from ..rpg import items as rpg_items
@@ -76,6 +77,7 @@ def draw(painter, session, width, height):
         _draw_target(painter, session, width, height)
     _draw_status_flags(painter, session, c, width, height)
     _draw_dice_roll(painter, session, width, height)
+    _draw_roll_log(painter, session, width, height)
     _draw_notifications(painter, session, width, height)
     _draw_floaters(painter, session, width, height)
     if not menu_open:
@@ -276,6 +278,56 @@ def draw_barks(painter, session, viewport, width, height):
         painter.setPen(QColor(247, 238, 214, alpha))
         painter.drawText(rect, int(Qt.AlignCenter),
                          fm.elidedText(text, Qt.ElideRight, w - 10))
+    painter.restore()
+
+
+#: Thought bubbles: a pale cloud trailing two small puffs down to the
+#: head, so a thought never reads as something said aloud (draw_barks).
+_THOUGHT_FILL = (232, 232, 244)
+_THOUGHT_INK = (52, 48, 70)
+
+
+def draw_thoughts(painter, session, viewport, width, height):
+    """What people are thinking, in a thought bubble over their heads: the
+    farmer heading home hungry, the witness going to the watch, the coward
+    running. Sits above anything the same person is saying aloud."""
+    if viewport is None:
+        return
+    thoughts = session.live_thoughts() if hasattr(session, "live_thoughts") else ()
+    if not thoughts:
+        return
+    try:
+        import glm
+        proj, view = viewport.projection_matrix, viewport.view_matrix
+    except Exception:
+        return
+    from . import fonts
+    font = fonts.dialogue_font(10)
+    fm = QFontMetrics(font)
+    speaking = {id(thing) for thing, _t, _l in
+                (session.live_barks() if hasattr(session, "live_barks") else ())}
+    painter.save()
+    painter.setFont(font)
+    painter.setRenderHint(painter.Antialiasing, True)
+    r, g, b = _THOUGHT_FILL
+    for thing, text, left in thoughts[:8]:
+        head_y = thing.pos[1] + float(thing.properties.get("sprite_height", 112)) * 0.5 + 40.0
+        sp = _world_to_screen(glm, proj, view, thing.pos[0], head_y, thing.pos[2],
+                              width, height)
+        if sp is None:
+            continue
+        alpha = int(255 * max(0.0, min(1.0, left / 0.4)))
+        cx, cy = int(sp[0]), int(sp[1]) - (30 if id(thing) in speaking else 0)
+        w = min(340, fm.horizontalAdvance(text) + 22)
+        rect = QRect(cx - w // 2, cy - 40, w, 24)
+        painter.setPen(QPen(QColor(120, 116, 150, alpha), 1))
+        painter.setBrush(QColor(r, g, b, int(alpha * 0.92)))
+        painter.drawRoundedRect(rect, 12, 12)
+        painter.drawEllipse(QPoint(cx - 6, cy - 10), 5, 4)
+        painter.drawEllipse(QPoint(cx - 1, cy - 2), 3, 2)
+        painter.setPen(QColor(*_THOUGHT_INK, alpha))
+        painter.drawText(rect, int(Qt.AlignCenter),
+                         fm.elidedText(text, Qt.ElideRight, w - 14))
     painter.restore()
 
 
@@ -978,13 +1030,18 @@ def _draw_dice_roll(painter, session, width, height):
         return
 
     notation = str(result.get("dice_notation", "1d20"))
+    label = str(result.get("label") or "")
+    target = result.get("target")
+    followups = [r for r in animation.get("followups", ()) if r.get("label")]
+    shown_followups = followups[:DICE_FOLLOWUP_LINES]
     count = len(visuals)
     columns = min(_DICE_MAX_COLUMNS, max(1, count))
     rows = (count + columns - 1) // columns
     die_size = 86 if count <= 4 else 72
     gap = 12
-    panel_w = max(340, columns * die_size + (columns - 1) * gap + 40)
-    panel_h = 76 + rows * (die_size + gap) + 34
+    panel_w = max(380 if label else 340, columns * die_size + (columns - 1) * gap + 40)
+    extra_h = len(shown_followups) * 18 + (18 if len(followups) > len(shown_followups) else 0)
+    panel_h = 76 + rows * (die_size + gap) + 34 + extra_h
     panel_x = (width - panel_w) // 2
     panel_y = max(58, height - panel_h - 34)
 
@@ -994,16 +1051,33 @@ def _draw_dice_roll(painter, session, width, height):
     painter.setPen(QPen(QColor(150, 122, 64, alpha), 2))
     painter.setBrush(panel_col)
     painter.drawRoundedRect(QRect(panel_x, panel_y, panel_w, panel_h), 10, 10)
-    T.text_in(painter, QRect(panel_x + 12, panel_y + 10, panel_w - 24, 20),
-              f"DICE  {notation}", size=10,
+    # What the roll is for, what it needs, and why the odds are what they are:
+    #   ROLL TO HIT BANDIT
+    #   d20 — need 14 or higher
+    #   Blade 35 vs their Agility 30 — 35%
+    title = label.upper() if label else f"DICE  {notation}"
+    T.text_in(painter, QRect(panel_x + 12, panel_y + 8, panel_w - 24, 20),
+              title, size=10,
               color=QColor(226, 224, 236, alpha), align=T.ALIGN_CENTER,
               bold=True, family="Segoe UI")
+    if target is not None:
+        need = (f"{notation} — need {target} or higher" if target <= _notation_max(notation)
+                else f"{notation} — cannot succeed")
+        T.text_in(painter, QRect(panel_x + 12, panel_y + 28, panel_w - 24, 16),
+                  need, size=9, color=QColor(255, 214, 130, alpha),
+                  align=T.ALIGN_CENTER, family="Segoe UI")
+    why = str(result.get("why") or "")
+    if why:
+        T.text_in(painter, QRect(panel_x + 12, panel_y + 45, panel_w - 24, 16),
+                  why, size=8, color=QColor(170, 166, 184, alpha),
+                  align=T.ALIGN_CENTER, italic=True, family="Segoe UI")
 
     settled = True
     start_y = panel_y + 68
+    row_left = panel_x + (panel_w - (columns * die_size + (columns - 1) * gap)) // 2
     for index, die in enumerate(visuals):
         row, column = divmod(index, columns)
-        center_x = panel_x + 20 + die_size // 2 + column * (die_size + gap)
+        center_x = row_left + die_size // 2 + column * (die_size + gap)
         center_y = start_y + die_size // 2 + row * (die_size + gap)
         local = elapsed - die["delay"]
         rolling = local < die["roll_duration"]
@@ -1044,11 +1118,86 @@ def _draw_dice_roll(painter, session, width, height):
                       bold=True, family="Segoe UI")
 
     if settled:
-        T.text_in(painter, QRect(panel_x + 12, panel_y + panel_h - 30,
-                                panel_w - 24, 22),
-                  f"TOTAL  {result.get('roll_result', 0)}", size=12,
-                  color=QColor(255, 214, 130, alpha), align=T.ALIGN_CENTER,
-                  bold=True, family="Segoe UI")
+        total_y = panel_y + panel_h - 30 - extra_h
+        total = result.get("roll_result", 0)
+        if target is not None:
+            # The verdict, in the colour of the outcome: "Rolled 7 — FAILED".
+            passed = bool(result.get("success"))
+            T.text_in(painter, QRect(panel_x + 12, total_y, panel_w - 24, 22),
+                      f"ROLLED {total}  —  {'SUCCESS' if passed else 'FAILED'}",
+                      size=12, color=_verdict_color(passed, alpha),
+                      align=T.ALIGN_CENTER, bold=True, family="Segoe UI")
+        else:
+            T.text_in(painter, QRect(panel_x + 12, total_y, panel_w - 24, 22),
+                      f"TOTAL  {total}", size=12,
+                      color=QColor(255, 214, 130, alpha), align=T.ALIGN_CENTER,
+                      bold=True, family="Segoe UI")
+        # The rolls that came with it (a hit's critical, a kill's loot).
+        line_y = total_y + 24
+        for extra in shown_followups:
+            color = (_verdict_color(bool(extra.get("success")), alpha)
+                     if extra.get("target") is not None
+                     else QColor(226, 224, 236, alpha))
+            T.text_in(painter, QRect(panel_x + 12, line_y, panel_w - 24, 18),
+                      describe_roll(extra), size=9, color=color,
+                      align=T.ALIGN_CENTER, family="Segoe UI")
+            line_y += 18
+        if len(followups) > len(shown_followups):
+            T.text_in(painter, QRect(panel_x + 12, line_y, panel_w - 24, 18),
+                      f"+ {len(followups) - len(shown_followups)} more (see roll log)",
+                      size=8, color=QColor(170, 166, 184, alpha),
+                      align=T.ALIGN_CENTER, family="Segoe UI")
+    painter.restore()
+
+
+#: How many same-instant follow-up rolls the dice panel lists under the main one.
+DICE_FOLLOWUP_LINES = 3
+_VERDICT_PASS = (130, 220, 130)
+_VERDICT_FAIL = (235, 110, 100)
+
+
+def _verdict_color(passed, alpha=255):
+    r, g, b = _VERDICT_PASS if passed else _VERDICT_FAIL
+    return QColor(r, g, b, alpha)
+
+
+def _notation_max(notation):
+    """The highest total *notation* can roll (20 for ``1d20``)."""
+    try:
+        from ..diceroll import parse_dice_notation
+        terms, _src = parse_dice_notation(notation)
+    except ValueError:
+        return 0
+    return sum(t.sign * (t.count * t.sides if t.sides else t.modifier) for t in terms)
+
+
+#: The roll log: bottom-left, above the inventory strip.
+ROLL_LOG_LINE = 18
+ROLL_LOG_BOTTOM = 128
+ROLL_LOG_FADE = 1.0
+
+
+def _draw_roll_log(painter, session, width, height):
+    """The last few explained rolls, newest at the bottom, each one in the
+    colour of its outcome: "Roll to hit Bandit: 7 (need 14+) — FAILED"."""
+    log = getattr(session, "roll_log", None)
+    if not log:
+        return
+    x = 16
+    y = height - ROLL_LOG_BOTTOM - len(log) * ROLL_LOG_LINE
+    fm = QFontMetrics(T.font(9, family="Segoe UI"))
+    painter.save()
+    for entry in log:
+        alpha = int(255 * max(0.0, min(1.0, entry["t"] / ROLL_LOG_FADE)))
+        success = entry.get("success")
+        color = (QColor(226, 224, 236, alpha) if success is None
+                 else _verdict_color(bool(success), alpha))
+        rect = QRect(x, y, fm.horizontalAdvance(entry["text"]) + 14, ROLL_LOG_LINE)
+        painter.fillRect(rect, QColor(0, 0, 0, int(alpha * 0.55)))
+        T.text_in(painter, rect.adjusted(6, 0, -6, 0), entry["text"], size=9,
+                  color=color, align=T.ALIGN_LEFT,
+                  family="Segoe UI")
+        y += ROLL_LOG_LINE
     painter.restore()
 
 

@@ -383,3 +383,111 @@ def _build_tasks(props, sched_state, target, investigating, confidence):
     top_pri = tasks[0][0]
     tasks = [(p, label, p == top_pri) for (p, label, _a) in tasks]
     return tasks
+
+
+# ---------------------------------------------------------------------------
+# Thoughts: what an actor is thinking, in its own words, for the overhead HUD
+# ---------------------------------------------------------------------------
+#: First-person lines per situation. One is picked per actor and situation
+#: (stable, not random) so an NPC does not change its mind about how to put it.
+_THOUGHTS = {
+    "flee": ("Too dangerous — I'm getting out of here!", "Run! Run!",
+             "I'm no fighter. I need to hide."),
+    "rally": ("There are enough of us — we can take them!",
+              "Together! Drive them off!"),
+    "alert": ("Something's wrong... I'll keep my distance.",
+              "Easy now. Watch them closely."),
+    "subdue": ("Enough brawling — break it up!",),
+    "combat": ("{target} — you'll regret this!", "Have at you, {target}!",
+               "{target}! To arms!"),
+    "hunt": ("Fresh meat...", "There — prey!", "Easy pickings."),
+    "pursue": ("You won't escape the law!", "After them!"),
+    "search": ("Where did they go?", "They can't have gone far..."),
+    "arrest": ("Stop right there, criminal!",),
+    "escort": ("Come quietly now.",),
+    "follow": ("Right behind you.", "Lead on."),
+    "exhausted": ("So tired... I need to lie down.", "Can barely keep my eyes open."),
+    "hungry": ("My stomach's growling — time to eat.", "Can't work on an empty belly."),
+    "GOING_TO_WORK": ("Time to get to work.", "Another day, another coin."),
+    "WORKING": ("Back to it.", "Busy, busy."),
+    "GOING_HOME": ("That's enough for today.", "Home for the night."),
+    "SLEEPING": ("Zzz...",),
+    "PATROL": ("All quiet. Keep walking.", "Eyes open, stay sharp."),
+}
+
+#: Situations urgent enough to think aloud the moment an actor is first seen,
+#: rather than waiting for its state to change.
+URGENT_THOUGHTS = frozenset(("flee", "rally", "alert", "subdue", "combat", "hunt",
+                             "pursue", "search", "arrest", "intent"))
+
+
+def _pick(options, *salt) -> str:
+    import zlib
+    return options[zlib.crc32("|".join(str(s) for s in salt).encode()) % len(options)]
+
+
+def _plain_reason(reason: str) -> str:
+    """A simulation reason as a thought: its working - "(courage 0.42)" - is
+    for the inspector, not the thought bubble."""
+    reason = str(reason).strip()
+    if reason.endswith(")") and " (" in reason:
+        reason = reason[:reason.rindex(" (")]
+    return reason
+
+
+def thought(props, target_name: Optional[str] = None) -> Tuple[str, str]:
+    """``(situation, text)``: what an actor is thinking right now.
+
+    *situation* is a stable key that changes only when the actor's reason for
+    what it is doing changes — the HUD shows a fresh thought on each change.
+    *text* is the first-person line to show ("Somebody must tell the watch
+    what Rufus did."), empty when there is nothing worth saying (idling,
+    wandering). Pure: reads only the actor's properties.
+    """
+    if not isinstance(props, dict) or props.get("dead"):
+        return "", ""
+    name = str(_get(props, "display_name", "name", default=""))
+    state = str(_get(props, "sched_state", default="")).upper()
+    target = target_name or "you"
+    aggression = str(props.get("aggression", "passive"))
+
+    def line(key, **fmt):
+        return key, _pick(_THOUGHTS[key], name, key).format(**fmt)
+
+    if props.get("_flee") or state == "FLEE":
+        reason = props.get("_sim_reason") if props.get("_sim_intent") == "FLEE" else ""
+        if reason:
+            return "flee:" + str(reason), _plain_reason(reason) + "."
+        return line("flee")
+    if props.get("_subduing"):
+        return line("subdue")
+    if state == "RALLY":
+        return line("rally")
+    if state == "ALERT":
+        return line("alert")
+    if state in ("PURSUE", "ARREST_APPROACH"):
+        return line("arrest" if state == "ARREST_APPROACH" else "pursue")
+    if state == "SEARCH":
+        return line("search")
+    if state == "ESCORT":
+        return line("escort")
+    # Something the actor knows is driving it: say it in the decision's words.
+    intent = str(props.get("_sim_intent") or "")
+    reason = props.get("_sim_reason")
+    acting_on_it = state in ("REPORT", "CONFRONT", "INVESTIGATE", "COMBAT")
+    if reason and (intent == "MOURN" or (acting_on_it and intent not in ("IGNORE", "WARM"))):
+        return "intent:" + intent + ":" + str(reason), _plain_reason(reason) + "."
+    if state == "COMBAT" and props.get("_aggro_target") is not None:
+        return "combat:" + str(props.get("_aggro_target")), line(
+            "combat", target=target)[1]
+    if (aggression == "hostile" and props.get("awake")
+            and not props.get("triggered")):
+        return line("hunt")
+    if state == "FOLLOW":
+        return line("follow")
+    need = props.get("_need_reason")
+    if need in ("exhausted", "hungry"):
+        return line(need)
+    if state in _THOUGHTS:
+        return line(state)
+    return state.lower(), ""

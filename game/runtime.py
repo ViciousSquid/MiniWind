@@ -65,6 +65,8 @@ from .rpg.dialogue import DialogueRunner
 from .rpg import inventory as inv
 from .rpg import skills as sk
 from .rpg.game_state import GameState
+from .diceroll import describe_roll
+from . import mental_state
 from .diceroll_anim import SHAKE_DURATION, ROLL_DURATION, FADE_DURATION
 from . import npc_archery
 from . import npc_stamina
@@ -225,6 +227,9 @@ DICE_ANIMATION_ROLL = ROLL_DURATION
 DICE_ANIMATION_FADE = FADE_DURATION
 DICE_DISPLAY_DURATION = DICE_ANIMATION_SHAKE + DICE_ANIMATION_ROLL + DICE_ANIMATION_FADE + 1.0
 DICE_TYPES = ("d4", "d6", "d8", "d10", "d12", "d20")
+#: How long an explained roll stays in the HUD's roll log, and how many it keeps.
+ROLL_LOG_SECONDS = 8.0
+ROLL_LOG_MAX = 6
 
 #: Probability an NPC/creature with no authored handedness is left-handed. Left
 #: handedness is deliberately rare, so most actors wield on the right.
@@ -256,6 +261,8 @@ SUBDUE_FRACTION = 0.45
 #: be said to be shown.
 BARK_SECONDS = 3.0
 BARK_RADIUS = 1800.0
+#: How long a thought (what an NPC is thinking, not saying) hangs over a head.
+THOUGHT_SECONDS = 3.5
 STOP_SHOUTS = ("Stop right there!", "Halt! In the name of the law!",
                "You there! Stop!", "That's far enough, criminal.")
 BREAK_UP_SHOUTS = ("Break it up!", "Oi! Enough of that!", "Stop this at once!",
@@ -658,6 +665,9 @@ class MiniwindSession(SettlementLaw):
         self._torch_flicker_t = 0.0
         self.dice_type_index = len(DICE_TYPES) - 1
         self.dice_animation: Optional[Dict] = None
+        #: Recent explained rolls ("Roll to hit: 7 (need 14+) — FAILED"),
+        #: newest last, for the HUD's roll log.
+        self.roll_log: List[Dict] = []
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
         self._attack_anim_time = 0.0   # player stab animation remaining (seconds)
@@ -714,8 +724,22 @@ class MiniwindSession(SettlementLaw):
             return True
 
     def _on_dice_roll(self, result: Dict, _source: str, _context: Dict) -> None:
-        """Start the HUD presentation for every roll when visualisation is enabled."""
+        """Log what a labelled roll was for and whether it passed, and start
+        the HUD presentation for every roll when visualisation is enabled."""
+        if result.get("label"):
+            line = describe_roll(result)
+            self.game.message(line)
+            self.roll_log.append({"text": line, "why": str(result.get("why", "")),
+                                  "success": result.get("success"),
+                                  "t": ROLL_LOG_SECONDS})
+            del self.roll_log[:-ROLL_LOG_MAX]
         if not self._visualise_dice_rolls_enabled():
+            return
+        current = self.dice_animation
+        if current is not None and current.get("elapsed", 0.0) == 0.0:
+            # Rolled in the same instant as the one about to be shown (a hit
+            # and its critical, a kill's loot): listed under it, not over it.
+            current.setdefault("followups", []).append(result)
             return
         self.dice_animation = {
             "result": result,
@@ -759,6 +783,7 @@ class MiniwindSession(SettlementLaw):
         self.notifications = []
         self.floaters = []
         self.dice_animation = None
+        self.roll_log = []
         self._deaths_seen = set()
         # A new game means a world with no history and nobody who remembers
         # anything: the store wipe above already erased every actor's knowledge,
@@ -1244,6 +1269,7 @@ class MiniwindSession(SettlementLaw):
                     elif (i & 1) != phase:
                         continue
                 self._decide(npc)
+            self._update_thoughts()
         for i, npc in enumerate(npcs):
             tier = npc_tiers[i]
             if tier >= TIER_DISTANT:
@@ -2905,6 +2931,9 @@ class MiniwindSession(SettlementLaw):
             f["t"] -= delta
             f["y"] -= 30 * delta
         self.floaters = [f for f in self.floaters if f["t"] > 0]
+        for r in self.roll_log:
+            r["t"] -= delta
+        self.roll_log = [r for r in self.roll_log if r["t"] > 0]
         self._tick_dice_animation(delta)
 
     def notify(self, text, seconds=3.0):
@@ -4064,6 +4093,75 @@ class MiniwindSession(SettlementLaw):
                 continue
             out.append((thing, text, until - now))
         return out
+
+    # -------------------------------------------------------------- thoughts
+    def _npc_thoughts_enabled(self) -> bool:
+        """Whether to show what nearby NPCs are thinking (GAME → "Show NPC
+        thoughts"). Defaults to on when unset."""
+        try:
+            config = self._editor_config()
+            if config is None:
+                return True
+            return config.getboolean("GAME", "show_npc_thoughts", fallback=True)
+        except (AttributeError, TypeError, ValueError):
+            return True
+
+    def think(self, thing, text, seconds: float = THOUGHT_SECONDS) -> None:
+        """Show what *thing* is thinking for a moment, in a thought bubble
+        over its head. Like :meth:`bark`, only those near enough to be on
+        screen bother."""
+        if thing is None or not text:
+            return
+        ppos = self._player_pos()
+        if ppos is not None and self._dist2d(thing.pos, ppos) > BARK_RADIUS:
+            return
+        import time as _time
+        thoughts = self.__dict__.setdefault("thoughts", {})
+        thoughts[id(thing)] = (thing, str(text), _time.monotonic() + float(seconds))
+
+    def live_thoughts(self):
+        """``[(thing, text, seconds_left)]`` still being thought."""
+        import time as _time
+        now = _time.monotonic()
+        thoughts = self.__dict__.get("thoughts") or {}
+        out = []
+        for key, (thing, text, until) in list(thoughts.items()):
+            if until <= now or thing.properties.get("dead"):
+                thoughts.pop(key, None)
+                continue
+            out.append((thing, text, until - now))
+        return out
+
+    def _update_thoughts(self) -> None:
+        """Give each actor near the player a thought whenever its reason for
+        what it is doing changes: the farmer heading home because he is
+        hungry, the witness going to the watch, the coward running.
+
+        Runs on the decision pass, after the decisions it explains. An actor
+        first seen mid-routine keeps quiet until something changes; one first
+        seen in the middle of something urgent says so at once."""
+        if not self._npc_thoughts_enabled():
+            return
+        for actor in self._live_actors():
+            p = actor.properties
+            if p.get("_sim_tier", TIER_NEAR) > TIER_NEAR or p.get("dead"):
+                continue
+            key, _text = mental_state.thought(p)
+            previous = p.get("_thought_key")
+            if key == previous:
+                continue
+            p["_thought_key"] = key
+            if previous is None and key.split(":", 1)[0] not in mental_state.URGENT_THOUGHTS:
+                continue
+            target = None
+            tid = p.get("_aggro_target")
+            if tid is not None:
+                other = next((t for t in self._actors if id(t) == tid), None)
+                if other is not None:
+                    op = other.properties
+                    target = op.get("display_name") or op.get("name")
+            _key, text = mental_state.thought(p, target)
+            self.think(actor, text)
 
     def _decide_distant(self, npc) -> None:
         """The reduced decision path for an actor outside the player's vicinity.
