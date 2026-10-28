@@ -934,8 +934,6 @@ class Expander:
                   "container_kind": kind, "display_name": kind.title(), "inventory": inv,
                   "custom_idle": f"assets/sprites/miniwind/container_{kind}.png"})
         c["pos"] = [round(x, 1), round(self._ground(x, z) + 48.0, 1), round(z, 1)]
-        from .container_locks import configure_container_lock
-        configure_container_lock(p, c["pos"], preserve_existing=False)
         self.world["things"].append(c)
 
     def add_wilds(self, seed=19):

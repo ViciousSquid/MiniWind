@@ -484,7 +484,7 @@ def build_cave_map(slug, name, monsters, count, loot, settings, camera, protos,
     s["pos"] = [0.0, 400.0, 0.0]
     s["properties"].update({"id": _uid(), "region_name": name,
                             # Underground: cave music only (game/music.py).
-                            "underground": True, "weather_enabled": False})
+                            "underground": True})
     s["io_connections"] = []
     things.append(s)
     if camera is not None:

@@ -432,7 +432,7 @@ class NpcMagic:
                 if fx is not None:
                     from .magic_fx import look_for
                     fx.cast(_feet(thing), look_for(spell.id, WARD_KINDS[kind], spell.element,
-                                                   getattr(spell, "visuals", None), school=spell.school))
+                                                   getattr(spell, "visuals", None)))
                 return True
         return False
 
@@ -480,8 +480,7 @@ class NpcMagic:
                 self._journal(thing)
                 fx = getattr(self.session, "magic_fx", None)
                 if fx is not None:
-                    from .magic_fx import cast_colour
-                    fx.heal(_feet(thing), spell.color, ring_colour=cast_colour(spell.school))
+                    fx.heal(_feet(thing), spell.color)
                 return True
         return False
 
@@ -566,8 +565,7 @@ class NpcMagic:
         fx = getattr(session, "magic_fx", None)
         if fx is not None:
             from .magic_fx import look_for
-            look = look_for(spell.id, colour, spell.element, getattr(spell, "visuals", None),
-                            school=spell.school)
+            look = look_for(spell.id, colour, spell.element, getattr(spell, "visuals", None))
             fx.cast(_feet(thing), look)
             if row is not None:
                 fx.bolt(fio.projectile_tag(logic, row), look, hostile=target == "player")

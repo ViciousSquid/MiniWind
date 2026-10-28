@@ -127,8 +127,6 @@ class Wildlife:
 
     def _idle(self, t, p, ppos) -> bool:
         """Nothing to fight: free to wander."""
-        if p.get("resurrection_used") and p.get("follow_player"):
-            return False  # the follower runtime owns the raised creature's movement
         if p.get("_aggro_target") or p.get("_flee") or p.get("_bow_charge") is not None:
             return False
         if p.get("is_shooting"):

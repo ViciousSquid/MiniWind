@@ -58,10 +58,6 @@ def run(player, brushes, steps=1, move=(0.0, 0.0), dt=1.0 / 60.0,
 
 @pytest.mark.parametrize("props, blocks", [
     ({}, True),
-    ({"no_collision": False}, True),
-    ({"no_collision": True}, False),
-    ({"no_collision": True, "is_mover": True}, False),
-    ({"no_collision": True, "is_door": True}, False),
     ({"hidden": True}, False),
     ({"disabled": True}, False),
     ({"is_fog": True}, False),
@@ -106,12 +102,11 @@ def test_a_solid_wall_stops_horizontal_movement(grid):
 
 @pytest.mark.parametrize("grid", [False, True], ids=["no-grid", "grid"])
 @pytest.mark.parametrize("props", [
-    {"no_collision": True},
     {"is_water": True},
     {"hidden": True},
     {"disabled": True},
     {"is_trigger": True},
-], ids=["non-solid", "water", "hidden", "disabled", "trigger"])
+], ids=["water", "hidden", "disabled", "trigger"])
 def test_a_non_solid_brush_never_stops_horizontal_movement(props, grid):
     """The regression this file exists for.
 
@@ -153,11 +148,10 @@ def test_the_player_lands_on_a_floor(grid):
 
 
 @pytest.mark.parametrize("props", [
-    {"no_collision": True},
     {"is_water": True},
     {"hidden": True},
     {"is_trigger": True},
-], ids=["non-solid", "water", "hidden", "trigger"])
+], ids=["water", "hidden", "trigger"])
 def test_the_player_falls_through_a_non_solid_floor(props):
     player = player_at(0.0, 200.0, 0.0)
     run(player, [floor_brush(**props)], steps=60)
@@ -216,11 +210,10 @@ def test_a_waterjump_launches_the_player_at_a_reachable_ledge():
 
 
 @pytest.mark.parametrize("props", [
-    {"no_collision": True},
     {"hidden": True},
     {"is_trigger": True},
     {"is_water": True},
-], ids=["non-solid", "hidden", "trigger", "water"])
+], ids=["hidden", "trigger", "water"])
 def test_a_waterjump_ignores_a_ledge_that_is_not_solid(props):
     assert _waterjump_rise(props) == _waterjump_rise(None)
 

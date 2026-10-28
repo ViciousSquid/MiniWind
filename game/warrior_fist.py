@@ -119,7 +119,8 @@ def strike(session, charge: float) -> bool:
     # The blow costs what it costs whether or not it found anyone.
     c.spend_stamina(max(0.0, cost - (6.0 * len(struck))))
     if charge >= 0.35:
-        # A physical blow must not create the gold magical explosion/ring.
+        hit = (ppos[0] + fwd[0] * reach * 0.55, ppos[2] + fwd[2] * reach * 0.55)
+        burst(s, hit, charge)
         if struck:
             s.add_floater("SMASH!" if charge < 0.95 else "CRUSHING BLOW!", kind="crit")
     return True
