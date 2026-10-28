@@ -6,18 +6,19 @@ A spell with a ``burn`` effect (``{"kind": "burn", "magnitude": 2,
 
 * the actor it hits **burns** for the effect's ``duration`` seconds, taking
   its ``magnitude`` in fire damage a second (Flare's is 2 a second for each
-  level of the spell, :data:`game.rpg.magic._PER_LEVEL_KINDS`). The flames
-  use the same engine FIRE effect as the dragon's breath and die down over
-  the last :data:`FADE_SECONDS`. The player burns too, when an enemy's Flare
-  finds them: through the player's own damage path, so fire resistance counts,
-  with the edges of the screen aglow.
+  level of the spell, :data:`game.rpg.magic._PER_LEVEL_KINDS`), with flames
+  on its body that die down over the last :data:`FADE_SECONDS` rather than
+  going out at once. The player burns too, when an enemy's Flare finds them:
+  through the player's own damage path, so fire resistance counts, with the
+  edges of the screen aglow.
 * a bolt that strikes no one -- a wall, the floor -- starts a **small fire**
   where it lands. It burns for :data:`GROUND_FIRE_SECONDS`, fading out the
   same way, and sets alight anyone who walks into it.
 
 The flames are the engine's FIRE effect (:data:`FIRE_TEXTURE`, fire02), one
-per fire, moved with whoever is burning and shrunk as it fades. No separate
-procedural flame particles are layered over the engine effect.
+per fire, moved with whoever is burning and shrunk as it fades: the same
+flame, size and light as the dragon's breath (game/dragon_fire.py), nothing
+added.
 Burning is transient: nothing of it is saved.
 """
 
@@ -26,10 +27,9 @@ from __future__ import annotations
 import math
 
 from . import fio
-from engine.effect_entity import EFFECT_DEFAULTS
 
-#: Use the same default FIRE effect texture as the dragon's breath.
-FIRE_TEXTURE = EFFECT_DEFAULTS["fire_texture"]
+#: The fire the flames are drawn with (the engine's FIRE effect, 1..5).
+FIRE_TEXTURE = "assets/textures/effects/fire02.gif"
 #: Over its last this-many seconds a fire dies down rather than going out.
 FADE_SECONDS = 1.5
 #: Burn damage is dealt this often (seconds), in that share of a second's.
@@ -40,10 +40,12 @@ GROUND_FIRE_SECONDS = 8.0
 GROUND_FIRE_RADIUS = 60.0
 #: How high on a burning body the flames sit, as a share of its sprite.
 BODY_FLAME_LIFT = 0.15
-#: Flare's fires are smaller than the dragon's, but use the same FIRE
-#: texture, tint and lighting defaults.
-BODY_FLAME_SIZE = (54.0, 80.0)
-GROUND_FLAME_SIZE = (40.0, 58.0)
+#: The FIRE effect's size on a body and on the ground, and its light: the
+#: dragon's flame (game/tools/make_caves.py), so all fire looks the same.
+BODY_FLAME_SIZE = (60.0, 90.0)
+GROUND_FLAME_SIZE = (60.0, 90.0)
+FLAME_LIGHT = {"light_enabled": True, "light_radius": 260.0, "light_intensity": 2.5,
+               "light_colour": [255, 150, 60]}
 #: The screen's edges glow while the player burns.
 PLAYER_TINT = ((1.0, 0.45, 0.1), 0.3)
 #: The key the player's own burn is kept under.
@@ -233,7 +235,8 @@ class Burning:
             return None
         props = {"type": "effect", "name": "Burning", "effect_type": "FIRE",
                  "fire_texture": FIRE_TEXTURE, "preview": False, "silent": True,
-                 "width": size[0], "height": size[1]}
+                 "intensity": 1.0, "colour": [255, 110, 25],
+                 "width": size[0], "height": size[1], **FLAME_LIGHT}
         try:
             effect = Effect(pos=list(pos), properties=props)
             fio.things(logic).append(effect)
@@ -254,7 +257,7 @@ class Burning:
         p = effect.properties
         p["width"] = size[0] * (0.25 + 0.75 * k)
         p["height"] = size[1] * (0.25 + 0.75 * k)
-        p["light_intensity"] = EFFECT_DEFAULTS["light_intensity"] * k
+        p["light_intensity"] = FLAME_LIGHT["light_intensity"] * k
         try:
             from engine.change_journal import touch
             touch(effect)

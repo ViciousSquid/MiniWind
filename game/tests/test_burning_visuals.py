@@ -2,7 +2,6 @@
 
 from types import SimpleNamespace
 
-from engine.effect_entity import EFFECT_DEFAULTS
 
 from .. import burning
 from ..dragon_fire import DEFAULT_SETTING, fire_texture
@@ -35,8 +34,13 @@ def _assert_dragon_fire_visuals(effect):
     assert props["effect_type"] == "FIRE"
     assert props["fire_texture"] == fire_texture(DEFAULT_SETTING)
     assert props["fire_texture"] == "assets/textures/effects/fire02.gif"
-    for key in ("colour", "light_enabled", "light_radius", "light_colour", "light_intensity"):
-        assert props[key] == EFFECT_DEFAULTS[key]
+    assert props["colour"] == [255, 110, 25]
+    assert props["intensity"] == 1.0
+    assert props["light_enabled"] is True
+    assert props["light_radius"] == 260.0
+    assert props["light_colour"] == [255, 150, 60]
+    assert props["light_intensity"] == 2.5
+    assert (props["width"], props["height"]) == (60.0, 90.0)
 
 
 def test_flare_ground_fire_is_fire02_without_extra_magic_flames():
@@ -70,7 +74,7 @@ def test_flare_burning_actor_follows_with_fire02_and_no_extra_flames():
     fires.update(0.1)
     assert flame.pos == [25.0, 120.0 - 112.0 * burning.BODY_FLAME_LIFT, 35.0]
     assert fx.calls == [], "The moving burn must still use only the FIRE Effect"
-    assert flame.properties["light_intensity"] == EFFECT_DEFAULTS["light_intensity"]
+    assert flame.properties["light_intensity"] == 2.5
 
     fires.clear()
     assert flame not in things
