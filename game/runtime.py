@@ -3439,8 +3439,13 @@ class MiniwindSession(SettlementLaw):
 
     def _on_drink(self, _item) -> None:
         """A potion drunk, however it was -- a strip slot's number key, the
-        heal key, the pack: the sound of it."""
+        heal key, the pack: the sound of it, and the green shimmer round the
+        player (game/magic_fx.py MagicFX.drink). Food is eaten, and neither."""
         self.play_ui_sound(DRINK_SOUND)
+        pos = self._player_pos()
+        fx = getattr(self, "magic_fx", None)
+        if pos is not None and fx is not None:
+            fx.drink(pos)
 
     def _on_xp(self, amount) -> None:
         """Experience earned (a kill, a quest): "+N XP" over the player, a

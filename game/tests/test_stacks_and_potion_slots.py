@@ -7,6 +7,8 @@ Run:  python -m pytest game/tests/test_stacks_and_potion_slots.py -q
 
 from __future__ import annotations
 
+import pytest
+
 from ..rpg import inventory as inv, items
 from .test_inventory_strip import _session
 
@@ -128,3 +130,27 @@ def test_only_potions_play_drink_not_food(monkeypatch):
     _give(s, "potion_stamina", 1)
     assert s.inventory_use("potion_stamina")
     assert [q["file"] for q in queued] == ["drink.mp3"]
+
+
+def test_drinking_a_potion_shimmers_green_for_a_moment_and_bread_does_not(monkeypatch):
+    from .. import magic_fx
+    s = _session()
+    _sounds(s, monkeypatch, "drink.mp3")
+    s.logic.player.pos = [10.0, 0.0, 20.0]
+    now = [100.0]
+    s.magic_fx = magic_fx.MagicFX(clock=lambda: now[0], player_pos=s._player_pos)
+    _give(s, "bread", 1)
+    s.inventory_use("bread")
+    assert s.magic_fx.frame()[1] == []                           # eaten: no shimmer
+    _give(s, "potion_heal_minor", 1)
+    s.inventory_use("potion_heal_minor")
+    now[0] += magic_fx.DRINK_IN                                  # at its fullest
+    sprites, lenses, _tints = s.magic_fx.frame()
+    (lens,) = lenses
+    x, y, z, strength, radius, _rim, colour, shimmer = lens
+    assert (x, z) == (10.0, 20.0) and strength == pytest.approx(magic_fx.DRINK_LENS)
+    assert colour[1] > colour[0] and colour[1] > colour[2] and shimmer > 0   # green, rippling
+    assert (sprites[:, 8] == magic_fx.BUBBLE).sum() == 1
+    now[0] += magic_fx.DRINK_SECONDS                             # a moment later: gone
+    sprites, lenses, _tints = s.magic_fx.frame()
+    assert lenses == [] and (sprites[:, 8] == magic_fx.BUBBLE).sum() == 0
