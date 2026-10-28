@@ -112,6 +112,31 @@ def _pos(thing):
     return list(p) if p is not None else None
 
 
+class _DirtyActors(set):
+    """Dirty flags with a revision that survives a decision consuming a flag."""
+
+    def __init__(self, keys=()):
+        super().__init__(keys)
+        self.revision = 0
+
+    def add(self, key):
+        super().add(key)
+        self.revision += 1
+
+    def clear(self):
+        super().clear()
+        self.revision += 1
+
+    def update(self, *others):
+        for other in others:
+            for key in other:
+                self.add(key)
+
+    def __ior__(self, other):
+        self.update(other)
+        return self
+
+
 class Director:
     """Runs the reactive pipeline over a set of actors.
 
@@ -145,11 +170,14 @@ class Director:
         # Pure on-demand projection supplied by the living world. Sampling
         # uses evaluate(), while ordinary decisions may cache their results.
         self.mood_context = None
+        self.mood_context_key = None
+        self.fact_reader = None
         self.ctx = appraisal.Context(hostile=hostile, disposition=disposition,
                                      store=store)
         #: actor key -> ranked intents (recomputed when their knowledge changes)
         self._intents: Dict[str, List[Intent]] = {}
-        self._dirty: set = set()
+        self._dirty = _DirtyActors()
+        self._intent_context = {}
         self._gossip_clock = 0.0
         self._coarse_clock = 0.0
         self._coarse_from = 0.0      # sim_time of the last coarse pass
@@ -307,12 +335,16 @@ class Director:
             pass
 
     # -------------------------------------------------- interpretation → why
+    @property
+    def knowledge_revision(self):
+        return self._dirty.revision
+
     def evaluate(self, thing) -> List[Intent]:
         """Read-only appraisal at a mention/materialisation/journey touchpoint."""
         from types import SimpleNamespace
         view = SimpleNamespace(properties=dict(_props(thing)))
         key = actor_key(view)
-        facts = knowledge.facts(self.store, key)
+        facts = self.fact_reader(key) if self.fact_reader is not None else knowledge.facts(self.store, key)
         mood = self.mood_context(thing, facts) if self.mood_context is not None else None
         return appraisal.appraise_all(view.properties, key, facts, self.ctx, mood=mood)
 
@@ -321,8 +353,11 @@ class Director:
         key = actor_key(thing)
         if not key:
             return []
-        if refresh or self.mood_context is not None or key in self._dirty or key not in self._intents:
+        context = self.mood_context_key(thing) if self.mood_context_key is not None else None
+        if (refresh or key in self._dirty or key not in self._intents
+                or self._intent_context.get(key) != context):
             self._intents[key] = self.evaluate(thing)
+            self._intent_context[key] = context
             self._dirty.discard(key)
         return self._intents[key]
 
@@ -338,6 +373,7 @@ class Director:
         """Force an actor's (or everyone's) intents to be reconsidered."""
         if thing is None:
             self._intents.clear()
+            self._intent_context.clear()
             self._dirty.clear()
             return
         key = actor_key(thing)
@@ -479,6 +515,7 @@ class Director:
                             ev.note(f"{actor_name(witness)} reported it to "
                                     f"{actor_name(officer)}")
                     knowledge.mark_reported(self.store, wkey, f.get("e", 0))
+                    self._dirty.add(wkey)
                 break
 
         # (2) a lawful actor who knows about an unreported crime lays the charge

@@ -75,15 +75,55 @@ class FactionSpine:
         self.dispatched = set()
         self.receipts = []
         self.last_decision = None
+        self._member_sources = {}
+        self.begin_tick()
+
+    def begin_tick(self):
+        """Start a shared board-update projection, including decisions/streaming.
+
+        These caches are transient. Reads never populate the director's intent
+        cache or consume dirty flags, write knowledge, or draw randomness.
+        """
+        self._cache_tick = getattr(self, "_cache_tick", 0) + 1
+        self._cache_revision = self.director.knowledge_revision
+        self._fact_cache = {}
+        self._goodwill_cache = {}
+        self._mood_cache = {}
+        self._traffic = None
+
+    def _sync_caches(self):
+        revision = self.director.knowledge_revision
+        if revision != self._cache_revision:
+            self._cache_revision = revision
+            self._goodwill_cache.clear()
+            self._mood_cache.clear()
+
+    def facts(self, key):
+        """Parse each unchanged holder's facts once per board update."""
+        raw = knowledge.token(self.store, key)
+        cached = self._fact_cache.get(key)
+        if cached is None or cached[0] != raw:
+            cached = (raw, knowledge.facts(self.store, key))
+            self._fact_cache[key] = cached
+        return copy.deepcopy(cached[1])
+
+    def context_key(self, actor):
+        """Cheap dependencies for the director's ordinary intent cache."""
+        p = actor.properties
+        return (self._cache_tick, self.director.knowledge_revision, self.enabled(),
+                p.get("courage"), p.get("alignment"), p.get("npc_role"), p.get("creature_role"),
+                p.get("faction"), p.get("team"),
+                knowledge.token(self.store, identity(actor)))
 
     def bind(self, board, actors):
         """Discover homes from real scene actors; never fabricate a force."""
         self.board = board
         self.members = {}
+        entities = {}
         for actor in actors:
             p = actor.properties
             faction = str(p.get("faction") or p.get("team") or "").strip().lower()
-            if faction in ("", "player", "wildlife") or p.get("_journey"):
+            if faction in ("", "player", "wildlife") or p.get("_journey") or p.get("dead"):
                 continue
             home = board.nearest_place(actor.pos[0], actor.pos[2])
             place = board.places.get(home)
@@ -93,9 +133,14 @@ class FactionSpine:
                     > float(place.get("radius", 2500)) ** 2):
                 continue
             key = f"faction_{faction}_{home}"
-            if key not in self.entities:
-                self.entities[key] = dict(faction=faction, home=home)
+            entities[key] = self.entities.get(key, dict(faction=faction, home=home))
             self.members.setdefault(key, {})[identity(actor)] = actor
+        self.entities = entities
+        self.ledgers = {k: v for k, v in self.ledgers.items() if k in entities}
+        self.intents = {k: v for k, v in self.intents.items() if k in entities}
+        self.orders = [o for o in self.orders if o["cause"]["entity"] in entities]
+        self._member_sources.clear()
+        self.begin_tick()
 
     def actor(self, key):
         row = self.entities[key]
@@ -104,32 +149,70 @@ class FactionSpine:
                                type="faction", _faction_actor=True, combatant=True, courage=0.8),
                                pos=[place["x"], 0, place["z"]])
 
-    def accounts(self, key):
-        yield key, knowledge.facts(self.store, key)
+    def _at_home(self, key):
         for member, actor in sorted(self.members.get(key, {}).items()):
             p = actor.properties
             if not p.get("dead") and not p.get("away_on_journey"):
                 place = self.board.places[self.entities[key]["home"]]
                 if ((actor.pos[0] - place["x"]) ** 2 + (actor.pos[2] - place["z"]) ** 2
                         <= float(place.get("radius", 2500)) ** 2):
-                    yield member, knowledge.facts(self.store, member)
+                    yield member
+
+    def accounts(self, key):
+        yield key, self.facts(key)
+        for member in self._at_home(key):
+            yield member, self.facts(member)
 
     def goodwill(self, faction, other):
         # Recompute from facts, rather than retaining a hidden reputation score.
         if not self.enabled():
             return 0.0
-        accounts = [account for key, row in self.entities.items() if row["faction"] == faction
-                    for account in self.accounts(key)]
-        return ledger(faction, accounts)["totals"].get(other, 0.0)
+        self._sync_caches()
+        if faction not in self._goodwill_cache:
+            accounts = (account for key, row in self.entities.items() if row["faction"] == faction
+                        for account in self.accounts(key))
+            self._goodwill_cache[faction] = ledger(faction, accounts)["totals"]
+        return self._goodwill_cache[faction].get(other, 0.0)
 
     def mood(self, actor, facts):
         if not self.enabled() or self.board is None:
             return None
-        from ..footprint import town_prosperity
-        home = self.board.nearest_place(actor.pos[0], actor.pos[2])
-        faction = str(actor.properties.get("faction", ""))
-        return moods.evaluate(actor.properties, facts, town_prosperity(self.board, home),
-                              self.goodwill(faction, "player"))
+        self._sync_caches()
+        key = identity(actor)
+        # Include the supplied beliefs so direct pure evaluations of a detached
+        # fact list cannot accidentally reuse another evaluation's mood.
+        belief_key = tuple((f.get("e"), f.get("kind"), f.get("actor"), f.get("identified", True),
+                            f.get("certainty"), f.get("actor_alignment")) for f in facts)
+        stamp = self.context_key(actor), belief_key
+        cached = self._mood_cache.get(key)
+        if cached is None or cached[0] != stamp:
+            from ..footprint import market_traffic
+            if self._traffic is None:
+                self._traffic = market_traffic(self.board)
+            home = self.board.nearest_place(actor.pos[0], actor.pos[2])
+            faction = str(actor.properties.get("faction", ""))
+            feeling = moods.evaluate(actor.properties, facts, min(1.0, self._traffic.get(home, 0) / 4),
+                                     self.goodwill(faction, "player"))
+            cached = (stamp, feeling)
+            self._mood_cache[key] = cached
+        return copy.deepcopy(cached[1])
+
+    def _tell(self, speaker, listener, fact):
+        if knowledge.tell(self.store, speaker, listener, fact, decay=0.0):
+            self.director.invalidate(listener)
+
+    def _hear_members(self, key):
+        for holder in self._at_home(key):
+            raw = knowledge.token(self.store, holder)
+            previous = self._member_sources.get((key, holder))
+            if previous is not None and previous[0] == raw:
+                continue
+            facts = self.facts(holder)
+            old = previous[1] if previous is not None else {}
+            for fact in facts:
+                if old.get(fact.get("e")) != fact:
+                    self._tell(holder, key, fact)
+            self._member_sources[key, holder] = (raw, {f.get("e"): f for f in facts})
 
     def decide(self, t):
         """An actor decision touchpoint, called before board sampling, never by it."""
@@ -144,11 +227,8 @@ class FactionSpine:
                 continue
             # Members communicate only at home. Copies remain ordinary facts,
             # with the original witness and retelling chain available to inspect.
-            for holder, facts in list(self.accounts(key)):
-                if holder != key:
-                    for fact in facts:
-                        knowledge.tell(self.store, holder, key, fact, decay=0.0)
-            known = knowledge.facts(self.store, key)
+            self._hear_members(key)
+            known = self.facts(key)
             account = ledger(entity["faction"], [(key, known)])
             self.ledgers[key] = account
             ctx = appraisal.Context(hostile=self.director.ctx.hostile, store=self.store,
@@ -231,8 +311,8 @@ class FactionSpine:
         for m in journey.members:
             actor = self.member(m["resident"])
             if actor is not None:
-                knowledge.tell(self.store, cause["holder"], identity(actor), cause["fact"], decay=0.0)
-                knowledge.tell(self.store, cause["holder"], identity(actor), cause["trail"], decay=0.0)
+                self._tell(cause["holder"], identity(actor), cause["fact"])
+                self._tell(cause["holder"], identity(actor), cause["trail"])
 
     def member(self, resident):
         return next((a for group in self.members.values() for a in group.values()
@@ -246,14 +326,16 @@ class FactionSpine:
         for m in journey.alive():
             actor = self.member(m.get("resident"))
             if actor is not None:
-                for fact in knowledge.facts(self.store, identity(actor)):
-                    knowledge.tell(self.store, identity(actor), key, fact, decay=0.0)
+                for fact in self.facts(identity(actor)):
+                    self._tell(identity(actor), key, fact)
 
     def encounter(self, winner, loser, t, where, fallen):
         """Existing board combat enters the same attack/death knowledge pipeline.
 
         This hook observes a resolved fight; it rolls no dice and causes no
         damage. No survivor means no returning testimony.
+        The abstract fight identifies parties, not individual killers: the
+        winner's leader represents its party in these coarse death accounts.
         """
         if not self.enabled() or not (winner.cause or loser.cause):
             return

@@ -470,6 +470,7 @@ class LivingWorld:
             self._board_t = 0.0
             spine = getattr(s, "faction_spine", None)
             if spine is not None:
+                spine.begin_tick()
                 spine.decide(_now_hours(s.clock))
             made = self.board.update(_now_hours(s.clock))
             self._enforce_away()

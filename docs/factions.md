@@ -31,7 +31,15 @@ keeps its authored ecology. There is no invented headquarters or recruitment
 pool. Members communicate their existing facts at home. Away and dead members
 cannot supply remote updates; returning survivors can tell what they learned.
 The faction's knowledge uses the same bounded, inspectable knowledge store as
-any resident, including its source and retelling chain.
+any resident, including its source and retelling chain. Rebinding a scene retains
+only faction/home pairs with living representatives in that scene; stale homes
+cannot contribute goodwill merely because their historical knowledge remains in
+the store. Those old facts and historical receipts remain available.
+
+The hourly decision compares each at-home member's serialized knowledge with its
+last communicated account. Unchanged accounts cause no tell attempts or faction
+knowledge writes. A changed account transfers only new or changed facts. These
+communication bookmarks are transient and reset on bind/restore.
 
 The pure `ledger()` projection counts the strongest identified account of each
 event once, at the existing reporting certainty threshold. Each contribution
@@ -87,6 +95,13 @@ schedule another encounter. Battle testimony does not invent criminal charges.
 Only living survivors remember, and only those who reach home inform the home
 faction. Live combat uses the session's existing event pipeline. The resulting
 knowledge can support later appraisal; there is no private revenge counter.
+Off-screen kill attribution is coarse: the winner's leader represents the winning
+party, rather than an individually simulated killer. This is party testimony.
+
+A force reaching a hostile destination uses the existing rest/loiter period.
+Off-screen resolution requires parties to meet on the road; live forces require
+visible opponents. Without actual contact, an order can rest and return home
+without accomplishing a battle. Arrival alone does not imply a successful attack.
 
 ## Footprint and the drama price
 
@@ -129,6 +144,23 @@ and consume no randomness. Mourning can hold a resident at home; a visible
 threat can make a travelling resident fight or flee through existing controls.
 Existing MiniWind needs and schedules remain in place.
 
+The ordinary `Director.intents()` cache stays active when a mood provider is
+installed. The living world starts one shared projection cache before each
+board update's faction decisions, sampling and streaming. Within it, each holder's
+unchanged facts are parsed once, market traffic is projected once, goodwill is
+accounted once per faction, and each resident's mood is evaluated once. Walking
+and ordinary health changes do not restart these projections between updates.
+
+Knowledge dirty flags carry a monotonic revision, including repeated additions of
+an already-dirty holder. This invalidates goodwill, moods and dependent ordinary
+intents immediately, even after that holder's decision consumes its dirty flag.
+Faction communication uses the same invalidation path. Direct knowledge editing
+continues to pair writes with `Director.invalidate()`. Cached parsed facts also
+check their serialized source before reuse. Read-only evaluations return detached
+facts/moods and never consume dirty flags or populate the ordinary intent cache.
+All projection caches are transient: reset, scene binding and restore discard
+them without changing snapshot schemas or consuming RNG.
+
 ## Pristine ecology and persistence
 
 The storyteller content kill switch and Studio pristine switch also leave new
@@ -151,6 +183,30 @@ omit the optional cause field, preserving their serialized representation.
 Moods have no independent saved state. No restore needs a new random draw.
 
 ## Validation
+
+The caching follow-up starts from a clean `32e76b2` baseline:
+
+- Baseline: **4,237 passed, 34 skipped, 1,974 deselected, five failures**.
+- Full headless: **4,251 passed, 34 skipped, 1,974 deselected, the same five failures**.
+- Focused cache/faction/simulation/storyteller/Studio/Karma: **194 passed**.
+- Eleven new mechanism pins cover per-update work counts, moving residents,
+  immediate cross-member invalidation after dirty-flag consumption, repeated
+  dirty notifications, detached read-only results, scene pruning, incremental
+  communication, board wiring and exact restore without transient caches.
+  Three automatic suite-integrity checks account for the rest of the increase.
+  Collection retains every baseline test. No tests were weakened or disabled.
+- Python compilation and `git diff --check` passed. Interactive play and OpenGL
+  were not exercised. The five unchanged failures are listed below.
+
+```sh
+FIO_HEADLESS_TIER=1 python -m pytest -m 'not qt and not gl and not benchmark' -q
+FIO_HEADLESS_TIER=1 python -m pytest game/tests/test_faction_caching.py \
+  game/tests/test_faction_spine.py game/tests/test_sim.py \
+  game/tests/test_storyteller.py game/tests/test_storyteller_window.py \
+  game/tests/test_alignment.py -q
+```
+
+### Initial faction-spine validation
 
 The initial workspace was clean at `1490d1d`. Upstream main advanced during the
 work, so the implementation was rebased onto `1bc5085` to preserve the newer

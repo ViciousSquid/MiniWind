@@ -893,6 +893,8 @@ class MiniwindSession(SettlementLaw):
         self.faction_spine = FactionSpine(self.store, self.director,
                                          enabled=lambda: self.storyteller.enabled)
         self.director.mood_context = self.faction_spine.mood
+        self.director.mood_context_key = self.faction_spine.context_key
+        self.director.fact_reader = self.faction_spine.facts
         self.director.ctx.goodwill = lambda a, b: (self.faction_spine.goodwill(a, b)
                                                   if self.faction_spine.enabled() else 0.0)
 

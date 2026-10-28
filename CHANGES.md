@@ -1,5 +1,36 @@
 # Changes
 
+## Cache faction projections per board update
+
+- Restore `Director.intents()` caching with a mood provider. Board-update and
+  knowledge revisions refresh dependent intentions without forcing every query
+  to appraise again. Ordinary movement does not invalidate the shared mood sample.
+- Parse each unchanged holder's facts once per board update, project market
+  traffic once, and reuse one goodwill ledger per faction and one mood per
+  resident. Dirty knowledge immediately invalidates dependent projections even
+  after an actor consumes its dirty flag. Read-only queries leave knowledge,
+  ordinary intent caches, dirty flags, snapshots and RNG unchanged.
+- Rebind only living faction/home pairs from the current scene, preserving
+  historical facts without counting stale homes toward current goodwill. Hourly
+  communication skips unchanged member accounts and re-tells only changed facts.
+- Keep all caches transient across bind/reset/restore. Document coarse leader
+  attribution for abstract kills and contact-dependent raid resolution through
+  the existing road encounters and destination rest/loiter period.
+
+Validation:
+
+- Clean baseline `32e76b2`: 4,237 passed, 34 skipped, 1,974 deselected, five
+  pre-existing failures. Full headless: 4,251 passed with the same skips,
+  deselections and five failures; no tests weakened or disabled.
+- Focused cache/faction/simulation/storyteller/Studio/Karma run: 194 passed.
+  Eleven new work-count and invalidation pins also add three automatic suite
+  integrity checks. The selected baseline node set is retained in full.
+- Same five failures: backport import boundary, repeated-assault aggression,
+  container lock difficulty enum, Ember Tome site spacing, missing inventory
+  icon archive manifest. Commands and full names are in `docs/factions.md`.
+- Python compilation and `git diff --check` passed. Interactive play and OpenGL
+  were not exercised.
+
 ## Faction spine and world-priced drama
 
 - Preserve the existing actor-faction knowledge repair and extend the fact

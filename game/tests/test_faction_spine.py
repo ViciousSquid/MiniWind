@@ -47,6 +47,8 @@ def world(count=2, enabled=True):
     session.faction_spine = spine
     spine.bind(b, cast)
     director.mood_context = spine.mood
+    director.mood_context_key = spine.context_key
+    director.fact_reader = spine.facts
     director.ctx.goodwill = lambda a, other: spine.goodwill(a, other) if spine.enabled() else 0
     return session, living, spine, cast
 

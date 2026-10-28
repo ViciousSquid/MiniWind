@@ -109,11 +109,16 @@ def source_for(mode: str) -> str:
 # ---------------------------------------------------------------------------
 # Reading / writing an actor's facts
 # ---------------------------------------------------------------------------
+def token(store, key: str):
+    """Serialized beliefs for cheap read-only cache validation; no JSON parse."""
+    if store is None or not key:
+        return ""
+    return store.get(_base(key), "")
+
+
 def facts(store, key: str) -> List[Dict]:
     """Every fact this actor currently believes (most recent last)."""
-    if store is None or not key:
-        return []
-    raw = store.get(_base(key), "")
+    raw = token(store, key)
     if raw in (None, "", "false"):
         return []
     try:
