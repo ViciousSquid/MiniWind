@@ -105,9 +105,11 @@ has three tabs:
   pacing toggle offers pristine ecology for the session.
 - **World** shows the towns holding remembered unreported crimes and their
   destination bias, clean kin vendettas and their staging explanations, and
-  bounded receipts for actual sampled journeys and materialisations. Receipts
-  retain holder names, known event IDs and the bias used at selection time.
-  Explicit authored destinations are not attributed to a sampling bias.
+  bounded receipts for biased journey choices and actual materialisations.
+  Receipts retain holder names, known event IDs and the bias used at selection time.
+  Routine authored planning produces no outcome receipt or inspector outcome
+  reason. Actual arrivals still appear, including peaceful authored traffic.
+  An arrival inherits remembered causes only from its matching journey leg.
 
 Drag the bottom-right corner to resize the Studio; its table and scroll area
 reflow within the viewport. Scroll with the wheel or Up/Down. Running the

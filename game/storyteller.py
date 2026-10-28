@@ -576,12 +576,13 @@ class Storyteller:
         return weight
 
     def record_journey(self, journey, now, *, arrived=False, destination_sampled=False):
-        """Board-owned choices/outcomes, retained as explanations in our KV only."""
+        """Retain biased choices and real arrivals, without routine planner churn."""
         if not self.enabled:
             return
         evidence = self._thread_facts.get(journey.dest, []) if destination_sampled else []
         events = sorted({row["event"] for row in evidence})
         bias = self._levers["destination_bias"] if evidence else 1.0
+        influenced = bool(evidence) and bias != 1.0
         why = (f"Destination weight {bias:g}: " + "; ".join(
             f"{r.get('holder_name', r['holder'])} ({r['holder']}) remembers {r['kind']} #{r['event']} in {journey.dest}" for r in evidence))
         if not evidence:
@@ -590,15 +591,24 @@ class Storyteller:
             key = actor_key(member.get("resident", ""))
             staged = self._vendetta_view.get(key, {})
             if destination_sampled and staged.get("destination") == journey.dest:
+                influenced = True
                 why = staged["staging"]
                 events = [staged["event"]]
                 break
+        if not arrived and not influenced:
+            return
+        # Remaining legs identify the board's current trip even if streaming
+        # rebases its departure time. A resting party has just completed a leg.
+        leg = journey.legs + int(arrived and journey.state == "rest")
         if arrived:
-            previous = next((r for r in reversed(self._receipts) if r["journey"] == journey.id), None)
+            previous = next((r for r in reversed(self._receipts)
+                             if r["journey"] == journey.id and r.get("leg") == leg
+                             and r["origin"] == journey.origin and r["destination"] == journey.dest), None)
             if previous:
                 why, events = previous["reason"], previous["events"]
         lead = journey.leader() or {}
         receipt = dict(time=float(now), journey=journey.id, kind=journey.kind,
+                       leg=leg,
                        party=lead.get("display") or lead.get("name") or journey.id,
                        origin=journey.origin, destination=journey.dest, events=events,
                        outcome="Materialised in the live region" if arrived else "Routed journey sampled",

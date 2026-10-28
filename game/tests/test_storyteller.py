@@ -1029,6 +1029,8 @@ def test_world_view_links_actual_sampled_trips_to_holder_memories_and_preserves_
     assert arrival["outcome"] == "Materialised in the live region"
     assert arrival["reason"] == receipt["reason"] and arrival["events"] == [ev.id]
     explicit = b.plan("trader", 9, origin="a", dest="b")
+    assert story.world_view()["receipts"][0] == arrival  # ordinary planning is quiet
+    story.record_journey(explicit, 10, arrived=True)
     authored = story.world_view()["receipts"][0]
     assert authored["journey"] == explicit.id and not authored["events"]
     before = dict(store.d), copy.deepcopy(story._reasons), director.rng.getstate()
@@ -1039,3 +1041,87 @@ def test_world_view_links_actual_sampled_trips_to_holder_memories_and_preserves_
     assert (store.d, story._reasons, director.rng.getstate()) == before
     story.persist()
     assert Storyteller(store, director, hooks).world_view() == story.world_view()
+
+
+def test_busy_ordinary_planning_preserves_causal_receipts_and_inspector_outcomes():
+    story, director, hooks, store = setup()
+    witness = actor(town="b")
+    hooks.cast = [witness]
+    remember(store, director.bus, witness)
+    rising(story)
+    b = board(story)
+    for _ in range(20):
+        if b.plan("trader", 8, origin="a").dest == "b":
+            break
+    receipts = story.world_view()["receipts"]
+    assert receipts and receipts[0]["events"]
+    outcome = dict(story.inspector_rows())["Journey outcome"]
+    control = board(story)
+    control.rng.setstate(b.rng.getstate())
+    control.next_id = b.next_id
+    control._names_used = set(b._names_used)
+    control.hooks.journey_sampled = lambda *_args, **_kwargs: None
+    sampler_rng = director.rng.getstate()
+    for i in range(TUNING["receipt_cap"] * 2):
+        # Explicit destinations and their later homeward legs are authored.
+        trip = b.plan("trader", 9 + i, origin="a", dest="c")
+        other = control.plan("trader", 9 + i, origin="a", dest="c")
+        trip.legs = other.legs = 1
+        b.next_leg(trip, 9.5 + i)
+        control.next_leg(other, 9.5 + i)
+        assert trip.to_dict() == other.to_dict()
+        assert b.rng.getstate() == control.rng.getstate()
+    assert story.world_view()["receipts"] == receipts
+    assert dict(story.inspector_rows())["Journey outcome"] == outcome
+    assert director.rng.getstate() == sampler_rng
+    story.persist()
+    loaded = Storyteller(store, director, hooks)
+    assert loaded.world_view() == story.world_view()
+    assert loaded.inspector_rows() == story.inspector_rows()
+
+
+def test_neutral_memory_weight_does_not_emit_planning_receipts_but_arrivals_do():
+    story, director, hooks, store = setup()
+    witness = actor(town="b")
+    hooks.cast = [witness]
+    remember(store, director.bus, witness)
+    rising(story)
+    story.edit_lever("RISING", ("destination_bias",), 1)
+    b = board(story)
+    for _ in range(20):
+        trip = b.plan("trader", 8, origin="a")
+        if trip.dest == "b":
+            break
+    assert trip.dest == "b"
+    assert not story.world_view()["receipts"]
+    assert "Journey outcome" not in dict(story.inspector_rows())
+    story.record_journey(trip, 9, arrived=True)
+    receipt = story.world_view()["receipts"][0]
+    assert receipt["journey"] == trip.id and not receipt["events"]
+    assert receipt["outcome"] == "Materialised in the live region"
+
+
+def test_receipt_causes_follow_only_the_matching_leg_including_a_resting_arrival():
+    story, director, hooks, store = setup()
+    witness = actor(town="b")
+    hooks.cast = [witness]
+    ev, _fact = remember(store, director.bus, witness)
+    rising(story)
+    b = board(story)
+    for _ in range(20):
+        trip = b.plan("trader", 8, origin="a")
+        if trip.dest == "b":
+            break
+    assert trip.dest == "b"
+    initial_leg = trip.legs
+    b.arrive(trip, 9, [])
+    assert trip.state == "rest" and trip.legs == initial_leg - 1
+    story.record_journey(trip, 9, arrived=True)
+    receipt = story.world_view()["receipts"][0]
+    assert receipt["events"] == [ev.id] and receipt["leg"] == initial_leg
+    # A later authored leg can reuse the same endpoints. Suppressing its
+    # planning receipt must not attach the old leg's theft to its arrival.
+    trip.state, trip.origin, trip.dest = "travel", "a", "b"
+    story.record_journey(trip, 10)
+    story.record_journey(trip, 11, arrived=True)
+    assert not story.world_view()["receipts"][0]["events"]

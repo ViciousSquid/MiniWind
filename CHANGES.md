@@ -1,5 +1,17 @@
 # Changes
 
+## Quieter storyteller receipts
+
+- Record journey outcomes for storyteller-biased destination choices and actual
+  materialisations. Routine authored planning no longer replaces the inspector's
+  latest outcome or fills the bounded receipt history. Neutral memory weights
+  produce no planning receipt. All actual arrivals remain visible.
+- Match inherited arrival causes to the journey leg, including resting arrivals,
+  so suppressing ordinary planning cannot misattribute an earlier leg's crime.
+  Pins cover busy planning, RNG parity, save/load and causal leg matching.
+- Validation: 111 focused tests passed; the full headless suite reports 4,179
+  passed, 34 skipped and the same five pre-existing failures listed below.
+
 ## Storyteller pacing and Studio
 
 - Eligible clean, undischarged kin vendettas can draw an ordinary resident
