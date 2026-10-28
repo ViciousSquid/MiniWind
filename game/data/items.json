@@ -709,10 +709,11 @@
     "value": 1,
     "weight": 0.2,
     "desc": "A heel of bread. Restores a little health.",
+    "food": true,
     "effects": [
       {
         "kind": "restore_health",
-        "magnitude": 8,
+        "magnitude": 5,
         "duration": 0
       }
     ]

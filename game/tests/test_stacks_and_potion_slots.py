@@ -114,3 +114,17 @@ def test_every_potion_drunk_by_every_route_plays_drink(monkeypatch):
     s.select_strip_slot(index)                                   # its number key / a click
     assert s.inventory_use("potion_magicka")                     # the pack, a double-click
     assert [q["file"] for q in queued] == ["drink.mp3"] * 3
+
+
+def test_only_potions_play_drink_not_food(monkeypatch):
+    s = _session()
+    queued = _sounds(s, monkeypatch, "drink.mp3")
+    _give(s, "bread", 2)
+    c = s.game.character
+    c.health = c.max_health - 20
+    assert s.inventory_use("bread")
+    assert c.health == c.max_health - 15                         # bread: 5 health
+    assert queued == []                                          # eaten, not drunk
+    _give(s, "potion_stamina", 1)
+    assert s.inventory_use("potion_stamina")
+    assert [q["file"] for q in queued] == ["drink.mp3"]

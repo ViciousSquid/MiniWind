@@ -179,6 +179,9 @@ class GameState:
             if inv.remove_item(self.character.inventory, item_id, 1) <= 0:
                 return False
             magic.apply_effects_to_character(self.character, d.get("effects", []))
+            if not items.is_potion(d):
+                self.message(f"Ate {d.name}")     # food: eaten, not drunk
+                return True
             self.message(f"Drank {d.name}")
             for listener in list(getattr(self, "_drink_listeners", ())):
                 try:
