@@ -48,6 +48,17 @@ class ContainerWindow(CallbackWindow):
         if not rect.contains(event.pos()):
             return False
         in_body = event.y() >= rect.y() + self.HEADER_H
+        picked = drag.picked_source()
+        if in_body and self.expanded and picked is not None:
+            # Something picked up with a click: a click on the contents
+            # stores it; any other puts it back down.
+            drag.unpick()
+            zone = next((t for r, t in screens.CONTAINER_DRAG["zones"]
+                         if r.contains(event.pos())), None)
+            if event.button() == Qt.LeftButton and zone == ("container", None) \
+                    and picked[0] != "container":
+                hits.queue(lambda session: session.item_drop(picked, zone))
+            return True
         if in_body and self.expanded and event.button() == Qt.LeftButton:
             source = self._cell_at(event.pos())
             if source is not None:

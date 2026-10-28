@@ -15,6 +15,11 @@ kinds are ``pack``, ``equip``, ``quick``, ``strip`` and ``container``. A spell
 dragged out of the spellbook is ``("spell", None, spell id)``, and it can be
 let go on the strip; a strip slot holding one carries ``"spell:<id>"``.
 
+Instead of a drag, a click can pick an item up (:func:`pick`): every slot it
+fits lights up, in every window, and a click on one puts it there -- the same
+``session.item_drop(source, target)``. A click on the item again, or a right
+click, puts it back down.
+
 Everything here runs on the UI thread (painting and the mouse).
 """
 
@@ -30,6 +35,10 @@ _tick = [0]
 
 #: What is being dragged, or None: ``{"owner": window, "source": (...)}``.
 current = None
+#: What a click (not a drag) has picked up to place with a second click on a
+#: slot, or None: ``{"owner": window, "source": (...)}``. Any window can take
+#: it: a click on one of its slots that fits is the drop.
+picked = None
 
 
 def set_zones(owner, zones) -> None:
@@ -41,11 +50,38 @@ def set_zones(owner, zones) -> None:
 
 def forget(owner) -> None:
     """*owner* has closed: it takes no more drops."""
-    global current
+    global current, picked
     _zones.pop(owner, None)
     _order.pop(owner, None)
     if current is not None and current.get("owner") is owner:
         current = None
+    if picked is not None and picked.get("owner") is owner:
+        picked = None
+
+
+def pick(owner, source) -> None:
+    """A click picked *source* up: the slots it fits light up, and a click on
+    one of them puts it there."""
+    global picked
+    picked = {"owner": owner, "source": tuple(source)}
+
+
+def unpick() -> None:
+    global picked
+    picked = None
+
+
+def picked_source():
+    """The ``(kind, key, id)`` picked up by a click, or None."""
+    return picked["source"] if picked is not None else None
+
+
+def offered():
+    """What is on its way to a slot: the item being dragged, else the one a
+    click picked up; None when neither."""
+    if current is not None:
+        return current["source"]
+    return picked_source()
 
 
 def over_window(x, y) -> bool:
@@ -93,15 +129,19 @@ def dragged_id():
     return current["source"][2] if current is not None else None
 
 
-def draw_ghost(painter, owner, pointer, size=52) -> None:
+def draw_ghost(painter, owner, pointer, size=52, source=None) -> None:
     """The dragged item's icon under the pointer, drawn by the window it was
-    picked up in."""
-    if current is None or current.get("owner") is not owner or pointer is None:
+    picked up in; or, given *source*, that item's (one a click picked up)."""
+    if source is None:
+        if current is None or current.get("owner") is not owner:
+            return
+        source = current["source"]
+    if pointer is None:
         return
-    iid = current["source"][2]
+    iid = source[2]
     if str(iid).startswith("spell:"):
         iid = str(iid)[len("spell:"):]          # a spell's strip slot
-    if current["source"][0] in ("spell", "spell_hand") or iid != current["source"][2]:
+    if source[0] in ("spell", "spell_hand") or iid != source[2]:
         from ..rpg import magic
         from PyQt5.QtCore import QPointF
         from PyQt5.QtGui import QColor
@@ -139,7 +179,8 @@ def draw_ghost(painter, owner, pointer, size=52) -> None:
 
 def reset() -> None:
     """Forget every window and drag (a play session ended; tests)."""
-    global current
+    global current, picked
     _zones.clear()
     _order.clear()
     current = None
+    picked = None

@@ -16,6 +16,10 @@ raised and lit, its name shown above the bar.
   wear it;
 * drag a slot onto another to rearrange (the two swap); out over the world,
   it is dropped on the floor;
+* or click to pick something up -- anything but a weapon or spell, which a
+  click readies -- and every slot lights up; a click on one puts it there.
+  An item picked up in the character window or the spellbook is placed on
+  the strip the same way;
 * drag between the strip and the character window (C), a chest or a body:
   out of the strip into the pack takes it off the strip, onto the body wears
   it, into a container stores it; from any of them onto a slot puts it there
@@ -195,6 +199,8 @@ class InventoryStrip(FloatingWindow):
             pass
         dragged = drag.dragged_id()
         mine = drag.current is not None and drag.current.get("owner") is self
+        # Picked up by a click somewhere: every slot is somewhere it can go.
+        picked = drag.picked_source() if drag.current is None else None
         painter.save()
         painter.setRenderHint(painter.Antialiasing, True)
         self._draw_bar(painter)
@@ -204,7 +210,9 @@ class InventoryStrip(FloatingWindow):
             iid = stack.get("id") if stack else None
             sel = i == self.selected
             hot = hits.hovered(rect)
-            self._draw_tile(painter, rect, stack, sel, hot, dragged is not None)
+            here = picked is not None and picked[0] == "strip" and picked[1] == i
+            self._draw_tile(painter, rect, stack, sel, hot, dragged is not None,
+                            open_=picked is not None and not here)
             hide = mine and self._press is not None and self._press[1] == i
             spell = _spell_of(stack)
             if spell is not None and not hide:
@@ -225,6 +233,10 @@ class InventoryStrip(FloatingWindow):
             self._draw_name(painter, stack)
         if mine:
             drag.draw_ghost(painter, self, hits.pointer, self._rects[0].width() - 8)
+        elif picked is not None:
+            # What a click picked up rides beside the pointer until placed.
+            drag.draw_ghost(painter, self, (hits.pointer[0] + 22, hits.pointer[1] + 22)
+                            if hits.pointer else None, 34, source=picked)
         painter.restore()
 
     def _draw_bar(self, painter):
@@ -256,8 +268,9 @@ class InventoryStrip(FloatingWindow):
             painter.setBrush(_RIVET)
             painter.drawEllipse(QRectF(cx - 2, cy - 2, 4, 4))
 
-    def _draw_tile(self, painter, rect, stack, selected, hot, dragging):
-        """One bevelled slot tile, tinted by the rarity of what is in it."""
+    def _draw_tile(self, painter, rect, stack, selected, hot, dragging, open_=False):
+        """One bevelled slot tile, tinted by the rarity of what is in it; lit
+        green as somewhere a dragged (or *open_*: picked-up) item can go."""
         r = QRectF(rect)
         if selected:
             glow = QPainterPath()
@@ -287,7 +300,7 @@ class InventoryStrip(FloatingWindow):
         painter.drawLine(int(r.left() + 2), int(r.bottom() - 1), int(r.right() - 2), int(r.bottom() - 1))
         painter.drawLine(int(r.right() - 1), int(r.top() + 2), int(r.right() - 1), int(r.bottom() - 2))
         edge, width = (_EMBER, 2.2) if selected else (_TILE_EDGE, 1.4)
-        if dragging and hot:
+        if (dragging and hot) or open_:
             edge, width = _OK, 2.4
         painter.setBrush(Qt.NoBrush)
         painter.setPen(QPen(edge, width))
@@ -407,6 +420,17 @@ class InventoryStrip(FloatingWindow):
             return False
         i = self._slot_at(event.pos())
         stack = self._slots[i] if i is not None and i < len(self._slots) else None
+        picked = drag.picked_source()
+        if picked is not None:
+            # Something picked up with a click: this click places it here --
+            # or, on the slot it came from or with the right button, puts it
+            # back down.
+            drag.unpick()
+            if (i is not None and event.button() == Qt.LeftButton
+                    and not (picked[0] == "strip" and picked[1] == i)):
+                self.selected = i
+                hits.queue(lambda session: session.item_drop(picked, ("strip", i)))
+            return True
         if (i is not None and event.button() == Qt.RightButton
                 and _spell_of(stack) is not None):
             # A spell's slot, right-clicked: readied in the right hand.
@@ -456,6 +480,10 @@ class InventoryStrip(FloatingWindow):
             if iid and last_i == i and now - last_t <= DOUBLE_CLICK:
                 hits.queue(lambda session: session.inventory_use(iid))
                 self._last_click = (0.0, None)
+            elif iid:
+                # Picked up: a click on another slot, or a slot of the
+                # character window, puts it there.
+                drag.pick(self, ("strip", i, iid))
             return True
         self._dragging = False
         drag.stop(self)

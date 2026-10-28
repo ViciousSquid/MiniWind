@@ -177,6 +177,21 @@ def why_not(target, item_def) -> str:
     return f"{name} can't go there."
 
 
+def placeable(target, source) -> bool:
+    """Whether a click on *target* puts the picked-up *source* there: it fits,
+    and it is a move -- not the slot it is already in, nor one pack slot to
+    another (the pack keeps its own order)."""
+    if target is None or source is None:
+        return False
+    if tuple(target[:2]) == tuple(source[:2]):
+        return False
+    if target[0] == "pack" and source[0] == "pack":
+        return False
+    if target[0] == "strip":
+        return True
+    return source_fits(target, source)
+
+
 def source_fits(target, source):
     if source[0] in ("spell", "spell_hand"):
         return (target[0] == "hand" or target in (("equip", "weapon"), ("equip", "shield"))
@@ -217,6 +232,8 @@ class InventoryWindow(FloatingWindow):
         self._press = None              # (QPoint, source) of a pending press
         self._drag = None               # source being dragged
         self._last_click = (0.0, None)
+        #: This press put a picked-up item back down (its release is no pick).
+        self._unpicked = False
         self._icons = {}
         self._doll = {}
         from . import fonts
@@ -394,7 +411,8 @@ class InventoryWindow(FloatingWindow):
         """One item slot: a sunken frame, its icon and count, its drop state.
         *stack* is what the slot shows when it is not the whole carried stack
         (one copy of a weapon carried twice)."""
-        dragging = self._drag or (drag.current["source"] if drag.current else None)
+        # Dragged, or picked up by a click: the slots it fits light up.
+        dragging = self._drag or drag.offered()
         drag_def = _item(dragging[2]) if dragging else None
         border = _SLOT_EDGE
         fill = _SLOT
@@ -1128,6 +1146,10 @@ class InventoryWindow(FloatingWindow):
         if not rect.contains(event.pos()):
             return False
         body_top = rect.y() + self.HEADER_H
+        picked = drag.picked_source()
+        if picked is not None and event.y() >= body_top and event.button() == Qt.RightButton:
+            drag.unpick()                    # a right click puts it back down
+            return True
         if event.y() < body_top or event.button() != Qt.LeftButton:
             return super().handle_mouse_press(event)
         p = event.pos()
@@ -1136,6 +1158,18 @@ class InventoryWindow(FloatingWindow):
             button()
             return True
         source = self._at(self._cells, p)
+        self._unpicked = False
+        if picked is not None:
+            if source is not None and tuple(source) == tuple(picked):
+                drag.unpick()                # the same item again: put down
+                self._unpicked = True
+            else:
+                target = self._at(self._targets, p)
+                if target is not None and placeable(target, picked):
+                    # A click on a slot it fits: it goes there.
+                    drag.unpick()
+                    self._queue(lambda session: session.item_drop(picked, target))
+                    return True
         if source is not None:
             self._press = (QPoint(p), source)
             if source[0] in ("spell", "spell_hand"):
@@ -1170,17 +1204,21 @@ class InventoryWindow(FloatingWindow):
         dragged, self._drag = self._drag, None
         drag.stop(self)
         if dragged is None:
-            # A click: a second one on the same item soon after uses it.
+            # A click: a second one on the same item soon after uses it; one
+            # on its own picks it up, to be put in a slot with a click there.
             now = time.monotonic()
             last_t, last_src = self._last_click
             self._last_click = (now, source)
             if last_src == source and now - last_t <= DOUBLE_CLICK:
                 iid = source[2]
+                drag.unpick()
                 if source[0] in ("spell", "spell_hand"):
                     self._ready_spell(iid)()
                 else:
                     self._queue(lambda session: session.inventory_use(iid))
                 self._last_click = (0.0, None)
+            elif not self._unpicked:
+                drag.pick(self, source)
             return True
         iid = dragged[2]
         target = self._at(self._targets, event.pos())
