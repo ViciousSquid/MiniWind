@@ -204,6 +204,10 @@ BOUNTY_NOTICE_RADIUS = 700.0
 ESCORT_BREAKAWAY_DISTANCE = 320.0
 #: Nearby guards who join the pursuit after an escort escape.
 GUARD_PURSUIT_RADIUS = 1200.0
+#: The sign over a prison marker in play: how far above the marker it floats
+#: and its billboard size (world units).
+PRISON_SIGN_RISE = 70.0
+PRISON_SIGN_SIZE = (56.0, 56.0)
 #: A surrendered player is considered delivered when close to the prison marker.
 PRISON_ARRIVE_RADIUS = 96.0
 PRISON_MARKER_NAME = "prison"
@@ -1009,6 +1013,7 @@ class MiniwindSession(SettlementLaw):
         self._assign_npc_handedness()  # random handedness (left rare) where unset
         self._arm_fighters()           # a bow for the swordsman, a blade for the archer
         self.dragon_fire.install(fio.things(self.logic))
+        self._show_prison_signs()      # the gaol is marked in the world
         self._assign_npc_stats()       # STRENGTH / ENDURANCE / CHARISMA for everyone
         self._wire_quest_givers()      # make quest givers offer their quests
         self._name_index()             # built now, not on the first quest's frame
@@ -1035,6 +1040,7 @@ class MiniwindSession(SettlementLaw):
             except Exception:
                 pass
         self._remove_wisp()
+        self._remove_prison_signs()
         self._remove_all_torch_lights()
         self.magic_fx.clear()
         self._bolt_positions = {}
@@ -1785,6 +1791,49 @@ class MiniwindSession(SettlementLaw):
                 self._rebuild_entity_caches()
         except Exception:
             pass
+
+    # ------------------------------------------------------------ the gaol
+    def _show_prison_signs(self) -> None:
+        """Mark each prison in the world while the game runs: a billboard of
+        the prison marker's own pin over it. Markers are authoring aids the
+        renderer draws only in the editor, so the sign is a separate Prop,
+        added for play and taken away again when play stops -- the marker
+        itself, which the editor keeps after play, is never changed."""
+        self._remove_prison_signs()
+        try:
+            from editor.things import Prop
+            from .entities import marker_sprite
+        except Exception:
+            return
+        things = fio.things(self.logic)
+        if things is None:
+            return
+        for marker in self._markers_of_kind("prison"):
+            sign = Prop(pos=[float(marker.pos[0]), float(marker.pos[1]) + PRISON_SIGN_RISE,
+                             float(marker.pos[2])],
+                        properties={"name": f"{marker.properties.get('name', 'prison')}_sign",
+                                    "render_mode": "billboard",
+                                    "sprite_path": marker_sprite("prison"),
+                                    "sprite_size": list(PRISON_SIGN_SIZE),
+                                    "_prison_sign": True})
+            things.append(sign)
+        self._rebuild_entity_caches()
+
+    def _remove_prison_signs(self) -> None:
+        """Take the prison signs out of the world (play stopping) -- and any
+        a save made during play brought back with it."""
+        try:
+            things = fio.things(self.logic)
+        except Exception:
+            return
+        if not things:
+            return
+        signs = [t for t in things
+                 if (getattr(t, "properties", None) or {}).get("_prison_sign")]
+        for sign in signs:
+            things.remove(sign)
+        if signs:
+            self._rebuild_entity_caches()
 
     # ------------------------------------------------------------- the reaper
     def _maybe_send_the_reaper(self, body) -> None:
