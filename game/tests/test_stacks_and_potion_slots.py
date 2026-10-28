@@ -16,9 +16,12 @@ def _give(s, iid, qty):
 
 
 def _sounds(s, monkeypatch, *present):
+    """Capture queued sounds, with only *present* shipped: no loose file in
+    assets/sounds counts (they are looked for first), only the pinned set."""
     from .. import runtime
     queued = []
     s.logic.game_state = type("GS", (), {"queue_sound": staticmethod(queued.append)})()
+    monkeypatch.setattr(runtime, "SOUND_DIR", "/nonexistent/sounds")
     monkeypatch.setattr(runtime, "_ARCHIVED_SOUNDS", set(present))
     return queued
 
@@ -94,3 +97,20 @@ def test_no_drink_sound_is_no_error(monkeypatch):
     _give(s, "potion_heal", 1)
     assert s.use_health_potion()
     assert queued == []
+
+
+def test_every_potion_drunk_by_every_route_plays_drink(monkeypatch):
+    from ..rpg import items
+    s = _session()
+    queued = _sounds(s, monkeypatch, "drink.mp3")
+    potions = [iid for iid in ("potion_heal_minor", "potion_heal", "potion_magicka")
+               if items.get(iid) is not None and items.get(iid).category == items.POTION]
+    assert len(potions) == 3
+    for iid in potions:
+        _give(s, iid, 3)
+    assert s.use_health_potion()                                 # the heal key
+    index = next(i for i, e in enumerate(s.strip_slots())
+                 if e and e["id"] == "potion_magicka")
+    s.select_strip_slot(index)                                   # its number key / a click
+    assert s.inventory_use("potion_magicka")                     # the pack, a double-click
+    assert [q["file"] for q in queued] == ["drink.mp3"] * 3
