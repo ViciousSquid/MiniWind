@@ -497,8 +497,53 @@ def _WorldWindow(parent, QtWidgets, QtCore):
             self.history.setHeaderLabels(["When", "What happened"])
             self.history.setColumnWidth(0, 150)
             self.history.setStyleSheet(editor_ui.TABLE_STYLE)
-            l.addWidget(self.history)
+            self.pacing = QtWidgets.QTreeWidget()
+            self.pacing.setHeaderLabels(["Storyteller world view", "Why / sampled outcome"])
+            self.pacing.setColumnWidth(0, 250)
+            self.pacing.setStyleSheet(editor_ui.TABLE_STYLE)
+            self.pacing.itemSelectionChanged.connect(self._select_pacing_event)
+            split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+            split.addWidget(self.history)
+            split.addWidget(self.pacing)
+            l.addWidget(split)
+            studio = QtWidgets.QPushButton("Open Storyteller Studio")
+            studio.clicked.connect(self._open_studio)
+            studio.setToolTip("Live sensors and editable lever tables. Select a pacing explanation to locate its source event in history.")
+            l.addWidget(studio)
             return w
+
+        def _open_studio(self):
+            from .ui.storyteller_window import open_storyteller
+            view = getattr(parent or _main_window(), "view_3d", None)
+            if view is not None:
+                open_storyteller(view)
+
+        def _select_pacing_event(self):
+            selected = self.pacing.currentItem()
+            events = selected.data(0, QtCore.Qt.UserRole) if selected else None
+            if not events:
+                return
+            for i in range(self.history.topLevelItemCount()):
+                item = self.history.topLevelItem(i)
+                if item.data(0, QtCore.Qt.UserRole) in events:
+                    self.history.setCurrentItem(item)
+                    self.history.scrollToItem(item)
+                    return
+
+        def _refresh_pacing(self, session):
+            from .storyteller_studio import world_explanations
+            self.pacing.clear()
+            groups = {}
+            for group, label, reason, events in world_explanations(getattr(session, "storyteller", None)):
+                if group not in groups:
+                    node = QtWidgets.QTreeWidgetItem([group, ""])
+                    self.pacing.addTopLevelItem(node)
+                    node.setExpanded(True)
+                    groups[group] = node
+                item = QtWidgets.QTreeWidgetItem([label, reason])
+                item.setData(0, QtCore.Qt.UserRole, events)
+                item.setToolTip(1, reason)
+                groups[group].addChild(item)
 
         # -- Simulate Event ----------------------------------------------
         def _inject_tab(self):
@@ -593,6 +638,7 @@ def _WorldWindow(parent, QtWidgets, QtCore):
                     "press Play and this window fills with the live world.")
                 self.actors.setRowCount(0)
                 self.history.clear()
+                self.pacing.clear()
                 self._actor_rows = []
                 return
             clock = session.clock
@@ -602,6 +648,7 @@ def _WorldWindow(parent, QtWidgets, QtCore):
                 f"{int(getattr(session.game.character, 'bounty', 0))}")
             self._refresh_actors(session, director)
             self._refresh_history(session, director)
+            self._refresh_pacing(session)
 
         def _refresh_actors(self, session, director):
             try:
@@ -650,6 +697,7 @@ def _WorldWindow(parent, QtWidgets, QtCore):
             for ev in events:
                 node = QtWidgets.QTreeWidgetItem(
                     [ev.timestamp(), f"#{ev.id} {ev.describe()}"])
+                node.setData(0, QtCore.Qt.UserRole, ev.id)
                 if ev.is_crime and not sim_crime.already_reported(director.store,
                                                                  ev.id):
                     node.setText(1, node.text(1) + "   [unreported]")

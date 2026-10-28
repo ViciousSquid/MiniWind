@@ -185,6 +185,25 @@ class WorldHooks:
     def resident_home(self, resident_id: str, journey, alive: bool) -> None:
         pass
 
+    def journey_levers(self) -> Dict:
+        """Optional session pacing values; defaults preserve the authored board."""
+        return {}
+
+    def destination_weight(self, place_key: str) -> float:
+        return 1.0
+
+    def materialisation_weight(self, actor_keys, distance: float) -> float:
+        return 1.0
+
+    def resident_destination(self, resident_id, towns, origin):
+        return None
+
+    def journey_weight(self, kind, position, hostile):
+        return 1.0
+
+    def journey_sampled(self, journey, t, *, arrived=False, destination_sampled=False):
+        pass
+
 
 # ---------------------------------------------------------------------------
 # A journey
@@ -319,8 +338,23 @@ class JourneyBoard:
         self.residents_on_trips: Dict[str, str] = {}   # resident id -> journey id
         self.resident_pool: List[Dict] = []   # {"id", "home", "role"} eligible to travel
         self._names_used = set()
+        self._update_levers = None
+        # Streamer-owned telemetry, read by the storyteller without events.
+        self.hostile_materialisations = {}
 
     # -- places --------------------------------------------------------------
+    def _lever(self, name, default):
+        levers = self._update_levers
+        return (self.hooks.journey_levers() if levers is None else levers).get(name, default)
+
+    def _hours(self, kind):
+        return self._lever("kind_hours", {}).get(kind, KINDS[kind]["hours"])
+
+    @staticmethod
+    def _in_hours(hour, hours):
+        lo, hi = hours
+        return lo <= hour < hi if lo <= hi else hour >= lo or hour < hi
+
     def places_of(self, kinds: Iterable[str]) -> List[str]:
         kinds = tuple(kinds)
         return [k for k, p in self.places.items()
@@ -382,6 +416,7 @@ class JourneyBoard:
         """Start a journey of *kind* (picking its places if not given)."""
         spec = KINDS[kind]
         rng = self.rng
+        destination_sampled = dest is None
         origins = [origin] if origin else self.places_of(spec["origins"])
         if not origins:
             return None
@@ -395,6 +430,7 @@ class JourneyBoard:
             weights = [1.0 / (1.0 + math.hypot(self.places[d]["x"] - ox,
                                                self.places[d]["z"] - oz) / 6000.0) ** 2
                        for d in dests]
+            weights = [w * self.hooks.destination_weight(d) for d, w in zip(dests, weights)]
             dest = rng.choices(dests, weights=weights)[0]
         route = self._route(origin, dest)
         if route is None:
@@ -415,20 +451,38 @@ class JourneyBoard:
         # Whatever is being said where they set out, they set out knowing.
         j.news = list(self.heard.get(origin, []))[-8:]
         self.journeys[jid] = j
+        if kind != "market":  # resident metadata is attached just after plan()
+            self.hooks.journey_sampled(j, t, destination_sampled=destination_sampled)
         return j
 
-    def _pick_kind(self) -> str:
-        kinds = [k for k, s in KINDS.items() if s.get("weight", 0) > 0]
-        weights = [KINDS[k]["weight"] for k in kinds]
+    def _pick_kind(self, hour=None) -> Optional[str]:
+        overrides = self._lever("kind_weights", {})
+        kinds = [k for k, s in KINDS.items()
+                 if overrides.get(k, s.get("weight", 0)) > 0
+                 and (hour is None or self._in_hours(hour, self._hours(k)))]
+        if not kinds:
+            return None
+        weights = [overrides.get(k, KINDS[k]["weight"]) for k in kinds]
         return self.rng.choices(kinds, weights=weights)[0]
 
     def seed(self, t: float) -> None:
         """A world that has been going for a while: a full population, caught
         part-way along their roads."""
-        for _ in range(self.population * 3):
-            if len(self.journeys) >= self.population:
+        self._update_levers = self.hooks.journey_levers()
+        try:
+            self._seed(t)
+        finally:
+            self._update_levers = None
+
+    def _seed(self, t):
+        population = int(self._lever("population", self.population))
+        for _ in range(population * 3):
+            if len(self.journeys) >= population:
                 break
-            j = self.plan(self._pick_kind(), t)
+            kind = self._pick_kind(t % 24.0)
+            if kind is None:
+                break
+            j = self.plan(kind, t)
             if j is not None and j.speed > 0 and j.length > 0:
                 j.depart_t = t - self.rng.uniform(0.0, j.length / j.speed)
 
@@ -436,6 +490,13 @@ class JourneyBoard:
     def update(self, t: float) -> List[str]:
         """Advance the off-screen world to absolute game hour *t*. Returns the
         news ids made this update (for the session to surface, if it likes)."""
+        self._update_levers = self.hooks.journey_levers()
+        try:
+            return self._update(t)
+        finally:
+            self._update_levers = None
+
+    def _update(self, t):
         made: List[str] = []
         last = self.last_t if self.last_t is not None else t
         self.last_t = t
@@ -464,16 +525,15 @@ class JourneyBoard:
         hour = t % 24.0
         active = sum(1 for j in self.journeys.values() if j.kind not in ("market",))
         tries = 0
-        while active < self.population and tries < 6:
+        while active < int(self._lever("population", self.population)) and tries < 6:
             tries += 1
-            kind = self._pick_kind()
-            lo, hi = KINDS[kind]["hours"]
-            if not (lo <= hour < hi):
-                continue
+            kind = self._pick_kind(hour)
+            if kind is None:
+                break
             if self.plan(kind, t) is not None:
                 active += 1
         # Hunters, when there is a price on the player's head worth the walk.
-        if (self.bounty_news and self.hooks.player_bounty() >= HUNTER_BOUNTY
+        if (self.bounty_news and self.hooks.player_bounty() >= self._lever("hunter_bounty", HUNTER_BOUNTY)
                 and not any(j.kind == "hunters" for j in self.journeys.values())):
             target = self.hooks.player_place()
             towns = [p for p in self.places_of(TOWNS) if p != target]
@@ -540,6 +600,7 @@ class JourneyBoard:
     def next_leg(self, j: Journey, t: float) -> None:
         """Rest is over: set out again -- home if this was the last leg."""
         here = j.dest
+        destination_sampled = False
         if j.legs <= 0:
             dest = j.home
         elif j.kind == "market":
@@ -553,7 +614,10 @@ class JourneyBoard:
                 hx, hz = self.places[here]["x"], self.places[here]["z"]
                 options.sort(key=lambda d: math.hypot(self.places[d]["x"] - hx,
                                                       self.places[d]["z"] - hz))
-                dest = self.rng.choice(options[:4])
+                nearby = options[:4]
+                destination_sampled = True
+                dest = self.rng.choices(nearby, weights=[self.hooks.destination_weight(d)
+                                                       for d in nearby])[0]
             else:
                 dest = j.home
         if dest == here:
@@ -569,6 +633,7 @@ class JourneyBoard:
         j.depart_t = t
         j.state = "travel"
         j.fought = []
+        self.hooks.journey_sampled(j, t, destination_sampled=destination_sampled)
 
     def _delve(self, j: Journey, place: str, t: float, made: List[str]) -> None:
         """Adventurers at a lair: they clear it, or they do not come back."""
@@ -751,7 +816,7 @@ class JourneyBoard:
         if not self.resident_pool or len(self.residents_on_trips) >= MAX_RESIDENT_TRIPS:
             return
         hour = t % 24.0
-        if not (7.0 <= hour < 10.0) or self.rng.random() > 0.25:
+        if not self._in_hours(hour, self._hours("market")) or self.rng.random() >= self._lever("market_chance", 0.25):
             return
         r = self.rng.choice(self.resident_pool)
         if r["id"] in self.residents_on_trips:
@@ -770,13 +835,24 @@ class JourneyBoard:
                   "max_health": r.get("health", 60), "damage": r.get("damage", 5),
                   "style": "melee", "alive": True, "gold": 30, "head": r.get("head", ""),
                   "resident": r["id"]}
-        j = self.plan("market", t, origin=home, dest=towns[0], members=[member])
+        # Keep market trips local while letting remembered trouble draw traffic.
+        nearby = towns[:4]
+        preferred = self.hooks.resident_destination(r["id"], towns, home)
+        if preferred in towns and self._route(home, preferred) is not None:
+            if preferred not in nearby:
+                nearby.append(preferred)
+            weights = [float(d == preferred) for d in nearby]
+        else:
+            weights = [self.hooks.destination_weight(d) for d in nearby]
+        town = self.rng.choices(nearby, weights=weights)[0]
+        j = self.plan("market", t, origin=home, dest=town, members=[member])
         if j is None:
             return
         j.resident = r["id"]
         j.home = home
         j.legs = 2
         self.residents_on_trips[r["id"]] = j.id
+        self.hooks.journey_sampled(j, t, destination_sampled=True)
         self.hooks.resident_left(r["id"], j)
 
     def _retire(self, j: Journey) -> None:
@@ -794,6 +870,7 @@ class JourneyBoard:
             "remains": self.remains, "next_id": self.next_id, "last_t": self.last_t,
             "bounty_news": self.bounty_news, "bounty_seen": self.bounty_seen,
             "residents_on_trips": self.residents_on_trips,
+            "streaming": {"version": 1, "hostile_materialisations": self.hostile_materialisations},
         })
 
     def load_json(self, raw: str) -> bool:
@@ -819,6 +896,9 @@ class JourneyBoard:
         self.bounty_news = d.get("bounty_news", "") or ""
         self.bounty_seen = int(d.get("bounty_seen", 0) or 0)
         self.residents_on_trips = dict(d.get("residents_on_trips") or {})
+        streaming = d.get("streaming") or {}
+        self.hostile_materialisations = (dict(streaming.get("hostile_materialisations") or {})
+                                        if streaming.get("version") == 1 else {})
         for j in self.journeys.values():
             for m in j.members:
                 self._names_used.add(m.get("display", ""))

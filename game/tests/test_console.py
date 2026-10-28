@@ -33,7 +33,7 @@ def _manager():
 
 def test_every_command_and_alias_is_registered():
     names = set(_manager().console_commands())
-    assert {"diceroll", "dice", "quest", "quests", "sim", "inspect", "mind"} <= names
+    assert {"diceroll", "dice", "quest", "quests", "sim", "inspect", "mind", "storyteller"} <= names
 
 
 def test_a_command_receives_fios_arguments_as_its_context(monkeypatch):
@@ -99,3 +99,34 @@ def test_pause_toggles_a_world_freeze_without_a_menu():
     assert console.CONSOLE_PAUSE in _Logic.session_runtime.owners
     console.cmd_pause(ctx, "")
     assert not _Logic.session_runtime.owners
+
+
+def test_storyteller_dispatch_opens_the_live_view(monkeypatch):
+    from types import SimpleNamespace
+    from .. import ui
+
+    opened = []
+    panel = SimpleNamespace(open_storyteller=lambda view: opened.append(view) or object())
+    monkeypatch.setattr(ui, "storyteller_window", panel, raising=False)
+    view = object()
+    logic = SimpleNamespace(_miniwind=SimpleNamespace(storyteller=object()))
+    handled, _ = _manager().dispatch_console_command(
+        "storyteller", "", logic, main_window=SimpleNamespace(view_3d=view), play_mode=True)
+    assert handled
+    assert opened == [view]
+
+
+def test_storyteller_reports_missing_play_session_and_view(monkeypatch):
+    from types import SimpleNamespace
+    from .. import ui
+
+    messages = []
+    monkeypatch.setattr(console, "debug_log", lambda _category, message: messages.append(message))
+    console.cmd_storyteller(console.ConsoleContext(), "")
+    assert "Play Mode only" in messages[-1]
+    console.cmd_storyteller(console.ConsoleContext(play_mode=True), "")
+    assert "no active MiniWind storyteller" in messages[-1]
+    monkeypatch.setattr(ui, "storyteller_window", SimpleNamespace(open_storyteller=lambda view: None), raising=False)
+    logic = SimpleNamespace(_miniwind=SimpleNamespace(storyteller=object()))
+    console.cmd_storyteller(console.ConsoleContext(logic_thread=logic, play_mode=True), "")
+    assert "no game view" in messages[-1]

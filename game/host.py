@@ -109,6 +109,8 @@ def _miniwind_kv_suggestions(store=None):
          "Quest lifecycle: active / complete / failed. Replace <id>."),
         ("Quest stage  (quest.<id>.stage)", "quest.<id>.stage", "0",
          "Current stage index of a quest. Replace <id>."),
+        ("Storyteller Studio  (storyteller.state)", "storyteller.state", "{}",
+         "Session pacing snapshot and Studio lever edits. Use the storyteller console Studio to edit numeric levers; sensors and actor decisions remain simulation-owned."),
     ]
     try:
         from . import data

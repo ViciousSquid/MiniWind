@@ -87,7 +87,9 @@ _MEM_KEY_CACHE = "_mem_key"
 def mem_key(npc_props: Dict) -> str:
     """A stable per-NPC memory key.
 
-    Prefers the entity's UUID (``properties['id']``) so two townsfolk who share
+    Journey proxies may carry ``_memory_identity`` to share their resident's
+    social memory while retaining a distinct scene UUID for save overlays.
+    Otherwise prefers the entity's UUID (``properties['id']``) so two townsfolk who share
     a display name still remember the player separately; falls back to a slug of
     the name / display name / role for hand-built fixtures with no id.
 
@@ -103,7 +105,7 @@ def mem_key(npc_props: Dict) -> str:
     if cached is not None:
         return cached
     key = ""
-    for field in ("id", "name", "display_name", "npc_role"):
+    for field in ("_memory_identity", "id", "name", "display_name", "npc_role"):
         v = npc_props.get(field)
         if v:
             key = _slug(v)

@@ -1,0 +1,159 @@
+{
+  "store_key": "storyteller.state",
+  "version": 2,
+  "enabled": true,
+  "sample_hours": 0.25,
+  "event_hours": 2.0,
+  "event_limit": 200,
+  "reason_cap": 24,
+  "observation_cap": 10,
+  "receipt_cap": 40,
+  "healthy": 0.7,
+  "danger_health": 0.35,
+  "peak_tension": 0.65,
+  "recovered_tension": 0.25,
+  "attack_tension": 0.18,
+  "death_tension": 1.0,
+  "hostile_tension": 0.08,
+  "pressure_bounty": 150,
+  "pressure_phases": [
+    "pursuit",
+    "search"
+  ],
+  "town_kinds": [
+    "town",
+    "hamlet",
+    "inn"
+  ],
+  "threat_tiers": [
+    0,
+    1
+  ],
+  "sight_radius": 1800.0,
+  "staging_distance": 900.0,
+  "vendetta_trip_distance": 6000.0,
+  "arrival_window_hours": 2.0,
+  "unpaid_writ_hours": 24.0,
+  "states": {
+    "CALM": {
+      "next": "RISING",
+      "min_hours": 3.0,
+      "max_hours": 8.0,
+      "reason": "Quiet roads give existing troubles time to develop.",
+      "advance_reason": "The player is healthy after a quiet interval; existing pressure or a long lull can build tension.",
+      "hold_reason": "Wait for enough quiet time and a healthy player before building pressure.",
+      "levers": {
+        "kind_weights": {
+          "bandits": 2,
+          "wolves": 1,
+          "greenskins": 1
+        },
+        "kind_hours": {},
+        "population": 26,
+        "hunter_bounty": 150,
+        "lair_refill_scale": 1.0,
+        "market_chance": 0.25,
+        "destination_bias": 2.0,
+        "vendetta_bias": 1.0,
+        "writ_hunter_scale": 0.75
+      }
+    },
+    "RISING": {
+      "next": "PEAK",
+      "min_hours": 2.0,
+      "max_hours": 6.0,
+      "reason": "More hostile departures after dark bring existing trouble closer.",
+      "advance_reason": "Danger, brewing consequences or a sustained rise have brought the roads to a short crest.",
+      "hold_reason": "Give existing trouble time to approach before the crest.",
+      "levers": {
+        "kind_weights": {
+          "bandits": 6,
+          "wolves": 3,
+          "greenskins": 3
+        },
+        "kind_hours": {
+          "bandits": [
+            18,
+            6
+          ],
+          "wolves": [
+            19,
+            6
+          ],
+          "greenskins": [
+            20,
+            5
+          ]
+        },
+        "population": 30,
+        "hunter_bounty": 125,
+        "lair_refill_scale": 0.85,
+        "market_chance": 0.2,
+        "destination_bias": 4.0,
+        "vendetta_bias": 4.0,
+        "writ_hunter_scale": 0.75
+      }
+    },
+    "PEAK": {
+      "next": "RESPITE",
+      "min_hours": 0.5,
+      "max_hours": 2.0,
+      "reason": "A short crest lets consequences play out before easing the roads.",
+      "advance_reason": "Injury, sustained tension or the crest's time limit calls for recovery.",
+      "hold_reason": "Let the short crest play out while the player can cope.",
+      "levers": {
+        "kind_weights": {
+          "bandits": 5,
+          "wolves": 2,
+          "greenskins": 2
+        },
+        "kind_hours": {
+          "bandits": [
+            18,
+            6
+          ],
+          "wolves": [
+            19,
+            6
+          ],
+          "greenskins": [
+            20,
+            5
+          ]
+        },
+        "population": 30,
+        "hunter_bounty": 125,
+        "lair_refill_scale": 0.85,
+        "market_chance": 0.15,
+        "destination_bias": 5.0,
+        "vendetta_bias": 6.0,
+        "writ_hunter_scale": 0.75
+      }
+    },
+    "RESPITE": {
+      "next": "CALM",
+      "min_hours": 4.0,
+      "reason": "Gentler traffic gives the player room to recover.",
+      "advance_reason": "The recovery interval has passed and the player is healthy with low tension.",
+      "hold_reason": "Keep gentler traffic until the recovery interval passes and health and tension recover.",
+      "levers": {
+        "kind_weights": {
+          "bandits": 1,
+          "wolves": 0,
+          "greenskins": 0,
+          "trader": 10,
+          "caravan": 5,
+          "minstrel": 5
+        },
+        "kind_hours": {},
+        "population": 24,
+        "hunter_bounty": 300,
+        "lair_refill_scale": 1.5,
+        "market_chance": 0.5,
+        "destination_bias": 1.5,
+        "vendetta_bias": 1.0,
+        "writ_hunter_scale": 0.75
+      }
+    }
+  }
+}

@@ -276,7 +276,7 @@ def appraise(observer_props: Dict, observer_key: str, fact: Dict,
                       fact)
 
     # -- 5. a threat in the world, not aimed at me -----------------------
-    if "violence" in tags and hostile_faction:
+    if "violence" in tags and hostile_faction and fact.get("identified", True):
         if combatant and courage >= STAND_COURAGE:
             return Intent(FIGHT, offender, offender_name,
                           f"{offender_name} is an enemy of my people", fact)

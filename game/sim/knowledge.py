@@ -71,6 +71,9 @@ def fact_from_event(event, certainty: float, source: str,
         "kind": str(getattr(event, "kind", "")),
         "actor": str(getattr(event, "actor", "")),
         "actor_name": str(getattr(event, "actor_name", "")),
+        # Retain the perceived event's faction snapshot for threat appraisal;
+        # never reconstruct it later from an actor's current faction.
+        "actor_faction": str((getattr(event, "data", None) or {}).get("actor_faction") or ""),
         "target": str(getattr(event, "target", "")),
         "target_name": str(getattr(event, "target_name", "")),
         "day": int(getattr(event, "day", 0) or 0),

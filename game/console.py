@@ -12,6 +12,7 @@ session is running, and the editor window) plus the raw argument string.
     diceroll | dice   roll a dice expression, optionally animated
     quest | quests    list / start / advance / complete / reset quests
     sim               inspect and drive the reactive simulation
+    storyteller       live pacing levers and the last 10 observations
     inspect | mind    pause and click an actor for its live mental state
     torch_shadows [on|off]   torches near you cast shadows (toggles)
 """
@@ -398,6 +399,22 @@ def cmd_dragonfire(ctx, args):
     return None
 
 
+def cmd_storyteller(ctx, args):
+    """storyteller -- open the resizable Studio: live sensors, lever editing and outcomes."""
+    if not ctx.play_mode:
+        debug_log("Error", "storyteller: Play Mode only.")
+        return None
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    if getattr(session, "storyteller", None) is None:
+        debug_log("Error", "storyteller: no active MiniWind storyteller.")
+        return None
+    from .ui import storyteller_window
+    view = getattr(ctx.main_window, "view_3d", None)
+    if storyteller_window.open_storyteller(view) is None:
+        debug_log("Error", "storyteller: no game view to open it on.")
+    return None
+
+
 def cmd_debugtools(ctx, args):
     """debugtools -- a floating window of time controls for the simulation:
     rewind, play / pause, and speed (0.25×, 0.5×, 1×, 2×). Play Mode only."""
@@ -641,6 +658,8 @@ COMMANDS = (
     (("sim",), cmd_sim,
      "[events | crimes | actors | why|knows|forget <name> | tell <name> <id> | emit …]"
      " — Reactive simulation (Play Mode)"),
+    (("storyteller",), cmd_storyteller,
+     "— Live pacing levers and last 10 observations (Play Mode)"),
     (("inspect", "mind"), cmd_inspect,
      "— Pause and click an actor: schedule, destination, AI state (Play Mode)"),
     (("paths", "pathfinding"), cmd_paths,

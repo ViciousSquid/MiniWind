@@ -338,6 +338,9 @@ def _knowledge_sections(thing, session):
                          for i in intents[:6]]))
     except Exception:
         pass
+    storyteller = getattr(session, "storyteller", None)
+    if storyteller is not None:
+        out.append(("Storyteller decisions", storyteller.inspector_rows()))
     return out
 
 

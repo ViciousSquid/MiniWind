@@ -1,5 +1,74 @@
 # Changes
 
+## Faction-aware threat appraisal
+
+- Preserve the event's `actor_faction` snapshot when creating a knowledge fact.
+  Storage and gossip now carry it into appraisal, enabling the existing enemy
+  threat branch to choose fighting or fleeing from perceived violence. Crime
+  reporting and arrest retain their precedence, and reasons come from appraisal.
+- Faction threats require an identified offender; sound-only accounts cannot
+  start a targeted fight. A clearer eyewitness account can upgrade the belief.
+  Legacy facts without a faction remain unknown rather than being backfilled
+  from an actor's current faction. No additional randomness is consumed.
+- Validation: 134 focused simulation/storyteller tests passed; the full headless
+  suite reports 4,189 passed, 34 skipped and the same five pre-existing failures
+  listed below.
+
+## Quieter storyteller receipts
+
+- Record journey outcomes for storyteller-biased destination choices and actual
+  materialisations. Routine authored planning no longer replaces the inspector's
+  latest outcome or fills the bounded receipt history. Neutral memory weights
+  produce no planning receipt. All actual arrivals remain visible.
+- Match inherited arrival causes to the journey leg, including resting arrivals,
+  so suppressing ordinary planning cannot misattribute an earlier leg's crime.
+  Pins cover busy planning, RNG parity, save/load and causal leg matching.
+- Validation: 111 focused tests passed; the full headless suite reports 4,179
+  passed, 34 skipped and the same five pre-existing failures listed below.
+
+## Storyteller pacing and Studio
+
+- Eligible clean, undischarged kin vendettas can draw an ordinary resident
+  market trip toward the healthy player's town, within the configured distance.
+  Trips keep routes, travel time and return legs; actors retain their intents.
+- Respite suppresses incoming hostile journeys only within the player's live
+  region. Distant hostile departures, raids and encounters keep authored rules.
+  Successful streamer materialisations feed a regional arrivals-per-game-hour
+  sensor; an empty pressure window caps population growth without forcing an
+  arrival. Continuously sampled old unpaid writs can lower the hunter threshold.
+- Move tuning to moddable `game/data/storyteller.json`, retaining code fallbacks.
+  The content kill switch disables every override and bias and leaves sensors
+  idle. Cache holders per sample and lever snapshots per board update; remove
+  the unused knowledge-source gate.
+- Turn the console window into a resizable Storyteller Studio with live sensors,
+  draggable numeric cells for every state's lever table, session-persisted edits,
+  reset controls, and a world view of threads, vendettas and journey outcomes.
+  The World Simulation history panel shows those explanations beside causal
+  history and links them to their remembered source events. Inspection creates
+  no events, facts or intentions and consumes no randomness.
+- Version 2 storyteller snapshots preserve feedback, writ ages, Studio edits,
+  evidence and bounded diagnostic receipts. Board arrival telemetry is separately
+  versioned. Extend mechanism pins for pristine-day byte/RNG parity, feedback,
+  route sampling, locality, editing, resizing, causal links and exact restore.
+
+Validation for this work:
+
+- Clean baseline at `4bddb3a`: 4,151 passed, 34 skipped, five existing failures.
+- Full dependency-light headless suite (`FIO_HEADLESS_TIER=1`, excluding `qt`,
+  `gl` and `benchmark`): 4,176 passed, 34 skipped, the same five failures.
+- Focused storyteller, Studio, property-tab and console run: 108 passed.
+- The existing failures remain enabled and unfixed: the backport import guard
+  flags `tools/benchmark_navigation.py`; repeated assaults leave aggression
+  passive; container `lock_difficulty` is an enum where its test expects an int;
+  the Ember Tome map's median site spacing is 3982.84 rather than over 4000;
+  the inventory artwork archive manifest is absent.
+- The marker-only headless command stalled in an existing unmarked Qt console
+  editor test. The complete headless runs above use the repository's explicit
+  dependency-light collection mode. No tests were weakened or skipped to hide
+  the five baseline failures. OpenGL rendering was not exercised.
+- Python compilation and `git diff --check` passed. The Studio screenshot uses
+  its real Qt painter with sample data.
+
 ## Three schools of magic, trainers and tutors
 
 - Magic has three schools and no others: Offensive, Defensive and the new

@@ -402,10 +402,12 @@ class WorldIndex:
             (i for i in range(n) if _stamped_tier(actors[i], TIER_NEAR) == tier),
             dtype=np.intp)
 
-    def counts_by_tier(self) -> Dict[int, int]:
-        """``{tier: count}`` — the numbers a perf overlay wants."""
+    def counts_by_tier(self, predicate=None) -> Dict[int, int]:
+        """``{tier: count}``; optionally count only actors in a read-only view."""
         counts: Dict[int, int] = {}
         for a in self.actors[:self.n]:
+            if predicate is not None and not predicate(a):
+                continue
             t = _stamped_tier(a, TIER_NEAR)
             counts[t] = counts.get(t, 0) + 1
         return counts

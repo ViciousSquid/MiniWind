@@ -45,14 +45,14 @@ def _read_json(path: str) -> Any:
         return json.load(fh)
 
 
-def _merge(base: Any, overlay: Any) -> Any:
+def _merge(base: Any, overlay: Any, *, replace_lists: bool = False) -> Any:
     """Merge *overlay* onto *base*: dicts update by key, lists concatenate."""
     if isinstance(base, dict) and isinstance(overlay, dict):
         out = dict(base)
         for key, value in overlay.items():
-            out[key] = _merge(out[key], value) if key in out else value
+            out[key] = _merge(out[key], value, replace_lists=replace_lists) if key in out else value
         return out
-    if isinstance(base, list) and isinstance(overlay, list):
+    if isinstance(base, list) and isinstance(overlay, list) and not replace_lists:
         return base + overlay
     return overlay
 
@@ -67,12 +67,14 @@ def _mod_files(name: str):
             yield mod, path
 
 
-def load(name: str, default: Any = None) -> Any:
+def load(name: str, default: Any = None, *, replace_lists: bool = False) -> Any:
     """Load content file ``<name>.json``, merged with any mod overlays.
 
     Returns the merged content (usually a dict keyed by id). If the base file is
     absent, mod content (if any) is returned alone, else *default* (or ``{}``).
     Mod files that fail to parse are skipped with a printed warning.
+    ``replace_lists`` is for fixed-size tuning values such as hour windows;
+    ordinary content keeps the default list-append behaviour.
     """
     base_path = os.path.join(_DATA_DIR, f"{name}.json")
     content: Any = default if default is not None else {}
@@ -80,7 +82,7 @@ def load(name: str, default: Any = None) -> Any:
         content = _read_json(base_path)
     for mod, path in _mod_files(name):
         try:
-            content = _merge(content, _read_json(path))
+            content = _merge(content, _read_json(path), replace_lists=replace_lists)
         except Exception as exc:  # pragma: no cover - defensive against bad mods
             print(f"[MiniWind] skipping malformed mod data '{mod}/{name}.json': {exc}")
     return content
