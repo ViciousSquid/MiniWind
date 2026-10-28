@@ -677,6 +677,12 @@ def install_play_menu(view):
     view.death_menu = DeathMenu(view)
     install_wheel_zoom(view)
     install_bow_draw(view)
+    # A gamepad plays it too, beside the keyboard and mouse (game/gamepad.py).
+    try:
+        from . import gamepad
+        gamepad.install(view)
+    except Exception as exc:
+        print(f"[MiniWind] gamepad unavailable: {exc}")
     _use_game_fonts_for_loading()
     editor = getattr(view, "editor", None)
     config = getattr(editor, "config", None)

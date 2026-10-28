@@ -14,7 +14,7 @@ from PyQt5.QtCore import QRect, QRectF, Qt
 from PyQt5.QtGui import QColor, QFontMetrics, QPixmap, QPolygon, QPolygonF, QPen, QConicalGradient
 from PyQt5.QtCore import QPoint, QPointF
 
-from .. import fio
+from .. import controls, fio
 from ..diceroll import check_target, describe_roll
 from . import hud_layout as layout
 from . import theme as T
@@ -806,10 +806,11 @@ def _draw_quest_tracker(painter, session, width):
         T.text(painter, x + 6, y + 18, line, size=9, color=T.PARCH, family="Segoe UI")
     dist = _fmt_distance(g.get("distance"))
     if dist:
-        T.text(painter, x + 6, y + 34, f"➤ {dist} away  ·  press Q for details",
+        T.text(painter, x + 6, y + 34,
+               f"➤ {dist} away  ·  press {controls.label('quest')} for details",
                size=8, color=T.DIM, family="Segoe UI")
     else:
-        T.text(painter, x + 6, y + 34, "press Q for details",
+        T.text(painter, x + 6, y + 34, f"press {controls.label('quest')} for details",
                size=8, color=T.DIM, family="Segoe UI")
     # Up to the clock's left edge (_draw_clock), so its button clears the clock.
     return QRect(x - 4, y - 16, 192, 56)

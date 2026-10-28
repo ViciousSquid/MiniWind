@@ -10,6 +10,13 @@ them: a letter, a digit, or ``space`` / ``tab``.
 
 Movement (W A S D), sprint (Shift), use (E, the engine's), the number keys of
 the inventory strip and Escape are not listed: they are the engine's or fixed.
+
+**Gamepad buttons** are bound the same way, beside the keys (``[PAD]``): each
+action has a pad button as well as its key, and a few controls only a pad
+needs (sprint on a stick click, the strip on the shoulders) are listed with
+them. The triggers are the hands' attacks and nothing else, so they are not
+offered. :mod:`game.gamepad` presses an action's key
+when its button is pressed, so a rebinding of either takes effect for both.
 """
 
 from __future__ import annotations
@@ -37,6 +44,32 @@ BINDABLE = tuple("abcdefghijklmnopqrstuvwxyz") + tuple(str(d) for d in range(10)
 RESERVED = ("w", "a", "s", "d")
 
 SECTION = "KEYS"
+PAD_SECTION = "PAD"
+
+#: The gamepad's buttons an action may be bound to, by the names the
+#: bindings use (SDL's standard controller layout, written as on an Xbox
+#: pad). The triggers are not among them: LT and RT are only ever the left-
+#: and right-hand attack (game.gamepad).
+PAD_BUTTONS = ("a", "b", "x", "y", "lb", "rb", "back", "start", "ls", "rs",
+               "dpad_up", "dpad_down", "dpad_left", "dpad_right")
+#: Controls only a gamepad needs: (action, label, default button).
+PAD_ONLY = (
+    ("sprint", "Sprint (hold)", "ls"),
+    ("strip_prev", "Previous strip slot", "lb"),
+    ("strip_next", "Next strip slot", "rb"),
+    ("pause", "Pause menu", "start"),
+)
+#: Every action's default button; "" leaves one off the pad (the Statistics
+#: tabs reach the character sheet, journal and spellbook on LB / RB).
+PAD_DEFAULTS = {
+    "attack": "x", "block": "b", "next_spell": "dpad_left", "heal": "dpad_down",
+    "sneak": "rs", "interact": "a", "inventory": "y", "character": "",
+    "journal": "", "spells": "", "levelup": "dpad_right", "map": "back",
+    "quest": "dpad_up",
+    **{action: button for action, _label, button in PAD_ONLY},
+}
+#: The pad's own state (applied from the config by :func:`apply`).
+PAD = dict(PAD_DEFAULTS)
 
 
 def defaults() -> dict:
@@ -59,11 +92,82 @@ def current(config) -> dict:
 
 
 def apply(config) -> None:
-    """Point the host's key constants at the bindings in *config*."""
+    """Point the host's key constants at the bindings in *config*, and the
+    pad's buttons (:data:`PAD`)."""
     from . import host
     keys = current(config)
     for action, _label, const, _default in ACTIONS:
         setattr(host, const, keys[action])
+    PAD.clear()
+    PAD.update(current_pad(config))
+
+
+def current_pad(config) -> dict:
+    """``{action: button}``: the player's pad choices over the defaults."""
+    buttons = dict(PAD_DEFAULTS)
+    if config is None:
+        return buttons
+    for action in buttons:
+        try:
+            value = config.get(PAD_SECTION, action, fallback=None)
+        except Exception:
+            value = None
+        if value is not None and (value in PAD_BUTTONS or value == ""):
+            buttons[action] = value
+    return buttons
+
+
+def bind_pad(config, action, button, save=None) -> str:
+    """Bind *action* to pad *button*; an action already on it swaps onto this
+    one's old button (or goes unbound). Returns the action swapped, or ''."""
+    if action not in PAD_DEFAULTS or button not in PAD_BUTTONS:
+        return ""
+    buttons = current_pad(config)
+    old = buttons.get(action, "")
+    swapped = next((a for a, b in buttons.items() if b == button and a != action), "")
+    if config is not None:
+        if not config.has_section(PAD_SECTION):
+            config.add_section(PAD_SECTION)
+        config.set(PAD_SECTION, action, button)
+        if swapped:
+            config.set(PAD_SECTION, swapped, old)
+        if save is not None:
+            try:
+                save()
+            except Exception:
+                pass
+    else:
+        PAD[action] = button
+        if swapped:
+            PAD[swapped] = old
+        return swapped
+    apply(config)
+    return swapped
+
+
+def key_binding(action) -> str:
+    """The key *action* is on now."""
+    from . import host
+    const = next((c for a, _l, c, _d in ACTIONS if a == action), None)
+    return getattr(host, const, "") if const else ""
+
+
+def pad_binding(action) -> str:
+    """The pad button *action* is on now ('' for none)."""
+    return PAD.get(action, "")
+
+
+def pad_action(button) -> str:
+    """The action pad *button* is bound to, or ''."""
+    return next((a for a, b in PAD.items() if b == button), "")
+
+
+def pad_label(action) -> str:
+    """Every pad-bindable action's label, for the bindings page."""
+    for a, lab, _c, _d in ACTIONS:
+        if a == action:
+            return lab
+    return next((lab for a, lab, _b in PAD_ONLY if a == action), action)
 
 
 def bind(config, action, key, save=None) -> str:
@@ -91,9 +195,12 @@ def bind(config, action, key, save=None) -> str:
 
 
 def reset(config, save=None) -> None:
-    """Every action back on its default key."""
-    if config is not None and config.has_section(SECTION):
-        config.remove_section(SECTION)
+    """Every action back on its default key and pad button."""
+    if config is not None and (config.has_section(SECTION)
+                               or config.has_section(PAD_SECTION)):
+        for section in (SECTION, PAD_SECTION):
+            if config.has_section(section):
+                config.remove_section(section)
         if save is not None:
             try:
                 save()

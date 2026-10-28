@@ -20,12 +20,22 @@ from ..rpg import (races, classes, birthsigns, attributes as attr, skills as sk,
                    items as rpg_items, inventory as inv, equipment as eq,
                    magic as rpg_magic, guilds, quests, heads)
 from ..rpg import charisma as _cha
+from .. import controls
 
 STATISTICS_TABS = (("Inventory", "inventory"), ("Skills", "skills"),
                    ("Fortune", "fortune"), ("Alignment", "alignment"),
                    ("Character", "character"),
                    ("Journal", "journal"), ("Spells", "spells"), ("Map", "map"))
 STATISTICS_SCREENS = tuple(screen for _label, screen in STATISTICS_TABS)
+
+
+def next_statistics_tab(screen, step):
+    """The Statistics tab *step* along from *screen* (a gamepad's LB / RB),
+    wrapping round; a screen that is not one of them stays as it is."""
+    if screen not in STATISTICS_SCREENS:
+        return screen
+    i = STATISTICS_SCREENS.index(screen)
+    return STATISTICS_SCREENS[(i + int(step)) % len(STATISTICS_SCREENS)]
 
 
 def _sel(session):
@@ -1207,7 +1217,10 @@ def _draw_spells(painter, session, w, h):
                             inner.width() - list_w - 20, 118),
                       spells[st["row"]].id if spells else None)
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              f"Drag a spell to the shortcut bar, or press 1-9 · {K_SPELLS.upper()}/Esc close",
+              (f"{controls.label('click')} a spell, then a shortcut bar slot · "
+               f"{controls.label('tabs')} tabs · {controls.label('back')} close"
+               if controls.gamepad() else
+               f"Drag a spell to the shortcut bar, or press 1-9 · {K_SPELLS.upper()}/Esc close"),
               size=9, color=T.DIM,
               align=T.ALIGN_CENTER, family="Segoe UI")
 
@@ -1910,7 +1923,8 @@ def _draw_container(painter, session, w, h):
     x, y, bw, bh = _panel_rect(w, h)
     inner = T.panel(painter, x, y, bw, bh)
     ty = T.heading(painter, inner, session.container_name(),
-                   f"{c.gold} gold    ·    click or Enter to take / store   ·   E/Esc close")
+                   f"{c.gold} gold    ·    {controls.label('click')} to take / store   ·   "
+                   f"{controls.label('back')} close")
 
     st["row_c"] = max(0, min(st["row_c"], max(0, len(citems) - 1)))
     st["row_p"] = max(0, min(st["row_p"], max(0, len(pitems) - 1)))

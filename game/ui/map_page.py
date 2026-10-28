@@ -282,7 +282,7 @@ class MapPage:
         painter.setPen(_CAPTION)
         painter.drawText(QRectF(x, rect.bottom() + 4, w, bottom - 4),
                          int(Qt.AlignCenter),
-                         "Click  waypoint      Drag  pan      Wheel  zoom      Space  you      Esc  back")
+                         _caption())
         painter.restore()
 
     def _draw_witnesses(self, painter, rect, text_font):
@@ -433,6 +433,15 @@ class MapPage:
         painter.setBrush(QBrush(QColor(255, 255, 255)))
         painter.setPen(QPen(QColor(20, 20, 20), 1.6))
         painter.drawPolygon(QPolygonF([tip, left, c, right]))
+
+
+def _caption() -> str:
+    """The controls under the map, on whichever controls are in use."""
+    from .. import controls
+    if controls.gamepad():
+        return ("A  waypoint      L-stick  move      A held  pan      R-stick  zoom      "
+                "B  back")
+    return "Click  waypoint      Drag  pan      Wheel  zoom      Space  you      Esc  back"
 
 
 def _takes_italic(text_font):

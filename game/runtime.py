@@ -8108,6 +8108,34 @@ class MiniwindSession(SettlementLaw):
         copy = sum(1 for st in slots[:index] if st and st.get("id") == d.id)
         return self.ready_weapon(d.id, copy)
 
+    def cycle_strip(self, step) -> bool:
+        """The strip's selection to the next (*step* 1) or previous (-1) slot
+        that holds something -- a gamepad's shoulder buttons. A weapon or a
+        spell reached is readied (a spell in the left hand) unless it already
+        is: passing over one never puts it away. Anything else is only
+        selected; it is used with its own control (a potion's, D-pad down).
+        True if anything changed."""
+        slots = self.strip_slots()
+        if not any(slots):
+            return False
+        n = len(slots)
+        i = int(self.strip_selected or 0)
+        for _ in range(n):
+            i = (i + (1 if step > 0 else -1)) % n
+            if slots[i]:
+                break
+        self.strip_selected = i
+        stack = slots[i]
+        if stack.get("spell"):
+            held = eq.hand_spell(self.game.character, "left")
+            if held is None or held.id != stack["spell"]:
+                return self.ready_spell(stack["spell"], "left")
+            return True
+        d = rpg_items.get(stack.get("id"))
+        if d is not None and d.category == rpg_items.WEAPON and self.strip_hands()[i] is None:
+            return self.select_strip_slot(i)
+        return True
+
     def ready_spell(self, spell_id, hand="left") -> bool:
         """Ready a known spell in the physical *hand* (``"left"`` or
         ``"right"``), putting away what that hand held; or, when that hand
