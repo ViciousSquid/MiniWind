@@ -313,3 +313,29 @@ def test_the_sdl_pad_reads_nothing_without_a_pad_and_does_not_raise():
     from ..gamepad import SdlPad
     pad = SdlPad()
     assert pad.read() is None
+
+
+def test_a_pad_is_looked_for_at_startup_and_when_sdl_reports_a_device_only(monkeypatch):
+    import pygame
+    if not pygame.display.get_init():
+        # As the engine's view does at startup (headless here).
+        monkeypatch.setenv("SDL_VIDEODRIVER", "dummy")
+        pygame.init()
+    from ..gamepad import SdlPad
+    pad = SdlPad()
+    if not pad._ok:
+        pytest.skip("no SDL game-controller support here")
+    looked = []
+    real = pad._find
+
+    def find():
+        looked.append(1)
+        real()
+    pad._find = find
+    pad.read()                                         # startup: looks once
+    for _ in range(100):
+        pad.read()                                     # nothing new: never again
+    assert len(looked) == 1
+    pygame.event.post(pygame.event.Event(pad._device_events[0], device_index=0))
+    pad.read()                                         # a device arrived: looks
+    assert len(looked) == 2

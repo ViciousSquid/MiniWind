@@ -89,9 +89,11 @@ class SdlPad:
 
     SDL only notices a pad arriving or leaving when its events are pumped.
     The engine pumps them only if it found a pad at startup, so this pumps
-    them itself on every read (pumping twice is harmless), and throws away
-    the pad events it queues: nothing reads SDL's queue -- the pad's state is
-    read directly -- so they would only pile up."""
+    them itself on every read (pumping twice is harmless). It looks for a pad
+    only when there may be a new one -- at startup, and when SDL reports a
+    device added or one removed -- never on a timer; the other pad events it
+    throws away, since nothing reads SDL's queue (the pad's state is read
+    directly) and they would only pile up."""
 
     _BUTTONS = (("a", "CONTROLLER_BUTTON_A"), ("b", "CONTROLLER_BUTTON_B"),
                 ("x", "CONTROLLER_BUTTON_X"), ("y", "CONTROLLER_BUTTON_Y"),
@@ -106,13 +108,10 @@ class SdlPad:
     _AXES = (("lx", "CONTROLLER_AXIS_LEFTX"), ("ly", "CONTROLLER_AXIS_LEFTY"),
              ("rx", "CONTROLLER_AXIS_RIGHTX"), ("ry", "CONTROLLER_AXIS_RIGHTY"),
              ("lt", "CONTROLLER_AXIS_TRIGGERLEFT"), ("rt", "CONTROLLER_AXIS_TRIGGERRIGHT"))
-    #: How often (seconds) to look for a pad when none is open.
-    SCAN_SECONDS = 1.0
-
-    def __init__(self, clock=time.monotonic):
-        self._clock = clock
+    def __init__(self):
         self._pad = None
-        self._scanned = -1e9
+        #: A pad may have arrived: look for one on the next read.
+        self._look = True
         self._ok = False
         try:
             import pygame
@@ -121,12 +120,15 @@ class SdlPad:
             controller.init()
             self._pygame, self._controller = pygame, controller
             self._buttons = [(name, getattr(pygame, const)) for name, const in self._BUTTONS]
-            self._pad_events = [getattr(pygame, name) for name in (
-                "JOYAXISMOTION", "JOYBALLMOTION", "JOYHATMOTION", "JOYBUTTONDOWN",
-                "JOYBUTTONUP", "JOYDEVICEADDED", "JOYDEVICEREMOVED",
-                "CONTROLLERAXISMOTION", "CONTROLLERBUTTONDOWN", "CONTROLLERBUTTONUP",
-                "CONTROLLERDEVICEADDED", "CONTROLLERDEVICEREMOVED",
-                "CONTROLLERDEVICEREMAPPED") if hasattr(pygame, name)]
+            def kinds(*names):
+                return [getattr(pygame, n) for n in names if hasattr(pygame, n)]
+            #: Devices coming and going: the only time a pad is looked for.
+            self._device_events = kinds("JOYDEVICEADDED", "JOYDEVICEREMOVED",
+                                        "CONTROLLERDEVICEADDED", "CONTROLLERDEVICEREMOVED")
+            self._pad_events = kinds("JOYAXISMOTION", "JOYBALLMOTION", "JOYHATMOTION",
+                                     "JOYBUTTONDOWN", "JOYBUTTONUP", "CONTROLLERAXISMOTION",
+                                     "CONTROLLERBUTTONDOWN", "CONTROLLERBUTTONUP",
+                                     "CONTROLLERDEVICEREMAPPED")
             self._axes = [(name, getattr(pygame, const)) for name, const in self._AXES]
             self._ok = True
         except Exception as exc:          # no SDL game-controller support
@@ -140,10 +142,7 @@ class SdlPad:
             return ""
 
     def _find(self) -> None:
-        now = self._clock()
-        if now - self._scanned < self.SCAN_SECONDS:
-            return
-        self._scanned = now
+        self._look = False
         try:
             # The device list is current as of the engine's last event pump.
             for index in range(self._pygame.joystick.get_count()):
@@ -157,6 +156,8 @@ class SdlPad:
     def _pump(self) -> None:
         try:
             self._pygame.event.pump()
+            if self._pygame.event.get(self._device_events):
+                self._look = True
             self._pygame.event.clear(self._pad_events)
         except Exception:
             pass
@@ -165,10 +166,13 @@ class SdlPad:
         if not self._ok:
             return None
         self._pump()
-        if self._pad is None or not self._attached():
-            if self._pad is not None:
-                print("[MiniWind] gamepad disconnected")
+        if self._pad is not None and not self._attached():
+            print("[MiniWind] gamepad disconnected")
             self._pad = None
+            self._look = True               # another may still be plugged in
+        if self._pad is None:
+            if not self._look:
+                return None
             self._find()
             if self._pad is None:
                 return None
@@ -182,6 +186,14 @@ class SdlPad:
         except Exception:
             self._pad = None
             return None
+
+    def rumble(self, low: float, high: float, ms: int) -> bool:
+        """Shake the pad (*low* / *high* motor strength 0..1) for *ms*
+        milliseconds; False when it cannot."""
+        try:
+            return bool(self._pad is not None and self._pad.rumble(low, high, int(ms)))
+        except Exception:
+            return False
 
     def _attached(self) -> bool:
         try:

@@ -428,6 +428,7 @@ class NpcMagic:
                 p["_ward_magnitude"] = magnitude
                 p["_attack_anim"] = 0.2
                 self.warded[id(thing)] = thing
+                self._cast_sound(thing)
                 fx = getattr(self.session, "magic_fx", None)
                 if fx is not None:
                     from .magic_fx import look_for
@@ -477,6 +478,7 @@ class NpcMagic:
                     return True
                 p["health"] = min(top, health + amount)
                 p["_attack_anim"] = 0.2
+                self._cast_sound(thing)
                 self._journal(thing)
                 fx = getattr(self.session, "magic_fx", None)
                 if fx is not None:
@@ -500,10 +502,18 @@ class NpcMagic:
                 if not channelled and self._fizzles(thing, spell):
                     return True
                 self._loose(thing, target, target_pos, spell, damage, speed, colour)
+                self._cast_sound(thing)
                 return True
         return False
 
     # -- internals ------------------------------------------------------------
+    def _cast_sound(self, thing) -> None:
+        """A cast that worked is heard, as the player's are (where the session
+        can play one: game.runtime.MiniwindSession.cast_sound)."""
+        hook = getattr(self.session, "cast_sound", None)
+        if hook is not None:
+            hook(thing)
+
     def _fizzles(self, thing, spell) -> bool:
         """Roll *thing*'s cast of *spell* (its magicka already spent); True,
         and "*fizzled*" over its head, when it came to nothing. A session

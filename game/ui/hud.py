@@ -337,6 +337,49 @@ def draw_floats(painter, session, viewport, width, height):
     painter.restore()
 
 
+#: "Block" over the player's head while the block is held: its ink, and how
+#: far above the head it stands (clear of a "*fizzled*" rising from there).
+BLOCK_TEXT = "Block"
+_BLOCK_INK = (150, 200, 255)
+BLOCK_LIFT = 44.0
+
+
+def draw_player_block(painter, session, viewport, width, height):
+    """While the player holds a block: "Block" over their head, steady for as
+    long as it is held (game.runtime.MiniwindSession.toggle_block)."""
+    if viewport is None or not getattr(session, "_blocking", False):
+        return
+    if session.game.character.is_dead:
+        return
+    pos = session._player_pos()
+    if pos is None:
+        return
+    try:
+        import glm
+        proj, view = viewport.projection_matrix, viewport.view_matrix
+    except Exception:
+        return
+    sp = _world_to_screen(glm, proj, view, pos[0], pos[1] + 112 * 0.5 + BLOCK_LIFT, pos[2],
+                          width, height)
+    if sp is None:
+        # Seen from inside the player's own head (first person): over the
+        # middle of the view, as the floats are.
+        sp = (width * 0.5, height * 0.36)
+    from . import fonts
+    font = fonts.dialogue_font(13)
+    font.setBold(True)
+    fm = QFontMetrics(font)
+    w = fm.horizontalAdvance(BLOCK_TEXT) + 10
+    rect = QRect(int(sp[0] - w / 2), int(sp[1] - fm.height()), w, fm.height())
+    painter.save()
+    painter.setFont(font)
+    painter.setPen(QColor(0, 0, 0, 200))
+    painter.drawText(rect.translated(1, 1), int(Qt.AlignCenter), BLOCK_TEXT)
+    painter.setPen(QColor(*_BLOCK_INK))
+    painter.drawText(rect, int(Qt.AlignCenter), BLOCK_TEXT)
+    painter.restore()
+
+
 #: The widest a speech plate or thought bubble grows before its text wraps.
 PLATE_MAX_W = 340
 

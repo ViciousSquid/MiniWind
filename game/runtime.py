@@ -480,6 +480,13 @@ TRANSACTION_SOUND = "transaction.mp3"
 DRINK_SOUND = "drink.mp3"
 #: Heard whenever the player casts a spell that works (assets/sounds).
 SPELLCAST_SOUND = "spellcast.mp3"
+#: Heard when a spell fizzles: the player's, or a caster's near enough.
+FIZZLE_SOUND = "sizzle.mp3"
+#: Resurrection's own sound, in place of SPELLCAST_SOUND (silent until the
+#: file is in assets/sounds).
+RESURRECTION_SOUND = "resurrection.mp3"
+#: Heard when the player discovers a place (assets/sounds).
+DISCOVER_SOUND = "discover.mp3"
 #: A guard stopping the player to arrest them says one of these, at random.
 ARREST_SOUNDS = ("arrest1.mp3", "arrest2.mp3")
 
@@ -2613,6 +2620,7 @@ class MiniwindSession(SettlementLaw):
                 p["_discovered"] = True
                 self.store.set(f"visited.{self._slug(name)}", "1")
                 self.notify(f"{name} discovered", 4.0)
+                self.play_ui_sound(DISCOVER_SOUND)
                 self.autosave.discovered(name)
 
     @staticmethod
@@ -4629,8 +4637,37 @@ class MiniwindSession(SettlementLaw):
                              float(seconds))
 
     def fizzled(self, thing) -> None:
-        """*thing*'s spell fizzled: say so over its head."""
+        """*thing*'s spell fizzled: say so over its head, and let it be heard
+        from where it stands."""
         self.float_text(thing, FIZZLE_TEXT, FIZZLE_SECONDS)
+        self._spell_sound(thing, FIZZLE_SOUND)
+
+    def cast_sound(self, thing) -> None:
+        """A caster's spell (an NPC's) worked: heard where it stands."""
+        self._spell_sound(thing, SPELLCAST_SOUND)
+
+    def _spell_sound(self, thing, sound) -> bool:
+        """A spell's sound, from where its caster stands -- the player's as
+        much as anyone's."""
+        if thing is self.player_actor or (getattr(thing, "properties", None) or {}).get(
+                "is_player"):
+            return self.play_sound_at(sound, self._player_pos())
+        return self.play_sound_at(sound, getattr(thing, "pos", None))
+
+    def play_sound_at(self, name: str, pos, volume: float = 1.0,
+                      radius: float = 900.0) -> bool:
+        """Play a sound from ``assets/sounds`` at world *pos*: louder the
+        nearer it is, nothing beyond *radius*. Skipped, as interface sounds
+        are, when the file is not there. Returns whether it was queued."""
+        if pos is None:
+            return False
+        game_state = getattr(self.logic, "game_state", None)
+        queue = getattr(game_state, "queue_sound", None)
+        if queue is None or not sound_available(name):
+            return False
+        queue({"file": name, "volume": float(volume), "radius": float(radius),
+               "position": [float(pos[0]), float(pos[1]), float(pos[2])]})
+        return True
 
     def live_floats(self):
         """``[(thing, text, seconds_left, seconds_total)]`` still floating."""
@@ -6591,8 +6628,8 @@ class MiniwindSession(SettlementLaw):
 
     def _magic_cast_fx(self, spell, target=None) -> None:
         """The visible side of a cast the player just made -- and the sound
-        of it."""
-        self.play_ui_sound(SPELLCAST_SOUND)
+        of it, from the player."""
+        self._spell_sound(self.player_actor, SPELLCAST_SOUND)
         pos = self._player_pos()
         if pos is None:
             return
@@ -6787,7 +6824,7 @@ class MiniwindSession(SettlementLaw):
                 self.close_lockpicking(save_progress=False)
             self.notify("Knock clears the sheared pick and opens the lock." if jammed
                         else "Knock opens the lock.", 4.0)
-            self.play_ui_sound(SPELLCAST_SOUND)
+            self._spell_sound(self.player_actor, SPELLCAST_SOUND)
             return True
         # A "wisp" effect conjures the wandering companion light (a SELF spell).
         if any(e.get("kind") == "wisp" for e in (spell.effects or [])):
@@ -6900,7 +6937,7 @@ class MiniwindSession(SettlementLaw):
             return False
         c.magicka = 0.0
         self.store.set("resurrect.last_day", today)
-        self.play_ui_sound(SPELLCAST_SOUND)
+        self._spell_sound(self.player_actor, RESURRECTION_SOUND)   # its own, not the cast's
         c.use_skill(spell.school, 1.0 + spell.base_cost / 40.0)
         p = target.properties
         self._restore_living_kit(p)
