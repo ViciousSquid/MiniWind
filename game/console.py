@@ -570,6 +570,46 @@ def cmd_paths(ctx, args):
     return None
 
 
+def cmd_shownav(ctx, args):
+    """shownav [on|off] -- draw the road network and its navigation graph live.
+
+    The ROAD_* PathNodes' links (solid: linked on the map, dashed: an unlinked
+    node joined to its neighbours), the node names near you, and each walker's
+    current road leg: to its next node, along the road, then off to its goal.
+    No argument toggles."""
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    if session is None or not ctx.play_mode:
+        debug_log("Error", "shownav: enter Play Mode first.")
+        return None
+    text = str(args or "").strip().lower()
+    if text in ("", "toggle"):
+        enabled = not getattr(session, "show_nav", False)
+    elif text in ("on", "1", "true"):
+        enabled = True
+    elif text in ("off", "0", "false"):
+        enabled = False
+    else:
+        debug_log("Error", "Usage: shownav [on|off]")
+        return None
+    session.show_nav = enabled
+    if enabled:
+        session._refresh_roads(force=True)   # what is drawn is the roads as they are now
+    from .ui.nav_debug import summary
+    info = summary(session)
+    if not enabled:
+        debug_log("Info", "Road network overlay off.")
+    elif not info["nodes"]:
+        debug_log("Info", "Road network overlay on, but this map has no ROAD_* PathNodes.")
+    else:
+        debug_log("Info", f"Road network overlay on: {info['nodes']} nodes, {info['links']} links "
+                  f"({info['auto_links']} auto-joined), {info['networks']} separate network(s), "
+                  f"graph built {info['builds']} time(s). Green: roads; orange: walkers' road legs.")
+    view = getattr(ctx.main_window, "view_3d", None)
+    if view is not None:
+        view.update()
+    return None
+
+
 def cmd_searchradius(ctx, args):
     """searchradius 1|0 -- show or hide the search circle and its orbiting label."""
     session = getattr(ctx.logic_thread, "_miniwind", None)
@@ -608,6 +648,8 @@ COMMANDS = (
      " — Live pathfinding diagnostics (Play Mode)"),
     (("searchradius",), cmd_searchradius,
      "1|0 — Show or hide the search circle and orbiting Searching label (saved)"),
+    (("shownav",), cmd_shownav,
+     "[on|off] — Draw the ROAD_* network, its navigation graph and walkers' road legs live (Play Mode)"),
     (("roads", "travellers"), cmd_roads,
      "— List the parties on the roads: who, where from/to, where now (Play Mode)"),
     (("debugtools", "debug"), cmd_debugtools,

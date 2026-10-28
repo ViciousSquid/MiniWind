@@ -278,6 +278,25 @@ QUEST_LOOKUP_SECONDS = 0.25
 #: How near the player must come to their map waypoint for it to be reached
 #: (and cleared), world units.
 WAYPOINT_REACHED = 160.0
+#: How often (seconds) the roads are compared with the graph built from them.
+ROAD_CHECK_SECONDS = 2.0
+#: How near a walker must come to a road node to go on to the next.
+ROAD_NODE_REACH = 96.0
+#: A walker's road leg is planned again when its goal moves this far, or when
+#: it is this far from the road node it was heading for (knocked off it).
+ROAD_GOAL_SLACK = 200.0
+ROAD_LOST = 2600.0
+#: Walking on a road -- within this distance of it -- is quicker than
+#: across country.
+ROAD_SPEED = 1.15
+ROAD_WIDTH = 120.0
+#: States in which a walker has something more pressing than a good road:
+#: a fight, a fright, a chase, an errand that cannot wait, a leader to keep up
+#: with.
+ROAD_SKIP_STATES = frozenset((sched.COMBAT, sched.FLEE, sched.ALERT, sched.RALLY,
+                              sched.REPORT, sched.CONFRONT, sched.FOLLOW, "PURSUE",
+                              "SEARCH", "INVESTIGATE", "ARREST_APPROACH",
+                              "ARREST_READY", "AWAKENED"))
 #: How long a guard's "!" shows when he reacts to something.
 MARK_FLASH_SECONDS = 1.6
 #: A brawler at or below this fraction of their health has had enough.
@@ -467,6 +486,14 @@ ARREST_SOUNDS = ("arrest1.mp3", "arrest2.mp3")
 #: Marks an NPC can show above its head: "!" heightened (alarmed, startled,
 #: coming for you), "?" puzzled (searching, unsure). game/ui/hud.py draws them.
 HEAD_MARKS = ("!", "?")
+
+
+def _segment_distance(p, a, b) -> float:
+    """Ground distance from *p* to the segment *a*-*b* (each ``(x, z)``)."""
+    dx, dz = b[0] - a[0], b[1] - a[1]
+    seg2 = dx * dx + dz * dz
+    t = 0.0 if seg2 <= 0 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / seg2))
+    return math.hypot(p[0] - (a[0] + dx * t), p[1] - (a[1] + dz * t))
 
 
 class SessionMemory:
@@ -706,6 +733,14 @@ class MiniwindSession(SettlementLaw):
         #: Routes round walls for every walker (game/navigation.py).
         from .navigation import Navigator
         self.nav = Navigator(self._blocked_by_wall)
+        #: The map's ROAD_* nodes as a prebuilt navigation graph
+        #: (game/road_nav.py), rebuilt only when the roads change; and each
+        #: walker's current road leg, by id.
+        from .road_nav import RoadCache
+        self.roads = RoadCache()
+        self._road_graph = None
+        self._road_plans: Dict[int, Dict] = {}
+        self._roads_checked = -1e9
         #: type name -> (bucket, len, frozenset of ids); see _type_ids.
         self._type_id_cache = {}
         #: The camera height the wheel asked for (None: never zoomed).
@@ -1014,6 +1049,7 @@ class MiniwindSession(SettlementLaw):
         self._arm_fighters()           # a bow for the swordsman, a blade for the archer
         self.dragon_fire.install(fio.things(self.logic))
         self._show_prison_signs()      # the gaol is marked in the world
+        self._refresh_roads(force=True)  # the road graph, built before anyone walks
         self._assign_npc_stats()       # STRENGTH / ENDURANCE / CHARISMA for everyone
         self._wire_quest_givers()      # make quest givers offer their quests
         self._name_index()             # built now, not on the first quest's frame
@@ -1509,6 +1545,7 @@ class MiniwindSession(SettlementLaw):
         self._ease_zoom(delta)
         self._update_bow_draw(delta)
         self._check_waypoint()
+        self._refresh_roads()
         self.archery.update(delta)
         warrior_fist.clear_spent(self)
         self.held.update()
@@ -5685,12 +5722,22 @@ class MiniwindSession(SettlementLaw):
         if not dest:
             return
         pos = npc.pos
+        if math.hypot(dest[0] - pos[0], dest[2] - pos[2]) <= ARRIVE_RADIUS:
+            return
+        speed = float(p.get("move_speed", NPC_WALK_SPEED)) or NPC_WALK_SPEED
+        # A long walk takes the road where one helps: head for its next node
+        # instead (_road_target), a little quicker once on it.
+        road = (self._road_target(npc, pos, dest)
+                if getattr(self, "_road_graph", None) is not None else None)
+        if road is not None:
+            dest, on_road = road
+            if on_road:
+                speed *= ROAD_SPEED
         dx = dest[0] - pos[0]
         dz = dest[2] - pos[2]
         dist = math.hypot(dx, dz)
-        if dist <= ARRIVE_RADIUS:
+        if dist <= 1e-3:
             return
-        speed = float(p.get("move_speed", NPC_WALK_SPEED)) or NPC_WALK_SPEED
         # A frightened villager runs while its stamina lasts, then walks
         # winded (game/npc_stamina.py). FLEE is re-decided every tick and
         # dropped once no hostile is in sight, so the run ends with the fright.
@@ -5729,6 +5776,76 @@ class MiniwindSession(SettlementLaw):
         # weapon overlay), so writing a bare 'angle' here left schedule-driven
         # NPCs sliding around the world without ever rotating.
         face_heading(p, dx, dz, delta)
+
+    # ================================================================ roads
+    def _refresh_roads(self, force=False) -> None:
+        """Keep the road graph true to the map's ROAD_* nodes: compared every
+        :data:`ROAD_CHECK_SECONDS`, and replaced -- with every walker's road
+        leg -- only when the roads differ from what it was built from."""
+        import time as _time
+        now = _time.monotonic()
+        if not force and now - self._roads_checked < ROAD_CHECK_SECONDS:
+            return
+        self._roads_checked = now
+        try:
+            graph = self.roads.graph(self._things_of_type("path_node"))
+        except Exception:
+            graph = None
+        if graph is not self._road_graph:
+            self._road_graph = graph
+            self._road_plans.clear()
+        elif len(self._road_plans) > 4 * max(64, len(self._actors)):
+            self._road_plans.clear()        # walkers long gone: start afresh
+
+    def _road_target(self, npc, pos, dest):
+        """Where a walker on its way to *dest* should head along the road,
+        as ``((x, y, z), on_road)``; or None to walk to *dest* by itself.
+
+        The road is taken only where it helps (game/road_nav.RoadGraph.plan),
+        only in an unhurried walk -- anything in :data:`ROAD_SKIP_STATES`, a
+        flight or a run leaves it at once -- and is left again at the node
+        nearest the goal. Joining at a node already behind the walker is
+        skipped: it heads on to the next."""
+        graph = self._road_graph
+        key = id(npc)
+        if graph is None or len(graph) < 2:
+            return None
+        p = npc.properties
+        if (p.get("sched_state") in ROAD_SKIP_STATES or p.get("_flee")
+                or p.get("_running") or p.get("_aggro_target") is not None):
+            self._road_plans.pop(key, None)
+            return None
+        here = (float(pos[0]), float(pos[2]))
+        goal = (float(dest[0]), float(dest[2]))
+        plan = self._road_plans.get(key)
+        if plan is not None and plan["points"] and plan["i"] < len(plan["points"]):
+            ahead = plan["points"][plan["i"]]
+            if math.hypot(ahead[0] - here[0], ahead[1] - here[1]) > ROAD_LOST:
+                plan = None                  # knocked well off the road
+        if plan is None or math.hypot(plan["goal"][0] - goal[0],
+                                      plan["goal"][1] - goal[1]) > ROAD_GOAL_SLACK:
+            plan = {"goal": goal, "points": graph.plan(here, goal) or (), "i": 0}
+            self._road_plans[key] = plan
+        points, i = plan["points"], plan["i"]
+        while i < len(points):
+            node = points[i]
+            gap = math.hypot(node[0] - here[0], node[1] - here[1])
+            nxt = points[i + 1] if i + 1 < len(points) else None
+            if gap <= ROAD_NODE_REACH or (
+                    nxt is not None and math.hypot(nxt[0] - here[0], nxt[1] - here[1])
+                    < math.hypot(nxt[0] - node[0], nxt[1] - node[1])):
+                i += 1                       # reached it, or already past it
+                continue
+            break
+        plan["i"] = i
+        if i >= len(points):
+            return None                      # off the road, on to the goal
+        node = points[i]
+        # On the road (and quicker for it) while within a road's width of the
+        # stretch being walked.
+        a = points[i - 1] if i > 0 else node
+        on_road = _segment_distance(here, a, node) <= ROAD_WIDTH
+        return (node[0], float(dest[1]), node[1]), on_road
 
     # ============================================================ bow draw
     def fist_in_hand(self) -> bool:

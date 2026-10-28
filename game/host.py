@@ -1260,9 +1260,10 @@ class MiniwindGame:
                                    time.perf_counter())
                 # Inspector lines (console 'inspect') lie on the world, under
                 # the HUD; their windows float above everything.
-                from .ui import inspector, path_debug
+                from .ui import inspector, nav_debug, path_debug
                 inspector.draw_world_lines(painter, viewport, w, h)
                 path_debug.draw(painter, session, viewport, w, h)   # console 'paths'
+                nav_debug.draw(painter, session, viewport, w, h)    # console 'shownav'
                 # The world's map picture for the minimap, which the HUD's
                 # status frame draws (painted once, in the background, then
                 # cached per map).
