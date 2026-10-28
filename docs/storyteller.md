@@ -143,7 +143,7 @@ last sample and edit dormant tables. A same-seed day matches the ordinary
 State, timing, discharge records, sampled thread evidence, observations,
 reasons, base and effective levers, Studio edits, writ ages, arrival-window
 samples, population caps and diagnostic receipts persist under
-`storyteller.state` in the normal KV store. This is schema version 2; other
+`storyteller.state` in the normal KV store. This is schema version 3; other
 versions reset to CALM instead of guessing at missing feedback state. Board
 streaming counters have their own version-1 telemetry block; older boards
 start at zero, and unknown telemetry versions are ignored.
@@ -151,6 +151,14 @@ Restoration uses the saved overrides rather than recomputing them from today's
 tuning table. The sampler consumes no random numbers; board choices use the
 session's reseeded RNG as before. Board consumers share one detached lever
 snapshot per update or seed, rather than copying the dictionary per lookup.
+
+Faction actors, goodwill, footprint pricing and on-demand moods are documented
+in [Factions: the world prices drama](factions.md). Faction decisions stay in the
+reactive simulation. Prosperity only prices legal bandit destinations; notoriety
+only adjusts the existing hunter threshold. The footprint retains the existing
+Karma axis and fact-backed legend. Schema 3 also saves sampled footprint pricing
+coefficients, so retuning cannot alter a restored effective price before its next
+sample. The pristine switch leaves these additional sensors and decisions idle.
 
 Run the mechanism tests with:
 

@@ -1,5 +1,75 @@
 # Changes
 
+## Cache faction projections per board update
+
+- Restore `Director.intents()` caching with a mood provider. Board-update and
+  knowledge revisions refresh dependent intentions without forcing every query
+  to appraise again. Ordinary movement does not invalidate the shared mood sample.
+- Parse each unchanged holder's facts once per board update, project market
+  traffic once, and reuse one goodwill ledger per faction and one mood per
+  resident. Dirty knowledge immediately invalidates dependent projections even
+  after an actor consumes its dirty flag. Read-only queries leave knowledge,
+  ordinary intent caches, dirty flags, snapshots and RNG unchanged.
+- Rebind only living faction/home pairs from the current scene, preserving
+  historical facts without counting stale homes toward current goodwill. Hourly
+  communication skips unchanged member accounts and re-tells only changed facts.
+- Keep all caches transient across bind/reset/restore. Document coarse leader
+  attribution for abstract kills and contact-dependent raid resolution through
+  the existing road encounters and destination rest/loiter period.
+
+Validation:
+
+- Clean baseline `32e76b2`: 4,237 passed, 34 skipped, 1,974 deselected, five
+  pre-existing failures. Full headless: 4,251 passed with the same skips,
+  deselections and five failures; no tests weakened or disabled.
+- Focused cache/faction/simulation/storyteller/Studio/Karma run: 194 passed.
+  Eleven new work-count and invalidation pins also add three automatic suite
+  integrity checks. The selected baseline node set is retained in full.
+- Same five failures: backport import boundary, repeated-assault aggression,
+  container lock difficulty enum, Ember Tome site spacing, missing inventory
+  icon archive manifest. Commands and full names are in `docs/factions.md`.
+- Python compilation and `git diff --check` passed. Interactive play and OpenGL
+  were not exercised.
+
+## Faction spine and world-priced drama
+
+- Preserve the existing actor-faction knowledge repair and extend the fact
+  snapshots with target faction and existing Karma. Pin identified fight/flee
+  appraisal through perception, gossip and restore.
+- Add local faction actors with goodwill derived solely from deduplicated known
+  crimes, heals/rescues, gifts and trades. Every contribution retains a holder
+  and source fact. Karma remains the existing good/evil system and creates no
+  hidden goodwill or testimony.
+- Route justified faction orders through JourneyBoard from real homes using
+  actual resident combatants, physical travel and return legs. Preserve social
+  identity, possessions and wounds; returning survivors share actual combat
+  facts. Expose causal receipts in the existing inspector and Studio.
+- Sample prosperity, notoriety and legend from current world state. Prosperity
+  prices existing legal bandit destinations; notoriety lowers the hunter
+  threshold while bounty/news gates remain. The storyteller gains no authoring
+  powers. Evaluate resident moods as pure touchpoint projections using existing
+  appraisal and Karma functions, with no new off-screen needs simulation.
+- Bump storyteller snapshots to schema 3 and add version-1 faction snapshots.
+  Preserve effective pricing, active causes and discharged orders exactly.
+  Extend pristine-day byte/RNG parity and read-only mechanism pins. Player hold
+  as a board town remains deferred. See [docs/factions.md](docs/factions.md).
+
+Validation (no tests weakened, disabled or newly skipped):
+
+- Clean baseline at current main `1bc5085`: 4,204 passed, 34 skipped, 1,974
+  deselected; five pre-existing failures. The initial `1490d1d` baseline also
+  had those five failures (4,189 passed). Upstream controller/camera changes
+  are retained by rebasing onto current main.
+- Full headless suite: 4,237 passed, 34 skipped, 1,974 deselected; the same five
+  failures. Both runs use `FIO_HEADLESS_TIER=1` and exclude `qt`, `gl`, `benchmark`.
+- Focused faction/simulation/storyteller/Studio/Karma run: 183 passed.
+- Unchanged failures: backport import boundary (`tools/benchmark_navigation.py`),
+  repeated-assault aggression restoration, container lock difficulty enum,
+  Ember Tome site spacing (3982.84), and absent inventory icon archive manifest.
+  Exact test names and commands are in `docs/factions.md`.
+- Python compilation and `git diff --check` passed. Interactive play and OpenGL
+  rendering were not exercised.
+
 ## Gamepad Statistics shortcut
 
 - Y opens Statistics directly on the Character sheet. LB/RB change tabs;
@@ -20,6 +90,7 @@
   Camera orbit survives save/load. Hold `[` / `]` to rotate left / right.
   Set `[GAME] camera_rotation = False` in `settings.ini` to disable both
   bracket-key and right-stick rotation during play; rotation defaults to on.
+
 
 ## Faction-aware threat appraisal
 

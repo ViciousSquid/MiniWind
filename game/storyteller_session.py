@@ -79,3 +79,16 @@ class SessionStorytellerHooks(StorytellerHooks):
         return {region: {"bounty": sum(int(c["amount"]) for c in row["charges"].values()),
                          "phase": row["phase"]}
                 for region, row in self.session.law.regions.items()}
+
+    def market_traffic(self):
+        from .footprint import market_traffic
+        living = self.session.living
+        return market_traffic(living.board if living is not None else None)
+
+    def player_wealth(self):
+        from .rpg.inventory import total_value
+        c = self.session.game.character
+        return total_value(getattr(c, "inventory", [])) + float(getattr(c, "gold", 0))
+
+    def player_karma(self):
+        return float(getattr(self.session.game.character, "alignment", 0.0))

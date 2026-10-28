@@ -117,12 +117,13 @@ class Context:
 
     def __init__(self, hostile: Optional[Callable[[str, str], bool]] = None,
                  disposition: Optional[Callable[[Dict, str], int]] = None,
-                 self_key: str = "", store=None):
+                 self_key: str = "", store=None, goodwill=None):
         #: ``hostile(faction_a, faction_b) -> bool``
         self.hostile = hostile or (lambda a, b: False)
         #: ``disposition(observer_props, other_key) -> 0-100``
         self.disposition = disposition or (lambda props, key: 50)
         self.store = store
+        self.goodwill = goodwill or (lambda a, b: 0.0)
 
 
 def relationship_to(observer_props: Dict, key: str, name: str = "") -> str:
@@ -215,6 +216,9 @@ def appraise(observer_props: Dict, observer_key: str, fact: Dict,
         return None
     hostile_faction = ctx.hostile(_faction(observer_props),
                                   str(fact.get("actor_faction", "")))
+    collective_grievance = ((observer_props.get("_faction_actor") or observer_props.get("_faction_cause")) and is_offence
+                            and fact.get("target_faction") == _faction(observer_props)
+                            and ctx.goodwill(_faction(observer_props), fact.get("actor_faction", "")) <= -20)
 
     # -- 1. it happened to me -------------------------------------------
     if victim_is_self and "violence" in tags:
@@ -258,7 +262,7 @@ def appraise(observer_props: Dict, observer_key: str, fact: Dict,
 
     # -- 3. it is a crime and I am the law -------------------------------
     unresolved = not crime_mod.settled(ctx.store, fact.get("e", 0))
-    if is_offence and unresolved and lawful and certainty >= crime_mod.REPORT_CERTAINTY:
+    if is_offence and unresolved and lawful and certainty >= crime_mod.REPORT_CERTAINTY and not collective_grievance:
         grave = "grave" in tags
         return Intent(ARREST, offender, offender_name,
                       f"I {'saw' if fact.get('source') == 'witnessed' else 'know'} "
@@ -266,7 +270,7 @@ def appraise(observer_props: Dict, observer_key: str, fact: Dict,
                       f"that is my duty", fact)
 
     # -- 4. it is a crime and I am not the law ---------------------------
-    if is_offence and unresolved and not fact.get("reported"):
+    if is_offence and unresolved and not fact.get("reported") and not collective_grievance:
         if courage < 0.2 and "violence" in tags:
             return Intent(FLEE, offender, offender_name,
                           f"{offender_name} is violent and I want no part of it",
@@ -276,10 +280,12 @@ def appraise(observer_props: Dict, observer_key: str, fact: Dict,
                       fact)
 
     # -- 5. a threat in the world, not aimed at me -----------------------
-    if "violence" in tags and hostile_faction and fact.get("identified", True):
+    if (("violence" in tags and hostile_faction) or collective_grievance) and fact.get("identified", True):
         if combatant and courage >= STAND_COURAGE:
             return Intent(FIGHT, offender, offender_name,
-                          f"{offender_name} is an enemy of my people", fact)
+                          (f"{offender_name} wronged my people (goodwill "
+                           f"{ctx.goodwill(_faction(observer_props), fact.get('actor_faction', '')):g})"
+                           if collective_grievance else f"{offender_name} is an enemy of my people"), fact)
         return Intent(FLEE, offender, offender_name,
                       f"There is fighting nearby and I am not part of it", fact)
 
@@ -299,16 +305,20 @@ def appraise(observer_props: Dict, observer_key: str, fact: Dict,
 
 
 def appraise_all(observer_props: Dict, observer_key: str, facts: List[Dict],
-                 ctx: Optional[Context] = None) -> List[Intent]:
+                 ctx: Optional[Context] = None, *, mood=None) -> List[Intent]:
     """Appraise every fact and return the intents, most urgent first.
 
     At most one intent per offender survives, so knowing four things about the
     same person produces one considered response rather than four."""
     best: Dict[str, Intent] = {}
+    if mood is not None:
+        observer_props = dict(observer_props, courage=mood["courage"])
     for f in facts or ():
         intent = appraise(observer_props, observer_key, f, ctx)
         if intent is None:
             continue
+        if mood is not None and mood["state"] != "steady":
+            intent.reason += f"; feeling {mood['state']}"
         prior = best.get(intent.target)
         if prior is None or intent.priority > prior.priority:
             best[intent.target] = intent

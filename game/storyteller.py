@@ -19,7 +19,9 @@ from .sim.director import PLAYER_KEY, actor_key
 
 DEFAULT_TUNING = {
     "store_key": "storyteller.state",
-    "version": 2,
+    "version": 3,
+    "prosperity_bandit_bias": 2.0,
+    "notoriety_hunter_scale": 0.5,
     "enabled": True,
     "sample_hours": 0.25,
     "event_hours": 2.0,
@@ -149,6 +151,15 @@ class StorytellerHooks:
         """(region key, cumulative successful hostile party arrivals)."""
         return None, 0
 
+    def market_traffic(self):
+        return {}
+
+    def player_wealth(self):
+        return 0.0
+
+    def player_karma(self):
+        return 0.0
+
 
 class Storyteller:
     def __init__(self, store=None, director=None, hooks=None):
@@ -181,6 +192,8 @@ class Storyteller:
         self._thread_facts = {}
         self._vendetta_view = {}
         self._receipts = ()
+        self._footprint_pricing = dict(bandit_bias=TUNING["prosperity_bandit_bias"],
+                                       hunter_scale=TUNING["notoriety_hunter_scale"])
         self._publish_levers()
 
     @property
@@ -380,11 +393,16 @@ class Storyteller:
         self._vendetta_view = {key: dict(reason=intent.reason, staging="Awaiting an ordinary trip or nearby arrival",
             holder=holders[key].properties.get("display_name") or holders[key].properties.get("name") or key,
             event=intent.event_id) for key, intent in vendettas.items()}
+        from .footprint import evaluate
+        footprint = evaluate(((key, knowledge.facts(self.store, key)) for key in holders),
+                             threads=len(ids), writs=law, vendettas=len(vendettas),
+                             traffic=self.hooks.market_traffic(), wealth=self.hooks.player_wealth(),
+                             karma=self.hooks.player_karma())
         tension = min(1.0, 1.0 - health + attacks * TUNING["attack_tension"]
                       + deaths * TUNING["death_tension"] + hostiles * TUNING["hostile_tension"])
         return dict(health=health, attacks=attacks, deaths=deaths, hostiles=hostiles,
                     tension=tension, loose_threads=len(ids), vendettas=len(vendettas),
-                    law=law, law_pressure=pressure)
+                    law=law, law_pressure=pressure, footprint=footprint)
 
     def _outcomes(self, now, sensors):
         region, total = self.hooks.hostile_materialisations()
@@ -437,6 +455,15 @@ class Storyteller:
         if overdue:
             levers["hunter_bounty"] *= levers["writ_hunter_scale"]
             self._local_hunter_bounty *= levers["writ_hunter_scale"]
+        notoriety = sensors.get("footprint", {}).get("notoriety", 0)
+        self._footprint_pricing = dict(bandit_bias=TUNING["prosperity_bandit_bias"],
+                                       hunter_scale=TUNING["notoriety_hunter_scale"])
+        scale = 1.0 - self._footprint_pricing["hunter_scale"] * notoriety
+        levers["hunter_bounty"] *= scale
+        self._local_hunter_bounty *= scale
+        self._reason("Player footprint", f"Prosperity {sensors.get('footprint', {}).get('prosperity', 0):.2f}; "
+                     f"notoriety {notoriety:.2f} prices hunter threshold x{scale:.2f}. "
+                     "Known deeds supply legend; Karma supplies the existing moral axis.")
         self._reason("Writ pressure", f"Hunter threshold {levers['hunter_bounty']:g}: " + (
             f"unpaid writs in {', '.join(overdue)} have persisted for at least "
             f"{TUNING['unpaid_writ_hours']:g} game hours."
@@ -538,6 +565,13 @@ class Storyteller:
             self._vendetta_view[eligible]["staging"] = why
         return weight
 
+    def bandit_destination_weight(self, distance):
+        """Price existing legal bandit destinations by sampled player wealth."""
+        if not self.enabled:
+            return 1.0
+        prosperity = self.sensors.get("footprint", {}).get("prosperity", 0)
+        return 1.0 + prosperity * self._footprint_pricing["bandit_bias"] / (1.0 + distance / 6000) ** 2
+
     def resident_destination(self, resident_id, towns, distance):
         """Select only a legal ordinary market destination, never an intent."""
         if not self.enabled:
@@ -587,6 +621,13 @@ class Storyteller:
             f"{r.get('holder_name', r['holder'])} ({r['holder']}) remembers {r['kind']} #{r['event']} in {journey.dest}" for r in evidence))
         if not evidence:
             why = "Ordinary authored destination sampling."
+        cause = getattr(journey, "cause", None)
+        if cause:
+            influenced = True
+            events = sorted({cause["event"], cause["trail"]["e"]})
+            why = (f"{cause['faction']} departed {cause['home']}: {cause['reason']}. "
+                   f"Known account #{cause['event']} and trail #{cause['trail']['e']} "
+                   f"held by {cause['holder']}; an actor's order.")
         for member in journey.members:
             key = actor_key(member.get("resident", ""))
             staged = self._vendetta_view.get(key, {})
@@ -613,6 +654,10 @@ class Storyteller:
                        origin=journey.origin, destination=journey.dest, events=events,
                        outcome="Materialised in the live region" if arrived else "Routed journey sampled",
                        state=self.state, reason=why)
+        if cause:
+            receipt["provenance"] = journey.provenance()
+            if not arrived:
+                receipt["outcome"] = "Faction order departed"
         self._receipts = (*self._receipts, receipt)[-TUNING["receipt_cap"]:]
         self._reason("Journey outcome", f"{journey.id} {journey.kind} → {journey.dest}: {receipt['outcome']}. {why}")
 
@@ -645,6 +690,7 @@ class Storyteller:
                 "studio_overrides": self._studio_overrides, "enabled_override": self._enabled_override,
                 "thread_facts": self._thread_facts, "vendetta_view": self._vendetta_view,
                 "receipts": self._receipts,
+                "footprint_pricing": self._footprint_pricing,
             }))
 
     def restore(self):
@@ -684,6 +730,7 @@ class Storyteller:
             self._thread_facts = copy.deepcopy(data.get("thread_facts") or {})
             self._vendetta_view = copy.deepcopy(data.get("vendetta_view") or {})
             self._receipts = tuple(copy.deepcopy(data.get("receipts") or [])[-TUNING["receipt_cap"]:])
+            self._footprint_pricing = dict(data.get("footprint_pricing") or self._footprint_pricing)
         except (TypeError, ValueError):
             self.reset()
             return False

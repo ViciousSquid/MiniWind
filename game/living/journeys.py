@@ -105,6 +105,8 @@ KINDS: Dict[str, Dict] = {
                     weight=0, speed=1.1, hunts_player=True),
     "market": dict(members=[], faction="villagers", origins=HOMES, dests=TOWNS,
                    legs=(2, 2), hours=(7, 10), weight=0, speed=0.9),
+    "faction_raid": dict(members=[], faction="", origins=HOMES + CAMPS,
+                         dests=HOMES + CAMPS, legs=(2, 2), hours=(0, 24), weight=0, speed=1.0),
 }
 
 #: Roles that fight (everyone else runs).
@@ -204,6 +206,22 @@ class WorldHooks:
     def journey_sampled(self, journey, t, *, arrived=False, destination_sampled=False):
         pass
 
+    def bandit_destination_weight(self, place_key):
+        return 1.0
+
+    def faction_orders(self):
+        """Read already decided actor orders. This query cannot appraise actors."""
+        return ()
+
+    def faction_departed(self, journey):
+        pass
+
+    def faction_returned(self, journey):
+        pass
+
+    def encounter_resolved(self, winner, loser, t, where, fallen):
+        pass
+
 
 # ---------------------------------------------------------------------------
 # A journey
@@ -232,6 +250,7 @@ class Journey:
         self.resident = ""                    # id of a townsperson making a trip
         self.quest = None                     # radiant quest offered, if any
         self.fought: List[str] = []           # journeys already met on this leg
+        self.cause = None                    # faction action's knowledge receipt
 
     # -- where -----------------------------------------------------------
     @property
@@ -275,11 +294,22 @@ class Journey:
 
     @property
     def faction(self) -> str:
+        if self.cause:
+            return self.cause["faction"]
         return KINDS.get(self.kind, {}).get("faction", "villagers")
 
     @property
     def hostile(self) -> bool:
+        if self.cause:
+            return self.cause["target"] == "player"
         return bool(KINDS.get(self.kind, {}).get("hostile"))
+
+    def provenance(self):
+        """A road party always has a faction, home, purpose and receipts."""
+        import copy
+        return copy.deepcopy(self.cause) if self.cause else dict(
+            faction=self.faction, home=self.home, reason=f"Authored {self.kind} journey",
+            news=list(self.news))
 
     def describe(self) -> str:
         lead = self.leader()
@@ -288,12 +318,15 @@ class Journey:
 
     # -- persistence -----------------------------------------------------
     def to_dict(self) -> Dict:
-        return {"id": self.id, "kind": self.kind, "members": self.members,
+        result = {"id": self.id, "kind": self.kind, "members": self.members,
                 "origin": self.origin, "dest": self.dest, "route": self.route,
                 "depart_t": self.depart_t, "speed": self.speed, "legs": self.legs,
                 "home": self.home, "state": self.state, "rest_until": self.rest_until,
                 "news": list(self.news), "resident": self.resident,
                 "quest": self.quest, "fought": list(self.fought)}
+        if self.cause is not None:
+            result["cause"] = self.cause
+        return result
 
     @classmethod
     def from_dict(cls, d: Dict) -> "Journey":
@@ -306,6 +339,7 @@ class Journey:
         j.resident = d.get("resident", "") or ""
         j.quest = d.get("quest")
         j.fought = list(d.get("fought", []))
+        j.cause = d.get("cause")
         return j
 
 
@@ -431,6 +465,8 @@ class JourneyBoard:
                                                self.places[d]["z"] - oz) / 6000.0) ** 2
                        for d in dests]
             weights = [w * self.hooks.destination_weight(d) for d, w in zip(dests, weights)]
+            if kind == "bandits":
+                weights = [w * self.hooks.bandit_destination_weight(d) for d, w in zip(dests, weights)]
             dest = rng.choices(dests, weights=weights)[0]
         route = self._route(origin, dest)
         if route is None:
@@ -451,7 +487,7 @@ class JourneyBoard:
         # Whatever is being said where they set out, they set out knowing.
         j.news = list(self.heard.get(origin, []))[-8:]
         self.journeys[jid] = j
-        if kind != "market":  # resident metadata is attached just after plan()
+        if kind not in ("market", "faction_raid"):  # metadata is attached just after plan()
             self.hooks.journey_sampled(j, t, destination_sampled=destination_sampled)
         return j
 
@@ -518,6 +554,7 @@ class JourneyBoard:
         self._encounters(t, made)
         self._departures(t)
         self._resident_trips(t)
+        self._faction_departures(t)
         self._forget(t)
         return made
 
@@ -550,6 +587,31 @@ class JourneyBoard:
         return out
 
     # -- arrival and onward -------------------------------------------------
+    def _faction_departures(self, t):
+        """Commit legal orders from faction actors through the ordinary board."""
+        for order in self.hooks.faction_orders():
+            cause = order.get("cause") or {}
+            home, dest = order.get("origin"), order.get("dest")
+            members = order.get("members") or []
+            if (home not in self.places or dest not in self.places or home == dest
+                    or not cause.get("event") or cause.get("home") != home
+                    or not cause.get("faction") or not cause.get("holder")
+                    or not cause.get("fact") or not members
+                    or any(j.cause and j.cause["entity"] == cause["entity"] for j in self.journeys.values())
+                    or any(not m.get("resident") or m["resident"] in self.residents_on_trips
+                           or not self.hooks.resident_can_leave(m["resident"]) for m in members)
+                    or self._route(home, dest) is None):
+                continue
+            j = self.plan("faction_raid", t, origin=home, dest=dest, members=members)
+            if j is None:
+                continue
+            j.cause = cause
+            self.hooks.faction_departed(j)
+            for m in members:
+                self.residents_on_trips[m["resident"]] = j.id
+                self.hooks.resident_left(m["resident"], j)
+            self.hooks.journey_sampled(j, t)
+
     def arrive(self, j: Journey, t: float, made: List[str]) -> None:
         """*j* has reached its destination."""
         place = j.dest
@@ -603,7 +665,7 @@ class JourneyBoard:
         destination_sampled = False
         if j.legs <= 0:
             dest = j.home
-        elif j.kind == "market":
+        elif j.kind in ("market", "faction_raid"):
             dest = j.home
         else:
             spec = KINDS.get(j.kind, {})
@@ -617,6 +679,7 @@ class JourneyBoard:
                 nearby = options[:4]
                 destination_sampled = True
                 dest = self.rng.choices(nearby, weights=[self.hooks.destination_weight(d)
+                                                       * (self.hooks.bandit_destination_weight(d) if j.kind == "bandits" else 1.0)
                                                        for d in nearby])[0]
             else:
                 dest = j.home
@@ -690,9 +753,11 @@ class JourneyBoard:
         for i, a in enumerate(moving):
             ax, az = a.position_at(t)
             for b in moving[i + 1:]:
-                if not (a.hostile or b.hostile or a.kind == "patrol" or b.kind == "patrol"):
+                if not (a.hostile or b.hostile or a.cause or b.cause or a.kind == "patrol" or b.kind == "patrol"):
                     continue
-                if not _hostile(a.faction, b.faction):
+                if not (_hostile(a.faction, b.faction)
+                        or a.cause and a.cause.get("target_faction") == b.faction
+                        or b.cause and b.cause.get("target_faction") == a.faction):
                     continue
                 if b.id in a.fought:
                     continue
@@ -705,6 +770,7 @@ class JourneyBoard:
 
     def _clash(self, a: Journey, b: Journey, t: float, where, made: List[str]) -> None:
         """Two hostile parties meet out of anyone's sight. Dice decide."""
+        before = [(j, m) for j in (a, b) for m in j.alive()]
         sa, sb = a.strength(), b.strength()
         if sa + sb <= 0:
             return
@@ -752,6 +818,8 @@ class JourneyBoard:
             for nid in made[-1:]:
                 if nid not in j.news:
                     j.news.append(nid)
+        self.hooks.encounter_resolved(winner, loser, t, where,
+                                     [(j, m) for j, m in before if not m.get("alive", True)])
 
     # -- news -----------------------------------------------------------------
     def say(self, text: str, t: float, place: Optional[str], kind: str = "",
@@ -856,6 +924,12 @@ class JourneyBoard:
         self.hooks.resident_left(r["id"], j)
 
     def _retire(self, j: Journey) -> None:
+        if j.cause:
+            self.hooks.faction_returned(j)
+            for member in j.members:
+                rid = member.get("resident")
+                self.residents_on_trips.pop(rid, None)
+                self.hooks.resident_home(rid, j, bool(member.get("alive", True)))
         if j.resident:
             self.residents_on_trips.pop(j.resident, None)
             lead = j.members[0] if j.members else {}

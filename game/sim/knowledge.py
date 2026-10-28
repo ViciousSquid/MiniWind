@@ -66,7 +66,7 @@ def fact_from_event(event, certainty: float, source: str,
     to whom, roughly where and when. A perceiver who was uncertain keeps the
     *same* fields — uncertainty lives in the number, not in missing data, so
     every consumer can treat all facts alike."""
-    return {
+    fact = {
         "e": int(getattr(event, "id", 0) or 0),
         "kind": str(getattr(event, "kind", "")),
         "actor": str(getattr(event, "actor", "")),
@@ -74,6 +74,8 @@ def fact_from_event(event, certainty: float, source: str,
         # Retain the perceived event's faction snapshot for threat appraisal;
         # never reconstruct it later from an actor's current faction.
         "actor_faction": str((getattr(event, "data", None) or {}).get("actor_faction") or ""),
+        "target_faction": str((getattr(event, "data", None) or {}).get("target_faction") or ""),
+        "actor_alignment": (getattr(event, "data", None) or {}).get("actor_alignment"),
         "target": str(getattr(event, "target", "")),
         "target_name": str(getattr(event, "target_name", "")),
         "day": int(getattr(event, "day", 0) or 0),
@@ -90,6 +92,13 @@ def fact_from_event(event, certainty: float, source: str,
         "from": str(told_by or ""),
         "reported": False,
     }
+    # Actual hostile encounters retain the departure receipt for investigation.
+    import copy
+    data = getattr(event, "data", None) or {}
+    for field in ("journey", "home", "cause"):
+        if field in data:
+            fact[field] = copy.deepcopy(data[field])
+    return fact
 
 
 def source_for(mode: str) -> str:
@@ -100,11 +109,16 @@ def source_for(mode: str) -> str:
 # ---------------------------------------------------------------------------
 # Reading / writing an actor's facts
 # ---------------------------------------------------------------------------
+def token(store, key: str):
+    """Serialized beliefs for cheap read-only cache validation; no JSON parse."""
+    if store is None or not key:
+        return ""
+    return store.get(_base(key), "")
+
+
 def facts(store, key: str) -> List[Dict]:
     """Every fact this actor currently believes (most recent last)."""
-    if store is None or not key:
-        return []
-    raw = store.get(_base(key), "")
+    raw = token(store, key)
     if raw in (None, "", "false"):
         return []
     try:

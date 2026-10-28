@@ -846,6 +846,8 @@ def test_old_unpaid_writs_lower_the_actual_hunter_threshold_and_settlement_clear
     hooks.law = {"a": dict(bounty=130, phase="writ")}
     story.tick(0)
     base = story.levers["hunter_bounty"]
+    authored_base = TUNING["states"]["CALM"]["levers"]["hunter_bounty"]
+    assert base == authored_base * (1 - TUNING["notoriety_hunter_scale"] * 130 / 1000)
     story.tick(TUNING["unpaid_writ_hours"] - TUNING["sample_hours"])
     assert story.levers["hunter_bounty"] == base
     story.tick(TUNING["unpaid_writ_hours"])
@@ -856,7 +858,8 @@ def test_old_unpaid_writs_lower_the_actual_hunter_threshold_and_settlement_clear
     assert any(j.kind == "hunters" for j in b.journeys.values())
     hooks.law = {"a": dict(bounty=0, phase="clear")}
     story.tick(25)
-    assert story.levers["hunter_bounty"] == base and not story._writ_since
+    assert story.levers["hunter_bounty"] == authored_base and not story._writ_since
+    assert story.sensors["footprint"]["notoriety"] == 0
     hooks.law["a"] = dict(bounty=130, phase="writ")
     story.tick(26)
     assert story.levers["hunter_bounty"] == base
@@ -875,7 +878,8 @@ def test_pristine_switch_keeps_sensors_idle_and_a_day_of_board_bytes_and_rng_aut
         pytest.fail("Pristine ecology queried a storyteller sensor")
 
     for name in ("actors", "actor_town", "player_town", "player_health_fraction",
-                 "hostile_counts_by_tier", "law_pressure", "player_region", "hostile_materialisations"):
+                 "hostile_counts_by_tier", "law_pressure", "player_region", "hostile_materialisations",
+                 "market_traffic", "player_wealth", "player_karma"):
         monkeypatch.setattr(hooks, name, forbidden)
     saved = copy.deepcopy(story.sensors), story.last_sample, story.observations
     a, b = board(story), board(story)

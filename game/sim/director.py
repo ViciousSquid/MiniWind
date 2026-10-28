@@ -112,6 +112,31 @@ def _pos(thing):
     return list(p) if p is not None else None
 
 
+class _DirtyActors(set):
+    """Dirty flags with a revision that survives a decision consuming a flag."""
+
+    def __init__(self, keys=()):
+        super().__init__(keys)
+        self.revision = 0
+
+    def add(self, key):
+        super().add(key)
+        self.revision += 1
+
+    def clear(self):
+        super().clear()
+        self.revision += 1
+
+    def update(self, *others):
+        for other in others:
+            for key in other:
+                self.add(key)
+
+    def __ior__(self, other):
+        self.update(other)
+        return self
+
+
 class Director:
     """Runs the reactive pipeline over a set of actors.
 
@@ -142,11 +167,17 @@ class Director:
         #: ``rumour_decay(fact) -> float | None``: how much certainty a fact
         #: loses each time it is retold (None: the usual amount).
         self.rumour_decay = None
+        # Pure on-demand projection supplied by the living world. Sampling
+        # uses evaluate(), while ordinary decisions may cache their results.
+        self.mood_context = None
+        self.mood_context_key = None
+        self.fact_reader = None
         self.ctx = appraisal.Context(hostile=hostile, disposition=disposition,
                                      store=store)
         #: actor key -> ranked intents (recomputed when their knowledge changes)
         self._intents: Dict[str, List[Intent]] = {}
-        self._dirty: set = set()
+        self._dirty = _DirtyActors()
+        self._intent_context = {}
         self._gossip_clock = 0.0
         self._coarse_clock = 0.0
         self._coarse_from = 0.0      # sim_time of the last coarse pass
@@ -169,7 +200,7 @@ class Director:
 
     # ----------------------------------------------------------- emit events
     def emit(self, kind: str, actor=None, target=None, pos=None,
-             observers: Sequence = (), **data) -> WorldEvent:
+             observers: Sequence = (), at=None, **data) -> WorldEvent:
         """Record something that happened and run it through the whole chain.
 
         *actor* and *target* may be entities or bare identity strings. *pos*
@@ -177,6 +208,8 @@ class Director:
         (an item id, a value, a damage number) rides along in ``data`` for the
         systems that care."""
         day, hour = self._now()
+        if at is not None:
+            day, hour = int(float(at) // 24), float(at) % 24
         akey = actor_key(actor)
         tkey = actor_key(target)
         if pos is None:
@@ -184,9 +217,19 @@ class Director:
         if self.region_for is not None and "law_region" not in data:
             data["law_region"] = self.region_for(pos)
         aprops = _props(actor)
+        if aprops.get("_faction_cause"):
+            data.setdefault("cause", dict(aprops["_faction_cause"]))
+            data.setdefault("home", aprops["_faction_cause"]["home"])
+            data.setdefault("journey", aprops.get("_journey", ""))
         if aprops and "actor_faction" not in data:
             data["actor_faction"] = str(aprops.get("faction")
                                         or aprops.get("team") or "")
+        tprops = _props(target)
+        if tprops and "target_faction" not in data:
+            data["target_faction"] = str(tprops.get("faction") or tprops.get("team") or "")
+        if aprops and "actor_alignment" not in data:
+            from ..rpg import alignment
+            data["actor_alignment"] = alignment.of_npc(dict(aprops))
         event = WorldEvent(
             kind, actor=akey, actor_name=actor_name(actor, akey or "someone"),
             target=tkey, target_name=actor_name(target, tkey or ""),
@@ -292,15 +335,29 @@ class Director:
             pass
 
     # -------------------------------------------------- interpretation → why
+    @property
+    def knowledge_revision(self):
+        return self._dirty.revision
+
+    def evaluate(self, thing) -> List[Intent]:
+        """Read-only appraisal at a mention/materialisation/journey touchpoint."""
+        from types import SimpleNamespace
+        view = SimpleNamespace(properties=dict(_props(thing)))
+        key = actor_key(view)
+        facts = self.fact_reader(key) if self.fact_reader is not None else knowledge.facts(self.store, key)
+        mood = self.mood_context(thing, facts) if self.mood_context is not None else None
+        return appraisal.appraise_all(view.properties, key, facts, self.ctx, mood=mood)
+
     def intents(self, thing, refresh: bool = False) -> List[Intent]:
         """This actor's ranked intents, recomputed only when their beliefs moved."""
         key = actor_key(thing)
         if not key:
             return []
-        if refresh or key in self._dirty or key not in self._intents:
-            facts = knowledge.facts(self.store, key)
-            self._intents[key] = appraisal.appraise_all(
-                _props(thing), key, facts, self.ctx)
+        context = self.mood_context_key(thing) if self.mood_context_key is not None else None
+        if (refresh or key in self._dirty or key not in self._intents
+                or self._intent_context.get(key) != context):
+            self._intents[key] = self.evaluate(thing)
+            self._intent_context[key] = context
             self._dirty.discard(key)
         return self._intents[key]
 
@@ -316,6 +373,7 @@ class Director:
         """Force an actor's (or everyone's) intents to be reconsidered."""
         if thing is None:
             self._intents.clear()
+            self._intent_context.clear()
             self._dirty.clear()
             return
         key = actor_key(thing)
@@ -323,7 +381,8 @@ class Director:
             self._dirty.add(key)
 
     def knowledge_lines(self, thing, limit: int = 8) -> List[str]:
-        return knowledge.summary(self.store, actor_key(thing), limit)
+        from types import SimpleNamespace
+        return knowledge.summary(self.store, actor_key(SimpleNamespace(properties=dict(_props(thing)))), limit)
 
     # ----------------------------------------------------------------- ticks
     def tick(self, actors: Sequence, hours: float, distant: Sequence = ()) -> None:
@@ -456,6 +515,7 @@ class Director:
                             ev.note(f"{actor_name(witness)} reported it to "
                                     f"{actor_name(officer)}")
                     knowledge.mark_reported(self.store, wkey, f.get("e", 0))
+                    self._dirty.add(wkey)
                 break
 
         # (2) a lawful actor who knows about an unreported crime lays the charge
