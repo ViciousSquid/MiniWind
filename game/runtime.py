@@ -4406,7 +4406,9 @@ class MiniwindSession(SettlementLaw):
             return          # away on a trip; a stand-in walks the road
         # Wounded (or a caster run dry) with a potion in the pack: drink it,
         # in a fight as much as out of one. It takes no turn of its own.
-        self._npc_drink(npc)
+        drink = getattr(self, "_npc_drink", None)
+        if drink is not None:
+            drink(npc)
 
         # Arrest movement is owned by the runtime, not the normal schedule or
         # MonsterAI. The guard remains visible and walks to the player/prison.
