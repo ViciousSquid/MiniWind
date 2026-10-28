@@ -713,7 +713,7 @@
     "effects": [
       {
         "kind": "restore_health",
-        "magnitude": 5,
+        "magnitude": 8,
         "duration": 0
       }
     ]

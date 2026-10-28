@@ -123,7 +123,7 @@ def test_only_potions_play_drink_not_food(monkeypatch):
     c = s.game.character
     c.health = c.max_health - 20
     assert s.inventory_use("bread")
-    assert c.health == c.max_health - 15                         # bread: 5 health
+    assert c.health == c.max_health - 12                         # bread: 8 health
     assert queued == []                                          # eaten, not drunk
     _give(s, "potion_stamina", 1)
     assert s.inventory_use("potion_stamina")
