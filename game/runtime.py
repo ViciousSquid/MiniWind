@@ -32,7 +32,7 @@ from . import fio
 from .facing import face_heading
 from engine.change_journal import touch as _journal
 from engine.spatial import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
-                                TIER_DORMANT)
+                            TIER_DORMANT, PARKED_HIDDEN_KEY, PARKED_DISABLED_KEY)
 from .rpg import factions
 from .rpg import gib
 from .rpg import schedule as sched
@@ -539,6 +539,11 @@ class MiniwindSession(SettlementLaw):
         self.region_name = str(cfg.get("region_name", "The Vale of Miniwind"))
         self.store = StateStore(globals_store, str(cfg.get("state_store", "miniwind")))
 
+        from .weather import Weather
+        self.weather = Weather(self.store)
+        self.weather_enabled = (bool(cfg.get("weather_enabled", True))
+                                and fio.map_created_by(logic) != "make_caves")
+
         self.rng = random.Random()
         self.game = GameState(self.store, rng=self.rng)
         self.law = Writs(self.store)
@@ -863,6 +868,8 @@ class MiniwindSession(SettlementLaw):
             self.store.clear()
         except Exception:
             pass
+        from .weather import Weather
+        self.weather = Weather(self.store)
         self.rng = random.Random()
         self._clear_arrest()
         self._arrest_region = ""
@@ -1445,6 +1452,7 @@ class MiniwindSession(SettlementLaw):
             self._arrow_tags.clear()
         self._keep_player_in_world()
         self.clock.advance(delta)
+        self.weather.tick(delta, self.clock.day * 24.0 + self.clock.hour)
         self.game.tick(delta, self._sprint(delta))
         self._announce_skill_raises()
         self._update_encumbrance()
@@ -1480,11 +1488,11 @@ class MiniwindSession(SettlementLaw):
         # Observable behaviour is unchanged: everything inside the overhead
         # camera's view moves every tick (NEAR when fitted, else NEAR or ACTIVE).
         hour_int = int(self.clock.hour)
-        # The NPCs worth ticking at all: the engine's live actor set, which
+        # The NPCs and raised companions worth ticking: the live actor set, which
         # already excludes anything the streamer has parked. On a streamed world
         # that is a handful of townsfolk rather than the whole population, and
         # the difference never reaches any of the loops below.
-        npcs = self._live_npcs()
+        npcs = self._live_movers()
         # Tiers are fixed for the tick (the world index set them just before
         # this call), so read each actor's once and share it with every pass
         # below rather than asking again per pass per actor.
@@ -1509,6 +1517,9 @@ class MiniwindSession(SettlementLaw):
             pass_no = getattr(self, "_decision_pass", 0) + 1
             self._decision_pass = pass_no
             for i, npc in enumerate(npcs):
+                p = npc.properties
+                if p.get("resurrection_used") and p.get("follow_player"):
+                    continue  # the per-tick follower pass owns its decisions and movement
                 tier = npc_tiers[i]
                 if tier >= TIER_DORMANT:
                     continue
@@ -3236,7 +3247,7 @@ class MiniwindSession(SettlementLaw):
         return sim_appraisal.is_combatant(npc.properties)
 
     def _reap_dead(self) -> None:
-        """Turn NPC deaths into persistent settlement consequences, once each.
+        """End raised followers' second lives and record NPC deaths once each.
 
         Deaths are caught by watching the ``dead`` flag rather than hooking every
         kill path, so a townsperson cut down by the engine's MonsterAI (a bandit,
@@ -3244,16 +3255,16 @@ class MiniwindSession(SettlementLaw):
         the persistent KV store, so it survives save/load and dialogue can read
         it — the town remembers who is gone.
         """
-        # PERF: only dead NPCs matter here. With the index that is its corpse
-        # rows (a few) rather than every NPC; without it, the "npc" bucket.
+        # With the index, visit only corpse rows. Raised creatures and monsters
+        # also lose their follower mark, but only NPCs have town consequences.
         wi = self._world_index()
         if wi is None:
-            pool = self._things_of_type("npc")
+            buckets = self._type_buckets()
+            pool = _chain(buckets.get("npc", ()), buckets.get("creature", ()),
+                          buckets.get("monster", ()))
         else:
-            npc_ids = self._type_ids("npc")
             actors = wi.actors
-            pool = [actors[i] for i in np.flatnonzero(wi.dead[:wi.n]).tolist()
-                    if id(actors[i]) in npc_ids]
+            pool = [actors[i] for i in np.flatnonzero(wi.dead[:wi.n]).tolist()]
         for t in pool:
             tp = t.properties
             if not tp.get("dead"):
@@ -3262,6 +3273,8 @@ class MiniwindSession(SettlementLaw):
                 tp["follow_player"] = False
                 tp.pop("_dest", None)
                 _journal(t)
+            if str(tp.get("type", "")).replace("_", "").lower() != "npc":
+                continue
             name = str(tp.get("name", ""))
             if name in self._deaths_seen:
                 continue
@@ -5230,11 +5243,29 @@ class MiniwindSession(SettlementLaw):
                            buckets.get("monster", ())))
 
     def _live_npcs(self) -> List:
-        """The live actors that are NPCs and not dead — what the tick drives."""
+        """The live social NPCs, excluding dead actors."""
         wi = self._world_index()
         if wi is None:
             return self.npcs()
         return self._live_of_type(wi, "npc")
+
+    def _live_movers(self) -> List:
+        """Live NPCs plus raised companions of any supported actor type.
+
+        Humanoid enemies such as bandits can be creatures. Resurrection parks
+        their combat AI, so they need the same follower mover as social NPCs.
+        Other creatures keep their existing combat, wildlife or journey mover.
+        """
+        wi = self._world_index()
+        if wi is None:
+            actors = self._live_actors()
+        else:
+            actors = (wi.actors[i] for i in np.flatnonzero(wi.alive[:wi.n]).tolist())
+        npc_ids = self._type_ids("npc")
+        return [t for t in actors if not (p := t.properties).get("dead")
+                and PARKED_HIDDEN_KEY not in p and PARKED_DISABLED_KEY not in p
+                and (id(t) in npc_ids
+                     or (p.get("resurrection_used") and p.get("follow_player")))]
 
     def _type_ids(self, type_name) -> frozenset:
         """``id()`` of every thing in the *type_name* bucket, cached until the
@@ -8627,6 +8658,7 @@ class MiniwindSession(SettlementLaw):
         now = _t.monotonic()
         if force or (now - self._last_persist) >= 1.0:
             self._last_persist = now
+            self.weather.persist()
             self.game.save_to_store()
             if force:
                 self.memory.save()
@@ -8640,6 +8672,10 @@ class MiniwindSession(SettlementLaw):
             self.law.persist()
 
     def restore(self) -> None:
+        # Old saves have no weather state; discard the current session's front
+        # before restoring so they start with the normal automatic cycle.
+        from .weather import Weather
+        self.weather = Weather(self.store)
         # The event history first, so anything that reads it during the rest of
         # the restore sees the world's past rather than an empty log.
         self.director.restore()

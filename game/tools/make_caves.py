@@ -482,7 +482,7 @@ def build_cave_map(slug, name, monsters, count, loot, settings, camera, protos,
     things.append(_light("Light_hoard", (x, 160.0, z), 520.0, (255, 210, 120), 2.0))
     s = copy.deepcopy(settings)
     s["pos"] = [0.0, 400.0, 0.0]
-    s["properties"].update({"id": _uid(), "region_name": name})
+    s["properties"].update({"id": _uid(), "region_name": name, "weather_enabled": False})
     s["io_connections"] = []
     things.append(s)
     if camera is not None:

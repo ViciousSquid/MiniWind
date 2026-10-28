@@ -91,6 +91,22 @@ def test_every_brush_comes_back(scene):
            [b["name"] for b in loaded.brushes]))
 
 
+@pytest.mark.parametrize("non_solid", [False, True])
+def test_brush_collision_setting_survives_the_map_round_trip(scene, non_solid):
+    from engine.physics import SpatialGrid
+
+    scene.brushes[0]["no_collision"] = non_solid
+
+    loaded, data = _round_trip(scene)
+
+    assert data["brushes"][0]["no_collision"] is non_solid
+    wall = loaded.brushes[0]
+    assert wall["no_collision"] is non_solid
+    grid = SpatialGrid()
+    grid.populate(loaded.brushes)
+    assert any(brush is wall for brush in grid._all_solid) is not non_solid
+
+
 def test_every_entity_comes_back(scene):
     loaded, _ = _round_trip(scene)
     assert [t.name for t in loaded.things] == [t.name for t in scene.things]

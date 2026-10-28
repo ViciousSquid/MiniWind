@@ -566,6 +566,8 @@ class MiniwindGame:
                  help="'prompt' opens character creation; 'quick' drops in as a default hero."),
             prop("difficulty", "enum", "Difficulty", default="normal",
                  choices=["easy", "normal", "hard"], group="WORLD"),
+            prop("weather_enabled", "bool", "Outdoor weather", default=True,
+                 group="WORLD", help="Show weather over this map's camera view. Disable for interiors."),
             prop("start_hour", "float", "Start hour", default=8.0, min=0.0, max=24.0,
                  group="TIME"),
             prop("start_day", "int", "Start day", default=1, min=1, max=100000, group="TIME"),
@@ -1192,6 +1194,9 @@ class MiniwindGame:
                 # Blood on the world, under the night and the HUD.
                 hud.draw_gore(painter, session, viewport, w, h)
                 hud.draw_time_tint(painter, session, w, h, viewport)
+                if getattr(session, "weather_enabled", True) and fio.is_overhead(session.logic):
+                    from .ui.weather import draw_weather
+                    draw_weather(painter, session, w, h)
                 # Magic's screen washes (a resurrection's dark red, a frost
                 # hit's rime) over the world, under the HUD.
                 from .ui import magic_overlay
