@@ -142,8 +142,14 @@ def _paint_ring(p, f):
     p.drawEllipse(QPointF(cx, cy), (R + r) / 2.0, (R + r) / 2.0)
     p.setPen(QPen(QColor(0, 0, 0, 120), 3.0))
     p.drawEllipse(QPointF(cx, cy), r + 1.5, r + 1.5)
-    # North, set into the ring.
-    ny = cy - (R + r) / 2.0
+
+
+def _paint_north(p, f, rotation=0.0):
+    """North moves with the map; its letter stays upright and readable."""
+    R, r = f.R, f.r
+    reach = (R + r) / 2.0
+    cx = f.cx + math.sin(rotation) * reach
+    ny = f.cy - math.cos(rotation) * reach
     p.setPen(QPen(_BRONZE_EDGE, 1.2))
     p.setBrush(QBrush(QColor(60, 32, 12)))
     p.drawEllipse(QPointF(cx, ny), 0.085 * R, 0.085 * R)
@@ -306,5 +312,6 @@ def draw(painter, session, c, width, height):
 
     painter.save()
     painter.drawPixmap(0, 0, ring)
+    _paint_north(painter, f, worldmap.minimap_rotation(session))
     _draw_identity(painter, f, c)
     painter.restore()

@@ -271,6 +271,9 @@ class ThreadedGameState:
         self._keys = set()
         self._mouse_lock = threading.Lock()
         self._mouse_delta = (0.0, 0.0)
+        self._gamepad_lock = threading.Lock()
+        self._gamepad_move = None
+        self._gamepad_look = (0.0, 0.0)
         
         # Shot Queue — deque for O(1) popleft
         self._shot_lock = threading.Lock()
@@ -474,6 +477,24 @@ class ThreadedGameState:
             self._aim_direction = (tuple(float(c) for c in direction)
                                    if direction is not None else None)
             self._aim_yaw = float(yaw) if yaw is not None else None
+
+    def set_gamepad_move(self, move):
+        """Camera-relative stick input, or None when keyboard/menu owns input."""
+        with self._gamepad_lock:
+            self._gamepad_move = tuple(move) if move is not None else None
+            if move is None:
+                self._gamepad_look = (0.0, 0.0)
+
+    def add_gamepad_look(self, dx, dy):
+        with self._gamepad_lock:
+            x, y = self._gamepad_look
+            self._gamepad_look = (x + float(dx), y + float(dy))
+
+    def consume_gamepad_input(self):
+        with self._gamepad_lock:
+            result = self._gamepad_move, self._gamepad_look
+            self._gamepad_look = (0.0, 0.0)
+            return result
 
     def get_aim_direction(self):
         """Unit aim vector toward the pointer, or None when pointer aiming is off."""

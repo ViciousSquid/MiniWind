@@ -234,6 +234,7 @@ class InventoryWindow(FloatingWindow):
         self._last_click = (0.0, None)
         #: This press put a picked-up item back down (its release is no pick).
         self._unpicked = False
+        self._pad_point = None
         self._icons = {}
         self._doll = {}
         from . import fonts
@@ -355,6 +356,7 @@ class InventoryWindow(FloatingWindow):
         # Its slots and pack take drops from the strip and the container
         # screen too (game/ui/drag.py).
         drag.set_zones(self, self._targets)
+        self._draw_pad_focus(painter)
         painter.restore()
 
     def _draw_view_tabs(self, painter, x, y, w, h):
@@ -1133,6 +1135,101 @@ class InventoryWindow(FloatingWindow):
         self._queue(lambda session: setattr(session, "open_screen", None))
 
     # --------------------------------------------------------------- mouse
+    def _pad_nodes(self):
+        """The actual painted slots and actions, including empty drop slots."""
+        nodes = {}
+        def node(rect):
+            return nodes.setdefault(rect.getRect(), {"rect": rect})
+        for rect, source in self._cells:
+            node(rect)["source"] = source
+        for rect, target in self._targets:
+            # A grid-wide pack drop area duplicates its individual cells.
+            if any(rect != cell and rect.contains(cell) for cell, _ in self._cells):
+                continue
+            node(rect)["target"] = target
+        for rect, action in self._buttons:
+            node(rect)["action"] = action
+        return list(nodes.values())
+
+    def _pad_node(self, nodes):
+        if not nodes:
+            return None
+        if self._pad_point is None:
+            return next((n for n in nodes if "source" in n), nodes[0])
+        x, y = self._pad_point
+        return min(nodes, key=lambda n: (n["rect"].center().x() - x) ** 2
+                   + (n["rect"].center().y() - y) ** 2)
+
+    def handle_gamepad(self, key):
+        """D-pad spatial focus and A pick/place, without double-click timing."""
+        if getattr(self, "screen", "inventory") not in ("inventory", "character", "spells", "skills"):
+            return False
+        if key == "escape":
+            drag.unpick()
+            self._close_action()
+            return True
+        if key not in ("up", "down", "left", "right", "return"):
+            return False
+        nodes = self._pad_nodes()
+        current = self._pad_node(nodes)
+        if current is None:
+            return True
+        if key != "return":
+            dx, dy = {"up": (0, -1), "down": (0, 1),
+                      "left": (-1, 0), "right": (1, 0)}[key]
+            origin = current["rect"].center()
+            candidates = []
+            for n in nodes:
+                point = n["rect"].center() - origin
+                ahead = point.x() * dx + point.y() * dy
+                across = abs(point.x() * dy - point.y() * dx)
+                if ahead > 2:
+                    candidates.append((ahead + across * 3, n))
+            if candidates:
+                current = min(candidates, key=lambda entry: entry[0])[1]
+        point = current["rect"].center()
+        self._pad_point = (point.x(), point.y())
+        hits.pointer = self._pad_point
+        source = current.get("source")
+        if source:
+            if source[0] in ("spell", "spell_hand"):
+                self.selected_spell = source[2]
+            else:
+                self.selected, self.selected_spell = source[2], None
+        if key == "return":
+            picked = drag.picked_source()
+            target = current.get("target")
+            if "action" in current:
+                drag.unpick()
+                current["action"]()
+            elif picked is not None:
+                if source == picked or (target and target[0] == picked[0] == "pack"):
+                    drag.unpick()
+                elif target and placeable(target, picked):
+                    drag.unpick()
+                    self._queue(lambda session: session.item_drop(picked, target))
+            elif source:
+                drag.pick(self, source)
+        return True
+
+    def _draw_pad_focus(self, painter):
+        from .. import controls
+        if not controls.gamepad():
+            return
+        node = self._pad_node(self._pad_nodes())
+        if node is not None:
+            if self._pad_point is None:
+                point = node["rect"].center()
+                self._pad_point = (point.x(), point.y())
+                source = node.get("source")
+                if source and source[0] not in ("spell", "spell_hand"):
+                    self.selected = source[2]
+            painter.save()
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(_GOLD, 3))
+            painter.drawRoundedRect(node["rect"].adjusted(-2, -2, 2, 2), 4, 4)
+            painter.restore()
+
     def _at(self, rects, p):
         for r, what in reversed(rects):
             if r.contains(p):

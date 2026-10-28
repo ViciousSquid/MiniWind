@@ -32,6 +32,8 @@ class LogicCamera:
         self.overhead_height_limit = None
         self.overhead_tilt = 0.0
         self.overhead_orientation = "north"
+        # Independent orbit: turning the player never turns a north-up camera.
+        self.overhead_yaw = 0.0
 
         # Avoid normalising the mode string on every render-state build.
         self._camera_mode_raw = None
@@ -210,17 +212,28 @@ class LogicCamera:
     # Overhead camera geometry
     # ------------------------------------------------------------------
 
+    def overhead_heading(self, player_angle=0.0):
+        """World heading at screen top, shared by movement and navigation HUD."""
+        base = (player_angle if str(self.overhead_orientation).strip().lower() == "player"
+                else math.pi)
+        return base + self.overhead_yaw
+
+    def rotate_overhead(self, dx, dy, player_angle=0.0):
+        # Orbiting must not follow the sprite as it turns to walk.
+        if str(self.overhead_orientation).strip().lower() == "player":
+            self.overhead_yaw = self.overhead_heading(player_angle) - math.pi
+            self.overhead_orientation = "north"
+        self.overhead_yaw = (self.overhead_yaw - dx * 0.002) % (2 * math.pi)
+        self.overhead_tilt = max(0.0, min(80.0, self.overhead_tilt + dy * 0.1))
+
     def _overhead_camera(self, player_pos, angle):
         """Compute (cam_pos, direction, up) for the overhead camera."""
         px = float(player_pos.x)
         py = float(player_pos.y)
         pz = float(player_pos.z)
 
-        if str(self.overhead_orientation).strip().lower() == "player":
-            head_x, head_z = math.sin(angle), math.cos(angle)
-        else:
-            # Fixed north: world -Z is at the top of the screen.
-            head_x, head_z = 0.0, -1.0
+        heading = self.overhead_heading(angle)
+        head_x, head_z = math.sin(heading), math.cos(heading)
 
         tilt = math.radians(max(0.0, min(89.0, float(self.overhead_tilt))))
         sin_t, cos_t = math.sin(tilt), math.cos(tilt)

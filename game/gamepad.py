@@ -1,37 +1,37 @@
 """
-MiniWind on a gamepad: every control the keyboard and mouse have, on a pad.
+MiniWind controller input through SDL's portable game-controller mapping.
 
 The pad is read through SDL's game-controller layer (``pygame._sdl2.
 controller``, part of pygame-ce -- the same SDL the engine already runs, in
 the same process), which names the buttons the same on every pad: A B X Y,
-the shoulders, the triggers, the sticks, the D-pad. What the pad does is
-turned into the very Qt key and mouse events the keyboard and mouse send, and
-handed to the game view: so whatever works from the keyboard and mouse works
-from the pad, and nothing in the game needs to know which it was. Both work
-side by side, always; the prompts follow whichever was used last
+the shoulders, the triggers, the sticks, the D-pad. Movement is published to
+the logic thread; game and menu actions are queued through the same path as
+clicks. Qt events serve the engine's pause menu and mouse fire controls.
+Keyboard and controller work side by side; prompts follow whichever was used last
 (:mod:`game.controls`).
 
 **In play** (no window wanting the pointer):
 
-* left stick: walk (W A S D); left stick click: sprint (Shift, held);
-* right stick: look (the mouse);
+* left stick: analog camera-relative walking, facing the direction of travel;
+  left stick click: sprint (Shift, held);
+* right stick: orbit the camera, unless GAME.gamepad_camera_rotation is false;
 * LT / RT: the left / right hand's attack -- the left / right mouse button,
   held as long as the trigger is, so a bow draws and a fist gathers its
-  blow. Only that: interacting, looting and the rest are face buttons;
+  blow. A shield's trigger holds block instead of bashing;
 * the face buttons, D-pad, Back and the right stick click: the actions bound
   to them in Options -> Key bindings (:data:`game.keybinds.PAD`), each
-  pressing that action's own key -- A talks, opens and loots (E), B blocks,
+  dispatching its action -- A talks, opens and loots, B blocks,
   X attacks, Y opens the inventory...;
-* LB / RB: the previous / next slot of the inventory strip, readying a weapon
-  or a spell as it is reached (never putting one away);
+* D-pad left / right: highlight the previous / next occupied quickbar slot;
+  A equips, consumes or uses it. Browsing takes priority over nearby interaction;
 * Start: the pause menu (Esc).
 
 **In a menu or window** (the Statistics window, a conversation, a chest, the
-pause menu, character creation...): the left stick moves the pointer; A
-clicks (held and moved, it drags), X right-clicks; B and Start go back (Esc);
-the D-pad presses the arrow keys; the right stick scrolls; LB / RB turn the
-Statistics window's tabs. In the pause menu and on the death screen, which
-are driven by the keyboard, A is Enter. Picking a lock, the left stick lifts
+pause menu, character creation...): D-pad navigates, A confirms, B goes back.
+Dialogs highlight responses; inventory highlights the painted slots and actions,
+with A picking up and placing items. LB / RB turn the Statistics window's tabs.
+The sticks still move the pointer and scroll in other windows. In the pause menu
+and on the death screen A is Enter. Picking a lock, the left stick lifts
 the pick, RT held is tension, Y the guide and B leaves; the pad shakes when
 the pick finds a pin's sweet spot.
 
@@ -247,6 +247,7 @@ class GamepadInput:
         self._repeat = {}                # D-pad button -> next repeat time
         self._scroll = 0.0
         self._was_menu = None
+        self._lockpick_tension = False
 
     # -- the loop -----------------------------------------------------------
     def poll(self) -> None:
@@ -261,18 +262,24 @@ class GamepadInput:
             self._last = PadState()
             return
         state = self._with_triggers(state)
+        enabled = getattr(self.sink, "enabled", lambda: True)()
+        if not enabled:
+            self.release_all()
+            self._last = state
+            return
         if self._active(state):
             controls.use(controls.GAMEPAD)
         menu = self.sink.menu_open()
-        if menu != self._was_menu:
+        context = getattr(self.sink, "context", lambda: menu)()
+        if context != self._was_menu:
             self.release_all()           # nothing held carries across
-            self._was_menu = menu
+            self._was_menu = context
         pressed = state.buttons - self._last.buttons
         released = self._last.buttons - state.buttons
         if menu:
             self._menu(state, pressed, released, dt, now)
         else:
-            self._play(state, pressed, released, dt)
+            self._play(state, pressed, released, dt, now)
         self._last = state
 
     def _with_triggers(self, state) -> PadState:
@@ -297,15 +304,24 @@ class GamepadInput:
         return bool(lx or ly or rx or ry)
 
     def release_all(self) -> None:
+        cancel = getattr(self.sink, "cancel_hands", None)
+        if cancel is not None:
+            cancel()
+        walk = getattr(self.sink, "walk", None)
+        if walk is not None:
+            walk(None)
         for key in list(self._held_keys):
             self._key(key, False)
         for button in list(self._held_mouse):
-            self.sink.mouse(button, False, play=True)
+            self._hand(button, False)
         self._held_mouse.clear()
         if self._menu_mouse:
             self.sink.mouse("left", False, play=False)
             self._menu_mouse = False
         self._repeat.clear()
+        if self._lockpick_tension:
+            self.sink.lockpick("tension_off")
+            self._lockpick_tension = False
 
     def _key(self, key, down) -> None:
         if down:
@@ -323,12 +339,16 @@ class GamepadInput:
         self.sink.key(key, False)
 
     # -- in play -------------------------------------------------------------
-    def _play(self, state, pressed, released, dt) -> None:
-        # Walk: the stick leans become W A S D held.
+    def _play(self, state, pressed, released, dt, now) -> None:
+        # The native sink keeps analog movement independent of sprite facing.
         lx, ly = _stick(state.axis("lx"), state.axis("ly"))
-        for key, on in (("w", ly < -WALK_ON), ("s", ly > WALK_ON),
-                        ("a", lx < -WALK_ON), ("d", lx > WALK_ON)):
-            self._key(_qt_key(key), on)
+        walk = getattr(self.sink, "walk", None)
+        if walk is not None:
+            walk((lx, ly))
+        else:
+            for key, on in (("w", ly < -WALK_ON), ("s", ly > WALK_ON),
+                            ("a", lx < -WALK_ON), ("d", lx > WALK_ON)):
+                self._key(_qt_key(key), on)
         # Look: the right stick is the mouse.
         rx, ry = _stick(state.axis("rx"), state.axis("ry"))
         if rx or ry:
@@ -338,13 +358,25 @@ class GamepadInput:
         # The triggers are the hands' attacks, always: each holds its mouse
         # button as long as it is pulled. The other buttons do what they are
         # bound to.
-        for button in pressed:
-            self._action(TRIGGER_HANDS.get(button) or keybinds.pad_action(button), True)
+        for button in sorted(pressed, key=lambda b: (b == "a", b)):
+            action = TRIGGER_HANDS.get(button) or keybinds.pad_action(button)
+            self._action(action, True)
+            if action in ("strip_prev", "strip_next"):
+                self._repeat[button] = now + REPEAT_DELAY
         for button in released:
             self._action(TRIGGER_HANDS.get(button) or keybinds.pad_action(button), False)
+        for button, due in list(self._repeat.items()):
+            if button not in state.buttons:
+                del self._repeat[button]
+            elif now >= due:
+                self._action(keybinds.pad_action(button), True)
+                self._repeat[button] = now + REPEAT_RATE
 
     def _action(self, action, down) -> None:
         if not action:
+            return
+        handler = getattr(self.sink, "play_action", None)
+        if handler is not None and handler(action, down):
             return
         if action in ("left_hand", "right_hand"):
             button = "left" if action == "left_hand" else "right"
@@ -354,7 +386,7 @@ class GamepadInput:
                 return
             else:
                 self._held_mouse.discard(button)
-            self.sink.mouse(button, down, play=True)
+            self._hand(button, down)
             return
         if action in ("strip_prev", "strip_next"):
             if down:
@@ -367,6 +399,10 @@ class GamepadInput:
         if action == "sprint":
             self._key(_qt_key("shift"), down)
             return
+        if action == "interact" and down:
+            activate = getattr(self.sink, "activate_strip", None)
+            if activate is not None and activate():
+                return
         key = keybinds.key_binding(action)
         if not key:
             return
@@ -378,6 +414,19 @@ class GamepadInput:
             if action == "interact" and key != "e":
                 self._tap(_qt_key("e"))  # the engine's own use key, for doors
 
+    def _hand(self, button, down):
+        handler = getattr(self.sink, "hand", None)
+        if handler is not None:
+            handler(button, down)
+        else:
+            self.sink.mouse(button, down, play=True)
+
+    def _menu_key(self, name):
+        handler = getattr(self.sink, "menu_action", None)
+        if handler is not None and handler(name):
+            return True
+        return False
+
     # -- in a menu ------------------------------------------------------------
     def _lockpicking(self, state, pressed, released, dt) -> None:
         """The lockpicking minigame: the left stick lifts the pick (a light
@@ -387,12 +436,15 @@ class GamepadInput:
             self.sink.lockpick("move", -ly * LOCKPICK_SPEED * dt)
         if "rt" in pressed:
             self.sink.lockpick("tension_on")
+            self._lockpick_tension = True
         if "rt" in released:
             self.sink.lockpick("tension_off")
+            self._lockpick_tension = False
         if "y" in pressed:
             self.sink.lockpick("assist")
         if pressed & {"b", "start"}:
-            self._tap(_qt_key("escape"))
+            if not self._menu_key("escape"):
+                self._tap(_qt_key("escape"))
 
     def _menu(self, state, pressed, released, dt, now) -> None:
         if self.sink.lockpicking():
@@ -418,9 +470,11 @@ class GamepadInput:
                 self.sink.wheel(step)
         else:
             self._scroll = 0.0
-        for button in pressed:
+        for button in sorted(pressed, key=lambda b: (b == "a", b)):
             if button == "a":
-                if keyboard_menu:
+                if self._menu_key("return"):
+                    pass
+                elif keyboard_menu:
                     self._tap(_qt_key("return"))
                 else:
                     self._menu_mouse = True
@@ -429,15 +483,18 @@ class GamepadInput:
                 self.sink.mouse("right", True, play=False)
                 self.sink.mouse("right", False, play=False)
             elif button in ("b", "start"):
-                self._tap(_qt_key("escape"))
+                if not self._menu_key("escape"):
+                    self._tap(_qt_key("escape"))
             elif button in ("lb", "rb"):
                 self.sink.turn_tab(-1 if button == "lb" else 1)
             elif button.startswith("dpad_"):
-                self._tap(_qt_key(button[5:]))
+                if not self._menu_key(button[5:]):
+                    self._tap(_qt_key(button[5:]))
                 self._repeat[button] = now + REPEAT_DELAY
             elif button == keybinds.pad_binding("inventory"):
                 # The button that opened the inventory closes it again.
-                self._tap(_qt_key(keybinds.key_binding("inventory")))
+                if not self._menu_key("escape"):
+                    self._tap(_qt_key(keybinds.key_binding("inventory")))
         if "a" in released and self._menu_mouse:
             self._menu_mouse = False
             self.sink.mouse("left", False, play=False)
@@ -445,7 +502,8 @@ class GamepadInput:
             if button not in state.buttons:
                 del self._repeat[button]
             elif now >= due:
-                self._tap(_qt_key(button[5:]))
+                if not self._menu_key(button[5:]):
+                    self._tap(_qt_key(button[5:]))
                 self._repeat[button] = now + REPEAT_RATE
 
 
@@ -457,6 +515,7 @@ class QtSink:
         self.view = view
         self._buttons = 0
         self._cursor = None
+        self._hand_modes = {}
 
     # -- what is open ----------------------------------------------------------
     def _session(self):
@@ -481,6 +540,17 @@ class QtSink:
         pointer: the pause menu, the death screen."""
         from engine import qt_game_view as qv
         return bool(qv._play_menu_open(self.view) or self._death_menu_open())
+
+    def context(self):
+        session = self._session()
+        return (self.menu_open(), self.keyboard_menu(),
+                getattr(session, "open_screen", None),
+                id(getattr(session, "dialogue", None)))
+
+    def enabled(self):
+        return (bool(getattr(self.view, "play_mode", False))
+                and self.view.window().isActiveWindow()
+                and not getattr(self.view, "console_overlay_active", False))
 
     def _death_menu_open(self) -> bool:
         view = self.view
@@ -557,8 +627,65 @@ class QtSink:
 
     def look(self, dx, dy) -> None:
         state = getattr(self.view, "game_state", None)
+        session = self._session()
+        if state is not None and (session is None or session._game_flag("gamepad_camera_rotation")):
+            state.add_gamepad_look(dx, dy)
+
+    def walk(self, move):
+        state = getattr(self.view, "game_state", None)
         if state is not None:
-            state.set_mouse_delta(float(dx), float(dy))
+            state.set_gamepad_move(move if controls.gamepad() else None)
+
+    def hand(self, button, down):
+        """A trigger holds a shield up, or uses its physical hand's item."""
+        from .rpg import equipment as eq
+        from .ui import hits
+        session = self._session()
+        if down:
+            c = session.game.character if session is not None else None
+            hand = eq.relative_hand(c, button) if c is not None else None
+            shield = eq.equipped_def(c, "shield") if c is not None else None
+            blocking = (hand == "off" and shield is not None
+                        and shield.category == "armour" and eq.hand_spell(c, hand) is None)
+            self._hand_modes[button] = "block" if blocking else "fire"
+        mode = self._hand_modes.get(button)
+        if mode == "block":
+            hits.queue(lambda s, on=down: setattr(s, "_pad_blocking", on))
+        elif mode == "fire":
+            if not down and self.menu_open() and session is not None:
+                session.bow_draw_input("cancel")
+            self.mouse(button, down, play=True)
+        if not down:
+            self._hand_modes.pop(button, None)
+
+    def cancel_hands(self):
+        session = self._session()
+        if session is not None and self._hand_modes:
+            session.bow_draw_input("cancel")
+
+    def menu_action(self, name):
+        """Queue game UI verbs; a fast A tap must survive between logic ticks."""
+        if self.keyboard_menu():
+            return False
+        session = self._session()
+        if session is None:
+            return False
+        from .ui import hits, drag, screens
+        if session.dialogue is not None:
+            hits.queue(lambda s: s.dialogue_key(name))
+            return True
+        if session.open_screen is None:
+            return False
+        window = getattr(session, "_overlay_win", None)
+        handler = getattr(window, "handle_gamepad", None)
+        if handler is not None and handler(name):
+            return True
+        if name == "escape" and session.open_screen in screens.STATISTICS_SCREENS:
+            drag.unpick()
+            hits.queue(lambda s: setattr(s, "open_screen", None))
+        else:
+            hits.queue(lambda s: screens.handle_key(s, name))
+        return True
 
     # -- lockpicking ---------------------------------------------------------
     def lockpicking(self) -> bool:
@@ -584,12 +711,58 @@ class QtSink:
             options.capture_pad_button(button)
 
     # -- the game's own ---------------------------------------------------------
+    def play_action(self, action, down):
+        """One-shot actions are queued instead of relying on held-key snapshots."""
+        from .ui import hits
+        if action == "interact":
+            if down and not self.activate_strip():
+                self.view.game_state.set_use_key_pressed()
+            return True
+        methods = {"attack": "attack_with_both", "next_spell": "next_spell",
+                   "heal": "use_health_potion", "sneak": "toggle_sneak"}
+        screens = {"inventory", "character", "journal", "spells", "levelup", "quest"}
+        if action not in methods and action not in screens and action != "map":
+            return False
+        if down:
+            def run(s):
+                if s.modal_input_active():
+                    return
+                if action in methods:
+                    getattr(s, methods[action])()
+                elif action == "map":
+                    s.map_request = "player"
+                elif action != "levelup" or s.game.character.can_level_up:
+                    if action == "spells":
+                        s.cancel_spell_aim()
+                    s.open_screen = action
+            hits.queue(run)
+        return True
+
     def cycle_strip(self, step) -> None:
         session = self._session()
         if session is None:
             return
         from .ui import hits
         hits.queue(lambda s: s.cycle_strip(step))
+
+    def activate_strip(self):
+        session = self._session()
+        if session is None:
+            return False
+        from . import fio
+        from .ui import hits
+        def activate(s):
+            if s.modal_input_active():
+                return
+            # Decide after earlier queued D-pad presses have moved selection.
+            if (not getattr(s, "_strip_confirm_pending", False)
+                    and (s.interact_prompt or fio.interaction_prompt(s.logic))):
+                self.view.game_state.set_use_key_pressed()
+                return
+            s._strip_confirm_pending = False
+            s.select_strip_slot(s.strip_selected)
+        hits.queue(activate)
+        return True
 
     def turn_tab(self, step) -> None:
         """The Statistics window's tabs, left (LB) or right (RB)."""

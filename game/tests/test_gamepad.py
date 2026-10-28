@@ -143,9 +143,9 @@ def test_face_buttons_press_their_actions_keys():
     step()
     assert step("start") == [("key", _qt("escape"), True), ("key", _qt("escape"), False)]
     step()
-    assert step("rb") == [("strip", 1)]
+    assert step("dpad_right") == [("strip", 1)]
     step()
-    assert step("lb") == [("strip", -1)]
+    assert step("dpad_left") == [("strip", -1)]
 
 
 def test_a_rebound_button_presses_the_rebound_actions_key():
@@ -196,6 +196,15 @@ def test_shoulders_turn_the_statistics_tabs_and_the_dpad_is_the_arrows():
     assert step("dpad_down") == [("key", _qt("down"), True), ("key", _qt("down"), False)]
     assert step("dpad_down", dt=0.2) == []
     assert step("dpad_down", dt=0.3)[0] == ("key", _qt("down"), True)  # held: repeats
+
+
+def test_held_dpad_repeats_quickbar_selection_and_stops_on_release():
+    _p, _sink, step = _pad()
+    assert step("dpad_right") == [("strip", 1)]
+    assert step("dpad_right", dt=.2) == []
+    assert step("dpad_right", dt=.3) == [("strip", 1)]
+    assert step() == []
+    assert step(dt=.5) == []
 
 
 def test_the_right_stick_scrolls_in_a_window():
@@ -266,14 +275,16 @@ def test_statistics_tabs_wrap_round():
     assert screens.next_statistics_tab("trade", 1) == "trade"
 
 
-def test_the_shoulders_ready_a_weapon_on_the_strip_but_never_put_it_away():
+def test_cycling_the_strip_only_highlights_until_confirmed():
     from .test_inventory_strip import _give, _session
     from ..rpg import equipment as eq
     s = _session()
     _give(s, "iron_shortsword", "potion_heal_minor")
     s.strip_selected = 1
     assert s.cycle_strip(1)                            # wraps to the sword
-    assert s.strip_selected == 0 and eq.weapon(s.game.character).id == "iron_shortsword"
+    assert s.strip_selected == 0 and eq.weapon(s.game.character) is None
+    s.select_strip_slot(s.strip_selected)
+    assert eq.weapon(s.game.character).id == "iron_shortsword"
     s.cycle_strip(1)                                   # the potion: only selected
     assert s.strip_selected == 1 and s.game.character.inventory
     s.cycle_strip(1)                                   # the sword again: kept in hand

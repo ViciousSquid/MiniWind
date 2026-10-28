@@ -8254,12 +8254,10 @@ class MiniwindSession(SettlementLaw):
         return self.ready_weapon(d.id, copy)
 
     def cycle_strip(self, step) -> bool:
-        """The strip's selection to the next (*step* 1) or previous (-1) slot
-        that holds something -- a gamepad's shoulder buttons. A weapon or a
-        spell reached is readied (a spell in the left hand) unless it already
-        is: passing over one never puts it away. Anything else is only
-        selected; it is used with its own control (a potion's, D-pad down).
-        True if anything changed."""
+        """Highlight the previous/next occupied quickbar slot without using it.
+
+        A separate confirmation equips, consumes or uses the selection.
+        """
         slots = self.strip_slots()
         if not any(slots):
             return False
@@ -8270,15 +8268,7 @@ class MiniwindSession(SettlementLaw):
             if slots[i]:
                 break
         self.strip_selected = i
-        stack = slots[i]
-        if stack.get("spell"):
-            held = eq.hand_spell(self.game.character, "left")
-            if held is None or held.id != stack["spell"]:
-                return self.ready_spell(stack["spell"], "left")
-            return True
-        d = rpg_items.get(stack.get("id"))
-        if d is not None and d.category == rpg_items.WEAPON and self.strip_hands()[i] is None:
-            return self.select_strip_slot(i)
+        self._strip_confirm_pending = True
         return True
 
     def ready_spell(self, spell_id, hand="left") -> bool:
@@ -8635,6 +8625,7 @@ class MiniwindSession(SettlementLaw):
 
     def start_dialogue(self, npc, player) -> bool:
         tree = npc.properties.get("dialogue")
+        self.dialogue_selected = 0
         self.dialogue_npc = npc
         if (npc is self._arrest_guard and self._arrest_state == "ready"
                 and int(self.game.character.bounty or 0) > 0):
@@ -8971,8 +8962,25 @@ class MiniwindSession(SettlementLaw):
         if self.dialogue is None:
             return
         view = self.dialogue.choose(index)
+        self.dialogue_selected = 0
         if view is None:
             self.end_dialogue()
+
+    def dialogue_key(self, key):
+        """Navigate the current, filtered response list with arrows and confirm."""
+        if key in ("escape", "esc"):
+            self.end_dialogue()
+            return
+        view = self.current_view()
+        responses = view.get("responses", ()) if view else ()
+        if not responses:
+            return
+        index = min(max(0, getattr(self, "dialogue_selected", 0)), len(responses) - 1)
+        if key in ("up", "down"):
+            index = (index + (1 if key == "down" else -1)) % len(responses)
+        self.dialogue_selected = index
+        if key in ("return", "enter"):
+            self.choose(index)
 
     def end_dialogue(self) -> None:
         self.dialogue = None

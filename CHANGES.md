@@ -1,5 +1,17 @@
 # Changes
 
+## Gamepad navigation and camera orbit
+
+- D-pad left/right highlights quickbar items; A equips, consumes or uses the
+  selection. Nearby talk/open/loot prompts still work with A.
+- Conversations support D-pad up/down, A to select, and B to leave. Inventory
+  supports D-pad focus, A pick/place, LB/RB tabs, and B to close.
+- Analog walking faces the direction of travel independently of camera orbit.
+  LT/RT use the corresponding physical hand; a shield trigger holds block.
+- The minimap, markers, player arrow and north indicator follow camera heading.
+  Camera orbit survives save/load. Set `[GAME] gamepad_camera_rotation = False`
+  in `settings.ini` to disable right-stick rotation during play.
+
 ## Faction-aware threat appraisal
 
 - Preserve the event's `actor_faction` snapshot when creating a knowledge fact.

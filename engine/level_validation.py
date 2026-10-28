@@ -26,7 +26,7 @@ BRUSH_NUMBER_FIELDS = ('door_speed', 'door_distance', 'door_lip', 'speed', 'dist
 #: Save ``runtime`` fields and the type each must have when present.
 _RUNTIME_NUMBERS = ('player_health', 'player_max_health', 'player_armor', 'player2_health',
                     'player2_max_health', 'player_ammo', 'overhead_height',
-                    'overhead_tilt')
+                    'overhead_tilt', 'overhead_yaw')
 _RUNTIME_STRINGS = ('current_hud_message', 'active_weapon', 'camera_mode',
                     'overhead_orientation')
 #: State fields the engine reads without a default, so a save must carry them.

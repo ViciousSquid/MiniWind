@@ -60,9 +60,13 @@ class PackWindow(InventoryWindow):
         self.screen = screen
         self.showing = screen
         if changed:
+            picked = drag.picked_source()
             self._cells, self._targets, self._buttons = [], [], []
             self._press = self._drag = None
+            self._pad_point = None
             drag.forget(self)
+            if picked is not None:
+                drag.pick(self, picked)
             if screen == "character":
                 self.view = "character"
         if screen != "map":
@@ -119,6 +123,7 @@ class PackWindow(InventoryWindow):
         self._draw_tabs(painter, QRect(x + 10, y + 8, w - 20, 34))
         self._draw_dragged(painter)
         drag.set_zones(self, self._targets)
+        self._draw_pad_focus(painter)
         painter.restore()
 
     def _draw_inventory(self, painter, x, y, w, h):

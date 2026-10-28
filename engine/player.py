@@ -308,7 +308,7 @@ class Player:
         return glm.lookAt(cam_pos, cam_pos + direction, glm.vec3(0, 1, 0))
 
     def update(self, delta, move_input, jump, crouch, brushes, movers=None, doors=None, terrain=None,
-           spatial_grid=None, sprint=False, gravity=None):
+           spatial_grid=None, sprint=False, gravity=None, movement_angle=None):
         """
         Update player physics.
 
@@ -373,8 +373,9 @@ class Player:
 
         # --- 1. Movement Physics ---
 
-        forward_vec = glm.vec3(math.sin(self.angle), 0, math.cos(self.angle))
-        right_vec   = glm.vec3(math.cos(self.angle), 0, -math.sin(self.angle))
+        heading = self.angle if movement_angle is None else movement_angle
+        forward_vec = glm.vec3(math.sin(heading), 0, math.cos(heading))
+        right_vec   = glm.vec3(math.cos(heading), 0, -math.sin(heading))
 
         # The wish as Quake 2 builds it: each key asks for 200 (400 with
         # +speed), so diagonals add up; the forward part shortens by a third
@@ -405,7 +406,8 @@ class Player:
         self._check_duck(crouch, aabb_brushes + mesh_brushes)
 
         if swimming:
-            self._apply_swim_physics(delta, move_input, right_vec, jump, crouch)
+            self._apply_swim_physics(delta, move_input, right_vec, jump, crouch,
+                                     movement_angle=movement_angle)
         else:
             if self.in_water:
                 wish_speed *= WATER_WADE_SPEED_MULT
@@ -594,7 +596,8 @@ class Player:
         if tint is not None:
             self.water_tint = list(tint)
 
-    def _apply_swim_physics(self, delta, move_input, right_vec, jump, crouch):
+    def _apply_swim_physics(self, delta, move_input, right_vec, jump, crouch,
+                            movement_angle=None):
         """Buoyant, drag-damped movement while submerged.
 
         Forward motion follows the view pitch (look down + forward = dive),
@@ -604,9 +607,10 @@ class Player:
         characteristic weight.
         """
         cos_p = math.cos(self.pitch)
-        swim_fwd = glm.vec3(math.sin(self.angle) * cos_p,
+        heading = self.angle if movement_angle is None else movement_angle
+        swim_fwd = glm.vec3(math.sin(heading) * cos_p,
                             math.sin(self.pitch),
-                            math.cos(self.angle) * cos_p)
+                            math.cos(heading) * cos_p)
 
         wish = swim_fwd * move_input.z + right_vec * move_input.x
         if glm.length(wish) > 0.1:
