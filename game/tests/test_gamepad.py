@@ -114,11 +114,14 @@ def test_the_left_stick_walks_and_lets_go():
     assert ("key", _qt("d"), True) in events and ("key", _qt("s"), True) in events
 
 
-def test_the_right_stick_is_the_mouse_look():
+def test_the_right_stick_sends_both_axes_to_the_camera():
     _pad_, _sink, step = _pad()
     (look,) = [e for e in step(rx=1.0) if e[0] == "look"]
     assert look[1] > 0 and look[2] == 0
     assert [e for e in step(rx=0.1) if e[0] == "look"] == []   # inside the dead zone
+    for ry in (-1.0, 1.0):
+        (look,) = [e for e in step(rx=.8, ry=ry) if e[0] == "look"]
+        assert look[1] > 0 and look[2] * ry > 0
 
 
 def test_the_triggers_hold_the_left_and_right_hands():

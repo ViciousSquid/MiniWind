@@ -54,7 +54,7 @@ Xbox names (A is the bottom face button). Controllers can connect during play.
 | Control | In play | In a window |
 |---------|---------|-------------|
 | Left stick | Walk; face the direction of movement | Pointer in other menus |
-| Right stick | Rotate the camera | Scroll |
+| Right stick | Rotate camera; pitch limited to ±5° from the configured view | Scroll |
 | D-pad left/right | Highlight a quickbar item | Highlight slots/actions |
 | D-pad up/down | Quest / healing potion | Highlight responses/items |
 | A | Use/equip/consume the highlighted quickbar item; answer nearby interaction prompts | Select response; pick up/place inventory items |

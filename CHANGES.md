@@ -8,6 +8,8 @@
   supports D-pad focus, A pick/place, LB/RB tabs, and B to close.
 - Analog walking faces the direction of travel independently of camera orbit.
   LT/RT use the corresponding physical hand; a shield trigger holds block.
+- Right-stick camera pitch is limited to ±5° from the configured view, with
+  physical elevation limits respected. Vertical stick input still scrolls menus.
 - The minimap, markers and player arrow follow camera heading. The upright
   north indicator trails turns with gentle liquid-compass damping.
   Camera orbit survives save/load. Hold `[` / `]` to rotate left / right.

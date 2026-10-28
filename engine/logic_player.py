@@ -11,6 +11,7 @@ import threading
 import glm
 
 from .physics import world_gravity
+from .logic_camera import CAMERA_PITCH_LIMIT
 
 # Qt key values used by the engine's input state.
 KEY_W = 0x57
@@ -37,6 +38,8 @@ class LogicPlayer:
     def __init__(self, logic):
         self.logic = logic
         self.player = None
+        self._pad_pitch_player = None
+        self._pad_pitch_offset = 0.0
         self.player2 = None
         self._player_was_in_water = False
         self._waterwalk_timer = 0.0
@@ -104,7 +107,13 @@ class LogicPlayer:
                                                  player_angle=player.angle)
             else:
                 mouse_dx += pad_look[0] + keyboard_dx
-                mouse_dy += pad_look[1]
+                if self._pad_pitch_player is not player:
+                    self._pad_pitch_player, self._pad_pitch_offset = player, 0.0
+                base = player.pitch - self._pad_pitch_offset
+                limit = math.radians(CAMERA_PITCH_LIMIT)
+                self._pad_pitch_offset = max(-limit, min(limit,
+                    self._pad_pitch_offset - pad_look[1] * 0.002))
+                player.pitch = base + self._pad_pitch_offset
 
         sensitivity = 0.002
         player.angle -= mouse_dx * sensitivity

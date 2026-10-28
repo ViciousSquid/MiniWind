@@ -255,6 +255,41 @@ def test_right_stick_orbits_without_turning_idle_sprite_and_modal_stops_it():
     assert logic.camera.overhead_yaw == yaw
 
 
+@pytest.mark.parametrize("mode", ["Overhead", "First Person"])
+@pytest.mark.parametrize("dx", [0, 100])
+@pytest.mark.parametrize("dy", [-100, 100])
+def test_gamepad_pitch_stays_within_five_degrees_of_the_configured_view(mode, dx, dy):
+    logic, runtime = _movement()
+    logic.camera.set_camera_mode(mode)
+    logic.camera.overhead_tilt = 30.0
+    runtime.player.pitch = .3
+    logic.game_state.set_gamepad_move((0, 0))
+    for _ in range(10):
+        logic.game_state.add_gamepad_look(dx, dy)
+        runtime.update_primary(.02, set(), 0, 0)
+    assert logic.camera.overhead_tilt == 30.0
+    if mode == "Overhead":
+        assert logic.camera.overhead_pitch == math.copysign(5.0, dy)
+        assert logic.camera.overhead_angle == 60.0 - math.copysign(5.0, dy)
+        assert runtime.player.pitch == .3
+        assert (logic.camera.overhead_yaw != 0) == bool(dx)
+        assert runtime.player.angle == .7
+    else:
+        assert runtime.player.pitch == pytest.approx(.3 - math.copysign(math.radians(5), dy))
+        assert runtime.player.angle == pytest.approx(.7 - 10 * dx * .002)
+
+
+@pytest.mark.parametrize("tilt,dy,expected", [(0, -100, 90), (88, 100, 1)])
+def test_small_pitch_adjustment_respects_physical_camera_limits(tilt, dy, expected):
+    logic, runtime = _movement()
+    logic.camera.overhead_tilt = tilt
+    logic.game_state.set_gamepad_move((0, 0))
+    logic.game_state.add_gamepad_look(0, dy)
+    runtime.update_primary(.02, set(), 0, 0)
+    assert logic.camera.overhead_angle == expected
+    assert abs(logic.camera.overhead_pitch) <= 5
+
+
 def test_controller_keeps_a_player_oriented_camera_stable_while_walking_sideways():
     logic, runtime = _movement()
     logic.camera.overhead_orientation = "player"
@@ -295,11 +330,12 @@ def test_brackets_and_right_stick_share_rotation_and_the_renamed_setting(key, st
     dt = 1 / 60
     # Already queued stick input must also be suppressed if rotation is off.
     controller.game_state.set_gamepad_move((0, 0))
-    controller.game_state.add_gamepad_look(stick * LOOK_SPEED * dt, 0)
+    controller.game_state.add_gamepad_look(stick * LOOK_SPEED * dt, 100)
     keyboard_runtime.update_primary(dt, {key}, 0, 0)
     controller_runtime.update_primary(dt, set(), 0, 0)
     assert keyboard.camera.overhead_yaw == pytest.approx(controller.camera.overhead_yaw)
     assert (keyboard.camera.overhead_yaw != 0) is enabled
+    assert controller.camera.overhead_pitch == (5.0 if enabled else 0.0)
     assert keyboard_runtime.player.angle == .7
     assert controller_runtime.player.angle == .7
     # Releasing the key stops rotation immediately.

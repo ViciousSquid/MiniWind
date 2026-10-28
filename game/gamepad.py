@@ -14,7 +14,8 @@ Keyboard and controller work side by side; prompts follow whichever was used las
 
 * left stick: analog camera-relative walking, facing the direction of travel;
   left stick click: sprint (Shift, held);
-* right stick: orbit the camera, unless GAME.camera_rotation is false;
+* right stick: rotate the camera, with pitch limited to 5 degrees either way,
+  unless GAME.camera_rotation is false;
 * LT / RT: the left / right hand's attack -- the left / right mouse button,
   held as long as the trigger is, so a bow draws and a fist gathers its
   blow. A shield's trigger holds block instead of bashing;
@@ -349,7 +350,7 @@ class GamepadInput:
             for key, on in (("w", ly < -WALK_ON), ("s", ly > WALK_ON),
                             ("a", lx < -WALK_ON), ("d", lx > WALK_ON)):
                 self._key(_qt_key(key), on)
-        # Look: the right stick is the mouse.
+        # Camera pitch is bounded in the camera runtime; menus use vertical scroll.
         rx, ry = _stick(state.axis("rx"), state.axis("ry"))
         if rx or ry:
             def curve(v):

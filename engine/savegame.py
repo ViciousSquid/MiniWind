@@ -36,7 +36,7 @@ Snapshot shape::
       "player2": { ... } | null,
       "runtime": {
         "god_mode", "buddha_mode", "notarget",
-        "camera_mode", "overhead_height", "overhead_tilt", "overhead_orientation", "overhead_yaw",
+        "camera_mode", "overhead_height", "overhead_tilt", "overhead_orientation", "overhead_yaw", "overhead_pitch",
         "active_weapon", "weapons", "player_ammo", "current_hud_message",
         "player_health", "player_max_health", "player_armor", "player_dead",
         "player2_health", "player2_max_health", "player2_dead",
@@ -404,6 +404,7 @@ def _build_full_snapshot(logic, *, map_name: str = "", with_level: bool = True) 
         "overhead_tilt": float(logic.camera.overhead_tilt),
         "overhead_orientation": logic.camera.overhead_orientation,
         "overhead_yaw": getattr(logic.camera, "overhead_yaw", 0.0),
+        "overhead_pitch": getattr(logic.camera, "overhead_pitch", 0.0),
         "active_weapon": logic.combat_runtime.active_weapon,
         "weapons": sorted(logic.combat_runtime.weapons),
         "player_ammo": max(0, int(logic.combat_runtime.player_ammo)),
@@ -807,6 +808,7 @@ def _restore_runtime_and_players(logic, data: dict) -> None:
     for attr in ("overhead_height", "overhead_tilt", "overhead_orientation"):
         if attr in runtime:
             setattr(logic.camera, attr, runtime[attr])
+    logic.camera.overhead_pitch = runtime.get("overhead_pitch", 0.0)
 
     # Collected keys — rebuild the set from the saved list.
     try:
