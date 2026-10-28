@@ -303,6 +303,8 @@ ROAD_SKIP_STATES = frozenset((sched.COMBAT, sched.FLEE, sched.ALERT, sched.RALLY
 NPC_DRINK_HEALTH = 0.35
 NPC_DRINK_MAGICKA = 0.2
 NPC_DRINK_SECONDS = 4.0
+#: How long the shield takes to swing up into a block, or back down (s).
+BLOCK_TWEEN_SECONDS = 0.06
 #: How long a guard's "!" shows when he reacts to something.
 MARK_FLASH_SECONDS = 1.6
 #: A brawler at or below this fraction of their health has had enough.
@@ -7289,6 +7291,20 @@ class MiniwindSession(SettlementLaw):
             self._lingering_lights = []
             self._rebuild_entity_caches()
 
+    def _block_pose(self, now) -> float:
+        """How far the shield is raised (0..1), easing toward the block held
+        or let go over :data:`BLOCK_TWEEN_SECONDS` -- a very fast tween,
+        smoothed at both ends. Asked once a frame by the view."""
+        last = self.__dict__.get("_block_at")
+        raw = self.__dict__.get("_block_raw", 0.0)
+        self._block_at = now
+        if last is not None:
+            step = max(0.0, now - last) / BLOCK_TWEEN_SECONDS
+            target = 1.0 if self._blocking else 0.0
+            raw = min(target, raw + step) if target > raw else max(target, raw - step)
+        self._block_raw = raw
+        return raw * raw * (3.0 - 2.0 * raw)        # smoothstep
+
     def overhead_player_weapon(self):
         """What the player holds, for the viewport's overhead overlay:
         ``[(item_id, side, attacking)]``, one per hand.
@@ -7319,8 +7335,10 @@ class MiniwindSession(SettlementLaw):
         if off is not None:
             held.append((off.id, other, self._offhand_anim_time > 0.0, off_lag))
         elif shield:
-            # A worn shield is on the off arm, brought up while blocking.
-            held.append((shield, other, bool(self._blocking), off_lag))
+            # A worn shield is on the off arm. Blocking, it swings in front of
+            # the head and turns edge-on (engine.overhead_sprite's block pose),
+            # tweened very fast each way (_block_pose).
+            held.append((shield, other, False, off_lag, self._block_pose(now)))
         else:
             torch = self._player_torch_def()
             if torch is not None:

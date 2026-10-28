@@ -192,9 +192,24 @@ def test_a_worn_shield_is_drawn_on_the_off_arm_and_raised_to_block():
     s.select_strip_slot(1)
     held = s.overhead_player_weapon()
     assert [h[0] for h in held] == ["iron_shortsword", "iron_shield"]
-    assert held[1][2] is False
+    assert held[1][2] is False and held[1][4] == 0.0
+    # Blocking raises the shield edge-on in front (the 5th field), with a
+    # very fast tween -- and never as a stab.
+    from ..runtime import BLOCK_TWEEN_SECONDS
     s._blocking = True
-    assert s.overhead_player_weapon()[1][2] is True
+    t0 = 100.0
+    s._block_pose(t0)
+    half = s._block_pose(t0 + BLOCK_TWEEN_SECONDS / 2)
+    assert 0.0 < half < 1.0
+    assert s._block_pose(t0 + BLOCK_TWEEN_SECONDS) == 1.0
+    s._blocking = False
+    assert s._block_pose(t0 + BLOCK_TWEEN_SECONDS * 2) == 0.0
+    s._blocking = True
+    s.overhead_player_weapon()
+    import time
+    time.sleep(BLOCK_TWEEN_SECONDS * 1.5)
+    held = s.overhead_player_weapon()
+    assert held[1][2] is False and held[1][4] == 1.0
 
 
 def test_with_the_main_hand_full_a_one_handed_weapon_goes_to_the_off_hand():
