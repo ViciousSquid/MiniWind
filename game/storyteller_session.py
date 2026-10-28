@@ -31,6 +31,22 @@ class SessionStorytellerHooks(StorytellerHooks):
     def player_town(self):
         return self._town_at(self.session._player_pos())
 
+    def player_region(self):
+        living = self.session.living
+        pos = self.session._player_pos()
+        if living is None or living.board is None or pos is None:
+            return None
+        return pos[0], pos[2], living.reach()
+
+    def hostile_materialisations(self):
+        living = self.session.living
+        pos = self.session._player_pos()
+        if living is None or living.board is None or pos is None:
+            return None, 0
+        board = living.board
+        region = board.nearest_place(pos[0], pos[2], TUNING["town_kinds"])
+        return region, board.hostile_materialisations.get(region, 0)
+
     def player_health_fraction(self):
         c = self.session.game.character
         return float(c.health) / max(1.0, float(c.max_health))

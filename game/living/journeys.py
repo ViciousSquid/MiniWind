@@ -195,6 +195,15 @@ class WorldHooks:
     def materialisation_weight(self, actor_keys, distance: float) -> float:
         return 1.0
 
+    def resident_destination(self, resident_id, towns, origin):
+        return None
+
+    def journey_weight(self, kind, position, hostile):
+        return 1.0
+
+    def journey_sampled(self, journey, t, *, arrived=False, destination_sampled=False):
+        pass
+
 
 # ---------------------------------------------------------------------------
 # A journey
@@ -329,10 +338,14 @@ class JourneyBoard:
         self.residents_on_trips: Dict[str, str] = {}   # resident id -> journey id
         self.resident_pool: List[Dict] = []   # {"id", "home", "role"} eligible to travel
         self._names_used = set()
+        self._update_levers = None
+        # Streamer-owned telemetry, read by the storyteller without events.
+        self.hostile_materialisations = {}
 
     # -- places --------------------------------------------------------------
     def _lever(self, name, default):
-        return self.hooks.journey_levers().get(name, default)
+        levers = self._update_levers
+        return (self.hooks.journey_levers() if levers is None else levers).get(name, default)
 
     def _hours(self, kind):
         return self._lever("kind_hours", {}).get(kind, KINDS[kind]["hours"])
@@ -403,6 +416,7 @@ class JourneyBoard:
         """Start a journey of *kind* (picking its places if not given)."""
         spec = KINDS[kind]
         rng = self.rng
+        destination_sampled = dest is None
         origins = [origin] if origin else self.places_of(spec["origins"])
         if not origins:
             return None
@@ -437,6 +451,8 @@ class JourneyBoard:
         # Whatever is being said where they set out, they set out knowing.
         j.news = list(self.heard.get(origin, []))[-8:]
         self.journeys[jid] = j
+        if kind != "market":  # resident metadata is attached just after plan()
+            self.hooks.journey_sampled(j, t, destination_sampled=destination_sampled)
         return j
 
     def _pick_kind(self, hour=None) -> Optional[str]:
@@ -452,6 +468,13 @@ class JourneyBoard:
     def seed(self, t: float) -> None:
         """A world that has been going for a while: a full population, caught
         part-way along their roads."""
+        self._update_levers = self.hooks.journey_levers()
+        try:
+            self._seed(t)
+        finally:
+            self._update_levers = None
+
+    def _seed(self, t):
         population = int(self._lever("population", self.population))
         for _ in range(population * 3):
             if len(self.journeys) >= population:
@@ -467,6 +490,13 @@ class JourneyBoard:
     def update(self, t: float) -> List[str]:
         """Advance the off-screen world to absolute game hour *t*. Returns the
         news ids made this update (for the session to surface, if it likes)."""
+        self._update_levers = self.hooks.journey_levers()
+        try:
+            return self._update(t)
+        finally:
+            self._update_levers = None
+
+    def _update(self, t):
         made: List[str] = []
         last = self.last_t if self.last_t is not None else t
         self.last_t = t
@@ -570,6 +600,7 @@ class JourneyBoard:
     def next_leg(self, j: Journey, t: float) -> None:
         """Rest is over: set out again -- home if this was the last leg."""
         here = j.dest
+        destination_sampled = False
         if j.legs <= 0:
             dest = j.home
         elif j.kind == "market":
@@ -584,6 +615,7 @@ class JourneyBoard:
                 options.sort(key=lambda d: math.hypot(self.places[d]["x"] - hx,
                                                       self.places[d]["z"] - hz))
                 nearby = options[:4]
+                destination_sampled = True
                 dest = self.rng.choices(nearby, weights=[self.hooks.destination_weight(d)
                                                        for d in nearby])[0]
             else:
@@ -601,6 +633,7 @@ class JourneyBoard:
         j.depart_t = t
         j.state = "travel"
         j.fought = []
+        self.hooks.journey_sampled(j, t, destination_sampled=destination_sampled)
 
     def _delve(self, j: Journey, place: str, t: float, made: List[str]) -> None:
         """Adventurers at a lair: they clear it, or they do not come back."""
@@ -804,8 +837,14 @@ class JourneyBoard:
                   "resident": r["id"]}
         # Keep market trips local while letting remembered trouble draw traffic.
         nearby = towns[:4]
-        town = self.rng.choices(nearby, weights=[self.hooks.destination_weight(d)
-                                               for d in nearby])[0]
+        preferred = self.hooks.resident_destination(r["id"], towns, home)
+        if preferred in towns and self._route(home, preferred) is not None:
+            if preferred not in nearby:
+                nearby.append(preferred)
+            weights = [float(d == preferred) for d in nearby]
+        else:
+            weights = [self.hooks.destination_weight(d) for d in nearby]
+        town = self.rng.choices(nearby, weights=weights)[0]
         j = self.plan("market", t, origin=home, dest=town, members=[member])
         if j is None:
             return
@@ -813,6 +852,7 @@ class JourneyBoard:
         j.home = home
         j.legs = 2
         self.residents_on_trips[r["id"]] = j.id
+        self.hooks.journey_sampled(j, t, destination_sampled=True)
         self.hooks.resident_left(r["id"], j)
 
     def _retire(self, j: Journey) -> None:
@@ -830,6 +870,7 @@ class JourneyBoard:
             "remains": self.remains, "next_id": self.next_id, "last_t": self.last_t,
             "bounty_news": self.bounty_news, "bounty_seen": self.bounty_seen,
             "residents_on_trips": self.residents_on_trips,
+            "streaming": {"version": 1, "hostile_materialisations": self.hostile_materialisations},
         })
 
     def load_json(self, raw: str) -> bool:
@@ -855,6 +896,9 @@ class JourneyBoard:
         self.bounty_news = d.get("bounty_news", "") or ""
         self.bounty_seen = int(d.get("bounty_seen", 0) or 0)
         self.residents_on_trips = dict(d.get("residents_on_trips") or {})
+        streaming = d.get("streaming") or {}
+        self.hostile_materialisations = (dict(streaming.get("hostile_materialisations") or {})
+                                        if streaming.get("version") == 1 else {})
         for j in self.journeys.values():
             for m in j.members:
                 self._names_used.add(m.get("display", ""))

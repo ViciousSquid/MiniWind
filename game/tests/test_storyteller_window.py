@@ -120,3 +120,82 @@ def test_inspector_survives_session_end_and_can_open_on_new_session(qt_app):
     view.logic_thread._miniwind = SimpleNamespace(storyteller=replacement)
     assert open_storyteller(view) is win
     assert win._storyteller() is replacement
+
+
+def test_studio_drags_a_numeric_cell_into_live_board_data_and_retains_edits(qt_app):
+    from ..storyteller import Storyteller
+    from .test_storyteller import board
+
+    story, director, hooks, store = setup()
+    view = View(story)
+    win = open_storyteller(view)
+    win.tab, win.edit_state = "Levers", "CALM"
+    paint(win, view)
+    rect, (path, value) = next(c for c in win._cells if c[1][0] == ("population",))
+    point = rect.center()
+    assert win.handle_body_click(point.x(), point.y())
+    assert win.mouse_captured
+    moved = SimpleNamespace(x=lambda: point.x() + 15, y=lambda: point.y())
+    assert view.window_manager.handle_mouse_move(moved, view.width(), view.height())
+    assert view.window_manager.handle_mouse_release(moved)
+    assert not win.mouse_captured
+    assert story.levers["population"] == value + 3
+    assert board(story)._lever("population", 0) == value + 3
+    assert Storyteller(store, director, hooks).levers == story.levers
+    assert "Studio edit" in dict(story.inspector_rows())
+
+
+def test_studio_resize_uses_window_manager_capture_and_reflows_scroll_area(qt_app):
+    story, _director, _hooks, _store = setup()
+    view = View(story)
+    win = open_storyteller(view)
+    paint(win, view)
+    old_width, old_height = win.width, win.content_height()
+    point = win._resize_rect.center()
+    press = SimpleNamespace(pos=lambda: point, x=lambda: point.x(), y=lambda: point.y())
+    assert view.window_manager.handle_mouse_press(press)
+    assert win.mouse_captured
+    moved = SimpleNamespace(x=lambda: point.x() + 120, y=lambda: point.y() + 40)
+    assert view.window_manager.handle_mouse_move(moved, view.width(), view.height())
+    view.window_manager.handle_mouse_release(moved)
+    paint(win, view)
+    assert win.width == old_width + 120
+    assert win.content_height() == old_height + 40
+    assert win._full_rect().right() < view.width() and win._full_rect().bottom() < view.height()
+    # Explicit size survives painting; smaller viewports still bound the window.
+    paint(win, view)
+    assert win.width == old_width + 120
+    view.size = (640, 360)
+    paint(win, view)
+    assert win._full_rect().right() < 640 and win._full_rect().bottom() < 360
+
+
+def test_studio_world_tab_and_causal_history_share_read_only_evidence(qt_app, monkeypatch):
+    from .. import sim_editor
+    from .test_storyteller import actor, remember
+
+    story, director, hooks, store = setup()
+    witness = actor(town="b")
+    hooks.cast = [witness]
+    ev, _fact = remember(store, director.bus, witness)
+    rising(story)
+    view = View(story)
+    win = open_storyteller(view)
+    win.tab = "World"
+    before = dict(store.d), story.observations
+    paint(win, view)
+    from PyQt5 import QtCore, QtWidgets
+    window = sim_editor._WorldWindow(None, QtWidgets, QtCore)
+    window._timer.stop()
+    session = SimpleNamespace(storyteller=story)
+    window._refresh_history(session, director)
+    window._refresh_pacing(session)
+    threads = next(window.pacing.topLevelItem(i) for i in range(window.pacing.topLevelItemCount())
+                   if window.pacing.topLevelItem(i).text(0) == "Unreported threads")
+    item = threads.child(0)
+    assert "b" in item.text(0) and "theft" in item.text(1)
+    assert item.data(0, QtCore.Qt.UserRole) == [ev.id]
+    window.pacing.setCurrentItem(item)
+    assert window.history.currentItem().data(0, QtCore.Qt.UserRole) == ev.id
+    assert (store.d, story.observations) == before
+    window.close()

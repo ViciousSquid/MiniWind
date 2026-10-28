@@ -400,7 +400,7 @@ def cmd_dragonfire(ctx, args):
 
 
 def cmd_storyteller(ctx, args):
-    """storyteller -- show live pacing levers and the last 10 sampled observations."""
+    """storyteller -- open the resizable Studio: live sensors, lever editing and outcomes."""
     if not ctx.play_mode:
         debug_log("Error", "storyteller: Play Mode only.")
         return None
