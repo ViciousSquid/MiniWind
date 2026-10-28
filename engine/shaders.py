@@ -150,11 +150,11 @@ MAX_LIGHTS = 64
 # its lights and costs an ordinary one nothing at all.
 MAX_LIGHTS_ARM = 16
 
-# Water and terrain light themselves from a handful of the nearest lights rather
-# than the whole set; their shaders are sized for that on purpose and the
-# renderer clamps `active_lights` to match (see ForwardRenderer._shader_light_cap).
+# Water and terrain light themselves from the nearest lights rather than the
+# whole set; their shaders are sized for that on purpose and the renderer clamps
+# `active_lights` to match (see ForwardRenderer._shader_light_cap).
 MAX_LIGHTS_WATER = 8
-MAX_LIGHTS_TERRAIN = 8
+MAX_LIGHTS_TERRAIN = 18
 MAX_TERRAIN_STAMPS = 32
 MAX_TERRAIN_STAMP_TEXTURES = 16
 
