@@ -11,7 +11,9 @@ picked up in finds what it was let go over with :func:`target_at`, and queues
 tick, exactly as its own drops are.
 
 A *source* is ``(kind, key, item id)`` and a *target* ``(kind, key)``; the
-kinds are ``pack``, ``equip``, ``quick``, ``strip`` and ``container``.
+kinds are ``pack``, ``equip``, ``quick``, ``strip`` and ``container``. A spell
+dragged out of the spellbook is ``("spell", None, spell id)``, and it can be
+let go on the strip; a strip slot holding one carries ``"spell:<id>"``.
 
 Everything here runs on the UI thread (painting and the mouse).
 """
@@ -97,12 +99,25 @@ def draw_ghost(painter, owner, pointer, size=52) -> None:
     if current is None or current.get("owner") is not owner or pointer is None:
         return
     iid = current["source"][2]
-    if current["source"][0] in ("spell", "spell_hand"):
+    if str(iid).startswith("spell:"):
+        iid = str(iid)[len("spell:"):]          # a spell's strip slot
+    if current["source"][0] in ("spell", "spell_hand") or iid != current["source"][2]:
         from ..rpg import magic
         from PyQt5.QtCore import QPointF
         from PyQt5.QtGui import QColor
         spell = magic.get(iid)
-        if spell is not None:
+        try:
+            from .. import item_icons
+            pm = item_icons.spell_pixmap(iid, size)
+        except Exception:
+            pm = None
+        if pm is not None and not pm.isNull():
+            painter.save()
+            painter.setOpacity(0.85)
+            painter.drawPixmap(int(pointer[0] - pm.width() / 2),
+                               int(pointer[1] - pm.height() / 2), pm)
+            painter.restore()
+        elif spell is not None:
             painter.save()
             painter.setOpacity(0.85)
             painter.setBrush(QColor(*spell.color))

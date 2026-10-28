@@ -9,8 +9,11 @@ raised and lit, its name shown above the bar.
 
 * click a slot (or press its number key) to select it; a weapon in it is
   taken in hand at once -- the main hand, or the off hand when the main hand
-  is full -- and clicked again is put away. Double-click anything else to
-  use or wear it;
+  is full -- and clicked again is put away. A spell (dragged here from the
+  spellbook) is readied in the left hand by a left click or its number key,
+  in the right hand by a right click or Shift and its number key; it then
+  casts on that hand's mouse button. Double-click anything else to use or
+  wear it;
 * drag a slot onto another to rearrange (the two swap); out over the world,
   it is dropped on the floor;
 * drag between the strip and the character window (C), a chest or a body:
@@ -93,6 +96,18 @@ def _is_weapon(iid) -> bool:
     except Exception:
         return False
     return d is not None and d.category == items.WEAPON
+
+
+def _spell_of(stack):
+    """The spell a strip slot holds (game.rpg.magic), or None."""
+    sid = (stack or {}).get("spell")
+    if not sid:
+        return None
+    try:
+        from ..rpg import magic
+        return magic.get(sid)
+    except Exception:
+        return None
 
 
 def _bar_rect(rects):
@@ -191,7 +206,10 @@ class InventoryStrip(FloatingWindow):
             hot = hits.hovered(rect)
             self._draw_tile(painter, rect, stack, sel, hot, dragged is not None)
             hide = mine and self._press is not None and self._press[1] == i
-            if iid and not hide:
+            spell = _spell_of(stack)
+            if spell is not None and not hide:
+                self._draw_spell(painter, rect, spell, hands[i] if i < len(hands) else None)
+            elif iid and not hide:
                 held = (hands[i] is not None if _is_weapon(iid) and i < len(hands)
                         else iid in worn)
                 self._draw_item(painter, rect, iid, stack, held)
@@ -298,6 +316,47 @@ class InventoryStrip(FloatingWindow):
         painter.setPen(colour)
         painter.drawText(plate, Qt.AlignCenter, name)
 
+    def _draw_spell(self, painter, rect, spell, hand):
+        """A spell's slot: its picture (assets/sprites/spells; a coloured orb
+        if it has none), and a tag for each hand it is readied in (L / R, as
+        the mouse buttons that cast it)."""
+        pm = None
+        try:
+            from .. import item_icons
+            pm = item_icons.spell_pixmap(spell.id, rect.width() - 8)
+        except Exception:
+            pm = None
+        if pm is not None and not pm.isNull():
+            clip = QPainterPath()
+            clip.addRoundedRect(QRectF(rect).adjusted(4, 4, -4, -4), 3, 3)
+            painter.save()
+            painter.setClipPath(clip)
+            painter.drawPixmap(rect.x() + (rect.width() - pm.width()) // 2,
+                               rect.y() + (rect.height() - pm.height()) // 2, pm)
+            painter.restore()
+        else:
+            colour = QColor(*spell.color)
+            r = QRectF(rect).adjusted(rect.width() * 0.22, rect.height() * 0.22,
+                                      -rect.width() * 0.22, -rect.height() * 0.22)
+            painter.setBrush(colour)
+            painter.setPen(QPen(colour.darker(170), 1.4))
+            painter.drawEllipse(r)
+        if not hand:
+            return
+        c = self.session.game.character
+        main = getattr(c, "handed", "right")
+        other = "left" if main == "right" else "right"
+        sides = {"main": [main], "off": [other], "both": ["left", "right"]}.get(hand, [])
+        painter.setFont(self.f_number)
+        for side in sides:
+            tag = QRect(rect.x() + 2 if side == "left" else rect.right() - 14,
+                        rect.y() + 2, 13, 13)
+            painter.setBrush(_WORN)
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(tag, 2, 2)
+            painter.setPen(QColor(20, 16, 10))
+            painter.drawText(tag, Qt.AlignCenter, "L" if side == "left" else "R")
+
     def _draw_item(self, painter, rect, iid, stack, worn):
         pm = None
         try:
@@ -347,10 +406,16 @@ class InventoryStrip(FloatingWindow):
         if not self.active or not self.hit(event.pos()):
             return False
         i = self._slot_at(event.pos())
+        stack = self._slots[i] if i is not None and i < len(self._slots) else None
+        if (i is not None and event.button() == Qt.RightButton
+                and _spell_of(stack) is not None):
+            # A spell's slot, right-clicked: readied in the right hand.
+            self.selected = i
+            hits.queue(lambda session: session.select_strip_slot(i, hand="right"))
+            return True
         if i is None or event.button() != Qt.LeftButton:
             return True               # the bar itself: swallowed, not a swing
         self.selected = i
-        stack = self._slots[i] if i < len(self._slots) else None
         if stack:
             self._press = (QPoint(event.pos()), i)
         return True
@@ -379,8 +444,9 @@ class InventoryStrip(FloatingWindow):
         stack = self._slots[i] if i < len(self._slots) else None
         iid = stack.get("id") if stack else None
         if not self._dragging:
-            if _is_weapon(iid):
-                # A weapon goes in hand on the click itself.
+            if _is_weapon(iid) or _spell_of(stack) is not None:
+                # A weapon goes in hand on the click itself; a spell in the
+                # left hand.
                 hits.queue(lambda session: session.select_strip_slot(i))
                 self._last_click = (0.0, None)
                 return True
@@ -398,6 +464,10 @@ class InventoryStrip(FloatingWindow):
         target = ("strip", mine) if mine is not None else drag.target_at(
             event.x(), event.y(), exclude=self)
         if target is None and iid and not drag.over_window(event.x(), event.y()):
+            if _spell_of(stack) is not None:
+                # A spell is not dropped: it just leaves the strip.
+                hits.queue(lambda session: session.set_strip_slot(i, None))
+                return True
             # Out over the world: on the floor (one copy of a weapon).
             hits.queue(lambda session: session.drop_item(iid))
             return True

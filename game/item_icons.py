@@ -116,6 +116,41 @@ def icon_pixmap(item_id, stack=None, size: int = 48):
         return None
 
 
+_SPELL_DIR = os.path.join(_ROOT, "assets", "sprites", "spells")
+
+
+def spell_icon_path(spell_id) -> Optional[str]:
+    """A spell's picture under assets/sprites/spells: its own (``<id>.png``
+    or ``.jpg``), else its school's (``_<school>.png``), else the generic
+    ``_spell.png``; None when there is none at all."""
+    names = [str(spell_id or "")]
+    try:
+        from .rpg import magic
+        spell = magic.get(spell_id)
+    except Exception:
+        spell = None
+    if spell is not None:
+        names.append(f"_{str(spell.school or '').lower()}")
+    names.append("_spell")
+    for name in names:
+        for ext in (".png", ".jpg"):
+            path = os.path.join(_SPELL_DIR, name + ext)
+            if name and os.path.isfile(path):
+                return path
+    return None
+
+
+def spell_pixmap(spell_id, size: int = 48):
+    """A cached ``QPixmap`` of the spell's picture, scaled to *size*, or None."""
+    path = spell_icon_path(spell_id)
+    if not path:
+        return None
+    try:
+        return _load_pixmap(path, int(size))
+    except Exception:
+        return None
+
+
 def icon(item_id, stack=None, size: int = 48):
     """A cached ``QIcon`` for the item (empty QIcon if nothing resolves)."""
     from PyQt5.QtGui import QIcon

@@ -634,18 +634,34 @@ class InventoryWindow(FloatingWindow):
             painter.setBrush(_SLOT)
             painter.setPen(QPen(_GOLD if sid == active else _SLOT_EDGE, 2 if sid == active else 1))
             painter.drawRoundedRect(r, 4, 4)
-            painter.setBrush(QBrush(col))
-            painter.setPen(QPen(col.darker(160), 1))
-            painter.drawEllipse(r.adjusted(9, 9, -9, -9))
+            if not self._draw_spell_art(painter, r.adjusted(4, 4, -4, -4), sid):
+                painter.setBrush(QBrush(col))
+                painter.setPen(QPen(col.darker(160), 1))
+                painter.drawEllipse(r.adjusted(9, 9, -9, -9))
             if hits.hovered(r):
                 self.hover = ("spell", sid)
             self._cells.append((QRect(r), ("spell", None, sid)))
 
+    def _draw_spell_art(self, painter, rect, spell_id) -> bool:
+        """The spell's picture (assets/sprites/spells) centred in *rect*;
+        False when it has none, for the caller to draw its orb."""
+        try:
+            from .. import item_icons
+            pm = item_icons.spell_pixmap(spell_id, min(rect.width(), rect.height()))
+        except Exception:
+            pm = None
+        if pm is None or pm.isNull():
+            return False
+        painter.drawPixmap(rect.x() + (rect.width() - pm.width()) // 2,
+                           rect.y() + (rect.height() - pm.height()) // 2, pm)
+        return True
+
     def _draw_spell_slot(self, painter, rect, spell, source):
         painter.fillRect(rect.adjusted(2, 2, -2, -2), _SLOT)
-        painter.setBrush(QColor(*spell.color))
-        painter.setPen(Qt.NoPen)
-        painter.drawEllipse(rect.adjusted(12, 5, -12, -19))
+        if not self._draw_spell_art(painter, rect.adjusted(6, 3, -6, -19), spell.id):
+            painter.setBrush(QColor(*spell.color))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(rect.adjusted(12, 5, -12, -19))
         painter.setFont(self.f_small)
         painter.setPen(_INK)
         _fit(painter, rect.adjusted(3, rect.height() - 18, -3, -2),
@@ -732,15 +748,16 @@ class InventoryWindow(FloatingWindow):
             painter.setPen(QPen(_SLOT_HOT if chosen else _GOLD if sid == active else _SLOT_EDGE,
                                 2 if (chosen or sid == active) else 1.4))
             painter.drawRoundedRect(r, 4, 4)
-            col_ = QColor(*sp.color)
-            glow = QColor(col_)
-            glow.setAlpha(70)
-            painter.setBrush(glow)
-            painter.setPen(Qt.NoPen)
-            painter.drawEllipse(r.adjusted(6, 6, -6, -6))
-            painter.setBrush(col_)
-            painter.setPen(QPen(col_.darker(160), 1))
-            painter.drawEllipse(r.adjusted(15, 15, -15, -15))
+            if not self._draw_spell_art(painter, r.adjusted(6, 6, -6, -6), sid):
+                col_ = QColor(*sp.color)
+                glow = QColor(col_)
+                glow.setAlpha(70)
+                painter.setBrush(glow)
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(r.adjusted(6, 6, -6, -6))
+                painter.setBrush(col_)
+                painter.setPen(QPen(col_.darker(160), 1))
+                painter.drawEllipse(r.adjusted(15, 15, -15, -15))
             try:
                 from ..rpg import magic
                 cost = int(round(magic.cast_cost(c, sp)))

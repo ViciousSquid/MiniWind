@@ -17,6 +17,9 @@ from . import fonts
 # palette
 GOLD = QColor(198, 162, 88)
 GOLD_BRIGHT = QColor(255, 214, 130)
+#: The player's map waypoint, wherever it shows (map, minimap, HUD arrow):
+#: always this orange, and no quest arrow takes it.
+WAYPOINT = QColor(255, 140, 30)
 GILD = QColor(150, 122, 64)
 PARCH = QColor(226, 224, 236)
 INK = QColor(232, 228, 240)

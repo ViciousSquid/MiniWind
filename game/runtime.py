@@ -173,6 +173,9 @@ NPC_BLOCKED_GIVE_UP_TICKS = 60
 TALK_RADIUS = 140.0
 #: The inventory strip's width in slots: always nine, one per number key.
 STRIP_SIZE = 9
+#: A strip slot holding a spell keeps ``"spell:<spell id>"`` (item ids never
+#: have the colon), so spells and carried things share the nine number keys.
+STRIP_SPELL = "spell:"
 #: Slots in the pack (the player's inventory) before a satchel's: each one
 #: holds a stack, or a single weapon (a pair to dual wield takes two).
 PACK_SLOTS = 20
@@ -268,6 +271,9 @@ REPELLABLE_FACTIONS = frozenset({"bandits", "cultists"})
 #: How long a quest's arrow target / guidance is reused before it is looked
 #: up again (the HUD asks every frame).
 QUEST_LOOKUP_SECONDS = 0.25
+#: How near the player must come to their map waypoint for it to be reached
+#: (and cleared), world units.
+WAYPOINT_REACHED = 160.0
 #: How long a guard's "!" shows when he reacts to something.
 MARK_FLASH_SECONDS = 1.6
 #: A brawler at or below this fraction of their health has had enough.
@@ -327,6 +333,11 @@ SUBDUED_SHOUTS = ("That's enough! Go home, the both of you.",
                   "Any more of that and it's the cells.", "Settle down. Now.")
 CHARGE_SHOUTS = ("To arms!", "Raiders! With me!", "Not in my town!",
                  "Steel out, lads!")
+#: A guard struck down calls the watch: every guard of his town this near
+#: (world units) comes running to overpower whoever did it.
+GUARD_AID_RADIUS = 1600.0
+AID_SHOUTS = ("Guards! To me!", "Guard down! Take them!", "Help! The watch is attacked!",
+              "Seize them, lads!")
 #: How far inside the terrain's edge the player is stopped.
 WORLD_EDGE_MARGIN = 900.0
 #: How fast an over-encumbered player moves, as a fraction of normal.
@@ -454,10 +465,39 @@ ARREST_SOUNDS = ("arrest1.mp3", "arrest2.mp3")
 HEAD_MARKS = ("!", "?")
 
 
+class SessionMemory:
+    """A plain in-memory stand-in for the plugin ``GlobalStore``.
+
+    Everything an NPC knows -- what they witnessed, their opinion of the
+    player, the writs against them, the quests' flags -- lives in the store.
+    Without one, every write was silently dropped and the world forgot each
+    thing the instant it happened: no witness, no grudge, no comrade
+    rallying. A session started without the host's store (a test, a tool,
+    a launch path that did not connect the plugin host) keeps its memory here
+    instead. It lives as long as the session and is not written to disk."""
+
+    def __init__(self):
+        self._data: Dict = {}
+
+    def get(self, key, default=None, store="plugins"):
+        return self._data.get(store, {}).get(str(key), default)
+
+    def set(self, key, value, store="plugins"):
+        self._data.setdefault(store, {})[str(key)] = None if value is None else str(value)
+
+    def all(self, store="plugins"):
+        return dict(self._data.get(store, {}))
+
+    def delete(self, key, store="plugins"):
+        self._data.get(store, {}).pop(str(key), None)
+
+
 class StateStore:
     """Adapter presenting a plugin ``GlobalStore`` as a string KV store."""
 
     def __init__(self, globals_store, store_name: str = "miniwind"):
+        if globals_store is None:
+            globals_store = SessionMemory()
         self._g = globals_store
         self._name = store_name
         # The registry Fio's GlobalStore reads, resolved once: the quest log,
@@ -1462,6 +1502,7 @@ class MiniwindSession(SettlementLaw):
         self._ground_actors()
         self._ease_zoom(delta)
         self._update_bow_draw(delta)
+        self._check_waypoint()
         self.archery.update(delta)
         warrior_fist.clear_spent(self)
         self.held.update()
@@ -2712,6 +2753,45 @@ class MiniwindSession(SettlementLaw):
             pass
         return new
 
+    # -------------------------------------------------------------- waypoint
+    # The one place the player has marked on the map (a click on it): an
+    # orange arrow rings the head pointing there until it is reached, cleared
+    # (a click on it again) or moved (a click elsewhere). Kept on the
+    # character (Character.waypoint), so it is saved with the game.
+    def waypoint(self):
+        """The map waypoint as ``(x, z)`` in world units, or None."""
+        here = getattr(getattr(self.game, "character", None), "waypoint", None)
+        return (float(here[0]), float(here[1])) if here else None
+
+    def set_waypoint(self, x, z) -> None:
+        """Put the waypoint at world ``(x, z)``: the only one, so any other
+        goes."""
+        self.game.character.waypoint = [float(x), float(z)]
+
+    def clear_waypoint(self) -> None:
+        self.game.character.waypoint = None
+
+    def toggle_waypoint(self, x, z, pick=0.0):
+        """A click on the map at world ``(x, z)``: on (within *pick* world
+        units of) the waypoint, it is taken away; anywhere else the waypoint
+        moves there. Returns the waypoint now, or None."""
+        here = self.waypoint()
+        if here is not None and math.hypot(here[0] - float(x), here[1] - float(z)) <= float(pick):
+            self.clear_waypoint()
+            return None
+        self.set_waypoint(x, z)
+        return self.waypoint()
+
+    def _check_waypoint(self) -> None:
+        """Reached: the waypoint is cleared, and the player told."""
+        here = self.waypoint()
+        ppos = self._player_pos() if here is not None else None
+        if ppos is None:
+            return
+        if math.hypot(here[0] - ppos[0], here[1] - ppos[2]) <= WAYPOINT_REACHED:
+            self.clear_waypoint()
+            self.notify("Waypoint reached", 2.0)
+
     def _arrow_destination(self, q):
         """Best-effort world position for *q*'s current stage, for the arrow.
 
@@ -3377,6 +3457,10 @@ class MiniwindSession(SettlementLaw):
         self.director.emit(
             "death", actor=killer, target=npc, pos=list(npc.pos),
             observers=self._sim_observers(), crime=crime)
+        if by_player:
+            # A guard cut down: the rest of the watch nearby comes for the
+            # killer (as for any blow struck at one, see _provoke).
+            self._rally_the_watch(npc)
         # What the killing makes of the killer (game/rpg/alignment.py).
         self._alignment_kill(killer, npc, by_player, crime)
         # The kin-grief wound stays: it is the *authored relationship* reacting,
@@ -5603,10 +5687,14 @@ class MiniwindSession(SettlementLaw):
         c = getattr(getattr(self, "game", None), "character", None)
         return c is not None and eq.equipped_id(c, rpg_items.SLOT_WEAPON) == warrior_fist.FIST
 
-    def charge_in_hand(self) -> bool:
-        """Whether the left mouse charges what is in hand: a bow's draw or a
-        fist's gathered blow (hold for the pie, release to loose)."""
-        return self.bow_in_hand() or self.fist_in_hand()
+    def charge_in_hand(self, hand=None) -> bool:
+        """Whether the mouse button for *hand* (``"main"``/``"off"``; None:
+        either) charges what is in it: a bow's draw, which takes both hands,
+        or a fist's gathered blow in the main hand (hold for the pie, release
+        to loose)."""
+        if self.bow_in_hand():
+            return True
+        return self.fist_in_hand() and hand in (None, "main")
 
     def bow_in_hand(self) -> bool:
         """Whether the weapon in hand is a bow."""
@@ -5957,11 +6045,13 @@ class MiniwindSession(SettlementLaw):
     def fire_player_weapon(self, logic, mode: str) -> bool:
         """The engine's fire buttons, given MiniWind meaning.
 
-        One button per hand. Primary fire (left) uses the main hand -- a bow
-        looses an arrow, a crossbow a bolt, a staff channels its spell, a blade
-        swings. Secondary fire (right) uses the off hand: the weapon in the
-        shield slot, or a worn shield's bash. An equipped spell casts from
-        its own hand instead of using that hand's weapon.
+        One button per hand, by the hand itself: the left button uses the
+        left hand, the right button the right hand (see :meth:`mouse_hand`).
+        The main hand's weapon strikes -- a bow looses an arrow, a crossbow a
+        bolt, a staff channels its spell, a blade swings; the off hand uses
+        the weapon in the shield slot, or a worn shield's bash. A two-handed
+        weapon is in both hands, so either button uses it. An equipped spell
+        casts from its own hand instead of using that hand's weapon.
         Returns True: MiniWind always owns the shot, so Fio's hitscan weapon
         path never runs underneath it.
         """
@@ -5970,18 +6060,27 @@ class MiniwindSession(SettlementLaw):
             return True
         if getattr(c, "is_dead", False):
             return True
-        hand = "off" if mode == "secondary" else "main"
+        hand = self.mouse_hand(mode)
         if eq.hand_spell(c, hand) is not None:
             self.do_cast(aim="facing", hand=hand)
             return True
-        if mode == "secondary":
+        if hand == "off":
             if eq.offhand_weapon(c) is not None:
                 self.do_attack("off")
             elif eq.equipped_id(c, rpg_items.SLOT_SHIELD):
                 self.shield_bash()
+            elif eq.is_two_handed(eq.weapon(c)):
+                self.do_attack()             # both hands are on it
         else:
             self.do_attack()
         return True
+
+    def mouse_hand(self, mode) -> str:
+        """The hand a mouse button uses, ``"main"`` or ``"off"``: the left
+        button (``"primary"``) the left hand, the right button the right
+        hand -- whichever of them is the main hand (``Character.handed``)."""
+        c = self.game.character
+        return eq.relative_hand(c, "right" if mode == "secondary" else "left")
 
     #: A shield bash: its damage (plus a share of the shield's armour rating),
     #: stamina and recovery.
@@ -7084,7 +7183,49 @@ class MiniwindSession(SettlementLaw):
                 self._apply_sim_intent(target, fresh_assault=True)
             elif self._natively_hostile(tp):
                 self._sim_engage(target, self.player_actor)
+        self._rally_the_watch(target)
         self._alert_followers(target)
+
+    def _rally_the_watch(self, victim) -> list:
+        """The player has attacked (or killed) a guard: his comrades do not
+        wait for testimony. Every guard of the same town within
+        :data:`GUARD_AID_RADIUS` hears the cry and turns on the player at
+        once -- the watch overpowers by numbers. Returns the guards called
+        (none when the victim is no guard, or the blow was no crime)."""
+        tp = getattr(victim, "properties", None) or {}
+        if not sim_crime.is_lawful(tp) or not self._sim_is_crime_against(victim):
+            return []
+        region = self._law_region(victim.pos, victim)
+        rallied = []
+        for guard in self.npcs():
+            if guard is victim or not self._is_guard(guard):
+                continue
+            p = guard.properties
+            if p.get("_arrest_state") == "pursuit":
+                continue                 # already hunting the player
+            if (self._law_region(guard.pos, guard) != region
+                    or self._dist2d(guard.pos, victim.pos) > GUARD_AID_RADIUS):
+                continue
+            already = (str(p.get("aggression")) == "hostile" and not p.get("triggered", True))
+            if p.get("_arrest_state"):
+                # The arrest is off: this is a fight now.
+                if guard is self._arrest_guard:
+                    self._arrest_guard = None
+                    self._arrest_state = ""
+                p.pop("_arrest_state", None)
+                p.pop("_dest", None)
+            p["asleep"] = False
+            self._sim_engage(guard, self.player_actor)
+            if not already:
+                self.flash_head_mark(guard, "!")
+                self.bark_later(guard, self.rng.choice(CHARGE_SHOUTS),
+                                0.3 + 0.4 * len(rallied))
+            rallied.append(guard)
+        if rallied and not tp.get("dead"):
+            self.bark(victim, self.rng.choice(AID_SHOUTS))
+        elif rallied:
+            self.bark(rallied[0], self.rng.choice(AID_SHOUTS))
+        return rallied
 
     def _alert_followers(self, target) -> None:
         """Un-park every follow_player companion near the player and send it
@@ -7372,7 +7513,9 @@ class MiniwindSession(SettlementLaw):
         self._cancel_bow_draw()
         self.cancel_spell_aim()
         physical = c.handed if hand == "main" else ("left" if c.handed == "right" else "right")
-        self.notify(f"{rpg_magic.get(spell_id).name} equipped in {physical} hand", 2.0)
+        mouse = "left" if physical == "left" else "right"
+        self.notify(f"{rpg_magic.get(spell_id).name} in your {physical} hand "
+                    f"({mouse} click casts)", 2.0)
         return True
 
     def inventory_use(self, item_id) -> bool:
@@ -7664,8 +7807,15 @@ class MiniwindSession(SettlementLaw):
             if isinstance(stack, dict) and stack.get("id") and int(stack.get("qty", 1) or 0) > 0:
                 carried.setdefault(str(stack["id"]), stack)
         placed = {}
+        known = set(getattr(c, "known_spells", ()) or ())
         for i, iid in enumerate(strip):
             if not iid:
+                continue
+            if str(iid).startswith(STRIP_SPELL):
+                # A spell's slot lasts while the spell is known, one slot each.
+                sid = str(iid)[len(STRIP_SPELL):]
+                if sid not in known or rpg_magic.get(sid) is None or iid in strip[:i]:
+                    strip[i] = None
                 continue
             n = placed.get(iid, 0) + 1
             if n > self._strip_copies(carried.get(iid)):
@@ -7688,6 +7838,10 @@ class MiniwindSession(SettlementLaw):
             del offered[iid]
         out, shown = [], {}
         for iid in strip:
+            if iid and str(iid).startswith(STRIP_SPELL):
+                spell = rpg_magic.get(str(iid)[len(STRIP_SPELL):])
+                out.append({"id": iid, "spell": spell.id, "name": spell.name, "qty": 1})
+                continue
             stack = carried.get(iid) if iid else None
             if stack is not None and self._strip_copies(stack) > 1:
                 # One copy of a weapon per slot; five at most of anything else.
@@ -7702,7 +7856,8 @@ class MiniwindSession(SettlementLaw):
         """Per strip slot, the hand its weapon copy is held in: ``"main"``,
         ``"off"`` or None. Copies of one weapon map to the hands in order --
         the first slot holding it is the main hand's copy when the main hand
-        holds it, the next the off hand's."""
+        holds it, the next the off hand's. A spell readied in both hands is
+        ``"both"``."""
         c = self.game.character
         main = eq.weapon(c)
         off = eq.offhand_weapon(c)
@@ -7710,7 +7865,11 @@ class MiniwindSession(SettlementLaw):
         for stack in self.strip_slots():
             iid = stack.get("id") if stack else None
             hand = None
-            if iid:
+            if stack and stack.get("spell"):
+                held = [h for h in ("main", "off")
+                        if getattr(eq.hand_spell(c, h), "id", None) == stack["spell"]]
+                hand = "both" if len(held) == 2 else held[0] if held else None
+            elif iid:
                 copy = seen.get(iid, 0)
                 seen[iid] = copy + 1
                 hands = [h for h, d in (("main", main), ("off", off))
@@ -7733,6 +7892,15 @@ class MiniwindSession(SettlementLaw):
         if item_id is None:
             strip[index] = None
             return True
+        if str(item_id).startswith(STRIP_SPELL):
+            sid = str(item_id)[len(STRIP_SPELL):]
+            if sid not in (c.known_spells or ()) or rpg_magic.get(sid) is None:
+                return False
+            if item_id in strip:
+                # One slot to a spell: the slot it was in takes this one's.
+                strip[strip.index(item_id)] = strip[index]
+            strip[index] = item_id
+            return True
         if not inv.has_item(c.inventory, item_id, 1):
             return False
         if from_index is not None and 0 <= int(from_index) < len(strip) \
@@ -7748,12 +7916,14 @@ class MiniwindSession(SettlementLaw):
         c._strip_seen.add(item_id)
         return True
 
-    def select_strip_slot(self, index: int) -> bool:
+    def select_strip_slot(self, index: int, hand=None) -> bool:
         """A strip slot picked, by a click or its number key: selected, and
         what is in it applied at once -- a weapon taken in hand (see
-        :meth:`ready_weapon`); anything else used as a double-click would
-        (:meth:`inventory_use`): a shield or armour worn, or taken off when
-        already worn, a potion drunk. True if anything changed."""
+        :meth:`ready_weapon`); a spell readied in *hand*, the physical
+        ``"left"`` (the default) or ``"right"`` (see :meth:`ready_spell`);
+        anything else used as a double-click would (:meth:`inventory_use`):
+        a shield or armour worn, or taken off when already worn, a potion
+        drunk. True if anything changed."""
         slots = self.strip_slots()
         index = int(index)
         if not 0 <= index < len(slots):
@@ -7762,6 +7932,8 @@ class MiniwindSession(SettlementLaw):
         stack = slots[index]
         if not stack:
             return False
+        if stack.get("spell"):
+            return self.ready_spell(stack["spell"], hand or "left")
         d = rpg_items.get(stack.get("id"))
         if d is None:
             return False
@@ -7769,6 +7941,26 @@ class MiniwindSession(SettlementLaw):
             return self.inventory_use(d.id)
         copy = sum(1 for st in slots[:index] if st and st.get("id") == d.id)
         return self.ready_weapon(d.id, copy)
+
+    def ready_spell(self, spell_id, hand="left") -> bool:
+        """Ready a known spell in the physical *hand* (``"left"`` or
+        ``"right"``), putting away what that hand held; or, when that hand
+        already holds it, put it away. The spell then casts on that hand's
+        mouse button. True if anything changed."""
+        c = self.game.character
+        spell = rpg_magic.get(spell_id)
+        if spell is None or spell_id not in (c.known_spells or ()):
+            return False
+        held = eq.hand_spell(c, hand)
+        if held is not None and held.id == spell_id:
+            eq.unequip_spell(c, hand)
+            self.cancel_spell_aim()
+            self.notify(f"Put away {spell.name}", 1.5)
+            return True
+        if not c.can_use_magic():
+            self.notify("You cannot use magic", 2.0)
+            return False
+        return self.equip_hand_spell(spell_id, hand)
 
     def ready_weapon(self, item_id, copy=None) -> bool:
         """Take a carried weapon in hand at once, or put it away if it is
@@ -7863,6 +8055,17 @@ class MiniwindSession(SettlementLaw):
         tkind, tkey = target[0], target[1]
         if not iid:
             return False
+        if skind in ("spell", "spell_hand") and tkind == "strip":
+            return self.set_strip_slot(int(tkey), STRIP_SPELL + str(iid))
+        if skind == "strip" and str(iid).startswith(STRIP_SPELL):
+            # A spell's slot: rearranged on the strip, taken off it, or
+            # readied in a hand it is dropped on.
+            if tkind == "strip":
+                return self.set_strip_slot(int(tkey), iid)
+            if tkind in ("hand", "equip"):
+                sid = str(iid)[len(STRIP_SPELL):]
+                return self.inventory_move(("spell", None, sid), target, sid)
+            return self.set_strip_slot(int(skey), None)
         if skind in ("spell", "spell_hand") or tkind == "hand":
             return self.inventory_move(source, target, iid)
         if skind == "container":

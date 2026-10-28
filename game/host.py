@@ -71,8 +71,9 @@ K_MAP = "m"
 # nothing a roll key adds.
 K_QUEST = "q"          # show the current quest (objective + how to complete)
 #: Number keys that pick a slot on the inventory strip: '1' the first, and so
-#: on, as numbered under the slots. A weapon there is taken in hand at once.
-#: Nine is plenty and leaves '0' free.
+#: on, as numbered under the slots. A weapon there is taken in hand at once;
+#: a spell is readied in the left hand (Shift: the right hand). Nine is
+#: plenty and leaves '0' free.
 WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 10))
 #: How long E stays ignored after it opened a screen, when the held-key
 #: snapshot never showed it down (a very quick tap), seconds.
@@ -1030,10 +1031,15 @@ class MiniwindGame:
             session.next_spell()
         # Number keys pick a slot on the inventory strip; a weapon in it is
         # taken in hand at once -- the main hand, or the off hand when the
-        # main hand is full -- and pressing it again puts it away.
+        # main hand is full -- and pressing it again puts it away. A spell
+        # there is readied in the left hand, or with Shift the right hand,
+        # and then casts on that hand's mouse button.
         for slot in WEAPON_SLOT_KEYS:
             if slot in just:
-                session.select_strip_slot(int(slot) - 1)
+                down = getattr(ctx, "key_down", None)
+                shift = bool(down and down("shift"))
+                session.select_strip_slot(int(slot) - 1,
+                                          hand="right" if shift else None)
                 break
         if K_SNEAK in just:
             session.toggle_sneak()
@@ -1409,7 +1415,7 @@ class MiniwindGame:
 
     #: Screens the inventory strip stays up over, so things can be dragged
     #: between it and them (game/ui/drag.py).
-    _STRIP_SCREENS = ("character", "inventory", "container")
+    _STRIP_SCREENS = ("character", "inventory", "container", "spells")
 
     @classmethod
     def _strip_wanted(cls, session, cutscene=False) -> bool:

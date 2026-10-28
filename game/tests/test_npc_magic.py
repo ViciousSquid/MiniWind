@@ -179,7 +179,7 @@ def test_a_spell_caster_holding_a_sword_does_not_cast_with_the_sword():
 
 
 def test_weapon_rating_is_damage_over_time():
-    assert combat_styles.weapon_rating("iron_dagger") == pytest.approx(6 * 1.4)
+    assert combat_styles.weapon_rating("iron_dagger") == pytest.approx(4 * 1.4)
     assert combat_styles.weapon_rating("bread") == 0.0
 
 

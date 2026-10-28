@@ -77,23 +77,41 @@ def _session():
     return s
 
 
-def test_each_mouse_button_uses_its_own_equipped_spell_or_weapon():
+@pytest.mark.parametrize("handed", ["right", "left"])
+def test_each_mouse_button_uses_the_hand_on_its_own_side(handed):
+    """The left button is the left hand and the right button the right hand,
+    whichever of them holds the weapon."""
     s = _session()
     c = s.game.character
+    c.handed = handed
+    weapon_button = "secondary" if handed == "right" else "primary"
+    other_button = "primary" if handed == "right" else "secondary"
     eq.equip(c, "iron_shortsword")
     eq.equip_spell(c, "flare", "off")
     calls = []
     s.do_attack = lambda hand="main": calls.append(("weapon", hand))
     s.do_cast = lambda **kw: calls.append(("spell", kw["hand"]))
-    s.fire_player_weapon(s.logic, "primary")
-    s.fire_player_weapon(s.logic, "secondary")
+    s.fire_player_weapon(s.logic, weapon_button)
+    s.fire_player_weapon(s.logic, other_button)
     assert calls == [("weapon", "main"), ("spell", "off")]
     eq.equip_spell(c, "heal_minor", "main")
     eq.equip(c, "iron_shortsword", "shield")
     calls.clear()
+    s.fire_player_weapon(s.logic, weapon_button)
+    s.fire_player_weapon(s.logic, other_button)
+    assert calls == [("spell", "main"), ("weapon", "off")]
+
+
+def test_a_two_handed_weapon_answers_both_buttons():
+    s = _session()
+    c = s.game.character
+    c.inventory.append(items.make("scythe"))
+    eq.equip(c, "scythe")
+    calls = []
+    s.do_attack = lambda hand="main": calls.append(hand)
     s.fire_player_weapon(s.logic, "primary")
     s.fire_player_weapon(s.logic, "secondary")
-    assert calls == [("spell", "main"), ("weapon", "off")]
+    assert calls == ["main", "main"]
 
 
 def test_selected_but_unequipped_spell_cannot_cast_or_spend_magicka():
@@ -141,6 +159,51 @@ def test_dragging_a_spell_between_hands_moves_it_and_dragging_back_unequips():
     assert not c.hand_spells
 
 
+def _strip(s):
+    return [e["id"] if e else None for e in s.strip_slots()]
+
+
+def test_a_spell_dragged_to_the_shortcut_bar_keeps_one_slot_and_follows_the_spell():
+    s = _session()
+    c = s.game.character
+    assert s.item_drop(("spell", None, "flare"), ("strip", 4))
+    assert _strip(s)[4] == "spell:flare"
+    assert s.item_drop(("spell", None, "flare"), ("strip", 6))
+    assert _strip(s).count("spell:flare") == 1 and _strip(s)[6] == "spell:flare"
+    assert s.item_drop(("strip", 6, "spell:flare"), ("strip", 2))
+    assert _strip(s)[2] == "spell:flare"
+    assert not s.set_strip_slot(3, "spell:lightning")          # not known
+    c.known_spells.remove("flare")
+    assert "spell:flare" not in _strip(s)                      # forgotten: gone
+    c.known_spells.append("flare")
+    assert s.item_drop(("spell", None, "flare"), ("strip", 0))
+    assert s.item_drop(("strip", 0, "spell:flare"), ("pack", None))
+    assert "spell:flare" not in _strip(s)
+
+
+@pytest.mark.parametrize("handed", ["right", "left"])
+def test_a_bar_spell_is_readied_left_by_its_key_and_right_with_shift(handed):
+    s = _session()
+    c = s.game.character
+    c.handed = handed
+    eq.equip(c, "iron_shortsword")
+    s.set_strip_slot(5, "spell:flare")
+    s.set_strip_slot(6, "spell:heal_minor")
+    game = host.MiniwindGame.__new__(host.MiniwindGame)
+    up = SimpleNamespace(key_down=lambda key: False)
+    shift = SimpleNamespace(key_down=lambda key: key == "shift")
+    game._handle_gameplay_input(s, {"6"}, up)
+    assert eq.hand_spell(c, "left").id == "flare"
+    assert s.strip_hands()[5] == eq.relative_hand(c, "left")
+    game._handle_gameplay_input(s, {"7"}, shift)
+    assert eq.hand_spell(c, "right").id == "heal_minor"
+    assert eq.weapon(c) is None              # both hands hold spells now
+    assert any(st["id"] == "iron_shortsword" for st in s.pack_stacks())
+    game._handle_gameplay_input(s, {"6"}, up)  # again: put away
+    assert eq.hand_spell(c, "left") is None
+    assert eq.hand_spell(c, "right").id == "heal_minor"
+
+
 def test_equipped_spells_glow_in_their_own_hands_and_stop_when_replaced():
     import math
     import numpy as np
@@ -165,3 +228,21 @@ def test_equipped_spells_glow_in_their_own_hands_and_stop_when_replaced():
     eq.unequip_spell(c, "off")
     assert s._magic_hands() == []
     assert len(s.magic_fx.frame(now=10.)[0]) == 0
+
+
+def test_swords_hit_harder_than_daggers():
+    damage = {iid: items.get(iid).get("damage") for iid in (
+        "iron_dagger", "iron_shortsword", "iron_longsword", "steel_longsword")}
+    assert damage["iron_dagger"] < damage["iron_shortsword"] < damage["iron_longsword"] \
+        < damage["steel_longsword"]
+    # A dagger's quicker strokes still do not keep up with a sword's.
+    rate = {iid: damage[iid] * float(items.get(iid).get("speed", 1.0)) for iid in damage}
+    assert rate["iron_dagger"] < rate["iron_shortsword"] / 2
+
+
+def test_each_spell_slot_shows_the_spells_own_picture():
+    import os
+    from game import item_icons
+    assert os.path.basename(item_icons.spell_icon_path("flare")) == "flare.png"
+    # A spell without one shows its school's, else the generic picture.
+    assert os.path.basename(item_icons.spell_icon_path("no_such_spell")) == "_spell.png"

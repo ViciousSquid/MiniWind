@@ -408,6 +408,19 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
         painter.setPen(QPen(QColor(60, 40, 0), 1.2))
         painter.drawPolygon(diamond)
 
+    # The player's own waypoint (set on the map): an orange pin, likewise.
+    here = session.waypoint() if hasattr(session, "waypoint") else None
+    if here is not None:
+        p = to_screen(here[0], here[1])
+        dx, dy = p.x() - centre.x(), p.y() - centre.y()
+        limit = radius - 9
+        reach = math.hypot(dx, dy)
+        if reach > limit:
+            p = QPointF(centre.x() + dx / reach * limit, centre.y() + dy / reach * limit)
+        painter.setBrush(QBrush(T.WAYPOINT))
+        painter.setPen(QPen(QColor(70, 30, 0), 1.4))
+        painter.drawEllipse(p, 5.5, 5.5)
+
     # The player: an arrow pointing the way they face, at the centre.
     angle = float(getattr(player, "angle", 0.0))
     fx, fz = math.sin(angle), math.cos(angle)
@@ -429,13 +442,16 @@ def map_features(session):
     """What the full map marks, read off the session.
 
     ``{"player": (x, z, angle) | None, "places": [(name, x, z)],
-    "quests": [(name, x, z, quest_id, tracked)], "night": ...}`` -- the
+    "quests": [(name, x, z, quest_id, tracked)], "waypoint": (x, z) | None,
+    "night": ...}`` -- the
     night is :func:`game.ui.daylight.map_night` (None by day); the places are the
     *discovered* location markers (an undiscovered town is not on your map),
     the quests every active quest whose objective has a place in the world.
     """
     out = {"player": None, "places": [], "quests": [], "night": None,
-           "witnesses": [], "law": None}
+           "witnesses": [], "law": None, "waypoint": None}
+    if hasattr(session, "waypoint"):
+        out["waypoint"] = session.waypoint()
     if hasattr(session, "witness_markers"):
         out["witnesses"] = session.witness_markers()
     if hasattr(session, "law_status"):

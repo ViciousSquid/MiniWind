@@ -38,7 +38,7 @@ _QUEST_ARROW_COLORS = [
     QColor(120, 200, 255),   # sky blue
     QColor(150, 230, 150),   # green
     QColor(240, 150, 220),   # pink
-    QColor(255, 170, 90),    # orange
+    QColor(110, 220, 210),   # teal (orange is the waypoint's: theme.WAYPOINT)
     QColor(190, 175, 255),   # lavender
 ]
 
@@ -677,6 +677,14 @@ def _weapon_icon_pixmap(weapon_def, size=26):
         return None
 
 
+def _spell_icon_pixmap(spell, size=26):
+    try:
+        from .. import item_icons
+        return item_icons.spell_pixmap(spell.id, size)
+    except Exception:
+        return None
+
+
 #: The weapon/spell box: top right, under the clock (_draw_clock).
 ACTIVE_W, ACTIVE_H = 268, 60
 ACTIVE_TOP = 132
@@ -685,22 +693,30 @@ ACTIVE_ICON = 26
 
 
 def _draw_active(painter, session, c, width, height):
-    """The two equipped hands and the mouse button that uses each one."""
+    """The two hands and the mouse button that uses each one: the left
+    button the left hand, the right button the right hand."""
     x = width - ACTIVE_W - ACTIVE_MARGIN
     y = ACTIVE_TOP
     rect = QRect(x, y, ACTIVE_W, ACTIVE_H)
     T.panel(painter, x, y, ACTIVE_W, ACTIVE_H, radius=8, shadow=False)
-    for i, (hand, mouse) in enumerate((("main", "LMB"), ("off", "RMB"))):
+    for i, (physical, mouse) in enumerate((("left", "LMB"), ("right", "RMB"))):
+        hand = eq.relative_hand(c, physical)
         spell = eq.hand_spell(c, hand)
         item = eq.hand_weapon(c, hand)
         if hand == "off" and item is None:
             item = eq.shield(c) or eq.light_source(c)
+            if item is None and eq.is_two_handed(eq.weapon(c)):
+                item = eq.weapon(c)                 # both hands on it
         top = y + 5 + i * 27
         tx = x + 14
         if spell is not None:
-            painter.setBrush(QColor(*spell.color))
-            painter.setPen(QPen(QColor(*spell.color).darker(160), 1))
-            painter.drawEllipse(x + 14, top + 2, 16, 16)
+            icon = _spell_icon_pixmap(spell, 22)
+            if icon is not None and not icon.isNull():
+                painter.drawPixmap(x + 12, top, icon)
+            else:
+                painter.setBrush(QColor(*spell.color))
+                painter.setPen(QPen(QColor(*spell.color).darker(160), 1))
+                painter.drawEllipse(x + 14, top + 2, 16, 16)
             tx = x + 40
         else:
             icon = _weapon_icon_pixmap(item, 22)
@@ -821,7 +837,8 @@ def _draw_quest_arrow(painter, session, width, height):
         except Exception:
             one = None
         targets = [(one[0], "", one[1])] if one else []
-    if not targets:
+    waypoint = session.waypoint() if hasattr(session, "waypoint") else None
+    if not targets and waypoint is None:
         return
     logic = getattr(session, "logic", None)
     player = fio.player(logic)
@@ -864,6 +881,19 @@ def _draw_quest_arrow(painter, session, width, height):
         orbit = 58.0 + i * 11.0
         _draw_one_quest_arrow(painter, cx, cy, rel, orbit, color,
                               _fmt_distance(math.hypot(dx, dz)), width, height)
+    if waypoint is not None:
+        # The player's own map waypoint: always orange, on a ring of its own
+        # outside the quests'.
+        dx = float(waypoint[0]) - float(ppos[0])
+        dz = float(waypoint[1]) - float(ppos[2])
+        if abs(dx) > 1e-3 or abs(dz) > 1e-3:
+            if overhead:
+                rel = math.atan2(-dx * hz + dz * hx, dx * hx + dz * hz)
+            else:
+                rel = _wrap(math.atan2(dx, dz) - pangle)
+            _draw_one_quest_arrow(painter, cx, cy, rel, 58.0 + len(targets) * 11.0,
+                                  T.WAYPOINT, _fmt_distance(math.hypot(dx, dz)),
+                                  width, height)
 
 
 def _draw_one_quest_arrow(painter, cx, cy, rel, orbit, color, dist, width, height):

@@ -130,57 +130,46 @@ def test_spell_rows_are_clickable_inside_statistics(ui):
     assert session.game.character.active_spell == "lightning"
 
 
-def test_spell_upgrades_and_hand_equipment_have_separate_click_targets(ui):
+def test_spell_upgrades_click_and_the_hands_are_shown_not_dropped_on(ui):
     _game, session, _view, window = ui
     c = session.game.character
     c.xp = c.spell_upgrade_cost("flare")
     _tab(ui, "spells")
     upgrade = next(rect for rect, label in hits.targets()
                    if label.startswith("Raise to level 2"))
-    hands = [rect for rect, target in window._targets if target[0] == "hand"]
-    assert len(hands) == 2
-    assert all(not upgrade.intersects(rect) for rect in hands)
+    assert not [target for _rect, target in window._targets if target[0] == "hand"]
+    assert not any(label.startswith("Equip") for _rect, label in hits.targets())
     assert window.handle_mouse_press(_Press(upgrade.center()))
     assert hits.run_clicks(session) == 1
     assert c.spell_level("flare") == 2
     assert c.xp == 0
     assert not c.hand_spells
-    _paint(window)
-    equip = next(rect for rect, label in hits.targets() if label == "Equip right")
-    assert window.handle_mouse_press(_Press(equip.center()))
-    assert hits.run_clicks(session) == 1
-    assert eq.hand_spell(c, "right").id == "flare"
-    assert c.spell_level("flare") == 2
 
 
-def test_spells_drag_to_each_hand_and_back_to_the_spell_list(ui):
-    _game, session, _view, window = ui
+def test_spells_drag_from_the_book_to_the_shortcut_bar_or_take_a_number_key(ui):
+    game, session, _view, window = ui
     c = session.game.character
-    c.inventory.append(items.make("iron_shortsword"))
-    eq.equip(c, "iron_shortsword")
     _tab(ui, "spells")
-
-    def move(source, target):
-        _paint(window)
-        start = next(rect.center() for rect, src in window._cells if src == source)
-        end = next(rect.center() for rect, dst in window._targets if dst == target)
-        assert window.handle_mouse_press(_Press(start))
-        motion = SimpleNamespace(pos=lambda: end, x=lambda: end.x(), y=lambda: end.y(),
-                                 buttons=lambda: QtCore.Qt.LeftButton)
-        assert window.handle_mouse_move(motion, 1280, 800)
-        _paint(window)
-        assert window.handle_mouse_release(_Press(end))
-        hits.run_clicks(session)
-
-    move(("spell", None, "flare"), ("hand", "right"))
-    assert eq.hand_spell(c, "right").id == "flare"
-    assert eq.weapon(c) is None
-    assert any(stack["id"] == "iron_shortsword" for stack in session.pack_stacks())
-    move(("spell", None, "lightning"), ("hand", "left"))
-    assert eq.hand_spell(c, "left").id == "lightning"
-    move(("spell_hand", "off", "lightning"), ("spells", None))
-    assert eq.hand_spell(c, "left") is None
-    assert eq.hand_spell(c, "right").id == "flare"
+    assert game._strip_wanted(session)            # the bar stays up over the book
+    bar = type("Bar", (), {"active": True})()      # the strip's drop zones
+    slot = QtCore.QRect(500, 900, 50, 50)          # below the window
+    _paint(window)
+    drag.set_zones(bar, [(slot, ("strip", 3))])
+    start = next(rect.center() for rect, src in window._cells
+                 if src == ("spell", None, "lightning"))
+    end = slot.center()
+    assert window.handle_mouse_press(_Press(start))
+    motion = SimpleNamespace(pos=lambda: end, x=lambda: end.x(), y=lambda: end.y(),
+                             buttons=lambda: QtCore.Qt.LeftButton)
+    assert window.handle_mouse_move(motion, 1280, 800)
+    assert window.handle_mouse_release(_Press(end))
+    hits.run_clicks(session)
+    assert session.strip_slots()[3]["spell"] == "lightning"
+    assert not c.hand_spells                       # on the bar, not in a hand
+    screens.handle_key(session, "7")               # the selected spell, by key
+    selected = screens._spellbook_spells(session)[
+        screens._sel(session)["spells"]["row"]].id
+    assert session.strip_slots()[6]["spell"] == selected
 
 
 def test_map_draws_terrain_and_supports_pan_zoom_and_recentering(ui):

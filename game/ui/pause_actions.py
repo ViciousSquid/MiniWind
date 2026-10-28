@@ -373,6 +373,14 @@ class PauseActions:
             worldmap.ensure_for(self._logic(), self.view)
         return worldmap.WORLD, worldmap.map_features(session)
 
+    def pause_menu_toggle_waypoint(self, x, z, pick):
+        """A click on the MAP page: the waypoint goes to world (x, z), or is
+        taken away when the click was on it (MiniwindSession.toggle_waypoint).
+        Queued for the game tick, which owns the session."""
+        from . import hits
+        if self._session() is not None:
+            hits.queue(lambda session: session.toggle_waypoint(x, z, pick))
+
     def pause_menu_to_editor(self):
         """Leave the game and hand the map back to the editor."""
         window = self.window
