@@ -83,7 +83,7 @@ WEAPON_BOW_DURATION = 0.18
 # Where it goes (forward of the head, and how far it stays to its own side),
 # how thin it gets, and how far it is angled off square (degrees, its own
 # side's edge swept back a little).
-WEAPON_BLOCK_FORWARD = 46.0
+WEAPON_BLOCK_FORWARD = 52.0
 WEAPON_BLOCK_SIDE = 6.0
 WEAPON_BLOCK_SQUASH = 0.12
 WEAPON_BLOCK_ANGLE_DEG = 10.0
