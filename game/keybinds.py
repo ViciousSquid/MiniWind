@@ -59,11 +59,11 @@ PAD_ONLY = (
     ("strip_next", "Next strip slot", "dpad_right"),
     ("pause", "Pause menu", "start"),
 )
-#: Every action's default button; "" leaves one off the pad (the Statistics
-#: tabs reach the character sheet, journal and spellbook on LB / RB).
+#: Y opens Statistics on the character sheet; LB / RB reach its other tabs.
+#: An empty button leaves an action off the pad's direct shortcuts.
 PAD_DEFAULTS = {
     "attack": "x", "block": "b", "next_spell": "lb", "heal": "dpad_down",
-    "sneak": "rs", "interact": "a", "inventory": "y", "character": "",
+    "sneak": "rs", "interact": "a", "inventory": "", "character": "y",
     "journal": "", "spells": "", "levelup": "rb", "map": "back",
     "quest": "dpad_up",
     **{action: button for action, _label, button in PAD_ONLY},
