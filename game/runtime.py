@@ -920,6 +920,10 @@ class MiniwindSession(SettlementLaw):
         """Killing blows and crits jolt the screen (GAME → "Screen shake")."""
         return self._game_flag("screen_shake")
 
+    def camera_rotation_enabled(self) -> bool:
+        """Allow right-stick and bracket-key camera rotation; on by default."""
+        return self._game_flag("camera_rotation")
+
     def motivational_quotes_enabled(self) -> bool:
         """Whether the level-up page opens with a line of encouragement
         (``[GAME] motivational_quotes`` in settings.ini; deliberately not in

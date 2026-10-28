@@ -43,6 +43,33 @@ def _published(session):
                 glm.normalize(forward), monsters)
 
 
+@pytest.mark.parametrize("key,text,turn", [(Qt.Key_BracketLeft, "[", 1),
+                                           (Qt.Key_BracketRight, "]", -1)])
+def test_bracket_key_events_rotate_the_play_camera_without_changing_editor_grid(
+        fio_session, qt_app, key, text, turn):
+    from PyQt5.QtCore import QEvent
+    from PyQt5.QtGui import QKeyEvent
+    session = fio_session(_arena()).start_play()
+    camera = session.logic.camera
+    camera.set_camera_mode("Overhead")
+    grid = session.view.grid_size
+    angle = session.logic.player_runtime.player.angle
+    qt_app.sendEvent(session.view, QKeyEvent(QEvent.KeyPress, key, Qt.NoModifier, text))
+    assert key in session.window.keys_pressed
+    session.step(10, keys=session.window.keys_pressed)
+    yaw = camera.overhead_yaw
+    assert turn * math.sin(yaw) > 0
+    assert session.logic.player_runtime.player.angle == angle
+    with session.render_state() as frame:
+        view = frame.camera_view_matrix
+        assert view[0][1] == pytest.approx(math.sin(camera.overhead_heading(angle)), abs=1e-5)
+        assert view[2][1] == pytest.approx(math.cos(camera.overhead_heading(angle)), abs=1e-5)
+    qt_app.sendEvent(session.view, QKeyEvent(QEvent.KeyRelease, key, Qt.NoModifier, text))
+    session.step(2, keys=session.window.keys_pressed)
+    assert camera.overhead_yaw == yaw
+    assert session.view.grid_size == grid
+
+
 def _walk(session, ticks, keys):
     player = session.logic.player_runtime.player
     start = glm.vec3(player.pos)

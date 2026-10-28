@@ -43,6 +43,7 @@ Guild.
 | **I** | Inventory & equipment | **C** | Character sheet |
 | **J** | Quest journal | **P** | Spellbook (click a spell to ready it) |
 | **L** | Level up (when available) | **1–9 / Esc** | Dialogue choices / close |
+| **[ / ]** (hold) | Rotate camera left / right | | |
 
 ### Gamepad
 
@@ -69,12 +70,14 @@ Equip, Use or Drop button with the D-pad to perform that action. A on an item
 picks it up; A on a compatible slot places it; A on the same item puts it back.
 Changing Statistics tabs preserves a picked item. B closes and cancels the pick.
 
-The minimap, its markers and north indicator rotate with the camera. The north
-letter stays upright. Disable right-stick rotation in `settings.ini` with:
+The minimap and its markers rotate with the camera. The upright north indicator
+trails turns gently and settles like a liquid-filled compass. Hold `[` / `]`
+to rotate the camera left / right from the keyboard. Disable rotation from both
+the right stick and bracket keys in `settings.ini` with:
 
 ```ini
 [GAME]
-gamepad_camera_rotation = False
+camera_rotation = False
 ```
 
 The default is `True`. This affects camera rotation during play; menu scrolling

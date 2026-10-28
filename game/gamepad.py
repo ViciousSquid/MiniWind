@@ -14,7 +14,7 @@ Keyboard and controller work side by side; prompts follow whichever was used las
 
 * left stick: analog camera-relative walking, facing the direction of travel;
   left stick click: sprint (Shift, held);
-* right stick: orbit the camera, unless GAME.gamepad_camera_rotation is false;
+* right stick: orbit the camera, unless GAME.camera_rotation is false;
 * LT / RT: the left / right hand's attack -- the left / right mouse button,
   held as long as the trigger is, so a bow draws and a fist gathers its
   blow. A shield's trigger holds block instead of bashing;
@@ -628,7 +628,7 @@ class QtSink:
     def look(self, dx, dy) -> None:
         state = getattr(self.view, "game_state", None)
         session = self._session()
-        if state is not None and (session is None or session._game_flag("gamepad_camera_rotation")):
+        if state is not None and (session is None or session.camera_rotation_enabled()):
             state.add_gamepad_look(dx, dy)
 
     def walk(self, move):

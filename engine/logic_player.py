@@ -21,6 +21,10 @@ KEY_SPACE = 0x20
 KEY_C = 0x43
 # Qt::Key_Shift; kept numeric so the engine remains Qt-free.
 KEY_SHIFT = 0x01000020
+KEY_BRACKET_LEFT = 0x5B
+KEY_BRACKET_RIGHT = 0x5D
+# Equivalent to a fully deflected right stick, in look pixels per second.
+KEYBOARD_LOOK_SPEED = 900.0
 
 _WATER_LOUDNESS = 0.7
 
@@ -82,13 +86,24 @@ class LogicPlayer:
             pad_move = None
 
         overhead_pad = pad_move is not None and logic.camera.is_overhead()
-        if not modal and pad_move is not None:
-            if overhead_pad:
+        if not modal:
+            rotation_enabled = getattr(getattr(logic, "game_session", None),
+                                       "camera_rotation_enabled", lambda: True)()
+            if not rotation_enabled or pad_move is None:
+                pad_look = (0.0, 0.0)
+            keyboard_dx = (((KEY_BRACKET_RIGHT in keys) - (KEY_BRACKET_LEFT in keys))
+                           * KEYBOARD_LOOK_SPEED * delta if rotation_enabled else 0.0)
+        else:
+            pad_look, keyboard_dx = (0.0, 0.0), 0.0
+        if not modal and (pad_move is not None or keyboard_dx):
+            if logic.camera.is_overhead():
                 if (any(pad_look)
+                        or keyboard_dx
                         or str(logic.camera.overhead_orientation).strip().lower() == "player"):
-                    logic.camera.rotate_overhead(*pad_look, player_angle=player.angle)
+                    logic.camera.rotate_overhead(pad_look[0] + keyboard_dx, pad_look[1],
+                                                 player_angle=player.angle)
             else:
-                mouse_dx += pad_look[0]
+                mouse_dx += pad_look[0] + keyboard_dx
                 mouse_dy += pad_look[1]
 
         sensitivity = 0.002

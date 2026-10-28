@@ -271,12 +271,56 @@ def test_settings_ini_can_disable_right_stick_rotation(enabled):
     import configparser
     s = _session()
     config = configparser.ConfigParser()
-    config.read_dict({"GAME": {"gamepad_camera_rotation": str(enabled)}})
+    config.read_dict({"GAME": {"camera_rotation": str(enabled)}})
     s._editor_config = lambda: config
     sink = _sink(s)
     sink.walk((0, 0))
     sink.look(100, 25)
     assert sink.view.game_state.consume_gamepad_input()[1] == ((100, 25) if enabled else (0, 0))
+
+
+@pytest.mark.parametrize("key,stick", [(ord("["), -1), (ord("]"), 1)])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_brackets_and_right_stick_share_rotation_and_the_renamed_setting(key, stick, enabled):
+    import configparser
+    from ..gamepad import LOOK_SPEED
+    s = _session()
+    config = configparser.ConfigParser()
+    config.read_dict({"GAME": {"camera_rotation": str(enabled)}})
+    s._editor_config = lambda: config
+    s.needs_char_creation = False
+    keyboard, keyboard_runtime = _movement()
+    controller, controller_runtime = _movement()
+    keyboard.game_session = controller.game_session = s
+    dt = 1 / 60
+    # Already queued stick input must also be suppressed if rotation is off.
+    controller.game_state.set_gamepad_move((0, 0))
+    controller.game_state.add_gamepad_look(stick * LOOK_SPEED * dt, 0)
+    keyboard_runtime.update_primary(dt, {key}, 0, 0)
+    controller_runtime.update_primary(dt, set(), 0, 0)
+    assert keyboard.camera.overhead_yaw == pytest.approx(controller.camera.overhead_yaw)
+    assert (keyboard.camera.overhead_yaw != 0) is enabled
+    assert keyboard_runtime.player.angle == .7
+    assert controller_runtime.player.angle == .7
+    # Releasing the key stops rotation immediately.
+    yaw = keyboard.camera.overhead_yaw
+    keyboard_runtime.update_primary(dt, set(), 0, 0)
+    assert keyboard.camera.overhead_yaw == yaw
+
+
+def test_camera_rotation_defaults_on_and_brackets_cancel_each_other_or_yield_to_menus():
+    s = _session()
+    s._editor_config = lambda: None
+    assert s.camera_rotation_enabled()
+    logic, runtime = _movement()
+    runtime.update_primary(.02, {ord("[")}, 0, 0)
+    yaw = logic.camera.overhead_yaw
+    assert yaw != 0
+    runtime.update_primary(.02, {ord("["), ord("]")}, 0, 0)
+    assert logic.camera.overhead_yaw == yaw
+    logic.game_session = NS(modal_input_active=lambda: True)
+    runtime.update_primary(.02, {ord("]")}, 0, 0)
+    assert logic.camera.overhead_yaw == yaw
 
 
 def test_minimap_art_markers_player_and_north_rotate_with_camera(qt_app):
