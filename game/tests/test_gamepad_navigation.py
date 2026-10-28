@@ -198,14 +198,34 @@ def test_disconnect_clears_shield_block_and_analog_movement():
     assert sink.view.game_state.consume_gamepad_input() == (None, (0, 0))
 
 
-def test_fast_inventory_button_and_b_close_survive_between_logic_ticks():
+def test_statistics_button_opens_character_each_time_and_b_or_y_closes():
     s = _session()
     _pad, sink, press = _controller(s)
     press("y")
-    assert s.open_screen == "inventory"
+    assert s.open_screen == "character"
     assert not sink.view.game_state.get_keys()
     press()
+    press("rb")
+    assert s.open_screen == "journal"
+    press()
+    press("y")
+    assert s.open_screen is None
+    press()
+    press("y")
+    assert s.open_screen == "character"
+    press()
     press("b")
+    assert s.open_screen is None
+
+
+def test_rebound_statistics_button_opens_character_and_closes_the_window():
+    keybinds.bind_pad(None, "character", "back")
+    s = _session()
+    _pad, _sink_, press = _controller(s)
+    press("back")
+    assert s.open_screen == "character"
+    press()
+    press("back")
     assert s.open_screen is None
 
 

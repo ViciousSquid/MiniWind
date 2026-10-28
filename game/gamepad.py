@@ -22,7 +22,7 @@ Keyboard and controller work side by side; prompts follow whichever was used las
 * the face buttons, D-pad, Back and the right stick click: the actions bound
   to them in Options -> Key bindings (:data:`game.keybinds.PAD`), each
   dispatching its action -- A talks, opens and loots, B blocks,
-  X attacks, Y opens the inventory...;
+  X attacks, Y opens Statistics on the Character sheet...;
 * D-pad left / right: highlight the previous / next occupied quickbar slot;
   A equips, consumes or uses it. Browsing takes priority over nearby interaction;
 * Start: the pause menu (Esc).
@@ -492,10 +492,11 @@ class GamepadInput:
                 if not self._menu_key(button[5:]):
                     self._tap(_qt_key(button[5:]))
                 self._repeat[button] = now + REPEAT_DELAY
-            elif button == keybinds.pad_binding("inventory"):
-                # The button that opened the inventory closes it again.
+            elif button in (keybinds.pad_binding("inventory"), keybinds.pad_binding("character")):
+                # Either Statistics shortcut closes the shared window again.
                 if not self._menu_key("escape"):
-                    self._tap(_qt_key(keybinds.key_binding("inventory")))
+                    action = "character" if button == keybinds.pad_binding("character") else "inventory"
+                    self._tap(_qt_key(keybinds.key_binding(action)))
         if "a" in released and self._menu_mouse:
             self._menu_mouse = False
             self.sink.mouse("left", False, play=False)

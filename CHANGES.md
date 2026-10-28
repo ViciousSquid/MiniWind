@@ -1,5 +1,10 @@
 # Changes
 
+## Gamepad Statistics shortcut
+
+- Y opens Statistics directly on the Character sheet. LB/RB change tabs;
+  B or Y closes the window. Reopening starts on Character again.
+
 ## Gamepad navigation and camera orbit
 
 - D-pad left/right highlights quickbar items; A equips, consumes or uses the

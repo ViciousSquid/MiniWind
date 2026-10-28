@@ -61,8 +61,12 @@ Xbox names (A is the bottom face button). Controllers can connect during play.
 | B | Hold block | Cancel dialog / close inventory |
 | LB / RB | Next spell / level up | Previous/next Statistics tab |
 | LT / RT | Use the physical left/right hand; hold for a bow/fist or to block with a shield | RT holds lockpick tension |
-| Y / Start | Inventory / pause | Close inventory / pause |
+| Y / Start | Statistics (Character sheet) / pause | Close Statistics / pause |
 | L3 / R3 / Back | Hold sprint / sneak / map | |
+
+Y opens the Statistics window on the Character sheet each time. LB / RB move
+between its tabs, including Inventory; B or Y closes it. The Statistics shortcut
+can be rebound as "Character sheet" under Pause → Options → Key bindings.
 
 Browsing the quickbar makes the next A press use that item, even beside an NPC.
 Otherwise a nearby talk/open/loot prompt takes priority. In inventory, focus the
