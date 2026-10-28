@@ -277,7 +277,7 @@ class LogicCombat:
 
     @staticmethod
     def _blocks_hitscan(brush):
-        return not (brush.get('is_trigger') or brush.get('hidden') or
+        return not (brush.get('no_collision') or brush.get('is_trigger') or brush.get('hidden') or
                     is_water_brush(brush) or brush.get('is_fog'))
 
     def _trace_brushes(self, rows, ray_origin, ray_dir, reach):

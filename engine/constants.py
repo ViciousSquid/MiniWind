@@ -116,7 +116,8 @@ def is_solid_world_brush(brush):
     """Single source of truth for "is this brush part of the solid world?".
 
     The rule every collision consumer shares: a brush is solid unless it is
-    hidden, fog, water, or a trigger volume that is not also a mover or a door.
+    marked non-solid, hidden, fog, water, or a trigger volume that is not also
+    a mover or a door.
     It was written out identically in five places -- the monster AI's three
     no-grid fallbacks, the monster wall query in the logic thread, and the
     player's own predicate -- which is how paths that are *supposed* to agree
@@ -134,7 +135,7 @@ def is_solid_world_brush(brush):
       through the grid -- and because a dynamic body is simulated rather than
       collided with as a wall.
     """
-    if brush.get('hidden') or brush.get('is_fog'):
+    if brush.get('no_collision') or brush.get('hidden') or brush.get('is_fog'):
         return False
     if brush.get('is_trigger') and not (brush.get('is_mover') or brush.get('is_door')):
         return False

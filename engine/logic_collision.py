@@ -147,21 +147,27 @@ class LogicCollision:
     def __init__(self, logic):
         self.logic = logic
         self._dirty = False
+        self._geometry_dirty = False
         self.model_collision_enabled = True
         self._model_collision_brushes = []
         self._physics_body_brushes = []
         self._collision_brushes_cache = []
         self._collision_rows = None
 
-    def mark_dirty(self):
+    def mark_dirty(self, rebuild_geometry=False):
         self._dirty = True
+        self._geometry_dirty |= bool(rebuild_geometry)
 
     def rebuild_if_dirty(self) -> bool:
         if not self._dirty:
             return False
         self._dirty = False
+        rebuild_geometry = self._geometry_dirty
+        self._geometry_dirty = False
         logic = self.logic
         with logic.session_runtime.monster_lock:
+            if rebuild_geometry:
+                self.prepare_angled_brush_collision()
             logic.world_runtime.notify_authored_visibility_changed()
         return True
 
@@ -175,7 +181,7 @@ class LogicCollision:
         blocks the player, angled or not.
         """
         logic = self.logic
-        if brush.get('hidden') or brush.get('is_fog'):
+        if brush.get('no_collision') or brush.get('hidden') or brush.get('is_fog'):
             return False
         if is_water_brush(brush):
             return False

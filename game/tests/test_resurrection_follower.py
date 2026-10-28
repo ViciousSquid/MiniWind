@@ -1,5 +1,11 @@
 """Resurrection grants one second life and a permanent, saved follower mark."""
 
+from types import SimpleNamespace
+
+import pytest
+
+from engine.spatial import (PARKED_DISABLED_KEY, PARKED_HIDDEN_KEY,
+                            TIER_DISTANT, TIER_DORMANT, TIER_NEAR)
 from game import fio
 from game.rpg import equipment as eq, magic
 from game.rpg.character import Character
@@ -7,10 +13,14 @@ from game.runtime import MiniwindSession
 from .test_cast_controls import _Logic, _Thing
 
 
-def _raised():
-    corpse = _Thing("Fallen", (0, 0, 100), type="npc", npc_role="bandit",
+def _raised(actor_type="npc"):
+    corpse = _Thing("Fallen", (0, 0, 100), type=actor_type, npc_role="bandit",
                     faction="bandits", team="bandits", aggression="hostile",
                     dead=True, health=0, max_health=40)
+    return _raise_actor(corpse)
+
+
+def _raise_actor(corpse):
     session = MiniwindSession(_Logic([corpse]), cfg={})
     session.game.character = Character.create("Caster", "imperial", "necromancer")
     session.needs_char_creation = False
@@ -35,8 +45,9 @@ def test_raised_npc_is_red_friendly_and_follows_the_caster():
     assert p["_dest"][0] > raised.pos[0]
 
 
-def test_second_death_ends_following_and_body_can_never_be_raised_again():
-    session, raised = _raised()
+@pytest.mark.parametrize("actor_type", ["npc", "creature", "monster"])
+def test_second_death_ends_following_and_body_can_never_be_raised_again(actor_type):
+    session, raised = _raised(actor_type)
     raised.properties.update(dead=True, health=0)
     session._reap_dead()
     assert not raised.properties["follow_player"]
@@ -49,6 +60,64 @@ def test_second_death_ends_following_and_body_can_never_be_raised_again():
     assert not session.do_cast(target=raised, hand="main")
     assert raised.properties["dead"]
     assert session.game.character.magicka == 100
+
+
+@pytest.mark.parametrize("actor_type", ["npc", "creature", "monster"])
+@pytest.mark.parametrize("indexed", [False, True])
+@pytest.mark.parametrize("tier", [TIER_NEAR, TIER_DISTANT])
+def test_raised_actors_walk_once_per_tick_toward_the_caster(actor_type, indexed,
+                                                          tier, monkeypatch):
+    """A follow flag must produce motion in both small and indexed worlds."""
+    session, raised = _raised(actor_type)
+    if indexed:
+        from game import runtime
+        session.logic.world_runtime = SimpleNamespace(monster_things=[raised])
+        monkeypatch.setattr(runtime, "WORLD_INDEX_MIN_ACTORS", 1)
+    raised.properties["move_speed"] = 120.0
+    raised.properties["_sim_tier"] = tier
+    fio.player(session.logic).pos = [1000., 0., 100.]
+    for _ in range(5):
+        session.tick(0.1)
+    assert raised.properties["sched_state"] == "FOLLOW"
+    assert raised.pos[0] == pytest.approx(60.0)
+    assert raised.pos[2] == pytest.approx(100.0)
+
+
+@pytest.mark.parametrize("actor_type", ["npc", "creature", "monster"])
+@pytest.mark.parametrize("indexed", [False, True])
+@pytest.mark.parametrize("marker", [PARKED_HIDDEN_KEY, PARKED_DISABLED_KEY])
+def test_parked_raised_actors_stay_stationary(actor_type, indexed, marker,
+                                             monkeypatch):
+    """A parking marker's presence matters even when its saved value is False."""
+    session, raised = _raised(actor_type)
+    if indexed:
+        from game import runtime
+        session.logic.world_runtime = SimpleNamespace(monster_things=[raised])
+        monkeypatch.setattr(runtime, "WORLD_INDEX_MIN_ACTORS", 1)
+    raised.properties.update(hidden=True, disabled=True, _sim_tier=TIER_DORMANT)
+    raised.properties[marker] = False
+    fio.player(session.logic).pos = [1000., 0., 100.]
+    original_pos = list(raised.pos)
+    for _ in range(5):
+        session.tick(0.1)
+    assert raised.pos == original_pos
+
+
+@pytest.mark.parametrize("role", ["bandit", "wolf"])
+def test_a_raised_creature_walks_in_the_normal_session_tick(role):
+    """Humanoid creatures follow too, and roaming beasts stop wandering."""
+    from game.entities import Creature
+    corpse = Creature(pos=[0., 0., 100.], properties={
+        "name": "Fallen", "npc_role": role, "dead": True,
+        "health": 0, "max_health": 40, "move_speed": 120.0})
+    corpse.properties["_roam_dest"] = [0., 1000.]
+    session, raised = _raise_actor(corpse)
+    assert raised.properties["type"] == "creature"
+    fio.player(session.logic).pos = [1000., 0., 100.]
+    session.tick(0.1)
+    assert raised.properties["sched_state"] == "FOLLOW"
+    assert raised.pos[0] == pytest.approx(12.0)
+    assert raised.pos[2] == pytest.approx(100.0)
 
 
 def test_resurrection_history_and_tint_are_in_saved_entity_properties():

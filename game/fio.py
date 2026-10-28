@@ -47,6 +47,12 @@ def is_overhead(logic) -> bool:
     return bool(cam is not None and cam.is_overhead())
 
 
+def map_created_by(logic) -> str:
+    """The map's authored origin marker, retained by the editor on load."""
+    state = getattr(logic, "editor_state", None)
+    return str(getattr(state, "created_at", ""))
+
+
 def set_camera_mode(logic, mode) -> None:
     cam = camera(logic)
     if cam is not None:

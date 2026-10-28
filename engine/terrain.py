@@ -446,6 +446,10 @@ class Terrain:
         # once by the editor and the resulting colour/coverage becomes part
         # of the terrain data itself.
         self.texture_paint_maps: Dict[Tuple[int, int], np.ndarray] = {}
+        # Temporary surface paint is composited over authored paint at upload,
+        # so removing it reveals the original road/ground material exactly.
+        self.washable_texture_paint_maps: Dict[Tuple[int, int], np.ndarray] = {}
+        self._washable_paint_alpha: Dict[Tuple[int, int], np.ndarray] = {}
         self._paint_map_versions: Dict[Tuple[int, int], int] = {}
         self._paint_version_counter = 0
         self._paint_pages: List[int] = []
@@ -1595,7 +1599,7 @@ class Terrain:
             weight = np.maximum(weight, biomes[:, terrain_biomes.SWAMP] * 0.8)
             weight = weight * terrain_biomes.grass_keep(biomes)
         keep &= edge_roll < weight
-        if self.texture_paint_maps:
+        if self.texture_paint_maps or self.washable_texture_paint_maps:
             keep &= self._paint_alpha_batch(tx, tz) < self.GRASS_PAINT_CLEAR
         tx = tx[keep]
         tz = tz[keep]
@@ -1670,7 +1674,7 @@ class Terrain:
         gx = (self._get_raw_heights_batch(tx + eps, tz) - h0) / eps
         gz = (self._get_raw_heights_batch(tx, tz + eps) - h0) / eps
         keep &= 1.0 / np.sqrt(1.0 + gx * gx + gz * gz) >= self.GRASS_MIN_NORMAL_Y
-        if self.texture_paint_maps:
+        if self.texture_paint_maps or self.washable_texture_paint_maps:
             keep &= self._paint_alpha_batch(tx, tz) < self.GRASS_PAINT_CLEAR
         tx, tz = tx[keep], tz[keep]
         if len(tx) == 0:
@@ -2609,7 +2613,7 @@ class Terrain:
         xs = np.asarray(world_x, np.float32).ravel()
         zs = np.asarray(world_z, np.float32).ravel()
         out = np.zeros(len(xs), np.float32)
-        if not self.texture_paint_maps or len(xs) == 0:
+        if not (self.texture_paint_maps or self.washable_texture_paint_maps) or len(xs) == 0:
             return out
         res = self.TERRAIN_PAINT_RESOLUTION
         size = float(self.chunk_size)
@@ -2620,11 +2624,14 @@ class Terrain:
         ix = np.clip(((fx - cx) * res).astype(np.int64), 0, res - 1)
         iz = np.clip(((fz - cz) * res).astype(np.int64), 0, res - 1)
         for key in set(zip(cx.tolist(), cz.tolist())):
-            paint = self.texture_paint_maps.get(key)
-            if paint is None:
-                continue
             m = (cx == key[0]) & (cz == key[1])
-            out[m] = paint[ix[m], iz[m], 3].astype(np.float32) / 255.0
+            paint = self.texture_paint_maps.get(key)
+            if paint is not None:
+                out[m] = paint[ix[m], iz[m], 3].astype(np.float32) / 255.0
+            overlay = self.washable_texture_paint_maps.get(key)
+            if overlay is not None:
+                alpha = overlay[ix[m], iz[m], 3].astype(np.float32) / 255.0
+                out[m] = alpha + out[m] * (1.0 - alpha)
         return out
 
     #: Paint sources already loaded, by path: a game stamping the same few
@@ -2685,7 +2692,7 @@ class Terrain:
         return (top * (1.0 - fy) + bottom * fy) / 255.0
 
     def _bake_texture_rect(self, bounds, texture, angle=0.0,
-                           feather=0.0, opacity=1.0):
+                           feather=0.0, opacity=1.0, washable=False):
         """Bake one source image directly into terrain's per-chunk albedo."""
         try:
             min_x, min_z, max_x, max_z = [float(v) for v in bounds]
@@ -2715,6 +2722,8 @@ class Terrain:
 
         res = self.TERRAIN_PAINT_RESOLUTION
         cell = self.chunk_size / float(res)
+        paint_maps = (self.washable_texture_paint_maps if washable
+                      else self.texture_paint_maps)
         changed = False
         for cx in range(min_cx, max_cx + 1):
             chunk_min_x = self.offset_x + cx * self.chunk_size
@@ -2762,11 +2771,17 @@ class Terrain:
                     continue
 
                 key = (int(cx), int(cz))
-                paint = self.texture_paint_maps.get(key)
+                paint = paint_maps.get(key)
                 if paint is None:
                     paint = np.zeros((res, res, 4), dtype=np.uint8)
-                    self.texture_paint_maps[key] = paint
+                    paint_maps[key] = paint
                 dst = paint[ix0:ix1 + 1, iz0:iz1 + 1].astype(np.float32) / 255.0
+                if washable:
+                    alpha = self._washable_paint_alpha.get(key)
+                    if alpha is None:
+                        alpha = paint[..., 3].astype(np.float32) / 255.0
+                        self._washable_paint_alpha[key] = alpha
+                    dst[..., 3] = alpha[ix0:ix1 + 1, iz0:iz1 + 1]
                 dst_a = dst[..., 3]
                 out_a = src_a + dst_a * (1.0 - src_a)
                 out_rgb = np.zeros_like(dst[..., :3])
@@ -2777,6 +2792,8 @@ class Terrain:
                 ) / out_a[valid, None]
                 dst[..., :3] = out_rgb
                 dst[..., 3] = out_a
+                if washable:
+                    alpha[ix0:ix1 + 1, iz0:iz1 + 1] = out_a
                 paint[ix0:ix1 + 1, iz0:iz1 + 1] = np.clip(
                     dst * 255.0 + 0.5, 0, 255).astype(np.uint8)
                 self._touch_texture_paint(key)
@@ -2784,8 +2801,8 @@ class Terrain:
         return changed
 
     def paint_texture_at(self, world_x, world_z, radius, texture,
-                         feather=0.25, opacity=1.0, angle=0.0):
-        """Bake the selected texture into the terrain under the sculpt brush."""
+                         feather=0.25, opacity=1.0, angle=0.0, washable=False):
+        """Paint terrain; washable marks overlay and preserve authored paint."""
         radius = float(radius)
         if radius <= 0.0 or not str(texture).strip():
             return False
@@ -2795,18 +2812,111 @@ class Terrain:
              float(world_x) + radius, float(world_z) + radius),
             str(texture), angle=float(angle),
             feather=radius * float(np.clip(feather, 0.0, 1.0)),
-            opacity=opacity)
+            opacity=opacity, washable=washable)
 
     def stamp_texture_at(self, world_x, world_z, radius, texture,
-                         feather=0.25, opacity=1.0, angle=0.0):
+                         feather=0.25, opacity=1.0, angle=0.0, washable=False):
         """Compatibility name: this now bakes paint into the terrain itself."""
         return self.paint_texture_at(
             world_x, world_z, radius, texture,
-            feather=feather, opacity=opacity, angle=angle)
+            feather=feather, opacity=opacity, angle=angle, washable=washable)
+
+    def _composite_texture_paint(self, coord):
+        """Straight-alpha RGBA8 for the existing terrain paint atlas."""
+        base = self.texture_paint_maps.get(coord)
+        overlay = self.washable_texture_paint_maps.get(coord)
+        if base is None:
+            return overlay
+        if overlay is None:
+            return base
+        under = base.astype(np.float32) / 255.0
+        over = overlay.astype(np.float32) / 255.0
+        top_alpha = over[..., 3:4]
+        base_alpha = under[..., 3:4] * (1.0 - top_alpha)
+        alpha = top_alpha + base_alpha
+        rgb = np.divide(over[..., :3] * top_alpha + under[..., :3] * base_alpha,
+                        alpha, out=np.zeros_like(over[..., :3]), where=alpha > 1e-6)
+        result = np.concatenate((rgb, alpha), axis=2)
+        return np.clip(result * 255.0 + 0.5, 0, 255).astype(np.uint8)
+
+    def wash_texture_paint(self, amount, bounds=None, exposed=None):
+        """Remove normalized coverage from washable paint; return changed chunks.
+
+        Bounds are world ``(min_x, min_z, max_x, max_z)``. With bounds supplied,
+        only intersecting chunk coordinates are visited. ``exposed(xs, zs)``
+        may return a boolean mask for the painted texel centres to protect
+        sheltered marks. Fractional alpha is retained between calls so small
+        simulation steps wash at the same rate as a single large step.
+        """
+        amount = float(amount)
+        if not math.isfinite(amount) or amount <= 0.0:
+            return 0
+        amount = min(amount, 1.0)
+        size = float(self.chunk_size)
+        res = self.TERRAIN_PAINT_RESOLUTION
+        cell = size / res
+        region = None
+        if bounds is None:
+            coords = list(self.washable_texture_paint_maps)
+        else:
+            region = tuple(float(v) for v in bounds)
+            if len(region) != 4 or not all(math.isfinite(v) for v in region):
+                return 0
+            min_x, min_z, max_x, max_z = region
+            if max_x <= min_x or max_z <= min_z:
+                return 0
+            min_cx = math.floor((min_x - self.offset_x) / size)
+            max_cx = math.floor((max_x - self.offset_x) / size)
+            min_cz = math.floor((min_z - self.offset_z) / size)
+            max_cz = math.floor((max_z - self.offset_z) / size)
+            coords = ((cx, cz) for cx in range(min_cx, max_cx + 1)
+                      for cz in range(min_cz, max_cz + 1))
+        changed = 0
+        for key in coords:
+            paint = self.washable_texture_paint_maps.get(key)
+            if paint is None:
+                continue
+            alpha = self._washable_paint_alpha.get(key)
+            if alpha is None:
+                alpha = paint[..., 3].astype(np.float32) / 255.0
+                self._washable_paint_alpha[key] = alpha
+            ix, iz = np.nonzero(alpha > 0.0)
+            if not len(ix):
+                continue
+            xs = self.offset_x + key[0] * size + (ix + 0.5) * cell
+            zs = self.offset_z + key[1] * size + (iz + 0.5) * cell
+            mask = np.ones(len(ix), dtype=bool)
+            if region is not None:
+                mask &= (xs >= min_x) & (xs <= max_x) & (zs >= min_z) & (zs <= max_z)
+            if exposed is not None and np.any(mask):
+                selected = np.flatnonzero(mask)
+                mask[selected] &= np.asarray(exposed(xs[selected], zs[selected]), dtype=bool)
+            ix, iz = ix[mask], iz[mask]
+            if not len(ix):
+                continue
+            alpha[ix, iz] = np.maximum(0.0, alpha[ix, iz] - amount)
+            encoded = np.clip(alpha[ix, iz] * 255.0 + 0.5, 0, 255).astype(np.uint8)
+            # Once invisible in the RGBA8 atlas, retire the residual coverage
+            # too rather than keeping tiny floating-point tails indefinitely.
+            alpha[ix, iz] = np.where(encoded == 0, 0.0, alpha[ix, iz])
+            visible_change = np.any(paint[ix, iz, 3] != encoded)
+            paint[ix, iz, 3] = encoded
+            changed += 1
+            if not np.any(alpha > 0.0):
+                self.washable_texture_paint_maps.pop(key, None)
+                self._washable_paint_alpha.pop(key, None)
+                self._touch_texture_paint(key)
+                if key not in self.texture_paint_maps:
+                    self._paint_map_versions.pop(key, None)
+            elif visible_change:
+                self._touch_texture_paint(key)
+        return changed
 
     def clear_texture_paint(self):
         """Erase all baked terrain texture paint."""
         self.texture_paint_maps = {}
+        self.washable_texture_paint_maps = {}
+        self._washable_paint_alpha = {}
         self._paint_map_versions = {}
         self._paint_version_counter += 1
         self._paint_gpu_version[:] = 0
@@ -2841,7 +2951,7 @@ class Terrain:
         table = self.table
         self._sync_gl_columns()
         coord = (int(table.coord[slot, 0]), int(table.coord[slot, 1]))
-        paint = self.texture_paint_maps.get(coord)
+        paint = self._composite_texture_paint(coord)
         if paint is None:
             self._paint_gpu_version[slot] = 0
             return
@@ -2859,10 +2969,10 @@ class Terrain:
             gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, data)
         self._paint_gpu_version[slot] = self._paint_map_versions.get(coord, 0)
 
-    def _serialize_texture_paint(self):
+    def _serialize_texture_paint(self, maps=None):
         import base64, zlib
         entries = []
-        for (cx, cz), paint in sorted(self.texture_paint_maps.items()):
+        for (cx, cz), paint in sorted((self.texture_paint_maps if maps is None else maps).items()):
             if paint is None or paint.shape != (
                     self.TERRAIN_PAINT_RESOLUTION,
                     self.TERRAIN_PAINT_RESOLUTION, 4):
@@ -2876,11 +2986,17 @@ class Terrain:
             })
         return entries
 
-    def _restore_texture_paint(self, entries):
+    def _restore_texture_paint(self, entries, washable=False):
         import base64, zlib
-        self.texture_paint_maps = {}
-        self._paint_map_versions = {}
-        self._paint_version_counter = 0
+        if washable:
+            self.washable_texture_paint_maps = {}
+            self._washable_paint_alpha = {}
+        else:
+            self.texture_paint_maps = {}
+            self._paint_map_versions = {}
+            self._paint_version_counter = 0
+            self._paint_gpu_version[:] = 0
+        maps = self.washable_texture_paint_maps if washable else self.texture_paint_maps
         res = self.TERRAIN_PAINT_RESOLUTION
         expected = res * res * 4
         for entry in entries or []:
@@ -2897,7 +3013,9 @@ class Terrain:
                 paint = np.frombuffer(raw, dtype=np.uint8).copy().reshape(
                     res, res, 4)
                 key = (int(coord[0]), int(coord[1]))
-                self.texture_paint_maps[key] = paint
+                maps[key] = paint
+                if washable:
+                    self._washable_paint_alpha[key] = paint[..., 3].astype(np.float32) / 255.0
                 self._touch_texture_paint(key)
             except (TypeError, ValueError, OSError, zlib.error):
                 continue
@@ -3004,6 +3122,10 @@ class Terrain:
         if texture_paint:
             data['texture_paint_resolution'] = self.TERRAIN_PAINT_RESOLUTION
             data['texture_paint'] = texture_paint
+        washable_paint = self._serialize_texture_paint(self.washable_texture_paint_maps)
+        if washable_paint:
+            data['texture_paint_resolution'] = self.TERRAIN_PAINT_RESOLUTION
+            data['washable_texture_paint'] = washable_paint
 
         # Heightmap settings (image data is NOT saved — only the path is
         # stored by the editor so the user can re-load it)
@@ -3142,6 +3264,7 @@ class Terrain:
             self.biome.name = biome_display_name(self.biome.name)
         # Baked terrain texture paint.
         self._restore_texture_paint(data.get('texture_paint', []))
+        self._restore_texture_paint(data.get('washable_texture_paint', []), washable=True)
         # Migrate old render-time stamps once. The source asset is sampled now
         # and then discarded; the saved terrain owns the resulting pixels.
         for stamp in data.get('texture_stamps', []):

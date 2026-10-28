@@ -284,6 +284,8 @@ class SpatialGrid:
             if is_water_brush(brush):
                 self.water_brushes.append(brush)
                 continue
+            if brush.get('no_collision'):
+                continue
 
             is_dynamic = brush.get('is_mover') or brush.get('is_door')
             if brush.get('is_trigger') and not is_dynamic:

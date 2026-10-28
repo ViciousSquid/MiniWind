@@ -69,6 +69,18 @@ low Security; only the **Knock** spell can open a jammed container.
 The physical key below **Esc** opens and closes the console in play and in the
 editor, including **§** on ISO Mac keyboards and **` / ~** on US keyboards.
 
+Outdoor weather changes between clear skies, cloud, rain, storms and snow.
+Rain falls toward the ground in the top-down view, with stronger foreground
+streaks at the screen edges and small splashes. Effects stay inside the camera
+view with a fixed particle budget, independent of world size and Big World's
+distant tiers. Caves stay dry; other interior maps can disable **Outdoor
+weather** in their Game Settings.
+Rain gradually washes exposed blood from the ground; shelter protects it.
+
+Use `weather rain` to see rain, `weather storm 0.7` for a lighter storm,
+`weather clear` for clear skies, or `weather auto` to resume the natural cycle.
+Weather choices and transitions are saved with the game.
+
 ## What's in the game
 
 | System | Summary |

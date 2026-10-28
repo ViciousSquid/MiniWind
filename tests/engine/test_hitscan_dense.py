@@ -283,6 +283,16 @@ def test_a_ray_starting_inside_a_box_hits_it_at_zero(logic):
     assert tuple(point) == (0.0, 0.0, 0.0)
 
 
+@pytest.mark.parametrize("dense", [False, True], ids=["scalar", "dense"])
+def test_shots_pass_through_a_non_solid_brush_to_the_wall_behind_it(logic, dense):
+    decoration = box_brush("decoration", (0, 0, 100), (64, 64, 16), no_collision=True)
+    wall = box_brush("wall", (0, 0, 300), (64, 64, 16))
+    thread = logic([decoration, wall], dense=dense)
+    distance, point = _trace(thread, glm.vec3(0), glm.vec3(0, 0, 1), 1000.)
+    assert distance == 292.
+    assert tuple(point) == (0., 0., 292.)
+
+
 # -- the batched monster pass --------------------------------------------------------
 
 def _random_monsters(rng, count=40):
@@ -390,18 +400,20 @@ def test_the_dense_wall_test_is_the_walk_including_box_faces(logic):
         assert dense == _walk_walls(brushes, x, y, z)
 
 
-def test_a_small_swarm_dies_on_a_wall_and_passes_a_hidden_one(logic):
+@pytest.mark.parametrize("disabled_key", ["hidden", "no_collision"])
+@pytest.mark.parametrize("dense", [False, True], ids=["scalar", "dense"])
+def test_a_small_swarm_dies_on_a_wall_and_passes_a_non_solid_one(logic, disabled_key, dense):
     from engine.player import Player
     walls = [box_brush("far%d" % i, (5000 + 100 * i, 0, 0), (10, 10, 10)) for i in range(3)]
     wall = box_brush("wall", (0, 0, 100), (512, 512, 16))
-    thread = logic([*walls, wall])
+    thread = logic([*walls, wall], dense=dense)
     thread.player_runtime.player = Player(0.0, -5000.0)
     combat = thread.combat_runtime
     combat._add_monster_projectile((0.0, 0.0, 0.0), (0.0, 0.0, 600.0), 12345, 10.0, 5.0)
     for _ in range(20):
         combat._update_monster_projectiles(1.0 / 60.0)
     assert len(combat._monster_projectiles) == 0
-    wall['hidden'] = True
+    wall[disabled_key] = True
     combat._add_monster_projectile((0.0, 0.0, 0.0), (0.0, 0.0, 600.0), 12345, 10.0, 5.0)
     for _ in range(20):
         combat._update_monster_projectiles(1.0 / 60.0)

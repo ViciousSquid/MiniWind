@@ -1177,6 +1177,13 @@ class PropertyEditor(QWidget):
         self._widgets['lock_cb'] = lock_cb
 
         type_layout.addWidget(self._section("Behaviors"))
+        non_solid_cb = _make_checkbox(
+            "Non solid", bool(brush.get('no_collision', False)),
+            self.on_non_solid_changed, _Style.CHECKBOX)
+        non_solid_cb.setToolTip("Disable collision while keeping this brush visible.")
+        type_layout.addWidget(non_solid_cb)
+        self._widgets['non_solid_cb'] = non_solid_cb
+
         for key, label, tip in (
             ('is_trigger', "Is Trigger (activates other objects)", self.on_trigger_changed),
             ('is_mover', "Is Mover (moves back and forth)", self.on_mover_changed),
@@ -4703,6 +4710,18 @@ class PropertyEditor(QWidget):
     # ────────────────────────────
     # Event handlers
     # ────────────────────────────
+    def on_non_solid_changed(self, checked):
+        if self._populating or not isinstance(self.current_object, dict):
+            return
+        checked = bool(checked)
+        if bool(self.current_object.get('no_collision', False)) == checked:
+            return
+        self.editor.save_state()
+        self.update_object_prop('no_collision', checked)
+        logic = getattr(self.editor.view_3d, 'logic_thread', None)
+        if logic is not None:
+            logic.collision_runtime.mark_dirty(rebuild_geometry=True)
+
     def on_shader_changed(self, shader_type):
         if self.current_object is None or self._populating:
             return

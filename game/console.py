@@ -14,6 +14,7 @@ session is running, and the editor window) plus the raw argument string.
     sim               inspect and drive the reactive simulation
     inspect | mind    pause and click an actor for its live mental state
     torch_shadows [on|off]   torches near you cast shadows (toggles)
+    weather [auto|clear|cloudy|rain|storm|snow] [0..1]   local outdoor weather
 """
 
 import time
@@ -483,6 +484,49 @@ def cmd_torch_shadows(ctx, args):
     return None
 
 
+def cmd_weather(ctx, args):
+    """weather [auto|clear|cloudy|rain|storm|snow] [intensity 0..1].
+
+    With no arguments, show the current weather. A named weather overrides the
+    natural cycle; ``weather auto`` returns to changing weather. Effects stay
+    within the top-down camera view and are hidden in cave maps.
+    """
+    session = getattr(ctx.logic_thread, "_miniwind", None)
+    if not ctx.play_mode or session is None:
+        debug_log("Error", "weather: enter Play Mode first.")
+        return None
+    from .ui import hits
+    import math
+    tokens = str(args or "").lower().split()
+    if not tokens:
+        weather = session.weather
+        mode = "automatic" if weather.automatic else "manual"
+        debug_log("Info", f"Weather: {weather.mode} ({mode}).")
+        return None
+    kind = tokens[0]
+    if kind not in ("auto", "clear", "cloudy", "rain", "storm", "snow") or len(tokens) > 2:
+        debug_log("Error", "Usage: weather [auto|clear|cloudy|rain|storm|snow] [0..1]")
+        return None
+    try:
+        intensity = float(tokens[1]) if len(tokens) == 2 else 1.0
+        if not math.isfinite(intensity) or not 0.0 <= intensity <= 1.0 or (kind == "auto" and len(tokens) > 1):
+            raise ValueError
+    except ValueError:
+        debug_log("Error", "weather: intensity must be between 0 and 1; auto takes no intensity.")
+        return None
+
+    def apply(active_session):
+        if kind == "auto":
+            active_session.weather.set_auto()
+        else:
+            active_session.weather.set_weather(kind, intensity)
+        active_session.notify("Weather: " + ("automatic" if kind == "auto" else kind))
+
+    hits.queue(apply)
+    debug_log("Info", "Weather: " + ("automatic cycle" if kind == "auto" else kind))
+    return None
+
+
 def cmd_roads(ctx, args):
     """roads -- who is travelling the roads right now, and where.
 
@@ -610,6 +654,8 @@ COMMANDS = (
      "1|0 — Show or hide the search circle and orbiting Searching label (saved)"),
     (("roads", "travellers"), cmd_roads,
      "— List the parties on the roads: who, where from/to, where now (Play Mode)"),
+    (("weather",), cmd_weather,
+     "[auto|clear|cloudy|rain|storm|snow] [0..1] — Outdoor weather in the camera view (saved)"),
     (("debugtools", "debug"), cmd_debugtools,
      "— Time controls (rewind, play/pause, speed) and teleport to any cave (Play Mode)"),
     (("resurrect",), cmd_resurrect,
