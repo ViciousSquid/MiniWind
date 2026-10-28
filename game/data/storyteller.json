@@ -1,6 +1,6 @@
 {
   "store_key": "storyteller.state",
-  "version": 2,
+  "version": 3,
   "enabled": true,
   "sample_hours": 0.25,
   "event_hours": 2.0,
@@ -155,5 +155,7 @@
         "writ_hunter_scale": 0.75
       }
     }
-  }
+  },
+  "prosperity_bandit_bias": 2.0,
+  "notoriety_hunter_scale": 0.5
 }

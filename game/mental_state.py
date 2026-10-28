@@ -231,7 +231,8 @@ def snapshot(thing, monster_state: Optional[dict] = None,
     thought = props.get("_sim_reason")
     if not thought and session is not None:
         try:
-            intent = session.director.top_intent(thing)
+            intents = session.director.evaluate(thing)
+            intent = intents[0] if intents else None
             if intent is not None:
                 thought = f"Considering {intent.label}: {intent.reason}"
         except (AttributeError, TypeError):
@@ -331,7 +332,7 @@ def _knowledge_sections(thing, session):
     except Exception:
         pass
     try:
-        intents = director.intents(thing)
+        intents = director.evaluate(thing)
         if intents:
             out.append(("Intents (ranked)",
                         [(f"{i.priority}", f"{i.label} — {i.reason}")
@@ -341,6 +342,28 @@ def _knowledge_sections(thing, session):
     storyteller = getattr(session, "storyteller", None)
     if storyteller is not None:
         out.append(("Storyteller decisions", storyteller.inspector_rows()))
+    spine = getattr(session, "faction_spine", None)
+    if spine is not None and spine.enabled():
+        from .sim import knowledge
+        from .sim.factions import identity, ledger
+        facts = knowledge.facts(spine.store, identity(thing))
+        feeling = spine.mood(thing, facts)
+        if feeling:
+            out.append(("Resident mood", [(k, str(v)) for k, v in feeling.items()]))
+        rows = []
+        faction = thing.properties.get("faction")
+        for key, entity in spine.entities.items():
+            if entity["faction"] == faction:
+                account = ledger(faction, spine.accounts(key))
+                rows.extend((f"#{r['event']} ({r['holder']})", f"{r['faction']} {r['amount']:+g}")
+                            for r in account["receipts"])
+        if rows:
+            out.append(("Faction goodwill receipts", rows))
+        cause = thing.properties.get("_faction_cause")
+        if cause:
+            out.append(("Journey cause", [("Faction", cause["faction"]), ("Home", cause["home"]),
+                        (f"Account #{cause['event']} ({cause['holder']})", cause["reason"]),
+                        ("Known trail", f"#{cause['trail']['e']} at {cause['trail'].get('pos')}")]))
     return out
 
 

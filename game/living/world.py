@@ -34,6 +34,7 @@ fallback tracks between places until you have authored them. Other PathNodes
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import time
@@ -169,6 +170,32 @@ class SessionHooks(jn.WorldHooks):
         storyteller = getattr(self.w.session, "storyteller", None)
         return storyteller.destination_weight(place_key) if storyteller is not None else 1.0
 
+    def bandit_destination_weight(self, place_key):
+        storyteller = getattr(self.w.session, "storyteller", None)
+        if storyteller is None or not storyteller.enabled:
+            return 1.0
+        target = self.w.places.get(storyteller.hooks.player_town())
+        place = self.w.places.get(place_key)
+        if target is None or place is None:
+            return 1.0
+        return storyteller.bandit_destination_weight(math.hypot(place["x"] - target["x"],
+                                                               place["z"] - target["z"]))
+
+    def faction_orders(self):
+        spine = getattr(self.w.session, "faction_spine", None)
+        return spine.pending() if spine is not None else ()
+
+    def faction_departed(self, journey):
+        self.w.session.faction_spine.departed(journey)
+
+    def faction_returned(self, journey):
+        self.w.session.faction_spine.returned(journey)
+
+    def encounter_resolved(self, winner, loser, t, where, fallen):
+        spine = getattr(self.w.session, "faction_spine", None)
+        if spine is not None:
+            spine.encounter(winner, loser, t, where, fallen)
+
     def materialisation_weight(self, actor_keys, distance):
         storyteller = getattr(self.w.session, "storyteller", None)
         return storyteller.materialisation_weight(actor_keys, distance) if storyteller is not None else 1.0
@@ -220,6 +247,12 @@ class SessionHooks(jn.WorldHooks):
         # Only someone the player cannot see goes: nobody vanishes on screen.
         parked = "_bw_parked_hidden" in p
         tier = int(p.get("_sim_tier", 0) or 0)
+        spine = getattr(self.w.session, "faction_spine", None)
+        if spine is not None and spine.enabled():
+            # Journey sampling may read appraisal, never populate its cache.
+            intents = self.w.session.director.evaluate(t)
+            if intents and intents[0].reaction == "MOURN":
+                return False
         return parked or tier >= TIER_DISTANT
 
     def resident_left(self, resident_id, journey):
@@ -233,6 +266,12 @@ class SessionHooks(jn.WorldHooks):
         if t is None:
             return
         t.properties.pop("away_on_journey", None)
+        member = next((m for m in journey.members if m.get("resident") == resident_id), {})
+        if alive and journey.cause:
+            t.properties["health"] = member.get("health", t.properties.get("health", 60))
+            for key in ("inventory", "equipped_weapon", "alignment"):
+                if key in member:
+                    t.properties[key] = copy.deepcopy(member[key])
         if not alive:
             t.properties["dead"] = True
             t.properties["health"] = 0
@@ -276,6 +315,9 @@ class LivingWorld:
                                      rng=s.rng, hooks=SessionHooks(self),
                                      population=self.population)
         self._index_scene(things)
+        spine = getattr(s, "faction_spine", None)
+        if spine is not None:
+            spine.bind(self.board, [t for t in things if str(t.properties.get("type")) in ("npc", "creature")])
         self._head_pool = [h for h in rpg_heads.HEAD_IDS
                            if h != getattr(s.game.character, "head", "")]
         now = _now_hours(s.clock)
@@ -350,6 +392,9 @@ class LivingWorld:
             kind = str(p.get("type", "")).lower()
             if kind not in ("npc", "creature"):
                 continue
+            rid = str(p.get("id") or p.get("name") or "")
+            if rid:
+                self._residents[rid] = t
             x, z = float(t.pos[0]), float(t.pos[2])
             if kind == "creature" and str(p.get("aggression")) == "hostile":
                 for k, v in sites.items():
@@ -423,6 +468,9 @@ class LivingWorld:
         self._board_t += delta
         if self._board_t >= BOARD_INTERVAL:
             self._board_t = 0.0
+            spine = getattr(s, "faction_spine", None)
+            if spine is not None:
+                spine.decide(_now_hours(s.clock))
             made = self.board.update(_now_hours(s.clock))
             self._enforce_away()
             self._stream()
@@ -587,6 +635,9 @@ class LivingWorld:
             p["triggered"] = True
             p["awake"] = False
             things.append(thing)
+            director = getattr(s, "director", None)
+            if director is not None and director.mood_context is not None:
+                director.evaluate(thing)  # pure materialisation touchpoint
         if not things:
             return
         scene = fio.things(s.logic)
@@ -615,6 +666,8 @@ class LivingWorld:
                 head = head_kind
             m["head"] = head
         faction = faction or j.faction
+        if j.cause:
+            faction, aggression, combatant = j.faction, "defensive", True
         props = {
             "name": m["name"], "display_name": m["display"], "npc_role": role,
             "faction": faction, "team": faction, "aggression": aggression,
@@ -656,13 +709,25 @@ class LivingWorld:
                 props["_memory_identity"] = (rp.get("_memory_identity") or rp.get("id")
                                              or rp.get("name"))
                 for k in ("dialogue", "merchant", "merchant_gold", "stock", "head",
-                          "relationships", "portrait", "strength", "endurance", "charisma"):
+                          "relationships", "portrait", "strength", "endurance", "charisma",
+                          "courage", "alignment", "combatant"):
                     if k in rp:
                         props[k] = rp[k]
+                if j.cause:
+                    # A faction force is made of these actual people, including
+                    # their authored role and possessions, rather than new guards.
+                    for k in ("npc_role", "equipped_weapon", "attack_style", "inventory"):
+                        if k in rp:
+                            props[k] = copy.deepcopy(rp[k])
         if m.get("id"):
             props["id"] = m["id"]
         if not props.get("dialogue"):
             props["dialogue"] = self._tree(j, m, index)
+        if j.cause:
+            for key in ("inventory", "equipped_weapon", "alignment"):
+                if key in m:
+                    props[key] = copy.deepcopy(m[key])
+            props["_faction_cause"] = j.provenance()
         return props
 
     def _despawn(self, jid, j) -> None:
@@ -693,6 +758,13 @@ class LivingWorld:
                             j.news.append(nid)
                 else:
                     m["health"] = max(1, int(p.get("health", m.get("health", 50)) or 1))
+                if j.cause and m.get("resident"):
+                    real = self.resident_thing(m["resident"])
+                    for key in ("inventory", "equipped_weapon", "alignment"):
+                        if key in p:
+                            m[key] = copy.deepcopy(p[key])
+                            if real is not None:
+                                real.properties[key] = copy.deepcopy(p[key])
             if j.state == "travel" and alive and len(j.route) >= 2:
                 lead = alive[0]
                 sx = roads.project(j.route, j.cum, lead.pos[0], lead.pos[2])
@@ -848,6 +920,15 @@ class LivingWorld:
     def _react(self, j, x, ppos) -> bool:
         """Fight or flight for one traveller. True when there is a threat."""
         s = self.session
+        spine = getattr(s, "faction_spine", None)
+        if j.cause or (spine is not None and spine.enabled() and x.properties.get("_memory_identity")):
+            intents = s.director.evaluate(x)
+            offender = s._sim_actor_by_key(intents[0].target) if intents else None
+            if (offender is not None and offender.pos is not None
+                    and not offender.properties.get("dead")
+                    and math.hypot(x.pos[0] - offender.pos[0], x.pos[2] - offender.pos[2]) <= SIGHT
+                    and s._law_visible(x, offender.pos) and s._apply_sim_intent(x)):
+                return True
         p = x.properties
         combatant = bool(p.get("combatant"))
         enemy = s._nearest_hostile(x, SIGHT)
@@ -855,7 +936,7 @@ class LivingWorld:
         if ppos is not None:
             d = math.hypot(x.pos[0] - ppos[0], x.pos[2] - ppos[2])
             if d <= SIGHT:
-                if j.hostile and j.kind != "wolves" or j.kind == "wolves" and d < 500:
+                if not j.cause and (j.hostile and j.kind != "wolves" or j.kind == "wolves" and d < 500):
                     player_threat = True
                 elif j.kind == "hunters" and self.board.hooks.player_bounty() > 0:
                     player_threat = True
@@ -964,10 +1045,14 @@ class LivingWorld:
             responses.append({"text": "Let's see your wares.", "goto": "END",
                               "actions": [{"op": "open_trade"}]})
         responses.append({"text": "Safe travels.", "goto": "END"})
+        purpose = PURPOSE.get(j.kind, "")
+        if j.cause:
+            purpose = (f"{j.faction}, from {self.board.place_name(j.home)}. {j.cause['reason']}. "
+                       "Our people at home can tell you what happened.")
         return {"start": "greet", "nodes": {
             "greet": {"text": greeting, "responses": responses},
             "where": {"text": f"From {origin}, bound for {dest}. "
-                              f"{PURPOSE.get(j.kind, '')}",
+                              f"{purpose}",
                       "responses": [{"text": "I see.", "goto": "greet"}]},
             "news": {"text": "", "news_of": j.id,
                      "responses": [{"text": "Thanks for the word.", "goto": "greet"}]},
@@ -1160,6 +1245,14 @@ class LivingWorld:
         for jid, entry in self.live.items():
             j = self.board.journeys.get(jid)
             alive = [x for x in entry["things"] if not x.properties.get("dead")]
+            if j is not None and j.cause:
+                for thing in entry["things"]:
+                    m = j.members[thing.properties["_member"]]
+                    m["alive"] = not bool(thing.properties.get("dead"))
+                    m["health"] = float(thing.properties.get("health", m.get("health", 0)))
+                    for key in ("inventory", "equipped_weapon", "alignment"):
+                        if key in thing.properties:
+                            m[key] = copy.deepcopy(thing.properties[key])
             if j is not None and j.state == "travel" and alive and len(j.route) >= 2:
                 j.set_progress(roads.project(j.route, j.cum, alive[0].pos[0],
                                              alive[0].pos[2]), t)
@@ -1167,6 +1260,9 @@ class LivingWorld:
         # Live flags are a session matter: a loaded game rebuilds them.
         self.session.store.set(STORE_KEY, raw.replace('"live": true', '"live": false'))
         self.session.store.set(QUEST_KEY, json.dumps(self._quests_def))
+        spine = getattr(self.session, "faction_spine", None)
+        if spine is not None:
+            spine.persist()
 
     def restore(self) -> None:
         """A save was loaded: every party back to data, then the saved board."""

@@ -473,6 +473,7 @@ class _PlayerActor:
         try:
             char = s.game.character
             p["display_name"] = str(getattr(char, "name", "") or "You")
+            p["alignment"] = float(getattr(char, "alignment", 0.0))
         except Exception:
             pass
         p["sneaking"] = bool(getattr(s.game, "sneaking", False))
@@ -888,6 +889,12 @@ class MiniwindSession(SettlementLaw):
         from .storyteller_session import SessionStorytellerHooks
         self.storyteller = Storyteller(self.store, self.director,
                                       SessionStorytellerHooks(self))
+        from .sim.factions import FactionSpine
+        self.faction_spine = FactionSpine(self.store, self.director,
+                                         enabled=lambda: self.storyteller.enabled)
+        self.director.mood_context = self.faction_spine.mood
+        self.director.ctx.goodwill = lambda a, b: (self.faction_spine.goodwill(a, b)
+                                                  if self.faction_spine.enabled() else 0.0)
 
     def _editor_config(self):
         """The editor's live settings (settings.ini), or None without an editor."""
@@ -1022,6 +1029,7 @@ class MiniwindSession(SettlementLaw):
         self.director.bus.clear()
         self.director.invalidate()
         self.storyteller.reset()
+        self.faction_spine.reset()
         self._sim_hours = 0.0
         if self.logic is not None:
             try:
@@ -8685,7 +8693,7 @@ class MiniwindSession(SettlementLaw):
         except Exception:
             facts = []
         try:
-            intents = self.director.intents(npc)
+            intents = self.director.evaluate(npc)
         except Exception:
             intents = []
         import copy
@@ -9575,6 +9583,7 @@ class MiniwindSession(SettlementLaw):
             self.director.persist()
             self.law.persist()
             self.storyteller.persist()
+            self.faction_spine.persist()
 
     def restore(self) -> None:
         # The event history first, so anything that reads it during the rest of
@@ -9583,6 +9592,7 @@ class MiniwindSession(SettlementLaw):
         self.director.invalidate()
         self.law.restore()
         self.storyteller.restore()
+        self.faction_spine.restore()
         self._clear_arrest()
         if getattr(self, "living", None) is not None:
             self.living.restore()
