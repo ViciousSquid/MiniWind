@@ -30,7 +30,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from . import fio
+from . import controls, fio
 from .facing import face_heading
 from engine.change_journal import touch as _journal
 from engine.spatial import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
@@ -485,6 +485,9 @@ FIZZLE_SOUND = "sizzle.mp3"
 #: Resurrection's own sound, in place of SPELLCAST_SOUND (silent until the
 #: file is in assets/sounds).
 RESURRECTION_SOUND = "resurrection.mp3"
+#: The pad's shake when a lock pick finds a pin's sweet spot: (low motor,
+#: high motor, milliseconds).
+LOCKPICK_SWEET_RUMBLE = (0.25, 0.7, 140)
 #: Heard when the player discovers a place (assets/sounds).
 DISCOVER_SOUND = "discover.mp3"
 #: A guard stopping the player to arrest them says one of these, at random.
@@ -9063,6 +9066,11 @@ class MiniwindSession(SettlementLaw):
                 return
         if not inv.has_item(self.game.character.inventory, "lockpick"):
             a.set_tension(False)
+        # The pick has just found the pin's sweet spot: a gamepad feels it.
+        aligned = bool(a.aligned) and not a.complete
+        if aligned and not getattr(self, "_lockpick_aligned", False):
+            controls.rumble(*LOCKPICK_SWEET_RUMBLE)
+        self._lockpick_aligned = aligned
         event = a.tick(delta)
         self._save_lockpick_progress()
         if event == "pick_broke":

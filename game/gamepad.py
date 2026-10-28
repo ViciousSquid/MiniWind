@@ -31,7 +31,9 @@ pause menu, character creation...): the left stick moves the pointer; A
 clicks (held and moved, it drags), X right-clicks; B and Start go back (Esc);
 the D-pad presses the arrow keys; the right stick scrolls; LB / RB turn the
 Statistics window's tabs. In the pause menu and on the death screen, which
-are driven by the keyboard, A is Enter.
+are driven by the keyboard, A is Enter. Picking a lock, the left stick lifts
+the pick, RT held is tension, Y the guide and B leaves; the pad shakes when
+the pick finds a pin's sweet spot.
 
 Testable without a pad or a window: :class:`GamepadInput` reads a *source*
 (anything with ``read() -> PadState or None``) and sends through a *sink*
@@ -60,6 +62,9 @@ TRIGGER_HANDS = {"lt": "left_hand", "rt": "right_hand"}
 #: small leans fine.
 LOOK_SPEED = 900.0
 LOOK_CURVE = 1.6
+#: How fast the left stick lifts a lock pick at full lean (degrees a
+#: second; the arrow keys' rate is 36).
+LOCKPICK_SPEED = 60.0
 #: Pointer speed in menus (pixels a second at full lean).
 CURSOR_SPEED = 900.0
 #: Scroll: wheel notches a second at full lean.
@@ -374,7 +379,25 @@ class GamepadInput:
                 self._tap(_qt_key("e"))  # the engine's own use key, for doors
 
     # -- in a menu ------------------------------------------------------------
+    def _lockpicking(self, state, pressed, released, dt) -> None:
+        """The lockpicking minigame: the left stick lifts the pick (a light
+        lean for fine work), RT held is tension, Y the guide, B leaves."""
+        _lx, ly = _stick(state.axis("lx"), state.axis("ly"))
+        if ly:
+            self.sink.lockpick("move", -ly * LOCKPICK_SPEED * dt)
+        if "rt" in pressed:
+            self.sink.lockpick("tension_on")
+        if "rt" in released:
+            self.sink.lockpick("tension_off")
+        if "y" in pressed:
+            self.sink.lockpick("assist")
+        if pressed & {"b", "start"}:
+            self._tap(_qt_key("escape"))
+
     def _menu(self, state, pressed, released, dt, now) -> None:
+        if self.sink.lockpicking():
+            self._lockpicking(state, pressed, released, dt)
+            return
         if self.sink.capturing_pad():
             # Options -> Key bindings is waiting for a button: this is it.
             for button in sorted(pressed):
@@ -537,6 +560,15 @@ class QtSink:
         if state is not None:
             state.set_mouse_delta(float(dx), float(dy))
 
+    # -- lockpicking ---------------------------------------------------------
+    def lockpicking(self) -> bool:
+        session = self._session()
+        return bool(session is not None and session.open_screen == "lockpicking")
+
+    def lockpick(self, action, value=0.0) -> None:
+        from .ui import hits
+        hits.queue(lambda s: s.lockpick_action(action, value))
+
     # -- binding a button ------------------------------------------------------
     def _options(self):
         menu = getattr(self.view, "play_menu", None)
@@ -582,6 +614,7 @@ def install(view):
     if not pad._ok:
         return None
     gamepad = GamepadInput(pad, QtSink(view))
+    controls.set_rumbler(pad.rumble)
     timer = QTimer(view)
     timer.timeout.connect(gamepad.poll)
     timer.start(16)

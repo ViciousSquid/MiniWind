@@ -46,6 +46,9 @@ class _Sink:
     def capturing_pad(self):
         return self.capturing
 
+    def lockpicking(self):
+        return False
+
     def capture_pad(self, button):
         self.events.append(("capture", button))
         self.capturing = False
@@ -339,3 +342,51 @@ def test_a_pad_is_looked_for_at_startup_and_when_sdl_reports_a_device_only(monke
     pygame.event.post(pygame.event.Event(pad._device_events[0], device_index=0))
     pad.read()                                         # a device arrived: looks
     assert len(looked) == 2
+
+
+# ------------------------------------------------------------ lockpicking
+def _lockpick_pad():
+    pad, sink, step = _pad(menu=True)
+    sink.lockpicking = lambda: True
+    sink.lockpick = lambda action, value=0.0: sink.events.append(("pick", action, round(value, 2)))
+    return pad, sink, step
+
+
+def test_picking_a_lock_rt_held_is_tension_and_the_stick_lifts_the_pick():
+    _p, _sink, step = _lockpick_pad()
+    assert step(rt=1.0) == [("pick", "tension_on", 0.0)]
+    assert step(rt=1.0) == []                          # held: tension stays on
+    assert step() == [("pick", "tension_off", 0.0)]
+    (lift,) = step(ly=-1.0, dt=0.1)
+    assert lift[1] == "move" and lift[2] > 0           # stick up lifts
+    (light,) = step(ly=-0.4, dt=0.1)
+    assert 0 < light[2] < lift[2]                      # a light lean, finer
+    assert step("y") == [("pick", "assist", 0.0)]
+    step()
+    assert step("b") == [("key", _qt("escape"), True), ("key", _qt("escape"), False)]
+
+
+def test_the_pad_shakes_when_the_pick_finds_the_sweet_spot_only_on_the_pad():
+    from .. import runtime
+    from .test_lockpicking import _picking
+    shakes = []
+    controls.set_rumbler(lambda low, high, ms: shakes.append((low, high, ms)) or True)
+    try:
+        s, _chest = _picking()
+        a = s.lockpick_attempt
+        controls.use(controls.GAMEPAD)
+        a.angle = a.target + a.tolerance * 3              # searching
+        s.tick_lockpicking(.02)
+        assert shakes == []
+        a.angle = a.target                                # found it
+        s.tick_lockpicking(.02)
+        s.tick_lockpicking(.02)                           # still there: once
+        assert shakes == [runtime.LOCKPICK_SWEET_RUMBLE]
+        a.angle = a.target + a.tolerance * 3
+        s.tick_lockpicking(.02)
+        controls.use(controls.KEYBOARD)                   # playing on the keyboard
+        a.angle = a.target
+        s.tick_lockpicking(.02)
+        assert len(shakes) == 1
+    finally:
+        controls.set_rumbler(None)

@@ -50,6 +50,26 @@ FIXED = {
 }
 
 
+#: Shakes the pad: ``rumble(low, high, ms)`` (set by game.gamepad.install).
+_rumbler = None
+
+
+def set_rumbler(fn) -> None:
+    global _rumbler
+    _rumbler = fn
+
+
+def rumble(low: float, high: float, ms: int) -> bool:
+    """Shake the pad, if it is what the player is using (a pad lying idle
+    while the keyboard plays stays still). True if it shook."""
+    if _rumbler is None or not gamepad():
+        return False
+    try:
+        return bool(_rumbler(low, high, ms))
+    except Exception:
+        return False
+
+
 def mode() -> str:
     return _mode
 
