@@ -34,6 +34,40 @@ from typing import Dict, List, Optional
 
 ITEM_TYPES = ("weapon", "armour", "consumable", "quest", "misc", "key", "gold")
 
+#: The most of one thing a slot holds -- in the pack and on the strip alike.
+#: Twelve potions are three slots: 5, 5 and 2. The list keeps one record per
+#: item however many there are; it is the slots that hold at most this many
+#: (:func:`slot_sizes`). A weapon is a slot per copy (each is drawn on its
+#: own); arrows and bolts are a quiver, carried in one slot however many.
+MAX_STACK = 5
+
+
+def stack_limit(item_id) -> Optional[int]:
+    """How many of *item_id* one slot holds: 1 for a weapon, None (no limit)
+    for ammunition and coin, :data:`MAX_STACK` for anything else."""
+    from . import items
+    d = items.get(str(item_id or ""))
+    if d is None:
+        return MAX_STACK
+    if d.category == items.WEAPON:
+        return 1
+    if d.category in (items.AMMO, items.GOLD):
+        return None
+    return MAX_STACK
+
+
+def slot_sizes(item_id, qty) -> List[int]:
+    """The slots *qty* of *item_id* fill, as their counts: ``[5, 5, 2]`` for
+    twelve potions, ``[1, 1]`` for a pair of swords, ``[20]`` for arrows."""
+    qty = int(qty or 0)
+    if qty <= 0:
+        return []
+    limit = stack_limit(item_id)
+    if not limit:
+        return [qty]
+    full, rest = divmod(qty, limit)
+    return [limit] * full + ([rest] if rest else [])
+
 
 def make_item(item_id: str, name: str = "", qty: int = 1, item_type: str = "misc",
               value: int = 0, weight: float = 0.0, description: str = "") -> Dict:

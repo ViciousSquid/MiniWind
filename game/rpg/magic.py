@@ -1,8 +1,10 @@
 """
 Magic — spells, schools, magicka cost, spell levels and cast resolution.
 
-There are two schools: **Offensive** (what harms or commands) and
-**Defensive** (what heals, wards and aids). A spell is a definition: its
+There are three schools, and only three: **Offensive** (what harms),
+**Defensive** (what heals, wards and aids) and **Occult** (the dark arts that
+raise the dead, unmake the living and bind beasts and spirits to the caster's
+will). A spell is a definition: its
 school, a base magicka cost, a delivery (self / touch / target / projectile),
 a list of effects, a rarity, and how it grows. The player raises each known
 spell's **level** by spending experience (:meth:`Character.upgrade_spell`); a
@@ -71,6 +73,10 @@ LIGHT_BRIGHTNESS_PER_LEVEL = 0.15
 #: an amount: a level never scales them.
 _FLAG_KINDS = {"knock", "wisp", "summon", "resurrect", "light", "night_eye",
                "invisibility", "cure_disease", "detect_life", "telekinesis"}
+#: Effect kinds whose magnitude is so much *per level* and whose duration is
+#: fixed: a level-3 Flare's fire burns 3 x 2 a second, still for 5 seconds
+#: (game/burning.py).
+_PER_LEVEL_KINDS = {"burn"}
 
 
 def default_rarity(cost) -> str:
@@ -95,7 +101,7 @@ class Spell:
                  level_cost=DEFAULT_LEVEL_COST, level=1, linger=0.0):
         self.id = sid
         self.name = name
-        self.school = sk.fold(school)  # sk.OFFENSIVE or sk.DEFENSIVE
+        self.school = sk.school(school)  # one of sk.SCHOOLS
         self.base_cost = float(cost)
         self.delivery = delivery
         self.effects = effects        # list of {"kind","magnitude","duration"}
@@ -138,6 +144,10 @@ class Spell:
         for e in self.effects or []:
             e = dict(e)
             mag = float(e.get("magnitude", 0))
+            if e.get("kind") in _PER_LEVEL_KINDS:
+                e["magnitude"] = round(mag * level, 1)
+                effects.append(e)
+                continue
             if e.get("kind") not in _FLAG_KINDS and 1 < mag < 99999:
                 e["magnitude"] = round(mag * power, 1)
             if float(e.get("duration", 0)) > 0:
@@ -257,7 +267,7 @@ def for_caster(character, spell_id: str) -> Optional[Spell]:
     levels = getattr(character, "spell_levels", None) or {}
     spell = spell.at_level(int(levels.get(spell.id, 1)))
     # Alignment empowers a school: the good's healing and wards, the wicked's
-    # strikes (game.rpg.alignment.magic_power).
+    # strikes and dark arts (game.rpg.alignment.magic_power).
     from . import alignment
     factor = alignment.magic_power(getattr(character, "alignment", 0.0), spell.school)
     return spell.empowered(factor) if factor != 1.0 else spell
@@ -266,10 +276,13 @@ def for_caster(character, spell_id: str) -> Optional[Spell]:
 # ---------------------------------------------------------------------------
 # Spell book
 # ---------------------------------------------------------------------------
-# Offensive: what harms or commands
+# Offensive: what harms
 register(Spell("flare", "Flare", sk.OFFENSIVE, 12, PROJECTILE,
-               [{"kind": "damage_health", "magnitude": 14, "duration": 0}],
-               "A bolt of fire.", element="fire", projectile_speed=1000, linger=20.0))
+               [{"kind": "damage_health", "magnitude": 14, "duration": 0},
+                {"kind": "burn", "magnitude": 2, "duration": 5}],
+               "A bolt of fire that sets alight whatever it strikes, or starts "
+               "a small fire where it lands.",
+               element="fire", projectile_speed=1000, linger=20.0))
 register(Spell("firebolt", "Firebolt", sk.OFFENSIVE, 28, PROJECTILE,
                [{"kind": "damage_health", "magnitude": 30, "duration": 0}],
                "A searing bolt of flame.", element="fire", projectile_speed=1100))
@@ -281,13 +294,9 @@ register(Spell("lightning", "Lightning Bolt", sk.OFFENSIVE, 30, PROJECTILE,
                [{"kind": "damage_health", "magnitude": 26, "duration": 0},
                 {"kind": "damage_magicka", "magnitude": 15, "duration": 0}],
                "A crackling arc of shock.", element="shock", projectile_speed=1600))
-# Disintegrate — a bolt of pure annihilation. Its projectile is ALWAYS red (an
-# explicit colour override, independent of element) and its damage is high enough
-# to kill anything in one hit (and gib it, being far over the overkill threshold).
-register(Spell("disintegrate", "Disintegrate", sk.OFFENSIVE, 60, PROJECTILE,
-               [{"kind": "damage_health", "magnitude": 99999, "duration": 0}],
-               "A bolt of pure annihilation — kills instantly on contact.",
-               element="magic", projectile_speed=1400.0, color=[255, 0, 0]))
+register(Spell("bound_blade", "Bound Blade", sk.OFFENSIVE, 25, SELF,
+               [{"kind": "bound_weapon", "magnitude": 18, "duration": 60}],
+               "Summon a blade of pure magicka.", element="magic"))
 # Defensive: what heals, wards and aids
 register(Spell("heal_minor", "Minor Healing", sk.DEFENSIVE, 15, SELF,
                [{"kind": "restore_health", "magnitude": 30, "duration": 0}],
@@ -326,34 +335,41 @@ register(Spell("invisibility_minor", "Invisibility", sk.DEFENSIVE, 40, SELF,
 register(Spell("sp_calm", "Calm", sk.DEFENSIVE, 22, TARGET,
                [{"kind": "calm", "magnitude": 30, "duration": 15}],
                "Soothe a foe into stopping its attack.", element="magic"))
-register(Spell("sp_commandcreature", "Command Creature", sk.OFFENSIVE, 26, TARGET,
-               [{"kind": "command", "magnitude": 30, "duration": 20}],
-               "Bend a beast to your will.", element="magic"))
-register(Spell("summon_wolf", "Summon Wolf", sk.OFFENSIVE, 30, SELF,
-               [{"kind": "summon", "magnitude": 1, "duration": 45, "creature": "wolf"}],
-               "Call a spectral wolf to fight for you.", element="magic"))
 register(Spell("wisp", "Wisp", sk.DEFENSIVE, 15, SELF,
                [{"kind": "wisp", "magnitude": 1, "duration": 120}],
                "Conjure a wandering fairy light that flits about you, lighting "
                "your way. Its hue is a whim of the moment.", element="magic"))
-register(Spell("bound_blade", "Bound Blade", sk.OFFENSIVE, 25, SELF,
-               [{"kind": "bound_weapon", "magnitude": 18, "duration": 60}],
-               "Summon a blade of pure magicka.", element="magic"))
+register(Spell("sp_telekinesis", "Telekinesis", sk.DEFENSIVE, 18, TARGET,
+               [{"kind": "telekinesis", "magnitude": 1, "duration": 10}],
+               "Grasp an object from afar.", element="magic"))
+# Occult: the dark arts -- the dead raised and the living unmade, beasts and
+# spirits called and bound, the souls around the caster sensed.
+# Disintegrate — an Occult bolt of pure annihilation. Its projectile is ALWAYS
+# red (an explicit colour override, independent of element) and its damage is
+# high enough to kill anything in one hit (and gib it, being far over the
+# overkill threshold).
+register(Spell("disintegrate", "Disintegrate", sk.OCCULT, 60, PROJECTILE,
+               [{"kind": "damage_health", "magnitude": 99999, "duration": 0}],
+               "A bolt of pure annihilation — kills instantly on contact.",
+               element="magic", projectile_speed=1400.0, color=[255, 0, 0]))
+register(Spell("sp_commandcreature", "Command Creature", sk.OCCULT, 26, TARGET,
+               [{"kind": "command", "magnitude": 30, "duration": 20}],
+               "Bend a beast to your will.", element="magic"))
+register(Spell("summon_wolf", "Summon Wolf", sk.OCCULT, 30, SELF,
+               [{"kind": "summon", "magnitude": 1, "duration": 45, "creature": "wolf"}],
+               "Call a spectral wolf to fight for you.", element="magic"))
 # Resurrection — the Necromancer's signature. Cast near a fallen character to
 # call it back to life. Special rules enforced by the caster (game.runtime):
 # it drains ALL remaining magicka and can be worked only once per in-game day.
-register(Spell("resurrection", "Resurrection", sk.DEFENSIVE, 100, TARGET,
+register(Spell("resurrection", "Resurrection", sk.OCCULT, 100, TARGET,
                [{"kind": "resurrect", "magnitude": 1, "duration": 0}],
                "Call a fallen soul back into its body. Drains all your magicka "
                "and can be worked only once each day. Each body can be raised "
                "only once; it keeps a red tint and follows you until killed again.",
                element="magic", color=[120, 255, 170]))
-register(Spell("sp_detect", "Detect Life", sk.DEFENSIVE, 16, SELF,
+register(Spell("sp_detect", "Detect Life", sk.OCCULT, 16, SELF,
                [{"kind": "detect_life", "magnitude": 1, "duration": 30}],
                "Sense living things nearby.", element="magic"))
-register(Spell("sp_telekinesis", "Telekinesis", sk.DEFENSIVE, 18, TARGET,
-               [{"kind": "telekinesis", "magnitude": 1, "duration": 10}],
-               "Grasp an object from afar.", element="magic"))
 # Racial power spells (referenced by races.py)
 register(Spell("sp_woad", "Woad", sk.DEFENSIVE, 0, SELF,
                [{"kind": "shield", "magnitude": 30, "duration": 30}], "Nord racial shield."))

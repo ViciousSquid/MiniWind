@@ -150,6 +150,12 @@ def build(settlement: dict, base: dict) -> dict:
             props["merchant_gold_base"] = npc.get("gold", 200)
         if "inventory" in npc:
             props["inventory"] = _resolve_inventory(npc["inventory"])
+        # A teacher (game/rpg/training.py): what it trains, the spells it
+        # sells, and the guild it teaches for. The shipped world's teachers
+        # are data (game/data/teachers.json), so these are for new ones.
+        for key in ("trainer", "teaches_spells", "guild"):
+            if key in npc:
+                props[key] = npc[key]
         if "dialogue" in npc:
             props["dialogue"] = npc["dialogue"]
         if "relationships" in npc:

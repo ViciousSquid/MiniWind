@@ -283,6 +283,7 @@ class MiniwindGame:
         from .rpg import bestiary
         from .rpg import items as rpg_items
         from .rpg import magic as rpg_magic
+        from .rpg import skills as sk
         api.register_entity(NPC, menu_label="NPC")
         api.register_entity(Creature, menu_label="Monster / Creature")
         api.register_entity(ItemPickup, menu_label="Item")
@@ -511,6 +512,18 @@ class MiniwindGame:
                  help="The purse the merchant is restocked back up to each day."),
             prop("loot", "string", "Loot table", default="", group="LOOT",
                  help="Loot-table id rolled on death (see game/rpg/loot)."),
+            prop("trainer_skills", "string", "Trains skills", default="", group="TEACHING",
+                 help="Skills this NPC trains for gold, comma-separated (e.g. "
+                      "\"occult, defensive\"). Blank: no training."),
+            prop("trainer_rank", "enum", "Trainer rank", default="Journeyman",
+                 choices=[name for _lo, name in sk.RANKS], group="TEACHING",
+                 help="Its own skill: it cannot train anyone past it."),
+            prop("teaches_spells", "string", "Sells spells", default="", group="TEACHING",
+                 help="Spell ids this NPC teaches for gold, comma-separated."),
+            prop("guild", "enum", "Teaches for", default="", choices=["", "mages"],
+                 group="TEACHING",
+                 help="mages: a tutor of the Arcane Circle, who sells rarer spells "
+                      "only to members of standing. Blank: independent."),
             prop("respawn", "bool", "Respawns when killed", default=False, group="STATE"),
             prop("persistent", "bool", "Persistent identity", default=True, group="STATE"),
         ] + _production_props() + _perception_props())
@@ -1275,6 +1288,7 @@ class MiniwindGame:
                     hud.draw_bubbles(painter, session, viewport, w, h)
                     hud.draw_barks(painter, session, viewport, w, h)
                     hud.draw_thoughts(painter, session, viewport, w, h)
+                    hud.draw_floats(painter, session, viewport, w, h)
                 # The "stay near the guard" ring during a prison escort.
                 hud.draw_escort_ring(painter, session, viewport, w, h)
                 # "!" / "?" over heightened NPCs (a guard coming to arrest
@@ -1312,6 +1326,7 @@ class MiniwindGame:
         "spells": "Spellbook", "levelup": "Level Up", "trade": "Trade",
         "quest": "Current Quest",
         "lockpicking": "Lockpicking",
+        "training": "Training", "tutor": "Spell Tutor",
     }
 
     def _close_overlay_screen(self, session, screen):
@@ -1334,6 +1349,9 @@ class MiniwindGame:
             return
         if screen == "lockpicking":
             session.close_lockpicking()
+            return
+        if screen in ("training", "tutor"):
+            session.close_teaching()
             return
         session.open_screen = None
 

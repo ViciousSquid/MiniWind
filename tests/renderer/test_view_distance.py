@@ -30,9 +30,25 @@ def test_default_matches_the_editors_spinbox_default():
     assert ViewDistance().distance == DEFAULT_VIEW_DISTANCE == 4096.0
 
 
-def test_default_ambient_is_black_so_existing_maps_are_unchanged():
-    # Ambient is *added* to each shader's baked term, so black is a no-op.
-    assert ViewDistance().ambient == (0.0, 0.0, 0.0)
+def test_default_ambient_keeps_every_face_from_black():
+    # Ambient is *added* to each shader's baked term: by default a little of
+    # it everywhere, so a face no light reaches is dim, never black.
+    from engine.view_distance import DEFAULT_AMBIENT_LEVEL
+    assert DEFAULT_AMBIENT_LEVEL > 0
+    assert ViewDistance().ambient == (DEFAULT_AMBIENT_LEVEL,) * 3
+
+
+def test_the_ambient_setting_reads_a_level_a_byte_or_a_colour():
+    from engine.view_distance import (DEFAULT_AMBIENT_LEVEL, ambient_from_setting,
+                                      ambient_setting)
+    assert ambient_from_setting("0.3") == (0.3, 0.3, 0.3)
+    assert ambient_from_setting("51")[0] == pytest.approx(0.2)
+    assert ambient_from_setting("0.2 0.1 0.4") == (0.2, 0.1, 0.4)
+    assert ambient_from_setting("0") == (0.0, 0.0, 0.0)
+    for bad in ("", "bright", "0.1 0.2"):
+        assert ambient_from_setting(bad) == (DEFAULT_AMBIENT_LEVEL,) * 3
+    for colour in ((0.3, 0.3, 0.3), (0.2, 0.1, 0.4)):
+        assert ambient_from_setting(ambient_setting(colour)) == pytest.approx(colour)
 
 
 def test_default_fog_color_is_the_editor_background():

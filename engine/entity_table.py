@@ -492,7 +492,7 @@ _EXPLOSION_PREVIEW_FRAME = 10
 
 def _effect_fire_variant(props):
     value = str(
-        props.get("fire_texture", _EFFECT_FIRE_TEXTURES[0])
+        props.get("fire_texture", _EFFECT_FIRE_TEXTURES[1])
     ).replace("\\", "/")
     return _EFFECT_FIRE_TEXTURE_TO_INDEX.get(value, 0)
 

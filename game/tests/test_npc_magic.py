@@ -35,7 +35,10 @@ def _cultist(**extra):
              "attack_style": "magic", "equipped_weapon": "apprentice_staff",
              "spells": [{"id": "flare", "damage": 12, "speed": 900.0}],
              "inventory": [{"id": "iron_dagger", "qty": 1}],
-             "health": 50, "max_health": 50, "creature_level": 1}
+             "health": 50, "max_health": 50, "creature_level": 1,
+             # A master: these tests are about what it casts, not whether
+             # the cast fizzles (see the fizzle tests at the end).
+             "magic_skill": 100}
     props.update(extra)
     return _Actor(**props)
 
@@ -260,3 +263,48 @@ def test_the_player_hitting_a_warded_caster_does_less_damage():
     assert _warded(mage.properties, 25.0) == 25.0
     session.npc_magic.try_ward(mage)
     assert _warded(mage.properties, 25.0) == 15.0
+
+
+# ------------------------------------------------------------ fizzles
+
+def test_an_npc_cast_is_rolled_against_its_school_skill():
+    from ..rpg import magic
+    flare, disintegrate = magic.get("flare"), magic.get("disintegrate")
+    novice = {"creature_level": 1}
+    master = {"magic_skill": 100}
+    assert npc_magic.skill(novice, "offensive") == npc_magic.SKILL_BASE + npc_magic.SKILL_PER_LEVEL
+    assert npc_magic.skill({"skills": {"occult": 70}, "magic_skill": 10}, "occult") == 70
+    assert npc_magic.cast_chance(master, flare) == 1.0
+    assert npc_magic.cast_chance(novice, flare) < 1.0
+    assert npc_magic.cast_chance(novice, disintegrate) < npc_magic.cast_chance(novice, flare)
+    assert npc_magic.cast_chance(novice, disintegrate) >= npc_magic.CAST_FLOOR
+    assert npc_magic.cast_chance(novice, magic.get("sp_woad")) == 1.0   # a power
+
+
+class _NeverLucky:
+    def random(self):
+        return 0.999
+
+
+def test_a_fizzled_npc_cast_spends_magicka_does_nothing_and_says_so():
+    session, combat = _session()
+    said = []
+    session.rng = _NeverLucky()
+    session.fizzled = said.append
+    cultist = _cultist(magic_skill=0, equipped_weapon=None)
+    before = npc_magic.magicka(cultist.properties)
+    assert session.npc_magic.cast_attack(cultist, "player") is True
+    assert combat.shots == []
+    assert npc_magic.magicka(cultist.properties) < before
+    assert said == [cultist]
+
+
+def test_a_staff_channels_its_spell_and_never_fizzles():
+    session, combat = _session()
+    said = []
+    session.rng = _NeverLucky()
+    session.fizzled = said.append
+    cultist = _cultist(magic_skill=0, spells=[])
+    assert session.npc_magic.cast_attack(cultist, "player") is True
+    assert len(combat.shots) == 1 and said == []
+

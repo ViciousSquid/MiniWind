@@ -180,6 +180,11 @@ class GameState:
                 return False
             magic.apply_effects_to_character(self.character, d.get("effects", []))
             self.message(f"Drank {d.name}")
+            for listener in list(getattr(self, "_drink_listeners", ())):
+                try:
+                    listener(d)
+                except Exception:
+                    pass
             return True
         if d.category == items.BOOK:
             c = self.character
@@ -532,6 +537,12 @@ class GameState:
                 except Exception:
                     pass
         return gained
+
+    def add_drink_listener(self, fn) -> None:
+        """Call ``fn(item_def)`` whenever the character drinks a potion."""
+        listeners = self.__dict__.setdefault("_drink_listeners", [])
+        if fn not in listeners:
+            listeners.append(fn)
 
     def add_xp_listener(self, fn) -> None:
         """Call ``fn(amount)`` whenever experience is awarded."""

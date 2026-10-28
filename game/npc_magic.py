@@ -32,6 +32,11 @@ off hand -- an attack when it carries no bow or staff (its way to fight at
 range), else a ward or a heal. A staff channels its own spell regardless. An empty ``hand_spells`` means it casts nothing.
 Raised followers keep the spells they knew in life, and fight with them.
 
+**Casts can fizzle.** As the player's do, an actor's cast is rolled against
+its skill in the spell's school (:func:`cast_chance`): a fizzle spends the
+magicka and the moment, does nothing, and floats "*fizzled*" over its head.
+A staff channels its spell, and never fizzles.
+
 Spells cost magicka. An actor's pool is its authored ``max_magicka`` (else
 :data:`MAGICKA_BASE` plus :data:`MAGICKA_PER_LEVEL` a level) and refills at
 :data:`MAGICKA_REGEN` a second. It is settled only when asked about, so idle
@@ -68,6 +73,19 @@ WARD_KINDS = {"shield": (110, 190, 255), "fire_shield": (255, 130, 40)}
 #: The share of fighting casters, not authored with a ward, who know Shield.
 WARD_CHANCE = 0.35
 WARD_SPELL = "sp_shield"
+
+#: An actor's chance that a spell works: this much at no skill, more per
+#: point of its school's skill, less per point of the spell's magicka cost,
+#: never below the floor and never above certainty. A fizzle costs the
+#: magicka and the moment, does nothing, and shows "*fizzled*" over its head.
+CAST_BASE = 0.75
+CAST_PER_SKILL = 0.004
+CAST_PER_COST = 0.003
+CAST_FLOOR = 0.5
+#: An actor's skill in a school when the map authors none (``skills`` by
+#: school, or one ``magic_skill`` for all three): a base and a share per level.
+SKILL_BASE = 20
+SKILL_PER_LEVEL = 4
 
 #: The session clock magicka refills against (seconds of unpaused play).
 #: :class:`NpcMagic` points it at its session; 0 with none.
@@ -355,6 +373,27 @@ def spend(props, cost, now=None) -> bool:
     return True
 
 
+def skill(props, school) -> int:
+    """*props*' actor's skill (0-100) in the magic *school*."""
+    skills = props.get("skills")
+    if isinstance(skills, dict) and school in skills:
+        return int(max(0, min(100, _float(skills[school]))))
+    if props.get("magic_skill") is not None:
+        return int(max(0, min(100, _float(props.get("magic_skill")))))
+    level = max(1, int(_float(props.get("creature_level", 1), 1)))
+    return min(100, SKILL_BASE + SKILL_PER_LEVEL * level)
+
+
+def cast_chance(props, spell) -> float:
+    """Probability that *props*' actor's cast of *spell* works (see
+    :data:`CAST_BASE`). Powers that cost nothing never fizzle."""
+    if spell.base_cost <= 0:
+        return 1.0
+    chance = (CAST_BASE + CAST_PER_SKILL * skill(props, spell.school)
+              - CAST_PER_COST * spell.base_cost)
+    return max(CAST_FLOOR, min(1.0, chance))
+
+
 def can_attack_with_magic(props) -> bool:
     """Whether *props*' actor can cast an attack spell right now: the combat
     loadout's magic check (see the module doc)."""
@@ -382,6 +421,8 @@ class NpcMagic:
             return False
         for spell, kind, magnitude, duration in wards(p):
             if spend(p, spell.base_cost, now):
+                if self._fizzles(thing, spell):
+                    return True
                 p["_ward_until"] = now + duration
                 p["_ward_kind"] = kind
                 p["_ward_magnitude"] = magnitude
@@ -432,6 +473,8 @@ class NpcMagic:
         current = magicka(p)
         for amount, spell in heals:
             if amount > 0 and current + 1e-6 >= spell.base_cost and spend(p, spell.base_cost):
+                if self._fizzles(thing, spell):
+                    return True
                 p["health"] = min(top, health + amount)
                 p["_attack_anim"] = 0.2
                 self._journal(thing)
@@ -451,11 +494,30 @@ class NpcMagic:
         current = magicka(p)
         for spell, damage, speed, colour, cost in attacks(p):
             if current + 1e-6 >= cost and spend(p, cost):
+                # A staff channels its spell: it never fizzles.
+                channelled = (spell is _staff_spell(p)
+                              and spell.id not in hands(p).values())
+                if not channelled and self._fizzles(thing, spell):
+                    return True
                 self._loose(thing, target, target_pos, spell, damage, speed, colour)
                 return True
         return False
 
     # -- internals ------------------------------------------------------------
+    def _fizzles(self, thing, spell) -> bool:
+        """Roll *thing*'s cast of *spell* (its magicka already spent); True,
+        and "*fizzled*" over its head, when it came to nothing. A session
+        with no ``rng`` rolls nothing: every cast works."""
+        rng = getattr(self.session, "rng", None)
+        if rng is None or rng.random() < cast_chance(thing.properties, spell):
+            return False
+        thing.properties["_attack_anim"] = 0.2
+        self._journal(thing)
+        fizzled = getattr(self.session, "fizzled", None)
+        if fizzled is not None:
+            fizzled(thing)
+        return True
+
     def _loose(self, thing, target, target_pos, spell, damage, speed, colour) -> None:
         session = self.session
         logic = session.logic
@@ -479,9 +541,21 @@ class NpcMagic:
             if ai is not None:
                 ai._apply_monster_damage(victim, dmg, attacker=caster)
 
+        # A bolt that burns (Flare) sets alight what it strikes, or the ground
+        # where it lands (game/burning.py); the player, hit by it, is set
+        # alight through the damage path, which reads ``_bolt_burn``.
+        from .burning import burn_of
+        burn = burn_of(spell)
+        on_impact = None
+        p["_bolt_burn"] = burn
+        burner = getattr(session, "burning", None)
+        if burn is not None and burner is not None:
+            def on_impact(pos, victim, caster=thing, spell=spell):
+                burner.landed(spell, list(pos), victim, by=caster)
         row = fio.spawn_projectile(logic, start, vel, lifetime=SPELL_MAX_RANGE / speed,
                                    damage=damage, owner_id=id(thing),
-                                   max_dist=SPELL_MAX_RANGE, on_hit=_on_hit)
+                                   max_dist=SPELL_MAX_RANGE, on_hit=_on_hit,
+                                   on_impact=on_impact)
         attach = getattr(session, "_attach_bolt_light", None)
         if row is not None and attach is not None:
             attach(row, start, SimpleNamespace(

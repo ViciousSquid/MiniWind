@@ -31,6 +31,9 @@ BURN_EVERY = 0.3
 #: Where the pool waits: well below the floor.
 PARK_DEPTH = -3000.0
 STORE_KEY = "dragonfire"
+#: The dragon's fire, unless the console's ``dragonfire N`` chose another:
+#: fire02, as every fire is.
+DEFAULT_SETTING = 2
 FIRE_SETTINGS = 5
 
 
@@ -58,10 +61,11 @@ class DragonFire:
             self._desync(t)
         setting = self.session.store.get(STORE_KEY, None)
         try:
-            if setting not in (None, "false"):
-                self.set_setting(int(float(setting)), remember=False)
+            chosen = DEFAULT_SETTING if setting in (None, "false") else int(float(setting))
         except (TypeError, ValueError):
-            pass
+            chosen = DEFAULT_SETTING
+        if not self.set_setting(chosen, remember=False):
+            self.set_setting(DEFAULT_SETTING, remember=False)
         self._park()
 
     def set_setting(self, setting: int, remember: bool = True) -> bool:

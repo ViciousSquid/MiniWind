@@ -12,6 +12,8 @@ words. Pure: the session applies the effects.
 
 from __future__ import annotations
 
+import math
+
 from typing import Dict, List
 
 from . import attributes as attr
@@ -100,6 +102,22 @@ def lucky_escape_chance(character) -> float:
     return max(0.0, min(0.60, (score(character) - 40) * 0.01))
 
 
+#: A player this lucky or luckier finds more coin wherever coin is found --
+#: in a purse on the ground, a chest, a body: this much more of it.
+LUCKY_GOLD_FROM = 60
+LUCKY_GOLD_BONUS = 0.10
+
+
+def lucky_gold(character, amount) -> int:
+    """The gold *character* actually finds where *amount* lies: 10% more
+    (rounded up) for the lucky, *amount* for anyone else."""
+    amount = int(amount or 0)
+    luck = int((getattr(character, "attrs", {}) or {}).get(attr.LUCK, 40))
+    if amount <= 0 or luck < LUCKY_GOLD_FROM:
+        return amount
+    return amount + int(math.ceil(amount * LUCKY_GOLD_BONUS))
+
+
 def benefits(character):
     """``[(name, value, why, good)]``: everything Charisma and Luck are doing
     for (or against) *character* right now, in numbers -- the Fortune page
@@ -136,6 +154,10 @@ def benefits(character):
                 sign(luck - 40)))
     out.append(("Special finds", f"{(luck - 40) * 0.1:+.0f}%", f"Luck {luck}",
                 sign(luck - 40)))
+    lucky = luck >= LUCKY_GOLD_FROM
+    out.append(("Gold found", f"+{LUCKY_GOLD_BONUS * 100:.0f}%" if lucky else "+0%",
+                f"Luck {luck}" + ("" if lucky else f" (the lucky, {LUCKY_GOLD_FROM}+, find more)"),
+                True if lucky else None))
     out.append(("Learning skills", f"{(luck - 40) * 0.2:+.0f}% skill experience",
                 f"Luck {luck}", sign(luck - 40)))
     fortune = score(character)

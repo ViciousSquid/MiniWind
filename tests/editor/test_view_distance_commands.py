@@ -250,6 +250,19 @@ def test_ambient_off_restores_the_stock_look(handler, vd):
     assert vd.ambient == (0.0, 0.0, 0.0)
 
 
+def test_ambient_is_remembered_as_the_new_default(handler, vd):
+    config = handler.main_window.config
+    run(handler, "ambient 0.3")
+    assert config.get("Renderer", "ambient") == "0.3"
+    run(handler, "ambient 0.2 0.1 0.4")
+    assert config.get("Renderer", "ambient") == "0.2 0.1 0.4"
+    # A map's logic may dim a room for a scene, but not change the player's
+    # default.
+    handler.handle_command("ambient 0.9", from_map=True)
+    assert vd.ambient == (0.9, 0.9, 0.9)
+    assert config.get("Renderer", "ambient") == "0.2 0.1 0.4"
+
+
 def test_ambient_adds_nothing_to_the_world(handler, vd):
     """The "no entity" half of the promise: the scene is left alone."""
     state = handler.main_window.state
