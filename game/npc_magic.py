@@ -133,6 +133,21 @@ def _known(props):
             yield spell, entry
 
 
+def casts(props) -> bool:
+    """Whether *props*' actor works magic at all: it holds a spell it can cast."""
+    return next(_known(props), None) is not None
+
+
+def restore(props, amount, now=None) -> float:
+    """Give *props*' actor *amount* magicka back (a potion), up to its pool;
+    returns the magicka it has now."""
+    now = clock() if now is None else now
+    current = min(max_magicka(props), magicka(props, now) + max(0.0, float(amount)))
+    props["_magicka"] = current
+    props["_magicka_at"] = now
+    return current
+
+
 def hands(props) -> dict:
     """``{"main": id, "off": id}``: the spells *props*' actor holds, readied
     now if it has never had any (:func:`ready_hands`)."""

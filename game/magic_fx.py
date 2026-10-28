@@ -68,6 +68,8 @@ WARD_SHIMMER = 1.0
 #: the world behind it like a ward's (a fisheye lens with a shimmer through
 #: it), swelling in fast and fading: its colour, size, lens strength and life.
 DRINK_COLOUR = (90, 255, 130)
+#: A magicka potion's shimmer is blue.
+DRINK_MAGICKA_COLOUR = (90, 150, 255)
 DRINK_SIZE = 180.0
 DRINK_LENS = 0.4
 DRINK_SECONDS = 0.7
@@ -92,6 +94,14 @@ def _rgb(colour):
     if max(c) > 1.0:
         c = [v / 255.0 for v in c]
     return tuple(min(1.0, max(0.0, v)) for v in c)
+
+
+def drink_colour(item_def) -> tuple:
+    """The shimmer a potion makes: blue if it restores magicka, else green."""
+    effects = (item_def.get("effects", ()) if item_def is not None else ()) or ()
+    if any(e.get("kind") == "restore_magicka" for e in effects):
+        return DRINK_MAGICKA_COLOUR
+    return DRINK_COLOUR
 
 
 def _lift(pos, dy):
@@ -206,7 +216,7 @@ class MagicFX:
         self._lenses = []
         #: [start, fade_in, hold, fade_out, (r, g, b), peak, style]
         self._tints = []
-        #: [x, y, z, start]: potions being drunk (the green shimmer).
+        #: [x, y, z, start, (r, g, b)]: potions being drunk (the shimmer).
         self._drinks = []
         #: ``wards() -> [(feet, colour, kind)]`` read every frame: who wears a
         #: ward (shield, flame cloak, ...), drawn as a fresnel bubble.
@@ -439,15 +449,17 @@ class MagicFX:
                                   grav=40.0, now=now))
         self._emit(rows)
 
-    def drink(self, feet) -> None:
-        """A potion drunk by whoever stands at *feet*: for a moment a green
-        bubble round them, the world behind it bending as through a ward's
-        glass, with a shimmer through it -- then gone."""
+    def drink(self, feet, colour=DRINK_COLOUR) -> None:
+        """A potion drunk by whoever stands at *feet*: for a moment a bubble
+        round them -- green, blue for magicka (:func:`drink_colour`) -- the
+        world behind it bending as through a ward's glass, with a shimmer
+        through it; then gone."""
         if not self.near(feet):
             return
         now = self._clock()
         with self._lock:
-            self._drinks.append([float(feet[0]), float(feet[1]), float(feet[2]), now])
+            self._drinks.append([float(feet[0]), float(feet[1]), float(feet[2]), now,
+                                 _rgb(colour)])
             if len(self._drinks) > MAX_LENSES:
                 self._drinks = self._drinks[-MAX_LENSES:]
 
@@ -565,8 +577,7 @@ class MagicFX:
             extra.append([float(pos[0]), float(pos[1]) + BODY_LIFT, float(pos[2]),
                           size, *c, 0.9, BUBBLE,
                           (now * 0.35) % 1.0, 0.5 if kind == "invisibility" else 0.0, 0.0])
-        green = _rgb(DRINK_COLOUR)
-        for x, y, z, start in drinks:
+        for x, y, z, start, green in drinks:
             # Swells in fast, then fades as it settles: momentary, not worn.
             age = now - start
             if age < 0:

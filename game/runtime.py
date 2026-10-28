@@ -297,6 +297,12 @@ ROAD_SKIP_STATES = frozenset((sched.COMBAT, sched.FLEE, sched.ALERT, sched.RALLY
                               sched.REPORT, sched.CONFRONT, sched.FOLLOW, "PURSUE",
                               "SEARCH", "INVESTIGATE", "ARREST_APPROACH",
                               "ARREST_READY", "AWAKENED"))
+#: An NPC drinks a healing potion from its pack at or below this share of
+#: its health -- a caster a magicka potion at or below this share of its
+#: magicka -- and not again for this many seconds.
+NPC_DRINK_HEALTH = 0.35
+NPC_DRINK_MAGICKA = 0.2
+NPC_DRINK_SECONDS = 4.0
 #: How long a guard's "!" shows when he reacts to something.
 MARK_FLASH_SECONDS = 1.6
 #: A brawler at or below this fraction of their health has had enough.
@@ -3437,15 +3443,79 @@ class MiniwindSession(SettlementLaw):
     def add_floater(self, text, kind="dmg", y=0.0):
         self.floaters.append({"text": text, "t": 1.2, "y": float(y), "kind": kind})
 
-    def _on_drink(self, _item) -> None:
+    def _npc_drink(self, npc) -> bool:
+        """*npc* drinks a potion it carries when it needs one: a healing
+        potion at or below :data:`NPC_DRINK_HEALTH` of its health, a magicka
+        potion (a caster) at or below :data:`NPC_DRINK_MAGICKA` of its
+        magicka -- the one that best makes good what it has lost. It costs the
+        potion from its pack, is heard (drink.mp3) and seen (the shimmer,
+        green or a magicka potion's blue) where it stands, and is not done again for
+        :data:`NPC_DRINK_SECONDS`. True if it drank."""
+        import time as _time
+        from . import npc_magic
+        p = npc.properties
+        carried = p.get("inventory")
+        if p.get("dead") or not isinstance(carried, list) or not carried:
+            return False
+        if p.get("asleep") or str(p.get("sched_state", "")).upper() == "SLEEPING":
+            return False
+        now = _time.monotonic()
+        if now - float(p.get("_drank_at", -1e9) or -1e9) < NPC_DRINK_SECONDS:
+            return False
+        try:
+            health = float(p.get("health", 0) or 0)
+            top = float(p.get("max_health", health) or health)
+        except (TypeError, ValueError):
+            return False
+        if top > 0 and 0 < health <= top * NPC_DRINK_HEALTH:
+            kind, lost = "restore_health", top - health
+        elif npc_magic.casts(p) and npc_magic.magicka(p) <= (
+                npc_magic.max_magicka(p) * NPC_DRINK_MAGICKA):
+            kind, lost = "restore_magicka", npc_magic.max_magicka(p) - npc_magic.magicka(p)
+        else:
+            return False
+        choices = []
+        for stack in carried:
+            d = rpg_items.get(stack.get("id")) if isinstance(stack, dict) else None
+            if not rpg_items.is_potion(d) or int(stack.get("qty", 1) or 0) <= 0:
+                continue
+            amount = sum(float(e.get("magnitude", 0) or 0) for e in d.get("effects", ())
+                         if e.get("kind") == kind)
+            if amount > 0:
+                choices.append((amount, stack, d))
+        if not choices:
+            return False
+        # The smallest that makes good the loss, else the strongest there is.
+        enough = [c for c in choices if c[0] >= lost]
+        amount, stack, d = (min(enough, key=lambda c: c[0]) if enough
+                            else max(choices, key=lambda c: c[0]))
+        stack["qty"] = int(stack.get("qty", 1) or 1) - 1
+        if stack["qty"] <= 0:
+            carried.remove(stack)
+        if kind == "restore_health":
+            p["health"] = min(top, health + amount)
+        else:
+            npc_magic.restore(p, amount)
+        p["_drank_at"] = now
+        _journal(npc)
+        self.play_sound_at(DRINK_SOUND, npc.pos)
+        fx = getattr(self, "magic_fx", None)
+        if fx is not None:
+            from .magic_fx import drink_colour
+            fx.drink(npc.pos, drink_colour(d))
+        return True
+
+    def _on_drink(self, item) -> None:
         """A potion drunk, however it was -- a strip slot's number key, the
-        heal key, the pack: the sound of it, and the green shimmer round the
-        player (game/magic_fx.py MagicFX.drink). Food is eaten, and neither."""
+        heal key, the pack: the sound of it, and the shimmer round the player
+        -- green, blue for magicka (game/magic_fx.py MagicFX.drink). Food is
+        eaten, and neither."""
         self.play_ui_sound(DRINK_SOUND)
         pos = self._player_pos()
         fx = getattr(self, "magic_fx", None)
         if pos is not None and fx is not None:
-            fx.drink(pos)
+            from .magic_fx import drink_colour
+            fx.drink(pos, drink_colour(item))
 
     def _on_xp(self, amount) -> None:
         """Experience earned (a kill, a quest): "+N XP" over the player, a
@@ -4334,6 +4404,9 @@ class MiniwindSession(SettlementLaw):
             return          # a traveller: its party is driven by game/living
         if p.get("away_on_journey"):
             return          # away on a trip; a stand-in walks the road
+        # Wounded (or a caster run dry) with a potion in the pack: drink it,
+        # in a fight as much as out of one. It takes no turn of its own.
+        self._npc_drink(npc)
 
         # Arrest movement is owned by the runtime, not the normal schedule or
         # MonsterAI. The guard remains visible and walks to the player/prison.
