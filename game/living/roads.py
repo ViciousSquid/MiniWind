@@ -3,7 +3,9 @@ The road network travellers walk.
 
 Built once per play session from what the map already holds:
 
-* **PathNodes you place along your roads.** A node's ``next_node`` names the
+* **The PathNodes you place along your roads, named ``ROAD_*``** -- the same
+  nodes live NPCs walk (:mod:`game.road_nav`); other PathNodes, a guard's
+  patrol route for one, are not roads. A node's ``next_node`` names the
   node(s) it connects to -- several names, comma separated, make a junction --
   and every link is a two-way road. Nodes nobody linked (dropped along a road
   in a hurry) are joined to their nearest neighbours within
@@ -43,6 +45,13 @@ EXTRA_LINK_MAX = 14000.0
 
 def _dist(a, b) -> float:
     return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+def authored_roads(things) -> List[Tuple[str, float, float, Tuple[str, ...]]]:
+    """``(name, x, z, linked names)`` of the map's road nodes: the ``ROAD_*``
+    PathNodes only (:func:`game.road_nav.road_nodes`), never a patrol chain."""
+    from ..road_nav import road_nodes
+    return [(name, x, z, links) for name, x, z, links, _y in road_nodes(things)]
 
 
 class RoadNetwork:

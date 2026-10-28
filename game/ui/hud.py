@@ -14,7 +14,7 @@ from PyQt5.QtCore import QRect, QRectF, Qt
 from PyQt5.QtGui import QColor, QFontMetrics, QPixmap, QPolygon, QPolygonF, QPen, QConicalGradient
 from PyQt5.QtCore import QPoint, QPointF
 
-from .. import fio
+from .. import controls, fio
 from ..diceroll import check_target, describe_roll
 from . import hud_layout as layout
 from . import theme as T
@@ -38,7 +38,7 @@ _QUEST_ARROW_COLORS = [
     QColor(120, 200, 255),   # sky blue
     QColor(150, 230, 150),   # green
     QColor(240, 150, 220),   # pink
-    QColor(255, 170, 90),    # orange
+    QColor(110, 220, 210),   # teal (orange is the waypoint's: theme.WAYPOINT)
     QColor(190, 175, 255),   # lavender
 ]
 
@@ -334,6 +334,49 @@ def draw_floats(painter, session, viewport, width, height):
         painter.drawText(rect.translated(1, 1), int(Qt.AlignCenter), text)
         painter.setPen(QColor(*_FLOAT_INK, alpha))
         painter.drawText(rect, int(Qt.AlignCenter), text)
+    painter.restore()
+
+
+#: "Block" over the player's head while the block is held: its ink, and how
+#: far above the head it stands (clear of a "*fizzled*" rising from there).
+BLOCK_TEXT = "Block"
+_BLOCK_INK = (150, 200, 255)
+BLOCK_LIFT = 44.0
+
+
+def draw_player_block(painter, session, viewport, width, height):
+    """While the player holds a block: "Block" over their head, steady for as
+    long as it is held (game.runtime.MiniwindSession.toggle_block)."""
+    if viewport is None or not getattr(session, "_blocking", False):
+        return
+    if session.game.character.is_dead:
+        return
+    pos = session._player_pos()
+    if pos is None:
+        return
+    try:
+        import glm
+        proj, view = viewport.projection_matrix, viewport.view_matrix
+    except Exception:
+        return
+    sp = _world_to_screen(glm, proj, view, pos[0], pos[1] + 112 * 0.5 + BLOCK_LIFT, pos[2],
+                          width, height)
+    if sp is None:
+        # Seen from inside the player's own head (first person): over the
+        # middle of the view, as the floats are.
+        sp = (width * 0.5, height * 0.36)
+    from . import fonts
+    font = fonts.dialogue_font(13)
+    font.setBold(True)
+    fm = QFontMetrics(font)
+    w = fm.horizontalAdvance(BLOCK_TEXT) + 10
+    rect = QRect(int(sp[0] - w / 2), int(sp[1] - fm.height()), w, fm.height())
+    painter.save()
+    painter.setFont(font)
+    painter.setPen(QColor(0, 0, 0, 200))
+    painter.drawText(rect.translated(1, 1), int(Qt.AlignCenter), BLOCK_TEXT)
+    painter.setPen(QColor(*_BLOCK_INK))
+    painter.drawText(rect, int(Qt.AlignCenter), BLOCK_TEXT)
     painter.restore()
 
 
@@ -677,6 +720,14 @@ def _weapon_icon_pixmap(weapon_def, size=26):
         return None
 
 
+def _spell_icon_pixmap(spell, size=26):
+    try:
+        from .. import item_icons
+        return item_icons.spell_pixmap(spell.id, size)
+    except Exception:
+        return None
+
+
 #: The weapon/spell box: top right, under the clock (_draw_clock).
 ACTIVE_W, ACTIVE_H = 268, 60
 ACTIVE_TOP = 132
@@ -685,22 +736,30 @@ ACTIVE_ICON = 26
 
 
 def _draw_active(painter, session, c, width, height):
-    """The two equipped hands and the mouse button that uses each one."""
+    """The two hands and the mouse button that uses each one: the left
+    button the left hand, the right button the right hand."""
     x = width - ACTIVE_W - ACTIVE_MARGIN
     y = ACTIVE_TOP
     rect = QRect(x, y, ACTIVE_W, ACTIVE_H)
     T.panel(painter, x, y, ACTIVE_W, ACTIVE_H, radius=8, shadow=False)
-    for i, (hand, mouse) in enumerate((("main", "LMB"), ("off", "RMB"))):
+    for i, (physical, mouse) in enumerate((("left", "LMB"), ("right", "RMB"))):
+        hand = eq.relative_hand(c, physical)
         spell = eq.hand_spell(c, hand)
         item = eq.hand_weapon(c, hand)
         if hand == "off" and item is None:
             item = eq.shield(c) or eq.light_source(c)
+            if item is None and eq.is_two_handed(eq.weapon(c)):
+                item = eq.weapon(c)                 # both hands on it
         top = y + 5 + i * 27
         tx = x + 14
         if spell is not None:
-            painter.setBrush(QColor(*spell.color))
-            painter.setPen(QPen(QColor(*spell.color).darker(160), 1))
-            painter.drawEllipse(x + 14, top + 2, 16, 16)
+            icon = _spell_icon_pixmap(spell, 22)
+            if icon is not None and not icon.isNull():
+                painter.drawPixmap(x + 12, top, icon)
+            else:
+                painter.setBrush(QColor(*spell.color))
+                painter.setPen(QPen(QColor(*spell.color).darker(160), 1))
+                painter.drawEllipse(x + 14, top + 2, 16, 16)
             tx = x + 40
         else:
             icon = _weapon_icon_pixmap(item, 22)
@@ -790,10 +849,11 @@ def _draw_quest_tracker(painter, session, width):
         T.text(painter, x + 6, y + 18, line, size=9, color=T.PARCH, family="Segoe UI")
     dist = _fmt_distance(g.get("distance"))
     if dist:
-        T.text(painter, x + 6, y + 34, f"➤ {dist} away  ·  press Q for details",
+        T.text(painter, x + 6, y + 34,
+               f"➤ {dist} away  ·  press {controls.label('quest')} for details",
                size=8, color=T.DIM, family="Segoe UI")
     else:
-        T.text(painter, x + 6, y + 34, "press Q for details",
+        T.text(painter, x + 6, y + 34, f"press {controls.label('quest')} for details",
                size=8, color=T.DIM, family="Segoe UI")
     # Up to the clock's left edge (_draw_clock), so its button clears the clock.
     return QRect(x - 4, y - 16, 192, 56)
@@ -821,7 +881,8 @@ def _draw_quest_arrow(painter, session, width, height):
         except Exception:
             one = None
         targets = [(one[0], "", one[1])] if one else []
-    if not targets:
+    waypoint = session.waypoint() if hasattr(session, "waypoint") else None
+    if not targets and waypoint is None:
         return
     logic = getattr(session, "logic", None)
     player = fio.player(logic)
@@ -864,6 +925,19 @@ def _draw_quest_arrow(painter, session, width, height):
         orbit = 58.0 + i * 11.0
         _draw_one_quest_arrow(painter, cx, cy, rel, orbit, color,
                               _fmt_distance(math.hypot(dx, dz)), width, height)
+    if waypoint is not None:
+        # The player's own map waypoint: always orange, on a ring of its own
+        # outside the quests'.
+        dx = float(waypoint[0]) - float(ppos[0])
+        dz = float(waypoint[1]) - float(ppos[2])
+        if abs(dx) > 1e-3 or abs(dz) > 1e-3:
+            if overhead:
+                rel = math.atan2(-dx * hz + dz * hx, dx * hx + dz * hz)
+            else:
+                rel = _wrap(math.atan2(dx, dz) - pangle)
+            _draw_one_quest_arrow(painter, cx, cy, rel, 58.0 + len(targets) * 11.0,
+                                  T.WAYPOINT, _fmt_distance(math.hypot(dx, dz)),
+                                  width, height)
 
 
 def _draw_one_quest_arrow(painter, cx, cy, rel, orbit, color, dist, width, height):

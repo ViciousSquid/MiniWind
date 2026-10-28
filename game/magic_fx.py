@@ -64,6 +64,16 @@ WARD_RIM = 0.9
 WARD_PULSE = 0.06
 WARD_PULSE_HZ = 0.7
 WARD_SHIMMER = 1.0
+#: Drinking a potion: a momentary green bubble round the drinker, bending
+#: the world behind it like a ward's (a fisheye lens with a shimmer through
+#: it), swelling in fast and fading: its colour, size, lens strength and life.
+DRINK_COLOUR = (90, 255, 130)
+#: A magicka potion's shimmer is blue.
+DRINK_MAGICKA_COLOUR = (90, 150, 255)
+DRINK_SIZE = 180.0
+DRINK_LENS = 0.4
+DRINK_SECONDS = 0.7
+DRINK_IN = 0.08
 #: The colours of fire, from the white-gold heart to the deep orange tips.
 FLAME_HOT = (1.0, 0.86, 0.42)
 FLAME_DEEP = (1.0, 0.36, 0.06)
@@ -84,6 +94,14 @@ def _rgb(colour):
     if max(c) > 1.0:
         c = [v / 255.0 for v in c]
     return tuple(min(1.0, max(0.0, v)) for v in c)
+
+
+def drink_colour(item_def) -> tuple:
+    """The shimmer a potion makes: blue if it restores magicka, else green."""
+    effects = (item_def.get("effects", ()) if item_def is not None else ()) or ()
+    if any(e.get("kind") == "restore_magicka" for e in effects):
+        return DRINK_MAGICKA_COLOUR
+    return DRINK_COLOUR
 
 
 def _lift(pos, dy):
@@ -198,6 +216,8 @@ class MagicFX:
         self._lenses = []
         #: [start, fade_in, hold, fade_out, (r, g, b), peak, style]
         self._tints = []
+        #: [x, y, z, start, (r, g, b)]: potions being drunk (the shimmer).
+        self._drinks = []
         #: ``wards() -> [(feet, colour, kind)]`` read every frame: who wears a
         #: ward (shield, flame cloak, ...), drawn as a fresnel bubble.
         self.wards = None
@@ -429,6 +449,20 @@ class MagicFX:
                                   grav=40.0, now=now))
         self._emit(rows)
 
+    def drink(self, feet, colour=DRINK_COLOUR) -> None:
+        """A potion drunk by whoever stands at *feet*: for a moment a bubble
+        round them -- green, blue for magicka (:func:`drink_colour`) -- the
+        world behind it bending as through a ward's glass, with a shimmer
+        through it; then gone."""
+        if not self.near(feet):
+            return
+        now = self._clock()
+        with self._lock:
+            self._drinks.append([float(feet[0]), float(feet[1]), float(feet[2]), now,
+                                 _rgb(colour)])
+            if len(self._drinks) > MAX_LENSES:
+                self._drinks = self._drinks[-MAX_LENSES:]
+
     def summon(self, feet, colour=(170, 90, 255)) -> None:
         """A portal opens at *feet*: a wide rune ring, rays and a dark flash."""
         if not self.near(feet):
@@ -480,6 +514,7 @@ class MagicFX:
             self._bolts.clear()
             self._lenses = []
             self._tints = []
+            self._drinks = []
 
     # -- what is alive now ----------------------------------------------------
     def frame(self, now=None):
@@ -504,6 +539,8 @@ class MagicFX:
             lenses = [list(l) for l in self._lenses]
             self._tints = [t for t in self._tints if now - t[0] < t[1] + t[2] + t[3]]
             tints = [list(t) for t in self._tints]
+            self._drinks = [d for d in self._drinks if now - d[3] < DRINK_SECONDS]
+            drinks = [list(d) for d in self._drinks]
         sprites = self._particles_now(p, now)
         extra = []
         for look, pos, vel, seen in bolts:
@@ -540,6 +577,18 @@ class MagicFX:
             extra.append([float(pos[0]), float(pos[1]) + BODY_LIFT, float(pos[2]),
                           size, *c, 0.9, BUBBLE,
                           (now * 0.35) % 1.0, 0.5 if kind == "invisibility" else 0.0, 0.0])
+        for x, y, z, start, green in drinks:
+            # Swells in fast, then fades as it settles: momentary, not worn.
+            age = now - start
+            if age < 0:
+                continue
+            env = (min(1.0, age / DRINK_IN)
+                   * (1.0 - max(0.0, age - DRINK_IN) / (DRINK_SECONDS - DRINK_IN)) ** 1.5)
+            size = DRINK_SIZE * (0.8 + 0.2 * min(1.0, age / DRINK_IN))
+            ward_lenses.append((x, y + BODY_LIFT, z, DRINK_LENS * env, size * 0.5,
+                                WARD_RIM, green, WARD_SHIMMER))
+            extra.append([x, y + BODY_LIFT, z, size, *green, 0.85 * env, BUBBLE,
+                          (now * 0.6) % 1.0, 0.0, 0.0])
         if extra:
             sprites = np.concatenate((sprites, np.asarray(extra, dtype=np.float32)))
         out_lenses = []

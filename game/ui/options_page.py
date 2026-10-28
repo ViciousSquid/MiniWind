@@ -46,6 +46,9 @@ class OptionsPage:
         #: new key (None when none is).
         self.keys_mode = False
         self.capture = None
+        #: The action waiting for its new gamepad button (None when none is):
+        #: game.gamepad hands the next button pressed to capture_pad.
+        self.capture_pad = None
 
     # -- data -------------------------------------------------------------
     def open(self):
@@ -84,9 +87,31 @@ class OptionsPage:
         for action, label, _const, _default in keybinds.ACTIONS:
             value = "Press a key…" if self.capture == action else keybinds.label(keys[action])
             rows.append(("bind:" + action, label, value, True))
+        rows.append(("pad_header", "Gamepad buttons", "", False))
+        from .. import controls
+        buttons = keybinds.current_pad(config)
+        pad_actions = [(a, lab) for a, lab, _c, _d in keybinds.ACTIONS]
+        pad_actions += [(a, lab) for a, lab, _b in keybinds.PAD_ONLY]
+        for action, label in pad_actions:
+            button = buttons.get(action, "")
+            value = ("Press a button…" if self.capture_pad == action
+                     else controls.PAD_LABELS.get(button, "—") if button else "—")
+            rows.append(("pad:" + action, label, value, True))
+        rows.append(("pad_hands", "Left / right hand", "LT / RT", False))
         rows.append(("keys_reset", "Reset to defaults", "", True))
         rows.append(("keys_back", "Back", "", True))
         return rows
+
+    def capture_pad_button(self, button) -> None:
+        """The gamepad button pressed while an action waited for one: bound
+        to it (an action already on it swaps over); B or Start cancels."""
+        action, self.capture_pad = self.capture_pad, None
+        if action is not None and button not in ("start",):
+            from .. import keybinds
+            config, save = self._config()
+            if button in keybinds.PAD_BUTTONS:
+                keybinds.bind_pad(config, action, button, save)
+        self.menu.view.update()
 
     def rows(self):
         """``[(key, label, value text, enabled)]`` top to bottom."""
@@ -126,12 +151,18 @@ class OptionsPage:
         if key == "volume":
             return "Drag or use ← →.  0% turns the music off."
         if key == "keys":
-            return "Choose the key for each action."
+            return "Choose the key and the gamepad button for each action."
         if key == "hud":
             return "Drag the HUD's panels where you want them; ▼ hides one."
         if key.startswith("bind:"):
             return ("Press the new key (Esc cancels). A key already in use swaps over."
                     if self.capture else "Enter or click, then press the new key.")
+        if key.startswith("pad:"):
+            return ("Press the new button on the gamepad (Start or Esc cancels). "
+                    "A button already in use swaps over."
+                    if self.capture_pad else "A, Enter or click, then press the new button.")
+        if key == "pad_hands":
+            return "The triggers are always the left- and right-hand attack."
         if key == "keys_reset":
             return "Every action back on its usual key."
         return ""
@@ -179,6 +210,12 @@ class OptionsPage:
             self.capture = key[5:]
             self.menu.view.update()
             return
+        if key.startswith("pad:"):
+            self.capture_pad = key[4:]
+            self.menu.view.update()
+            return
+        if key in ("pad_header", "pad_hands"):
+            return
         if s is None:
             return
         if key == "mode":
@@ -201,6 +238,11 @@ class OptionsPage:
 
     # -- input ------------------------------------------------------------
     def handle_key(self, key):
+        if self.capture_pad is not None:
+            if key == Qt.Key_Escape:             # the keyboard can cancel it too
+                self.capture_pad = None
+                self.menu.view.update()
+            return
         if self.capture is not None:
             # Waiting for the new key: Esc cancels, anything bindable binds.
             if key != Qt.Key_Escape:

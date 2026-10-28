@@ -130,6 +130,9 @@ class Character:
         self._strip_seen = set()
         #: How many copies of each the strip has offered a slot (transient).
         self._strip_offered = {}
+        #: The one place marked on the map, ``[x, z]`` in world units, or
+        #: None (MiniwindSession.waypoint).
+        self.waypoint: Optional[List[float]] = None
 
         # wealth & gear
         self.gold = 25
@@ -559,6 +562,7 @@ class Character:
             "alignment_log": [dict(e) for e in self.alignment_log],
             "quick_weapons": list(self.quick_weapons),
             "strip": list(self.strip),
+            "waypoint": list(self.waypoint) if self.waypoint else None,
             "rolls": dict(self.rolls),
             "read_books": list(self.read_books),
             "trained_this_level": int(self.trained_this_level),
@@ -644,6 +648,11 @@ class Character:
             c._strip_offered = {str(s.get("id")): int(s.get("qty", 1) or 1)
                                 for s in c.inventory
                                 if isinstance(s, dict) and s.get("id")}
+        waypoint = data.get("waypoint")
+        try:
+            c.waypoint = [float(waypoint[0]), float(waypoint[1])] if waypoint else None
+        except (TypeError, ValueError, IndexError):
+            c.waypoint = None
         practice = data.get("spell_practice")
         if isinstance(practice, dict):
             c.spell_practice = {str(k): int(v) for k, v in practice.items()}

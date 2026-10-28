@@ -77,6 +77,17 @@ WEAPON_STAB_DURATION = 0.14
 WEAPON_BOW_PULL_DISTANCE = 24.0
 WEAPON_BOW_DURATION = 0.18
 
+# A block (``draw_weapon(block=...)``, 0 at rest .. 1 raised): the held item
+# -- a shield -- swings round in front of the head and turns to face forward,
+# which from above reads as it narrowing to a line across the actor's front.
+# Where it goes (forward of the head, and how far it stays to its own side),
+# how thin it gets, and how far it is angled off square (degrees, its own
+# side's edge swept back a little).
+WEAPON_BLOCK_FORWARD = 52.0
+WEAPON_BLOCK_SIDE = 6.0
+WEAPON_BLOCK_SQUASH = 0.12
+WEAPON_BLOCK_ANGLE_DEG = 10.0
+
 
 class SpriteController:
     IDLE = "idle"
@@ -448,7 +459,10 @@ class OverheadSpriteRenderer:
         tint=(0.0, 0.0, 0.0, 0.0),
         depth_write: bool = True,
         opacity: float = 1.0,
+        squash: float = 1.0,
     ) -> None:
+        """*squash* scales the quad along its own forward axis only (1: as
+        drawn) -- a blocking shield seen edge-on."""
         try:
             gl = self._gl
             glm = self._glm
@@ -473,7 +487,7 @@ class OverheadSpriteRenderer:
 
             model = glm.scale(
                 model,
-                glm.vec3(float(size), 1.0, float(size)),
+                glm.vec3(float(size), 1.0, float(size) * float(squash)),
             )
 
             mvp = projection * view * model
@@ -593,6 +607,7 @@ class OverheadSpriteRenderer:
         size: Optional[float] = None,
         handed: str = "right",
         opacity: float = 1.0,
+        block: float = 0.0,
     ) -> None:
         """Draw an equipped weapon to the actor's wielding hand.
 
@@ -614,6 +629,13 @@ class OverheadSpriteRenderer:
             blade.
         Player, NPC and monster callers all go through this one path and
         therefore receive identical behaviour for a given weapon kind.
+
+        ``block`` (0..1) raises it to block: from its resting place it swings
+        in front of the head (:data:`WEAPON_BLOCK_FORWARD`) and turns to face
+        forward, narrowing to :data:`WEAPON_BLOCK_SQUASH` of its depth -- a
+        line across the actor's front, angled very slightly
+        (:data:`WEAPON_BLOCK_ANGLE_DEG`). The caller tweens it; while it is
+        raised there is no attack motion.
         """
 
         if not weapon_path or not self._ready():
@@ -666,6 +688,17 @@ class OverheadSpriteRenderer:
         )
 
         thrust = 0.0
+        block = max(0.0, min(1.0, float(block or 0.0)))
+        if block > 0.0:
+            # Raised: from beside the head to in front of it, edge-on.
+            rest_x, rest_z = weapon_x, weapon_z
+            front_x = (float(pos[0]) + forward_x * WEAPON_BLOCK_FORWARD
+                       + right_x * WEAPON_BLOCK_SIDE)
+            front_z = (float(pos[2]) + forward_z * WEAPON_BLOCK_FORWARD
+                       + right_z * WEAPON_BLOCK_SIDE)
+            weapon_x = rest_x + (front_x - rest_x) * block
+            weapon_z = rest_z + (front_z - rest_z) * block
+            attacking = False
 
         if attacking:
             kind = str(weapon_kind or "melee").lower()
@@ -712,4 +745,6 @@ class OverheadSpriteRenderer:
             # opposite way; its resting position (actor's right) and thrust are
             # computed above from the raw facing and are unaffected either way.
             opacity=opacity,
+            squash=1.0 - block * (1.0 - WEAPON_BLOCK_SQUASH),
+            rotation_offset=math.radians(WEAPON_BLOCK_ANGLE_DEG) * block * side,
         )

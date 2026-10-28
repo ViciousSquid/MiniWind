@@ -677,6 +677,12 @@ def install_play_menu(view):
     view.death_menu = DeathMenu(view)
     install_wheel_zoom(view)
     install_bow_draw(view)
+    # A gamepad plays it too, beside the keyboard and mouse (game/gamepad.py).
+    try:
+        from . import gamepad
+        gamepad.install(view)
+    except Exception as exc:
+        print(f"[MiniWind] gamepad unavailable: {exc}")
     _use_game_fonts_for_loading()
     editor = getattr(view, "editor", None)
     config = getattr(editor, "config", None)
@@ -734,15 +740,20 @@ def _free_play_session(view):
 
 
 def install_bow_draw(view):
-    """With a bow in hand, the LEFT mouse draws it: hold to draw (the pie fills
-    beside the head), release to loose (game.runtime:
+    """A bow in hand draws on either mouse button -- it takes both hands --
+    and a warrior's fist charges on its own hand's button (left button left
+    hand, right button right hand: MiniwindSession.mouse_hand). Hold to draw
+    (the pie fills beside the head), release to loose (game.runtime:
     MiniwindSession._update_bow_draw). A quick click looses a short shot. The
-    button is the game's then, so the engine does not also fire on it; with a
-    blade in hand a left click is an ordinary stab. The right mouse is the off
-    hand (its weapon, equipped spell or a shield bash)."""
+    button is the game's then, so the engine does not also fire on it; any
+    other hand's click is an ordinary use of what it holds (a stab, a cast,
+    a shield bash)."""
     from PyQt5.QtCore import QEvent, QObject, Qt
 
     class _BowDraw(QObject):
+        #: The button that started the draw: only its release looses.
+        button = None
+
         def eventFilter(self, obj, event):
             kind = event.type()
             if kind not in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease,
@@ -750,17 +761,22 @@ def install_bow_draw(view):
                 return False
             session = _free_play_session(view)
             if session is None:
+                self.button = None
                 return False
-            if event.button() != Qt.LeftButton:
+            if event.button() not in (Qt.LeftButton, Qt.RightButton):
                 return False
             drawing = session.bow_charge is not None
             if kind == QEvent.MouseButtonRelease:
-                if drawing or session._bow_input:
+                if (drawing or session._bow_input) and self.button in (None, event.button()):
+                    self.button = None
                     session.bow_draw_input("release")
                     return True
                 return False
-            charge = getattr(session, "charge_in_hand", session.bow_in_hand)
-            if charge():
+            if drawing or session._bow_input:
+                return True                  # one draw at a time
+            mode = "primary" if event.button() == Qt.LeftButton else "secondary"
+            if session.charge_in_hand(session.mouse_hand(mode)):
+                self.button = event.button()
                 session.bow_draw_input("press")
                 return True
             return False

@@ -10,7 +10,8 @@ it, with a ring round that objective.
 
 Driven by the pause menu: drag or the arrow keys to pan, the wheel or + / -
 to zoom (about the pointer), Space or Home to come back to the player, Esc or
-M to leave. Its data comes through the menu's actions
+M to leave. A click (without dragging) puts the player's one waypoint there,
+in orange; a click on it takes it away. Its data comes through the menu's actions
 (``pause_menu_map_data``), so the page itself knows no session.
 """
 
@@ -30,6 +31,12 @@ OPEN_SPAN = 9000.0
 ZOOM_STEP = 1.25
 #: An arrow key pans this fraction of the span.
 PAN_STEP = 0.12
+#: How far (screen px) the pointer may move and still be a click, not a drag.
+CLICK_SLOP = 5
+#: How near (screen px) a click must be to the waypoint to take it away.
+WAYPOINT_PICK = 14.0
+#: How long a clicked waypoint is shown before the game's own is read back.
+PENDING_SECONDS = 0.5
 
 _GOLD = QColor(214, 178, 96)
 _GOLD_BRIGHT = QColor(250, 214, 120)
@@ -42,8 +49,14 @@ _CAPTION = QColor(170, 166, 160)
 class MapPage:
     """State, input and painting of the map in Statistics or a PauseMenu."""
 
-    def __init__(self, menu=None, *, read_data=None, update=None, on_close=None):
+    def __init__(self, menu=None, *, read_data=None, update=None, on_close=None,
+                 on_waypoint=None):
         self.menu = menu
+        #: ``on_waypoint(x, z, pick)``: a click on the map at world (x, z),
+        #: *pick* world units being near enough to be on the waypoint.
+        self._on_waypoint = (on_waypoint if on_waypoint is not None else
+                             getattr(getattr(menu, "actions", None),
+                                     "pause_menu_toggle_waypoint", None))
         self._read_data = (read_data if read_data is not None else
                            getattr(getattr(menu, "actions", None), "pause_menu_map_data", None))
         self._update = update if update is not None else menu.view.update
@@ -55,6 +68,8 @@ class MapPage:
         self.focus = None         # (x, z, label) ringed on the map
         self._rect = None         # QRectF of the map on screen, last paint
         self._drag = None         # (press pos, centre at press)
+        self._moved = False       # the press became a drag, not a click
+        self._pending = None      # (waypoint, time): a click not yet applied
         self._opened_at = 0.0
 
     # -- data -------------------------------------------------------------
@@ -66,6 +81,13 @@ class MapPage:
             self.world, self.features = None, None
         if not self.features:
             self.features = {"player": None, "places": [], "quests": []}
+        pending = self._pending
+        if pending is not None:
+            # A click the game tick has not applied yet: show it meanwhile.
+            if time.monotonic() - pending[1] < PENDING_SECONDS:
+                self.features["waypoint"] = pending[0]
+            else:
+                self._pending = None
 
     def open(self, focus=None):
         """Show the map on the player, or on *focus* = ``(x, z, label)``."""
@@ -161,20 +183,47 @@ class MapPage:
 
     def handle_mouse_press(self, pos):
         self._drag = (QPointF(pos), self.centre)
+        self._moved = False
 
     def handle_mouse_move(self, pos, buttons):
         if self._drag is None or not (buttons & Qt.LeftButton) or self._rect is None:
             self._drag = None
             return
         start, centre = self._drag
-        s = self._scale(self._rect)
         point = QPointF(pos)
+        if not self._moved and (abs(point.x() - start.x()) + abs(point.y() - start.y())
+                                < CLICK_SLOP):
+            return                    # still a click, not yet a drag
+        self._moved = True
+        s = self._scale(self._rect)
         self.centre = (centre[0] - (point.x() - start.x()) / s,
                        centre[1] - (point.y() - start.y()) / s)
         self._update()
 
     def handle_mouse_release(self):
-        self._drag = None
+        drag, self._drag = self._drag, None
+        if drag is None or self._moved or self._rect is None:
+            return
+        if self._rect.contains(drag[0]):
+            self.click(drag[0])
+
+    def click(self, pos):
+        """A click on the map at screen *pos*: the waypoint goes there, or,
+        clicked on, goes away. Shown at once; the game keeps the real one."""
+        rect = self._rect
+        if rect is None:
+            return
+        x, z = self.to_world(rect, QPointF(pos))
+        pick = WAYPOINT_PICK / self._scale(rect)
+        here = self.features.get("waypoint")
+        if here is not None and math.hypot(here[0] - x, here[1] - z) <= pick:
+            self.features["waypoint"] = None
+        else:
+            self.features["waypoint"] = (x, z)
+        self._pending = (self.features["waypoint"], time.monotonic())
+        if self._on_waypoint is not None:
+            self._on_waypoint(x, z, pick)
+        self._update()
 
     def handle_wheel(self, pos, delta):
         if delta:
@@ -215,6 +264,7 @@ class MapPage:
         self._draw_quests(painter, rect, text_font)
         self._draw_witnesses(painter, rect, text_font)
         self._draw_focus(painter, rect)
+        self._draw_waypoint(painter, rect)
         self._draw_player(painter, rect)
         painter.setClipping(False)
 
@@ -232,7 +282,7 @@ class MapPage:
         painter.setPen(_CAPTION)
         painter.drawText(QRectF(x, rect.bottom() + 4, w, bottom - 4),
                          int(Qt.AlignCenter),
-                         "Drag  pan      Wheel  zoom      Space  you      Esc  back")
+                         _caption())
         painter.restore()
 
     def _draw_witnesses(self, painter, rect, text_font):
@@ -350,6 +400,25 @@ class MapPage:
         painter.drawEllipse(p, r, r)
         self._update()                  # keep the ring breathing
 
+    def _draw_waypoint(self, painter, rect):
+        """The player's waypoint: an orange pin, its point on the spot."""
+        here = self.features.get("waypoint")
+        if here is None:
+            return
+        from .theme import WAYPOINT
+        p = self.to_screen(rect, here[0], here[1])
+        head = QPointF(p.x(), p.y() - 16)
+        pin = QPainterPath()
+        pin.moveTo(p)
+        pin.lineTo(head.x() - 6, head.y() + 3)
+        pin.arcTo(QRectF(head.x() - 7, head.y() - 7, 14, 14), 200, -220)
+        pin.closeSubpath()
+        painter.setPen(QPen(QColor(70, 30, 0), 1.6))
+        painter.setBrush(QBrush(WAYPOINT))
+        painter.drawPath(pin)
+        painter.setBrush(QBrush(QColor(255, 236, 200)))
+        painter.drawEllipse(head, 2.6, 2.6)
+
     def _draw_player(self, painter, rect):
         player = self.features.get("player")
         if player is None:
@@ -364,6 +433,15 @@ class MapPage:
         painter.setBrush(QBrush(QColor(255, 255, 255)))
         painter.setPen(QPen(QColor(20, 20, 20), 1.6))
         painter.drawPolygon(QPolygonF([tip, left, c, right]))
+
+
+def _caption() -> str:
+    """The controls under the map, on whichever controls are in use."""
+    from .. import controls
+    if controls.gamepad():
+        return ("A  waypoint      L-stick  move      A held  pan      R-stick  zoom      "
+                "B  back")
+    return "Click  waypoint      Drag  pan      Wheel  zoom      Space  you      Esc  back"
 
 
 def _takes_italic(text_font):

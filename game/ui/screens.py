@@ -20,12 +20,22 @@ from ..rpg import (races, classes, birthsigns, attributes as attr, skills as sk,
                    items as rpg_items, inventory as inv, equipment as eq,
                    magic as rpg_magic, guilds, quests, heads)
 from ..rpg import charisma as _cha
+from .. import controls
 
 STATISTICS_TABS = (("Inventory", "inventory"), ("Skills", "skills"),
                    ("Fortune", "fortune"), ("Alignment", "alignment"),
                    ("Character", "character"),
                    ("Journal", "journal"), ("Spells", "spells"), ("Map", "map"))
 STATISTICS_SCREENS = tuple(screen for _label, screen in STATISTICS_TABS)
+
+
+def next_statistics_tab(screen, step):
+    """The Statistics tab *step* along from *screen* (a gamepad's LB / RB),
+    wrapping round; a screen that is not one of them stays as it is."""
+    if screen not in STATISTICS_SCREENS:
+        return screen
+    i = STATISTICS_SCREENS.index(screen)
+    return STATISTICS_SCREENS[(i + int(step)) % len(STATISTICS_SCREENS)]
 
 
 def _sel(session):
@@ -1207,7 +1217,10 @@ def _draw_spells(painter, session, w, h):
                             inner.width() - list_w - 20, 118),
                       spells[st["row"]].id if spells else None)
     T.text_in(painter, QRect(inner.x(), inner.bottom() - 16, inner.width(), 16),
-              f"Drag a spell to a hand · LMB/RMB use equipped hands · {K_SPELLS.upper()}/Esc close",
+              (f"{controls.label('click')} a spell, then a shortcut bar slot · "
+               f"{controls.label('tabs')} tabs · {controls.label('back')} close"
+               if controls.gamepad() else
+               f"Drag a spell to the shortcut bar, or press 1-9 · {K_SPELLS.upper()}/Esc close"),
               size=9, color=T.DIM,
               align=T.ALIGN_CENTER, family="Segoe UI")
 
@@ -1253,24 +1266,26 @@ def _upgrade_spell(session, spell_id):
 
 
 def _draw_spell_hands(painter, session, area, selected):
+    """What each hand holds, and the mouse button that uses it: the left
+    button the left hand, the right button the right hand. Only shown here --
+    a spell is readied from the shortcut bar (its number key, Shift for the
+    right hand), so the selected spell's slot on the bar is named too."""
     c = session.game.character
     width = (area.width() - 12) // 2
     for i, physical in enumerate(("left", "right")):
         hand = eq.relative_hand(c, physical)
         spell = eq.hand_spell(c, hand)
-        slot = eq.hand_slot(hand)
-        iid = eq.equipped_id(c, slot)
-        if hand == "off" and not iid:
-            iid = eq.equipped_id(c, "light")
-            if iid:
-                slot = "light"
-        item = rpg_items.get(iid) if iid else None
+        item = eq.hand_weapon(c, hand)
+        if hand == "off" and item is None:
+            item = eq.shield(c) or eq.light_source(c)
+            if item is None and eq.is_two_handed(eq.weapon(c)):
+                item = eq.weapon(c)                 # both hands on it
         rect = QRect(area.x() + i * (width + 12), area.y(), width, 78)
         painter.save()
         painter.setBrush(QColor(30, 28, 36, 245))
-        painter.setPen(QPen(T.GOLD_BRIGHT if hits.hovered(rect) else T.GILD, 1.5))
+        painter.setPen(QPen(T.GILD, 1.5))
         painter.drawRoundedRect(rect, 5, 5)
-        mouse = "LMB" if hand == "main" else "RMB"
+        mouse = "LMB" if physical == "left" else "RMB"
         T.text_in(painter, rect.adjusted(6, 4, -6, -48),
                   f"{physical.title()} hand · {mouse}", size=11, color=T.GOLD_BRIGHT,
                   align=T.ALIGN_CENTER)
@@ -1279,15 +1294,30 @@ def _draw_spell_hands(painter, session, area, selected):
                   size=10, color=QColor(*spell.color) if spell else T.INK,
                   align=int(Qt.AlignCenter | Qt.TextWordWrap))
         painter.restore()
-        _SPELL_HITS["targets"].append((QRect(rect), ("hand", physical)))
-        if spell:
-            _SPELL_HITS["cells"].append((QRect(rect), ("spell_hand", hand, spell.id)))
-        elif iid:
-            _SPELL_HITS["cells"].append((QRect(rect), ("equip", slot, iid)))
-        button(painter, QRect(rect.x(), rect.bottom() + 6, width, 28),
-               f"Equip {physical}",
-               lambda s, sid=selected, h=physical: s.equip_hand_spell(sid, h),
-               enabled=selected is not None)
+    slot = _strip_slot_of(session, selected)
+    note = (f"On the shortcut bar as {slot + 1}: press {slot + 1} for the left hand, "
+            f"Shift+{slot + 1} for the right" if slot is not None else
+            "Not on the shortcut bar: drag it there, or press 1-9")
+    T.text_in(painter, QRect(area.x(), area.y() + 84, area.width(), 30), note,
+              size=9, color=T.DIM, align=int(Qt.AlignCenter | Qt.TextWordWrap),
+              family="Segoe UI")
+
+
+def _strip_slot_of(session, spell_id):
+    """The shortcut bar slot (0-8) holding *spell_id*, or None."""
+    if not spell_id or not hasattr(session, "strip_slots"):
+        return None
+    for i, stack in enumerate(session.strip_slots()):
+        if stack and stack.get("spell") == spell_id:
+            return i
+    return None
+
+
+def _bar_spell(session, spell_id, index):
+    """Put *spell_id* in shortcut bar slot *index* (0-8)."""
+    spell = rpg_magic.get(spell_id)
+    if spell is not None and session.set_strip_slot(index, "spell:" + spell_id):
+        session.notify(f"{spell.name} on the shortcut bar as {index + 1}", 2.0)
 
 
 def _handle_spells(session, key):
@@ -1303,6 +1333,8 @@ def _handle_spells(session, key):
         _ready_spell(session, spells[st["row"]].id); return True
     if key == "u" and spells:
         _upgrade_spell(session, spells[st["row"]].id); return True
+    if key in tuple("123456789") and spells and hasattr(session, "set_strip_slot"):
+        _bar_spell(session, spells[st["row"]].id, int(key) - 1); return True
     if key in (K_SPELLS, "escape", "esc"):
         session.open_screen = None
     return True
@@ -1891,7 +1923,8 @@ def _draw_container(painter, session, w, h):
     x, y, bw, bh = _panel_rect(w, h)
     inner = T.panel(painter, x, y, bw, bh)
     ty = T.heading(painter, inner, session.container_name(),
-                   f"{c.gold} gold    ·    click or Enter to take / store   ·   E/Esc close")
+                   f"{c.gold} gold    ·    {controls.label('click')} to take / store   ·   "
+                   f"{controls.label('back')} close")
 
     st["row_c"] = max(0, min(st["row_c"], max(0, len(citems) - 1)))
     st["row_p"] = max(0, min(st["row_p"], max(0, len(pitems) - 1)))

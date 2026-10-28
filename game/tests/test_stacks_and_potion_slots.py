@@ -7,6 +7,8 @@ Run:  python -m pytest game/tests/test_stacks_and_potion_slots.py -q
 
 from __future__ import annotations
 
+import pytest
+
 from ..rpg import inventory as inv, items
 from .test_inventory_strip import _session
 
@@ -16,9 +18,12 @@ def _give(s, iid, qty):
 
 
 def _sounds(s, monkeypatch, *present):
+    """Capture queued sounds, with only *present* shipped: no loose file in
+    assets/sounds counts (they are looked for first), only the pinned set."""
     from .. import runtime
     queued = []
     s.logic.game_state = type("GS", (), {"queue_sound": staticmethod(queued.append)})()
+    monkeypatch.setattr(runtime, "SOUND_DIR", "/nonexistent/sounds")
     monkeypatch.setattr(runtime, "_ARCHIVED_SOUNDS", set(present))
     return queued
 
@@ -94,3 +99,58 @@ def test_no_drink_sound_is_no_error(monkeypatch):
     _give(s, "potion_heal", 1)
     assert s.use_health_potion()
     assert queued == []
+
+
+def test_every_potion_drunk_by_every_route_plays_drink(monkeypatch):
+    from ..rpg import items
+    s = _session()
+    queued = _sounds(s, monkeypatch, "drink.mp3")
+    potions = [iid for iid in ("potion_heal_minor", "potion_heal", "potion_magicka")
+               if items.get(iid) is not None and items.get(iid).category == items.POTION]
+    assert len(potions) == 3
+    for iid in potions:
+        _give(s, iid, 3)
+    assert s.use_health_potion()                                 # the heal key
+    index = next(i for i, e in enumerate(s.strip_slots())
+                 if e and e["id"] == "potion_magicka")
+    s.select_strip_slot(index)                                   # its number key / a click
+    assert s.inventory_use("potion_magicka")                     # the pack, a double-click
+    assert [q["file"] for q in queued] == ["drink.mp3"] * 3
+
+
+def test_only_potions_play_drink_not_food(monkeypatch):
+    s = _session()
+    queued = _sounds(s, monkeypatch, "drink.mp3")
+    _give(s, "bread", 2)
+    c = s.game.character
+    c.health = c.max_health - 20
+    assert s.inventory_use("bread")
+    assert c.health == c.max_health - 12                         # bread: 8 health
+    assert queued == []                                          # eaten, not drunk
+    _give(s, "potion_stamina", 1)
+    assert s.inventory_use("potion_stamina")
+    assert [q["file"] for q in queued] == ["drink.mp3"]
+
+
+def test_drinking_a_potion_shimmers_green_for_a_moment_and_bread_does_not(monkeypatch):
+    from .. import magic_fx
+    s = _session()
+    _sounds(s, monkeypatch, "drink.mp3")
+    s.logic.player.pos = [10.0, 0.0, 20.0]
+    now = [100.0]
+    s.magic_fx = magic_fx.MagicFX(clock=lambda: now[0], player_pos=s._player_pos)
+    _give(s, "bread", 1)
+    s.inventory_use("bread")
+    assert s.magic_fx.frame()[1] == []                           # eaten: no shimmer
+    _give(s, "potion_heal_minor", 1)
+    s.inventory_use("potion_heal_minor")
+    now[0] += magic_fx.DRINK_IN                                  # at its fullest
+    sprites, lenses, _tints = s.magic_fx.frame()
+    (lens,) = lenses
+    x, y, z, strength, radius, _rim, colour, shimmer = lens
+    assert (x, z) == (10.0, 20.0) and strength == pytest.approx(magic_fx.DRINK_LENS)
+    assert colour[1] > colour[0] and colour[1] > colour[2] and shimmer > 0   # green, rippling
+    assert (sprites[:, 8] == magic_fx.BUBBLE).sum() == 1
+    now[0] += magic_fx.DRINK_SECONDS                             # a moment later: gone
+    sprites, lenses, _tints = s.magic_fx.frame()
+    assert lenses == [] and (sprites[:, 8] == magic_fx.BUBBLE).sum() == 0

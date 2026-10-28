@@ -1197,10 +1197,11 @@ class QtGameView(QOpenGLWidget):
         if held is None:
             return
         # ``(weapon_id, handed)`` for one hand, or a list of
-        # ``(weapon_id, handed[, attacking[, facing_offset]])`` -- one per
-        # hand that holds something (a second weapon, a torch) -- each
-        # animated on its own, and turned by its offset (radians) from the
-        # head's facing, so a game can let a weapon trail a turn.
+        # ``(weapon_id, handed[, attacking[, facing_offset[, block]]])`` --
+        # one per hand that holds something (a second weapon, a torch) --
+        # each animated on its own, and turned by its offset (radians) from
+        # the head's facing, so a game can let a weapon trail a turn; *block*
+        # (0..1, the game's own tween) raises a shield edge-on in front.
         try:
             in_hands = held()
             if in_hands and isinstance(in_hands[0], str):
@@ -1222,7 +1223,8 @@ class QtGameView(QOpenGLWidget):
                 facing, weapon_path,
                 now, attacking=bool(entry[2]) if len(entry) > 2 else shooting,
                 weapon_kind=self._weapon_kind(weapon_id, sess),
-                handed=handed)
+                handed=handed,
+                block=float(entry[4] or 0.0) if len(entry) > 4 else 0.0)
         # Everyone else nearby holds their weapon too, through the same path:
         # ``overhead_actor_weapons() -> [(pos, facing, weapon_id, handed,
         # attacking, size)]``.

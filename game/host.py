@@ -29,7 +29,7 @@ from PyQt5 import QtWidgets
 # the plugin lifecycle: MiniWind uses them the way any native game layer would.
 from plugins.api import TickContext, io_def, prop, key_code
 
-from . import fio
+from . import controls, fio
 from .runtime import MiniwindSession, TALK_RADIUS, DICE_DISPLAY_DURATION
 
 # key vocabulary we translate raw Qt codes back into (for menu/dialogue nav)
@@ -71,8 +71,9 @@ K_MAP = "m"
 # nothing a roll key adds.
 K_QUEST = "q"          # show the current quest (objective + how to complete)
 #: Number keys that pick a slot on the inventory strip: '1' the first, and so
-#: on, as numbered under the slots. A weapon there is taken in hand at once.
-#: Nine is plenty and leaves '0' free.
+#: on, as numbered under the slots. A weapon there is taken in hand at once;
+#: a spell is readied in the left hand (Shift: the right hand). Nine is
+#: plenty and leaves '0' free.
 WEAPON_SLOT_KEYS = tuple(str(n) for n in range(1, 10))
 #: How long E stays ignored after it opened a screen, when the held-key
 #: snapshot never showed it down (a very quick tap), seconds.
@@ -1030,10 +1031,15 @@ class MiniwindGame:
             session.next_spell()
         # Number keys pick a slot on the inventory strip; a weapon in it is
         # taken in hand at once -- the main hand, or the off hand when the
-        # main hand is full -- and pressing it again puts it away.
+        # main hand is full -- and pressing it again puts it away. A spell
+        # there is readied in the left hand, or with Shift the right hand,
+        # and then casts on that hand's mouse button.
         for slot in WEAPON_SLOT_KEYS:
             if slot in just:
-                session.select_strip_slot(int(slot) - 1)
+                down = getattr(ctx, "key_down", None)
+                shift = bool(down and down("shift"))
+                session.select_strip_slot(int(slot) - 1,
+                                          hand="right" if shift else None)
                 break
         if K_SNEAK in just:
             session.toggle_sneak()
@@ -1099,7 +1105,8 @@ class MiniwindGame:
             from .rpg import magic as rpg_magic
             spell = rpg_magic.get(session.game.character.active_spell or "")
             name = spell.name if spell is not None else "the spell"
-            session.interact_prompt = f"Click to cast {name}  ·  Esc or right-click to cancel"
+            session.interact_prompt = (f"{controls.label('click')} to cast {name}  ·  "
+                                       f"{controls.label('back')} to cancel")
             return
         if ctx.interaction_consumed:
             # MiniWind suppresses the stock HUD. Show the core's cave/door
@@ -1112,7 +1119,7 @@ class MiniwindGame:
         arrest_guard = session.nearest_arrest_guard(player.pos, TALK_RADIUS)
         if arrest_guard is not None:
             name = arrest_guard.properties.get("display_name") or arrest_guard.properties.get("name", "Guard")
-            prompt = f"Press E to answer {name}'s arrest order"
+            prompt = f"{controls.press('interact')} to answer {name}'s arrest order"
             ctx.set_prompt(prompt, priority=6)
             session.interact_prompt = prompt
             if K_INTERACT in just or ctx.use_pressed:
@@ -1124,7 +1131,7 @@ class MiniwindGame:
         if npc is not None:
             name = npc.properties.get("display_name") or npc.properties.get("name", "NPC")
             verb = "trade with" if npc.properties.get("merchant") else "talk to"
-            prompt = f"Press E to {verb} {name}"
+            prompt = f"{controls.press('interact')} to {verb} {name}"
             # Show it both via the engine prompt and MiniWind's own HUD (the RPG
             # suppresses the stock HUD, so the HUD copy is what the player sees).
             ctx.set_prompt(prompt, priority=5)
@@ -1141,7 +1148,7 @@ class MiniwindGame:
         corpse = session.nearest_corpse(player.pos, TALK_RADIUS)
         if corpse is not None and (container is None or _dist2(player.pos, corpse.pos)
                                    < _dist2(player.pos, container.pos)):
-            prompt = f"[E] Loot {session.corpse_name(corpse)}"
+            prompt = f"[{controls.label('interact')}] Loot {session.corpse_name(corpse)}"
             ctx.set_prompt(prompt, priority=5)
             session.interact_prompt = prompt
             if K_INTERACT in just or ctx.use_pressed:
@@ -1153,7 +1160,7 @@ class MiniwindGame:
             p = container.properties
             label = "Jammed · requires Knock" if p.get("lock_jammed") else (
                 f"Locked · {str(p.get('lock_difficulty', 'novice')).title()}" if p.get("locked") else "Open")
-            prompt = f"[E] {label}: {cname}"
+            prompt = f"[{controls.label('interact')}] {label}: {cname}"
             ctx.set_prompt(prompt, priority=5)
             session.interact_prompt = prompt
             if K_INTERACT in just or ctx.use_pressed:
@@ -1254,9 +1261,10 @@ class MiniwindGame:
                                    time.perf_counter())
                 # Inspector lines (console 'inspect') lie on the world, under
                 # the HUD; their windows float above everything.
-                from .ui import inspector, path_debug
+                from .ui import inspector, nav_debug, path_debug
                 inspector.draw_world_lines(painter, viewport, w, h)
                 path_debug.draw(painter, session, viewport, w, h)   # console 'paths'
+                nav_debug.draw(painter, session, viewport, w, h)    # console 'shownav'
                 # The world's map picture for the minimap, which the HUD's
                 # status frame draws (painted once, in the background, then
                 # cached per map).
@@ -1289,6 +1297,7 @@ class MiniwindGame:
                     hud.draw_barks(painter, session, viewport, w, h)
                     hud.draw_thoughts(painter, session, viewport, w, h)
                     hud.draw_floats(painter, session, viewport, w, h)
+                    hud.draw_player_block(painter, session, viewport, w, h)
                 # The "stay near the guard" ring during a prison escort.
                 hud.draw_escort_ring(painter, session, viewport, w, h)
                 # "!" / "?" over heightened NPCs (a guard coming to arrest
@@ -1409,7 +1418,7 @@ class MiniwindGame:
 
     #: Screens the inventory strip stays up over, so things can be dragged
     #: between it and them (game/ui/drag.py).
-    _STRIP_SCREENS = ("character", "inventory", "container")
+    _STRIP_SCREENS = ("character", "inventory", "container", "spells")
 
     @classmethod
     def _strip_wanted(cls, session, cutscene=False) -> bool:

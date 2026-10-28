@@ -174,6 +174,14 @@ def is_equippable(item_id: str) -> bool:
     return bool(d and (d.get("slot") or d.category in (WEAPON, ARMOUR, AMMO, LIGHT)))
 
 
+def is_potion(item_def) -> bool:
+    """Whether a consumable is drunk -- a potion, with the drink's sound and
+    shimmer -- rather than food (``"food": true``: bread is eaten, though it
+    is used from the same Potions tab)."""
+    return (item_def is not None and item_def.category == POTION
+            and not item_def.get("food"))
+
+
 def is_light_source(item_def) -> bool:
     """Whether an item def is a carried light (torch/lantern): the LIGHT category,
     or anything that declares a ``light_radius``."""

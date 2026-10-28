@@ -30,7 +30,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from . import fio
+from . import controls, fio
 from .facing import face_heading
 from engine.change_journal import touch as _journal
 from engine.spatial import (TIER_NEAR, TIER_ACTIVE, TIER_DISTANT,
@@ -173,6 +173,9 @@ NPC_BLOCKED_GIVE_UP_TICKS = 60
 TALK_RADIUS = 140.0
 #: The inventory strip's width in slots: always nine, one per number key.
 STRIP_SIZE = 9
+#: A strip slot holding a spell keeps ``"spell:<spell id>"`` (item ids never
+#: have the colon), so spells and carried things share the nine number keys.
+STRIP_SPELL = "spell:"
 #: Slots in the pack (the player's inventory) before a satchel's: each one
 #: holds a stack, or a single weapon (a pair to dual wield takes two).
 PACK_SLOTS = 20
@@ -201,6 +204,10 @@ BOUNTY_NOTICE_RADIUS = 700.0
 ESCORT_BREAKAWAY_DISTANCE = 320.0
 #: Nearby guards who join the pursuit after an escort escape.
 GUARD_PURSUIT_RADIUS = 1200.0
+#: The sign over a prison marker in play: how far above the marker it floats
+#: and its billboard size (world units).
+PRISON_SIGN_RISE = 70.0
+PRISON_SIGN_SIZE = (56.0, 56.0)
 #: A surrendered player is considered delivered when close to the prison marker.
 PRISON_ARRIVE_RADIUS = 96.0
 PRISON_MARKER_NAME = "prison"
@@ -268,6 +275,36 @@ REPELLABLE_FACTIONS = frozenset({"bandits", "cultists"})
 #: How long a quest's arrow target / guidance is reused before it is looked
 #: up again (the HUD asks every frame).
 QUEST_LOOKUP_SECONDS = 0.25
+#: How near the player must come to their map waypoint for it to be reached
+#: (and cleared), world units.
+WAYPOINT_REACHED = 160.0
+#: How often (seconds) the roads are compared with the graph built from them.
+ROAD_CHECK_SECONDS = 2.0
+#: How near a walker must come to a road node to go on to the next.
+ROAD_NODE_REACH = 96.0
+#: A walker's road leg is planned again when its goal moves this far, or when
+#: it is this far from the road node it was heading for (knocked off it).
+ROAD_GOAL_SLACK = 200.0
+ROAD_LOST = 2600.0
+#: Walking on a road -- within this distance of it -- is quicker than
+#: across country.
+ROAD_SPEED = 1.15
+ROAD_WIDTH = 120.0
+#: States in which a walker has something more pressing than a good road:
+#: a fight, a fright, a chase, an errand that cannot wait, a leader to keep up
+#: with.
+ROAD_SKIP_STATES = frozenset((sched.COMBAT, sched.FLEE, sched.ALERT, sched.RALLY,
+                              sched.REPORT, sched.CONFRONT, sched.FOLLOW, "PURSUE",
+                              "SEARCH", "INVESTIGATE", "ARREST_APPROACH",
+                              "ARREST_READY", "AWAKENED"))
+#: An NPC drinks a healing potion from its pack at or below this share of
+#: its health -- a caster a magicka potion at or below this share of its
+#: magicka -- and not again for this many seconds.
+NPC_DRINK_HEALTH = 0.35
+NPC_DRINK_MAGICKA = 0.2
+NPC_DRINK_SECONDS = 4.0
+#: How long the shield takes to swing up into a block, or back down (s).
+BLOCK_TWEEN_SECONDS = 0.06
 #: How long a guard's "!" shows when he reacts to something.
 MARK_FLASH_SECONDS = 1.6
 #: A brawler at or below this fraction of their health has had enough.
@@ -327,6 +364,11 @@ SUBDUED_SHOUTS = ("That's enough! Go home, the both of you.",
                   "Any more of that and it's the cells.", "Settle down. Now.")
 CHARGE_SHOUTS = ("To arms!", "Raiders! With me!", "Not in my town!",
                  "Steel out, lads!")
+#: A guard struck down calls the watch: every guard of his town this near
+#: (world units) comes running to overpower whoever did it.
+GUARD_AID_RADIUS = 1600.0
+AID_SHOUTS = ("Guards! To me!", "Guard down! Take them!", "Help! The watch is attacked!",
+              "Seize them, lads!")
 #: How far inside the terrain's edge the player is stopped.
 WORLD_EDGE_MARGIN = 900.0
 #: How fast an over-encumbered player moves, as a fraction of normal.
@@ -446,6 +488,16 @@ TRANSACTION_SOUND = "transaction.mp3"
 DRINK_SOUND = "drink.mp3"
 #: Heard whenever the player casts a spell that works (assets/sounds).
 SPELLCAST_SOUND = "spellcast.mp3"
+#: Heard when a spell fizzles: the player's, or a caster's near enough.
+FIZZLE_SOUND = "sizzle.mp3"
+#: Resurrection's own sound, in place of SPELLCAST_SOUND (silent until the
+#: file is in assets/sounds).
+RESURRECTION_SOUND = "resurrection.mp3"
+#: The pad's shake when a lock pick finds a pin's sweet spot: (low motor,
+#: high motor, milliseconds).
+LOCKPICK_SWEET_RUMBLE = (0.25, 0.7, 140)
+#: Heard when the player discovers a place (assets/sounds).
+DISCOVER_SOUND = "discover.mp3"
 #: A guard stopping the player to arrest them says one of these, at random.
 ARREST_SOUNDS = ("arrest1.mp3", "arrest2.mp3")
 
@@ -454,10 +506,47 @@ ARREST_SOUNDS = ("arrest1.mp3", "arrest2.mp3")
 HEAD_MARKS = ("!", "?")
 
 
+def _segment_distance(p, a, b) -> float:
+    """Ground distance from *p* to the segment *a*-*b* (each ``(x, z)``)."""
+    dx, dz = b[0] - a[0], b[1] - a[1]
+    seg2 = dx * dx + dz * dz
+    t = 0.0 if seg2 <= 0 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / seg2))
+    return math.hypot(p[0] - (a[0] + dx * t), p[1] - (a[1] + dz * t))
+
+
+class SessionMemory:
+    """A plain in-memory stand-in for the plugin ``GlobalStore``.
+
+    Everything an NPC knows -- what they witnessed, their opinion of the
+    player, the writs against them, the quests' flags -- lives in the store.
+    Without one, every write was silently dropped and the world forgot each
+    thing the instant it happened: no witness, no grudge, no comrade
+    rallying. A session started without the host's store (a test, a tool,
+    a launch path that did not connect the plugin host) keeps its memory here
+    instead. It lives as long as the session and is not written to disk."""
+
+    def __init__(self):
+        self._data: Dict = {}
+
+    def get(self, key, default=None, store="plugins"):
+        return self._data.get(store, {}).get(str(key), default)
+
+    def set(self, key, value, store="plugins"):
+        self._data.setdefault(store, {})[str(key)] = None if value is None else str(value)
+
+    def all(self, store="plugins"):
+        return dict(self._data.get(store, {}))
+
+    def delete(self, key, store="plugins"):
+        self._data.get(store, {}).pop(str(key), None)
+
+
 class StateStore:
     """Adapter presenting a plugin ``GlobalStore`` as a string KV store."""
 
     def __init__(self, globals_store, store_name: str = "miniwind"):
+        if globals_store is None:
+            globals_store = SessionMemory()
         self._g = globals_store
         self._name = store_name
         # The registry Fio's GlobalStore reads, resolved once: the quest log,
@@ -662,6 +751,14 @@ class MiniwindSession(SettlementLaw):
         #: Routes round walls for every walker (game/navigation.py).
         from .navigation import Navigator
         self.nav = Navigator(self._blocked_by_wall)
+        #: The map's ROAD_* nodes as a prebuilt navigation graph
+        #: (game/road_nav.py), rebuilt only when the roads change; and each
+        #: walker's current road leg, by id.
+        from .road_nav import RoadCache
+        self.roads = RoadCache()
+        self._road_graph = None
+        self._road_plans: Dict[int, Dict] = {}
+        self._roads_checked = -1e9
         #: type name -> (bucket, len, frozenset of ids); see _type_ids.
         self._type_id_cache = {}
         #: The camera height the wheel asked for (None: never zoomed).
@@ -969,6 +1066,8 @@ class MiniwindSession(SettlementLaw):
         self._assign_npc_handedness()  # random handedness (left rare) where unset
         self._arm_fighters()           # a bow for the swordsman, a blade for the archer
         self.dragon_fire.install(fio.things(self.logic))
+        self._show_prison_signs()      # the gaol is marked in the world
+        self._refresh_roads(force=True)  # the road graph, built before anyone walks
         self._assign_npc_stats()       # STRENGTH / ENDURANCE / CHARISMA for everyone
         self._wire_quest_givers()      # make quest givers offer their quests
         self._name_index()             # built now, not on the first quest's frame
@@ -995,6 +1094,7 @@ class MiniwindSession(SettlementLaw):
             except Exception:
                 pass
         self._remove_wisp()
+        self._remove_prison_signs()
         self._remove_all_torch_lights()
         self.magic_fx.clear()
         self._bolt_positions = {}
@@ -1462,6 +1562,8 @@ class MiniwindSession(SettlementLaw):
         self._ground_actors()
         self._ease_zoom(delta)
         self._update_bow_draw(delta)
+        self._check_waypoint()
+        self._refresh_roads()
         self.archery.update(delta)
         warrior_fist.clear_spent(self)
         self.held.update()
@@ -1744,6 +1846,49 @@ class MiniwindSession(SettlementLaw):
                 self._rebuild_entity_caches()
         except Exception:
             pass
+
+    # ------------------------------------------------------------ the gaol
+    def _show_prison_signs(self) -> None:
+        """Mark each prison in the world while the game runs: a billboard of
+        the prison marker's own pin over it. Markers are authoring aids the
+        renderer draws only in the editor, so the sign is a separate Prop,
+        added for play and taken away again when play stops -- the marker
+        itself, which the editor keeps after play, is never changed."""
+        self._remove_prison_signs()
+        try:
+            from editor.things import Prop
+            from .entities import marker_sprite
+        except Exception:
+            return
+        things = fio.things(self.logic)
+        if things is None:
+            return
+        for marker in self._markers_of_kind("prison"):
+            sign = Prop(pos=[float(marker.pos[0]), float(marker.pos[1]) + PRISON_SIGN_RISE,
+                             float(marker.pos[2])],
+                        properties={"name": f"{marker.properties.get('name', 'prison')}_sign",
+                                    "render_mode": "billboard",
+                                    "sprite_path": marker_sprite("prison"),
+                                    "sprite_size": list(PRISON_SIGN_SIZE),
+                                    "_prison_sign": True})
+            things.append(sign)
+        self._rebuild_entity_caches()
+
+    def _remove_prison_signs(self) -> None:
+        """Take the prison signs out of the world (play stopping) -- and any
+        a save made during play brought back with it."""
+        try:
+            things = fio.things(self.logic)
+        except Exception:
+            return
+        if not things:
+            return
+        signs = [t for t in things
+                 if (getattr(t, "properties", None) or {}).get("_prison_sign")]
+        for sign in signs:
+            things.remove(sign)
+        if signs:
+            self._rebuild_entity_caches()
 
     # ------------------------------------------------------------- the reaper
     def _maybe_send_the_reaper(self, body) -> None:
@@ -2486,6 +2631,7 @@ class MiniwindSession(SettlementLaw):
                 p["_discovered"] = True
                 self.store.set(f"visited.{self._slug(name)}", "1")
                 self.notify(f"{name} discovered", 4.0)
+                self.play_ui_sound(DISCOVER_SOUND)
                 self.autosave.discovered(name)
 
     @staticmethod
@@ -2711,6 +2857,45 @@ class MiniwindSession(SettlementLaw):
         except Exception:
             pass
         return new
+
+    # -------------------------------------------------------------- waypoint
+    # The one place the player has marked on the map (a click on it): an
+    # orange arrow rings the head pointing there until it is reached, cleared
+    # (a click on it again) or moved (a click elsewhere). Kept on the
+    # character (Character.waypoint), so it is saved with the game.
+    def waypoint(self):
+        """The map waypoint as ``(x, z)`` in world units, or None."""
+        here = getattr(getattr(self.game, "character", None), "waypoint", None)
+        return (float(here[0]), float(here[1])) if here else None
+
+    def set_waypoint(self, x, z) -> None:
+        """Put the waypoint at world ``(x, z)``: the only one, so any other
+        goes."""
+        self.game.character.waypoint = [float(x), float(z)]
+
+    def clear_waypoint(self) -> None:
+        self.game.character.waypoint = None
+
+    def toggle_waypoint(self, x, z, pick=0.0):
+        """A click on the map at world ``(x, z)``: on (within *pick* world
+        units of) the waypoint, it is taken away; anywhere else the waypoint
+        moves there. Returns the waypoint now, or None."""
+        here = self.waypoint()
+        if here is not None and math.hypot(here[0] - float(x), here[1] - float(z)) <= float(pick):
+            self.clear_waypoint()
+            return None
+        self.set_waypoint(x, z)
+        return self.waypoint()
+
+    def _check_waypoint(self) -> None:
+        """Reached: the waypoint is cleared, and the player told."""
+        here = self.waypoint()
+        ppos = self._player_pos() if here is not None else None
+        if ppos is None:
+            return
+        if math.hypot(here[0] - ppos[0], here[1] - ppos[2]) <= WAYPOINT_REACHED:
+            self.clear_waypoint()
+            self.notify("Waypoint reached", 2.0)
 
     def _arrow_destination(self, q):
         """Best-effort world position for *q*'s current stage, for the arrow.
@@ -3260,10 +3445,79 @@ class MiniwindSession(SettlementLaw):
     def add_floater(self, text, kind="dmg", y=0.0):
         self.floaters.append({"text": text, "t": 1.2, "y": float(y), "kind": kind})
 
-    def _on_drink(self, _item) -> None:
+    def _npc_drink(self, npc) -> bool:
+        """*npc* drinks a potion it carries when it needs one: a healing
+        potion at or below :data:`NPC_DRINK_HEALTH` of its health, a magicka
+        potion (a caster) at or below :data:`NPC_DRINK_MAGICKA` of its
+        magicka -- the one that best makes good what it has lost. It costs the
+        potion from its pack, is heard (drink.mp3) and seen (the shimmer,
+        green or a magicka potion's blue) where it stands, and is not done again for
+        :data:`NPC_DRINK_SECONDS`. True if it drank."""
+        import time as _time
+        from . import npc_magic
+        p = npc.properties
+        carried = p.get("inventory")
+        if p.get("dead") or not isinstance(carried, list) or not carried:
+            return False
+        if p.get("asleep") or str(p.get("sched_state", "")).upper() == "SLEEPING":
+            return False
+        now = _time.monotonic()
+        if now - float(p.get("_drank_at", -1e9) or -1e9) < NPC_DRINK_SECONDS:
+            return False
+        try:
+            health = float(p.get("health", 0) or 0)
+            top = float(p.get("max_health", health) or health)
+        except (TypeError, ValueError):
+            return False
+        if top > 0 and 0 < health <= top * NPC_DRINK_HEALTH:
+            kind, lost = "restore_health", top - health
+        elif npc_magic.casts(p) and npc_magic.magicka(p) <= (
+                npc_magic.max_magicka(p) * NPC_DRINK_MAGICKA):
+            kind, lost = "restore_magicka", npc_magic.max_magicka(p) - npc_magic.magicka(p)
+        else:
+            return False
+        choices = []
+        for stack in carried:
+            d = rpg_items.get(stack.get("id")) if isinstance(stack, dict) else None
+            if not rpg_items.is_potion(d) or int(stack.get("qty", 1) or 0) <= 0:
+                continue
+            amount = sum(float(e.get("magnitude", 0) or 0) for e in d.get("effects", ())
+                         if e.get("kind") == kind)
+            if amount > 0:
+                choices.append((amount, stack, d))
+        if not choices:
+            return False
+        # The smallest that makes good the loss, else the strongest there is.
+        enough = [c for c in choices if c[0] >= lost]
+        amount, stack, d = (min(enough, key=lambda c: c[0]) if enough
+                            else max(choices, key=lambda c: c[0]))
+        stack["qty"] = int(stack.get("qty", 1) or 1) - 1
+        if stack["qty"] <= 0:
+            carried.remove(stack)
+        if kind == "restore_health":
+            p["health"] = min(top, health + amount)
+        else:
+            npc_magic.restore(p, amount)
+        p["_drank_at"] = now
+        _journal(npc)
+        self.play_sound_at(DRINK_SOUND, npc.pos)
+        fx = getattr(self, "magic_fx", None)
+        if fx is not None:
+            from .magic_fx import drink_colour
+            fx.drink(npc.pos, drink_colour(d))
+        return True
+
+    def _on_drink(self, item) -> None:
         """A potion drunk, however it was -- a strip slot's number key, the
-        heal key, the pack: the sound of it."""
+        heal key, the pack: the sound of it, and the shimmer round the player
+        -- green, blue for magicka (game/magic_fx.py MagicFX.drink). Food is
+        eaten, and neither."""
         self.play_ui_sound(DRINK_SOUND)
+        pos = self._player_pos()
+        fx = getattr(self, "magic_fx", None)
+        if pos is not None and fx is not None:
+            from .magic_fx import drink_colour
+            fx.drink(pos, drink_colour(item))
 
     def _on_xp(self, amount) -> None:
         """Experience earned (a kill, a quest): "+N XP" over the player, a
@@ -3377,6 +3631,10 @@ class MiniwindSession(SettlementLaw):
         self.director.emit(
             "death", actor=killer, target=npc, pos=list(npc.pos),
             observers=self._sim_observers(), crime=crime)
+        if by_player:
+            # A guard cut down: the rest of the watch nearby comes for the
+            # killer (as for any blow struck at one, see _provoke).
+            self._rally_the_watch(npc)
         # What the killing makes of the killer (game/rpg/alignment.py).
         self._alignment_kill(killer, npc, by_player, crime)
         # The kin-grief wound stays: it is the *authored relationship* reacting,
@@ -4148,6 +4406,11 @@ class MiniwindSession(SettlementLaw):
             return          # a traveller: its party is driven by game/living
         if p.get("away_on_journey"):
             return          # away on a trip; a stand-in walks the road
+        # Wounded (or a caster run dry) with a potion in the pack: drink it,
+        # in a fight as much as out of one. It takes no turn of its own.
+        drink = getattr(self, "_npc_drink", None)
+        if drink is not None:
+            drink(npc)
 
         # Arrest movement is owned by the runtime, not the normal schedule or
         # MonsterAI. The guard remains visible and walks to the player/prison.
@@ -4459,8 +4722,37 @@ class MiniwindSession(SettlementLaw):
                              float(seconds))
 
     def fizzled(self, thing) -> None:
-        """*thing*'s spell fizzled: say so over its head."""
+        """*thing*'s spell fizzled: say so over its head, and let it be heard
+        from where it stands."""
         self.float_text(thing, FIZZLE_TEXT, FIZZLE_SECONDS)
+        self._spell_sound(thing, FIZZLE_SOUND)
+
+    def cast_sound(self, thing) -> None:
+        """A caster's spell (an NPC's) worked: heard where it stands."""
+        self._spell_sound(thing, SPELLCAST_SOUND)
+
+    def _spell_sound(self, thing, sound) -> bool:
+        """A spell's sound, from where its caster stands -- the player's as
+        much as anyone's."""
+        if thing is self.player_actor or (getattr(thing, "properties", None) or {}).get(
+                "is_player"):
+            return self.play_sound_at(sound, self._player_pos())
+        return self.play_sound_at(sound, getattr(thing, "pos", None))
+
+    def play_sound_at(self, name: str, pos, volume: float = 1.0,
+                      radius: float = 900.0) -> bool:
+        """Play a sound from ``assets/sounds`` at world *pos*: louder the
+        nearer it is, nothing beyond *radius*. Skipped, as interface sounds
+        are, when the file is not there. Returns whether it was queued."""
+        if pos is None:
+            return False
+        game_state = getattr(self.logic, "game_state", None)
+        queue = getattr(game_state, "queue_sound", None)
+        if queue is None or not sound_available(name):
+            return False
+        queue({"file": name, "volume": float(volume), "radius": float(radius),
+               "position": [float(pos[0]), float(pos[1]), float(pos[2])]})
+        return True
 
     def live_floats(self):
         """``[(thing, text, seconds_left, seconds_total)]`` still floating."""
@@ -5552,12 +5844,22 @@ class MiniwindSession(SettlementLaw):
         if not dest:
             return
         pos = npc.pos
+        if math.hypot(dest[0] - pos[0], dest[2] - pos[2]) <= ARRIVE_RADIUS:
+            return
+        speed = float(p.get("move_speed", NPC_WALK_SPEED)) or NPC_WALK_SPEED
+        # A long walk takes the road where one helps: head for its next node
+        # instead (_road_target), a little quicker once on it.
+        road = (self._road_target(npc, pos, dest)
+                if getattr(self, "_road_graph", None) is not None else None)
+        if road is not None:
+            dest, on_road = road
+            if on_road:
+                speed *= ROAD_SPEED
         dx = dest[0] - pos[0]
         dz = dest[2] - pos[2]
         dist = math.hypot(dx, dz)
-        if dist <= ARRIVE_RADIUS:
+        if dist <= 1e-3:
             return
-        speed = float(p.get("move_speed", NPC_WALK_SPEED)) or NPC_WALK_SPEED
         # A frightened villager runs while its stamina lasts, then walks
         # winded (game/npc_stamina.py). FLEE is re-decided every tick and
         # dropped once no hostile is in sight, so the run ends with the fright.
@@ -5597,16 +5899,90 @@ class MiniwindSession(SettlementLaw):
         # NPCs sliding around the world without ever rotating.
         face_heading(p, dx, dz, delta)
 
+    # ================================================================ roads
+    def _refresh_roads(self, force=False) -> None:
+        """Keep the road graph true to the map's ROAD_* nodes: compared every
+        :data:`ROAD_CHECK_SECONDS`, and replaced -- with every walker's road
+        leg -- only when the roads differ from what it was built from."""
+        import time as _time
+        now = _time.monotonic()
+        if not force and now - self._roads_checked < ROAD_CHECK_SECONDS:
+            return
+        self._roads_checked = now
+        try:
+            graph = self.roads.graph(self._things_of_type("path_node"))
+        except Exception:
+            graph = None
+        if graph is not self._road_graph:
+            self._road_graph = graph
+            self._road_plans.clear()
+        elif len(self._road_plans) > 4 * max(64, len(self._actors)):
+            self._road_plans.clear()        # walkers long gone: start afresh
+
+    def _road_target(self, npc, pos, dest):
+        """Where a walker on its way to *dest* should head along the road,
+        as ``((x, y, z), on_road)``; or None to walk to *dest* by itself.
+
+        The road is taken only where it helps (game/road_nav.RoadGraph.plan),
+        only in an unhurried walk -- anything in :data:`ROAD_SKIP_STATES`, a
+        flight or a run leaves it at once -- and is left again at the node
+        nearest the goal. Joining at a node already behind the walker is
+        skipped: it heads on to the next."""
+        graph = self._road_graph
+        key = id(npc)
+        if graph is None or len(graph) < 2:
+            return None
+        p = npc.properties
+        if (p.get("sched_state") in ROAD_SKIP_STATES or p.get("_flee")
+                or p.get("_running") or p.get("_aggro_target") is not None):
+            self._road_plans.pop(key, None)
+            return None
+        here = (float(pos[0]), float(pos[2]))
+        goal = (float(dest[0]), float(dest[2]))
+        plan = self._road_plans.get(key)
+        if plan is not None and plan["points"] and plan["i"] < len(plan["points"]):
+            ahead = plan["points"][plan["i"]]
+            if math.hypot(ahead[0] - here[0], ahead[1] - here[1]) > ROAD_LOST:
+                plan = None                  # knocked well off the road
+        if plan is None or math.hypot(plan["goal"][0] - goal[0],
+                                      plan["goal"][1] - goal[1]) > ROAD_GOAL_SLACK:
+            plan = {"goal": goal, "points": graph.plan(here, goal) or (), "i": 0}
+            self._road_plans[key] = plan
+        points, i = plan["points"], plan["i"]
+        while i < len(points):
+            node = points[i]
+            gap = math.hypot(node[0] - here[0], node[1] - here[1])
+            nxt = points[i + 1] if i + 1 < len(points) else None
+            if gap <= ROAD_NODE_REACH or (
+                    nxt is not None and math.hypot(nxt[0] - here[0], nxt[1] - here[1])
+                    < math.hypot(nxt[0] - node[0], nxt[1] - node[1])):
+                i += 1                       # reached it, or already past it
+                continue
+            break
+        plan["i"] = i
+        if i >= len(points):
+            return None                      # off the road, on to the goal
+        node = points[i]
+        # On the road (and quicker for it) while within a road's width of the
+        # stretch being walked.
+        a = points[i - 1] if i > 0 else node
+        on_road = _segment_distance(here, a, node) <= ROAD_WIDTH
+        return (node[0], float(dest[1]), node[1]), on_road
+
     # ============================================================ bow draw
     def fist_in_hand(self) -> bool:
         """Whether the weapon in hand is a warrior's fist (game/warrior_fist.py)."""
         c = getattr(getattr(self, "game", None), "character", None)
         return c is not None and eq.equipped_id(c, rpg_items.SLOT_WEAPON) == warrior_fist.FIST
 
-    def charge_in_hand(self) -> bool:
-        """Whether the left mouse charges what is in hand: a bow's draw or a
-        fist's gathered blow (hold for the pie, release to loose)."""
-        return self.bow_in_hand() or self.fist_in_hand()
+    def charge_in_hand(self, hand=None) -> bool:
+        """Whether the mouse button for *hand* (``"main"``/``"off"``; None:
+        either) charges what is in it: a bow's draw, which takes both hands,
+        or a fist's gathered blow in the main hand (hold for the pie, release
+        to loose)."""
+        if self.bow_in_hand():
+            return True
+        return self.fist_in_hand() and hand in (None, "main")
 
     def bow_in_hand(self) -> bool:
         """Whether the weapon in hand is a bow."""
@@ -5957,11 +6333,13 @@ class MiniwindSession(SettlementLaw):
     def fire_player_weapon(self, logic, mode: str) -> bool:
         """The engine's fire buttons, given MiniWind meaning.
 
-        One button per hand. Primary fire (left) uses the main hand -- a bow
-        looses an arrow, a crossbow a bolt, a staff channels its spell, a blade
-        swings. Secondary fire (right) uses the off hand: the weapon in the
-        shield slot, or a worn shield's bash. An equipped spell casts from
-        its own hand instead of using that hand's weapon.
+        One button per hand, by the hand itself: the left button uses the
+        left hand, the right button the right hand (see :meth:`mouse_hand`).
+        The main hand's weapon strikes -- a bow looses an arrow, a crossbow a
+        bolt, a staff channels its spell, a blade swings; the off hand uses
+        the weapon in the shield slot, or a worn shield's bash. A two-handed
+        weapon is in both hands, so either button uses it. An equipped spell
+        casts from its own hand instead of using that hand's weapon.
         Returns True: MiniWind always owns the shot, so Fio's hitscan weapon
         path never runs underneath it.
         """
@@ -5970,18 +6348,27 @@ class MiniwindSession(SettlementLaw):
             return True
         if getattr(c, "is_dead", False):
             return True
-        hand = "off" if mode == "secondary" else "main"
+        hand = self.mouse_hand(mode)
         if eq.hand_spell(c, hand) is not None:
             self.do_cast(aim="facing", hand=hand)
             return True
-        if mode == "secondary":
+        if hand == "off":
             if eq.offhand_weapon(c) is not None:
                 self.do_attack("off")
             elif eq.equipped_id(c, rpg_items.SLOT_SHIELD):
                 self.shield_bash()
+            elif eq.is_two_handed(eq.weapon(c)):
+                self.do_attack()             # both hands are on it
         else:
             self.do_attack()
         return True
+
+    def mouse_hand(self, mode) -> str:
+        """The hand a mouse button uses, ``"main"`` or ``"off"``: the left
+        button (``"primary"``) the left hand, the right button the right
+        hand -- whichever of them is the main hand (``Character.handed``)."""
+        c = self.game.character
+        return eq.relative_hand(c, "right" if mode == "secondary" else "left")
 
     #: A shield bash: its damage (plus a share of the shield's armour rating),
     #: stamina and recovery.
@@ -6326,8 +6713,8 @@ class MiniwindSession(SettlementLaw):
 
     def _magic_cast_fx(self, spell, target=None) -> None:
         """The visible side of a cast the player just made -- and the sound
-        of it."""
-        self.play_ui_sound(SPELLCAST_SOUND)
+        of it, from the player."""
+        self._spell_sound(self.player_actor, SPELLCAST_SOUND)
         pos = self._player_pos()
         if pos is None:
             return
@@ -6522,7 +6909,7 @@ class MiniwindSession(SettlementLaw):
                 self.close_lockpicking(save_progress=False)
             self.notify("Knock clears the sheared pick and opens the lock." if jammed
                         else "Knock opens the lock.", 4.0)
-            self.play_ui_sound(SPELLCAST_SOUND)
+            self._spell_sound(self.player_actor, SPELLCAST_SOUND)
             return True
         # A "wisp" effect conjures the wandering companion light (a SELF spell).
         if any(e.get("kind") == "wisp" for e in (spell.effects or [])):
@@ -6635,7 +7022,7 @@ class MiniwindSession(SettlementLaw):
             return False
         c.magicka = 0.0
         self.store.set("resurrect.last_day", today)
-        self.play_ui_sound(SPELLCAST_SOUND)
+        self._spell_sound(self.player_actor, RESURRECTION_SOUND)   # its own, not the cast's
         c.use_skill(spell.school, 1.0 + spell.base_cost / 40.0)
         p = target.properties
         self._restore_living_kit(p)
@@ -6904,6 +7291,20 @@ class MiniwindSession(SettlementLaw):
             self._lingering_lights = []
             self._rebuild_entity_caches()
 
+    def _block_pose(self, now) -> float:
+        """How far the shield is raised (0..1), easing toward the block held
+        or let go over :data:`BLOCK_TWEEN_SECONDS` -- a very fast tween,
+        smoothed at both ends. Asked once a frame by the view."""
+        last = self.__dict__.get("_block_at")
+        raw = self.__dict__.get("_block_raw", 0.0)
+        self._block_at = now
+        if last is not None:
+            step = max(0.0, now - last) / BLOCK_TWEEN_SECONDS
+            target = 1.0 if self._blocking else 0.0
+            raw = min(target, raw + step) if target > raw else max(target, raw - step)
+        self._block_raw = raw
+        return raw * raw * (3.0 - 2.0 * raw)        # smoothstep
+
     def overhead_player_weapon(self):
         """What the player holds, for the viewport's overhead overlay:
         ``[(item_id, side, attacking)]``, one per hand.
@@ -6934,8 +7335,10 @@ class MiniwindSession(SettlementLaw):
         if off is not None:
             held.append((off.id, other, self._offhand_anim_time > 0.0, off_lag))
         elif shield:
-            # A worn shield is on the off arm, brought up while blocking.
-            held.append((shield, other, bool(self._blocking), off_lag))
+            # A worn shield is on the off arm. Blocking, it swings in front of
+            # the head and turns edge-on (engine.overhead_sprite's block pose),
+            # tweened very fast each way (_block_pose).
+            held.append((shield, other, False, off_lag, self._block_pose(now)))
         else:
             torch = self._player_torch_def()
             if torch is not None:
@@ -7084,7 +7487,49 @@ class MiniwindSession(SettlementLaw):
                 self._apply_sim_intent(target, fresh_assault=True)
             elif self._natively_hostile(tp):
                 self._sim_engage(target, self.player_actor)
+        self._rally_the_watch(target)
         self._alert_followers(target)
+
+    def _rally_the_watch(self, victim) -> list:
+        """The player has attacked (or killed) a guard: his comrades do not
+        wait for testimony. Every guard of the same town within
+        :data:`GUARD_AID_RADIUS` hears the cry and turns on the player at
+        once -- the watch overpowers by numbers. Returns the guards called
+        (none when the victim is no guard, or the blow was no crime)."""
+        tp = getattr(victim, "properties", None) or {}
+        if not sim_crime.is_lawful(tp) or not self._sim_is_crime_against(victim):
+            return []
+        region = self._law_region(victim.pos, victim)
+        rallied = []
+        for guard in self.npcs():
+            if guard is victim or not self._is_guard(guard):
+                continue
+            p = guard.properties
+            if p.get("_arrest_state") == "pursuit":
+                continue                 # already hunting the player
+            if (self._law_region(guard.pos, guard) != region
+                    or self._dist2d(guard.pos, victim.pos) > GUARD_AID_RADIUS):
+                continue
+            already = (str(p.get("aggression")) == "hostile" and not p.get("triggered", True))
+            if p.get("_arrest_state"):
+                # The arrest is off: this is a fight now.
+                if guard is self._arrest_guard:
+                    self._arrest_guard = None
+                    self._arrest_state = ""
+                p.pop("_arrest_state", None)
+                p.pop("_dest", None)
+            p["asleep"] = False
+            self._sim_engage(guard, self.player_actor)
+            if not already:
+                self.flash_head_mark(guard, "!")
+                self.bark_later(guard, self.rng.choice(CHARGE_SHOUTS),
+                                0.3 + 0.4 * len(rallied))
+            rallied.append(guard)
+        if rallied and not tp.get("dead"):
+            self.bark(victim, self.rng.choice(AID_SHOUTS))
+        elif rallied:
+            self.bark(rallied[0], self.rng.choice(AID_SHOUTS))
+        return rallied
 
     def _alert_followers(self, target) -> None:
         """Un-park every follow_player companion near the player and send it
@@ -7372,7 +7817,9 @@ class MiniwindSession(SettlementLaw):
         self._cancel_bow_draw()
         self.cancel_spell_aim()
         physical = c.handed if hand == "main" else ("left" if c.handed == "right" else "right")
-        self.notify(f"{rpg_magic.get(spell_id).name} equipped in {physical} hand", 2.0)
+        mouse = "left" if physical == "left" else "right"
+        self.notify(f"{rpg_magic.get(spell_id).name} in your {physical} hand "
+                    f"({mouse} click casts)", 2.0)
         return True
 
     def inventory_use(self, item_id) -> bool:
@@ -7664,8 +8111,15 @@ class MiniwindSession(SettlementLaw):
             if isinstance(stack, dict) and stack.get("id") and int(stack.get("qty", 1) or 0) > 0:
                 carried.setdefault(str(stack["id"]), stack)
         placed = {}
+        known = set(getattr(c, "known_spells", ()) or ())
         for i, iid in enumerate(strip):
             if not iid:
+                continue
+            if str(iid).startswith(STRIP_SPELL):
+                # A spell's slot lasts while the spell is known, one slot each.
+                sid = str(iid)[len(STRIP_SPELL):]
+                if sid not in known or rpg_magic.get(sid) is None or iid in strip[:i]:
+                    strip[i] = None
                 continue
             n = placed.get(iid, 0) + 1
             if n > self._strip_copies(carried.get(iid)):
@@ -7688,6 +8142,10 @@ class MiniwindSession(SettlementLaw):
             del offered[iid]
         out, shown = [], {}
         for iid in strip:
+            if iid and str(iid).startswith(STRIP_SPELL):
+                spell = rpg_magic.get(str(iid)[len(STRIP_SPELL):])
+                out.append({"id": iid, "spell": spell.id, "name": spell.name, "qty": 1})
+                continue
             stack = carried.get(iid) if iid else None
             if stack is not None and self._strip_copies(stack) > 1:
                 # One copy of a weapon per slot; five at most of anything else.
@@ -7702,7 +8160,8 @@ class MiniwindSession(SettlementLaw):
         """Per strip slot, the hand its weapon copy is held in: ``"main"``,
         ``"off"`` or None. Copies of one weapon map to the hands in order --
         the first slot holding it is the main hand's copy when the main hand
-        holds it, the next the off hand's."""
+        holds it, the next the off hand's. A spell readied in both hands is
+        ``"both"``."""
         c = self.game.character
         main = eq.weapon(c)
         off = eq.offhand_weapon(c)
@@ -7710,7 +8169,11 @@ class MiniwindSession(SettlementLaw):
         for stack in self.strip_slots():
             iid = stack.get("id") if stack else None
             hand = None
-            if iid:
+            if stack and stack.get("spell"):
+                held = [h for h in ("main", "off")
+                        if getattr(eq.hand_spell(c, h), "id", None) == stack["spell"]]
+                hand = "both" if len(held) == 2 else held[0] if held else None
+            elif iid:
                 copy = seen.get(iid, 0)
                 seen[iid] = copy + 1
                 hands = [h for h, d in (("main", main), ("off", off))
@@ -7733,6 +8196,15 @@ class MiniwindSession(SettlementLaw):
         if item_id is None:
             strip[index] = None
             return True
+        if str(item_id).startswith(STRIP_SPELL):
+            sid = str(item_id)[len(STRIP_SPELL):]
+            if sid not in (c.known_spells or ()) or rpg_magic.get(sid) is None:
+                return False
+            if item_id in strip:
+                # One slot to a spell: the slot it was in takes this one's.
+                strip[strip.index(item_id)] = strip[index]
+            strip[index] = item_id
+            return True
         if not inv.has_item(c.inventory, item_id, 1):
             return False
         if from_index is not None and 0 <= int(from_index) < len(strip) \
@@ -7748,12 +8220,14 @@ class MiniwindSession(SettlementLaw):
         c._strip_seen.add(item_id)
         return True
 
-    def select_strip_slot(self, index: int) -> bool:
+    def select_strip_slot(self, index: int, hand=None) -> bool:
         """A strip slot picked, by a click or its number key: selected, and
         what is in it applied at once -- a weapon taken in hand (see
-        :meth:`ready_weapon`); anything else used as a double-click would
-        (:meth:`inventory_use`): a shield or armour worn, or taken off when
-        already worn, a potion drunk. True if anything changed."""
+        :meth:`ready_weapon`); a spell readied in *hand*, the physical
+        ``"left"`` (the default) or ``"right"`` (see :meth:`ready_spell`);
+        anything else used as a double-click would (:meth:`inventory_use`):
+        a shield or armour worn, or taken off when already worn, a potion
+        drunk. True if anything changed."""
         slots = self.strip_slots()
         index = int(index)
         if not 0 <= index < len(slots):
@@ -7762,6 +8236,8 @@ class MiniwindSession(SettlementLaw):
         stack = slots[index]
         if not stack:
             return False
+        if stack.get("spell"):
+            return self.ready_spell(stack["spell"], hand or "left")
         d = rpg_items.get(stack.get("id"))
         if d is None:
             return False
@@ -7769,6 +8245,54 @@ class MiniwindSession(SettlementLaw):
             return self.inventory_use(d.id)
         copy = sum(1 for st in slots[:index] if st and st.get("id") == d.id)
         return self.ready_weapon(d.id, copy)
+
+    def cycle_strip(self, step) -> bool:
+        """The strip's selection to the next (*step* 1) or previous (-1) slot
+        that holds something -- a gamepad's shoulder buttons. A weapon or a
+        spell reached is readied (a spell in the left hand) unless it already
+        is: passing over one never puts it away. Anything else is only
+        selected; it is used with its own control (a potion's, D-pad down).
+        True if anything changed."""
+        slots = self.strip_slots()
+        if not any(slots):
+            return False
+        n = len(slots)
+        i = int(self.strip_selected or 0)
+        for _ in range(n):
+            i = (i + (1 if step > 0 else -1)) % n
+            if slots[i]:
+                break
+        self.strip_selected = i
+        stack = slots[i]
+        if stack.get("spell"):
+            held = eq.hand_spell(self.game.character, "left")
+            if held is None or held.id != stack["spell"]:
+                return self.ready_spell(stack["spell"], "left")
+            return True
+        d = rpg_items.get(stack.get("id"))
+        if d is not None and d.category == rpg_items.WEAPON and self.strip_hands()[i] is None:
+            return self.select_strip_slot(i)
+        return True
+
+    def ready_spell(self, spell_id, hand="left") -> bool:
+        """Ready a known spell in the physical *hand* (``"left"`` or
+        ``"right"``), putting away what that hand held; or, when that hand
+        already holds it, put it away. The spell then casts on that hand's
+        mouse button. True if anything changed."""
+        c = self.game.character
+        spell = rpg_magic.get(spell_id)
+        if spell is None or spell_id not in (c.known_spells or ()):
+            return False
+        held = eq.hand_spell(c, hand)
+        if held is not None and held.id == spell_id:
+            eq.unequip_spell(c, hand)
+            self.cancel_spell_aim()
+            self.notify(f"Put away {spell.name}", 1.5)
+            return True
+        if not c.can_use_magic():
+            self.notify("You cannot use magic", 2.0)
+            return False
+        return self.equip_hand_spell(spell_id, hand)
 
     def ready_weapon(self, item_id, copy=None) -> bool:
         """Take a carried weapon in hand at once, or put it away if it is
@@ -7863,6 +8387,17 @@ class MiniwindSession(SettlementLaw):
         tkind, tkey = target[0], target[1]
         if not iid:
             return False
+        if skind in ("spell", "spell_hand") and tkind == "strip":
+            return self.set_strip_slot(int(tkey), STRIP_SPELL + str(iid))
+        if skind == "strip" and str(iid).startswith(STRIP_SPELL):
+            # A spell's slot: rearranged on the strip, taken off it, or
+            # readied in a hand it is dropped on.
+            if tkind == "strip":
+                return self.set_strip_slot(int(tkey), iid)
+            if tkind in ("hand", "equip"):
+                sid = str(iid)[len(STRIP_SPELL):]
+                return self.inventory_move(("spell", None, sid), target, sid)
+            return self.set_strip_slot(int(skey), None)
         if skind in ("spell", "spell_hand") or tkind == "hand":
             return self.inventory_move(source, target, iid)
         if skind == "container":
@@ -8629,6 +9164,11 @@ class MiniwindSession(SettlementLaw):
                 return
         if not inv.has_item(self.game.character.inventory, "lockpick"):
             a.set_tension(False)
+        # The pick has just found the pin's sweet spot: a gamepad feels it.
+        aligned = bool(a.aligned) and not a.complete
+        if aligned and not getattr(self, "_lockpick_aligned", False):
+            controls.rumble(*LOCKPICK_SWEET_RUMBLE)
+        self._lockpick_aligned = aligned
         event = a.tick(delta)
         self._save_lockpick_progress()
         if event == "pick_broke":

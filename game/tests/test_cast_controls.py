@@ -1,5 +1,7 @@
 """The cast key (K) in its two prototype modes, and the hands on the mouse:
-left the main hand, right the off hand (its weapon or a shield bash)."""
+the left button the left hand, the right button the right hand (for the
+default right-hander: the off hand -- its weapon or a shield bash -- and the
+main hand)."""
 
 from __future__ import annotations
 
@@ -86,13 +88,13 @@ def test_a_spell_cast_on_oneself_needs_no_aim():
     assert not s.spell_aiming
 
 
-def test_right_mouse_no_longer_casts():
-    s = _session("facing")
-    s.fire_player_weapon(s.logic, "secondary")
+def test_the_left_mouse_is_the_left_hand_and_does_not_cast_the_right_hands_spell():
+    s = _session("facing")          # flare in the main (right) hand
+    s.fire_player_weapon(s.logic, "primary")
     assert not s.casts
 
 
-def test_right_mouse_with_a_shield_worn_bashes_the_foe_in_front():
+def test_left_mouse_with_a_shield_worn_bashes_the_foe_in_front():
     bandit = _Thing("Bandit", (0.0, 0.0, 60.0), type="npc", health=40, max_health=40,
                     aggression="hostile")
     s = _session("facing", bandit)
@@ -100,7 +102,7 @@ def test_right_mouse_with_a_shield_worn_bashes_the_foe_in_front():
     inv.add_item(s.game.character.inventory, items.make("iron_shield", 1))
     s.game.equip("iron_shield")
     s._acquire_target = lambda reach, aim_dot=None: bandit    # the foe in front
-    s.fire_player_weapon(s.logic, "secondary")
+    s.fire_player_weapon(s.logic, "primary")      # the shield is in the left hand
     expected = s.BASH_DAMAGE + 8 * s.BASH_ARMOUR_SHARE
     assert bandit.properties["health"] == 40 - round(expected)
     assert s._offhand_cooldown > 0 and not s.casts
