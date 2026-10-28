@@ -69,3 +69,14 @@ Run the mechanism tests with:
 ```sh
 python -m pytest game/tests/test_storyteller.py -q
 ```
+
+## Window screenshots
+
+These captures render the actual floating window with sample simulation data.
+
+[Current lever settings](screenshots/storyteller-levers.png) ·
+[Observation history (scrolled)](screenshots/storyteller-observations.png)
+
+![Storyteller lever settings](screenshots/storyteller-levers.png)
+
+![Storyteller observation history](screenshots/storyteller-observations.png)
