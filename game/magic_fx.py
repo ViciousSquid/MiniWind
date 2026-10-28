@@ -130,18 +130,6 @@ VISUAL_KEYS = {"orb": float, "trail": str, "flash": float, "ring": float,
 TRAILS = ("embers", "frost", "arcs", "motes")
 CAST_EFFECTS = ("runes", "none")
 
-# Casting circles identify the school, independently of a spell's elemental
-# projectile/impact colour. "Occult" is the offensive school's authored alias.
-OCCULT_CAST_COLOUR = (1.0, 0.12, 0.18)
-DEFENSIVE_CAST_COLOUR = (0.16, 0.42, 1.0)
-
-
-def cast_colour(school):
-    from .rpg import skills
-    school = skills.fold(str(school or "").strip().lower())
-    return (OCCULT_CAST_COLOUR if school in (skills.OFFENSIVE, "occult")
-            else DEFENSIVE_CAST_COLOUR)
-
 
 def clean_visuals(visuals) -> dict:
     """*visuals* kept to :data:`VISUAL_KEYS`, each coerced to its type (an
@@ -166,7 +154,7 @@ def clean_visuals(visuals) -> dict:
     return out
 
 
-def look_for(spell_id="", colour=None, element="magic", visuals=None, school=None) -> dict:
+def look_for(spell_id="", colour=None, element="magic", visuals=None) -> dict:
     """How *spell_id* (or, failing that, its *element*) looks, in *colour*,
     with the spell's own *visuals* from the Spell Editor over the top."""
     element = element if element in ELEMENT_LOOKS else "magic"
@@ -178,11 +166,6 @@ def look_for(spell_id="", colour=None, element="magic", visuals=None, school=Non
         from .rpg import magic
         colour = magic.element_color(element)
     look["colour"] = _rgb(colour)
-    if school is None:
-        from .rpg import magic
-        spell = magic.get(spell_id)
-        school = getattr(spell, "school", None)
-    look["cast_colour"] = cast_colour(school)
     look["element"] = element
     look["spell"] = str(spell_id or "")
     return look
@@ -288,8 +271,7 @@ class MagicFX:
         now = self._clock()
         c = look["colour"]
         foot, body = _lift(feet, GROUND_LIFT), _lift(feet, BODY_LIFT)
-        rows = [self._row(foot, RUNES, 0.9, 130.0, 150.0,
-                         look.get("cast_colour", DEFENSIVE_CAST_COLOUR), 0.95, flat=True, now=now),
+        rows = [self._row(foot, RUNES, 0.9, 130.0, 150.0, c, 0.95, flat=True, now=now),
                 self._row(body, FLASH, 0.25, 70.0, 110.0, _mix(c, (1, 1, 1), 0.5), 0.8, now=now)]
         r = self._rng
         for i in range(12):
@@ -425,7 +407,7 @@ class MagicFX:
                                   0.35 * strength, now=now))
         self._emit(rows)
 
-    def heal(self, feet, colour=(120, 255, 150), ring_colour=DEFENSIVE_CAST_COLOUR) -> None:
+    def heal(self, feet, colour=(120, 255, 150)) -> None:
         """Healing light: a ring at the *feet* and motes spiralling up."""
         if not self.near(feet):
             return
@@ -433,7 +415,7 @@ class MagicFX:
         now = self._clock()
         c = _rgb(colour)
         foot = _lift(feet, GROUND_LIFT)
-        rows = [self._row(foot, RING, 0.9, 120.0, 120.0, ring_colour, 0.9, flat=True, now=now),
+        rows = [self._row(foot, RING, 0.9, 120.0, 120.0, c, 0.9, flat=True, now=now),
                 self._row(pos, ORB, 0.7, 60.0, 90.0, _mix(c, (1, 1, 1), 0.3), 0.55, now=now)]
         r = self._rng
         for i in range(26):
@@ -447,7 +429,7 @@ class MagicFX:
                                   grav=40.0, now=now))
         self._emit(rows)
 
-    def summon(self, feet, colour=(170, 90, 255), ring_colour=OCCULT_CAST_COLOUR) -> None:
+    def summon(self, feet, colour=(170, 90, 255)) -> None:
         """A portal opens at *feet*: a wide rune ring, rays and a dark flash."""
         if not self.near(feet):
             return
@@ -455,13 +437,13 @@ class MagicFX:
         now = self._clock()
         c = _rgb(colour)
         foot = _lift(feet, GROUND_LIFT)
-        self._emit([self._row(foot, RUNES, 1.4, 200.0, 240.0, ring_colour, 1.0, flat=True, now=now),
+        self._emit([self._row(foot, RUNES, 1.4, 200.0, 240.0, c, 1.0, flat=True, now=now),
                     self._row(pos, RAYS, 1.0, 120.0, 220.0, c, 0.9, now=now),
-                    self._row(foot, RING, 0.8, 280.0, 280.0, ring_colour, 0.9, flat=True, now=now)])
+                    self._row(foot, RING, 0.8, 280.0, 280.0, c, 0.9, flat=True, now=now)])
         self._burst(pos, 30, c, 260.0, 0.9, 14.0, grav=60.0, up=1.0, now=now)
         self._lens(pos, 0.25, 220.0, c, life=0.8, now=now)
 
-    def resurrection(self, feet, ring_colour=DEFENSIVE_CAST_COLOUR) -> None:
+    def resurrection(self, feet) -> None:
         """A fallen soul returns: the whole screen goes dark red for three
         seconds while light pours up from the body at *feet*."""
         fade_in, hold, fade_out = RESURRECT_TINT
@@ -475,8 +457,8 @@ class MagicFX:
         foot = _lift(feet, GROUND_LIFT)
         self._emit([
             self._row(pos, RAYS, 2.6, 160.0, 520.0, gold, 1.0, now=now),
-            self._row(foot, RUNES, 3.0, 260.0, 300.0, ring_colour, 1.0, flat=True, now=now),
-            self._row(foot, RING, 1.2, 420.0, 420.0, ring_colour, 1.0, flat=True, now=now),
+            self._row(foot, RUNES, 3.0, 260.0, 300.0, green, 1.0, flat=True, now=now),
+            self._row(foot, RING, 1.2, 420.0, 420.0, gold, 1.0, flat=True, now=now),
             self._row(pos, FLASH, 0.6, 200.0, 360.0, (1.0, 0.95, 0.8), 1.0, now=now),
         ])
         r = self._rng

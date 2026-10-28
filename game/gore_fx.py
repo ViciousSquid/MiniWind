@@ -5,8 +5,8 @@ of the screen.
 
 Everything here is plain data in world coordinates, advanced by time. Blood
 that comes to rest is **stamped into the surface it lies on** through
-:attr:`GoreFX.stamp` -- baked into the terrain's washable paint, so it is part of
-the ground, cannot z-fight, and can wash away in rain -- a few each update so a massacre does
+:attr:`GoreFX.stamp` -- baked into the terrain's own paint, so it is part of
+the ground, cannot z-fight, and stays -- a few each update so a massacre does
 not stall a frame. A pool still spreading, and blood on a surface that cannot
 take a stamp (a brush floor), are laid on the floor in the 3D pass under the
 actors standing in it (:func:`game.ui.blood_gl.draw_decals`); blood in flight
@@ -33,9 +33,6 @@ GRAVITY = 1400.0
 #: last stretch of that over which it fades.
 SPLAT_LIFE = 240.0
 SPLAT_FADE = 30.0
-#: Full-strength rain removes exposed ground blood over this many gameplay
-#: seconds. Lighter rain accumulates the same exposure more slowly.
-RAIN_WASH_SECONDS = 60.0
 #: However bloody it gets, no more than this many at once (oldest go first).
 MAX_SPLATS = 600
 MAX_PARTICLES = 500
@@ -191,36 +188,6 @@ class GoreFX:
             self._splat((x, p["gy"], z), p["size"] * (2.8 if p["kind"] == "chunk" else 2.4),
                         kind="chunk" if p["kind"] == "chunk" else "drop")
 
-    def wash(self, delta, rain, exposed=None):
-        """Let rain gradually wash exposed ground splats away.
-
-        ``delta`` is gameplay time and ``rain`` the current 0..1 rainfall, so
-        pausing or dry weather adds no exposure. An optional ``exposed(splat)``
-        predicate limits washing to nearby, unsheltered ground. The bounded
-        splat list is the only thing visited; airborne and screen blood keep
-        their usual lifetimes. Returns the number of fully removed splats.
-        """
-        try:
-            delta, rain = float(delta), float(rain)
-        except (TypeError, ValueError, OverflowError):
-            return 0
-        if not (math.isfinite(delta) and math.isfinite(rain)) or delta <= 0 or rain <= 0:
-            return 0
-        amount = delta * min(1.0, rain)
-        with self._lock:
-            kept = []
-            removed = 0
-            for splat in self.splats:
-                if exposed is None or exposed(splat):
-                    splat["rain_wash"] = min(
-                        RAIN_WASH_SECONDS, splat.get("rain_wash", 0.0) + amount)
-                if splat.get("rain_wash", 0.0) >= RAIN_WASH_SECONDS:
-                    removed += 1
-                else:
-                    kept.append(splat)
-            self.splats = kept
-        return removed
-
     def _stamp_settled(self, now):
         """Bake blood that has come to rest into the ground, a few at a time;
         what will not take a stamp stays drawn as it is."""
@@ -258,12 +225,10 @@ class GoreFX:
         return strength * left if left > 0 else 0.0
 
     def splat_alpha(self, s, now=None) -> float:
-        """A splat's visibility after natural drying and accumulated rain."""
+        """How visible a splat is: full until it starts to dry, then fading."""
         now = self.clock() if now is None else now
         age = now - s["t0"]
-        dry = max(0.0, min(1.0, (SPLAT_LIFE - age) / SPLAT_FADE))
-        rain = max(0.0, 1.0 - s.get("rain_wash", 0.0) / RAIN_WASH_SECONDS)
-        return dry * rain
+        return max(0.0, min(1.0, (SPLAT_LIFE - age) / SPLAT_FADE))
 
     def splat_size(self, s, now=None) -> float:
         """A pool spreads to its size; everything else lands at full size."""

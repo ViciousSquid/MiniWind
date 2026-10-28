@@ -400,7 +400,6 @@ def _init_settings(self):
     p.setdefault("start_day", 1)
     p.setdefault("minutes_per_day", 24.0)
     p.setdefault("show_clock", True)
-    p.setdefault("weather_enabled", True)
     p.setdefault("state_store", "miniwind")
     p.setdefault("difficulty", "normal")        # easy | normal | hard
     p.setdefault("start_scenario", "prompt")    # prompt=char creation, or quick
@@ -426,7 +425,6 @@ if _HAVE_EDITOR:
             "start_day",
             "minutes_per_day",
             "show_clock",
-            "weather_enabled",
             "state_store",
             "difficulty",
             "start_scenario",
