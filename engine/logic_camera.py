@@ -12,6 +12,9 @@ import glm
 
 from .camera import Camera
 
+# Right-stick pitch may deviate only this far from the configured view.
+CAMERA_PITCH_LIMIT = 5.0
+
 
 class LogicCamera:
     """State and calculations for the editor/play camera."""
@@ -32,6 +35,9 @@ class LogicCamera:
         self.overhead_height_limit = None
         self.overhead_tilt = 0.0
         self.overhead_orientation = "north"
+        # Independent orbit: turning the player never turns a north-up camera.
+        self.overhead_yaw = 0.0
+        self._overhead_pitch = 0.0
 
         # Avoid normalising the mode string on every render-state build.
         self._camera_mode_raw = None
@@ -130,13 +136,23 @@ class LogicCamera:
     @property
     def overhead_angle(self) -> float:
         """Elevation above the ground plane: 90 is straight down."""
-        return 90.0 - float(self.overhead_tilt)
+        return max(1.0, min(90.0, 90.0 - float(self.overhead_tilt) - self.overhead_pitch))
+
+    @property
+    def overhead_pitch(self):
+        """Bounded stick adjustment in degrees; the configured tilt stays intact."""
+        return self._overhead_pitch
+
+    @overhead_pitch.setter
+    def overhead_pitch(self, degrees):
+        self._overhead_pitch = max(-CAMERA_PITCH_LIMIT, min(CAMERA_PITCH_LIMIT, float(degrees)))
 
     def set_overhead_angle(self, degrees) -> float:
         angle = float(degrees)
         if not math.isfinite(angle) or not 1.0 <= angle <= 90.0:
             raise ValueError("overheadangle must be between 1 and 90 degrees")
         self.overhead_tilt = 90.0 - angle
+        self.overhead_pitch = 0.0
         return angle
 
     def effective_overhead_height(self) -> float:
@@ -210,19 +226,32 @@ class LogicCamera:
     # Overhead camera geometry
     # ------------------------------------------------------------------
 
+    def overhead_heading(self, player_angle=0.0):
+        """World heading at screen top, shared by movement and navigation HUD."""
+        base = (player_angle if str(self.overhead_orientation).strip().lower() == "player"
+                else math.pi)
+        return base + self.overhead_yaw
+
+    def rotate_overhead(self, dx, dy, player_angle=0.0):
+        """Orbit with at most five degrees of pitch from the configured view."""
+        # Orbiting must not follow the sprite as it turns to walk.
+        if str(self.overhead_orientation).strip().lower() == "player":
+            self.overhead_yaw = self.overhead_heading(player_angle) - math.pi
+            self.overhead_orientation = "north"
+        self.overhead_yaw = (self.overhead_yaw - dx * 0.002) % (2 * math.pi)
+        base = max(0.0, min(89.0, float(self.overhead_tilt)))
+        self.overhead_pitch = max(-base, min(89.0 - base, self.overhead_pitch + dy * 0.1))
+
     def _overhead_camera(self, player_pos, angle):
         """Compute (cam_pos, direction, up) for the overhead camera."""
         px = float(player_pos.x)
         py = float(player_pos.y)
         pz = float(player_pos.z)
 
-        if str(self.overhead_orientation).strip().lower() == "player":
-            head_x, head_z = math.sin(angle), math.cos(angle)
-        else:
-            # Fixed north: world -Z is at the top of the screen.
-            head_x, head_z = 0.0, -1.0
+        heading = self.overhead_heading(angle)
+        head_x, head_z = math.sin(heading), math.cos(heading)
 
-        tilt = math.radians(max(0.0, min(89.0, float(self.overhead_tilt))))
+        tilt = math.radians(90.0 - self.overhead_angle)
         sin_t, cos_t = math.sin(tilt), math.cos(tilt)
         dir_x = head_x * sin_t
         dir_y = -cos_t

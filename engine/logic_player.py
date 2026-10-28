@@ -11,6 +11,7 @@ import threading
 import glm
 
 from .physics import world_gravity
+from .logic_camera import CAMERA_PITCH_LIMIT
 
 # Qt key values used by the engine's input state.
 KEY_W = 0x57
@@ -21,6 +22,10 @@ KEY_SPACE = 0x20
 KEY_C = 0x43
 # Qt::Key_Shift; kept numeric so the engine remains Qt-free.
 KEY_SHIFT = 0x01000020
+KEY_BRACKET_LEFT = 0x5B
+KEY_BRACKET_RIGHT = 0x5D
+# Equivalent to a fully deflected right stick, in look pixels per second.
+KEYBOARD_LOOK_SPEED = 900.0
 
 _WATER_LOUDNESS = 0.7
 
@@ -33,6 +38,8 @@ class LogicPlayer:
     def __init__(self, logic):
         self.logic = logic
         self.player = None
+        self._pad_pitch_player = None
+        self._pad_pitch_offset = 0.0
         self.player2 = None
         self._player_was_in_water = False
         self._waterwalk_timer = 0.0
@@ -74,9 +81,39 @@ class LogicPlayer:
 
         from .game_input import modal_input_active
         modal = modal_input_active(logic)
+        read_pad = getattr(logic.game_state, "consume_gamepad_input", None)
+        pad_move, pad_look = read_pad() if read_pad is not None else (None, (0, 0))
         if modal:
             keys = frozenset()
             mouse_dx = mouse_dy = 0
+            pad_move = None
+
+        overhead_pad = pad_move is not None and logic.camera.is_overhead()
+        if not modal:
+            rotation_enabled = getattr(getattr(logic, "game_session", None),
+                                       "camera_rotation_enabled", lambda: True)()
+            if not rotation_enabled or pad_move is None:
+                pad_look = (0.0, 0.0)
+            keyboard_dx = (((KEY_BRACKET_RIGHT in keys) - (KEY_BRACKET_LEFT in keys))
+                           * KEYBOARD_LOOK_SPEED * delta if rotation_enabled else 0.0)
+        else:
+            pad_look, keyboard_dx = (0.0, 0.0), 0.0
+        if not modal and (pad_move is not None or keyboard_dx):
+            if logic.camera.is_overhead():
+                if (any(pad_look)
+                        or keyboard_dx
+                        or str(logic.camera.overhead_orientation).strip().lower() == "player"):
+                    logic.camera.rotate_overhead(pad_look[0] + keyboard_dx, pad_look[1],
+                                                 player_angle=player.angle)
+            else:
+                mouse_dx += pad_look[0] + keyboard_dx
+                if self._pad_pitch_player is not player:
+                    self._pad_pitch_player, self._pad_pitch_offset = player, 0.0
+                base = player.pitch - self._pad_pitch_offset
+                limit = math.radians(CAMERA_PITCH_LIMIT)
+                self._pad_pitch_offset = max(-limit, min(limit,
+                    self._pad_pitch_offset - pad_look[1] * 0.002))
+                player.pitch = base + self._pad_pitch_offset
 
         sensitivity = 0.002
         player.angle -= mouse_dx * sensitivity
@@ -86,7 +123,7 @@ class LogicPlayer:
         # Pointer aiming with an overhead camera: the view publishes the
         # heading under the pointer each frame; None leaves yaw to mouse look.
         aim_yaw = logic.game_state.get_aim_yaw()
-        if aim_yaw is not None and not modal:
+        if aim_yaw is not None and not modal and pad_move is None:
             player.angle = aim_yaw
 
         move_dir = glm.vec3(0)
@@ -99,11 +136,25 @@ class LogicPlayer:
         if KEY_D in keys:
             move_dir.x -= 1
 
+        movement_angle = None
+        self.pad_moving = pad_move is not None and any(pad_move)
+        if pad_move is not None:
+            lx, ly = pad_move
+            move_dir = glm.vec3(-lx, 0, -ly)
+            if overhead_pad:
+                movement_angle = logic.camera.overhead_heading(player.angle)
+                if lx or ly:
+                    # Screen right is (-cos h, sin h); screen up is (sin h, cos h).
+                    dx = -lx * math.cos(movement_angle) - ly * math.sin(movement_angle)
+                    dz = lx * math.sin(movement_angle) - ly * math.cos(movement_angle)
+                    player.angle = math.atan2(dx, dz)
+
         jump = KEY_SPACE in keys
         crouch = KEY_C in keys
         # A game can hold the player to a walk (out of breath, say).
         sprint = KEY_SHIFT in keys and getattr(player, "sprint_allowed", True)
 
+        extra = {"movement_angle": movement_angle} if movement_angle is not None else {}
         player.update(
             delta,
             move_dir,
@@ -116,6 +167,7 @@ class LogicPlayer:
             spatial_grid=logic.session_runtime.spatial_grid,
             sprint=sprint,
             gravity=world_gravity(logic.session_runtime.physics_world),
+            **extra,
         )
 
     def update_player2(self, delta):

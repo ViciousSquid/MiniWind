@@ -11,6 +11,7 @@ running, a tool, a test without one) and then answers as if nothing were there.
 from __future__ import annotations
 
 import contextlib
+import math
 
 
 def things(logic) -> list:
@@ -45,6 +46,21 @@ def camera(logic):
 def is_overhead(logic) -> bool:
     cam = camera(logic)
     return bool(cam is not None and cam.is_overhead())
+
+
+def navigation_heading(logic):
+    """World heading at screen top, for maps and objective markers."""
+    actor = player(logic)
+    angle = float(getattr(actor, "angle", 0.0))
+    cam = camera(logic)
+    if cam is None:
+        return math.pi
+    if not cam.is_overhead():
+        return angle
+    heading = getattr(cam, "overhead_heading", None)
+    if heading is not None:
+        return heading(angle)
+    return angle if str(getattr(cam, "overhead_orientation", "north")).lower() == "player" else math.pi
 
 
 def set_camera_mode(logic, mode) -> None:

@@ -43,6 +43,45 @@ Guild.
 | **I** | Inventory & equipment | **C** | Character sheet |
 | **J** | Quest journal | **P** | Spellbook (click a spell to ready it) |
 | **L** | Level up (when available) | **1–9 / Esc** | Dialogue choices / close |
+| **[ / ]** (hold) | Rotate camera left / right | | |
+
+### Gamepad
+
+SDL's standard controller mapping supplies the same controls on macOS, Windows,
+Linux and Android runtimes with pygame-ce/SDL controller support. Buttons use
+Xbox names (A is the bottom face button). Controllers can connect during play.
+
+| Control | In play | In a window |
+|---------|---------|-------------|
+| Left stick | Walk; face the direction of movement | Pointer in other menus |
+| Right stick | Rotate camera; pitch limited to ±5° from the configured view | Scroll |
+| D-pad left/right | Highlight a quickbar item | Highlight slots/actions |
+| D-pad up/down | Quest / healing potion | Highlight responses/items |
+| A | Use/equip/consume the highlighted quickbar item; answer nearby interaction prompts | Select response; pick up/place inventory items |
+| B | Hold block | Cancel dialog / close inventory |
+| LB / RB | Next spell / level up | Previous/next Statistics tab |
+| LT / RT | Use the physical left/right hand; hold for a bow/fist or to block with a shield | RT holds lockpick tension |
+| Y / Start | Inventory / pause | Close inventory / pause |
+| L3 / R3 / Back | Hold sprint / sneak / map | |
+
+Browsing the quickbar makes the next A press use that item, even beside an NPC.
+Otherwise a nearby talk/open/loot prompt takes priority. In inventory, focus the
+Equip, Use or Drop button with the D-pad to perform that action. A on an item
+picks it up; A on a compatible slot places it; A on the same item puts it back.
+Changing Statistics tabs preserves a picked item. B closes and cancels the pick.
+
+The minimap and its markers rotate with the camera. The upright north indicator
+trails turns gently and settles like a liquid-filled compass. Hold `[` / `]`
+to rotate the camera left / right from the keyboard. Disable rotation from both
+the right stick and bracket keys in `settings.ini` with:
+
+```ini
+[GAME]
+camera_rotation = False
+```
+
+The default is `True`. This affects camera rotation during play; menu scrolling
+still works. Other bindings can be changed under Pause → Options → Key bindings.
 
 ## What's in the game
 

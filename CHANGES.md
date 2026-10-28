@@ -1,5 +1,21 @@
 # Changes
 
+## Gamepad navigation and camera orbit
+
+- D-pad left/right highlights quickbar items; A equips, consumes or uses the
+  selection. Nearby talk/open/loot prompts still work with A.
+- Conversations support D-pad up/down, A to select, and B to leave. Inventory
+  supports D-pad focus, A pick/place, LB/RB tabs, and B to close.
+- Analog walking faces the direction of travel independently of camera orbit.
+  LT/RT use the corresponding physical hand; a shield trigger holds block.
+- Right-stick camera pitch is limited to ±5° from the configured view, with
+  physical elevation limits respected. Vertical stick input still scrolls menus.
+- The minimap, markers and player arrow follow camera heading. The upright
+  north indicator trails turns with gentle liquid-compass damping.
+  Camera orbit survives save/load. Hold `[` / `]` to rotate left / right.
+  Set `[GAME] camera_rotation = False` in `settings.ini` to disable both
+  bracket-key and right-stick rotation during play; rotation defaults to on.
+
 ## Faction-aware threat appraisal
 
 - Preserve the event's `actor_faction` snapshot when creating a knowledge fact.

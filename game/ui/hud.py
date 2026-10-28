@@ -897,13 +897,8 @@ def _draw_quest_arrow(painter, session, width, height):
         overhead = False
     hx = hz = 0.0
     if overhead:
-        orientation = str(getattr(fio.camera(logic), "overhead_orientation",
-                                  "north")).strip().lower()
-        if orientation == "player":
-            a = getattr(player, "angle", 0.0)
-            hx, hz = math.sin(a), math.cos(a)
-        else:                       # fixed north: -Z at the top of the screen
-            hx, hz = 0.0, -1.0
+        a = fio.navigation_heading(logic)
+        hx, hz = math.sin(a), math.cos(a)
     pangle = getattr(player, "angle", 0.0)
 
     cx, cy = width // 2, height // 2

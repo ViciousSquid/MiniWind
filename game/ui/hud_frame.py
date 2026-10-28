@@ -11,7 +11,8 @@ Everything is drawn with QPainter -- no artwork asset -- in three layers:
     back    the four fins                        cached pixmap
     bars    health (stamina a line beneath), magicka   live, every frame
     map     the minimap, clipped to the circle   game.ui.worldmap
-    ring    the bronze ring and its "N"          cached pixmap
+    ring    the bronze ring                     cached pixmap
+    north   a gently damped, upright "N"        live, every frame
 
 The ring goes over the minimap and over the bars' left ends, so the bars read
 as coming out from behind it. The two static layers are painted once per size
@@ -26,6 +27,7 @@ where the circle is.
 from __future__ import annotations
 
 import math
+import time
 from types import SimpleNamespace
 
 from PyQt5.QtCore import QPointF, QRectF, Qt
@@ -33,6 +35,7 @@ from PyQt5.QtGui import (QBrush, QColor, QConicalGradient, QImage, QLinearGradie
                          QPainter, QPainterPath, QPen, QPixmap, QRadialGradient)
 
 from . import theme as T
+from ..compass import CompassNeedle
 
 #: Gap between the frame and the window's top-left corner.
 MARGIN = 14
@@ -115,7 +118,7 @@ def _paint_back(p, f):
 
 
 def _paint_ring(p, f):
-    """The bronze ring round the minimap, with a north mark at the top."""
+    """The static bronze ring round the minimap."""
     cx, cy, R, r = f.cx, f.cy, f.R, f.r
     ring = _circle(cx, cy, R).subtracted(_circle(cx, cy, r))
     g = QConicalGradient(QPointF(cx, cy), 135.0)
@@ -142,8 +145,21 @@ def _paint_ring(p, f):
     p.drawEllipse(QPointF(cx, cy), (R + r) / 2.0, (R + r) / 2.0)
     p.setPen(QPen(QColor(0, 0, 0, 120), 3.0))
     p.drawEllipse(QPointF(cx, cy), r + 1.5, r + 1.5)
-    # North, set into the ring.
-    ny = cy - (R + r) / 2.0
+
+
+def _north_rotation(session, target, now=None):
+    needle = getattr(session, "_minimap_compass", None)
+    if needle is None:
+        needle = session._minimap_compass = CompassNeedle()
+    return needle.update(target, time.monotonic() if now is None else now)
+
+
+def _paint_north(p, f, rotation=0.0):
+    """North trails a turn gently; its letter stays upright and readable."""
+    R, r = f.R, f.r
+    reach = (R + r) / 2.0
+    cx = f.cx + math.sin(rotation) * reach
+    ny = f.cy - math.cos(rotation) * reach
     p.setPen(QPen(_BRONZE_EDGE, 1.2))
     p.setBrush(QBrush(QColor(60, 32, 12)))
     p.drawEllipse(QPointF(cx, ny), 0.085 * R, 0.085 * R)
@@ -306,5 +322,6 @@ def draw(painter, session, c, width, height):
 
     painter.save()
     painter.drawPixmap(0, 0, ring)
+    _paint_north(painter, f, _north_rotation(session, worldmap.minimap_rotation(session)))
     _draw_identity(painter, f, c)
     painter.restore()

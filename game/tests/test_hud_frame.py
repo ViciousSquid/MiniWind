@@ -1,5 +1,7 @@
 """The top-left status frame (:mod:`game.ui.hud_frame`)."""
 
+import math
+
 import pytest
 
 pytest.importorskip("PyQt5")
@@ -95,3 +97,38 @@ def test_the_frame_paints_and_keeps_its_static_layers(qt_app):
     well = QtGui.QColor.fromRgba(image.pixel(int(f.cx), int(f.cy)))
     assert ring.alpha() == 255 and well.alpha() == 255
     assert QtGui.QColor.fromRgba(image.pixel(1270, 700)).alpha() == 0
+
+
+def test_only_the_north_badge_lags_and_each_session_has_its_own_compass(qt_app, monkeypatch):
+    now, maps, badges = [0.0], [], []
+    monkeypatch.setattr(hud_frame.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(worldmap, "minimap_rotation", lambda s: s.rotation)
+    monkeypatch.setattr(worldmap, "draw_minimap", lambda p, s, *args: maps.append(s.rotation))
+    monkeypatch.setattr(hud_frame, "_paint_north", lambda p, f, angle: badges.append(angle))
+    session = _Session()
+    session.rotation = 0.0
+    image = QtGui.QImage(1280, 720, QtGui.QImage.Format_ARGB32_Premultiplied)
+    image.fill(0)
+    painter = QtGui.QPainter(image)
+    try:
+        hud_frame.draw(painter, session, _Character(), 1280, 720)
+        session.rotation, now[0] = math.pi / 2, .05
+        hud_frame.draw(painter, session, _Character(), 1280, 720)
+        assert maps[-1] == math.pi / 2
+        lagged = badges[-1]
+        assert 0 < lagged < math.pi / 2
+
+        fresh = _Session()
+        fresh.rotation = -math.pi / 2
+        hud_frame.draw(painter, fresh, _Character(), 1280, 720)
+        assert badges[-1] == pytest.approx(fresh.rotation)
+        hud_frame.draw(painter, session, _Character(), 1280, 720)
+        assert badges[-1] == pytest.approx(lagged)
+
+        for _ in range(20):
+            now[0] += .02
+            hud_frame.draw(painter, session, _Character(), 1280, 720)
+        assert maps[-1] == math.pi / 2
+        assert abs(badges[-1] - session.rotation) < math.radians(1)
+    finally:
+        painter.end()

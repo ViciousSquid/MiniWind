@@ -9,8 +9,8 @@ on a background thread, in strips, and is cached on disk per map (``cache/``),
 so a map is only ever painted once. Until it is ready the minimap says so.
 
 :func:`draw_minimap` paints the round minimap inside the bronze ring of the
-top-left status frame (:mod:`game.ui.hud_frame`): north up (the overhead
-camera's north), about :data:`MINIMAP_SPAN` world units across, with the
+top-left status frame (:mod:`game.ui.hud_frame`): aligned with the camera,
+about :data:`MINIMAP_SPAN` world units across, with the
 player's arrow, the people
 and creatures nearby (red: hostile to the player, green: friendly, grey:
 anyone else), and the tracked quest's target as a yellow diamond, pinned to
@@ -312,6 +312,11 @@ def _relation_colour(session, thing):
     return QColor(200, 200, 200)
 
 
+def minimap_rotation(session):
+    """Clockwise map rotation, in radians, relative to its north-up artwork."""
+    return fio.navigation_heading(getattr(session, "logic", None)) - math.pi
+
+
 def draw_minimap(painter, session, viewport, width, height, world=None):
     """Paint the round minimap (see the module docstring).
 
@@ -340,6 +345,11 @@ def draw_minimap(painter, session, viewport, width, height, world=None):
     window.addEllipse(frame)
     painter.fillPath(window, QColor(20, 24, 20, 230))
     painter.setClipPath(window)
+    # One transform rotates terrain, night lighting, actors, objectives,
+    # waypoints and the player arrow together with the world camera.
+    painter.translate(centre)
+    painter.rotate(math.degrees(minimap_rotation(session)))
+    painter.translate(-centre)
 
     image = world.image() if world.ready else None
     if image is not None:

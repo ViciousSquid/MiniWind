@@ -13,7 +13,7 @@ the inventory strip and Escape are not listed: they are the engine's or fixed.
 
 **Gamepad buttons** are bound the same way, beside the keys (``[PAD]``): each
 action has a pad button as well as its key, and a few controls only a pad
-needs (sprint on a stick click, the strip on the shoulders) are listed with
+needs (sprint on a stick click, the strip on D-pad left/right) are listed with
 them. The triggers are the hands' attacks and nothing else, so they are not
 offered. :mod:`game.gamepad` presses an action's key
 when its button is pressed, so a rebinding of either takes effect for both.
@@ -55,16 +55,16 @@ PAD_BUTTONS = ("a", "b", "x", "y", "lb", "rb", "back", "start", "ls", "rs",
 #: Controls only a gamepad needs: (action, label, default button).
 PAD_ONLY = (
     ("sprint", "Sprint (hold)", "ls"),
-    ("strip_prev", "Previous strip slot", "lb"),
-    ("strip_next", "Next strip slot", "rb"),
+    ("strip_prev", "Previous strip slot", "dpad_left"),
+    ("strip_next", "Next strip slot", "dpad_right"),
     ("pause", "Pause menu", "start"),
 )
 #: Every action's default button; "" leaves one off the pad (the Statistics
 #: tabs reach the character sheet, journal and spellbook on LB / RB).
 PAD_DEFAULTS = {
-    "attack": "x", "block": "b", "next_spell": "dpad_left", "heal": "dpad_down",
+    "attack": "x", "block": "b", "next_spell": "lb", "heal": "dpad_down",
     "sneak": "rs", "interact": "a", "inventory": "y", "character": "",
-    "journal": "", "spells": "", "levelup": "dpad_right", "map": "back",
+    "journal": "", "spells": "", "levelup": "rb", "map": "back",
     "quest": "dpad_up",
     **{action: button for action, _label, button in PAD_ONLY},
 }

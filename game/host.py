@@ -965,7 +965,9 @@ class MiniwindGame:
         was_lockpicking = session.open_screen == "lockpicking"
         # Shift while moving is a sprint, paid for in stamina (session._sprint).
         down = getattr(ctx, "key_down", None)
-        session.sprint_held = bool(down) and down("shift") and any(down(k) for k in "wasd")
+        moving = any(down(k) for k in "wasd") if down else False
+        moving = moving or getattr(fio.player_runtime(logic), "pad_moving", False)
+        session.sprint_held = bool(down) and down("shift") and moving
         session.tick(ctx.delta)
         from .ui import hits
         hits.run_clicks(session)
@@ -1019,7 +1021,7 @@ class MiniwindGame:
 
     def _handle_gameplay_input(self, session, just, ctx):
         # held: block
-        session.toggle_block(ctx.key_down(K_BLOCK))
+        session.toggle_block(ctx.key_down(K_BLOCK) or getattr(session, "_pad_blocking", False))
         # Mouse fire buttons reach the session through the engine's shot path
         # (LogicThread._handle_shooting -> MiniwindSession.fire_player_weapon),
         # so there is nothing to poll here. Keyboard equivalents follow.
@@ -1092,6 +1094,10 @@ class MiniwindGame:
                 pass
 
     def _handle_dialogue_input(self, session, just, ctx):
+        for name in ("escape", "up", "down", "return", "enter"):
+            if name in just:
+                session.dialogue_key(name)
+                return
         view = session.current_view()
         if view is not None:
             for i in range(len(view["responses"])):

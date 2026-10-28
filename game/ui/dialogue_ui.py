@@ -21,6 +21,7 @@ from PyQt5.QtGui import (QColor, QFont, QPixmap, QPainterPath, QLinearGradient,
 from . import fonts, hits
 from . import theme as T
 from ..rpg import guilds, heads
+from .. import controls
 
 _PIXMAP_CACHE = {}
 
@@ -233,8 +234,14 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
     for i, resp in enumerate(view["responses"]):
         # The whole reply row is clickable (the number keys still work).
         row = QRect(int(tx) - 4, int(ry) - 16, int(cr - tx) + 8, _RESP_LINE_H - 2)
-        if hits.hovered(row):
+        selected = controls.gamepad() and i == min(
+            getattr(session, "dialogue_selected", 0), len(lay["responses"]) - 1)
+        if hits.hovered(row) or selected:
             painter.fillRect(row, QColor(255, 220, 150, 26))
+        if selected:
+            painter.setPen(QPen(T.GOLD_BRIGHT, 1.5))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(row, 3, 3)
         hits.add(row, lambda sess, n=i: sess.choose(n), resp.get("text", ""))
         chip = QRect(tx, ry - 13, 18, 18)
         painter.setBrush(QColor(60, 52, 78))
@@ -251,7 +258,9 @@ def _draw_content(painter, session, x, y, w, box_h, framed=True):
     painter.setPen(T.DIM)
     painter.setFont(fonts.dialogue_font(9))
     painter.drawText(QRect(int(x + pad), int(y + box_h - 22), int(cr - (x + pad)), 16),
-                     int(Qt.AlignRight | Qt.AlignVCenter), "Click or [1-9] choose   [Esc] leave")
+                     int(Qt.AlignRight | Qt.AlignVCenter),
+                     "D-pad ↑ / ↓ choose   A select   B leave" if controls.gamepad()
+                     else "Click or [1-9] choose   [Esc] leave")
 
 
 def _draw_head(painter, head, x, y, w, box_h):

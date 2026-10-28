@@ -274,3 +274,21 @@ def test_a_restore_never_invents_a_flag_the_map_never_had(session):
     assert "hidden" not in brush, "the restore added 'hidden' to a plain brush"
     assert "disabled" not in monster.properties, (
         "the restore added 'disabled' to an entity that never carried it")
+
+
+def test_camera_orbit_survives_save_and_legacy_saves_reset_it(session):
+    _state, thread = session(things=[make_thing(PlayerStart, "spawn", (0, 64, 0))])
+    thread.camera.overhead_yaw = 1.25
+    thread.camera.overhead_pitch = 4.0
+    snapshot = savegame.build_snapshot(thread, map_name=MAP)
+    thread.camera.overhead_yaw = 2.5
+    thread.camera.overhead_pitch = -5.0
+    savegame.restore_auto(thread, snapshot, current_map_name=MAP)
+    assert thread.camera.overhead_yaw == 1.25
+    assert thread.camera.overhead_pitch == 4.0
+
+    del snapshot["runtime"]["overhead_yaw"]
+    del snapshot["runtime"]["overhead_pitch"]
+    savegame.restore_auto(thread, snapshot, current_map_name=MAP)
+    assert thread.camera.overhead_yaw == 0.0
+    assert thread.camera.overhead_pitch == 0.0
