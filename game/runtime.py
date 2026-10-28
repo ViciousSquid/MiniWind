@@ -884,6 +884,11 @@ class MiniwindSession(SettlementLaw):
         #: as data far away and as actors near the player. Built at install.
         self.living = None
 
+        from .storyteller import Storyteller
+        from .storyteller_session import SessionStorytellerHooks
+        self.storyteller = Storyteller(self.store, self.director,
+                                      SessionStorytellerHooks(self))
+
     def _editor_config(self):
         """The editor's live settings (settings.ini), or None without an editor."""
         return _editor_config
@@ -1012,6 +1017,7 @@ class MiniwindSession(SettlementLaw):
         # so only the in-memory event log and intent cache remain.
         self.director.bus.clear()
         self.director.invalidate()
+        self.storyteller.reset()
         self._sim_hours = 0.0
         if self.logic is not None:
             try:
@@ -1687,6 +1693,7 @@ class MiniwindSession(SettlementLaw):
 
         # The roads: journeys advance off-screen on the clock, and parties
         # inside Big World's live region walk as actors (game/living).
+        self.storyteller.tick(float(self.clock.day) * 24.0 + float(self.clock.hour))
         if self.living is not None:
             self.living.tick(delta)
 
@@ -9555,12 +9562,15 @@ class MiniwindSession(SettlementLaw):
             # crimes were charged) already lives in the store as it is written.
             self.director.persist()
             self.law.persist()
+            self.storyteller.persist()
 
     def restore(self) -> None:
         # The event history first, so anything that reads it during the rest of
         # the restore sees the world's past rather than an empty log.
         self.director.restore()
+        self.director.invalidate()
         self.law.restore()
+        self.storyteller.restore()
         self._clear_arrest()
         if getattr(self, "living", None) is not None:
             self.living.restore()

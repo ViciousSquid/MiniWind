@@ -127,9 +127,11 @@ class MapMemory:
         return generic.get(str(p.get("display_name") or p.get("npc_role") or ""), 0) > 1
 
     def _delay(self, key) -> float:
-        """This one's own day: RESPAWN_HOURS plus a stable jitter."""
+        """Pace new deaths only; saved deadlines remain stable across states."""
         jitter = (sum(map(ord, key)) % 97) / 96.0
-        return RESPAWN_HOURS + RESPAWN_JITTER * jitter
+        storyteller = getattr(self.session, "storyteller", None)
+        scale = storyteller.levers["lair_refill_scale"] if storyteller is not None else 1.0
+        return (RESPAWN_HOURS + RESPAWN_JITTER * jitter) * scale
 
     # -- entering a map --------------------------------------------------------
     def load(self, map_key: str) -> None:

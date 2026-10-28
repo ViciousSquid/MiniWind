@@ -1,0 +1,381 @@
+"""Drama pacing by sampling existing opportunities, never by authoring events.
+
+Only the KV key owned here is writable. Hooks supply read-only world views;
+consumers ask for lever values and sampling weights. No engine/Qt dependency.
+All designer tuning is in TUNING. Hours and dwell times are game hours.
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+from types import SimpleNamespace
+
+from .sim import appraisal, crime, knowledge
+from .sim.director import PLAYER_KEY, actor_key
+
+
+TUNING = {
+    "store_key": "storyteller.state",
+    "version": 1,
+    "sample_hours": 0.25,
+    "event_hours": 2.0,
+    "event_limit": 200,
+    "reason_cap": 24,
+    "observation_cap": 10,
+    "healthy": 0.7,
+    "danger_health": 0.35,
+    "peak_tension": 0.65,
+    "recovered_tension": 0.25,
+    "attack_tension": 0.18,
+    "death_tension": 1.0,
+    "hostile_tension": 0.08,
+    "pressure_bounty": 150,
+    "pressure_phases": ("pursuit", "search"),
+    "town_kinds": ("town", "hamlet", "inn"),
+    "threat_tiers": (0, 1),
+    "sight_radius": 1800.0,
+    "staging_distance": 900.0,
+    "states": {
+        "CALM": {
+            "next": "RISING", "min_hours": 3.0, "max_hours": 8.0,
+            "reason": "Quiet roads give existing troubles time to develop.",
+            "advance_reason": "The player is healthy after a quiet interval; existing pressure or a long lull can build tension.",
+            "hold_reason": "Wait for enough quiet time and a healthy player before building pressure.",
+            "levers": {
+                "kind_weights": {"bandits": 2, "wolves": 1, "greenskins": 1},
+                "kind_hours": {}, "population": 26, "hunter_bounty": 150,
+                "lair_refill_scale": 1.0, "market_chance": 0.25,
+                "destination_bias": 2.0, "vendetta_bias": 1.0,
+            },
+        },
+        "RISING": {
+            "next": "PEAK", "min_hours": 2.0, "max_hours": 6.0,
+            "reason": "More hostile departures after dark bring existing trouble closer.",
+            "advance_reason": "Danger, brewing consequences or a sustained rise have brought the roads to a short crest.",
+            "hold_reason": "Give existing trouble time to approach before the crest.",
+            "levers": {
+                "kind_weights": {"bandits": 6, "wolves": 3, "greenskins": 3},
+                "kind_hours": {"bandits": [18, 6], "wolves": [19, 6],
+                               "greenskins": [20, 5]},
+                "population": 30, "hunter_bounty": 125,
+                "lair_refill_scale": 0.85, "market_chance": 0.2,
+                "destination_bias": 4.0, "vendetta_bias": 4.0,
+            },
+        },
+        "PEAK": {
+            "next": "RESPITE", "min_hours": 0.5, "max_hours": 2.0,
+            "reason": "A short crest lets consequences play out before easing the roads.",
+            "advance_reason": "Injury, sustained tension or the crest's time limit calls for recovery.",
+            "hold_reason": "Let the short crest play out while the player can cope.",
+            "levers": {
+                "kind_weights": {"bandits": 5, "wolves": 2, "greenskins": 2},
+                "kind_hours": {"bandits": [18, 6], "wolves": [19, 6],
+                               "greenskins": [20, 5]},
+                "population": 30, "hunter_bounty": 125,
+                "lair_refill_scale": 0.85, "market_chance": 0.15,
+                "destination_bias": 5.0, "vendetta_bias": 6.0,
+            },
+        },
+        "RESPITE": {
+            "next": "CALM", "min_hours": 4.0,
+            "reason": "Gentler traffic gives the player room to recover.",
+            "advance_reason": "The recovery interval has passed and the player is healthy with low tension.",
+            "hold_reason": "Keep gentler traffic until the recovery interval passes and health and tension recover.",
+            "levers": {
+                "kind_weights": {"bandits": 1, "wolves": 0, "greenskins": 0,
+                                 "trader": 10, "caravan": 5, "minstrel": 5},
+                "kind_hours": {}, "population": 24, "hunter_bounty": 300,
+                "lair_refill_scale": 1.5, "market_chance": 0.5,
+                "destination_bias": 1.5, "vendetta_bias": 1.0,
+            },
+        },
+    },
+}
+
+
+class StorytellerHooks:
+    """Read-only projections, injected by the session like WorldHooks.
+
+    actors yields living knowledge holders (including parked residents).
+    actor_town uses the holder's current town, never the hidden event location.
+    Hostile counts must include only threats the player can perceive.
+    """
+
+    def actors(self):
+        return ()
+
+    def actor_town(self, actor):
+        return None
+
+    def player_town(self):
+        return None
+
+    def player_health_fraction(self):
+        return 1.0
+
+    def hostile_counts_by_tier(self):
+        return {}
+
+    def law_pressure(self):
+        """{region: {bounty, phase}}, without creating Writs records."""
+        return {}
+
+
+class Storyteller:
+    def __init__(self, store=None, director=None, hooks=None):
+        self.store = store
+        self.director = director
+        self.hooks = hooks if hooks is not None else StorytellerHooks()
+        self.restore()
+
+    def reset(self):
+        self.state = "CALM"
+        self.entered_at = None
+        self.last_sample = None
+        self._levers = copy.deepcopy(TUNING["states"][self.state]["levers"])
+        self.sensors = {}
+        self._threads = {}
+        self._discharged = set()
+        self._observations = ()
+        self._reasons = {}
+        self._publish_levers()
+
+    @property
+    def levers(self):
+        """A detached snapshot: consumers cannot mutate authored/restored values."""
+        return copy.deepcopy(self._levers)
+
+    @property
+    def observations(self):
+        """The last accepted samples, newest first, detached for live inspection."""
+        return copy.deepcopy(list(reversed(self._observations)))
+
+    def _reason(self, decision, reason):
+        # Latest explanation per decision; bounded even with many destinations.
+        self._reasons.pop(decision, None)
+        self._reasons[decision] = str(reason)
+        while len(self._reasons) > TUNING["reason_cap"]:
+            oldest = next((key for key in self._reasons if key.startswith("Destination ")),
+                          next(iter(self._reasons)))
+            del self._reasons[oldest]
+
+    def _publish_levers(self):
+        why = TUNING["states"][self.state]["reason"]
+        self._reason("Pacing", f"{self.state}: {why}")
+        for label, key in (("Journey weights", "kind_weights"),
+                           ("Departure hours", "kind_hours"),
+                           ("Road population", "population"),
+                           ("Hunter bounty threshold", "hunter_bounty"),
+                           ("New lair refill delay multiplier", "lair_refill_scale"),
+                           ("Market trip chance", "market_chance"),
+                           ("Town destination multiplier", "destination_bias"),
+                           ("Vendetta arrival multiplier", "vendetta_bias")):
+            self._reason(label, f"{self._levers[key]}. {why}")
+
+    def _holders(self):
+        holders = {}
+        for actor in self.hooks.actors():
+            if actor.properties.get("dead"):
+                continue
+            # actor_key caches on properties. Resolve against a detached view
+            # so even a previously uninspected actor remains entirely read-only.
+            key = actor_key(SimpleNamespace(properties=dict(actor.properties)))
+            if key:
+                holders[key] = actor
+        return holders
+
+    def _vendettas(self, holders):
+        """Read cached intentions only; never appraise, dirty or replace them."""
+        out = {}
+        if self.director is None:
+            return out
+        for key, actor in holders.items():
+            if key in self.director._dirty:
+                continue
+            known = {f.get("e"): f for f in knowledge.facts(self.store, key)}
+            for intent in self.director._intents.get(key, ()):
+                fact = known.get(intent.event_id)
+                if (intent.reaction != appraisal.FIGHT or intent.target != PLAYER_KEY
+                        or not fact or fact.get("kind") != "death"
+                        or fact.get("actor") != PLAYER_KEY
+                        or not fact.get("identified", True)
+                        or fact.get("source") not in knowledge.SOURCE_PHRASE
+                        or float(fact.get("certainty", 0)) < crime.REPORT_CERTAINTY):
+                    continue
+                token = (key, intent.event_id)
+                if any(ev.actor == key and ev.target == PLAYER_KEY
+                       and ev.kind in ("attack", "death") and ev.id > intent.event_id
+                       for ev in self.director.bus.recent(limit=TUNING["event_limit"], actor=PLAYER_KEY)):
+                    self._discharged.add(token)
+                if token in self._discharged:
+                    continue
+                tie = appraisal.relationship_to(actor.properties, fact.get("target", ""),
+                                                 fact.get("target_name", ""))
+                if tie in appraisal.KIN_TIES:
+                    out[key] = intent.reason
+                    break
+        return out
+
+    def _sense(self, now):
+        holders = self._holders()
+        bus = self.director.bus if self.director is not None else None
+        # unsolved() is an omniscient history query: its ids are only a filter.
+        # Never inspect its event locations, offenders or other hidden fields.
+        open_ids = {ev.id for ev in crime.unsolved(
+            self.store, bus, limit=TUNING["event_limit"])} if bus is not None else set()
+        threads, ids = {}, set()
+        for key, actor in holders.items():
+            if key == PLAYER_KEY:
+                continue
+            for fact in knowledge.facts(self.store, key):
+                eid = fact.get("e")
+                # A remembered crime can outlive the bounded event history.
+                # Unknown events must not erase a living holder's loose thread
+                # merely by pushing its event out of unsolved()'s history tail.
+                reported = eid not in open_ids and crime.already_reported(self.store, eid)
+                if (not eid or reported or not crime.is_crime(fact)
+                        or fact.get("reported") or crime.settled(self.store, eid)
+                        or float(fact.get("certainty", 0)) < knowledge.FORGET_BELOW
+                        or fact.get("source") not in knowledge.SOURCE_PHRASE):
+                    continue
+                ids.add(eid)
+                town = self.hooks.actor_town(actor)
+                if town:
+                    threads.setdefault(town, set()).add(eid)
+        self._threads = {town: len(events) for town, events in threads.items()}
+        health = max(0.0, min(1.0, float(self.hooks.player_health_fraction())))
+        attacks = deaths = 0
+        if bus is not None:
+            for ev in bus.recent(limit=TUNING["event_limit"], actor=PLAYER_KEY):
+                # The player necessarily perceives attacks/deaths targeting them.
+                if ev.target != PLAYER_KEY or not 0 <= now - (ev.day * 24 + ev.hour) <= TUNING["event_hours"]:
+                    continue
+                attacks += ev.kind == "attack"
+                deaths += ev.kind == "death"
+        counts = self.hooks.hostile_counts_by_tier()
+        hostiles = sum(counts.get(tier, 0) for tier in TUNING["threat_tiers"])
+        law = self.hooks.law_pressure()
+        pressure = any(row.get("bounty", 0) >= TUNING["pressure_bounty"]
+                       or row.get("phase") in TUNING["pressure_phases"]
+                       for row in law.values())
+        vendettas = self._vendettas(holders)
+        tension = min(1.0, 1.0 - health + attacks * TUNING["attack_tension"]
+                      + deaths * TUNING["death_tension"] + hostiles * TUNING["hostile_tension"])
+        return dict(health=health, attacks=attacks, deaths=deaths, hostiles=hostiles,
+                    tension=tension, loose_threads=len(ids), vendettas=len(vendettas),
+                    law=law, law_pressure=pressure)
+
+    def tick(self, now):
+        """Sample on world time; one transition per sample, including large jumps."""
+        now = float(now)
+        if self.last_sample is not None and now < self.last_sample:
+            return                 # load must call restore(), not advance backwards
+        if self.last_sample is not None and now - self.last_sample < TUNING["sample_hours"]:
+            return
+        self.last_sample = now
+        if self.entered_at is None:
+            self.entered_at = now
+        self.sensors = s = self._sense(now)
+        row = TUNING["states"][self.state]
+        age = now - self.entered_at
+        danger = s["health"] <= TUNING["danger_health"] or s["tension"] >= TUNING["peak_tension"]
+        ready = s["loose_threads"] or s["vendettas"] or s["law_pressure"]
+        recovered = s["health"] >= TUNING["healthy"] and s["tension"] <= TUNING["recovered_tension"]
+        advance = False
+        if self.state == "CALM":
+            advance = age >= row["min_hours"] and s["health"] >= TUNING["healthy"] and (
+                ready or age >= row["max_hours"])
+        elif self.state == "RISING":
+            advance = danger or age >= row["max_hours"] or (age >= row["min_hours"] and ready)
+        elif self.state == "PEAK":
+            advance = s["health"] <= TUNING["danger_health"] or age >= row["max_hours"] or (
+                age >= row["min_hours"] and s["tension"] >= TUNING["peak_tension"])
+        elif self.state == "RESPITE":
+            advance = recovered and age >= row["min_hours"]
+        previous = self.state
+        if advance:
+            self.state = row["next"]
+            self.entered_at = now
+            self._levers = copy.deepcopy(TUNING["states"][self.state]["levers"])
+            self._publish_levers()
+        explanation = row["advance_reason"] if advance else row["hold_reason"]
+        self._reason("State decision", f"{previous} → {self.state}: {explanation} After {age:.2f} hours: "
+                     f"health {s['health']:.0%}, tension {s['tension']:.2f}, "
+                     f"{s['attacks']} recent attacks, {s['deaths']} deaths, {s['hostiles']} visible hostiles, "
+                     f"{s['loose_threads']} unreported memories, {s['vendettas']} kin vendettas; "
+                     f"law pressure {'present' if s['law_pressure'] else 'absent'}.")
+        observation = dict(time=now, state=self.state, sensors=copy.deepcopy(s),
+                           reason=self._reasons["State decision"])
+        # Replace atomically so the UI can read history while the session ticks.
+        self._observations = (*self._observations, observation)[-TUNING["observation_cap"]:]
+        self.persist()
+
+    def destination_weight(self, town):
+        weight = self._levers["destination_bias"] if town in self._threads else 1.0
+        self._reason(f"Destination {town}", f"Weight {weight:g}: "
+                     f"{self._threads.get(town, 0)} unreported crimes remembered by people in this town.")
+        return weight
+
+    def materialisation_weight(self, actor_keys, distance):
+        """Prioritise natural arrivals already near the player, never teleport.
+
+        Revalidate knowledge/intents at the point of sampling so a discharged,
+        forgotten or changed intention cannot keep a stale staging bonus.
+        """
+        keys = set(actor_keys)
+        vendettas = self._vendettas({key: actor for key, actor in self._holders().items()
+                                    if key in keys})
+        eligible = next((key for key in actor_keys if key in vendettas), None)
+        ready = (eligible and self.hooks.player_town()
+                 and self.hooks.player_health_fraction() >= TUNING["healthy"]
+                 and distance <= TUNING["staging_distance"])
+        weight = self._levers["vendetta_bias"] if ready else 1.0
+        self._reason("Vendetta staging", f"Weight {weight:g}: " + (
+            f"{eligible} already intends to fight ({vendettas[eligible]}); "
+            "the player is healthy in town and this journey is already nearby."
+            if ready else "No nearby justified kin fight is ready for a healthy player in town."))
+        return weight
+
+    def inspector_rows(self):
+        return list(self._reasons.items())
+
+    def persist(self):
+        if self.store is not None:
+            self.store.set(TUNING["store_key"], json.dumps({
+                "version": TUNING["version"], "state": self.state,
+                "entered_at": self.entered_at, "last_sample": self.last_sample,
+                "levers": self._levers, "sensors": self.sensors,
+                "threads": self._threads, "reasons": self._reasons,
+                "discharged": sorted(self._discharged),
+                "observations": self._observations,
+            }))
+
+    def restore(self):
+        """Restore the saved lever snapshot exactly, even after designer retuning."""
+        self.reset()
+        if self.store is None:
+            return False
+        try:
+            data = json.loads(self.store.get(TUNING["store_key"], ""))
+            if not isinstance(data, dict) or data.get("version") != TUNING["version"]:
+                return False
+            if data.get("state") not in TUNING["states"] or not isinstance(data.get("levers"), dict):
+                return False
+            if set(data["levers"]) != set(self._levers):
+                return False
+            entered = data.get("entered_at")
+            sampled = data.get("last_sample")
+            self.entered_at = None if entered is None else float(entered)
+            self.last_sample = None if sampled is None else float(sampled)
+            self.state = data["state"]
+            self._levers = copy.deepcopy(data["levers"])
+            self.sensors = dict(data.get("sensors") or {})
+            self._threads = dict(data.get("threads") or {})
+            self._reasons = dict(data.get("reasons") or {})
+            self._discharged = {(str(key), int(eid)) for key, eid in data.get("discharged", [])}
+            self._observations = tuple(copy.deepcopy(data.get("observations") or [])[-TUNING["observation_cap"]:])
+        except (TypeError, ValueError):
+            self.reset()
+            return False
+        return True

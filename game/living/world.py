@@ -143,6 +143,18 @@ class SessionHooks(jn.WorldHooks):
     def __init__(self, world: "LivingWorld"):
         self.w = world
 
+    def journey_levers(self):
+        storyteller = getattr(self.w.session, "storyteller", None)
+        return storyteller.levers if storyteller is not None else {}
+
+    def destination_weight(self, place_key):
+        storyteller = getattr(self.w.session, "storyteller", None)
+        return storyteller.destination_weight(place_key) if storyteller is not None else 1.0
+
+    def materialisation_weight(self, actor_keys, distance):
+        storyteller = getattr(self.w.session, "storyteller", None)
+        return storyteller.materialisation_weight(actor_keys, distance) if storyteller is not None else 1.0
+
     def site_strength(self, place_key):
         return sum(float(t.properties.get("health", 0) or 0)
                    * float(t.properties.get("damage", 5) or 5)
@@ -477,7 +489,12 @@ class LivingWorld:
             x, z = self._abstract_pos(j, t)
             d = math.hypot(x - px, z - pz)
             if d <= near:
-                candidates.append((d, j))
+                from ..sim.director import actor_key
+                keys = [actor_key(identity) for m in j.members if m.get("alive", True)
+                        for identity in (m.get("resident"), m.get("id") or m.get("name"))
+                        if identity]
+                weight = self.board.hooks.materialisation_weight(keys, d)
+                candidates.append((d / max(1.0, weight), j))
         for _d, j in sorted(candidates, key=lambda c: c[0]):
             if len(self.live) >= MAX_LIVE:
                 break
@@ -530,6 +547,7 @@ class LivingWorld:
             except Exception:
                 continue
             p = thing.properties
+            m["id"] = p.get("id") or m["name"]
             # The bestiary fills what the template knows; the journey's own
             # numbers (wounds carried from an earlier fight) win.
             p["health"] = max(1, int(m.get("health", p.get("health", 60))))
@@ -604,10 +622,16 @@ class LivingWorld:
             real = self.resident_thing(m["resident"])
             if real is not None:
                 rp = real.properties
+                # Share social identity, while keeping the proxy's scene UUID
+                # distinct from the hidden resident for savegame overlays.
+                props["_memory_identity"] = (rp.get("_memory_identity") or rp.get("id")
+                                             or rp.get("name"))
                 for k in ("dialogue", "merchant", "merchant_gold", "stock", "head",
                           "relationships", "portrait", "strength", "endurance", "charisma"):
                     if k in rp:
                         props[k] = rp[k]
+        if m.get("id"):
+            props["id"] = m["id"]
         if not props.get("dialogue"):
             props["dialogue"] = self._tree(j, m, index)
         return props
