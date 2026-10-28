@@ -68,6 +68,12 @@ Containers expose **Locked**, **Difficulty** and **Key item id** in the editor.
 Existing containers default to unlocked. `lock_jammed` and `lockpick_state` are
 runtime properties; save files and map memory preserve them by container id.
 
+The Vale's overworld includes a mixture of open containers and pickable novice,
+apprentice and adept chest/crate locks. Barrels and sacks stay unlocked. World
+generation applies this policy without rerolling the rest of the content;
+`python -m game.tools.container_locks [MAP]` applies the same repeatable pass to
+an existing map while preserving its contents and authored locks.
+
 The existing cave maps include three examples: the novice Wolfmaw lockbox in
 `cave01`, an expert strongbox in `cave04`, and a master strongbox in `cave12`.
 The Patient Locksmith, a green spellbook near the entrance of `cave01`, teaches

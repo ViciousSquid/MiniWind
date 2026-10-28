@@ -606453,8 +606453,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
-                "custom_idle": "assets/sprites/miniwind/container_crate.png"
+                "locked": true,
+                "custom_idle": "assets/sprites/miniwind/container_crate.png",
+                "lock_key": "",
+                "lock_difficulty": "novice"
             },
             "io_connections": []
         },
@@ -608145,12 +608147,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "owner": "Osric",
                 "owner_name": "Osric the Ferryman",
                 "type": "container",
-                "id": "a09bdaf0-ae9e-5916-9024-27ac08f48c02"
+                "id": "a09bdaf0-ae9e-5916-9024-27ac08f48c02",
+                "lock_key": "",
+                "lock_difficulty": "novice"
             },
             "io_connections": []
         },
@@ -610585,12 +610589,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "owner": "Aldric",
                 "owner_name": "Aldric the Reeve",
                 "type": "container",
-                "id": "cbd6c873-6a90-5b33-95ea-c9d6a506494a"
+                "id": "cbd6c873-6a90-5b33-95ea-c9d6a506494a",
+                "lock_key": "",
+                "lock_difficulty": "novice"
             },
             "io_connections": []
         },
@@ -613535,12 +613541,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "owner": "Fenwick",
                 "owner_name": "Fenwick the Hunter",
                 "type": "container",
-                "id": "e33b228f-7709-595f-8c81-70db7990aeae"
+                "id": "e33b228f-7709-595f-8c81-70db7990aeae",
+                "lock_key": "",
+                "lock_difficulty": "adept"
             },
             "io_connections": []
         },
@@ -614657,12 +614665,14 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "owner": "Bryn",
                 "owner_name": "Bryn the Shepherd",
                 "type": "container",
-                "id": "b525e89b-ac0e-5a97-b243-93395a21f4ba"
+                "id": "b525e89b-ac0e-5a97-b243-93395a21f4ba",
+                "lock_key": "",
+                "lock_difficulty": "apprentice"
             },
             "io_connections": []
         },
@@ -616446,11 +616456,13 @@
                     }
                 ],
                 "use_radius": 120.0,
-                "locked": false,
+                "locked": true,
                 "custom_idle": "assets/sprites/miniwind/container_chest.png",
                 "owner_faction": "cultists",
                 "type": "container",
-                "id": "7574ea46-4e73-5e6f-adbc-8ef790f39850"
+                "id": "7574ea46-4e73-5e6f-adbc-8ef790f39850",
+                "lock_key": "",
+                "lock_difficulty": "adept"
             },
             "io_connections": []
         },
@@ -624304,8 +624316,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
-                "custom_idle": "assets/sprites/miniwind/container_chest.png"
+                "locked": true,
+                "custom_idle": "assets/sprites/miniwind/container_chest.png",
+                "lock_key": "",
+                "lock_difficulty": "novice"
             },
             "io_connections": []
         },
@@ -626330,8 +626344,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
-                "custom_idle": "assets/sprites/miniwind/container_chest.png"
+                "locked": true,
+                "custom_idle": "assets/sprites/miniwind/container_chest.png",
+                "lock_key": "",
+                "lock_difficulty": "novice"
             },
             "io_connections": []
         },
@@ -628473,8 +628489,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
-                "custom_idle": "assets/sprites/miniwind/container_chest.png"
+                "locked": true,
+                "custom_idle": "assets/sprites/miniwind/container_chest.png",
+                "lock_key": "",
+                "lock_difficulty": "adept"
             },
             "io_connections": []
         },
@@ -628898,8 +628916,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
-                "custom_idle": "assets/sprites/miniwind/container_chest.png"
+                "locked": true,
+                "custom_idle": "assets/sprites/miniwind/container_chest.png",
+                "lock_key": "",
+                "lock_difficulty": "novice"
             },
             "io_connections": []
         },
@@ -635842,8 +635862,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
-                "custom_idle": "assets/sprites/miniwind/container_chest.png"
+                "locked": true,
+                "custom_idle": "assets/sprites/miniwind/container_chest.png",
+                "lock_key": "",
+                "lock_difficulty": "novice"
             },
             "io_connections": []
         },
@@ -635949,8 +635971,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
-                "custom_idle": "assets/sprites/miniwind/container_chest.png"
+                "locked": true,
+                "custom_idle": "assets/sprites/miniwind/container_chest.png",
+                "lock_key": "",
+                "lock_difficulty": "novice"
             },
             "io_connections": []
         },
@@ -661912,8 +661936,10 @@
                     }
                 ],
                 "use_radius": 128.0,
-                "locked": false,
-                "custom_idle": "assets/sprites/miniwind/container_chest.png"
+                "locked": true,
+                "custom_idle": "assets/sprites/miniwind/container_chest.png",
+                "lock_key": "",
+                "lock_difficulty": "novice"
             },
             "io_connections": []
         },

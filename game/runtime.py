@@ -543,6 +543,7 @@ class MiniwindSession(SettlementLaw):
         self.weather = Weather(self.store)
         self.weather_enabled = (bool(cfg.get("weather_enabled", True))
                                 and fio.map_created_by(logic) != "make_caves")
+        self._rain_wash_elapsed = self._rain_wash_dose = 0.0
 
         self.rng = random.Random()
         self.game = GameState(self.store, rng=self.rng)
@@ -1111,8 +1112,8 @@ class MiniwindSession(SettlementLaw):
             self.gore.flash_red(0.55 if killed else 0.35)
 
     def _stamp_blood(self, splat) -> bool:
-        """Bake a splat of blood into the terrain under it -- the ground's own
-        paint, so it is part of the surface and cannot z-fight. Only where the
+        """Bake blood into a washable layer over the terrain, preserving the
+        authored ground paint and avoiding z-fighting. Only where the
         ground there *is* the terrain: on a floor, a bridge or a step (a brush)
         it is left for the HUD to draw. True when it took."""
         ter = fio.terrain(self.logic)
@@ -1131,12 +1132,92 @@ class MiniwindSession(SettlementLaw):
         path = _blood_stamp(splat["kind"], splat.get("seed", 0.0))
         if path is None:
             return False
+        from .gore_fx import RAIN_WASH_SECONDS
         try:
             return bool(ter.paint_texture_at(
                 x, z, max(2.0, float(splat["size"]) * 0.5), path, feather=0.2,
-                opacity=0.92, angle=float(splat.get("rot", 0.0))))
+                opacity=0.92 * max(0.0, 1.0 - splat.get("rain_wash", 0.0) / RAIN_WASH_SECONDS),
+                angle=float(splat.get("rot", 0.0)), washable=True))
         except Exception:
             return False
+
+    def _wash_blood(self, delta) -> None:
+        """Rain cleans exposed blood in the camera's resident area only.
+
+        Work is batched twice a second. Authored terrain paint stays intact;
+        the washable layer, floor splats and physical gib stains fade together.
+        """
+        rain = self.weather.snapshot.rain if self.weather_enabled else 0.0
+        if rain <= 0.0 or delta <= 0.0:
+            self._rain_wash_elapsed = self._rain_wash_dose = 0.0
+            return
+        camera = fio.camera(self.logic)
+        footprint = getattr(camera, "overhead_ground_footprint", lambda: None)()
+        pos = self._player_pos()
+        if not footprint or pos is None:
+            return
+        hx, hz = float(footprint[0]), float(footprint[1])
+        if not all(math.isfinite(v) and v > 0.0 for v in (hx, hz)):
+            return
+        manager = getattr(fio.bigworld(self.logic), "manager", None)
+        reach = float(getattr(manager, "activation_radius", 4096.0) or 4096.0)
+        hx, hz = min(hx, reach, 4096.0), min(hz, reach, 4096.0)
+        bounds = (pos[0] - hx, pos[2] - hz, pos[0] + hx, pos[2] + hz)
+        self._rain_wash_elapsed = getattr(self, "_rain_wash_elapsed", 0.0) + delta
+        self._rain_wash_dose = getattr(self, "_rain_wash_dose", 0.0) + delta * rain
+        if self._rain_wash_elapsed < 0.5:
+            return
+        dose = self._rain_wash_dose
+        self._rain_wash_elapsed = self._rain_wash_dose = 0.0
+        from .gore_fx import RAIN_WASH_SECONDS
+        terrain = fio.terrain(self.logic)
+        grid = getattr(getattr(self.logic, "session_runtime", None), "spatial_grid", None)
+
+        def exposed(splat):
+            x, y, z = splat["x"], splat["y"], splat["z"]
+            if not (bounds[0] <= x <= bounds[2] and bounds[1] <= z <= bounds[3]):
+                return False
+            roof = None if grid is None else grid.raycast_down(x, z, 1e9)
+            return roof is None or roof <= y + STAMP_GROUND_TOLERANCE
+
+        self.gore.wash(dose, 1.0, exposed=exposed)
+        if terrain is not None and getattr(terrain, "enabled", False):
+            def exposed_ground(xs, zs):
+                if grid is None:
+                    return np.ones(len(xs), dtype=bool)
+                ground = terrain._get_heights_batch(xs, zs)
+                roof = grid.raycast_down_batch(xs, zs, 1e9)
+                return ~np.isfinite(roof) | (roof <= ground + STAMP_GROUND_TOLERANCE)
+
+            terrain.wash_texture_paint(dose / RAIN_WASH_SECONDS, bounds=bounds,
+                                       exposed=exposed_ground)
+        pool = self._actors_near(pos, math.hypot(hx, hz))
+        if pool is None:
+            pool = self._live_actors()
+        for actor in pool:
+            p = actor.properties
+            if (not p.get("dead") or not p.get("gibbed") or p.get("gib_magical")
+                    or self._tier_of(actor) > TIER_ACTIVE or p.get("hidden")):
+                continue
+            x, y, z = self._feet(actor)
+            if not exposed({"x": x, "y": y, "z": z}):
+                continue
+            p["blood_rain_wash"] = min(RAIN_WASH_SECONDS,
+                float(p.get("blood_rain_wash", 0.0)) + dose)
+            self._apply_blood_wash_alpha(actor)
+
+    @staticmethod
+    def _apply_blood_wash_alpha(actor) -> None:
+        p = actor.properties
+        if not (p.get("dead") and p.get("gibbed") and not p.get("gib_magical")
+                and "blood_rain_wash" in p):
+            return
+        from .gore_fx import RAIN_WASH_SECONDS
+        alpha = max(0.0, 1.0 - float(p["blood_rain_wash"]) / RAIN_WASH_SECONDS)
+        p["_opacity"] = alpha
+        if getattr(actor, "_respawn_fade_alpha", 1.0) != alpha:
+            actor._respawn_fade_alpha = alpha
+            _journal(actor)
 
     def _gore_player_hurt(self, final, attacker=None) -> None:
         """The player's own blood: a spray, blood on the screen's edge for a
@@ -1453,6 +1534,7 @@ class MiniwindSession(SettlementLaw):
         self._keep_player_in_world()
         self.clock.advance(delta)
         self.weather.tick(delta, self.clock.day * 24.0 + self.clock.hour)
+        self._wash_blood(delta)
         self.game.tick(delta, self._sprint(delta))
         self._announce_skill_raises()
         self._update_encumbrance()
@@ -5070,6 +5152,8 @@ class MiniwindSession(SettlementLaw):
             if tp.get("hidden"):
                 continue
             if tp.get("dead"):
+                if "blood_rain_wash" in tp:
+                    self._apply_blood_wash_alpha(t)
                 dead.append(t)
             else:
                 actors.append(t)
@@ -6192,7 +6276,7 @@ class MiniwindSession(SettlementLaw):
         from .magic_fx import look_for
         return look_for(getattr(spell, "id", ""), getattr(spell, "color", None),
                         getattr(spell, "element", "magic"),
-                        getattr(spell, "visuals", None))
+                        getattr(spell, "visuals", None), school=getattr(spell, "school", None))
 
     def _magic_hands(self):
         """Live spell glows at the same physical hands as held weapons."""
@@ -6247,9 +6331,9 @@ class MiniwindSession(SettlementLaw):
         kinds = {e.get("kind") for e in (spell.effects or ())}
         if spell.delivery == rpg_magic.SELF:
             if kinds & {"restore_health", "cure_disease", "restore_magicka"}:
-                fx.heal(pos, spell.color)
+                fx.heal(pos, spell.color, ring_colour=look["cast_colour"])
             if kinds & {"summon", "bound_weapon", "wisp"}:
-                fx.summon(pos, spell.color)
+                fx.summon(pos, spell.color, ring_colour=look["cast_colour"])
         elif target is not None:
             fx.impact(list(target.pos), look)
 
@@ -6431,6 +6515,7 @@ class MiniwindSession(SettlementLaw):
                 self.close_lockpicking(save_progress=False)
             self.notify("Knock clears the sheared pick and opens the lock." if jammed
                         else "Knock opens the lock.", 4.0)
+            self._magic_cast_fx(spell)
             return True
         # A "wisp" effect conjures the wandering companion light (a SELF spell).
         if any(e.get("kind") == "wisp" for e in (spell.effects or [])):
@@ -6561,7 +6646,9 @@ class MiniwindSession(SettlementLaw):
         name = target.properties.get("name") or target.properties.get("npc_role") \
             or target.properties.get("monster_type") or "The fallen"
         # The whole screen sinks into dark red as light pours up from the body.
-        self.magic_fx.resurrection(_feet(target))
+        self._magic_cast_fx(spell)
+        self.magic_fx.resurrection(_feet(target),
+                                   ring_colour=self.spell_look(spell)["cast_colour"])
         self.notify(f"{name} rises and follows you!")
         self._player_deed("resurrect")
         self.add_floater("RAISED", kind="heal")
@@ -6579,6 +6666,10 @@ class MiniwindSession(SettlementLaw):
         p["dead"] = False
         p["hidden"] = False
         p["is_shooting"] = False
+        if "blood_rain_wash" in p:
+            p.pop("blood_rain_wash", None)
+            p.pop("_opacity", None)
+            thing._respawn_fade_alpha = 1.0
         _journal(thing)
         try:
             mh = float(p.get("max_health", p.get("health", 100)) or 100)
@@ -8676,6 +8767,7 @@ class MiniwindSession(SettlementLaw):
         # before restoring so they start with the normal automatic cycle.
         from .weather import Weather
         self.weather = Weather(self.store)
+        self._rain_wash_elapsed = self._rain_wash_dose = 0.0
         # The event history first, so anything that reads it during the rest of
         # the restore sees the world's past rather than an empty log.
         self.director.restore()

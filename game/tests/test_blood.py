@@ -206,7 +206,7 @@ def test_blood_is_baked_into_the_terrain_itself(config, monkeypatch, qt_app):
     splat = {"x": 10.0, "y": 100.0, "z": 10.0, "size": 60.0, "kind": "pool",
              "seed": 0.3, "rot": 0.5}
     assert s._stamp_blood(splat)
-    paint = terrain.texture_paint_maps[(0, 0)]
+    paint = terrain.washable_texture_paint_maps[(0, 0)]
     stained = paint[paint[..., 3] > 128]
     assert len(stained) and np.all(stained[:, 0] > stained[:, 1] * 3)   # it is red
     # On a floor built over the terrain it is not stamped (the HUD draws it).
