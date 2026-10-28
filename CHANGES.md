@@ -1,5 +1,19 @@
 # Changes
 
+## Faction-aware threat appraisal
+
+- Preserve the event's `actor_faction` snapshot when creating a knowledge fact.
+  Storage and gossip now carry it into appraisal, enabling the existing enemy
+  threat branch to choose fighting or fleeing from perceived violence. Crime
+  reporting and arrest retain their precedence, and reasons come from appraisal.
+- Faction threats require an identified offender; sound-only accounts cannot
+  start a targeted fight. A clearer eyewitness account can upgrade the belief.
+  Legacy facts without a faction remain unknown rather than being backfilled
+  from an actor's current faction. No additional randomness is consumed.
+- Validation: 134 focused simulation/storyteller tests passed; the full headless
+  suite reports 4,189 passed, 34 skipped and the same five pre-existing failures
+  listed below.
+
 ## Quieter storyteller receipts
 
 - Record journey outcomes for storyteller-biased destination choices and actual

@@ -63,6 +63,10 @@ available.
 
 Vendetta staging requires a cached, clean kin `FIGHT` intent against the player
 and the corresponding identified death fact in the actor's own knowledge.
+Facts preserve the event's `actor_faction` snapshot through storage and gossip,
+so appraisal can also produce ordinary faction-threat fight/flee intentions.
+Those responses require an identified offender. They do not qualify for kin
+vendetta staging without the existing death fact and relationship checks.
 An actor who has already attacked the player for that fact is discharged from
 staging. The discharge survives rolling event history and save/load. A bonus
 only applies while the player is healthy inside a town and the journey's

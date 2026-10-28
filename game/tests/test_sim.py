@@ -16,6 +16,8 @@ import os
 import random
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from ..sim import appraisal, crime, knowledge, ownership, perception, production
@@ -207,6 +209,23 @@ def test_only_notable_things_are_worth_repeating():
     assert knowledge.gossip(store, "a", "b") == []
 
 
+def test_actor_faction_snapshot_survives_storage_and_gossip():
+    store = _Store()
+    ev = WorldEvent("attack", actor="raider", event_id=8,
+                    data={"actor_faction": "bandits", "crime": False})
+    fact = knowledge.fact_from_event(ev, 1.0, knowledge.SOURCE_WITNESSED)
+    assert knowledge.learn(store, "seer", fact)
+    ev.data["actor_faction"] = "villagers"
+    assert knowledge.gossip(store, "seer", "listener")
+    restored = _Store()
+    restored.d = dict(store.d)
+    known = knowledge.knows(restored, "listener", ev.id)
+    assert known["actor_faction"] == "bandits"
+    assert known["source"] == knowledge.SOURCE_TOLD and known["from"] == "seer"
+    assert known["certainty"] == 1.0 - knowledge.TELL_DECAY
+    assert known["crime"] is False
+
+
 # --------------------------------------------------------------- ownership --
 def test_taking_an_owned_thing_is_theft_and_taking_your_own_is_not():
     milk = {"owner": "thalen", "owner_name": "Thalen", "value": 6}
@@ -309,6 +328,86 @@ def test_one_response_per_offender_not_one_per_fact():
              _fact("death", eid=3)]
     intents = appraisal.appraise_all({"courage": 0.9, "name": "Wick"}, "wick", facts)
     assert len(intents) == 1 and intents[0].reaction == appraisal.FIGHT
+
+
+@pytest.mark.parametrize("faction,combatant,courage,crime_flag,expected", [
+    ("guards", True, 0.8, False, appraisal.FIGHT),
+    ("villagers", False, 0.8, False, appraisal.FLEE),
+    ("villagers", True, 0.1, False, appraisal.FLEE),
+    ("bandits", True, 0.8, False, None),
+    ("guards", True, 0.8, True, appraisal.ARREST),
+    ("villagers", False, 0.8, True, appraisal.REPORT),
+])
+def test_perceived_enemy_violence_reaches_faction_appraisal_without_overriding_crime(
+        faction, combatant, courage, crime_flag, expected):
+    d = _director()
+    raider = _Thing("Raider", faction="bandits")
+    victim = _Thing("Stranger", (50, 0, 0))
+    observer = _Thing("Observer", (100, 0, 0), faction=faction,
+                      combatant=combatant, courage=courage, sight_range=900)
+    before = d.rng.getstate()
+    ev = d.emit("attack", actor=raider, target=victim, observers=[observer], crime=crime_flag)
+    known = knowledge.knows(d.store, actor_key(observer), ev.id)
+    assert known["actor_faction"] == ev.data["actor_faction"] == "bandits"
+    assert known["identified"] is True
+    intent = d.top_intent(observer)
+    assert (intent.reaction if intent else None) == expected
+    if intent is not None:
+        assert intent.target == actor_key(raider) and intent.reason
+    if expected == appraisal.FIGHT:
+        assert "enemy of my people" in intent.reason
+    assert d.rng.getstate() == before
+
+
+def test_gossip_carries_an_identified_faction_threat_into_restored_intents():
+    d = _director()
+    raider = _Thing("Raider", team="bandits")
+    victim = _Thing("Stranger", (50, 0, 0))
+    seer = _Thing("Seer", (100, 0, 0), faction="villagers", sight_range=900)
+    listener = _Thing("Guard", (5000, 0, 0), faction="guards", combatant=True, courage=0.8)
+    before = d.rng.getstate()
+    ev = d.emit("attack", actor=raider, target=victim, observers=[seer, listener], crime=False)
+    assert not knowledge.facts(d.store, actor_key(listener))
+    # Knowledge keeps the observed snapshot even if the offender later changes sides.
+    raider.properties["team"] = "villagers"
+    assert knowledge.gossip(d.store, actor_key(seer), actor_key(listener))
+    copied = _Store()
+    copied.d = dict(d.store.d)
+    loaded = _director(store=copied)
+    intent = loaded.top_intent(listener)
+    assert intent.reaction == appraisal.FIGHT and intent.event_id == ev.id
+    assert intent.target == actor_key(raider) and "enemy of my people" in intent.reason
+    assert intent.fact["actor_faction"] == "bandits" and intent.fact["source"] == "told"
+    assert d.rng.getstate() == loaded.rng.getstate() == before
+
+
+def test_heard_enemy_violence_needs_identification_before_a_faction_response():
+    d = _director()
+    raider = _Thing("Raider", faction="bandits")
+    victim = _Thing("Stranger", (50, 0, 0))
+    listener = _Thing("Guard", (100, 0, 0), faction="guards", combatant=True,
+                      courage=0.8, sight_range=0)
+    ev = d.emit("attack", actor=raider, target=victim, observers=[listener], crime=False)
+    known = knowledge.knows(d.store, actor_key(listener), ev.id)
+    assert known["source"] == "heard" and known["identified"] is False
+    assert d.top_intent(listener) is None
+    listener.properties["sight_range"] = 900
+    d.dispatch(ev, [listener], actor_thing=raider)
+    known = knowledge.knows(d.store, actor_key(listener), ev.id)
+    assert known["source"] == "witnessed" and known["identified"] is True
+    assert d.top_intent(listener).reaction == appraisal.FIGHT
+
+
+def test_missing_faction_in_events_or_legacy_facts_does_not_invent_an_enemy():
+    fact = knowledge.fact_from_event(
+        WorldEvent("attack", actor="raider", target="stranger", data={"crime": False}),
+        1.0, knowledge.SOURCE_WITNESSED)
+    assert fact["actor_faction"] == ""
+    observer = {"faction": "guards", "combatant": True, "courage": 0.8}
+    ctx = _director().ctx
+    assert appraisal.appraise(observer, "guard", fact, ctx) is None
+    del fact["actor_faction"]  # old saved knowledge has no faction snapshot
+    assert appraisal.appraise(observer, "guard", fact, ctx) is None
 
 
 # ------------------------------------------------------------------ crime --
