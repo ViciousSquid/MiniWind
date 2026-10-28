@@ -672,7 +672,11 @@
     "weight": 1.0,
     "desc": "Reading this treatise sharpens your aim.",
     "teaches_skill": "marksman",
-    "book": "hunters_eye"
+    "book": "hunters_eye",
+    "found": [
+      "shop",
+      "wild"
+    ]
   },
   "book_blade": {
     "name": "The Duellist's Companion",
@@ -681,7 +685,11 @@
     "weight": 1.0,
     "desc": "A manual of the blade.",
     "teaches_skill": "blade",
-    "book": "duellists_companion"
+    "book": "duellists_companion",
+    "found": [
+      "shop",
+      "wild"
+    ]
   },
   "book_lore": {
     "name": "The Chronicle of Miniwind",
@@ -689,7 +697,11 @@
     "value": 20,
     "weight": 1.0,
     "desc": "A history of the vale and its founding.",
-    "book": "chronicle_of_miniwind"
+    "book": "chronicle_of_miniwind",
+    "found": [
+      "town",
+      "shop"
+    ]
   },
   "bread": {
     "name": "Bread",
@@ -1146,7 +1158,12 @@
     "value": 35,
     "weight": 1.0,
     "desc": "A worn volume of Reedhollow tales, its pages stained by lake water.",
-    "book": "last_ferryman"
+    "book": "last_ferryman",
+    "found": [
+      "town",
+      "shop",
+      "wild"
+    ]
   },
   "book_ember_wyrm": {
     "name": "The Ember Wyrm of Whisperdeep",
@@ -1154,7 +1171,12 @@
     "value": 60,
     "weight": 1.0,
     "desc": "A monk's account of a journey into the red hills, and what he found there.",
-    "book": "ember_wyrm"
+    "book": "ember_wyrm",
+    "found": [
+      "shop",
+      "wild",
+      "cult"
+    ]
   },
   "book_lament_greywood": {
     "name": "A Lament for Greywood",
@@ -1162,7 +1184,11 @@
     "value": 10,
     "weight": 1.0,
     "desc": "A thin book of verse, with oak leaves pressed between its pages.",
-    "book": "lament_for_greywood"
+    "book": "lament_for_greywood",
+    "found": [
+      "town",
+      "shop"
+    ]
   },
   "letter_to_mara": {
     "name": "A Letter, Much Folded",
@@ -1170,6 +1196,514 @@
     "value": 1,
     "weight": 0.1,
     "desc": "A letter that has been folded and unfolded many times.",
-    "book": "letter_to_mara"
+    "book": "letter_to_mara",
+    "found": [
+      "town"
+    ]
+  },
+  "book_reedhollow_almanac": {
+    "name": "The Reedhollow Almanac",
+    "category": "book",
+    "value": 15,
+    "weight": 1.0,
+    "desc": "The year on the lake shore, month by month: what to sow and what to fear.",
+    "book": "reedhollow_almanac",
+    "found": [
+      "town",
+      "shop"
+    ]
+  },
+  "book_downwind": {
+    "name": "Downwind",
+    "category": "book",
+    "value": 50,
+    "weight": 1.0,
+    "desc": "A shepherd's notes on the wolves of Greywood, and how to walk among them unheard.",
+    "teaches_skill": "sneak",
+    "book": "downwind",
+    "found": [
+      "town",
+      "shop",
+      "wild"
+    ]
+  },
+  "book_lockwright": {
+    "name": "The Lockwright's Patience",
+    "category": "book",
+    "value": 55,
+    "weight": 1.0,
+    "desc": "A locksmith's manual. Not for thieves, it insists.",
+    "teaches_skill": "security",
+    "book": "lockwrights_patience",
+    "found": [
+      "shop",
+      "bandit",
+      "wild"
+    ]
+  },
+  "book_herbwife": {
+    "name": "A Herbwife's Remembrancer",
+    "category": "book",
+    "value": 50,
+    "weight": 1.0,
+    "desc": "Mother Nettle's notes on what grows, and what it will do to you.",
+    "teaches_skill": "alchemy",
+    "book": "herbwifes_remembrancer",
+    "found": [
+      "shop",
+      "town"
+    ]
+  },
+  "book_honest_pedlar": {
+    "name": "Weights, Measures and the Honest Pedlar",
+    "category": "book",
+    "value": 45,
+    "weight": 1.0,
+    "desc": "Twenty years of being cheated on the road, distilled.",
+    "teaches_skill": "mercantile",
+    "book": "honest_pedlar",
+    "found": [
+      "shop",
+      "town"
+    ]
+  },
+  "book_long_table": {
+    "name": "Songs for a Long Table",
+    "category": "book",
+    "value": 12,
+    "weight": 1.0,
+    "desc": "The tavern songs, both verses, so there is no more arguing.",
+    "book": "songs_long_table",
+    "found": [
+      "town",
+      "shop"
+    ]
+  },
+  "book_black_jory": {
+    "name": "The Ballad of Black Jory",
+    "category": "book",
+    "value": 15,
+    "weight": 0.5,
+    "desc": "The brigand chief's ballad, sung two ways.",
+    "book": "ballad_black_jory",
+    "found": [
+      "town",
+      "shop",
+      "bandit"
+    ]
+  },
+  "book_barrows": {
+    "name": "Let the Barrows Lie",
+    "category": "book",
+    "value": 25,
+    "weight": 1.0,
+    "desc": "A priest of Saint Aldric's warning against opening the barrows.",
+    "book": "let_the_barrows_lie",
+    "found": [
+      "shrine",
+      "town",
+      "wild"
+    ]
+  },
+  "book_eight_legs": {
+    "name": "Eight Legs in the Dark",
+    "category": "book",
+    "value": 30,
+    "weight": 1.0,
+    "desc": "A cave-walker's notes on the spiders under the hills.",
+    "book": "eight_legs",
+    "found": [
+      "wild",
+      "shop"
+    ]
+  },
+  "book_aldous_penn": {
+    "name": "The Journal of Aldous Penn",
+    "category": "book",
+    "value": 5,
+    "weight": 0.5,
+    "desc": "An adventurer's journal. It ends mid-sentence.",
+    "book": "journal_aldous_penn",
+    "found": [
+      "wild"
+    ]
+  },
+  "book_standing_orders": {
+    "name": "Standing Orders of the Watch",
+    "category": "book",
+    "value": 45,
+    "weight": 1.0,
+    "desc": "Reeve Halloran's orders to the watch. Shield first.",
+    "teaches_skill": "block",
+    "book": "standing_orders",
+    "found": [
+      "town",
+      "shop"
+    ]
+  },
+  "book_nursery_rhymes": {
+    "name": "Rhymes for the Nursery",
+    "category": "book",
+    "value": 8,
+    "weight": 0.5,
+    "desc": "Songs for small ones who will not sleep. Mostly about wolves.",
+    "book": "nursery_rhymes",
+    "found": [
+      "town"
+    ]
+  },
+  "book_moonwell": {
+    "name": "A Pilgrim's Guide to the Moonwell",
+    "category": "book",
+    "value": 20,
+    "weight": 1.0,
+    "desc": "The road to the Moonwell, and how to drink from it.",
+    "book": "moonwell_pilgrim",
+    "found": [
+      "shrine",
+      "town",
+      "shop"
+    ]
+  },
+  "book_kingsfall": {
+    "name": "The Crossing at Kingsfall",
+    "category": "book",
+    "value": 25,
+    "weight": 1.0,
+    "desc": "How the Seven came over the mountain wall, and why the pass is named for a fall.",
+    "book": "crossing_kingsfall",
+    "found": [
+      "town",
+      "shop"
+    ]
+  },
+  "book_greenskin": {
+    "name": "A Few Useful Words of the Greenskin Tongue",
+    "category": "book",
+    "value": 45,
+    "weight": 1.0,
+    "desc": "A trader's phrasebook, for leaving the greenskin camps with all your fingers.",
+    "teaches_skill": "speechcraft",
+    "book": "greenskin_phrases",
+    "found": [
+      "shop",
+      "wild"
+    ]
+  },
+  "book_ash_that_speaks": {
+    "name": "The Ash That Speaks",
+    "category": "book",
+    "value": 25,
+    "weight": 1.0,
+    "desc": "A tract of the Ashen Circle, bound in grey cloth and smelling of smoke.",
+    "book": "ash_that_speaks",
+    "found": [
+      "cult"
+    ]
+  },
+  "book_bandit_ledger": {
+    "name": "A Ledger, Water-Stained",
+    "category": "book",
+    "value": 3,
+    "weight": 0.5,
+    "desc": "A brigand's accounts. There is a goat now.",
+    "book": "water_stained_ledger",
+    "found": [
+      "bandit"
+    ]
+  },
+  "letter_unsent": {
+    "name": "An Unsent Letter",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "A mother's letter to her son at the watch-house. It was never sent.",
+    "book": "unsent_letter",
+    "found": [
+      "town"
+    ]
+  },
+  "book_coldharbour_receipts": {
+    "name": "Coldharbour Kitchen Receipts",
+    "category": "book",
+    "value": 12,
+    "weight": 1.0,
+    "desc": "Plain food for working people, from a cook of forty winters.",
+    "book": "coldharbour_receipts",
+    "found": [
+      "town",
+      "shop"
+    ]
+  },
+  "note_shopping_list": {
+    "name": "A Shopping List",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "A list on the back of a feed bill.",
+    "note": true,
+    "book": "note_shopping_list",
+    "found": [
+      "town"
+    ]
+  },
+  "note_adventurer_list": {
+    "name": "Things to Bring",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "An adventurer's packing list. Most of it is ticked.",
+    "note": true,
+    "book": "note_adventurer_list",
+    "found": [
+      "wild",
+      "town"
+    ]
+  },
+  "note_crier_wolves": {
+    "name": "Torn Page of the Crier",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "A page of the Millbrook Crier: wolves at the High Fold.",
+    "note": true,
+    "book": "note_crier_wolves",
+    "found": [
+      "town"
+    ]
+  },
+  "note_crier_election": {
+    "name": "Clipping from the Crier",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "The Millbrook Crier on the reeve's election.",
+    "note": true,
+    "book": "note_crier_election",
+    "found": [
+      "town"
+    ]
+  },
+  "note_crier_smoke": {
+    "name": "Clipping from the Crier",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "The Millbrook Crier on the smoke over the Emberpeaks.",
+    "note": true,
+    "book": "note_crier_smoke",
+    "found": [
+      "town",
+      "wild"
+    ]
+  },
+  "note_crier_wanted": {
+    "name": "Wanted Notice",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "A notice torn from a post: the brigands of Cutthroat Ridge.",
+    "note": true,
+    "book": "note_crier_wanted",
+    "found": [
+      "town",
+      "bandit"
+    ]
+  },
+  "note_crier_lost": {
+    "name": "Lost and Found",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "The Crier's lost and found. A goat called Duchess.",
+    "note": true,
+    "book": "note_crier_lost",
+    "found": [
+      "town",
+      "bandit"
+    ]
+  },
+  "note_crier_pilgrims": {
+    "name": "Clipping from the Crier",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "The Millbrook Crier on the pilgrim season.",
+    "note": true,
+    "book": "note_crier_pilgrims",
+    "found": [
+      "town",
+      "shrine"
+    ]
+  },
+  "note_crier_greenskins": {
+    "name": "Clipping from the Crier",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "The Millbrook Crier on greenskins near the warcamp.",
+    "note": true,
+    "book": "note_crier_greenskins",
+    "found": [
+      "town",
+      "wild"
+    ]
+  },
+  "note_death_list": {
+    "name": "A List in Small Neat Writing",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "Names, and what is to become of them. Ash along the edge.",
+    "note": true,
+    "book": "note_death_list",
+    "found": [
+      "cult"
+    ]
+  },
+  "note_bandit_marks": {
+    "name": "Bandit's Notes",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "Charcoal on sacking: which farms to rob.",
+    "note": true,
+    "book": "note_bandit_marks",
+    "found": [
+      "bandit"
+    ]
+  },
+  "note_iou": {
+    "name": "An IOU",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "Fen owes Wil. Fen owes Wil a goat.",
+    "note": true,
+    "book": "note_iou",
+    "found": [
+      "bandit"
+    ]
+  },
+  "note_poem_heron": {
+    "name": "Heron",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "A poem, copied out neatly.",
+    "note": true,
+    "book": "note_poem_heron",
+    "found": [
+      "town",
+      "shrine"
+    ]
+  },
+  "note_poem_barley": {
+    "name": "Barley",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "A poem scrawled on a flour sack.",
+    "note": true,
+    "book": "note_poem_barley",
+    "found": [
+      "town"
+    ]
+  },
+  "note_poem_dark": {
+    "name": "Lines Scratched on a Scrap",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "A few lines in pencil, pressed hard.",
+    "note": true,
+    "book": "note_poem_dark",
+    "found": [
+      "wild"
+    ]
+  },
+  "note_love_poem": {
+    "name": "A Love Poem (Unfinished)",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "Several lines are crossed out.",
+    "note": true,
+    "book": "note_love_poem",
+    "found": [
+      "town"
+    ]
+  },
+  "note_watch_roster": {
+    "name": "Watch Roster",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "The watch's duty roster, with grievances.",
+    "note": true,
+    "book": "note_watch_roster",
+    "found": [
+      "town"
+    ]
+  },
+  "note_last_words": {
+    "name": "A Note, Folded Small",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "A dying man's message to his wife.",
+    "note": true,
+    "book": "note_last_words",
+    "found": [
+      "wild"
+    ]
+  },
+  "note_dont_go_left": {
+    "name": "Scrawled Warning",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "Large, uneven letters on a torn page.",
+    "note": true,
+    "book": "note_dont_go_left",
+    "found": [
+      "wild"
+    ]
+  },
+  "note_childrens_dare": {
+    "name": "A Child's Note",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "A dare, much misspelt.",
+    "note": true,
+    "book": "note_childrens_dare",
+    "found": [
+      "town"
+    ]
+  },
+  "note_prayer_aldric": {
+    "name": "A Prayer to Saint Aldric",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "A prayer left at a shrine under a stone.",
+    "note": true,
+    "book": "note_prayer_aldric",
+    "found": [
+      "shrine"
+    ]
+  },
+  "note_nettle_scrap": {
+    "name": "Half a Recipe",
+    "category": "book",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "Mother Nettle's cure for warts, torn in half.",
+    "note": true,
+    "book": "note_nettle_scrap",
+    "found": [
+      "town"
+    ]
   }
 }

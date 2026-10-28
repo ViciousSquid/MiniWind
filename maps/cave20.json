@@ -1741,7 +1741,8 @@
     "start_scenario": "prompt",
     "region_name": "Moonfang Refuge",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -1758,6 +1759,438 @@
     "id": "bae45fee-04ab-4a17-b0bd-3defd2d5ee64",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    320.0,
+    48.0,
+    704.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave20_f0",
+    "id": "162d2669-03a0-54b2-a161-839eb658f31e",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_wolf_pelt",
+      "name": "Wolf Pelt",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 6,
+      "weight": 2.0,
+      "description": "A rough grey pelt worth a few coins."
+     },
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "iron_arrow",
+      "name": "Iron Arrow",
+      "qty": 9,
+      "type": "ammo",
+      "value": 1,
+      "weight": 0.1,
+      "description": "A plain iron-tipped arrow."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 324.2
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    832.0,
+    48.0,
+    1472.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave20_f1",
+    "id": "8d140106-e510-52af-8cbc-a58dc48a4041",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_wolf_pelt",
+      "name": "Wolf Pelt",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 6,
+      "weight": 2.0,
+      "description": "A rough grey pelt worth a few coins."
+     },
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 224.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -704.0,
+    48.0,
+    1216.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave20_f2",
+    "id": "393a1253-70e1-5208-9180-a8bb8f30c2dc",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_wolf_pelt",
+      "name": "Wolf Pelt",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 6,
+      "weight": 2.0,
+      "description": "A rough grey pelt worth a few coins."
+     },
+     {
+      "id": "iron_arrow",
+      "name": "Iron Arrow",
+      "qty": 5,
+      "type": "ammo",
+      "value": 1,
+      "weight": 0.1,
+      "description": "A plain iron-tipped arrow."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 18,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 70.8
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    704.0,
+    48.0,
+    1216.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave20_f3",
+    "id": "617acbf4-ffb9-55eb-a81f-a2816b04086f",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 136.7
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -448.0,
+    48.0,
+    576.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave20_f4",
+    "id": "8aaf830e-ee3d-50c8-8b21-81f7c90da880",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_wolf_pelt",
+      "name": "Wolf Pelt",
+      "qty": 3,
+      "type": "ingredient",
+      "value": 6,
+      "weight": 2.0,
+      "description": "A rough grey pelt worth a few coins."
+     },
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 149.0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -576.0,
+    48.0,
+    1472.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave20_f5",
+    "id": "b2e74448-8fea-5e4c-b486-9169647ab4ae",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 15.8
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1216.0,
+    48.0,
+    832.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave20_f6",
+    "id": "085b894d-14c9-51d1-9c1a-69ef28ecae7d",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_wolf_pelt",
+      "name": "Wolf Pelt",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 6,
+      "weight": 2.0,
+      "description": "A rough grey pelt worth a few coins."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 57.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    448.0,
+    48.0,
+    960.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave20_f7",
+    "id": "1dd9c4c2-dfbe-5953-b1de-ae5452af0471",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 246.9
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -320.0,
+    48.0,
+    1088.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave20_f8",
+    "id": "3d487dca-a97a-5feb-af7b-83c38acd4dd7",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "hunting_bow",
+      "name": "Hunting Bow",
+      "qty": 1,
+      "type": "weapon",
+      "value": 45,
+      "weight": 7.0,
+      "description": "A wood hunting bow."
+     },
+     {
+      "id": "iron_arrow",
+      "name": "Iron Arrow",
+      "qty": 3,
+      "type": "ammo",
+      "value": 1,
+      "weight": 0.1,
+      "description": "A plain iron-tipped arrow."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 58.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -576.0,
+    48.0,
+    832.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave20_f9",
+    "id": "32f633a2-20fa-5691-b528-ef4052bd6443",
+    "container_kind": "sack",
+    "display_name": "Adventurer's Pack",
+    "inventory": [
+     {
+      "id": "torch",
+      "name": "Torch",
+      "qty": 2,
+      "type": "light",
+      "value": 5,
+      "weight": 1.0,
+      "description": "A pitch-soaked torch that throws a warm circle of light. Equip it in the off hand to see in the dark."
+     },
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 1,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     },
+     {
+      "id": "leather_helmet",
+      "name": "Leather Helmet",
+      "qty": 1,
+      "type": "armour",
+      "value": 12,
+      "weight": 2.0,
+      "description": "Leather helmet."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 19,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 79.6
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    -64.0,
+    40.0,
+    832.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Book_cave20_f",
+    "id": "8298685f-a847-53db-a491-50884ab9d24f",
+    "item_id": "note_dont_go_left",
+    "quantity": 1,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/note_dont_go_left.png",
+    "display_name": "Scrawled Warning",
+    "angle": 353.0,
+    "_furnished": true
    },
    "io_connections": []
   }

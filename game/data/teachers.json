@@ -1,0 +1,50 @@
+{
+  "_doc": "Who teaches what in the Vale. Keyed by an NPC's stable 'name'. Each entry may give 'trainer' ({skills, rank}: rank is a number or Novice/Apprentice/Journeyman/Expert/Master), 'teaches_spells' (spell ids) and 'guild' ('mages' for the Arcane Circle, whose tutors ask standing for rarer spells). An NPC's own authored properties win over its entry. See game/rpg/training.py.",
+  "Mara": {
+    "guild": "mages",
+    "trainer": {"skills": ["offensive", "defensive", "occult"], "rank": "Apprentice"},
+    "teaches_spells": ["flare", "sp_light", "heal_minor", "sp_nighteye", "sp_detect",
+                       "sp_feather", "sp_shield", "frostbite"]
+  },
+  "Ansel": {
+    "guild": "mages",
+    "trainer": {"skills": ["offensive", "defensive", "occult"], "rank": "Expert"},
+    "teaches_spells": ["frostbite", "firebolt", "bound_blade", "lightning",
+                       "heal_over_time", "heal", "cure_disease_spell", "sp_shield",
+                       "sp_calm", "sp_telekinesis", "knock", "invisibility_minor",
+                       "sp_dragonskin", "sp_commandcreature", "summon_wolf"]
+  },
+  "Nettle": {
+    "trainer": {"skills": ["occult", "alchemy"], "rank": "Expert"},
+    "teaches_spells": ["sp_detect", "sp_commandcreature", "sp_calm", "summon_wolf",
+                       "invisibility_minor", "disintegrate", "resurrection"]
+  },
+  "Maud": {
+    "trainer": {"skills": ["defensive", "alchemy"], "rank": "Apprentice"},
+    "teaches_spells": ["frostbite", "sp_feather", "sp_nighteye", "heal_minor"]
+  },
+  "Osric": {
+    "trainer": {"skills": ["athletics", "acrobatics"], "rank": "Journeyman"}
+  },
+  "Grunn": {
+    "trainer": {"skills": ["blade", "blunt", "block", "heavy_armor"], "rank": "Expert"}
+  },
+  "Thalen": {
+    "trainer": {"skills": ["blunt", "heavy_armor"], "rank": "Apprentice"}
+  },
+  "Ysolde": {
+    "trainer": {"skills": ["blade", "light_armor"], "rank": "Journeyman"}
+  },
+  "Fenwick": {
+    "trainer": {"skills": ["marksman", "sneak"], "rank": "Journeyman"}
+  },
+  "Aldric": {
+    "trainer": {"skills": ["speechcraft", "mercantile"], "rank": "Expert"}
+  },
+  "Wynn_the_wanderer_s_rest": {
+    "trainer": {"skills": ["speechcraft", "light_fingers"], "rank": "Journeyman"}
+  },
+  "Nell_the_pilgrim_s_lantern": {
+    "trainer": {"skills": ["mercantile", "security"], "rank": "Journeyman"}
+  }
+}

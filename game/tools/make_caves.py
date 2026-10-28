@@ -93,8 +93,8 @@ LAIRS = {
     DRAGON_CAVE: {
         "dragon": {
             "display_name": "Vharzul the Ember Wyrm", "head": "dragon",
-            # Eight times the player's head size, and hit points to match.
-            "head_scale": 8.0, "health": 3000, "max_health": 3000,
+            # Five times the player's head size, and hit points to match.
+            "head_scale": 5.0, "health": 3000, "max_health": 3000,
             # It bites what is close; what is not, it burns (game/dragon_fire.py).
             "damage": 45, "attack_style": "melee", "creature_level": 30,
             "breathes_fire": True, "breath_damage": 14,
@@ -482,7 +482,9 @@ def build_cave_map(slug, name, monsters, count, loot, settings, camera, protos,
     things.append(_light("Light_hoard", (x, 160.0, z), 520.0, (255, 210, 120), 2.0))
     s = copy.deepcopy(settings)
     s["pos"] = [0.0, 400.0, 0.0]
-    s["properties"].update({"id": _uid(), "region_name": name, "weather_enabled": False})
+    s["properties"].update({"id": _uid(), "region_name": name,
+                            # Underground: cave music only (game/music.py).
+                            "underground": True, "weather_enabled": False})
     s["io_connections"] = []
     things.append(s)
     if camera is not None:
@@ -525,7 +527,7 @@ def _furnish_lair(things, lair, hall, open_, slug):
     for k in range(int(lair.get("flames", 0))):
         things.append(_thing("effect", (x, -3000.0, z), name=f"DragonFire_{slug}_{k}",
                              effect_type="FIRE", preview=False, silent=True,
-                             fire_texture="assets/textures/effects/fire01.gif",
+                             fire_texture="assets/textures/effects/fire02.gif",
                              orb_texture="assets/textures/effects/orb01.gif",
                              custom_gif="", custom_loop=True, width=60.0, height=90.0,
                              intensity=1.0, colour=[255, 110, 25], lifetime=0.5,

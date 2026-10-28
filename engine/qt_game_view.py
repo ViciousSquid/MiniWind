@@ -24,6 +24,7 @@ from editor.things import (
 from engine.player import Player
 from engine.game_input import modal_input_active as _game_modal_input_active
 from engine.game_input import modal_escape_active as _game_modal_escape_active
+from engine.game_input import owns_number_keys as _game_owns_number_keys
 
 from engine.renderer import DEFAULT_RENDERER, available_renderers, create_renderer
 from editor.selection_overlay import describe_selection
@@ -370,6 +371,16 @@ class QtGameView(QOpenGLWidget):
         # attribute for existing callers and mirrors view_distance.distance.
         self.view_distance = ViewDistance()
         self.cull_distance = self.view_distance.distance
+        # The light added everywhere, so nothing is ever completely black:
+        # settings.ini [Renderer] ambient, as the `ambient` command left it.
+        try:
+            from engine.view_distance import ambient_from_setting
+            config = getattr(editor, "config", None)
+            if config is not None and config.has_option("Renderer", "ambient"):
+                self.view_distance.ambient = ambient_from_setting(
+                    config.get("Renderer", "ambient"))
+        except Exception:
+            pass
 
         self._proj_ptr = None
         self._view_ptr = None
@@ -2118,6 +2129,18 @@ class QtGameView(QOpenGLWidget):
             _pmgr.emit("render.pre_scene", viewport=self, renderer=self.renderer,
                        projection=self.projection_matrix, view=self.view_matrix,
                        camera_pos=camera_pos, play_mode=self.play_mode)
+        # ``render.pre_sprites``: inside the scene pass, once the world is drawn
+        # and before the effects and sprites, with that view's own matrices
+        # (split-screen draws the scene once per view) -- for flat things on
+        # the floor that every actor must cover.
+        if _pmgr is not None and _pmgr.has_listeners("render.pre_sprites"):
+            def _pre_sprites(projection, view, cam_pos, _pmgr=_pmgr):
+                _pmgr.emit("render.pre_sprites", viewport=self, renderer=self.renderer,
+                           projection=projection, view=view, camera_pos=cam_pos,
+                           play_mode=self.play_mode)
+            self._render_config["pre_sprites"] = _pre_sprites
+        else:
+            self._render_config.pop("pre_sprites", None)
 
         if _splitscreen:
             _w, _h = self.width(), self.height()
@@ -5019,7 +5042,8 @@ class QtGameView(QOpenGLWidget):
         # the game-session capability rather than hard-coding MiniWind here.
         game_modal_input = _game_modal_input_active(self.logic_thread) if self.play_mode else False
         if (self.play_mode and not self.show_render_menu
-                and event.key() in self._SLOT_KEYS and not game_modal_input):
+                and event.key() in self._SLOT_KEYS and not game_modal_input
+                and not _game_owns_number_keys(self.logic_thread)):
             # Weapon slots 1-4 (gun1, gun2, custom1, custom2): the logic thread
             # takes the weapon in hand if the player has it.
             self.game_state.queue_weapon_slot(self._SLOT_KEYS[event.key()])

@@ -2635,7 +2635,8 @@
     "start_scenario": "prompt",
     "region_name": "Glowcap Grotto",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -2652,6 +2653,370 @@
     "id": "b17bd10c-3f24-4b8f-9080-021679693a7e",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1600.0,
+    48.0,
+    -448.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave03_f0",
+    "id": "81572a45-a1d9-5ba6-9016-67d86084cf47",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_mushroom",
+      "name": "Cave Mushroom",
+      "qty": 4,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.2,
+      "description": "A glowing fungus."
+     },
+     {
+      "id": "ingr_nightshade",
+      "name": "Nightshade",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 3,
+      "weight": 0.1,
+      "description": "A poisonous purple bloom."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 250.4
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1472.0,
+    48.0,
+    -1600.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave03_f1",
+    "id": "0b2ee190-3005-52ea-87d1-12fba38d9559",
+    "container_kind": "urn",
+    "display_name": "Urn",
+    "inventory": [
+     {
+      "id": "ingr_mushroom",
+      "name": "Cave Mushroom",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.2,
+      "description": "A glowing fungus."
+     },
+     {
+      "id": "potion_cure",
+      "name": "Cure Disease Potion",
+      "qty": 1,
+      "type": "potion",
+      "value": 30,
+      "weight": 0.5,
+      "description": "Cures common disease."
+     },
+     {
+      "id": "ingr_nightshade",
+      "name": "Nightshade",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 3,
+      "weight": 0.1,
+      "description": "A poisonous purple bloom."
+     },
+     {
+      "id": "note_dont_go_left",
+      "name": "Scrawled Warning",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "Large, uneven letters on a torn page."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 36.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    832.0,
+    48.0,
+    -1344.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave03_f2",
+    "id": "59e006a4-d697-5e03-8d66-a7353ceafdaa",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "book_aldous_penn",
+      "name": "The Journal of Aldous Penn",
+      "qty": 1,
+      "type": "book",
+      "value": 5,
+      "weight": 0.5,
+      "description": "An adventurer's journal. It ends mid-sentence."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 142.9
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -960.0,
+    48.0,
+    -704.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Crate_cave03_f3",
+    "id": "ea8d0bfa-a4d0-53b9-a154-32e1df74c4e4",
+    "container_kind": "crate",
+    "display_name": "Crate",
+    "inventory": [
+     {
+      "id": "ingr_nightshade",
+      "name": "Nightshade",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 3,
+      "weight": 0.1,
+      "description": "A poisonous purple bloom."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_crate.png",
+    "_furnished": true,
+    "angle": 174.4
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    320.0,
+    48.0,
+    -1728.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Crate_cave03_f4",
+    "id": "d25da409-acd8-539d-a421-e9cb43025d91",
+    "container_kind": "crate",
+    "display_name": "Crate",
+    "inventory": [
+     {
+      "id": "ingr_mushroom",
+      "name": "Cave Mushroom",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.2,
+      "description": "A glowing fungus."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 8,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "note_poem_dark",
+      "name": "Lines Scratched on a Scrap",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "A few lines in pencil, pressed hard."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_crate.png",
+    "_furnished": true,
+    "angle": 0.7
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -448.0,
+    48.0,
+    -1088.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave03_f5",
+    "id": "95daf2c9-8d83-5034-ac41-871c56a65f7b",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 26,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "note_crier_greenskins",
+      "name": "Clipping from the Crier",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "The Millbrook Crier on greenskins near the warcamp."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 27.6
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1472.0,
+    48.0,
+    -192.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave03_f6",
+    "id": "3befa82a-5eeb-5bcd-b8bf-5cab3a31e7f6",
+    "container_kind": "urn",
+    "display_name": "Urn",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 17,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "note_crier_greenskins",
+      "name": "Clipping from the Crier",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "The Millbrook Crier on greenskins near the warcamp."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 320.1
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    576.0,
+    48.0,
+    1216.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave03_f7",
+    "id": "0afbf43a-34cc-58a7-9390-3e46f40e4acc",
+    "container_kind": "sack",
+    "display_name": "Adventurer's Pack",
+    "inventory": [
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 1,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     },
+     {
+      "id": "iron_dagger",
+      "name": "Iron Dagger",
+      "qty": 1,
+      "type": "weapon",
+      "value": 10,
+      "weight": 4.0,
+      "description": "An iron dagger."
+     },
+     {
+      "id": "bread",
+      "name": "Bread",
+      "qty": 2,
+      "type": "potion",
+      "value": 1,
+      "weight": 0.2,
+      "description": "A heel of bread. Restores a little health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 29,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_barrows",
+      "name": "Let the Barrows Lie",
+      "qty": 1,
+      "type": "book",
+      "value": 25,
+      "weight": 1.0,
+      "description": "A priest of Saint Aldric's warning against opening the barrows."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 190.9
    },
    "io_connections": []
   }

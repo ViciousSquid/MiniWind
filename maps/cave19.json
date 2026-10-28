@@ -1654,7 +1654,8 @@
     "start_scenario": "prompt",
     "region_name": "Blackwater Hideout",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -1671,6 +1672,275 @@
     "id": "ced44ce9-6c7e-42be-ad7d-d060c6a27b45",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -448.0,
+    48.0,
+    1216.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Crate_cave19_f0",
+    "id": "99db7f02-642e-5bb3-beb4-d40c1536994c",
+    "container_kind": "crate",
+    "display_name": "Stolen Goods",
+    "inventory": [
+     {
+      "id": "steel_arrow",
+      "name": "Steel Arrow",
+      "qty": 6,
+      "type": "ammo",
+      "value": 2,
+      "weight": 0.1,
+      "description": "A sharp steel arrow."
+     },
+     {
+      "id": "iron_bolt",
+      "name": "Iron Bolt",
+      "qty": 8,
+      "type": "ammo",
+      "value": 1,
+      "weight": 0.1,
+      "description": "A short, heavy iron-headed crossbow bolt."
+     },
+     {
+      "id": "lockpick",
+      "name": "Lockpick",
+      "qty": 3,
+      "type": "misc",
+      "value": 5,
+      "weight": 0.0,
+      "description": "For coaxing open stubborn locks."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 68,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_crate.png",
+    "_furnished": true,
+    "angle": 268.7
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -64.0,
+    48.0,
+    704.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave19_f1",
+    "id": "f3d201d3-8bdd-5c1b-bb31-62977885c456",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "steel_arrow",
+      "name": "Steel Arrow",
+      "qty": 10,
+      "type": "ammo",
+      "value": 2,
+      "weight": 0.1,
+      "description": "A sharp steel arrow."
+     },
+     {
+      "id": "lockpick",
+      "name": "Lockpick",
+      "qty": 3,
+      "type": "misc",
+      "value": 5,
+      "weight": 0.0,
+      "description": "For coaxing open stubborn locks."
+     },
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 2,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 45.4
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    448.0,
+    48.0,
+    960.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Crate_cave19_f2",
+    "id": "288e074e-89a8-558a-86e9-70ed6cc0f9fb",
+    "container_kind": "crate",
+    "display_name": "Stolen Goods",
+    "inventory": [
+     {
+      "id": "iron_bolt",
+      "name": "Iron Bolt",
+      "qty": 8,
+      "type": "ammo",
+      "value": 1,
+      "weight": 0.1,
+      "description": "A short, heavy iron-headed crossbow bolt."
+     },
+     {
+      "id": "leather_cuirass",
+      "name": "Leather Cuirass",
+      "qty": 1,
+      "type": "armour",
+      "value": 40,
+      "weight": 8.0,
+      "description": "Leather cuirass."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 17,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_crate.png",
+    "_furnished": true,
+    "angle": 268.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    448.0,
+    48.0,
+    1472.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Barrel_cave19_f3",
+    "id": "c44bbeb8-1a85-50e5-a6bf-f6b849ca6b84",
+    "container_kind": "barrel",
+    "display_name": "Barrel",
+    "inventory": [
+     {
+      "id": "steel_arrow",
+      "name": "Steel Arrow",
+      "qty": 12,
+      "type": "ammo",
+      "value": 2,
+      "weight": 0.1,
+      "description": "A sharp steel arrow."
+     },
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 1,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     },
+     {
+      "id": "leather_cuirass",
+      "name": "Leather Cuirass",
+      "qty": 1,
+      "type": "armour",
+      "value": 40,
+      "weight": 8.0,
+      "description": "Leather cuirass."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_barrel.png",
+    "_furnished": true,
+    "angle": 258.0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -320.0,
+    48.0,
+    1472.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave19_f4",
+    "id": "7c62429b-3015-5b09-9d18-0aa1b88009d4",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "steel_arrow",
+      "name": "Steel Arrow",
+      "qty": 10,
+      "type": "ammo",
+      "value": 2,
+      "weight": 0.1,
+      "description": "A sharp steel arrow."
+     },
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 2,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 37,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "note_crier_wanted",
+      "name": "Wanted Notice",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "A notice torn from a post: the brigands of Cutthroat Ridge."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": true,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 90.1,
+    "lock_difficulty": "apprentice"
    },
    "io_connections": []
   }

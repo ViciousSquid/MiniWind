@@ -39,7 +39,8 @@ EFFECT_DEFAULTS = {
     "effect_type": EFFECT_FIRE,
     "preview": False,
     "silent": False,
-    "fire_texture": EFFECT_FIRE_TEXTURES[0],
+    # Fire is fire02 wherever it is not authored otherwise.
+    "fire_texture": EFFECT_FIRE_TEXTURES[1],
     "orb_texture": EFFECT_ORB_TEXTURES[0],
     "custom_gif": "",
     "custom_loop": True,
@@ -112,10 +113,10 @@ class Effect(_ThingBase):
             self.properties["light_colour"] = list(EFFECT_ORB_LIGHT_COLOUR)
 
         fire_texture = str(
-            self.properties.get("fire_texture", EFFECT_FIRE_TEXTURES[0])
+            self.properties.get("fire_texture", EFFECT_FIRE_TEXTURES[1])
         ).replace("\\", "/")
         if fire_texture not in EFFECT_FIRE_TEXTURES:
-            fire_texture = EFFECT_FIRE_TEXTURES[0]
+            fire_texture = EFFECT_FIRE_TEXTURES[1]
         self.properties["fire_texture"] = fire_texture
 
         orb_texture = str(

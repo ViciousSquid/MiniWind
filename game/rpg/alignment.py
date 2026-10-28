@@ -142,11 +142,11 @@ def bounty_mult(value: float) -> float:
 
 def magic_power(value: float, school: str) -> float:
     """How alignment empowers a school: the good's Defensive magic (healing,
-    wards) and the wicked's Offensive magic grow up to +25%."""
+    wards), and the wicked's Offensive and Occult magic, grow up to +25%."""
     v = float(value)
     if school == "defensive" and v > 0:
         return 1.0 + 0.25 * v / 100.0
-    if school == "offensive" and v < 0:
+    if school in ("offensive", "occult") and v < 0:
         return 1.0 + 0.25 * -v / 100.0
     return 1.0
 
@@ -199,7 +199,7 @@ def consequences(value: float) -> List[str]:
     if v > 0:
         out.append(f"Defensive magic (healing, wards) works x{magic_power(v, 'defensive'):.2f}.")
     elif v < 0:
-        out.append(f"Offensive magic strikes x{magic_power(v, 'offensive'):.2f}.")
+        out.append(f"Offensive and Occult magic strike x{magic_power(v, 'offensive'):.2f}.")
     a_good, a_evil = affinity(v, 30), affinity(v, -45)
     if a_good:
         out.append(f"Decent folk feel {a_good:+d} toward you (prices, persuasion, "

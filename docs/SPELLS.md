@@ -9,7 +9,7 @@ file overrides the built-in one with the same `id`, and a new `id` adds a spell.
 |-------|--------------|
 | `id` | Unique name the game, items, races and classes refer to. |
 | `name`, `desc` | What the player sees in the spellbook. |
-| `school` | `offensive` (harms or commands) or `defensive` (heals, wards, aids). The matching skill governs cost and the cast roll, and is trained by casting. |
+| `school` | One of the three schools, and there are no others: `offensive` (harms), `defensive` (heals, wards, aids) or `occult` (the dark arts: raising the dead, unmaking the living, summoning and binding beasts and spirits, sensing life). The matching skill governs cost and the cast roll, and is trained by casting and by trainers. An old school name (`destruction`, `restoration`, `conjuration`...) is read as the school it was folded into. |
 | `cost` | Magicka at level 1, before the caster's skill discount (skill can bring it down to a quarter). |
 | `delivery` | `self`, `touch`, `target` or `projectile`. |
 | `effects` | A list of `{"kind", "magnitude", "duration"}`. `damage_health` magnitudes are the spell's damage; `restore_health` its healing; `shield`, `fortify_*`, `calm`... their strength. `duration` is in seconds (0: instant). |

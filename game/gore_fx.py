@@ -7,11 +7,11 @@ Everything here is plain data in world coordinates, advanced by time. Blood
 that comes to rest is **stamped into the surface it lies on** through
 :attr:`GoreFX.stamp` -- baked into the terrain's washable paint, so it is part of
 the ground, cannot z-fight, and can wash away in rain -- a few each update so a massacre does
-not stall a frame. Blood in flight, a pool still spreading, and blood on a
-surface that cannot take a stamp (a brush floor) are drawn by the HUD
-(:func:`game.ui.hud.draw_gore`) over the world, masked out under living
-actors so it never paints over anyone standing in it. Droplets fly on real arcs and land as splats that stay on the
-ground; a killing blow opens a pool that spreads under the body; a gib throws
+not stall a frame. A pool still spreading, and blood on a surface that cannot
+take a stamp (a brush floor), are laid on the floor in the 3D pass under the
+actors standing in it (:func:`game.ui.blood_gl.draw_decals`); blood in flight
+is drawn by the HUD (:func:`game.ui.hud.draw_gore`) over the world. Droplets
+fly on real arcs and land as splats that stay on the ground; a killing blow opens a pool that spreads under the body; a gib throws
 dark chunks and a much bigger spray. Old blood dries and fades.
 
 Safe to feed from the game tick and draw from the UI thread (one lock).
@@ -21,6 +21,7 @@ Pure Python: no Qt, so it is tested headless.
 from __future__ import annotations
 
 import math
+import os
 import random
 import threading
 import time
@@ -46,6 +47,29 @@ STAMPS_PER_UPDATE = 6
 FLASH_SECONDS = 0.35
 SCREEN_BLOOD_SECONDS = 2.2
 
+#: The blood stamps, by kind (assets/sprites/miniwind/blood_stamps, made by
+#: game/tools/make_blood_stamps.py).
+STAMP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "assets", "sprites", "miniwind", "blood_stamps")
+_STAMPS: Dict[str, List[str]] = {}
+#: How opaque blood lying on the ground is drawn, stamped or not.
+STAMP_OPACITY = 0.92
+
+
+def stamp_image(kind, seed):
+    """A stamp image for a splat of *kind*, picked stably by *seed*: what
+    blood baked into the terrain looks like, and blood lying on a floor."""
+    kind = kind if kind in ("splash", "drop", "pool", "chunk") else "splash"
+    if kind not in _STAMPS:
+        try:
+            _STAMPS[kind] = sorted(
+                os.path.join(STAMP_DIR, f) for f in os.listdir(STAMP_DIR)
+                if f.startswith(kind + "_") and f.endswith(".png"))
+        except OSError:
+            _STAMPS[kind] = []
+    files = _STAMPS[kind]
+    return files[int(float(seed) * 1e6) % len(files)] if files else None
+
 
 class GoreFX:
     """The blood in the world right now (see the module docstring)."""
@@ -64,6 +88,10 @@ class GoreFX:
         #: ``stamp(splat) -> bool``: bake a splat into the surface under it;
         #: True when it took (it is then forgotten here). None: never stamp.
         self.stamp = None
+        #: ``ground(x, y, z) -> height or None``: the floor a splat at
+        #: (x, y, z) lies on -- a built floor's top, not the terrain under
+        #: it. None: a splat lies where it landed.
+        self.ground = None
 
     # ---------------------------------------------------------- spawning
     def wound(self, pos, damage, max_health=30.0, away=None, crit=False):
@@ -244,6 +272,36 @@ class GoreFX:
         now = self.clock() if now is None else now
         k = max(0.0, min(1.0, (now - s["t0"]) / POOL_SPREAD))
         return s["size"] * (0.15 + 0.85 * (1.0 - (1.0 - k) ** 2))
+
+    def floor_decals(self, now=None):
+        """The blood lying on the ground that is not part of it yet, as
+        ``(pos, rot, image, size, opacity)`` decals for the 3D pass to lay on
+        the floor under the actors (game/ui/blood_gl.py)."""
+        now = self.clock() if now is None else now
+        out = []
+        for s in self.snapshot()[1]:
+            image = stamp_image(s["kind"], s.get("seed", 0.0))
+            opacity = STAMP_OPACITY * self.splat_alpha(s, now)
+            if image is None or opacity <= 0.0:
+                continue
+            out.append(((s["x"], self.floor_of(s), s["z"]), float(s.get("rot", 0.0)), image,
+                        self.splat_size(s, now), opacity))
+        return out
+
+    def floor_of(self, s) -> float:
+        """The height of the floor splat *s* lies on, found once and kept: a
+        decal laid at the height a body's feet were given can be under a
+        built floor, hidden by it."""
+        floor = s.get("floor")
+        if floor is None:
+            found = None
+            if self.ground is not None:
+                try:
+                    found = self.ground(s["x"], s["y"], s["z"])
+                except Exception:
+                    found = None
+            floor = s["floor"] = float(s["y"] if found is None else found)
+        return floor
 
     def snapshot(self):
         """``(particles, splats, screen)`` copies to draw from."""

@@ -50,10 +50,10 @@ Guild.
 |--------|---------|
 | **Character creation** | 10 races (each with attribute/skill bonuses, resistances and a daily power), 13 classes, 10 birthsigns, or your own custom class. |
 | **8 attributes** | Strength, Endurance, Agility, Speed, Intelligence, Willpower, Personality, Luck — driving every derived stat and roll. |
-| **20 skills, leveled by use** | Blade, Blunt, Marksman, Block, Heavy/Light Armor, Destruction, Restoration, Alteration, Conjuration, Illusion, Mysticism, Alchemy, Sneak, Security, Mercantile, Speechcraft, Acrobatics, Athletics, Light Fingers. Doing raises them; raising *major* skills levels you up. |
+| **17 skills, leveled by use** | Blade, Blunt, Marksman, Block, Heavy/Light Armor, Offensive, Defensive, Occult, Alchemy, Sneak, Security, Mercantile, Speechcraft, Acrobatics, Athletics, Light Fingers. Doing raises them; raising *major* skills levels you up. |
 | **Derived pools** | Health, Magicka and Stamina, recomputed from attributes; passive magicka/stamina regen. |
 | **Combat** | Melee (Strength + weapon skill), archery (draw + ammo), spells; hit chance, criticals, sneak attacks (×6 with a dagger), blocking, armour mitigation and elemental resistance. |
-| **Magic** | 30+ spells across six schools, magicka cost that falls with skill, self/touch/target/projectile delivery, summons and bound weapons. |
+| **Magic** | 30 spells across three schools (Offensive, Defensive and Occult), spell tutors and skill trainers in the settlements, magicka cost that falls with skill, self/touch/target/projectile delivery, summons and bound weapons. |
 | **Items & equipment** | Weapons, armour (heavy/light by slot & material), ammunition, potions, ingredients, books, keys and gold; encumbrance from Strength. |
 | **Loot rarity** | Dropped gear can roll **Fine / Rare / Fabled** tiers (ARPG-style) — worth more, tinted in the UI, and hitting/protecting harder. |
 | **Quests & journal** | Multi-stage quests with objectives, a journal, and quest state stored in the persistent KV store (visible to map logic). |

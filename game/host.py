@@ -283,6 +283,7 @@ class MiniwindGame:
         from .rpg import bestiary
         from .rpg import items as rpg_items
         from .rpg import magic as rpg_magic
+        from .rpg import skills as sk
         api.register_entity(NPC, menu_label="NPC")
         api.register_entity(Creature, menu_label="Monster / Creature")
         api.register_entity(ItemPickup, menu_label="Item")
@@ -304,6 +305,18 @@ class MiniwindGame:
                             if item_def.category == rpg_items.WEAPON)
         light_ids = sorted(item_id for item_id, item_def in rpg_items.ITEMS.items()
                            if rpg_items.is_light_source(item_def))
+        from .rpg import magic as rpg_magic
+        spell_ids = sorted(rpg_magic.SPELLS)
+        # The spells an actor holds in its hands (game/npc_magic.py): left
+        # empty, it readies its own from the spells it knows.
+        hand_spell_props = [
+            prop("hand_spell_main", "enum", "Spell in main hand", default="",
+                 choices=[""] + spell_ids, group="MAGIC",
+                 help="Cast with this hand; empty readies the actor's own choice."),
+            prop("hand_spell_off", "enum", "Spell in off hand", default="",
+                 choices=[""] + spell_ids, group="MAGIC",
+                 help="Cast with this hand; empty readies the actor's own choice."),
+        ]
         factions = ["player", "villagers", "guards", "bandits", "cultists",
                     "wildlife", "monsters"]
         styles = ["melee", "bow", "magic"]
@@ -490,6 +503,7 @@ class MiniwindGame:
                  help="How slowly fatigue builds (>1 tires slower). Drives naps."),
             prop("equipped_weapon", "enum", "Equipped weapon", default="", choices=[""] + weapon_ids,
                  group="INVENTORY", help="Weapon drawn in front of this actor in overhead mode."),
+            *hand_spell_props,
             prop("merchant", "bool", "Is a merchant", default=False, group="INVENTORY"),
             prop("merchant_gold", "int", "Merchant gold", default=0, min=0, max=1000000,
                  group="INVENTORY"),
@@ -498,6 +512,18 @@ class MiniwindGame:
                  help="The purse the merchant is restocked back up to each day."),
             prop("loot", "string", "Loot table", default="", group="LOOT",
                  help="Loot-table id rolled on death (see game/rpg/loot)."),
+            prop("trainer_skills", "string", "Trains skills", default="", group="TEACHING",
+                 help="Skills this NPC trains for gold, comma-separated (e.g. "
+                      "\"occult, defensive\"). Blank: no training."),
+            prop("trainer_rank", "enum", "Trainer rank", default="Journeyman",
+                 choices=[name for _lo, name in sk.RANKS], group="TEACHING",
+                 help="Its own skill: it cannot train anyone past it."),
+            prop("teaches_spells", "string", "Sells spells", default="", group="TEACHING",
+                 help="Spell ids this NPC teaches for gold, comma-separated."),
+            prop("guild", "enum", "Teaches for", default="", choices=["", "mages"],
+                 group="TEACHING",
+                 help="mages: a tutor of the Arcane Circle, who sells rarer spells "
+                      "only to members of standing. Blank: independent."),
             prop("respawn", "bool", "Respawns when killed", default=False, group="STATE"),
             prop("persistent", "bool", "Persistent identity", default=True, group="STATE"),
         ] + _production_props() + _perception_props())
@@ -530,6 +556,7 @@ class MiniwindGame:
                  choices=styles, group="BEHAVIOUR"),
             prop("equipped_weapon", "enum", "Equipped weapon", default="", choices=[""] + weapon_ids,
                  group="BEHAVIOUR", help="Weapon drawn in front of this actor in overhead mode."),
+            *hand_spell_props,
             prop("sight_range", "int", "Sight range", default=1024, min=0, max=100000,
                  group="BEHAVIOUR", help="How far it perceives enemies before engaging."),
             prop("wake_on_sight", "bool", "Wakes on sight", default=True,
@@ -561,6 +588,10 @@ class MiniwindGame:
         api.register_properties("miniwindsettings", [
             prop("region_name", "string", "Region name",
                  default="The Vale of Miniwind", group="WORLD"),
+            prop("underground", "bool", "Underground (cave music)", default=False,
+                 group="WORLD",
+                 help="A cave or dungeon: only cave music plays here "
+                      "(assets/music/cave*.mp3), and none until there is some."),
             prop("start_scenario", "enum", "Start", default="prompt",
                  choices=["prompt", "quick"], group="WORLD",
                  help="'prompt' opens character creation; 'quick' drops in as a default hero."),
@@ -757,6 +788,27 @@ class MiniwindGame:
         self._host = host
         host.on("render.overlay", self._on_overlay)
         host.on("render.post_scene", self._on_post_scene)
+        host.on("render.pre_sprites", self._on_pre_sprites)
+
+    def _on_pre_sprites(self, ev):
+        """Draw what lies on the floor, before Fio's effects and actors so they
+        all go over it: blood (game/ui/blood_gl.py), then containers and things
+        lying about, which Fio draws nothing for in Play (game/ui/
+        world_objects.py) -- flat, as seen from above."""
+        if not ev.get("play_mode"):
+            return
+        host = getattr(self, "_host", None)
+        session = getattr(getattr(host, "logic", None), "_miniwind", None)
+        if session is None:
+            return
+        projection, view = ev.get("projection"), ev.get("view")
+        gore = getattr(session, "gore", None)
+        if (gore is not None and not getattr(session, "needs_char_creation", False)
+                and getattr(session, "open_screen", None) != "charcreate"):
+            from .ui import blood_gl
+            blood_gl.draw_decals(projection, view, gore.floor_decals())
+        from .ui import world_objects
+        world_objects.draw(projection, view, world_objects.visible(session))
 
     def _on_post_scene(self, ev):
         """Draw, in the 3D pass: magic (game/ui/magic_gl.py), the arrows in
@@ -793,6 +845,10 @@ class MiniwindGame:
         logic.game_session = None
         settings = self._find_settings(logic)
         cfg = dict(settings.properties) if settings is not None else {}
+        # Apply the authored Vale lock choices without replacing the newer
+        # furnished overworld map. Saved container state restores afterwards.
+        from .tools.container_locks import apply_overworld_lock_overrides
+        apply_overworld_lock_overrides(logic.things)
         host = getattr(self, "_host", None)
         globals_store = host.globals if host is not None else None
         fio.set_camera_mode(logic, PLAY_CAMERA)
@@ -813,6 +869,8 @@ class MiniwindGame:
         keybinds.apply(runtime._editor_config)
         self._prev_keys = frozenset()
         from . import music
+        # A cave has its own music (game/music.py).
+        music.PLAYER.set_place(music.CAVE if session.underground else music.WORLD)
         if music.PLAYER.configured:
             music.PLAYER.start()
         if host is not None:
@@ -828,6 +886,7 @@ class MiniwindGame:
         music.PLAYER.stop()
         session = getattr(logic, "_miniwind", None)
         if session is not None:
+            session.leave_map()            # raised followers go with the player
             session.persist(force=True)
             session.uninstall()
             logic._miniwind = None
@@ -1238,6 +1297,7 @@ class MiniwindGame:
                     hud.draw_bubbles(painter, session, viewport, w, h)
                     hud.draw_barks(painter, session, viewport, w, h)
                     hud.draw_thoughts(painter, session, viewport, w, h)
+                    hud.draw_floats(painter, session, viewport, w, h)
                 # The "stay near the guard" ring during a prison escort.
                 hud.draw_escort_ring(painter, session, viewport, w, h)
                 # "!" / "?" over heightened NPCs (a guard coming to arrest
@@ -1275,6 +1335,7 @@ class MiniwindGame:
         "spells": "Spellbook", "levelup": "Level Up", "trade": "Trade",
         "quest": "Current Quest",
         "lockpicking": "Lockpicking",
+        "training": "Training", "tutor": "Spell Tutor",
     }
 
     def _close_overlay_screen(self, session, screen):
@@ -1297,6 +1358,9 @@ class MiniwindGame:
             return
         if screen == "lockpicking":
             session.close_lockpicking()
+            return
+        if screen in ("training", "tutor"):
+            session.close_teaching()
             return
         session.open_screen = None
 

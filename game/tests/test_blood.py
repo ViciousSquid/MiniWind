@@ -209,15 +209,15 @@ def test_blood_is_baked_into_the_terrain_itself(config, monkeypatch, qt_app):
     paint = terrain.washable_texture_paint_maps[(0, 0)]
     stained = paint[paint[..., 3] > 128]
     assert len(stained) and np.all(stained[:, 0] > stained[:, 1] * 3)   # it is red
-    # On a floor built over the terrain it is not stamped (the HUD draws it).
+    # On a floor built over the terrain it is not stamped (it is laid on the
+    # floor in the 3D pass instead, game/ui/blood_gl.py).
     monkeypatch.setattr(fio, "ground_height", lambda logic, x, z, below=None: 160.0)
     assert not s._stamp_blood(splat)
 
 
 def test_stamp_images_are_read_once():
     from engine.terrain import Terrain
-    from .. import runtime as rt
-    path = rt._blood_stamp("splash", 0.1)
+    path = gore_fx.stamp_image("splash", 0.1)
     assert path and path.endswith(".png")
     Terrain._RGBA_CACHE.pop(path, None)
     reads = []
@@ -229,3 +229,52 @@ def test_stamp_images_are_read_once():
     finally:
         Terrain._read_texture_rgba = staticmethod(real)
     assert a is b and len(reads) == 1
+
+
+# ------------------------------------------------ lying on a built floor
+def test_blood_on_a_floor_is_laid_as_decals_in_the_stamps_own_art():
+    g, clock = _gore()
+    g.stamp = lambda s: False                       # a brush floor: no stamp
+    g.kill([10, 50, 20], 40)
+    g.update()
+    decals = g.floor_decals()
+    assert len(decals) == 1
+    pos, rot, image, size, opacity = decals[0]
+    assert pos == (10.0, 50.0, 20.0)
+    assert image == gore_fx.stamp_image("pool", g.splats[0]["seed"])
+    assert size == g.splat_size(g.splats[0])        # still spreading
+    assert opacity == pytest.approx(gore_fx.STAMP_OPACITY)
+    clock.t += gore_fx.SPLAT_LIFE - gore_fx.SPLAT_FADE / 2
+    assert g.floor_decals()[0][4] == pytest.approx(gore_fx.STAMP_OPACITY / 2)
+
+
+def test_blood_on_the_floor_lies_under_the_actors_standing_in_it():
+    """Laid in the 3D pass below the actors' layer, it is depth-tested under
+    them -- never painted over them, as it was from the HUD."""
+    from engine import overhead_sprite
+    from ..ui import blood_gl
+    assert blood_gl.DECAL_Y == overhead_sprite.DECAL_Y < overhead_sprite.ACTOR_Y
+
+
+def test_the_hud_draws_no_blood_lying_on_the_ground(qt_app):
+    """Ground blood drawn over the finished frame painted over the actors
+    standing in it (their sprite and weapons reach past any cut-out)."""
+    import glm
+    from PyQt5.QtGui import QColor, QImage, QPainter
+    from ..ui import hud
+
+    g, _c = _gore()
+    g.stamp = lambda s: False
+    g._splat((0.0, 0.0, 0.0), 400.0, kind="pool")
+
+    class _View:
+        projection_matrix = glm.ortho(-500.0, 500.0, -500.0, 500.0, -1000.0, 1000.0)
+        view_matrix = glm.lookAt(glm.vec3(0, 500, 0), glm.vec3(0, 0, 0),
+                                 glm.vec3(0, 0, -1))
+
+    image = QImage(200, 200, QImage.Format_ARGB32)
+    image.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(image)
+    hud.draw_gore(painter, type("S", (), {"gore": g})(), _View(), 200, 200)
+    painter.end()
+    assert image.pixelColor(100, 100).alpha() == 0

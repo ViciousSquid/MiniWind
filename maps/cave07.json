@@ -2639,7 +2639,8 @@
     "start_scenario": "prompt",
     "region_name": "Rattlebone Warren",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -2656,6 +2657,356 @@
     "id": "8dd2ef2f-4efe-4624-a2ed-fc6512c8614d",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -448.0,
+    48.0,
+    -1600.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave07_f0",
+    "id": "12e66772-6b49-56d2-9111-2b7afab78431",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 352.4
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    448.0,
+    48.0,
+    704.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave07_f1",
+    "id": "a4a9f510-c9a4-5921-83e0-30f55f45ea75",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 36,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 293.0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    192.0,
+    48.0,
+    -448.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave07_f2",
+    "id": "974bb588-5eea-5a43-bae0-a9dfc41ff14f",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 3,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 314.4
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    64.0,
+    48.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave07_f3",
+    "id": "4633ccf1-7051-54a7-9634-efc3f20c02a2",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 30,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 257.7
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1344.0,
+    48.0,
+    320.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave07_f4",
+    "id": "39aec489-ac7b-545c-8898-b5de6845b448",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 4,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "copper_ring",
+      "name": "Copper Ring",
+      "qty": 1,
+      "type": "armour",
+      "value": 8,
+      "weight": 0.2,
+      "description": "A plain copper band."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 38,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "note_last_words",
+      "name": "A Note, Folded Small",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "A dying man's message to his wife."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 31.2
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -960.0,
+    48.0,
+    576.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave07_f5",
+    "id": "b5d403fb-28d4-5df1-b3a3-49616be5965f",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "book_downwind",
+      "name": "Downwind",
+      "qty": 1,
+      "type": "book",
+      "value": 50,
+      "weight": 1.0,
+      "description": "A shepherd's notes on the wolves of Greywood, and how to walk among them unheard."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 341.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -960.0,
+    48.0,
+    1344.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Urn_cave07_f6",
+    "id": "152bb1fc-1a51-59fe-8735-49b03e59ddbe",
+    "container_kind": "urn",
+    "display_name": "Burial Urn",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 3,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 57,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_aldous_penn",
+      "name": "The Journal of Aldous Penn",
+      "qty": 1,
+      "type": "book",
+      "value": 5,
+      "weight": 0.5,
+      "description": "An adventurer's journal. It ends mid-sentence."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_urn.png",
+    "_furnished": true,
+    "angle": 346.4
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    960.0,
+    48.0,
+    -320.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave07_f7",
+    "id": "723916cb-7413-5061-b01a-60c4c59b5e24",
+    "container_kind": "sack",
+    "display_name": "Adventurer's Pack",
+    "inventory": [
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 2,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 9,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_ember_wyrm",
+      "name": "The Ember Wyrm of Whisperdeep",
+      "qty": 1,
+      "type": "book",
+      "value": 60,
+      "weight": 1.0,
+      "description": "A monk's account of a journey into the red hills, and what he found there."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 165.0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    1472.0,
+    40.0,
+    -1344.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Book_cave07_f",
+    "id": "bbddc604-3d93-5a5c-a782-c48d3dbf6c41",
+    "item_id": "note_crier_greenskins",
+    "quantity": 1,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/note_crier_greenskins.png",
+    "display_name": "Clipping from the Crier",
+    "angle": 23.0,
+    "_furnished": true
    },
    "io_connections": []
   }

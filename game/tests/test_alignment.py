@@ -72,6 +72,7 @@ def test_consequences():
     assert alignment.magic_power(good, "defensive") > 1
     assert alignment.magic_power(evil, "offensive") > 1
     assert alignment.magic_power(good, "offensive") == 1
+    assert alignment.magic_power(evil, "occult") > 1 == alignment.magic_power(good, "occult")
     assert alignment.affinity(good, 35) > 0 > alignment.affinity(evil, 35)
     assert alignment.affinity(evil, -45) > 0
     assert alignment.kinship(evil) and not alignment.kinship(good)

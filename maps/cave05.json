@@ -2758,7 +2758,8 @@
     "start_scenario": "prompt",
     "region_name": "Frostfang Cavern",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -2775,6 +2776,425 @@
     "id": "bb55082f-d6d6-4fc9-9740-098817061801",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -960.0,
+    48.0,
+    320.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave05_f0",
+    "id": "cbea6049-d12b-5b47-8dbd-47b8fabff4e2",
+    "container_kind": "sack",
+    "display_name": "Cocooned Bundle",
+    "inventory": [
+     {
+      "id": "leather_gauntlets",
+      "name": "Leather Bracers",
+      "qty": 1,
+      "type": "armour",
+      "value": 10,
+      "weight": 1.5,
+      "description": "Leather bracers."
+     },
+     {
+      "id": "torch",
+      "name": "Torch",
+      "qty": 1,
+      "type": "light",
+      "value": 5,
+      "weight": 1.0,
+      "description": "A pitch-soaked torch that throws a warm circle of light. Equip it in the off hand to see in the dark."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 343.0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1344.0,
+    48.0,
+    1088.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave05_f1",
+    "id": "e5d57205-95a5-5b89-80c0-43f618995a9d",
+    "container_kind": "sack",
+    "display_name": "Cocooned Bundle",
+    "inventory": [
+     {
+      "id": "iron_helmet",
+      "name": "Iron Helmet",
+      "qty": 1,
+      "type": "armour",
+      "value": 30,
+      "weight": 5.0,
+      "description": "Iron helmet."
+     },
+     {
+      "id": "torch",
+      "name": "Torch",
+      "qty": 1,
+      "type": "light",
+      "value": 5,
+      "weight": 1.0,
+      "description": "A pitch-soaked torch that throws a warm circle of light. Equip it in the off hand to see in the dark."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 43,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_greenskin",
+      "name": "A Few Useful Words of the Greenskin Tongue",
+      "qty": 1,
+      "type": "book",
+      "value": 45,
+      "weight": 1.0,
+      "description": "A trader's phrasebook, for leaving the greenskin camps with all your fingers."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 94.0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    704.0,
+    48.0,
+    960.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave05_f2",
+    "id": "21aba778-e74f-57d0-b650-bf340a90b89e",
+    "container_kind": "sack",
+    "display_name": "Cocooned Bundle",
+    "inventory": [
+     {
+      "id": "elven_arrow",
+      "name": "Elven Arrow",
+      "qty": 4,
+      "type": "ammo",
+      "value": 4,
+      "weight": 0.1,
+      "description": "A keen elven arrow that flies true."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 50,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 102.8
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    192.0,
+    48.0,
+    -64.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave05_f3",
+    "id": "8897cd7a-91c0-5d4a-8f1b-0b757d3698f0",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "copper_ring",
+      "name": "Copper Ring",
+      "qty": 1,
+      "type": "armour",
+      "value": 8,
+      "weight": 0.2,
+      "description": "A plain copper band."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 12,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 271.4
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1344.0,
+    48.0,
+    -1088.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave05_f4",
+    "id": "2599b9da-8be4-53d8-8dbb-0f286d45af44",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "elven_arrow",
+      "name": "Elven Arrow",
+      "qty": 6,
+      "type": "ammo",
+      "value": 4,
+      "weight": 0.1,
+      "description": "A keen elven arrow that flies true."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": true,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 0.9,
+    "lock_difficulty": "novice"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1600.0,
+    48.0,
+    -576.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave05_f5",
+    "id": "25f13fa7-8ec6-54a9-ace6-34e550cb1f07",
+    "container_kind": "sack",
+    "display_name": "Cocooned Bundle",
+    "inventory": [
+     {
+      "id": "elven_arrow",
+      "name": "Elven Arrow",
+      "qty": 9,
+      "type": "ammo",
+      "value": 4,
+      "weight": 0.1,
+      "description": "A keen elven arrow that flies true."
+     },
+     {
+      "id": "iron_helmet",
+      "name": "Iron Helmet",
+      "qty": 1,
+      "type": "armour",
+      "value": 30,
+      "weight": 5.0,
+      "description": "Iron helmet."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 31,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_lockwright",
+      "name": "The Lockwright's Patience",
+      "qty": 1,
+      "type": "book",
+      "value": 55,
+      "weight": 1.0,
+      "description": "A locksmith's manual. Not for thieves, it insists."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 235.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    448.0,
+    48.0,
+    -192.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave05_f6",
+    "id": "5bb0d8b6-0147-5b89-bd03-37d780a0515c",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "elven_arrow",
+      "name": "Elven Arrow",
+      "qty": 7,
+      "type": "ammo",
+      "value": 4,
+      "weight": 0.1,
+      "description": "A keen elven arrow that flies true."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 266.7
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -960.0,
+    48.0,
+    1088.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave05_f7",
+    "id": "09a247c9-692a-545e-8d57-5a7cc65d4b1d",
+    "container_kind": "sack",
+    "display_name": "Cocooned Bundle",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 50,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 235.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -64.0,
+    48.0,
+    -1088.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave05_f8",
+    "id": "d9a0dc46-e003-5f6f-a39f-cc9c89e34af8",
+    "container_kind": "sack",
+    "display_name": "Adventurer's Pack",
+    "inventory": [
+     {
+      "id": "torch",
+      "name": "Torch",
+      "qty": 1,
+      "type": "light",
+      "value": 5,
+      "weight": 1.0,
+      "description": "A pitch-soaked torch that throws a warm circle of light. Equip it in the off hand to see in the dark."
+     },
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 1,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 17,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_greenskin",
+      "name": "A Few Useful Words of the Greenskin Tongue",
+      "qty": 1,
+      "type": "book",
+      "value": 45,
+      "weight": 1.0,
+      "description": "A trader's phrasebook, for leaving the greenskin camps with all your fingers."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 190.3
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    1088.0,
+    40.0,
+    1600.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Book_cave05_f",
+    "id": "75e120cb-6667-5dcc-913e-b206358fe722",
+    "item_id": "book_greenskin",
+    "quantity": 1,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/book_greenskin.png",
+    "display_name": "A Few Useful Words of the Greenskin Tongue",
+    "angle": 249.0,
+    "_furnished": true
    },
    "io_connections": []
   }

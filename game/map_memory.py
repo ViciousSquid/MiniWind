@@ -12,6 +12,16 @@ and the clock across level changes and saves):
   cleared away.
 * **Taken** -- pickups the player picked up (a gold pile does not come back).
 * **Containers** -- contents, unlocked/jammed locks and latched pin progress.
+* **Raised** -- who the player's necromancy brought back. A raised body has
+  had its second life: it is never raised again, and it is no lair's stock
+  (it does not come back on its own). While it lives it is the caster's
+  follower, whenever the player is in its map.
+* **Departed** -- raised followers who left the map with the player
+  (game/party.py): they travel with the player now, and are never also
+  standing here.
+* **Kits** -- what a searched corpse still has on it, and what a raised
+  follower carries and knows (:data:`KIT_FIELDS`), so neither is restocked
+  from the map file.
 
 **Repopulation.** Generic hostile creatures -- a wolf, a skeleton, a
 bandit, anything whose kind appears more than once in the map, and every
@@ -23,9 +33,10 @@ the player: in the map they are standing in, a creature returns only while
 the player is out of sight of its home (:data:`HIDDEN_DISTANCE`); otherwise
 it returns the next time the map is entered.
 
-Spawner members are remembered by spawner and slot (they get new ids every
-load), so a spawner whose wolves were killed today spawns fewer of them until
-their day is up.
+Spawner members are remembered by spawner and slot (each slot's member also
+keeps the same uuid every load, game/runtime.py ``spawn_creature_points``),
+so a spawner whose wolves were killed today spawns fewer of them until their
+day is up.
 """
 
 from __future__ import annotations
@@ -47,6 +58,13 @@ HIDDEN_DISTANCE = 2600.0
 #: How often (real seconds) the live map is checked for returns and deaths.
 CHECK_SECONDS = 1.5
 ACTOR_TYPES = ("npc", "creature", "monster")
+#: What a body carries and knows, kept for a looted corpse and for a raised
+#: follower so neither comes back from the map file whole: its pack (and
+#: what it carried in life, game_state.stock_corpse), the weapons in its
+#: hands, its spells and the spells it holds ready, and its one-time rolls.
+KIT_FIELDS = ("inventory", "living_inventory", "loot_rolled", "equipped_weapon",
+              "offhand_weapon", "spells", "hand_spells", "_ward_rolled",
+              "_second_weapon_rolled", "_caster_sidearm_rolled")
 
 
 def _kind(t) -> str:
@@ -55,6 +73,22 @@ def _kind(t) -> str:
 
 def _hours(clock) -> float:
     return float(clock.day) * 24.0 + float(clock.hour)
+
+
+def _kit(props) -> Dict:
+    return {k: copy.deepcopy(props[k]) for k in KIT_FIELDS if k in props}
+
+
+def _restore_kit(props, kit) -> None:
+    """Lay a remembered *kit* over freshly loaded *props* (a field it lacks,
+    a looted weapon say, is gone)."""
+    if not isinstance(kit, dict):
+        return
+    for k in KIT_FIELDS:
+        if k in kit:
+            props[k] = copy.deepcopy(kit[k])
+        else:
+            props.pop(k, None)
 
 
 def _clean_props(props) -> Dict:
@@ -66,7 +100,8 @@ class MapMemory:
     def __init__(self, session):
         self.session = session
         self.key = ""
-        self.record = {"dead": {}, "taken": [], "containers": {}, "locks": {}}
+        self.record = {"dead": {}, "taken": [], "containers": {}, "locks": {},
+                       "raised": {}, "departed": {}}
         self._originals: Dict[str, Dict] = {}     # memory key -> (props, pos)
         self._known_dead = set()
         self._accum = 0.0
@@ -107,7 +142,9 @@ class MapMemory:
                     self.record = {"dead": dict(rec.get("dead") or {}),
                                    "taken": list(rec.get("taken") or []),
                                    "containers": dict(rec.get("containers") or {}),
-                                   "locks": dict(rec.get("locks") or {})}
+                                   "locks": dict(rec.get("locks") or {}),
+                                   "raised": dict(rec.get("raised") or {}),
+                                   "departed": dict(rec.get("departed") or {})}
             except ValueError:
                 pass
 
@@ -133,6 +170,18 @@ class MapMemory:
         taken = set(self.record["taken"])
         conts = self.record["containers"]
         changed = False
+        departed = self.record["departed"]
+        if departed:
+            # (Not the follower itself, back home with the player.)
+            gone = [t for t in things
+                    if _kind(t) in ACTOR_TYPES and self.actor_key(t) in departed
+                    and not t.properties.get("travelling")]
+            if gone:
+                live = fio.things(self.session.logic)
+                for t in gone:
+                    live.remove(t)
+                    things.remove(t)
+                changed = True
         for t in things:
             kind = _kind(t)
             p = t.properties
@@ -143,6 +192,18 @@ class MapMemory:
                 p["_respawns"] = self._respawns(t, generic)
                 self._originals[key] = (_clean_props(p), list(t.pos))
                 rec = dead.get(key)
+                if key in self.record["raised"]:
+                    # Its second life is spent, whatever the map file says;
+                    # alive, it is the caster's follower again, with what it
+                    # carried and knew when the map was left.
+                    _restore_kit(p, self.record["raised"][key])
+                    p["_respawns"] = False
+                    bind = getattr(self.session, "_bind_raised", None)
+                    if bind is not None:
+                        bind(p)
+                    if rec is not None:
+                        p["follow_player"] = False
+                    changed = True
                 if rec is None:
                     continue
                 if rec.get("r") and now - float(rec["t"]) >= float(rec.get("d", RESPAWN_HOURS)):
@@ -151,6 +212,8 @@ class MapMemory:
                     continue
                 p["dead"] = True
                 p["health"] = 0
+                if "kit" in rec and key not in self.record["raised"]:
+                    _restore_kit(p, rec["kit"])  # what is left on the body
                 if rec.get("pos"):
                     t.pos = list(rec["pos"])
                 if now - float(rec["t"]) >= CORPSE_HOURS:
@@ -258,6 +321,29 @@ class MapMemory:
             self._dirty = True
             fio.rebuild_entity_caches(s.logic)
 
+    def raised(self, actor) -> None:
+        """The player raised *actor*: it is no longer among this map's dead,
+        and its second life is spent (see the module docstring)."""
+        key = self.actor_key(actor)
+        if not key:
+            return
+        self.record["dead"].pop(key, None)
+        self._known_dead.discard(key)
+        self.record["raised"][key] = _kit(actor.properties)
+        actor.properties["_respawns"] = False
+        self._dirty = True
+
+    def departed(self, actor) -> None:
+        """*actor*, a raised follower, leaves the map with the player for good
+        (game/party.py)."""
+        key = self.actor_key(actor)
+        if not key:
+            return
+        self.record["departed"][key] = True
+        self.record["raised"].pop(key, None)
+        self.record["dead"].pop(key, None)
+        self._dirty = True
+
     def taken(self, pickup) -> None:
         """The player picked *pickup* up: it stays gone."""
         pid = str(pickup.properties.get("id") or "")
@@ -276,6 +362,17 @@ class MapMemory:
                     field: copy.deepcopy(t.properties[field])
                     for field in ("locked", "lock_jammed", "lockpick_state")
                     if field in t.properties}
+        # A searched corpse keeps what is left on it; a raised follower what
+        # it carries now.
+        dead, raised = self.record["dead"], self.record["raised"]
+        for t in fio.things(self.session.logic):
+            if _kind(t) not in ACTOR_TYPES:
+                continue
+            key = self.actor_key(t)
+            if key in raised:
+                raised[key] = _kit(t.properties)
+            elif isinstance(dead.get(key), dict) and t.properties.get("loot_rolled"):
+                dead[key]["kit"] = _kit(t.properties)
         self.session.store.set(STORE_PREFIX + self.key, json.dumps(self.record,
                                                                    separators=(",", ":")))
         self._dirty = False

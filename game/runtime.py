@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import copy
 import json
 import math
 import threading
 import os
 import random
+import uuid
 from itertools import chain as _chain
 from typing import Dict, List, Optional
 
@@ -39,10 +41,14 @@ from .rpg import schedule as sched
 from .rpg import combat as rpg_combat
 from .rpg import equipment as eq
 from .rpg import items as rpg_items
+from . import library
 from . import warrior_fist
 from . import held_weapons
+from . import party
 from .rpg import magic as rpg_magic
 from .rpg import guilds
+from .rpg import training as rpg_training
+from . import burning as burning_mod
 from .rpg import disposition as disp
 from .rpg import needs as rpg_needs
 from .rpg import heads
@@ -285,27 +291,6 @@ HURT_SHAKE_FROM = 0.2
 #: How near the terrain's surface the ground under blood must be for it to be
 #: stamped into the terrain (further, and it is lying on something built).
 STAMP_GROUND_TOLERANCE = 8.0
-#: The blood stamps, by kind (assets/sprites/miniwind/blood_stamps, made by
-#: game/tools/make_blood_stamps.py).
-_BLOOD_STAMP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                "assets", "sprites", "miniwind", "blood_stamps")
-_BLOOD_STAMPS = {}
-
-
-def _blood_stamp(kind, seed):
-    """A stamp image for a splat of *kind*, picked stably by *seed*."""
-    kind = kind if kind in ("splash", "drop", "pool", "chunk") else "splash"
-    if kind not in _BLOOD_STAMPS:
-        try:
-            _BLOOD_STAMPS[kind] = sorted(
-                os.path.join(_BLOOD_STAMP_DIR, f) for f in os.listdir(_BLOOD_STAMP_DIR)
-                if f.startswith(kind + "_") and f.endswith(".png"))
-        except OSError:
-            _BLOOD_STAMPS[kind] = []
-    files = _BLOOD_STAMPS[kind]
-    return files[int(float(seed) * 1e6) % len(files)] if files else None
-
-
 #: A blow taken for this share of the player's health puts their blood on
 #: the screen's edge.
 HURT_SCREEN_BLOOD = 0.08
@@ -313,6 +298,14 @@ HURT_SCREEN_BLOOD = 0.08
 DEFEND_RADIUS = 600.0
 #: How long a thought (what an NPC is thinking, not saying) hangs over a head.
 THOUGHT_SECONDS = 3.5
+#: What the player says to a teacher (game/rpg/training.py).
+TRAIN_PROMPT = "I'd like some training."
+TUTOR_PROMPT = "What spells can you teach me?"
+JOIN_CIRCLE_PROMPT = "I wish to join the Arcane Circle."
+#: What floats up over a caster -- the player or anyone else -- whose spell
+#: fizzles, and for how long.
+FIZZLE_TEXT = "*fizzled*"
+FIZZLE_SECONDS = 1.6
 #: Two townsfolk talking: how long a rumour's opener is up (longer than an
 #: ordinary bark: it says more), how close they must be to pass the time of
 #: day, how long before either does so again (s), and the chance per decision
@@ -338,9 +331,15 @@ CHARGE_SHOUTS = ("To arms!", "Raiders! With me!", "Not in my town!",
 WORLD_EDGE_MARGIN = 900.0
 #: How fast an over-encumbered player moves, as a fraction of normal.
 ENCUMBERED_SPEED = 0.33
+#: Spawn points' actors are given ids from this namespace and their spawner
+#: and slot, so each keeps the same uuid every time its map is entered.
+SPAWN_ID_NAMESPACE = uuid.UUID("6f1c2a8e-3b7d-4e59-9a0c-5d2e8b7f4a11")
 #: The light a spell bolt carries with it, in the spell's colour.
 BOLT_LIGHT_RADIUS = 420.0
 BOLT_LIGHT_INTENSITY = 2.2
+#: A lingering bolt light (a spell's ``linger``, Flare's) holds where the
+#: bolt landed for its time, then fades out over this many seconds.
+BOLT_LINGER_FADE = 3.0
 
 #: Wisp companion light — how far it may wander from the player, and its four
 #: possible hues (RGB 0-255). One is picked at cast time and never changes.
@@ -443,6 +442,10 @@ class _PlayerActor:
 #: purchase or sale makes.
 SOUND_DIR = os.path.join("assets", "sounds")
 TRANSACTION_SOUND = "transaction.mp3"
+#: Heard whenever a potion is drunk (assets/sounds).
+DRINK_SOUND = "drink.mp3"
+#: Heard whenever the player casts a spell that works (assets/sounds).
+SPELLCAST_SOUND = "spellcast.mp3"
 #: A guard stopping the player to arrest them says one of these, at random.
 ARREST_SOUNDS = ("arrest1.mp3", "arrest2.mp3")
 
@@ -518,6 +521,10 @@ class StateStore:
 class MiniwindSession(SettlementLaw):
     """Owns the clock, the player character, NPC AI and dialogue state."""
 
+    #: The number keys pick inventory strip slots (game/host.py), so the
+    #: engine leaves 1-4 alone rather than reading them as its weapon slots.
+    owns_number_keys = True
+
     def __init__(self, logic, cfg: Dict = None, globals_store=None):
         self.logic = logic
         cfg = cfg or {}
@@ -537,6 +544,8 @@ class MiniwindSession(SettlementLaw):
             _ps = [s.strip() for s in _ps.split(",") if s.strip()]
         self._player_start_spells = list(_ps) if isinstance(_ps, list) else []
         self.region_name = str(cfg.get("region_name", "The Vale of Miniwind"))
+        #: A cave or dungeon (Game Settings): it has cave music (game/music.py).
+        self.underground = bool(cfg.get("underground", False))
         self.store = StateStore(globals_store, str(cfg.get("state_store", "miniwind")))
 
         from .weather import Weather
@@ -701,10 +710,14 @@ class MiniwindSession(SettlementLaw):
         self.memory = MapMemory(self)
         self.wildlife = Wildlife(self)
         self.dragon_fire = DragonFire(self)
+        #: Flare's fires: who is burning, and fires on the ground (game/burning.py).
+        from .burning import Burning
+        self.burning = Burning(self)
         #: Spell bolts in flight that carry a light: Fio tag -> Light, and
         #: where each lit bolt was last published (tag -> (x, y, z)).
         self._bolt_lights = {}
         self._bolt_positions = {}
+        self._lingering_lights = []     # [{light, hold, fade, base}], see _update_bolt_lights
         #: ``((x, y, z), (vx, vy, vz), sprite)`` per arrow in flight, as last
         #: published for the renderer (read by game/ui/arrows.py).
         self.arrows_in_flight = ()
@@ -743,8 +756,11 @@ class MiniwindSession(SettlementLaw):
         from .gore_fx import GoreFX
         self.gore = GoreFX()
         self.gore.stamp = self._stamp_blood
+        # Blood not stamped lies on the floor it fell on, built or not.
+        self.gore.ground = lambda x, y, z: fio.ground_height(self.logic, x, z, below=y + 80.0)
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
+        self.game.add_drink_listener(self._on_drink)
         self._attack_anim_time = 0.0   # player stab animation remaining (seconds)
         self._offhand_anim_time = 0.0  # the off hand's, when dual wielding
 
@@ -879,11 +895,14 @@ class MiniwindSession(SettlementLaw):
         self.director.invalidate()
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
+        self.game.add_drink_listener(self._on_drink)
         self.needs_char_creation = True
         self.open_screen = "charcreate"
         self.dialogue = None
         self.dialogue_npc = None
         self.merchant_npc = None
+        #: Whoever is teaching the player on the "training" / "tutor" screen.
+        self.trainer_npc = None
         self.show_loadout = False
         #: The inventory strip along the bottom of the screen
         #: (game/ui/inventory_strip.py): always up in free play. Kept for
@@ -954,6 +973,7 @@ class MiniwindSession(SettlementLaw):
         self.memory.load(self._map_key)
         self.spawn_creature_points()   # materialise CreatureSpawn points once
         self.memory.apply()            # the dead stay dead; lairs refill after a day
+        self._party_due = True         # raised followers arrive with the player (update)
         self._assign_npc_handedness()  # random handedness (left rare) where unset
         self._arm_fighters()           # a bow for the swordsman, a blade for the archer
         self.dragon_fire.install(fio.things(self.logic))
@@ -987,6 +1007,9 @@ class MiniwindSession(SettlementLaw):
         self.magic_fx.clear()
         self._bolt_positions = {}
         self._update_bolt_lights()          # no bolt is live: every light goes out
+        self._clear_lingering_lights()
+        if getattr(self, "burning", None) is not None:
+            self.burning.clear()
         if getattr(self.logic, "_player_damage_filter", None) is self._mitigate_incoming:
             self.logic._player_damage_filter = None
         if getattr(self.logic, "player_fire_handler", None) == self.fire_player_weapon:
@@ -1013,6 +1036,12 @@ class MiniwindSession(SettlementLaw):
             return 0.0
         raw_damage = float(raw_damage) * self.incoming_mult
         attacker = self._attacker()
+        last = getattr(fio.player_runtime(self.logic), "last_damage", None)
+        if attacker is not None and last and last[1] == "projectile":
+            burn = attacker.properties.get("_bolt_burn")
+            if burn:
+                # An enemy's Flare found the player: they burn.
+                self.burning.ignite(burning_mod.PLAYER, burn[0], burn[1], by=attacker)
         if attacker is not None and damage_kind == "physical":
             # Every living thing has a Strength: a bear hits harder than a hen.
             raw_damage *= rpg_combat.strength_factor(
@@ -1129,14 +1158,15 @@ class MiniwindSession(SettlementLaw):
         ground = fio.ground_height(self.logic, x, z, below=y + 60.0)
         if ground is None or abs(float(ground) - float(surface)) > STAMP_GROUND_TOLERANCE:
             return False                     # standing on something built
-        path = _blood_stamp(splat["kind"], splat.get("seed", 0.0))
+        from . import gore_fx
+        path = gore_fx.stamp_image(splat["kind"], splat.get("seed", 0.0))
         if path is None:
             return False
         from .gore_fx import RAIN_WASH_SECONDS
         try:
             return bool(ter.paint_texture_at(
                 x, z, max(2.0, float(splat["size"]) * 0.5), path, feather=0.2,
-                opacity=0.92 * max(0.0, 1.0 - splat.get("rain_wash", 0.0) / RAIN_WASH_SECONDS),
+                opacity=gore_fx.STAMP_OPACITY * max(0.0, 1.0 - splat.get("rain_wash", 0.0) / RAIN_WASH_SECONDS),
                 angle=float(splat.get("rot", 0.0)), washable=True))
         except Exception:
             return False
@@ -1297,9 +1327,11 @@ class MiniwindSession(SettlementLaw):
         self.game.character.handed = "left" if str(handed).lower() == "left" else "right"
         self.game.add_roll_listener(self._on_dice_roll)
         self.game.add_xp_listener(self._on_xp)
+        self.game.add_drink_listener(self._on_drink)
         # Author-granted starting spells (Game Settings → Player Spells).
         c = self.game.character
         for sid in (self._player_start_spells if c.can_use_magic() else ()):
+            sid = rpg_magic.awarded(sid, c.known_spells, self.rng)
             if rpg_magic.get(sid) and sid not in c.known_spells:
                 c.known_spells.append(sid)
         if c.known_spells and not c.active_spell:
@@ -1347,8 +1379,9 @@ class MiniwindSession(SettlementLaw):
 
         * an animal gets a head of its own kind (:func:`heads.animal_head`):
           its own image once drawn, the placeholder head until then;
-        * an NPC whose role is "guard" gets a random *guard* head
-          (guard01…guard26), matching the editor's guard-head option;
+        * a guard or a town archer (:data:`heads.GUARD_ROLES`) always wears a
+          *guard* head: one set in the editor is kept, anything else (no head,
+          or a regular one) is swapped for a random guard head (guard01…guard26);
         * everyone else gets a random regular head that is never the player's.
         """
         from .rpg import heads
@@ -1371,9 +1404,10 @@ class MiniwindSession(SettlementLaw):
             # was drawn) looks again, so new art reaches it.
             stand_in = cur == heads.PLACEHOLDER_HEAD and role in heads.ANIMAL_ROLES
             guard = heads.is_guard(p)
-            forbidden_guard = heads.is_guard_head(cur) and not guard
+            # Guard heads are for the guards alone, and the guards wear nothing else.
+            fits = cur.lower().startswith("guard") == guard
             if (heads.is_any_head(cur) and cur != player_head and not stand_in
-                    and not forbidden_guard):
+                    and fits):
                 head = cur
             elif role in heads.ANIMAL_ROLES:
                 head = heads.animal_head(role, self.rng, deck)
@@ -1520,12 +1554,16 @@ class MiniwindSession(SettlementLaw):
         warrior_fist.clear_spent(self)
         self.held.update()
         self.dragon_fire.update(delta)
+        self.burning.update(delta)
         self.wildlife.update(delta)
+        if self.__dict__.get("_party_due") and self._player_pos() is not None:
+            self._party_due = False
+            party.arrive(self)
         self.memory.update(delta)
         self._check_pack()
         self.autosave.tick(delta)
         self.rewind.tick(delta)
-        self._update_bolt_lights()
+        self._update_bolt_lights(delta)
         if self.arrows_in_flight and not fio.projectile_count(self.logic):
             # Fio does not publish an empty store, so the last arrow to land
             # is cleared here.
@@ -1783,6 +1821,8 @@ class MiniwindSession(SettlementLaw):
             pos[0] = ppos[0] + dx * k
             pos[2] = ppos[2] + dz * k
             w["retarget"] = 0.0   # pick a fresh inward target next tick
+        # Assigned, not only changed in place: the renderer is told it moved.
+        light.pos = pos
 
     def _remove_wisp(self) -> None:
         w = self._wisp
@@ -2330,10 +2370,14 @@ class MiniwindSession(SettlementLaw):
                 ox = self.rng.uniform(-radius, radius) if radius else 0.0
                 oz = self.rng.uniform(-radius, radius) if radius else 0.0
                 pos = [sp.pos[0] + ox, sp.pos[1], sp.pos[2] + oz]
+                spawner = str(p.get("id") or p.get("name") or "")
                 props = {"npc_role": role,
+                         # The same uuid every time the map is entered, as
+                         # everything authored in it keeps its own.
+                         "id": str(uuid.uuid5(SPAWN_ID_NAMESPACE, f"{spawner}#{slot}")),
                          # Remembered by spawner and slot (game/map_memory.py):
                          # killed today, back in about a day.
-                         "_spawner": str(p.get("id") or p.get("name") or ""),
+                         "_spawner": spawner,
                          "_spawn_slot": slot,
                          "_spawner_respawn": p.get("respawn", True) is not False}
                 if faction:
@@ -2440,9 +2484,12 @@ class MiniwindSession(SettlementLaw):
                     sim_own.mark_stolen(stack, sim_own.owner_of(p),
                                         sim_own.owner_name_of(p))
                     self.notify(f"Stole {name}")
-                else:
+                elif iid != rpg_items.GOLD:
                     self.notify(f"Picked up {name}")
-                inv.add_item(self.game.character.inventory, stack)
+                if iid == rpg_items.GOLD:
+                    self._credit_found_gold(qty, "Picked up")   # to the purse
+                else:
+                    inv.add_item(self.game.character.inventory, stack)
                 # Let a producer know one of its outstanding yields was taken so
                 # it starts making the next one.
                 producer = self._sim_producer_of(p)
@@ -2476,6 +2523,9 @@ class MiniwindSession(SettlementLaw):
             elif spell_id in c.known_spells:
                 self.notify(f"You already know {spell.name}")
             else:
+                # Flare is now and then Wisp instead (rpg_magic.awarded).
+                spell_id = rpg_magic.awarded(spell_id, c.known_spells, self.rng)
+                spell = rpg_magic.get(spell_id)
                 c.known_spells.append(spell_id)
                 if not c.active_spell:
                     c.active_spell = spell_id
@@ -3258,7 +3308,7 @@ class MiniwindSession(SettlementLaw):
         self._encumbered = heavy
 
     def _announce_skill_raises(self) -> None:
-        """Toast each skill that rose through use ("Destruction increased to
+        """Toast each skill that rose through use ("Offensive increased to
         12"), so learning by doing is something the player sees happen, and
         say so when the rises have earned a level."""
         c = getattr(getattr(self, "game", None), "character", None)
@@ -3302,6 +3352,11 @@ class MiniwindSession(SettlementLaw):
 
     def add_floater(self, text, kind="dmg", y=0.0):
         self.floaters.append({"text": text, "t": 1.2, "y": float(y), "kind": kind})
+
+    def _on_drink(self, _item) -> None:
+        """A potion drunk, however it was -- a strip slot's number key, the
+        heal key, the pack: the sound of it."""
+        self.play_ui_sound(DRINK_SOUND)
 
     def _on_xp(self, amount) -> None:
         """Experience earned (a kill, a quest): "+N XP" over the player, a
@@ -4481,6 +4536,38 @@ class MiniwindSession(SettlementLaw):
                 barks.pop(key, None)
                 continue
             out.append((thing, text, until - now))
+        return out
+
+    # -------------------------------------------------------------- floats
+    def float_text(self, thing, text, seconds: float = FIZZLE_SECONDS) -> None:
+        """Float *text* up from *thing*'s head and let it fade: a word about
+        what just happened to it (a fizzled spell), not something it says.
+        Like :meth:`bark`, only for those near enough to be on screen."""
+        if thing is None or not text or getattr(thing, "pos", None) is None:
+            return
+        ppos = self._player_pos()
+        if ppos is not None and self._dist2d(thing.pos, ppos) > BARK_RADIUS:
+            return
+        import time as _time
+        floats = self.__dict__.setdefault("floats", {})
+        floats[id(thing)] = (thing, str(text), _time.monotonic() + float(seconds),
+                             float(seconds))
+
+    def fizzled(self, thing) -> None:
+        """*thing*'s spell fizzled: say so over its head."""
+        self.float_text(thing, FIZZLE_TEXT, FIZZLE_SECONDS)
+
+    def live_floats(self):
+        """``[(thing, text, seconds_left, seconds_total)]`` still floating."""
+        import time as _time
+        now = _time.monotonic()
+        floats = self.__dict__.get("floats") or {}
+        out = []
+        for key, (thing, text, until, total) in list(floats.items()):
+            if until <= now or getattr(thing, "pos", None) is None:
+                floats.pop(key, None)
+                continue
+            out.append((thing, text, until - now, total))
         return out
 
     # ---------------------------------------------------------- conversation
@@ -6284,12 +6371,14 @@ class MiniwindSession(SettlementLaw):
         pos = self._player_pos()
         if c.is_dead or pos is None or fio.cutscene_active(self.logic):
             return []
-        from engine.overhead_sprite import ACTOR_Y, WEAPON_Y_LIFT, WEAPON_RIGHT_OFFSET
+        from engine.overhead_sprite import WEAPON_RIGHT_OFFSET
         player = fio.player(self.logic)
         angle = float(getattr(player, "angle", 0.0))
         forward = (math.sin(angle), math.cos(angle))
         overhead = fio.is_overhead(self.logic)
-        height = ACTOR_Y + WEAPON_Y_LIFT if overhead else \
+        # From above the hands lie where the weapons are drawn: at the actor,
+        # never lifted toward the camera (engine/overhead_sprite.py).
+        height = 0.0 if overhead else \
             float(getattr(player, "camera_height", 48.0)) - 16.0
         advance = 0.0 if overhead else 60.0
         out = []
@@ -6303,6 +6392,36 @@ class MiniwindSession(SettlementLaw):
                   pos[1] + height,
                   pos[2] - forward[0] * side * WEAPON_RIGHT_OFFSET + forward[1] * advance)
             out.append((at, self.spell_look(spell)))
+        return out + self._npc_magic_hands(pos)
+
+    #: How far from the player an NPC's readied spells are drawn in its hands.
+    NPC_HAND_GLOW_RADIUS = 2400.0
+
+    def _npc_magic_hands(self, ppos):
+        """The spells fighting NPCs hold ready, glowing in their hands as the
+        player's do (game/npc_magic.py)."""
+        from engine.overhead_sprite import WEAPON_RIGHT_OFFSET
+        from . import npc_magic
+        out = []
+        r2 = self.NPC_HAND_GLOW_RADIUS ** 2
+        for t in self._actors or ():
+            p = t.properties
+            if p.get("dead") or p.get("hidden") or not p.get("spells"):
+                continue
+            if (t.pos[0] - ppos[0]) ** 2 + (t.pos[2] - ppos[2]) ** 2 > r2:
+                continue
+            glows = npc_magic.hand_glows(p)
+            if not glows:
+                continue
+            facing = float(p.get("_facing", 0.0) or 0.0)
+            forward = (math.sin(facing), math.cos(facing))
+            handed = str(p.get("handed", "right") or "right")
+            for hand, spell in glows:
+                physical = handed if hand == "main" else ("left" if handed == "right" else "right")
+                side = -1.0 if physical == "left" else 1.0
+                at = (t.pos[0] + forward[1] * side * WEAPON_RIGHT_OFFSET, t.pos[1],
+                      t.pos[2] - forward[0] * side * WEAPON_RIGHT_OFFSET)
+                out.append((at, self.spell_look(spell)))
         return out
 
     #: Ward effects drawn as a fresnel bubble round the player: kind -> colour.
@@ -6321,7 +6440,9 @@ class MiniwindSession(SettlementLaw):
                       if c.effect_magnitude(kind) > 0]
 
     def _magic_cast_fx(self, spell, target=None) -> None:
-        """The visible side of a cast the player just made."""
+        """The visible side of a cast the player just made -- and the sound
+        of it."""
+        self.play_ui_sound(SPELLCAST_SOUND)
         pos = self._player_pos()
         if pos is None:
             return
@@ -6494,6 +6615,7 @@ class MiniwindSession(SettlementLaw):
             if res.reason == "not enough magicka":
                 self.notify("Not enough magicka")
             elif res.reason == "fizzle":
+                self.fizzled(self.player_actor)
                 roll = res.roll or {}
                 if roll:
                     self.notify(
@@ -6515,6 +6637,7 @@ class MiniwindSession(SettlementLaw):
                 self.close_lockpicking(save_progress=False)
             self.notify("Knock clears the sheared pick and opens the lock." if jammed
                         else "Knock opens the lock.", 4.0)
+            self.play_ui_sound(SPELLCAST_SOUND)
             self._magic_cast_fx(spell)
             return True
         # A "wisp" effect conjures the wandering companion light (a SELF spell).
@@ -6628,16 +6751,16 @@ class MiniwindSession(SettlementLaw):
             return False
         c.magicka = 0.0
         self.store.set("resurrect.last_day", today)
+        self.play_ui_sound(SPELLCAST_SOUND)
         c.use_skill(spell.school, 1.0 + spell.base_cost / 40.0)
         p = target.properties
-        p.update(resurrection_used=True, resurrected_by="player",
-                 sprite_tint=[1.0, 0.30, 0.30], follow_player=True,
-                 combatant=True, aggression="defensive", team=factions.PLAYER,
-                 faction=factions.PLAYER, triggered=True, awake=False,
-                 away_on_journey=False)
-        for key in ("_aggro_target", "_base_aggression", "_flee", "_dest",
-                    "_arrest_state", "_journey", "_death_noted"):
-            p.pop(key, None)
+        self._restore_living_kit(p)
+        self._bind_raised(p)
+        # The map forgets it among its dead and remembers it was raised
+        # (game/map_memory.py): its second life holds when the map is left.
+        memory = getattr(self, "memory", None)
+        if memory is not None:
+            memory.raised(target)
         self._deaths_seen.discard(str(p.get("name", "")))
         if p.get("name"):
             self.store.set("dead." + str(p["name"]), "false")
@@ -6653,6 +6776,74 @@ class MiniwindSession(SettlementLaw):
         self._player_deed("resurrect")
         self.add_floater("RAISED", kind="heal")
         return True
+
+    def leave_map(self) -> None:
+        """The player leaves this map (play stops for a level change): its
+        living raised followers go with them (game/party.py)."""
+        try:
+            party.depart(self)
+        except Exception as exc:
+            print(f"[MiniWind] followers could not leave with the player: {exc}")
+
+    @staticmethod
+    def _restore_living_kit(p) -> None:
+        """Give the raised body *p* back what it carried in life, less what the
+        player took from its corpse: the loot rolled onto it at death
+        (``stock_corpse``) was never its own and goes. Its spells were never
+        lost. A weapon it held that was looted is no longer in its hand."""
+        living = p.pop("living_inventory", None)
+        if not isinstance(living, list):
+            return                      # never stocked: its pack is untouched
+        carried = p.get("inventory")
+        left = {}
+        for st in carried if isinstance(carried, list) else ():
+            if isinstance(st, dict):
+                iid = str(st.get("id", ""))
+                left[iid] = left.get(iid, 0) + int(st.get("qty", 1) or 0)
+        kept = []
+        for st in living:
+            iid = str(st.get("id", ""))
+            if warrior_fist.innate(iid):
+                kept.append(copy.deepcopy(st))   # fists never leave a body
+                continue
+            n = min(int(st.get("qty", 1) or 0), left.get(iid, 0))
+            if n <= 0:
+                continue
+            left[iid] -= n
+            stack = copy.deepcopy(st)
+            if "qty" in stack or n != 1:
+                stack["qty"] = n
+            kept.append(stack)
+        p["inventory"] = kept
+        had = {str(st.get("id", "")) for st in living}
+        have = {str(st.get("id", "")) for st in kept}
+        disarmed = False
+        for field in ("equipped_weapon", "offhand_weapon"):
+            wid = str(p.get(field) or "")
+            if wid and wid in had and wid not in have:
+                p.pop(field, None)
+                disarmed = True
+        p.pop("_active_weapon", None)
+        from . import npc_magic
+        if disarmed and not any(p.get(f"hand_spell_{h}") for h in npc_magic.HANDS):
+            p.pop("hand_spells", None)   # readied again for the hands now free
+
+    @staticmethod
+    def _bind_raised(p) -> None:
+        """Make the raised body *p* the caster's: tinted red, on the player's
+        side, following and defending them (see _guard_raised_follower)."""
+        p.update(resurrection_used=True, resurrected_by="player",
+                 sprite_tint=[1.0, 0.30, 0.30], follow_player=True,
+                 combatant=True, aggression="defensive", team=factions.PLAYER,
+                 faction=factions.PLAYER, triggered=True, awake=False,
+                 away_on_journey=False,
+                 # It has what it had in life, no more: the map's arming
+                 # rolls (game/held_weapons.py) never add to it again.
+                 _ward_rolled=True, _second_weapon_rolled=True,
+                 _caster_sidearm_rolled=True)
+        for key in ("_aggro_target", "_base_aggression", "_flee", "_dest",
+                    "_arrest_state", "_journey", "_death_noted"):
+            p.pop(key, None)
 
     def _revive_actor(self, thing) -> bool:
         """Bring a slain actor back to life: clear death flags, restore health
@@ -6724,10 +6915,16 @@ class MiniwindSession(SettlementLaw):
         # with the spell's damage.
         # A no-op impact hook gives the bolt a tag, so its light and its
         # trail can follow it.
+        # A bolt that burns (Flare) sets alight what it strikes, or the
+        # ground where it lands (game/burning.py).
+        on_impact = _bolt_landed
+        if burning_mod.burn_of(spell) is not None:
+            def on_impact(pos, target, spell=spell):
+                self.burning.landed(spell, list(pos), target, by=None)
         row = fio.spawn_projectile(lt, start, vel,
                                    lifetime=MONSTER_PROJECTILE_MAX_DIST / speed,
                                    damage=int(getattr(spell, "damage", 0) or 0),
-                                   on_impact=_bolt_landed)
+                                   on_impact=on_impact)
         self._attach_bolt_light(row, start, spell)
         if row is not None:
             self.magic_fx.bolt(fio.projectile_tag(lt, row), self.spell_look(spell))
@@ -6736,8 +6933,11 @@ class MiniwindSession(SettlementLaw):
         """Give a spell bolt its own moving light, in the spell's colour.
 
         The light rides the bolt (see :meth:`_split_projectiles`, which reads
-        where every lit bolt is as Fio publishes the projectiles) and goes out
-        the moment the bolt strikes or fizzles out of range."""
+        where every lit bolt is as Fio publishes the projectiles). When the
+        bolt strikes or fizzles out of range the light goes out with it, or,
+        for a spell that lingers (Flare), stays where the bolt landed for the
+        spell's ``linger`` seconds and then fades. A higher level reaches a
+        little further and burns brighter (``Spell.light_scale``)."""
         if row is None:
             return
         tag = fio.projectile_tag(self.logic, row)
@@ -6747,10 +6947,15 @@ class MiniwindSession(SettlementLaw):
             colour = list(spell.color)
         except Exception:
             colour = list(rpg_magic.DEFAULT_SPELL_COLOR)
+        try:
+            k_radius, k_bright = spell.light_scale()
+        except Exception:
+            k_radius = k_bright = 1.0
         light = self._make_light(start, {
-            "colour": colour, "intensity": BOLT_LIGHT_INTENSITY,
-            "radius": BOLT_LIGHT_RADIUS, "state": "on", "casts_shadows": False,
-            "hidden_in_game": False, "_bolt": True})
+            "colour": colour, "intensity": BOLT_LIGHT_INTENSITY * k_bright,
+            "radius": BOLT_LIGHT_RADIUS * k_radius, "state": "on",
+            "casts_shadows": False, "hidden_in_game": False, "_bolt": True,
+            "_linger": float(getattr(spell, "linger", 0.0) or 0.0)})
         if light is None:
             return
         try:
@@ -6760,29 +6965,65 @@ class MiniwindSession(SettlementLaw):
         self._bolt_lights[tag] = light
         self._rebuild_entity_caches()
 
-    def _update_bolt_lights(self) -> None:
-        """Move each spell bolt's light onto its bolt; put out the spent ones."""
+    def _update_bolt_lights(self, delta: float = 0.0) -> None:
+        """Move each spell bolt's light onto its bolt; put out the spent ones,
+        or leave a lingering one where its bolt landed, and fade those out."""
+        changed = self._update_lingering_lights(delta)
         lights = self._bolt_lights
-        if not lights:
-            return
-        live = self._bolt_positions if fio.projectile_count(self.logic) else {}
-        changed = False
+        live = self._bolt_positions if lights and fio.projectile_count(self.logic) else {}
         for tag in list(lights):
             light = lights[tag]
             pos = live.get(tag)
             if pos is None:
                 del lights[tag]
-                try:
-                    things = fio.things(self.logic)
-                    if light in things:
-                        things.remove(light)
-                except Exception:
-                    pass
+                linger = float(light.properties.get("_linger", 0.0) or 0.0)
+                if linger > 0.0:
+                    # Burning where it landed (it already stands there).
+                    self._lingering_lights.append({
+                        "light": light, "hold": linger, "fade": BOLT_LINGER_FADE,
+                        "base": float(light.properties.get("intensity",
+                                                           BOLT_LIGHT_INTENSITY))})
+                    continue
+                self._drop_light(light)
                 changed = True
                 continue
-            lp = light.pos
-            lp[0], lp[1], lp[2] = pos[0], pos[1], pos[2]
+            # Assigned, not changed in place: the renderer is told it moved.
+            light.pos = [pos[0], pos[1], pos[2]]
         if changed:
+            self._rebuild_entity_caches()
+
+    def _update_lingering_lights(self, delta: float) -> bool:
+        """Count down each lingering bolt light: it holds, then fades out and
+        is put out. True if any went out."""
+        gone = False
+        for entry in list(self._lingering_lights):
+            light = entry["light"]
+            if entry["hold"] > 0.0:
+                entry["hold"] -= delta
+                continue
+            entry["fade"] -= delta
+            if entry["fade"] <= 0.0:
+                self._lingering_lights.remove(entry)
+                self._drop_light(light)
+                gone = True
+                continue
+            light.properties["intensity"] = entry["base"] * entry["fade"] / BOLT_LINGER_FADE
+            _journal(light)
+        return gone
+
+    def _drop_light(self, light) -> None:
+        try:
+            things = fio.things(self.logic)
+            if light in things:
+                things.remove(light)
+        except Exception:
+            pass
+
+    def _clear_lingering_lights(self) -> None:
+        for entry in self._lingering_lights:
+            self._drop_light(entry["light"])
+        if self._lingering_lights:
+            self._lingering_lights = []
             self._rebuild_entity_caches()
 
     def overhead_player_weapon(self):
@@ -7302,7 +7543,10 @@ class MiniwindSession(SettlementLaw):
         if book is None:
             self.notify("The pages are blank", 2.0)
             return False
-        self.reading = {"item": item_id, "book": book.id, "spread": 0, "spreads": 1}
+        d = rpg_items.get(item_id)
+        self.reading = {"item": item_id, "book": book.id, "spread": 0, "spreads": 1,
+                        # A note is a loose sheet, not a bound book (book_window.py).
+                        "note": bool(d is not None and d.get("note"))}
         self._book_return = self.open_screen if self.open_screen != "book" else None
         self.open_screen = "book"
         self.play_ui_sound("page")
@@ -7345,8 +7589,9 @@ class MiniwindSession(SettlementLaw):
 
     def pack_stacks(self) -> List[Dict]:
         """What the pack holds, slot by slot, in the order things came: every
-        carried stack not worn, and each copy of a weapon not in hand on its
-        own (as a stack of one). Coin is in the purse."""
+        carried stack not worn, at most :data:`inventory.MAX_STACK` to a slot
+        (twelve potions are 5, 5 and 2), and each copy of a weapon not in hand
+        on its own (as a stack of one). Coin is in the purse."""
         c = self.game.character
         worn = [v for v in (c.equipment or {}).values() if v]
         out = []
@@ -7367,7 +7612,11 @@ class MiniwindSession(SettlementLaw):
                 else:
                     out.extend(dict(stack, qty=1) for _ in range(max(0, loose)))
             elif iid not in worn:
-                out.append(stack)
+                sizes = inv.slot_sizes(iid, qty)
+                if len(sizes) == 1:
+                    out.append(stack)
+                else:
+                    out.extend(dict(stack, qty=n) for n in sizes)
         return out
 
     def pack_used(self) -> int:
@@ -7383,8 +7632,24 @@ class MiniwindSession(SettlementLaw):
         if d is not None and d.category == rpg_items.WEAPON:
             need = max(1, int(qty))
         else:
-            need = 0 if any(st.get("id") == item_id for st in self.pack_stacks()) else 1
+            # A slot for each stack of five it fills that it did not before.
+            worn = item_id in [v for v in (self.game.character.equipment or {}).values() if v]
+            have = 0 if worn else inv.quantity(self.game.character.inventory, item_id)
+            need = (len(inv.slot_sizes(item_id, have + int(qty)))
+                    - len(inv.slot_sizes(item_id, have)))
         return self.pack_used() - int(freed) + need <= self.pack_capacity()
+
+    def _credit_found_gold(self, amount: int, verb: str = "Found") -> int:
+        """Put *amount* gold found in the world in the purse -- more of it for
+        the lucky (game.rpg.fortune.lucky_gold) -- and say how much."""
+        c = self.game.character
+        got = rpg_fortune.lucky_gold(c, amount)
+        c.gold += got
+        if got > amount:
+            self.notify(f"{verb} {got} gold  (+{got - amount} by luck)")
+        elif got:
+            self.notify(f"{verb} {got} gold")
+        return got
 
     def _pack_full_note(self) -> None:
         import time as _time
@@ -7484,13 +7749,11 @@ class MiniwindSession(SettlementLaw):
     def _strip_copies(stack) -> int:
         """How many strip slots a carried *stack* may take: one per copy of a
         weapon -- each blade is drawn from a slot of its own, so a pair to
-        dual wield costs two -- and one for anything else (its count shows)."""
+        dual wield costs two -- and one per stack of five of anything else
+        (:func:`inventory.slot_sizes`; its count shows)."""
         if not stack:
             return 0
-        d = rpg_items.get(stack.get("id"))
-        if d is not None and d.category == rpg_items.WEAPON:
-            return max(1, int(stack.get("qty", 1) or 1))
-        return 1
+        return max(1, len(inv.slot_sizes(stack.get("id"), stack.get("qty", 1))))
 
     def strip_slots(self) -> List[Optional[Dict]]:
         """The strip's slots, each the carried stack in it or None. A weapon
@@ -7545,11 +7808,15 @@ class MiniwindSession(SettlementLaw):
         seen.intersection_update(carried)
         for iid in [k for k in offered if k not in carried]:
             del offered[iid]
-        out = []
+        out, shown = [], {}
         for iid in strip:
             stack = carried.get(iid) if iid else None
             if stack is not None and self._strip_copies(stack) > 1:
-                stack = dict(stack, qty=1)       # one copy per slot
+                # One copy of a weapon per slot; five at most of anything else.
+                sizes = inv.slot_sizes(iid, stack.get("qty", 1))
+                k = shown.get(iid, 0)
+                shown[iid] = k + 1
+                stack = dict(stack, qty=sizes[min(k, len(sizes) - 1)])
             out.append(stack)
         return out
 
@@ -7968,6 +8235,7 @@ class MiniwindSession(SettlementLaw):
         if getattr(self, "living", None) is not None:
             tree = self.living.prepare_tree(tree, npc)
         tree = self._with_mind_topic(tree, npc)
+        tree = self._with_training_topics(tree, npc)
         tree = self._with_fortune_topics(tree, npc)
         self.dialogue = DialogueRunner(
             tree, store=self.store,
@@ -8012,6 +8280,39 @@ class MiniwindSession(SettlementLaw):
             "responses": [{"text": "I see.", "goto": start}]}
         resp = tree["nodes"][start].setdefault("responses", [])
         resp.insert(max(0, len(resp) - 1), {"text": "What's on your mind?", "goto": "_mind"})
+        return tree
+
+    def _with_training_topics(self, tree, npc):
+        """*tree* with what this NPC teaches among the opening responses -- a
+        copy: training in its skills, its spells, and, for a teacher of the
+        Arcane Circle, joining it. Not offered by anyone hostile, or during
+        an arrest (game/rpg/training.py)."""
+        p = npc.properties
+        if (not isinstance(tree, dict) or str(p.get("aggression")) == "hostile"
+                or npc is self._arrest_guard):
+            return tree
+        start = tree.get("start")
+        if start not in (tree.get("nodes") or {}):
+            return tree
+        offers = []
+        if rpg_training.is_trainer(p):
+            offers.append({"text": TRAIN_PROMPT, "goto": "END",
+                           "actions": [{"op": "open_training"}]})
+        if rpg_training.is_tutor(p):
+            offers.append({"text": TUTOR_PROMPT, "goto": "END",
+                           "actions": [{"op": "open_tutor"}]})
+        c = self.game.character
+        if (offers and rpg_training.guild_of(p) == rpg_training.ARCANE_CIRCLE
+                and c.can_use_magic() and not guilds.is_member(c, rpg_training.ARCANE_CIRCLE)):
+            offers.append({"text": JOIN_CIRCLE_PROMPT, "goto": "END",
+                           "actions": [{"op": "join_guild",
+                                        "guild": rpg_training.ARCANE_CIRCLE}]})
+        if not offers:
+            return tree
+        import copy
+        tree = copy.deepcopy(tree)
+        resp = tree["nodes"][start].setdefault("responses", [])
+        resp[:0] = offers
         return tree
 
     def _fortune_key(self, npc, option) -> str:
@@ -8243,6 +8544,8 @@ class MiniwindSession(SettlementLaw):
         elif op == "join_guild":
             if guilds.join(self.game.character, action.get("guild", "")):
                 self.notify(f"You have joined the {guilds.get(action.get('guild','')).name}.")
+        elif op in ("open_training", "open_tutor"):
+            self.open_teaching(npc, "training" if op == "open_training" else "tutor")
 
     def choose(self, index: int) -> None:
         if self.dialogue is None:
@@ -8561,11 +8864,12 @@ class MiniwindSession(SettlementLaw):
                                 sim_own.owner_name_of(props))
             self.notify(f"Stole {name}")
         else:
-            self.notify(f"Took {name}" if stack.get("id") != rpg_items.GOLD
-                        else f"Took {int(stack.get('qty', 1))} gold")
+            if stack.get("id") != rpg_items.GOLD:
+                self.notify(f"Took {name}")
         if stack.get("id") == rpg_items.GOLD:
-            # Coin is counted, not carried as an item.
-            self.game.character.gold += int(stack.get("qty", 1) or 0)
+            # Coin is counted, not carried as an item -- and the lucky find
+            # more of it than lies there.
+            self._credit_found_gold(int(stack.get("qty", 1) or 0), "Took")
         else:
             inv.add_item(self.game.character.inventory, stack)
         return True
@@ -8664,6 +8968,9 @@ class MiniwindSession(SettlementLaw):
         if warrior_fist.innate(item_id):
             self.notify("Your fists are not for sale")
             return False
+        if not self.merchant_will_buy(item_id):
+            self.notify(library.NOT_INTERESTED)
+            return False
         price = self._price(d.value, buying=False, npc=self.merchant_npc)
         inv.remove_item(c.inventory, item_id, 1)
         c.gold += price
@@ -8671,6 +8978,13 @@ class MiniwindSession(SettlementLaw):
         self._remember_trade()
         self.play_ui_sound(TRANSACTION_SOUND)
         return True
+
+    def merchant_will_buy(self, item_id) -> bool:
+        """Whether the merchant being traded with will take *item_id*: not
+        everyone has a shelf for books (game/library.py)."""
+        npc = self.merchant_npc
+        return library.will_buy(getattr(npc, "properties", None) if npc is not None
+                                else None, item_id)
 
     def play_ui_sound(self, name: str, volume: float = 1.0) -> bool:
         """Play an interface sound from ``assets/sounds`` (heard everywhere).
@@ -8685,6 +8999,69 @@ class MiniwindSession(SettlementLaw):
             return False
         queue({"file": name, "volume": float(volume), "global": True})
         return True
+
+    # -- trainers and tutors (game/rpg/training.py) ---------------------------
+    def open_teaching(self, npc, screen: str) -> bool:
+        """Open *npc*'s ``"training"`` or ``"tutor"`` screen. A Warrior is
+        told why not, if magic is all the teacher has."""
+        p = npc.properties
+        c = self.game.character
+        magic_only = (screen == "tutor" or all(
+            s in sk.SCHOOLS for s in (rpg_training.trainer_of(p) or {}).get("skills", ())))
+        self.end_dialogue()
+        if magic_only and not c.can_use_magic():
+            name = p.get("display_name", "The teacher")
+            self.notify(f'{name}: "{rpg_training.explain("warrior")}"', 4.5)
+            return False
+        self.trainer_npc = npc
+        self.open_screen = screen
+        return True
+
+    def close_teaching(self) -> None:
+        self.open_screen = None
+        self.trainer_npc = None
+
+    def _teacher_price(self, base) -> int:
+        """A teacher's fee: the merchant's price, for the merchant's reasons."""
+        return self._price(int(base), buying=True, npc=self.trainer_npc)
+
+    def train_with_teacher(self, skill_id: str) -> Dict:
+        """Buy one training session in *skill_id* from :attr:`trainer_npc`."""
+        npc = self.trainer_npc
+        if npc is None:
+            return {"ok": False, "reason": "not_taught"}
+        c = self.game.character
+        r = rpg_training.train(c, npc.properties, skill_id, price_of=self._teacher_price)
+        if not r["ok"]:
+            self.notify(rpg_training.explain(r["reason"]), 3.5)
+            return r
+        self.play_ui_sound(TRANSACTION_SOUND)
+        disp.remember(self.store, npc.properties, "traded")
+        # The rise itself is toasted as every rise is (_announce_skill_raises).
+        self.notify(f"Paid {r['price']} gold for a lesson in {sk.label(r['skill'])}.", 3.0)
+        self._announce_promotion(r)
+        return r
+
+    def learn_from_teacher(self, spell_id: str) -> Dict:
+        """Buy *spell_id* from :attr:`trainer_npc`."""
+        npc = self.trainer_npc
+        if npc is None:
+            return {"ok": False, "reason": "not_taught"}
+        c = self.game.character
+        r = rpg_training.learn(c, npc.properties, spell_id, price_of=self._teacher_price)
+        if not r["ok"]:
+            self.notify(rpg_training.explain(r["reason"]), 3.5)
+            return r
+        self.play_ui_sound(TRANSACTION_SOUND)
+        disp.remember(self.store, npc.properties, "traded")
+        self.notify(f"Learned {r['spell'].name}  (-{r['price']} gold)", 3.5)
+        self._announce_promotion(r)
+        return r
+
+    def _announce_promotion(self, result) -> None:
+        if result.get("promoted"):
+            title = guilds.rank_title(self.game.character, rpg_training.ARCANE_CIRCLE)
+            self.notify(f"The Arcane Circle names you {title}.", 4.5)
 
     def _remember_trade(self) -> None:
         """Honest business slowly warms a merchant to the player (memory), and

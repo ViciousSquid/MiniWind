@@ -11,6 +11,7 @@ reward a finished quest, and award kill XP + loot. Combat maths live in
 
 from __future__ import annotations
 
+import copy
 import json
 import random
 from html import escape
@@ -120,7 +121,9 @@ class GameState:
     @classmethod
     def new_game(cls, store, name, race_id, class_id, birthsign_id="none",
                  gender="male", custom_class=None, rng=None, head="") -> "GameState":
-        char = Character.create(name, race_id, class_id, birthsign_id, gender, custom_class)
+        rng = rng or random.Random()
+        char = Character.create(name, race_id, class_id, birthsign_id, gender, custom_class,
+                                rng=rng)
         if head:
             from . import heads
             char.head = heads.normalise(head)
@@ -177,6 +180,11 @@ class GameState:
                 return False
             magic.apply_effects_to_character(self.character, d.get("effects", []))
             self.message(f"Drank {d.name}")
+            for listener in list(getattr(self, "_drink_listeners", ())):
+                try:
+                    listener(d)
+                except Exception:
+                    pass
             return True
         if d.category == items.BOOK:
             c = self.character
@@ -443,6 +451,13 @@ class GameState:
         if target_props.get("loot_rolled"):
             return False
         target_props["loot_rolled"] = True
+        # What it carried in life, before the loot table is laid over it: a
+        # body raised by necromancy gets back what of this the player left.
+        carried = target_props.get("inventory")
+        if isinstance(carried, str):
+            target_props["inventory"] = _stacks_from_text(carried)
+        target_props["living_inventory"] = copy.deepcopy(
+            [s for s in target_props.get("inventory") or () if isinstance(s, dict)])
         role = str(target_props.get("npc_role") or target_props.get("monster_role") or "").lower()
         creature = bestiary.get(role)
         table = target_props.get("loot") or (creature.loot if creature else "")
@@ -459,10 +474,6 @@ class GameState:
             stacks += potions
         if not stacks and not gold and not table:
             return True
-        carried = target_props.get("inventory")
-        if isinstance(carried, str):
-            # Authored shorthand ("id:qty, id"): expand it rather than lose it.
-            target_props["inventory"] = _stacks_from_text(carried)
         carried = inv.get_inventory(target_props)
         for s in stacks:
             inv.add_item(carried, s)
@@ -526,6 +537,12 @@ class GameState:
                 except Exception:
                     pass
         return gained
+
+    def add_drink_listener(self, fn) -> None:
+        """Call ``fn(item_def)`` whenever the character drinks a potion."""
+        listeners = self.__dict__.setdefault("_drink_listeners", [])
+        if fn not in listeners:
+            listeners.append(fn)
 
     def add_xp_listener(self, fn) -> None:
         """Call ``fn(amount)`` whenever experience is awarded."""

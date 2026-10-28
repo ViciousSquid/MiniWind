@@ -16,6 +16,18 @@ def modal_input_active(logic) -> bool:
     query = getattr(session, "modal_input_active", None)
     return bool(query()) if callable(query) else False
 
+
+def owns_number_keys(logic) -> bool:
+    """Whether the running game reads the number keys itself.
+
+    Fio maps 1-4 to its own weapon slots (gun1, gun2, custom1, custom2). A
+    game with its own slot bar sets ``owns_number_keys`` on its session, and
+    the keys then reach it as ordinary key presses instead.
+    """
+    session = getattr(logic, "game_session", None)
+    return bool(getattr(session, "owns_number_keys", False))
+
+
 def modal_escape_active(logic) -> bool:
     """Whether the running game wants Escape routed to its own modal UI.
 

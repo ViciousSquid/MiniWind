@@ -22,9 +22,9 @@ from PyQt5.QtGui import QColor, QPen
 from ..rpg import attributes as attr
 from ..rpg import skills as sk
 
-#: Mastery ranks: (from level, name).
-RANKS = ((0, "Novice"), (25, "Apprentice"), (50, "Journeyman"), (75, "Expert"),
-         (100, "Master"))
+#: Mastery ranks: (from level, name), and the one a level has reached.
+RANKS = sk.RANKS
+rank = sk.rank
 #: Each branch's colour.
 BRANCH_COLORS = {sk.COMBAT: QColor(222, 112, 88), sk.MAGIC: QColor(120, 150, 245),
                  sk.STEALTH: QColor(110, 200, 130)}
@@ -33,15 +33,6 @@ _DIM = QColor(140, 144, 150)
 _GOLD = QColor(240, 200, 110)
 _TRACK = QColor(54, 56, 60)
 
-
-def rank(level: int):
-    """``(index, name)`` of the mastery rank *level* has reached."""
-    level = int(level)
-    out = (0, RANKS[0][1])
-    for i, (lo, name) in enumerate(RANKS):
-        if level >= lo:
-            out = (i, name)
-    return out
 
 
 def progress(character, skill_id: str) -> float:

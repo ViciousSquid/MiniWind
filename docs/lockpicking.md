@@ -55,7 +55,7 @@ is `25% × (15 − Security) / 15` (about 17% at Security 5), displayed before
 tension is applied. A sheared tip jams the container: keys, further picks,
 leaving the map, saving and reloading cannot bypass it.
 
-**Knock** is the sole jam exception. This Alteration touch spell costs 45 base
+**Knock** is the sole jam exception. This Defensive touch spell costs 45 base
 magicka and uses normal spell knowledge, skill, magicka, fizzle and practice
 rules. A successful cast opens the nearest locked/jammed container within its
 use radius (capped at interaction reach), clears the obstruction and leaves

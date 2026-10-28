@@ -38,12 +38,16 @@ _cache: Dict[str, Optional["Book"]] = {}
 
 class Book:
     def __init__(self, book_id: str, title: str, author: str,
-                 paragraphs: List[str], meta: Dict[str, str]):
+                 paragraphs: List[str], meta: Dict[str, str],
+                 lines: Optional[List[List[str]]] = None):
         self.id = book_id
         self.title = title
         self.author = author
         #: Paragraph texts, with PAGE_BREAK entries where a page must turn.
         self.paragraphs = paragraphs
+        #: The same paragraphs as the lines they were written in (a list, a
+        #: poem), for writing laid out line by line: a note.
+        self.lines = lines if lines is not None else [[p] for p in paragraphs]
         self.meta = meta
 
 
@@ -57,24 +61,27 @@ def parse(book_id: str, text: str) -> Book:
             meta[key.strip().lower()] = value.strip()
         i += 1
     paragraphs: List[str] = []
+    written: List[List[str]] = []
     current: List[str] = []
+
+    def end_paragraph():
+        if current:
+            paragraphs.append(" ".join(current))
+            written.append(list(current))
+            current.clear()
     for line in lines[i:]:
         s = line.strip()
         if s == PAGE_BREAK:
-            if current:
-                paragraphs.append(" ".join(current))
-                current = []
+            end_paragraph()
             paragraphs.append(PAGE_BREAK)
+            written.append([PAGE_BREAK])
         elif not s:
-            if current:
-                paragraphs.append(" ".join(current))
-                current = []
+            end_paragraph()
         else:
             current.append(s)
-    if current:
-        paragraphs.append(" ".join(current))
+    end_paragraph()
     title = meta.get("title") or book_id.replace("_", " ").title()
-    return Book(book_id, title, meta.get("author", ""), paragraphs, meta)
+    return Book(book_id, title, meta.get("author", ""), paragraphs, meta, written)
 
 
 def get(book_id: str) -> Optional[Book]:

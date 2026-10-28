@@ -2403,7 +2403,8 @@
     "start_scenario": "prompt",
     "region_name": "Bearclaw Den",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -2420,6 +2421,406 @@
     "id": "fdde1898-3143-47f4-aba4-8af662046f26",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -576.0,
+    48.0,
+    1600.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave10_f0",
+    "id": "8765047e-7d6f-5e48-86ca-fb8d712ce6de",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "iron_arrow",
+      "name": "Iron Arrow",
+      "qty": 3,
+      "type": "ammo",
+      "value": 1,
+      "weight": 0.1,
+      "description": "A plain iron-tipped arrow."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 307.2
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -704.0,
+    48.0,
+    64.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave10_f1",
+    "id": "76cac13d-e727-585c-bacd-51ebd385e8b7",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_wolf_pelt",
+      "name": "Wolf Pelt",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 6,
+      "weight": 2.0,
+      "description": "A rough grey pelt worth a few coins."
+     },
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 1,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 12.8
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    576.0,
+    48.0,
+    -192.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave10_f2",
+    "id": "701e0479-8659-567f-bdd8-9080dcabd4b0",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_wolf_pelt",
+      "name": "Wolf Pelt",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 6,
+      "weight": 2.0,
+      "description": "A rough grey pelt worth a few coins."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 216.4
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1216.0,
+    48.0,
+    -832.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave10_f3",
+    "id": "dc3e6291-f747-5258-84e4-454a3685a768",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "leather_boots",
+      "name": "Leather Boots",
+      "qty": 1,
+      "type": "armour",
+      "value": 12,
+      "weight": 3.0,
+      "description": "Leather boots."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 5,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 129.1
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1088.0,
+    48.0,
+    320.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave10_f4",
+    "id": "e79282e4-dfe1-55e3-9829-7fa1f7dc6202",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_wolf_pelt",
+      "name": "Wolf Pelt",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 6,
+      "weight": 2.0,
+      "description": "A rough grey pelt worth a few coins."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 102.9
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    704.0,
+    48.0,
+    -1344.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave10_f5",
+    "id": "c75c8755-5a1a-5455-b636-32d480878f7c",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 20,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 327.3
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    832.0,
+    48.0,
+    64.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave10_f6",
+    "id": "a238bc21-cf21-5ff9-989e-950ea02f71de",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_wolf_pelt",
+      "name": "Wolf Pelt",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 6,
+      "weight": 2.0,
+      "description": "A rough grey pelt worth a few coins."
+     },
+     {
+      "id": "ingr_bonemeal",
+      "name": "Bone Meal",
+      "qty": 2,
+      "type": "ingredient",
+      "value": 2,
+      "weight": 0.5,
+      "description": "Ground bone."
+     },
+     {
+      "id": "iron_arrow",
+      "name": "Iron Arrow",
+      "qty": 5,
+      "type": "ammo",
+      "value": 1,
+      "weight": 0.1,
+      "description": "A plain iron-tipped arrow."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 21,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 329.1
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1600.0,
+    48.0,
+    64.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave10_f7",
+    "id": "fe24ad7f-7b24-514c-8407-d952dd4e0b06",
+    "container_kind": "sack",
+    "display_name": "Sack",
+    "inventory": [
+     {
+      "id": "ingr_wolf_pelt",
+      "name": "Wolf Pelt",
+      "qty": 3,
+      "type": "ingredient",
+      "value": 6,
+      "weight": 2.0,
+      "description": "A rough grey pelt worth a few coins."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 86.7
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    64.0,
+    48.0,
+    192.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave10_f8",
+    "id": "e763f2d4-60e8-5e7b-968b-63d07e399a08",
+    "container_kind": "sack",
+    "display_name": "Adventurer's Pack",
+    "inventory": [
+     {
+      "id": "potion_heal_minor",
+      "name": "Minor Healing Potion",
+      "qty": 1,
+      "type": "potion",
+      "value": 15,
+      "weight": 0.5,
+      "description": "Restores 30 health."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 9,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "note_crier_smoke",
+      "name": "Clipping from the Crier",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "The Millbrook Crier on the smoke over the Emberpeaks."
+     },
+     {
+      "id": "book_aldous_penn",
+      "name": "The Journal of Aldous Penn",
+      "qty": 1,
+      "type": "book",
+      "value": 5,
+      "weight": 0.5,
+      "description": "An adventurer's journal. It ends mid-sentence."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 193.4
+   },
+   "io_connections": []
+  },
+  {
+   "type": "itempickup",
+   "pos": [
+    1216.0,
+    40.0,
+    64.0
+   ],
+   "properties": {
+    "type": "itempickup",
+    "name": "Book_cave10_f",
+    "id": "aa0e0167-b3ba-517c-8cf7-89a584ab1d5e",
+    "item_id": "note_crier_smoke",
+    "quantity": 1,
+    "respawn": false,
+    "pickup_radius": 60.0,
+    "custom_idle": "assets/sprites/items/note_crier_smoke.png",
+    "display_name": "Clipping from the Crier",
+    "angle": 295.0,
+    "_furnished": true
    },
    "io_connections": []
   }

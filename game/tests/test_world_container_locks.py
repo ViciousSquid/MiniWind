@@ -9,6 +9,7 @@ import pytest
 
 from game.rpg.lockpicking import LOCKS
 from game.tools.container_locks import (apply_container_locks,
+                                        apply_overworld_lock_overrides,
                                         configure_container_lock, update_map_text)
 
 
@@ -18,10 +19,13 @@ ROOT = Path(__file__).resolve().parents[2]
 @pytest.fixture(scope="module")
 def world_containers():
     world = json.loads((ROOT / "maps/village_walled_source.json").read_bytes())
+    # Apply the authored lock overlay without discarding newer furnished map data.
+    assert apply_overworld_lock_overrides(world["things"]) == 13
+    assert apply_overworld_lock_overrides(world["things"]) == 0
     return [t for t in world["things"] if t.get("type") == "container"]
 
 
-def test_the_shipped_world_has_a_mix_of_open_and_pickable_containers(world_containers):
+def test_the_loaded_world_has_a_mix_of_open_and_pickable_containers(world_containers):
     props = [t["properties"] for t in world_containers]
     locked = [p for p in props if p.get("locked")]
     assert 0 < len(locked) < len(props)

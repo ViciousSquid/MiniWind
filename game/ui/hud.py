@@ -289,6 +289,54 @@ def draw_barks(painter, session, viewport, width, height):
     painter.restore()
 
 
+#: A float (a fizzled spell) rises this far (px) over its life as it fades.
+FLOAT_RISE_PX = 26.0
+_FLOAT_INK = (214, 200, 255)
+
+
+def draw_floats(painter, session, viewport, width, height):
+    """Words floating up from a head and fading -- "*fizzled*" over a caster,
+    the player or anyone else, whose spell came to nothing."""
+    if viewport is None:
+        return
+    floats = session.live_floats() if hasattr(session, "live_floats") else ()
+    if not floats:
+        return
+    try:
+        import glm
+        proj, view = viewport.projection_matrix, viewport.view_matrix
+    except Exception:
+        return
+    from . import fonts
+    font = fonts.dialogue_font(12)
+    font.setItalic(True)
+    font.setBold(True)
+    fm = QFontMetrics(font)
+    painter.save()
+    painter.setFont(font)
+    painter.setRenderHint(painter.Antialiasing, True)
+    for thing, text, left, total in floats[:12]:
+        pos = thing.pos
+        head_y = pos[1] + float(thing.properties.get("sprite_height", 112)) * 0.5 + 24.0
+        sp = _world_to_screen(glm, proj, view, pos[0], head_y, pos[2], width, height)
+        if sp is None and thing.properties.get("is_player"):
+            # Seen from inside the player's own head (first person): over
+            # the middle of the view, where their head would be.
+            sp = (width * 0.5, height * 0.4)
+        if sp is None:
+            continue
+        age = max(0.0, min(1.0, 1.0 - left / max(0.01, total)))
+        alpha = int(255 * max(0.0, min(1.0, left / 0.5)))
+        w = fm.horizontalAdvance(text) + 8
+        rect = QRect(int(sp[0] - w / 2), int(sp[1] - FLOAT_RISE_PX * age - fm.height()),
+                     w, fm.height())
+        painter.setPen(QColor(0, 0, 0, int(alpha * 0.8)))
+        painter.drawText(rect.translated(1, 1), int(Qt.AlignCenter), text)
+        painter.setPen(QColor(*_FLOAT_INK, alpha))
+        painter.drawText(rect, int(Qt.AlignCenter), text)
+    painter.restore()
+
+
 #: The widest a speech plate or thought bubble grows before its text wraps.
 PLATE_MAX_W = 340
 
@@ -1403,13 +1451,11 @@ def _blob(painter, cx, cy, r, seed, color, alpha):
 
 
 def draw_gore(painter, session, viewport, width, height):
-    """The blood in the world (game/gore_fx.py) that is not yet part of it,
-    over the world and under the HUD. Blood at rest on the terrain is stamped
-    into the terrain itself and drawn by the renderer; what is drawn here is
-    blood in flight, a pool still spreading, blood waiting its turn to be
-    stamped and blood on a built floor (masked out under anyone standing in
-    it, so it never paints over the living), the red flash of a kill, and the
-    player's own blood on the screen's edge."""
+    """The blood in the air (game/gore_fx.py), over the world and under the
+    HUD: droplets and chunks in flight, the red flash of a kill, and the
+    player's own blood on the screen's edge. Blood lying on the ground is not
+    drawn here, over everything, but in the 3D pass under the actors standing
+    in it (game/ui/blood_gl.py) or stamped into the terrain."""
     gore = getattr(session, "gore", None)
     if gore is None or viewport is None:
         return
@@ -1418,7 +1464,7 @@ def draw_gore(painter, session, viewport, width, height):
         proj, view = viewport.projection_matrix, viewport.view_matrix
     except Exception:
         return
-    particles, splats, screen = gore.snapshot()
+    particles, _splats, screen = gore.snapshot()
     now = gore.clock()
 
     def to_screen(x, y, z):
@@ -1433,35 +1479,6 @@ def draw_gore(painter, session, viewport, width, height):
     painter.save()
     painter.setRenderHint(painter.Antialiasing, True)
     painter.setPen(Qt.NoPen)
-    if splats:
-        # Never over the living: cut each standing actor's footprint out.
-        from PyQt5.QtGui import QPainterPath
-        clip = QPainterPath()
-        clip.addRect(QRectF(0, 0, width, height))
-        holes = QPainterPath()
-        actors = session._live_actors() if hasattr(session, "_live_actors") else ()
-        player = fio.player(getattr(session, "logic", None))
-        for t in list(actors) + ([player] if player is not None else []):
-            tp = getattr(t, "properties", {}) or {}
-            if tp.get("dead"):
-                continue
-            sp = to_screen(*t.pos)
-            k = px_per_unit(*t.pos)
-            if sp is None or k is None:
-                continue
-            r = float(tp.get("sprite_height", 112) or 112) * 0.42 * k
-            holes.addEllipse(QPointF(sp[0], sp[1]), r, r)
-        painter.setClipPath(clip.subtracted(holes))
-        for s in splats:
-            sp = to_screen(s["x"], s["y"], s["z"])
-            k = px_per_unit(s["x"], s["y"], s["z"])
-            if sp is None or k is None:
-                continue
-            alpha = gore.splat_alpha(s, now) * (225 if s["kind"] == "pool" else 205)
-            colour = _BLOOD_CHUNK if s["kind"] == "chunk" else _BLOOD_DARK
-            _blob(painter, sp[0], sp[1], max(1.5, gore.splat_size(s, now) * 0.5 * k),
-                  s["seed"], colour, alpha)
-        painter.setClipping(False)
     for p in particles:
         x, y, z = gore.position(p, now)
         sp = to_screen(x, y, z)

@@ -335,7 +335,8 @@ class InventoryStrip(FloatingWindow):
     # --------------------------------------------------------------- mouse
     def _slot_at(self, p):
         for i, r in enumerate(self._rects):
-            if r.contains(p):
+            # The number under a slot is part of it: clicking it picks the slot.
+            if r.adjusted(0, 0, 0, NUMBERS + 2).contains(p):
                 return i
         return None
 

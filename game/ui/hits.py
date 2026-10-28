@@ -162,7 +162,8 @@ class GamePointer:
         # dialogue and other game screens keep normal mouse-look captured.
         open_screen = getattr(session, "open_screen", None)
         from .screens import STATISTICS_SCREENS
-        interactive_screen = open_screen in (*STATISTICS_SCREENS, "trade", "levelup")
+        interactive_screen = open_screen in (*STATISTICS_SCREENS, "trade", "levelup",
+                                             "training", "tutor")
         # Initial character creation happens before normal play controls exist.
         needs_creation = bool(getattr(session, "needs_char_creation", False))
         return bool((interactive_screen or needs_creation) and has_targets())

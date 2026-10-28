@@ -1,6 +1,6 @@
 """
-Two schools of magic, spell levels bought with experience, and every spell's
-values in game/data/spells.json.
+Three schools of magic and no others, spell levels bought with experience, and
+every spell's values in game/data/spells.json.
 
 Run:  python -m pytest game/tests/test_spell_levels.py -q
 """
@@ -14,13 +14,27 @@ from ..rpg import classes, magic, skills as sk
 from ..rpg.character import Character
 
 
-def test_there_are_two_schools_and_every_spell_is_in_one():
+def test_there_are_three_schools_and_every_spell_is_in_one():
+    assert sk.SCHOOLS == (sk.OFFENSIVE, sk.DEFENSIVE, sk.OCCULT)
     magic_skills = [s for s, d in sk.SKILLS.items() if d.spec == sk.MAGIC]
-    assert set(magic_skills) == {sk.OFFENSIVE, sk.DEFENSIVE, sk.ALCHEMY}
+    assert set(magic_skills) == {sk.OFFENSIVE, sk.DEFENSIVE, sk.OCCULT, sk.ALCHEMY}
     for spell in magic.SPELLS.values():
-        assert spell.school in (sk.OFFENSIVE, sk.DEFENSIVE), spell.id
+        assert spell.school in sk.SCHOOLS, spell.id
     assert magic.get("flare").school == sk.OFFENSIVE
     assert magic.get("heal_minor").school == sk.DEFENSIVE
+    for sid in ("resurrection", "disintegrate", "summon_wolf",
+                "sp_commandcreature", "sp_detect"):
+        assert magic.get(sid).school == sk.OCCULT, sid
+
+
+def test_no_spell_names_a_school_that_does_not_exist():
+    # Unknown or old names land in a real school; nothing else survives.
+    assert magic.Spell.from_dict({"id": "x", "school": "necromancy"}).school == sk.OCCULT
+    assert magic.Spell.from_dict({"id": "x", "school": "Occult"}).school == sk.OCCULT
+    assert magic.Spell.from_dict({"id": "x", "school": "pyromancy"}).school == sk.OFFENSIVE
+    path = os.path.join(os.path.dirname(__file__), "..", "data", "spells.json")
+    with open(path, "r", encoding="utf-8") as fh:
+        assert {r["school"] for r in json.load(fh)} <= set(sk.SCHOOLS)
 
 
 def test_a_higher_level_is_stronger_lasts_longer_and_costs_more():
@@ -69,11 +83,27 @@ def test_an_old_save_keeps_its_best_magic():
     c = Character.from_dict({"skills": {"destruction": 40, "conjuration": 55,
                                         "restoration": 30, "mysticism": 20},
                              "major_skills": ["destruction", "conjuration", "blade"]})
-    assert c.skills[sk.OFFENSIVE] == 55 and c.skills[sk.DEFENSIVE] == 30
-    assert c.major_skills == [sk.OFFENSIVE, "blade"]
+    assert c.skills[sk.OFFENSIVE] == 40 and c.skills[sk.DEFENSIVE] == 30
+    assert c.skills[sk.OCCULT] == 55
+    assert c.major_skills == [sk.OFFENSIVE, sk.OCCULT, "blade"]
     custom = classes.make_custom("Old", sk.MAGIC, [], ["illusion", "alteration"])
     assert custom.major_skills[0] == sk.DEFENSIVE
     assert magic.Spell.from_dict({"id": "x", "school": "destruction"}).school == sk.OFFENSIVE
+
+
+def test_a_two_school_save_gains_the_occult():
+    # Saved before the Occult existed: its dark arts were practised under the
+    # other two, so it starts at the lesser, and a preset class's majors are
+    # the class's own now.
+    c = Character.from_dict({"class": "necromancer",
+                             "skills": {"offensive": 30, "defensive": 22, "blade": 10},
+                             "major_skills": ["offensive", "defensive", "blade"]})
+    assert c.skills[sk.OCCULT] == 22
+    assert c.major_skills == classes.get("necromancer").major_skills
+    assert sk.OCCULT in c.major_skills
+    # Saved again, it is a three-school save and keeps what it has.
+    c.skills[sk.OCCULT] = 3
+    assert Character.from_dict(c.to_dict()).skills[sk.OCCULT] == 3
 
 
 def test_the_data_file_holds_every_spell_and_its_numbers():

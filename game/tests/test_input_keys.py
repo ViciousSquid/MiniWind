@@ -84,6 +84,19 @@ def test_engine_modal_input_capability_is_optional():
         ))
     )
 
+def test_miniwind_owns_the_number_keys():
+    """1-4 pick strip slots, not the engine's weapon slots (gun1, gun2 ...)."""
+    from types import SimpleNamespace
+    from engine.game_input import owns_number_keys
+    from ..runtime import MiniwindSession
+
+    assert MiniwindSession.owns_number_keys is True
+    assert owns_number_keys(SimpleNamespace(game_session=MiniwindSession))
+    assert not owns_number_keys(None)
+    assert not owns_number_keys(SimpleNamespace(game_session=None))
+    assert not owns_number_keys(SimpleNamespace(game_session=SimpleNamespace()))
+
+
 def test_engine_defers_escape_to_game_owned_modal_ui():
     """Escape routing should respect the session's existing modal contract."""
     from types import SimpleNamespace

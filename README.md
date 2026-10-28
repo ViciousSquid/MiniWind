@@ -87,10 +87,10 @@ Weather choices and transitions are saved with the game.
 |--------|---------|
 | **Character creation** | 10 races (each with attribute/skill bonuses, resistances and a daily power), 13 classes, 10 birthsigns, or your own custom class. |
 | **6 attributes** | Strength, Endurance, Speed, Intelligence, Charisma, Luck — driving every derived stat and roll. Strength, Endurance and Charisma are rolled at creation and belong to every living thing in the Vale. |
-| **20 skills, leveled by use** | Blade, Blunt, Marksman, Block, Heavy/Light Armor, Destruction, Restoration, Alteration, Conjuration, Illusion, Mysticism, Alchemy, Sneak, Security, Mercantile, Speechcraft, Acrobatics, Athletics, Light Fingers. Doing raises them; raising *major* skills levels you up. |
+| **17 skills, leveled by use** | Blade, Blunt, Marksman, Block, Heavy/Light Armor, Offensive, Defensive, Occult, Alchemy, Sneak, Security, Mercantile, Speechcraft, Acrobatics, Athletics, Light Fingers. Doing raises them; raising *major* skills levels you up. |
 | **Derived pools** | Health, Magicka and Stamina, recomputed from attributes; passive magicka/stamina regen. |
 | **Combat** | Melee (charge weapons, dual wield, off-hand strikes), archery with a real draw for NPCs and player alike, spells; hit chance, criticals, sneak attacks, blocking, armour mitigation and elemental resistance — all through the engine-native dice service. |
-| **Magic** | 30+ spells across six schools, magicka cost that falls with skill, self/touch/target/projectile delivery, summons and bound weapons. |
+| **Magic** | 30 spells across three schools (Offensive, Defensive and Occult), spell tutors and skill trainers in the settlements, magicka cost that falls with skill, self/touch/target/projectile delivery, summons and bound weapons. |
 | **Items & equipment** | Weapons, armour (heavy/light by slot & material), ammunition, potions, ingredients, books (plain-text, fiopak-packable), keys and gold; encumbrance from Strength. |
 | **Lockpicking** | Individual latched pins, mouse resistance, tension/strain, snapping and shearing; five lock difficulties, Security progression and the Knock spell. The world keeps running during an attempt. |
 | **Loot rarity** | Dropped gear can roll **Fine / Rare / Fabled** tiers — worth more, tinted in the UI, and hitting/protecting harder. |

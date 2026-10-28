@@ -1573,6 +1573,7 @@ _CARD_WELL = "rgba(255,255,255,22)"   # icon well fill
 _SCHOOL_ACCENT = {
     "offensive":   "#e8836f",
     "defensive":   "#7fd39b",
+    "occult":      "#b08cf0",
     "default":     "#b9b6c4",
 }
 
@@ -2187,6 +2188,14 @@ def open_spell_editor(parent=None):
             self.spd.setValue(float(d.get("projectile_speed", 900.0)))
             self.spd.valueChanged.connect(lambda v: self.d.__setitem__("projectile_speed", float(v)))
             nums.addWidget(self.spd)
+            nums.addWidget(_lab("Linger"))
+            self.linger = QtWidgets.QDoubleSpinBox(); self.linger.setRange(0.0, 600.0)
+            self.linger.setDecimals(1); self.linger.setSingleStep(1.0); self.linger.setSuffix(" s")
+            self.linger.setToolTip("Seconds a bolt's light stays where it lands before "
+                                   "fading (0: it goes out with the bolt)")
+            self.linger.setValue(float(d.get("linger", 0.0) or 0.0))
+            self.linger.valueChanged.connect(lambda v: self.d.__setitem__("linger", float(v)))
+            nums.addWidget(self.linger)
             nums.addStretch(1)
             root.addLayout(nums)
             self._level_rows(root, _lab)
@@ -2197,8 +2206,8 @@ def open_spell_editor(parent=None):
         def _level_rows(self, root, _lab):
             row = QtWidgets.QHBoxLayout(); row.setSpacing(8)
             row.addWidget(_lab("School"))
-            school = QtWidgets.QComboBox(); school.addItems([sk.OFFENSIVE, sk.DEFENSIVE])
-            school.setCurrentText(sk.fold(self.d.get("school", sk.OFFENSIVE)))
+            school = QtWidgets.QComboBox(); school.addItems(list(sk.SCHOOLS))
+            school.setCurrentText(sk.school(self.d.get("school", sk.OFFENSIVE)))
             school.currentTextChanged.connect(lambda t: self.d.__setitem__("school", t))
             row.addWidget(school)
             row.addWidget(_lab("Rarity"))

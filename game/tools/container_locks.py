@@ -20,6 +20,47 @@ LOCK_CHANCE = {"chest": 0.45, "crate": 0.25}
 NEVER_LOCK = frozenset({"barrel", "sack"})
 
 
+# Authored overworld lock states. These are applied to loaded entities by id,
+# preserving the newer, furnished source map and any subsequent map additions.
+# The generated-container policy below remains separate.
+OVERWORLD_LOCKS = {
+    "7524e34d-2566-4940-9da5-da258f929873": "novice",
+    "a09bdaf0-ae9e-5916-9024-27ac08f48c02": "novice",
+    "cbd6c873-6a90-5b33-95ea-c9d6a506494a": "novice",
+    "e33b228f-7709-595f-8c81-70db7990aeae": "adept",
+    "b525e89b-ac0e-5a97-b243-93395a21f4ba": "apprentice",
+    "7574ea46-4e73-5e6f-adbc-8ef790f39850": "adept",
+    "18fcb74b-18e5-452c-a876-2bf60bf111c3": "novice",
+    "fe3f2a08-8770-4b3b-9ebb-cd4aa6e1cb3e": "novice",
+    "b0b6436e-0fc9-4078-b18f-874197e33c8c": "adept",
+    "86fa63f5-fbd7-45d2-b695-1c01806b431e": "novice",
+    "79f583dc-b8a8-4ab6-840a-1f9529ffa5f5": "novice",
+    "549ce98a-e32a-4666-882d-ccaa1078a55f": "novice",
+    "0dd16bdf-7ff3-4e2a-aaeb-29fff9d224ef": "novice",
+}
+
+
+def apply_overworld_lock_overrides(things):
+    """Restore the Vale's authored lock choices on the live map entities.
+
+    Existing picked/unlocked state may be restored by map memory afterwards.
+    Other containers, inventories, ownership and map content are untouched.
+    """
+    applied = 0
+    for thing in things:
+        props = thing.get("properties", {}) if isinstance(thing, dict) else getattr(thing, "properties", {})
+        difficulty = OVERWORLD_LOCKS.get(props.get("id"))
+        if difficulty is None:
+            continue
+        if props.get("locked") and props.get("lock_difficulty"):
+            continue
+        props["locked"] = True
+        props["lock_key"] = ""
+        props["lock_difficulty"] = difficulty
+        applied += 1
+    return applied
+
+
 def configure_container_lock(properties, pos, *, preserve_existing=True):
     """Apply the lock policy to one container, leaving its contents untouched."""
     kind = str(properties.get("container_kind", "chest")).strip().lower()

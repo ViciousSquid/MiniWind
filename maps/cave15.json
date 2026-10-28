@@ -2620,7 +2620,8 @@
     "start_scenario": "prompt",
     "region_name": "Mossveil Grotto",
     "player_spells": [],
-    "quests": []
+    "quests": [],
+    "underground": true
    },
    "io_connections": []
   },
@@ -2637,6 +2638,400 @@
     "id": "9cc60cc9-f3da-446a-a9c1-a8037f33157a",
     "command": "cam topdown",
     "disabled": false
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -832.0,
+    48.0,
+    -960.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave15_f0",
+    "id": "93852c44-984b-54f0-b2ba-efe29aefb20d",
+    "container_kind": "sack",
+    "display_name": "Cocooned Bundle",
+    "inventory": [
+     {
+      "id": "elven_arrow",
+      "name": "Elven Arrow",
+      "qty": 7,
+      "type": "ammo",
+      "value": 4,
+      "weight": 0.1,
+      "description": "A keen elven arrow that flies true."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 207.9
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    832.0,
+    48.0,
+    704.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave15_f1",
+    "id": "8560171d-7595-5e1b-b4b5-bfa3f58b8327",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "iron_shortsword",
+      "name": "Iron Shortsword",
+      "qty": 1,
+      "type": "weapon",
+      "value": 25,
+      "weight": 8.0,
+      "description": "An iron shortsword."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 97.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1600.0,
+    48.0,
+    -576.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave15_f2",
+    "id": "2d1f071d-ea6d-55b6-8184-4cabcc29141a",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "leather_gauntlets",
+      "name": "Leather Bracers",
+      "qty": 1,
+      "type": "armour",
+      "value": 10,
+      "weight": 1.5,
+      "description": "Leather bracers."
+     },
+     {
+      "id": "iron_shortsword",
+      "name": "Iron Shortsword",
+      "qty": 1,
+      "type": "weapon",
+      "value": 25,
+      "weight": 8.0,
+      "description": "An iron shortsword."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": true,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 85.2,
+    "lock_difficulty": "novice"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    1088.0,
+    48.0,
+    1600.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave15_f3",
+    "id": "1106fe16-86bd-57b1-b578-3ad392e445ca",
+    "container_kind": "sack",
+    "display_name": "Cocooned Bundle",
+    "inventory": [
+     {
+      "id": "leather_gauntlets",
+      "name": "Leather Bracers",
+      "qty": 1,
+      "type": "armour",
+      "value": 10,
+      "weight": 1.5,
+      "description": "Leather bracers."
+     },
+     {
+      "id": "book_lockwright",
+      "name": "The Lockwright's Patience",
+      "qty": 1,
+      "type": "book",
+      "value": 55,
+      "weight": 1.0,
+      "description": "A locksmith's manual. Not for thieves, it insists."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 306.0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    448.0,
+    48.0,
+    -1600.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave15_f4",
+    "id": "ebe37bbe-8e83-5423-9e79-ec34e3279c3f",
+    "container_kind": "sack",
+    "display_name": "Cocooned Bundle",
+    "inventory": [
+     {
+      "id": "iron_helmet",
+      "name": "Iron Helmet",
+      "qty": 1,
+      "type": "armour",
+      "value": 30,
+      "weight": 5.0,
+      "description": "Iron helmet."
+     },
+     {
+      "id": "torch",
+      "name": "Torch",
+      "qty": 1,
+      "type": "light",
+      "value": 5,
+      "weight": 1.0,
+      "description": "A pitch-soaked torch that throws a warm circle of light. Equip it in the off hand to see in the dark."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 43,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 336.7
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1216.0,
+    48.0,
+    704.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave15_f5",
+    "id": "1bbc0af2-09dd-52ff-b052-87a35b3e76e6",
+    "container_kind": "sack",
+    "display_name": "Cocooned Bundle",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 45,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 51.0
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1088.0,
+    48.0,
+    -320.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave15_f6",
+    "id": "4bb33fc1-ed72-5ecf-abf3-fa9e3d66d5b0",
+    "container_kind": "sack",
+    "display_name": "Cocooned Bundle",
+    "inventory": [
+     {
+      "id": "elven_arrow",
+      "name": "Elven Arrow",
+      "qty": 10,
+      "type": "ammo",
+      "value": 4,
+      "weight": 0.1,
+      "description": "A keen elven arrow that flies true."
+     },
+     {
+      "id": "note_last_words",
+      "name": "A Note, Folded Small",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "A dying man's message to his wife."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 55.5
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -320.0,
+    48.0,
+    1216.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave15_f7",
+    "id": "2234a69c-f652-547d-9b17-631921bcc368",
+    "container_kind": "sack",
+    "display_name": "Cocooned Bundle",
+    "inventory": [
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 24,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     },
+     {
+      "id": "book_marksman",
+      "name": "A Hunter's Eye",
+      "qty": 1,
+      "type": "book",
+      "value": 50,
+      "weight": 1.0,
+      "description": "Reading this treatise sharpens your aim."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 118.9
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -704.0,
+    48.0,
+    -192.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Chest_cave15_f8",
+    "id": "83de5ffa-ac89-526d-94f8-19b366eab613",
+    "container_kind": "chest",
+    "display_name": "Chest",
+    "inventory": [
+     {
+      "id": "iron_helmet",
+      "name": "Iron Helmet",
+      "qty": 1,
+      "type": "armour",
+      "value": 30,
+      "weight": 5.0,
+      "description": "Iron helmet."
+     },
+     {
+      "id": "gold",
+      "name": "Gold",
+      "qty": 21,
+      "type": "gold",
+      "value": 1,
+      "weight": 0.0,
+      "description": "The coin of the realm."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": true,
+    "custom_idle": "assets/sprites/miniwind/container_chest.png",
+    "_furnished": true,
+    "angle": 182.2,
+    "lock_difficulty": "novice"
+   },
+   "io_connections": []
+  },
+  {
+   "type": "container",
+   "pos": [
+    -1088.0,
+    48.0,
+    960.0
+   ],
+   "properties": {
+    "type": "container",
+    "name": "Sack_cave15_f9",
+    "id": "04cd9122-ba84-5d00-825c-209811bfed77",
+    "container_kind": "sack",
+    "display_name": "Adventurer's Pack",
+    "inventory": [
+     {
+      "id": "torch",
+      "name": "Torch",
+      "qty": 1,
+      "type": "light",
+      "value": 5,
+      "weight": 1.0,
+      "description": "A pitch-soaked torch that throws a warm circle of light. Equip it in the off hand to see in the dark."
+     },
+     {
+      "id": "note_dont_go_left",
+      "name": "Scrawled Warning",
+      "qty": 1,
+      "type": "book",
+      "value": 1,
+      "weight": 0.1,
+      "description": "Large, uneven letters on a torn page."
+     }
+    ],
+    "use_radius": 120.0,
+    "locked": false,
+    "custom_idle": "assets/sprites/miniwind/container_sack.png",
+    "_furnished": true,
+    "angle": 136.0
    },
    "io_connections": []
   }

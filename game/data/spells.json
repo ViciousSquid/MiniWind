@@ -52,7 +52,7 @@
   {
     "id": "disintegrate",
     "name": "Disintegrate",
-    "school": "offensive",
+    "school": "occult",
     "cost": 60.0,
     "delivery": "projectile",
     "effects": [
@@ -114,9 +114,14 @@
         "kind": "damage_health",
         "magnitude": 14,
         "duration": 0
+      },
+      {
+        "kind": "burn",
+        "magnitude": 2,
+        "duration": 5
       }
     ],
-    "desc": "A bolt of fire.",
+    "desc": "A bolt of fire that sets alight whatever it strikes, or starts a small fire where it lands.",
     "element": "fire",
     "projectile_speed": 1000,
     "color": null,
@@ -126,7 +131,8 @@
     "xp_per_level": 30,
     "level_power": 0.25,
     "level_duration": 0.125,
-    "level_cost": 0.1
+    "level_cost": 0.1,
+    "linger": 20.0
   },
   {
     "id": "frostbite",
@@ -320,7 +326,7 @@
   {
     "id": "resurrection",
     "name": "Resurrection",
-    "school": "defensive",
+    "school": "occult",
     "cost": 100.0,
     "delivery": "target",
     "effects": [
@@ -424,7 +430,7 @@
   {
     "id": "sp_commandcreature",
     "name": "Command Creature",
-    "school": "offensive",
+    "school": "occult",
     "cost": 26.0,
     "delivery": "target",
     "effects": [
@@ -449,7 +455,7 @@
   {
     "id": "sp_detect",
     "name": "Detect Life",
-    "school": "defensive",
+    "school": "occult",
     "cost": 16.0,
     "delivery": "self",
     "effects": [
@@ -724,7 +730,7 @@
   {
     "id": "summon_wolf",
     "name": "Summon Wolf",
-    "school": "offensive",
+    "school": "occult",
     "cost": 30.0,
     "delivery": "self",
     "effects": [
