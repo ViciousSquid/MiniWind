@@ -220,3 +220,22 @@ def test_the_overlay_draws_the_roads_and_a_walkers_leg(qt_app):
     road_px = at(3500.0, 0.0)                            # between ROAD_3 and ROAD_4
     assert road_px.green() > 150 and road_px.alpha() > 100
     assert nav_debug.summary(s)["walkers"] == 1
+
+
+def test_patrol_nodes_are_never_roads_for_live_walkers_or_travellers():
+    from ..living import roads as living_roads
+    patrol = [_Node("patrol_1", 1000, 300, "patrol_2"), _Node("patrol_2", 2000, 300, "ROAD_2"),
+              _Node("guard_post_a", 1500, 600)]
+    road = _straight_road(3)
+    road[0].properties["next_node"] = "ROAD_2, patrol_1"      # a link to a patrol node
+    things = patrol + road
+    # Live NPCs' graph: the three roads, the patrol link ignored.
+    g = RoadGraph.build(road_nodes(things))
+    assert g.names == ["ROAD_1", "ROAD_2", "ROAD_3"]
+    assert {(g.names[a], g.names[b]) for a, b, _auto in g.edges()} == {
+        ("ROAD_1", "ROAD_2"), ("ROAD_2", "ROAD_3")}
+    # The living world's travellers read the same road nodes and nothing else.
+    authored = living_roads.authored_roads(things)
+    assert [n[0] for n in authored] == ["ROAD_1", "ROAD_2", "ROAD_3"]
+    net = living_roads.RoadNetwork.build(authored, [])
+    assert net.authored_nodes == 3

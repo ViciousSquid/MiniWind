@@ -27,8 +27,9 @@ hunters, townsfolk on market trips) happens off-screen through
 it: clear a lair's creatures, take a farm's livestock, hide a merchant who has
 gone to market.
 
-The roads are your PathNodes (see :mod:`game.living.roads`), with fallback
-tracks between places until you have authored them.
+The roads are your ``ROAD_*`` PathNodes (see :mod:`game.living.roads`), with
+fallback tracks between places until you have authored them. Other PathNodes
+(patrol routes and the like) are not roads.
 """
 
 from __future__ import annotations
@@ -238,16 +239,8 @@ class LivingWorld:
         if len(places) < 2:
             self.enabled = False
             return False
-        pathnodes = []
-        for t in things:
-            p = t.properties
-            if str(p.get("type", "")).replace("_", "").lower() != "pathnode":
-                continue
-            nxt = [n for n in str(p.get("next_node", "") or "").split(",") if n.strip()]
-            nxt += [n for n in str(p.get("links", "") or "").split(",") if n.strip()]
-            pathnodes.append((p.get("name", ""), float(t.pos[0]), float(t.pos[2]), nxt))
         network = roads.RoadNetwork.build(
-            pathnodes, [(k, v["x"], v["z"]) for k, v in places.items()])
+            roads.authored_roads(things), [(k, v["x"], v["z"]) for k, v in places.items()])
         self.places = places
         self.board = jn.JourneyBoard(network, places, s.clock.hours_per_second,
                                      rng=s.rng, hooks=SessionHooks(self),
