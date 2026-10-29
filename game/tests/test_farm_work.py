@@ -3,9 +3,11 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from .. import farm_work, mental_state
 from ..farm_work import FarmWork
+from ..rpg import inventory, items
 
 
 class Field:
@@ -96,15 +98,68 @@ def test_dusk_puts_the_tool_away_and_hands_back_the_schedule():
 
 
 def test_the_scythe_swings_on_a_steady_beat_and_strikes_nothing():
-    farmer = actor(_farm_work="reap")
+    farmer = actor(pos=(1500.0, 0.0, 0.0), _farm_work="reap", _active_weapon="scythe")
     w = FarmWork()
     swings = 0
     for _ in range(int(6.0 / 0.05)):
         before = farmer.properties.get("is_shooting", False)
-        w.update(0.05, (farmer,))
+        w.update(0.05, (farmer,), Field())
         swings += farmer.properties.get("is_shooting", False) and not before
     assert swings == int(6.0 / farm_work.SWING_EVERY)
+    assert inventory.quantity(inventory.get_inventory(farmer), "wheat") == swings
     assert "health" not in farmer.properties                # a pulse, not a blow
+
+
+def test_a_harvest_stacks_one_wheat_and_notifies_only_on_the_swing():
+    farmer = actor(pos=(1500.0, 0.0, 0.0), inventory=[items.make("wheat", 4)])
+    s = session(terrain=Field())
+    collected = []
+    w = FarmWork(on_collect=lambda *args: collected.append(args))
+    assert w.drive(s, farmer)
+    w.update(farm_work.SWING_EVERY - 0.1, (farmer,), Field())
+    assert inventory.quantity(farmer.properties["inventory"], "wheat") == 4
+    assert collected == []
+    w.update(0.11, (farmer,), Field())
+    assert inventory.quantity(farmer.properties["inventory"], "wheat") == 5
+    assert collected == [(farmer, "wheat", 1)]
+    w.update(farm_work.SWING_HOLD / 2, (farmer,), Field())
+    assert inventory.quantity(farmer.properties["inventory"], "wheat") == 5
+    assert len(farmer.properties["inventory"]) == len(collected) == 1
+
+
+@pytest.mark.parametrize("props, pos, terrain", [
+    ({}, (0.0, 0.0, 0.0), Field()),                 # walking to the crop
+    ({}, (1500.0, 0.0, 0.0), None),
+    ({}, (1500.0, 0.0, 0.0), SimpleNamespace(biome_map=None)),
+    ({"_farm_work": "tend", "_active_weapon": "pitchfork"}, (1500.0, 0.0, 0.0), Field()),
+    ({"_active_weapon": "iron_shortsword"}, (1500.0, 0.0, 0.0), Field()),
+    ({"dead": True}, (1500.0, 0.0, 0.0), Field()),
+    ({"hidden": True}, (1500.0, 0.0, 0.0), Field()),
+])
+def test_work_without_a_harvest_gives_no_wheat_or_notification(props, pos, terrain):
+    p = dict(_farm_work="reap", _active_weapon="scythe")
+    p.update(props)
+    farmer = actor(pos=pos, **p)
+    collected = []
+    w = FarmWork(on_collect=lambda *args: collected.append(args))
+    w.update(farm_work.FORK_EVERY, (farmer,), terrain)
+    assert inventory.quantity(inventory.get_inventory(farmer), "wheat") == 0
+    assert collected == []
+
+
+def test_stopping_work_stops_the_harvest():
+    farmer = actor(pos=(1500.0, 0.0, 0.0))
+    w = FarmWork()
+    assert w.drive(session(terrain=Field()), farmer)
+    farm_work.stop(farmer.properties)
+    w.update(farm_work.SWING_EVERY, (farmer,), Field())
+    assert inventory.get_inventory(farmer) == []
+
+
+def test_wheat_is_a_tradeable_ingredient():
+    wheat = items.make("wheat")
+    assert wheat["name"] == "Wheat" and wheat["type"] == items.INGREDIENT
+    assert wheat["qty"] == 1 and wheat["value"] > 0 and wheat["weight"] > 0
 
 
 def test_only_farmers_farm_and_their_thoughts_are_brief():
