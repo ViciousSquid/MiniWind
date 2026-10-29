@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[2]
 HUB_HEIGHT = 550.0
 DOOR_HEIGHT = 106.0
 BODY_RADIUS = 140.0
-MODEL_DIR = ROOT / "assets/models/windmill"
+MODEL_DIR = ROOT / "assets/models"
 SPRITE_DIR = ROOT / "assets/sprites/scenery"
 MATERIALS = {}
 PARTS = []
@@ -65,7 +65,7 @@ def brick_material(folder):
             pixels.extend((*[min(1.0, c * noise * dark) for c in color], 1.0))
     image = bpy.data.images.new("windmill_brick", size, size, alpha=False)
     image.pixels.foreach_set(pixels)
-    image.filepath_raw = str(folder / "brick_albedo.png")
+    image.filepath_raw = str(folder / "windmill_brick_albedo.png")
     image.file_format = 'PNG'
     image.save()
     mat = material("Brick", (1.0, 1.0, 1.0))
@@ -293,7 +293,7 @@ def export(folder, work):
     obj.write_text('# fio:up=y\n' + obj.read_text())
     mtl = folder / 'windmill.mtl'
     text = mtl.read_text()
-    text = '\n'.join('map_Kd brick_albedo.png' if line.startswith('map_Kd ') else line
+    text = '\n'.join('map_Kd windmill_brick_albedo.png' if line.startswith('map_Kd ') else line
                      for line in text.splitlines()) + '\n'
     text = text.replace('newmtl Brick\n', 'newmtl Brick\nKd 1.000000 1.000000 1.000000\n')
     mtl.write_text(text)
@@ -311,14 +311,13 @@ def export(folder, work):
     for image in document.get('images', []):
         image.pop('bufferView', None)
         image.pop('mimeType', None)
-        image['uri'] = 'windmill/brick_albedo.png'
+        image['uri'] = 'windmill_brick_albedo.png'
     json_chunk = json.dumps(document, separators=(',', ':')).encode()
     json_chunk += b' ' * (-len(json_chunk) % 4)
     binary_chunks = data[20 + json_length:]
     packed = struct.pack('<III', 0x46546C67, 2, 20 + len(json_chunk) + len(binary_chunks))
     packed += struct.pack('<II', len(json_chunk), 0x4E4F534A) + json_chunk + binary_chunks
-    (folder.parent / 'windmill.glb').write_bytes(packed)
-    (folder / 'windmill.glb').unlink(missing_ok=True)
+    (folder / 'windmill.glb').write_bytes(packed)
     bpy.data.objects.remove(merged, do_unlink=True)
 
 
@@ -368,7 +367,7 @@ def main():
     finish(head, 'Scale_reference_head', 'Scale_reference', smooth=True)
     render(scene, args.work / 'windmill_scale.png', 15, 1120, target=(0, 0, 410), azimuth=-18)
     mannequin.hide_render = head.hide_render = True
-    bpy.ops.wm.save_as_mainfile(filepath=str(args.work / 'windmill.blend'))
+    bpy.ops.wm.save_as_mainfile(filepath=str(MODEL_DIR / 'windmill.blend'))
     print('WINDMILL_ASSET ' + json.dumps(stats), flush=True)
 
 

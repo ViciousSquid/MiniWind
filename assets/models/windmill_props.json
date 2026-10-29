@@ -43,7 +43,7 @@
         "name": "Windmill OBJ",
         "id": "9f5e4394-24c0-5688-b74b-34b35b0e684b",
         "render_mode": "model",
-        "model_path": "assets/models/windmill/windmill.obj",
+        "model_path": "assets/models/windmill.obj",
         "rotation": [
           0,
           0,

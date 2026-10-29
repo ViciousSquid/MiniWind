@@ -12,7 +12,7 @@ from engine.obj_loader import OBJLoader
 from engine.glb_loader import GLBLoader
 
 ROOT = Path(__file__).resolve().parents[2]
-FOLDER = ROOT / 'assets/models/windmill'
+FOLDER = ROOT / 'assets/models'
 pytestmark = pytest.mark.qt
 
 
@@ -25,7 +25,7 @@ def _load_obj():
 def test_obj_and_glb_have_the_same_upright_ground_origin_and_dimensions():
     obj = _load_obj()
     glb = GLBLoader()
-    assert glb.load(str(FOLDER.parent / 'windmill.glb'))
+    assert glb.load(str(FOLDER / 'windmill.glb'))
     a, b = np.asarray(obj.vertices), np.asarray(glb.get_flattened_vertices())
     assert obj.up_axis == 'y'
     np.testing.assert_allclose(a.min(0), b.min(0), atol=1e-3)
@@ -52,13 +52,13 @@ def test_the_door_fits_the_100_unit_player_and_sails_clear_their_head():
 def test_both_model_texture_paths_resolve_in_the_packaged_layout():
     obj = _load_obj()
     brick = obj.materials['Brick']
-    assert brick['texture'] == 'brick_albedo.png'
+    assert brick['texture'] == 'windmill_brick_albedo.png'
     assert (FOLDER / brick['texture']).is_file()
     assert tuple(brick['color']) == (1, 1, 1)
     glb = GLBLoader()
-    assert glb.load(str(FOLDER.parent / 'windmill.glb'))
-    assert glb.materials['Brick']['texture'] == 'windmill/brick_albedo.png'
-    assert (FOLDER.parent / glb.materials['Brick']['texture']).is_file()
+    assert glb.load(str(FOLDER / 'windmill.glb'))
+    assert glb.materials['Brick']['texture'] == 'windmill_brick_albedo.png'
+    assert (FOLDER / glb.materials['Brick']['texture']).is_file()
 
 
 @pytest.mark.parametrize('name', ['windmill_topdown.png', 'windmill_overhead.png'])

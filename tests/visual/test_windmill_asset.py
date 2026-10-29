@@ -27,7 +27,7 @@ def test_both_windmill_formats_draw_the_same_silhouette():
             view = glm.lookAt(eye, glm.vec3(0, 420, 0), glm.vec3(0, 1, 0))
             for extension in ('obj', 'glb'):
                 folder = root / 'assets/models'
-                path = str((folder if extension == 'glb' else folder / 'windmill') / f'windmill.{extension}')
+                path = str(folder / f'windmill.{extension}')
                 prop = Prop.for_model(path)
                 light = Light(pos=[-500, 1200, 1000], properties={
                     'color': [255, 240, 225], 'intensity': 1.0, 'radius': 6000,

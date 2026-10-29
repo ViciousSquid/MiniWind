@@ -21,10 +21,13 @@ center of the foundation on **Y=0**. Use **rotation [0, 0, 0]** and
 **scale [1, 1, 1]**. Put the Prop's Y coordinate at the ground surface.
 All transforms are baked into the exported mesh for Fio's current loaders.
 
-- `../windmill.glb`: GLB model with the shared `windmill/brick_albedo.png` texture.
-- `windmill.obj`: keep `windmill.mtl` and `brick_albedo.png` beside it.
+All model files live directly in `assets/models`:
+
+- `windmill.glb`: GLB model with the shared `windmill_brick_albedo.png` texture.
+- `windmill.obj`: keep `windmill.mtl` and `windmill_brick_albedo.png` beside it.
 - `windmill.json`: dimensions and sprite placement metadata.
 - `windmill.blend`: editable source with packed texture and a named rotor pivot.
+- `windmill_props.json`: ready-to-use Fio Prop placement records.
 
 Keep the supplied folder structure when copying the assets into Fio. The GLB
 uses an external texture so Fio's current renderer displays the brickwork.
@@ -73,7 +76,7 @@ From the repository root, using Blender 4.3 or newer:
 blender -b -t 4 -P game/tools/make_windmill.py -- --samples 96
 ```
 
-This writes the models, texture, sprites and dimensions to their asset folders,
-and an editable `windmill.blend`, model preview and 100-unit scale preview to
-`work/windmill/`. The Blender source retains a named rotor pivot. Only model
+This writes the models, editable `windmill.blend`, texture and dimensions to
+`assets/models`, sprites to `assets/sprites/scenery`, and model and 100-unit
+scale previews to `work/windmill/`. The Blender source retains a named rotor pivot. Only model
 geometry is exported; lights, cameras and the scale reference are excluded.
