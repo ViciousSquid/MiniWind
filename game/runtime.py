@@ -1448,6 +1448,7 @@ class MiniwindSession(SettlementLaw):
         """
         from .rpg import heads
         from .rpg.head_registry import member_identity
+        from .living.world import ACTOR_ROLES
         player_head = str(getattr(self.game.character, "head", "") or "")
         registry = self.head_registry
         registry.set_player(player_head)
@@ -1503,8 +1504,6 @@ class MiniwindSession(SettlementLaw):
         if living is not None and living.board is not None:
             for journey in sorted(living.board.journeys.values(), key=lambda j: str(j.id)):
                 for index, member in enumerate(journey.members):
-                    if not member.get("alive", True):
-                        continue
                     role = str(member.get("role", "")).lower()
                     if role in heads.ANIMAL_ROLES or role in ("wolf", "greenskin"):
                         continue
@@ -1512,8 +1511,7 @@ class MiniwindSession(SettlementLaw):
                     if not owner:
                         owner = f"journey:{journey.id}:{index}"
                     member.setdefault("_head_identity", owner)
-                    actor_role = __import__("game.living.world", fromlist=["ACTOR_ROLES"]).ACTOR_ROLES.get(
-                        role, ("villager",))[0]
+                    actor_role = ACTOR_ROLES.get(role, ("villager",))[0]
                     head = registry.assign(
                         owner, member.get("head", ""),
                         guard=actor_role in heads.GUARD_ROLES)
