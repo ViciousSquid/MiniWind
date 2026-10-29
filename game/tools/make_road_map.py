@@ -22,6 +22,9 @@ copy (``maps/village_roads_test.json``) in which:
   ``next_node`` lists every neighbour, comma separated: the two-way
   navigation graph :mod:`game.road_nav` and :mod:`game.living.roads` walk.
 
+* **A south-west desert** over 30% of the map, blending through steppe into
+  the green, with low dunes; and **a dense forest** of tree brushes of many
+  sizes on open lowland, kept clear of roads, buildings and everything else.
 * **Terrain realism**: craggier ridged mountains and gently rolling lowlands,
   baked into the heightmap. The terrain is untouched within
   :data:`PROTECT_IN` of every thing, brush footprint and settlement, and the
@@ -35,6 +38,7 @@ Deterministic: the same source always gives the same map, ids included.
 
 from __future__ import annotations
 
+import copy
 import heapq
 import json
 import math
@@ -99,6 +103,25 @@ LOW_AMP = 34.0
 #: and only fully reshaped beyond PROTECT_OUT.
 PROTECT_IN = 320.0
 PROTECT_OUT = 1100.0
+#: The south-west desert: a quarter-disc from that corner covering
+#: DESERT_AREA of the map, its edge wobbled by noise and blended over a band
+#: DESERT_BAND (fraction of the map's width) wide, through steppe into green.
+DESERT_AREA = 0.30
+DESERT_BAND = 0.07
+DESERT_WOBBLE = 0.05
+DUNE_AMP = 48.0
+DUNE_LENGTH = 900.0
+#: The dense forest: radius, spacing between trunks, canopy sizes, and how
+#: far trees keep from roads, settlements, water and other brushes.
+FOREST_RADIUS = 5600.0
+FOREST_SPACING = 175.0
+TREE_SIZES = (110.0, 330.0)
+TREE_LIFT = 190.0
+CLEAR_ROAD = 230.0
+CLEAR_BRUSH = 160.0
+FOREST_TREES = {"broadleaf": ("tree01.png", "tree02.png", "tree03.png", "tree04.png",
+                              "tree05.png", "tree06.png", "tree07.png", "trees0.png"),
+                "pine": ("pine01.png", "pine02.png"), "willow": ("willow01.png",)}
 ID_NAMESPACE = uuid.UUID("7d9b2e3e-58e4-4a6f-9b0a-6e2f1f4c1a77")
 
 
@@ -192,6 +215,41 @@ def ridged(shape, scale, seed, octaves=4):
     return out / total
 
 
+def desert_weight(terrain, xs, zs):
+    """Desert coverage 0..1 at world points (arrays), smooth at the edge."""
+    (min_x, max_x), (min_z, max_z) = terrain.get_terrain_bounds()
+    width = max_x - min_x
+    u = (np.asarray(xs, float) - min_x) / width
+    v = (np.asarray(zs, float) - min_z) / (max_z - min_z)
+    r = np.hypot(u, v)
+    reach = math.sqrt(4.0 * DESERT_AREA / math.pi)
+    # A wobbling edge: low-frequency waves round the arc.
+    ang = np.arctan2(v, u)
+    wobble = DESERT_WOBBLE * (0.6 * np.sin(ang * 7.0 + 1.3) + 0.4 * np.sin(ang * 17.0 + 4.1))
+    t = np.clip((reach + wobble + DESERT_BAND - r) / (2 * DESERT_BAND), 0.0, 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def paint_desert(terrain):
+    """Desert (R) over the biome map's south-west; snow, swamp and wheat
+    fade out beneath it so the blend runs sand, steppe, meadow."""
+    m = terrain.biome_map
+    if m is None:
+        m = np.zeros((1024, 1024, 4), np.uint8)
+    (min_x, max_x), (min_z, max_z) = terrain.get_terrain_bounds()
+    rows, cols = m.shape[:2]
+    xs = min_x + (np.arange(cols) + 0.5) * (max_x - min_x) / cols
+    zs = min_z + (np.arange(rows) + 0.5) * (max_z - min_z) / rows
+    gx, gz = np.meshgrid(xs, zs)
+    w = desert_weight(terrain, gx, gz)
+    out = m.astype(np.float32)
+    out[..., 0] = np.maximum(out[..., 0], w * 255.0)
+    for ch in (1, 2, 3):
+        out[..., ch] *= (1.0 - w)
+    terrain.set_biome_map(np.clip(out + 0.5, 0, 255).astype(np.uint8))
+    return float((w > 0.5).mean())
+
+
 def realism(terrain, data, places):
     """Craggier mountains and gently rolling lowlands, away from anything placed.
 
@@ -208,8 +266,12 @@ def realism(terrain, data, places):
     mountain = np.clip((ground - base) / (top - base), 0.0, 1.0) ** 0.8
     crags = ridged(hm.shape, 26.0, SEED + 11)            # ~2.8 km features down to ~350 m
     rolling = noise_field(hm.shape[1], hm.shape[0], 14.0, SEED + 23).T
+    sand = desert_weight(terrain, gx, gz)
+    # Dunes: long crests across the prevailing wind, bent by noise.
+    phase = (gx * 0.8 + gz * 0.6) / DUNE_LENGTH * 2 * math.pi + 6.0 * rolling
+    dunes = DUNE_AMP * ((0.5 + 0.5 * np.sin(phase)) ** 2 - 0.35)
     delta = (mountain * RIDGE_AMP * (crags - 0.45)
-             + (1.0 - mountain) * LOW_AMP * (2.0 * rolling - 1.0))
+             + (1.0 - mountain) * ((1.0 - sand) * LOW_AMP * (2.0 * rolling - 1.0) + sand * dunes))
     weight = protection(terrain, data, places)
     delta *= weight
     strength = float(terrain.heightmap_strength) * float(terrain.mesh_scale)
@@ -230,6 +292,127 @@ def footprint_points(data):
             for v in np.linspace(-hz, hz, nz):
                 pts.append((float(x) + u, float(z) + v))
     return np.array(pts, dtype=np.float32)
+
+
+# -------------------------------------------------------------------- forest
+#: What grows in the desert (enliven_world's desert kinds): dead trees and
+#: scrub on the sand, palms at an oasis.
+DESERT_TREES = ("deadtree01.png", "scrub01.png", "scrub02.png")
+OASIS_TREES = ("palm01.png",)
+
+
+def dry_out_trees(terrain, data, grid):
+    """Existing trees now standing in desert become desert kinds.
+
+    Only the canopy texture changes: every brush keeps its place and size."""
+    rng = np.random.default_rng(SEED + 47)
+    changed = 0
+    for b in data["brushes"]:
+        if not _is_tree(b):
+            continue
+        x, _y, z = b["pos"]
+        w = float(desert_weight(terrain, [x], [z])[0])
+        if w < 0.35 or rng.random() > min(1.0, (w - 0.35) / 0.3):
+            continue
+        wet = any(grid.water[grid.cell(x + dx, z + dz)]
+                  for dx in (-600, 0, 600) for dz in (-600, 0, 600))
+        names = OASIS_TREES if wet else DESERT_TREES
+        b["textures"] = dict(b["textures"], top=names[int(rng.integers(len(names)))])
+        changed += 1
+    return changed
+def _is_tree(b):
+    from game.tools.enliven_world import _is_tree as is_tree
+    return is_tree(b)
+
+
+def plant_forest(terrain, data, places, roads, grid):
+    """One dense forest on open green lowland, on the final ground.
+
+    The centre is the candidate with the most free ground round it, away from
+    the desert, mountains and settlements. Trees keep clear of roads,
+    settlements, water, buildings and existing trees, so nothing is buried
+    in foliage and no path is blocked."""
+    rng = np.random.default_rng(SEED + 41)
+    (min_x, max_x), (min_z, max_z) = terrain.get_terrain_bounds()
+    road_pts = np.array([p for r in roads for p in resample(r["points"], 120.0)])
+    solid = [b for b in data["brushes"] if not _is_tree(b)]
+    trees = np.array([(b["pos"][0], b["pos"][2]) for b in data["brushes"] if _is_tree(b)] or [(1e9, 1e9)])
+    homes = np.array([(p["x"], p["z"], p.get("radius", 900.0)) for p in places])
+
+    def ok_points(X, Z):
+        keep = np.ones(len(X), bool)
+        keep &= desert_weight(terrain, X, Z) < 0.05
+        for hx, hz, hr in homes:
+            keep &= np.hypot(X - hx, Z - hz) > hr + 400.0
+        cells = [grid.cell(x, z) for x, z in zip(X, Z)]
+        keep &= np.array([not grid.water[c] and grid.high[c] < 1.6 for c in cells])
+        return keep
+
+    best = None
+    for cx in np.linspace(min_x + 9000, max_x - 9000, 15):
+        for cz in np.linspace(min_z + 9000, max_z - 9000, 15):
+            a = rng.uniform(0, 2 * math.pi, 160)
+            r = FOREST_RADIUS * np.sqrt(rng.uniform(0, 1, 160))
+            X, Z = cx + r * np.cos(a), cz + r * np.sin(a)
+            score = ok_points(X, Z).mean()
+            if best is None or score > best[0]:
+                best = (score, cx, cz)
+    _score, cx, cz = best
+    # A jittered grid inside a noisy blob.
+    g = np.arange(-FOREST_RADIUS, FOREST_RADIUS, FOREST_SPACING)
+    X, Z = np.meshgrid(cx + g, cz + g)
+    X = X.ravel() + rng.uniform(-0.45, 0.45, X.size) * FOREST_SPACING
+    Z = Z.ravel() + rng.uniform(-0.45, 0.45, Z.size) * FOREST_SPACING
+    # An organic outline: noise decides where the wood ends, and it thins
+    # out over its last stretch rather than stopping at a line.
+    n = len(g)
+    shape = noise_field(n, n, n / 5.0, SEED + 43).T.ravel()
+    reach = np.hypot(X - cx, Z - cz) / FOREST_RADIUS
+    edge = 0.55 + 0.5 * shape
+    density = np.clip((edge - reach) / 0.18, 0.0, 1.0)
+    inside = rng.random(X.size) < density
+    X, Z = X[inside], Z[inside]
+    keep = ok_points(X, Z)
+    for i in np.nonzero(keep)[0]:
+        x, z = X[i], Z[i]
+        if len(road_pts) and np.min(np.hypot(road_pts[:, 0] - x, road_pts[:, 1] - z)) < CLEAR_ROAD:
+            keep[i] = False
+            continue
+        if np.min(np.hypot(trees[:, 0] - x, trees[:, 1] - z)) < 110.0:
+            keep[i] = False
+    X, Z = X[keep], Z[keep]
+    keep = np.ones(len(X), bool)
+    for b in solid:
+        (bx, _y, bz), (sx, _sy, sz) = b["pos"], b["size"]
+        hx, hz = abs(sx) / 2 + CLEAR_BRUSH, abs(sz) / 2 + CLEAR_BRUSH
+        if abs(bx - cx) > FOREST_RADIUS + hx or abs(bz - cz) > FOREST_RADIUS + hz:
+            continue
+        keep &= ~((np.abs(X - bx) < hx) & (np.abs(Z - bz) < hz))
+    for t in data["things"]:
+        x, _y, z = t["pos"]
+        keep &= np.hypot(X - x, Z - z) > CLEAR_BRUSH
+    X, Z = X[keep], Z[keep]
+    ground = terrain._get_heights_batch(X.astype(np.float32), Z.astype(np.float32))
+    proto = next(b for b in data["brushes"] if _is_tree(b))
+    counts = {}
+    for k in range(len(X)):
+        near_water = grid.water[grid.cell(X[k] + 300, Z[k])] or grid.water[grid.cell(X[k] - 300, Z[k])]
+        roll = rng.random()
+        kind = "willow" if near_water else ("pine" if roll < 0.22 or grid.high[grid.cell(X[k], Z[k])] > 1.15
+                                            else "broadleaf")
+        names = FOREST_TREES[kind]
+        tex = names[int(rng.integers(len(names)))]
+        # Mostly mid-sized, a few saplings and a few great old trees.
+        size = float(np.clip(rng.lognormal(math.log(190.0), 0.3), *TREE_SIZES))
+        lift = TREE_LIFT * (0.75 + 0.5 * (size - TREE_SIZES[0]) / (TREE_SIZES[1] - TREE_SIZES[0]))
+        data["brushes"].append({
+            "pos": [round(float(X[k]), 1), round(float(ground[k]) + lift, 1), round(float(Z[k]), 1)],
+            "size": [round(size, 1), 16.0, round(size, 1)],
+            "textures": {**{f: "nodraw.jpg" for f in ("north", "south", "east", "west", "down")}, "top": tex},
+            "uv_scale": copy.deepcopy(proto.get("uv_scale", {})),
+            "id": str(uuid.uuid5(ID_NAMESPACE, f"forest-{k}"))})
+        counts[kind] = counts.get(kind, 0) + 1
+    return dict(centre=(round(cx), round(cz)), **counts)
 
 
 # ------------------------------------------------------------------- routing
@@ -485,7 +668,7 @@ def path_node_things(terrain, nodes, edges):
 
 
 # -------------------------------------------------------------------- preview
-def render(path, grid, places, roads, nodes, edges, size=1400):
+def render(path, grid, places, roads, nodes, edges, terrain=None, data=None, size=1400):
     from PIL import Image, ImageDraw, ImageFont
     h = grid.h
     lo, hi = np.percentile(h, 1), np.percentile(h, 99.5)
@@ -496,6 +679,16 @@ def render(path, grid, places, roads, nodes, edges, size=1400):
     low = np.array([88, 132, 72]); mid = np.array([150, 160, 100]); top = np.array([235, 235, 235])
     rgb = np.where(n[..., None] < 0.6, low + (mid - low) * (n[..., None] / 0.6),
                    mid + (top - mid) * ((n[..., None] - 0.6) / 0.4))
+    if terrain is not None and terrain.biome_map is not None:
+        from engine import terrain_biomes as tb
+        xs = grid.x0 + (np.arange(grid.nx) + 0.5) * CELL
+        zs = grid.z0 + (np.arange(grid.nz) + 0.5) * CELL
+        gx, gz = np.meshgrid(xs, zs, indexing="ij")
+        w = tb.sample(terrain.biome_map, terrain.get_terrain_bounds(), gx.ravel(), gz.ravel())
+        w = w.reshape(grid.nx, grid.nz, 4)
+        for ch, colour in ((0, (214, 180, 118)), (1, (238, 242, 250)), (3, (206, 172, 80))):
+            a = w[..., ch:ch + 1]
+            rgb = rgb * (1 - a) + np.array(colour) * a
     rgb = rgb * shade[..., None]
     rgb[grid.water] = (60, 110, 170)
     # Grid is [x, z]; image rows run north (high z) to south.
@@ -505,6 +698,12 @@ def render(path, grid, places, roads, nodes, edges, size=1400):
     sx = size / (grid.nx * CELL)
     sz = size / (grid.nz * CELL)
     to = lambda x, z: ((x - grid.x0) * sx, size - (z - grid.z0) * sz)
+    if data is not None:
+        for b in data["brushes"]:
+            if _is_tree(b):
+                u, v = to(b["pos"][0], b["pos"][2])
+                r = max(1.0, b["size"][0] * sx * 0.5)
+                draw.ellipse((u - r, v - r, u + r, v + r), fill=(28, 72, 30))
     for road in roads:
         draw.line([to(*p) for p in road["points"]], fill=(120, 72, 32), width=5, joint="curve")
         draw.line([to(*p) for p in road["points"]], fill=(214, 172, 108), width=3, joint="curve")
@@ -526,6 +725,7 @@ def render(path, grid, places, roads, nodes, edges, size=1400):
                   stroke_width=2, stroke_fill=(0, 0, 0))
     legend = [("Town", colour["town"]), ("Hamlet", colour["hamlet"]), ("Inn", colour["inn"]),
               ("Farm", colour["farm"]), ("Road (stamped)", (214, 172, 108)),
+              ("Desert", (214, 180, 118)), ("Tree brush", (28, 72, 30)),
               ("ROAD_* path node / link", (255, 230, 40))]
     draw.rectangle((10, 10, 260, 22 + 22 * len(legend)), fill=(0, 0, 0, 160))
     for i, (label, c) in enumerate(legend):
@@ -546,6 +746,7 @@ def make(source=SOURCE, out=OUT, preview=PREVIEW):
     terrain = terrain_of(data)
     feet = footprint_points(data)
     before = terrain._get_heights_batch(feet[:, 0], feet[:, 1])
+    desert = paint_desert(terrain)
     protected, reshaped = realism(terrain, data, list(places.values()))
     after = terrain._get_heights_batch(feet[:, 0], feet[:, 1])
     moved = float(np.abs(after - before).max()) if len(feet) else 0.0
@@ -556,6 +757,8 @@ def make(source=SOURCE, out=OUT, preview=PREVIEW):
     roads = build_roads(places, grid)
     stamps = stamp_roads(terrain, roads)
     nodes, edges = place_nodes(terrain, roads)
+    dried = dry_out_trees(terrain, data, grid)
+    forest = plant_forest(terrain, data, list(places.values()), roads, grid)
     # Replace any earlier ROAD_* nodes; keep everything else (patrol chains too).
     data["things"] = [t for t in data["things"]
                       if not (t.get("properties", {}).get("type") == "path_node"
@@ -565,15 +768,17 @@ def make(source=SOURCE, out=OUT, preview=PREVIEW):
     # Keep every saved terrain field; add the baked road paint.
     data["terrain_data"] = dict(data["terrain_data"], texture_paint=terrain_data["texture_paint"],
                                 texture_paint_resolution=terrain_data["texture_paint_resolution"],
-                                heightmap_blob=terrain_data["heightmap_blob"])
+                                heightmap_blob=terrain_data["heightmap_blob"],
+                                biome_map_blob=terrain_data["biome_map_blob"])
     with open(out, "w", encoding="utf-8") as f:
         json.dump(data, f)
     if preview:
-        render(preview, grid, places, roads, nodes, edges)
+        render(preview, grid, places, roads, nodes, edges, terrain, data)
     return dict(settlements=len(places), roads=len(roads), stamps=stamps,
                 nodes=len(nodes), links=len(edges), protected_pixels=protected,
                 max_reshape=round(reshaped, 1), checked_points=len(feet),
-                max_change_under_placed=round(moved, 4))
+                max_change_under_placed=round(moved, 4), desert_fraction=round(desert, 3),
+                forest=forest, desert_trees=dried)
 
 
 if __name__ == "__main__":
