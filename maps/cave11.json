@@ -1652,7 +1652,7 @@
     "type": "levelchanger",
     "name": "LevelChanger_cave11_out",
     "id": "fba74c93-4a3e-48a3-abe4-bc2c67905f79",
-    "target_map": "maps/village_walled_source.json",
+    "target_map": "maps/miniwind_world.json",
     "delay": 0.0,
     "fade_time": 0.5,
     "show_radius": false,
@@ -3015,6 +3015,6 @@
  },
  "_miniwind_cave": {
   "name": "The Ashen Deep",
-  "overworld": "maps/village_walled_source.json"
+  "overworld": "maps/miniwind_world.json"
  }
 }

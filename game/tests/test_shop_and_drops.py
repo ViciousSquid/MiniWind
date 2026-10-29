@@ -48,7 +48,7 @@ def _carried(s, item_id):
 
 # --- the shop ---------------------------------------------------------------
 def test_the_starting_vendor_sells_healing_potions_that_restock():
-    with open(os.path.join(ROOT, "maps", "village_walled_source.json"), encoding="utf-8") as fh:
+    with open(os.path.join(ROOT, "maps", "miniwind_world.json"), encoding="utf-8") as fh:
         things = json.load(fh)["things"]
     elowen = next(t for t in things if t.get("properties", {}).get("name") == "Elowen")
     p = elowen["properties"]

@@ -1967,7 +1967,7 @@
     "type": "levelchanger",
     "name": "LevelChanger_cave14_out",
     "id": "4064e13f-fac8-4b59-bedb-731ce5289cb8",
-    "target_map": "maps/village_walled_source.json",
+    "target_map": "maps/miniwind_world.json",
     "delay": 0.0,
     "fade_time": 0.5,
     "show_radius": false,
@@ -3240,6 +3240,6 @@
  },
  "_miniwind_cave": {
   "name": "Hollowguard Crypt",
-  "overworld": "maps/village_walled_source.json"
+  "overworld": "maps/miniwind_world.json"
  }
 }

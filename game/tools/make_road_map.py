@@ -2,8 +2,9 @@
 
     python -m game.tools.make_road_map [source.json] [out.json] [preview.png]
 
-Reads the world (``maps/village_walled_source.json`` by default) and writes a
-copy (``maps/village_roads_test.json``) in which:
+Built the game's default world (``maps/miniwind_world.json``, settings.ini
+``[Startup] default_map``) from the earlier hand-made one, which it replaced.
+Given an unbuilt map it writes a world in which:
 
 * **Settlements** are the location markers the living world itself calls a
   town, hamlet, inn or farm (:meth:`game.living.world.LivingWorld._classify_places`).
@@ -61,8 +62,11 @@ from types import SimpleNamespace
 import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SOURCE = os.path.join(ROOT, "maps", "village_walled_source.json")
-OUT = os.path.join(ROOT, "maps", "village_roads_test.json")
+OUT = os.path.join(ROOT, "maps", "miniwind_world.json")
+#: There is one world now: the tool builds on the map it is given, and a
+#: world it has already built says so (``_miniwind_world.roads``), so the
+#: roads, desert, ocean and terrain shaping are never laid on twice.
+SOURCE = OUT
 PREVIEW = os.path.join(ROOT, "docs", "screenshots", "road-test-map.png")
 
 #: Place kinds that count as settlements (roads join these).
@@ -529,6 +533,26 @@ def make_ocean(terrain, data):
     rows, cols = np.nonzero(wet)
     x0, x1 = float(xs[cols.min()]), float(xs[cols.max()])
     z0, z1 = float(zs[rows.min()]), float(zs[rows.max()])
+    # One water body, one brush: cut the box clear of any lake it would
+    # overlap, on whichever side loses the least sea.
+    for lx0, lz0, lx1, lz1, _top in water_rects(data):
+        if not (x0 <= lx1 and lx0 <= x1 and z0 <= lz1 and lz0 <= z1):
+            continue
+        cuts = [(max(x0, lx1 + 200.0), x1, z0, z1), (x0, min(x1, lx0 - 200.0), z0, z1),
+                (x0, x1, max(z0, lz1 + 200.0), z1), (x0, x1, z0, min(z1, lz0 - 200.0))]
+        def kept(c):
+            if c[0] >= c[1] or c[2] >= c[3]:
+                return -1.0
+            return float(o[(gx >= c[0]) & (gx <= c[1]) & (gz >= c[2]) & (gz <= c[3])].sum())
+        x0, x1, z0, z1 = max(cuts, key=kept)
+    # The ground is lowered only inside the box, easing off before its inland
+    # edges (a map edge needs no bank), so no dry pit opens outside the water.
+    (bx0, bx1), (bz0, bz1) = terrain.get_terrain_bounds()
+    feather = 1500.0
+    def ease(d, edge_is_map):
+        return np.ones_like(d) if edge_is_map else np.clip(d / feather, 0.0, 1.0)
+    o = o * ease(gx - x0, x0 <= bx0 + 1) * ease(x1 - gx, x1 >= bx1 - 1) \
+          * ease(gz - z0, z0 <= bz0 + 1) * ease(z1 - gz, z1 >= bz1 - 1)
     inside = (gx >= x0) & (gx <= x1) & (gz >= z0) & (gz <= z1)
     sea = float(np.min(ground[inside & (o < 0.3)])) - 25.0
     floor = sea - OCEAN_DEPTH
@@ -1091,9 +1115,33 @@ def render(path, grid, places, roads, nodes, edges, terrain=None, data=None, siz
     img.save(path)
 
 
+def retarget_caves(source, out):
+    """Every cave leads back out to *out*, the world this tool wrote, rather
+    than to the *source* it was made from (make_caves.py points them at the
+    map it ran on). Only those two path strings change in each cave map."""
+    rel = lambda path: os.path.relpath(path, ROOT).replace(os.sep, "/")
+    old, new = f'"{rel(source)}"', f'"{rel(out)}"'
+    changed = 0
+    maps = os.path.join(ROOT, "maps")
+    for name in sorted(os.listdir(maps)):
+        if not (name.startswith("cave") and name.endswith(".json")):
+            continue
+        path = os.path.join(maps, name)
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        if old in text:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text.replace(old, new))
+            changed += 1
+    return changed
+
+
 # ---------------------------------------------------------------------- main
 def make(source=SOURCE, out=OUT, preview=PREVIEW):
     data = load(source)
+    if (data.get("_miniwind_world") or {}).get("roads"):
+        raise SystemExit(f"{source} is already a built world (roads, desert, ocean and "
+                         "terrain shaping applied); give an unbuilt map to build again.")
     places = settlements(data)
     terrain = terrain_of(data)
     desert = paint_desert(terrain)
@@ -1132,8 +1180,12 @@ def make(source=SOURCE, out=OUT, preview=PREVIEW):
                                 # Lush grass: short tufts and medium stalks.
                                 grass_enabled=True, grass_height=GRASS_HEIGHT,
                                 grass_density=GRASS_DENSITY)
+    data.setdefault("_miniwind_world", {})["roads"] = True
     with open(out, "w", encoding="utf-8") as f:
         json.dump(data, f)
+    caves = (retarget_caves(source, out)
+             if os.path.abspath(out) == os.path.abspath(OUT) and os.path.abspath(source) != os.path.abspath(out)
+             else 0)
     if preview:
         render(preview, grid, places, roads, nodes, edges, terrain, data)
     return dict(settlements=len(places), roads=len(roads), stamps=stamps,
@@ -1141,7 +1193,7 @@ def make(source=SOURCE, out=OUT, preview=PREVIEW):
                 max_reshape=round(reshaped, 1), checked_points=len(feet),
                 max_change_under_placed=round(moved, 4), desert_fraction=round(desert, 3),
                 tundra_fraction=round(tundra, 3), sea_level=round(sea, 1), ocean_fraction=round(ocean, 3), wheat_plots=plots, paddocks=paddocks, animals=animals,
-                forest=forest, desert_trees=dried, trees=seated)
+                forest=forest, desert_trees=dried, trees=seated, caves_retargeted=caves)
 
 
 if __name__ == "__main__":

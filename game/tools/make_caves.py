@@ -40,7 +40,7 @@ import numpy as np
 
 from . import expand_world as ew
 
-OVERWORLD = os.path.join("maps", "village_walled_source.json")
+OVERWORLD = os.path.join("maps", "miniwind_world.json")
 
 #: (map slug, name, monsters by display name, how many, loot)
 CAVES = (

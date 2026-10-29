@@ -20,7 +20,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--map', default='maps/village_walled_source.json')
+    parser.add_argument('--map', default='maps/miniwind_world.json')
     args = parser.parse_args()
     source, output = args.source.resolve(), args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -114,7 +114,7 @@ def main():
             window.grab().save(str(output))
             metrics['paint_ms'] = window.view_3d.paint_ms
             overlay = window.loading_overlay
-            overlay.begin('Loading village_walled_source', 'Building terrain', 50)
+            overlay.begin('Loading miniwind_world', 'Building terrain', 50)
             overlay.grab().save(str(output.with_name(output.stem + '-loading.png')))
             metrics['progress_bar_height'] = overlay.bar.height()
             overlay.end()

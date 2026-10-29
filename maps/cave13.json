@@ -1568,7 +1568,7 @@
     "type": "levelchanger",
     "name": "LevelChanger_cave13_out",
     "id": "c8c4e4cd-c22e-40b1-bb5f-95ab7ec19844",
-    "target_map": "maps/village_walled_source.json",
+    "target_map": "maps/miniwind_world.json",
     "delay": 0.0,
     "fade_time": 0.5,
     "show_radius": false,
@@ -2728,6 +2728,6 @@
  },
  "_miniwind_cave": {
   "name": "Briarweb Cavern",
-  "overworld": "maps/village_walled_source.json"
+  "overworld": "maps/miniwind_world.json"
  }
 }

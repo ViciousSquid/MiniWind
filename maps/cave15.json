@@ -1841,7 +1841,7 @@
     "type": "levelchanger",
     "name": "LevelChanger_cave15_out",
     "id": "bd04bc1a-a549-4912-add5-a03b7530069d",
-    "target_map": "maps/village_walled_source.json",
+    "target_map": "maps/miniwind_world.json",
     "delay": 0.0,
     "fade_time": 0.5,
     "show_radius": false,
@@ -3042,6 +3042,6 @@
  },
  "_miniwind_cave": {
   "name": "Mossveil Grotto",
-  "overworld": "maps/village_walled_source.json"
+  "overworld": "maps/miniwind_world.json"
  }
 }

@@ -22,7 +22,7 @@ def pump(t):
     while time.perf_counter() < e:
         app.processEvents(); time.sleep(0.001)
 pump(1.0)
-w.load_level_file(os.path.join(ROOT, "maps/village_walled_source.json")); pump(2.0)
+w.load_level_file(os.path.join(ROOT, "maps/miniwind_world.json")); pump(2.0)
 (w.enter_kiosk_mode() if os.environ.get("KIOSK") else w.enter_play_mode()); pump(1.0)
 lt = w.view_3d.logic_thread; s = lt._miniwind
 s.needs_char_creation = False; s.open_screen = None

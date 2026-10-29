@@ -41,7 +41,7 @@ def test_generated_cave_mouth_is_clear_in_every_direction_on_sloping_ground(dire
 
 @pytest.fixture(scope='module')
 def overworld():
-    return json.loads((MAPS / 'village_walled_source.json').read_text())
+    return json.loads((MAPS / 'miniwind_world.json').read_text())
 
 
 def test_shipped_overworld_cave_changers_are_clear_and_reachable(overworld):
@@ -93,7 +93,7 @@ def test_all_20_caves_have_unique_entrances_and_round_trip_destinations(overworl
         exits = [t for t in cave['things'] if t['type'] == 'levelchanger']
         assert len(exits) == 1
         destination = exits[0]['properties']
-        assert destination['target_map'] == 'maps/village_walled_source.json'
+        assert destination['target_map'] == 'maps/miniwind_world.json'
         assert destination['destination_spawn'] == f'{slug}_exit'
         assert sum(t['type'] == 'playerstart'
                    and t['properties']['name'] == destination['destination_spawn']

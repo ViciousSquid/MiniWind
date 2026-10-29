@@ -1715,7 +1715,7 @@
     "type": "levelchanger",
     "name": "LevelChanger_cave01_out",
     "id": "69d2b716-adcf-4816-9fa7-1b006dcd84a4",
-    "target_map": "maps/village_walled_source.json",
+    "target_map": "maps/miniwind_world.json",
     "delay": 0.0,
     "fade_time": 0.5,
     "show_radius": false,
@@ -2793,6 +2793,6 @@
  },
  "_miniwind_cave": {
   "name": "Wolfmaw Cave",
-  "overworld": "maps/village_walled_source.json"
+  "overworld": "maps/miniwind_world.json"
  }
 }

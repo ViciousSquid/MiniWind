@@ -1757,7 +1757,7 @@
     "type": "levelchanger",
     "name": "LevelChanger_cave07_out",
     "id": "c1c04eec-bac2-4fe7-aca4-f848b31daddf",
-    "target_map": "maps/village_walled_source.json",
+    "target_map": "maps/miniwind_world.json",
     "delay": 0.0,
     "fade_time": 0.5,
     "show_radius": false,
@@ -3017,6 +3017,6 @@
  },
  "_miniwind_cave": {
   "name": "Rattlebone Warren",
-  "overworld": "maps/village_walled_source.json"
+  "overworld": "maps/miniwind_world.json"
  }
 }

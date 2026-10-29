@@ -145,7 +145,7 @@ def test_every_school_has_a_trainer_and_every_teacher_is_real():
     import json
     import os
     root = os.path.join(os.path.dirname(__file__), "..", "..")
-    with open(os.path.join(root, "maps", "village_walled_source.json"), encoding="utf-8") as fh:
+    with open(os.path.join(root, "maps", "miniwind_world.json"), encoding="utf-8") as fh:
         names = {(t.get("properties") or {}).get("name") for t in json.load(fh)["things"]
                  if (t.get("properties") or {}).get("type") == "npc"}
     taught_skills, taught_spells = set(), set()

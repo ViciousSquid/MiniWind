@@ -1,7 +1,7 @@
 """
 Give the Vale its geography: relief, biomes, forests and shrines.
 
-Runs over the expanded world map (``maps/village_walled_source.json``) and:
+Runs over the expanded world map (``maps/miniwind_world.json``) and:
 
 * **Relief.** Rolling hills everywhere (stronger in some regions, gentle in
   others), long ridgelines, dunes and a few flat-topped mesas in the desert,
