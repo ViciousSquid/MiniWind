@@ -326,7 +326,6 @@ class LivingWorld:
         self._livestock_index: Dict[str, List] = {}
         self._residents: Dict[str, object] = {}
         self._quests_def: List[Dict] = []
-        self._head_pool: List[str] = []
         self.enabled = True
 
     # ------------------------------------------------------------------ build
@@ -349,8 +348,6 @@ class LivingWorld:
         spine = getattr(s, "faction_spine", None)
         if spine is not None:
             spine.bind(self.board, [t for t in things if str(t.properties.get("type")) in ("npc", "creature")])
-        self._head_pool = [h for h in rpg_heads.HEAD_IDS
-                           if h != getattr(s.game.character, "head", "")]
         now = _now_hours(s.clock)
         raw = s.store.get(STORE_KEY, "")
         if not (raw and raw != "false" and self.board.load_json(raw)):
@@ -696,13 +693,23 @@ class LivingWorld:
             m["role"], ("villager", None, "passive", False, "", "head"))
         s = self.session
         head = m.get("head") or ""
-        if not head:
-            if head_kind == "head" and self._head_pool:
-                head = s.rng.choice(self._head_pool)
-            elif head_kind == "guard":
-                head = s.rng.choice(rpg_heads.GUARD_HEAD_IDS)
-            elif head_kind not in ("wolf",):
-                head = head_kind
+        if head_kind == "wolf":
+            # Animals keep their species-specific sprites.
+            pass
+        elif m["role"] == "greenskin":
+            # Creature art is not a human NPC portrait.
+            head = head or head_kind
+            m["head"] = head
+        else:
+            # All living and off-screen travellers share the world ledger.
+            # Resident proxies deliberately use the resident's own identity.
+            from ..rpg.head_registry import member_identity
+            owner = member_identity(m)
+            if not owner:
+                owner = f"journey:{j.id}:{index}"
+            m.setdefault("_head_identity", owner)
+            head = s.head_registry.assign(
+                owner, head, guard=role in rpg_heads.GUARD_ROLES)
             m["head"] = head
         faction = faction or j.faction
         if j.cause:
