@@ -122,7 +122,8 @@ class SdlPad:
         try:
             import pygame
             from pygame._sdl2 import controller
-            pygame.joystick.init()       # the engine's view has, too: harmless
+            from engine.sdl_runtime import init_input
+            init_input()                # safe before or after the engine view
             controller.init()
             self._pygame, self._controller = pygame, controller
             self._buttons = [(name, getattr(pygame, const)) for name, const in self._BUTTONS]

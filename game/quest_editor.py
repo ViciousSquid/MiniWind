@@ -445,14 +445,14 @@ def _cond_phrase(cond):
     tgt = (cond or {}).get("target", "")
     cnt = (cond or {}).get("count", 1)
     if kind == "kill":
-        return f"⚔️ Kill {cnt}× {tgt or '?'}"
+        return f"Kill {cnt}× {tgt or '?'}"
     if kind == "fetch":
-        return f"🎒 Fetch {cnt}× {tgt or '?'}"
+        return f"Fetch {cnt}× {tgt or '?'}"
     if kind == "talk":
-        return f"💬 Talk to {tgt or '?'}"
+        return f"Talk to {tgt or '?'}"
     if kind == "roll":
         notation = (cond or {}).get("notation", "1d20")
-        return f"🎲 Roll {notation} ≥ {tgt or '?'}"
+        return f"Roll {notation} ≥ {tgt or '?'}"
 
 
 def goal_summary(quest):
@@ -470,7 +470,7 @@ def goal_summary(quest):
         phrase = _cond_phrase(s.get("condition"))
         if phrase:
             return phrase
-    return "📜 Scripted / dialogue-driven"
+    return "Scripted / dialogue-driven"
 
 
 def build_wizard_quest(existing, *, name, giver, desc, goal_kind, target,
@@ -658,8 +658,7 @@ def _classes():
             self.kind = kind
             lay = QtWidgets.QVBoxLayout(self)
             lay.setContentsMargins(12, 12, 12, 12)
-            title = QtWidgets.QLabel(f"{GOAL_EMOJI.get(kind,'•')}  "
-                                     f"{GOAL_LABEL.get(kind, kind)}")
+            title = QtWidgets.QLabel(GOAL_LABEL.get(kind, kind))
             tf = title.font(); tf.setBold(True); tf.setPointSizeF(tf.pointSizeF() + 1)
             title.setFont(tf)
             desc = QtWidgets.QLabel(GOAL_DESC.get(kind, ""))
@@ -1148,11 +1147,11 @@ def _classes():
             rw = quest.get("rewards", {}) or {}
             bits = []
             if giver:
-                bits.append(f"👤 {giver}")
+                bits.append(f"Giver: {giver}")
             if rw.get("gold"):
-                bits.append(f"🪙 {rw['gold']}")
+                bits.append(f"Gold: {rw['gold']}")
             if quest.get("xp"):
-                bits.append(f"✨ {quest['xp']}")
+                bits.append(f"XP: {quest['xp']}")
             if bits:
                 meta = QtWidgets.QLabel("   ".join(bits))
                 meta.setStyleSheet("color:#7f7f8a;")
@@ -1193,12 +1192,12 @@ def _classes():
             root.setSpacing(10)
 
             header = QtWidgets.QHBoxLayout()
-            title = QtWidgets.QLabel("📜  Quest Editor")
+            title = QtWidgets.QLabel("Quest Editor")
             hf = title.font(); hf.setBold(True); hf.setPointSizeF(hf.pointSizeF() + 4)
             title.setFont(hf)
             header.addWidget(title)
             header.addStretch(1)
-            wiz = QtWidgets.QPushButton("✨  New Quest Wizard")
+            wiz = QtWidgets.QPushButton("New Quest Wizard")
             wiz.setObjectName("primary")
             wiz.clicked.connect(self.launch_wizard)
             header.addWidget(wiz)
@@ -1222,7 +1221,7 @@ def _classes():
             lb = QtWidgets.QHBoxLayout()
             add = QtWidgets.QPushButton("＋ Add")
             dup = QtWidgets.QPushButton("⧉ Duplicate")
-            rem = QtWidgets.QPushButton("🗑 Remove"); rem.setObjectName("danger")
+            rem = QtWidgets.QPushButton("Remove"); rem.setObjectName("danger")
             add.clicked.connect(self._add)
             dup.clicked.connect(self._duplicate)
             rem.clicked.connect(self._remove)
@@ -1260,7 +1259,7 @@ def _classes():
             v.setSpacing(10)
 
             self.empty = QtWidgets.QLabel(
-                "Select a quest, or press ✨ New Quest Wizard to build one.")
+                "Select a quest, or press New Quest Wizard to build one.")
             self.empty.setAlignment(Qt.AlignCenter)
             self.empty.setStyleSheet("color:#8a8a94; padding:40px;")
             v.addWidget(self.empty)
@@ -1626,8 +1625,8 @@ def make_quests_launcher(thing):
             v.addWidget(self.summary)
 
             row = QtWidgets.QHBoxLayout()
-            openb = QtWidgets.QPushButton("📜  Open Quest Editor")
-            wizb = QtWidgets.QPushButton("✨  New Quest Wizard")
+            openb = QtWidgets.QPushButton("Open Quest Editor")
+            wizb = QtWidgets.QPushButton("New Quest Wizard")
             try:
                 openb.setStyleSheet(
                     "background:#34343f;border:1px solid #55555f;border-radius:5px;"

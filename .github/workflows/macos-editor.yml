@@ -98,6 +98,11 @@ jobs:
         run: >-
           python -m pytest -q
           tests/editor/test_macos_layout.py
+          tests/editor/test_terrain_panel_layout.py
+          tests/editor/test_console_history.py
+          tests/editor/test_held_keys.py
+          tests/engine/test_sdl_runtime.py
+          game/tests/test_gamepad.py
           tests/editor/test_editor_freelook.py
           tests/editor/test_mouselook_warp.py
           tests/editor/test_shortcuts_window.py
