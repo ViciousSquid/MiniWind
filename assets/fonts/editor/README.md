@@ -7,9 +7,11 @@ different installed fonts.
   https://github.com/microsoft/Selawik/releases/tag/1.01
   (license in Selawik-OFL.txt). The modified fonts are renamed in accordance
   with the reserved font name requirement. Their hhea and OS/2 typographic
-  ascent/descent are set to the original Windows ascent/descent, line gaps
-  are zero, and USE_TYPO_METRICS is enabled. CoreText and Windows therefore
-  use the same line metrics instead of two different sets within one font.
+  metrics are normalized to 2100 units per em, 2100 ascent, 700 descent and
+  zero line gap, with USE_TYPO_METRICS enabled. Outlines and advance widths
+  are scaled to preserve their proportions. The 4/3-em line box matches the
+  original Windows line height at the default and enlarged text sizes, with
+  integral metrics that avoid different CoreText/GDI rounding results.
 - IBM Plex Mono Regular and Bold: from
   https://github.com/google/fonts/tree/main/ofl/ibmplexmono
   (unmodified font files; license in IBMPlexMono-OFL.txt).

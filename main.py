@@ -127,6 +127,9 @@ dark_stylesheet = """
     }
 """
 
+from editor_styles import CONTROL_STYLESHEET
+dark_stylesheet += CONTROL_STYLESHEET
+
 def _missing_mandatory_plugins(config):
     """Names in ``[Plugins] mandatory`` that discovery did not find.
 

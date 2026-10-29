@@ -9,7 +9,9 @@ on:
       - 'tools/compare_editor_ui.py'
       - 'editor/**'
       - 'assets/fonts/editor/**'
+      - 'assets/ui/controls/**'
       - 'main.py'
+      - 'editor_styles.py'
   workflow_dispatch:
 
 permissions:

@@ -8,7 +8,7 @@ import sys
 import pytest
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QFontInfo
-from PyQt5.QtWidgets import QDialogButtonBox, QFormLayout, QLabel, QStyle, QTabWidget
+from PyQt5.QtWidgets import QDialogButtonBox, QFormLayout, QLabel, QStyle, QTabWidget, QWidget
 
 from editor.desktop_style import MONO_FONT, UI_FONT
 from main import dark_stylesheet
@@ -42,6 +42,33 @@ def test_new_forms_and_button_boxes_use_windows_alignment(qt_app):
     assert qt_app.style().styleHint(QStyle.SH_DialogButtonLayout) == QDialogButtonBox.WinLayout
     for family in (UI_FONT, MONO_FONT):
         assert QFontInfo(QFont(family, 11)).family() == family
+
+
+def test_deferred_pages_get_explicit_alignment_properties(qt_app):
+    tabs = QTabWidget()
+    page = QWidget()
+    form = QFormLayout(page)
+    form.addRow('Name', QLabel('Value'))
+    form.setFormAlignment(Qt.AlignCenter)
+    form.setLabelAlignment(Qt.AlignRight)
+    tabs.addTab(page, 'Deferred page')
+    tabs.show()
+    qt_app.processEvents()
+    try:
+        assert form.formAlignment() == Qt.AlignLeft | Qt.AlignTop
+        assert form.labelAlignment() == Qt.AlignLeft | Qt.AlignVCenter
+        assert not tabs.tabBar().expanding()
+    finally:
+        tabs.close()
+        tabs.deleteLater()
+
+
+def test_spacing_and_indicator_metrics_are_explicit(qt_app):
+    style = qt_app.style()
+    assert style.pixelMetric(QStyle.PM_LayoutLeftMargin) == 9
+    assert style.pixelMetric(QStyle.PM_LayoutHorizontalSpacing) == 6
+    assert style.pixelMetric(QStyle.PM_IndicatorWidth) == 16
+    assert style.pixelMetric(QStyle.PM_ScrollBarExtent) == 12
 
 
 def test_fresh_startup_converts_points_to_windows_logical_pixels():
