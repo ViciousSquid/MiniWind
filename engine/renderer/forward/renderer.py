@@ -73,6 +73,9 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
             #: settings.ini [Renderer] grass: False turns terrain grass off
             #: everywhere, whatever each map asks for.
             self.grass_enabled = config.getboolean('Renderer', 'grass', fallback=True)
+            #: settings.ini [Renderer] grass_quality: 'low' keeps the original,
+            #: half-as-thick grass; 'high' (default) the thick meadows.
+            self.grass_quality = str(config.get('Renderer', 'grass_quality', fallback='high')).strip().lower()
             try:
                 shadow_size = config.getint('Renderer', 'shadow_map_size', fallback=self.SHADOW_MAP_SIZE)
             except Exception:
@@ -81,6 +84,7 @@ class ForwardRenderer(PassesMixin, LightingMixin, PortalsMixin, InstancingMixin,
             self.lowpower_mode = is_low_power
             self.shadows_enabled = not is_low_power
             self.grass_enabled = True
+            self.grass_quality = 'high'
             shadow_size = self.SHADOW_MAP_SIZE
         #: Session-only debug cap on water quality (see WATER_QUALITIES).
         #: Quality itself is per water brush (``water_high_quality``);

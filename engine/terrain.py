@@ -1572,10 +1572,10 @@ class Terrain:
         sand or snow, reeds in the swamp."""
         table = self.table
         size = float(table.size[slot])
-        tufts = min(
+        tufts = int(min(
             self.GRASS_MAX_PER_CHUNK,
             int(max(0.0, self.grass_density) * size * size)
-        )
+        ) * self._grass_budget())
         if tufts <= 0:
             return np.empty((0, 9), dtype=np.float32)
 
@@ -1675,7 +1675,9 @@ class Terrain:
         density_scale = min(1.0, max(0.0, self.grass_density) / 0.02)
         height, ripeness, season_cover = self.wheat_stage
         tufts = int(terrain_biomes.WHEAT_MAX_PER_CHUNK * min(1.0, cover * 1.3 + 0.1)
-                    * max(0.35, density_scale) * season_cover)
+                    * max(0.35, density_scale) * season_cover
+                    # low quality: the original 9,000 of today's 13,500
+                    * (1.0 if self.grass_quality != 'low' else 2.0 / 3.0))
         if tufts <= 0:
             return np.empty((0, 9), dtype=np.float32)
         seed = ((int(self.seed) * 2654435761)
@@ -1743,6 +1745,27 @@ class Terrain:
             self.table.mark_grass_dirty()
         return True
 
+    #: settings.ini [Renderer] grass_quality: 'high' (thick meadows) or 'low'
+    #: (the original grass: half the tufts, narrower blades).
+    grass_quality = 'high'
+    #: (tuft budget multiplier, blade half-width) per quality.
+    GRASS_QUALITIES = {'high': (1.0, 0.45), 'low': (0.5, 0.35)}
+
+    def set_grass_quality(self, quality) -> bool:
+        """Switch grass quality; grass regrows only when it changes."""
+        quality = str(quality or 'high').lower()
+        if quality not in self.GRASS_QUALITIES:
+            quality = 'high'
+        if quality == self.grass_quality:
+            return False
+        self.grass_quality = quality
+        self.GRASS_BLADE_WIDTH = self.GRASS_QUALITIES[quality][1]
+        self.table.mark_grass_dirty()
+        return True
+
+    def _grass_budget(self) -> float:
+        return self.GRASS_QUALITIES.get(self.grass_quality, (1.0, 0.45))[0]
+
     def _biome_size_scale(self) -> float:
         """Wheat, reeds and tundra keep their own real heights whatever the
         map's meadow blade height: their sizes are authored against
@@ -1767,7 +1790,7 @@ class Terrain:
             return np.empty((0, 9), dtype=np.float32)
         density_scale = min(1.0, max(0.0, self.grass_density) / 0.02)
         tufts = int(terrain_biomes.TUNDRA_MAX_PER_CHUNK * min(1.0, float(np.mean(coarse)) * 1.3 + 0.1)
-                    * max(0.35, density_scale))
+                    * max(0.35, density_scale) * self._grass_budget())
         if tufts <= 0:
             return np.empty((0, 9), dtype=np.float32)
         seed = ((int(self.seed) * 2246822519)
