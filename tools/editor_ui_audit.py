@@ -6,6 +6,7 @@ manifests. No rendering context or playable world is needed for this UI audit.
 
 import argparse
 import configparser
+import faulthandler
 import hashlib
 import json
 import os
@@ -418,6 +419,8 @@ def run_audit(audit, window, sections):
 
 
 def main():
+    faulthandler.enable()
+    faulthandler.dump_traceback_later(300, exit=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--output", type=Path, required=True)
@@ -467,7 +470,9 @@ def main():
     finally:
         QtWidgets.QOpenGLWidget = native_gl_widget
     importlib.import_module(config.get("Startup", "game_module")).install()
+    print("AUDIT_STAGE constructing-main-window", flush=True)
     window = MainWindow(str(source))
+    print("AUDIT_STAGE main-window-constructed", flush=True)
     # The audit exercises actual Qt widgets and native styles. Isolate the
     # renderer: Windows hosted runners don't supply a GL 3.3 graphics driver.
     view = window.view_3d
@@ -480,7 +485,9 @@ def main():
     for timer in window.findChildren(QtCore.QTimer):
         timer.stop()
     window.resize(1440, 900)
+    print("AUDIT_STAGE showing-main-window", flush=True)
     window.show()
+    print("AUDIT_STAGE main-window-shown", flush=True)
     screen = app.primaryScreen()
     audit = Audit(app, output, {
         "platform": sys.platform, "qt_platform": app.platformName(),
@@ -501,6 +508,7 @@ def main():
         audit.save()
     sys.excepthook = exception_hook
     try:
+        print("AUDIT_STAGE visiting-surfaces", flush=True)
         run_audit(audit, window, set(filter(None, args.sections.split(","))))
     except Exception:
         audit.error("audit-driver")
@@ -510,6 +518,7 @@ def main():
         window.close()
     print("AUDIT_COMPLETE", len(audit.manifest["frames"]), "frames,",
           len(audit.manifest["errors"]), "errors", flush=True)
+    faulthandler.cancel_dump_traceback_later()
     return 1 if audit.manifest["errors"] else 0
 
 
