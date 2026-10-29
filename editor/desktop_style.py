@@ -4,16 +4,18 @@ from pathlib import Path
 import os
 
 from PyQt5.QtCore import QEvent, QObject, Qt
-from PyQt5.QtGui import QFont, QFontDatabase
+from PyQt5.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QIcon, QPalette
 from PyQt5.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QDialogButtonBox,
-                             QFormLayout, QHeaderView, QProxyStyle, QStyle, QStyleFactory,
-                             QTabWidget, QWidget)
+                             QFileDialog, QFileIconProvider,
+                             QFormLayout, QHeaderView, QLabel, QProxyStyle, QStyle, QStyleFactory,
+                             QTabWidget, QToolTip, QWidget)
 
 UI_FONT = "Fio UI"
 MONO_FONT = "IBM Plex Mono"
+ICON_DIRECTORY = Path(__file__).resolve().parents[1] / 'assets' / 'ui' / 'controls'
 
 
-def prepare_qt():
+def prepare_qt(high_dpi=True):
     """Call before QApplication: points and menus use the Windows convention.
 
     Keep device-pixel-ratio scaling enabled. Only point-to-logical-pixel text
@@ -23,9 +25,12 @@ def prepare_qt():
         # Stylesheet point sizes use the screen DPI too; AA_Use96Dpi alone
         # only normalizes standalone QFont instances on some Qt 5 backends.
         os.environ["QT_FONT_DPI"] = "96"
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, high_dpi)
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
         QApplication.setAttribute(Qt.AA_Use96Dpi, True)
         QApplication.setAttribute(Qt.AA_DontUseNativeMenuBar, True)
         QApplication.setAttribute(Qt.AA_DontUseNativeDialogs, True)
+        QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
 
 class EditorStyle(QProxyStyle):
@@ -49,6 +54,7 @@ class EditorStyle(QProxyStyle):
             QStyle.SH_Widget_Animate: 0,
             QStyle.SH_UnderlineShortcut: 0,
             QStyle.SH_TabBar_ElideMode: int(Qt.ElideRight),
+            QStyle.SH_DialogButtonBox_ButtonsHaveIcons: 0,
         }
         if hint in rules:
             return rules[hint]
@@ -88,12 +94,53 @@ class EditorStyle(QProxyStyle):
             return metrics[metric]
         return super().pixelMetric(metric, option, widget)
 
+    def standardIcon(self, icon, option=None, widget=None):
+        files = {
+            QStyle.SP_ArrowLeft: 'left', QStyle.SP_ArrowRight: 'right',
+            QStyle.SP_ArrowUp: 'up', QStyle.SP_ArrowDown: 'down',
+            QStyle.SP_ArrowBack: 'left', QStyle.SP_ArrowForward: 'right',
+            QStyle.SP_DialogOkButton: 'check', QStyle.SP_DialogApplyButton: 'check',
+            QStyle.SP_DialogCancelButton: 'close', QStyle.SP_DialogCloseButton: 'close',
+            QStyle.SP_DialogOpenButton: 'folder', QStyle.SP_DialogSaveButton: 'save',
+            QStyle.SP_TitleBarCloseButton: 'close', QStyle.SP_TitleBarMinButton: 'minus',
+            QStyle.SP_TitleBarMaxButton: 'maximize', QStyle.SP_TitleBarNormalButton: 'restore',
+            QStyle.SP_DirIcon: 'folder', QStyle.SP_DirOpenIcon: 'folder',
+            QStyle.SP_DirClosedIcon: 'folder', QStyle.SP_DirLinkIcon: 'folder',
+            QStyle.SP_FileIcon: 'file', QStyle.SP_FileLinkIcon: 'file',
+            QStyle.SP_FileDialogToParent: 'up', QStyle.SP_FileDialogBack: 'left',
+            QStyle.SP_FileDialogNewFolder: 'new-folder',
+            QStyle.SP_FileDialogDetailedView: 'list', QStyle.SP_FileDialogListView: 'list',
+            QStyle.SP_MessageBoxInformation: 'info', QStyle.SP_MessageBoxWarning: 'warning',
+            QStyle.SP_MessageBoxCritical: 'error', QStyle.SP_MessageBoxQuestion: 'question',
+        }
+        if icon in files:
+            return QIcon(str(ICON_DIRECTORY / (files[icon] + '.svg')))
+        return super().standardIcon(icon, option, widget)
+
+
+class EditorFileIcons(QFileIconProvider):
+    def icon(self, value):
+        folder = value.isDir() if hasattr(value, 'isDir') else value == QFileIconProvider.Folder
+        return QIcon(str(ICON_DIRECTORY / ('folder.svg' if folder else 'file.svg')))
+
 
 class EditorLayoutRules(QObject):
     """Assign layout properties to actual widgets, including deferred pages."""
 
     def eventFilter(self, obj, event):
-        if event.type() != QEvent.Polish or not isinstance(obj, QWidget):
+        if not isinstance(obj, QWidget):
+            return False
+        if event.type() in (QEvent.Polish, QEvent.FontChange) and isinstance(obj, QLabel):
+            if obj.text() and obj.maximumHeight() == 16777215:
+                previous = obj.property('_fio_label_height')
+                floor = obj.property('_fio_label_floor')
+                if previous is None or obj.minimumHeight() != previous:
+                    floor = obj.minimumHeight()
+                height = max(floor or 0, obj.fontMetrics().height())
+                obj.setProperty('_fio_label_floor', floor or 0)
+                obj.setProperty('_fio_label_height', height)
+                obj.setMinimumHeight(height)
+        if event.type() != QEvent.Polish:
             return False
         if isinstance(obj, QTabWidget):
             obj.setUsesScrollButtons(True)
@@ -101,6 +148,10 @@ class EditorLayoutRules(QObject):
             obj.tabBar().setExpanding(False)
         if isinstance(obj, QDialogButtonBox):
             obj.setCenterButtons(False)
+        if isinstance(obj, QFileDialog):
+            obj.setOption(QFileDialog.DontUseNativeDialog, True)
+            obj.setOption(QFileDialog.DontUseCustomDirectoryIcons, True)
+            obj.setIconProvider(QApplication.instance()._fio_file_icons)
         if isinstance(obj, QHeaderView):
             obj.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         if isinstance(obj, QAbstractSpinBox):
@@ -128,10 +179,37 @@ def install_editor_style(app):
     if not {UI_FONT, MONO_FONT}.issubset(families):
         raise RuntimeError("The bundled editor fonts are missing")
     app.setStyle(EditorStyle())
+    palette = QPalette()
+    colours = {
+        QPalette.Window: '#2b2b2b', QPalette.WindowText: '#e0e0e0',
+        QPalette.Base: '#303234', QPalette.AlternateBase: '#2b2b2b',
+        QPalette.ToolTipBase: '#333333', QPalette.ToolTipText: '#eeeeee',
+        QPalette.Text: '#e0e0e0', QPalette.Button: '#3c3f41', QPalette.ButtonText: '#e0e0e0',
+        QPalette.Highlight: '#425f5d', QPalette.HighlightedText: '#ffffff',
+        QPalette.Link: '#f08000', QPalette.LinkVisited: '#c07bc2', QPalette.BrightText: '#ffffff',
+        QPalette.Light: '#707579', QPalette.Midlight: '#55595d', QPalette.Mid: '#44484b',
+        QPalette.Dark: '#202224', QPalette.Shadow: '#17191b', QPalette.PlaceholderText: '#888888',
+    }
+    for group in (QPalette.Active, QPalette.Inactive, QPalette.Disabled):
+        for role, colour in colours.items():
+            palette.setColor(group, role, QColor(colour))
+    for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText, QPalette.PlaceholderText):
+        palette.setColor(QPalette.Disabled, role, QColor('#858585'))
+    for role in (QPalette.Base, QPalette.Button):
+        palette.setColor(QPalette.Disabled, role, QColor('#333333'))
+    app.setPalette(palette)
+    app._fio_file_icons = EditorFileIcons()
     app.setLayoutDirection(Qt.LeftToRight)
     app._fio_layout_rules = EditorLayoutRules(app)
     app.installEventFilter(app._fio_layout_rules)
-    font = QFont(UI_FONT, 11)
+    set_editor_font_size(app, 11)
+    app._fio_editor_style_installed = True
+
+
+def set_editor_font_size(app, size):
+    font = QFont(UI_FONT, int(size))
     font.setHintingPreference(QFont.PreferNoHinting)
     app.setFont(font)
-    app._fio_editor_style_installed = True
+    for widget_class in ('QMenu', 'QMenuBar', 'QMessageBox'):
+        app.setFont(font, widget_class)
+    QToolTip.setFont(font)

@@ -6,6 +6,7 @@ theme supplies the appearance of an otherwise unstyled editor control.
 
 CONTROL_STYLESHEET = """
     QLabel { border: none; background: transparent; padding: 0px; }
+    QMessageBox QLabel { font-family: 'Fio UI'; font-weight: normal; }
     QWidget:disabled { color: #858585; }
     QPushButton, QToolButton {
         background: #3c3f41; color: #e0e0e0; border: 1px solid #555;

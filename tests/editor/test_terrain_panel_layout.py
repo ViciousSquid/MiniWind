@@ -40,7 +40,7 @@ def terrain_panel(request, qt_app):
 
 def test_actions_fit_the_font_without_large_empty_buttons(terrain_panel):
     panel = terrain_panel
-    actions = {"🔄 Regenerate", "Reset Defaults", "✕ Close", "Sculpt", "Stamp"}
+    actions = {"Regenerate", "Reset Defaults", "Close", "Sculpt", "Stamp"}
     buttons = [b for b in panel.findChildren(QPushButton) if b.text() in actions]
     assert len(buttons) == len(actions)
     for button in buttons:

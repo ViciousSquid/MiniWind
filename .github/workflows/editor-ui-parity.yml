@@ -42,6 +42,7 @@ jobs:
       PYOPENGL_PLATFORM: ${{ matrix.opengl_platform }}
       SDL_AUDIODRIVER: dummy
       PYTHONUNBUFFERED: '1'
+      PYTHONHASHSEED: '0'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

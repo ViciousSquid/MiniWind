@@ -254,8 +254,8 @@ if __name__ == "__main__":
         def finish(self, main_window):
             self.close()
 
-    from editor.desktop_style import prepare_qt, install_editor_style
-    prepare_qt()
+    from editor.desktop_style import prepare_qt, install_editor_style, set_editor_font_size
+    prepare_qt(config.getboolean('Display', 'high_dpi_scaling', fallback=True))
     # Create app
     app = QApplication(sys.argv)
     install_editor_style(app)
@@ -267,9 +267,7 @@ if __name__ == "__main__":
 
     # The user's font size, applied up front so the splash and a game's
     # launcher match the editor rather than only the main window honouring it.
-    app_font = app.font()
-    app_font.setPointSize(config.getint('Display', 'font_size', fallback=11))
-    app.setFont(app_font)
+    set_editor_font_size(app, config.getint('Display', 'font_size', fallback=11))
 
     # ---------------------------------------------------------
     # Built-in game layer ([Startup] game_module in settings.ini)

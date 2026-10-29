@@ -206,6 +206,13 @@ class Audit:
             tab.setCurrentIndex(current)
 
     def surface(self, name, root, wizard=False):
+        # Compare an identical logical viewport, not each runner's available
+        # desktop area (Cocoa otherwise clamps tool windows below menu/dock).
+        if root.isWindow() and not isinstance(root, (self.W.QMenu, self.W.QWizard)):
+            root.ensurePolished()
+            preferred = root.size() if root.testAttribute(self.C.Qt.WA_Resized) else root.sizeHint()
+            preferred = preferred.expandedTo(root.minimumSizeHint()).expandedTo(root.minimumSize())
+            root.setFixedSize(preferred)
         root.show()
         self.settle()
         before = len(self.manifest["frames"])
@@ -379,6 +386,8 @@ def run_audit(audit, window, sections):
                                                          editor_state=window.state),
             "package-export": lambda: PackageMetadataDialog("audit.json", window),
             "procedural-generator": lambda: ProceduralMapWidget(window),
+            "open-map-picker": lambda: QtWidgets.QFileDialog(window, 'Open Map', 'maps', 'Maps (*.json)'),
+            "colour-picker": lambda: QtWidgets.QColorDialog(audit.G.QColor('#F08000'), window),
         }
         for name, factory in factories.items():
             audit.attempt("dialogs/" + name, factory)
@@ -446,15 +455,13 @@ def main():
     config = prepare_runtime(source, output, args.font_size)
 
     from PyQt5 import QtCore, QtWidgets
-    from editor.desktop_style import prepare_qt, install_editor_style
-    prepare_qt()
+    from editor.desktop_style import prepare_qt, install_editor_style, set_editor_font_size
+    prepare_qt(config.getboolean('Display', 'high_dpi_scaling', fallback=True))
     app = QtWidgets.QApplication([])
     install_editor_style(app)
     from main import dark_stylesheet
     app.setStyleSheet(dark_stylesheet)
-    font = app.font()
-    font.setPointSize(args.font_size)
-    app.setFont(font)
+    set_editor_font_size(app, args.font_size)
     from plugins.manager import load_plugins
     load_plugins()
     import importlib
@@ -483,6 +490,7 @@ def main():
     importlib.import_module(config.get("Startup", "game_module")).install()
     print("AUDIT_STAGE constructing-main-window", flush=True)
     window = MainWindow(str(source))
+    window.camera_movement_learned = True
     print("AUDIT_STAGE main-window-constructed", flush=True)
     # The audit exercises actual Qt widgets and native styles. Isolate the
     # renderer: Windows hosted runners don't supply a GL 3.3 graphics driver.
@@ -495,9 +503,11 @@ def main():
     window.view_3d_dock.setWidget(placeholder)
     for timer in window.findChildren(QtCore.QTimer):
         timer.stop()
-    window.resize(1440, 900)
+    window.setFixedSize(1440, 900)
     print("AUDIT_STAGE showing-main-window", flush=True)
     window.show()
+    from PyQt5.QtGui import QCursor
+    QCursor.setPos(0, 0)
     print("AUDIT_STAGE main-window-shown", flush=True)
     screen = app.primaryScreen()
     audit = Audit(app, output, {
@@ -532,11 +542,19 @@ def main():
 
     app.setQuitOnLastWindowClosed(False)
     QtCore.QTimer.singleShot(100, perform_audit)
-    outcome = app.exec_()
+    app.exec_()
     print("AUDIT_COMPLETE", len(audit.manifest["frames"]), "frames,",
           len(audit.manifest["errors"]), "errors", flush=True)
     faulthandler.cancel_dump_traceback_later()
-    return outcome
+    verdict = 1 if (not audit.manifest['capture_complete'] or audit.manifest['errors']) else 0
+    if __name__ == '__main__':
+        # All artifacts are closed and flushed. This disposable worker opens
+        # every global game dialog; skip host-dependent Qt wrapper destruction
+        # at interpreter shutdown, which is separate from the capture verdict.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(verdict)
+    return verdict
 
 
 if __name__ == "__main__":

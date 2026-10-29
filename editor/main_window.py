@@ -977,6 +977,7 @@ class MainWindow(QMainWindow):
             background-color: {bg};
             color: {fg};
             font-weight: bold;
+            font-size: 14px;
             padding: 2px 10px;
             border-radius: 3px;
         """)
@@ -995,6 +996,7 @@ class MainWindow(QMainWindow):
             background-color: #2b2b2b;
             color: white;
             font-weight: bold;
+            font-size: 14px;
             padding: 2px 10px;
             border-radius: 3px;
         """)
@@ -1988,9 +1990,8 @@ class MainWindow(QMainWindow):
 
     def update_global_font(self):
         font_size = self.config.getint('Display', 'font_size', fallback=11)
-        font = QApplication.font()
-        font.setPointSize(font_size)
-        QApplication.setFont(font)
+        from editor.desktop_style import set_editor_font_size
+        set_editor_font_size(QApplication.instance(), font_size)
 
     def show_settings_dialog(self):
         # Store old values to check for changes

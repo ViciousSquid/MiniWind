@@ -53,6 +53,14 @@ class CutsceneWizard(QtWidgets.QDialog):
         "skeleton", "wraith", "cow", "sheep", "hen",
     )
 
+    @staticmethod
+    def _scroll_page(page):
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        scroll.setWidget(page)
+        return scroll
+
     def __init__(self, main_window, parent=None):
         super().__init__(parent or main_window)
         self.main_window = main_window
@@ -151,7 +159,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         setup_help.setMinimumHeight(55)
         setup_layout.addWidget(setup_help)
         setup_layout.addStretch(1)
-        tabs.addTab(setup_page, "Setup")
+        tabs.addTab(self._scroll_page(setup_page), "Setup")
 
         # -----------------------------------------------------------------
         # Actors + waypoints — the main authoring workflow.
@@ -248,7 +256,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         wv.addWidget(self.waypoint_list)
         actors_layout.addWidget(waypoint_box, 1)
 
-        tabs.addTab(actors_page, "Actors && Waypoints")
+        tabs.addTab(self._scroll_page(actors_page), "Actors && Waypoints")
 
         # -----------------------------------------------------------------
         # Camera
@@ -309,7 +317,7 @@ class CutsceneWizard(QtWidgets.QDialog):
         cv.addLayout(camera_buttons)
         self.camera_keys_list.currentRowChanged.connect(self._camera_keyframe_selected)
         camera_layout.addWidget(camera_box, 1)
-        tabs.addTab(camera_page, "Keyframes")
+        tabs.addTab(self._scroll_page(camera_page), "Keyframes")
 
         # -----------------------------------------------------------------
         # Events / dialogue. Advanced functionality remains available, but

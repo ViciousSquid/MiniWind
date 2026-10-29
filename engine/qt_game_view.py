@@ -810,15 +810,15 @@ class QtGameView(QOpenGLWidget):
         return QFont(self._hud_font_families.get(1, "Rushford Clean"), 56)
 
     def _init_hud_caches(self):
-        self._hud_font = QFont("Arial", 11)
+        self._hud_font = QFont("Fio UI", 11)
         self._hud_font.setBold(True)
-        self._hud_msg_font = QFont("Arial", 14)
+        self._hud_msg_font = QFont("Fio UI", 14)
         self._hud_msg_font.setBold(True)
-        self._fps_font = QFont("Arial", 10)
-        self._sprites_font = QFont("Arial", 10)
+        self._fps_font = QFont("Fio UI", 10)
+        self._sprites_font = QFont("Fio UI", 10)
         self._sprites_font.setBold(True)
-        self._death_title_font = QFont("Arial", 64, QFont.Bold)
-        self._death_sub_font = QFont("Arial", 18)
+        self._death_title_font = QFont("Fio UI", 64, QFont.Bold)
+        self._death_sub_font = QFont("Fio UI", 18)
         self._load_hud_font_families()
         self._hud_style = 1
         self._hud_opacity = 100.0
@@ -830,8 +830,8 @@ class QtGameView(QOpenGLWidget):
             self._hud_font_families.get(1, "Rushford Clean"), 56
         )
         self._reload_hud_settings()
-        self._face_mode_font_top = QFont("Arial", 14, QFont.Bold)
-        self._face_mode_font_bot = QFont("Arial", 10, QFont.Bold)
+        self._face_mode_font_top = QFont("Fio UI", 14, QFont.Bold)
+        self._face_mode_font_bot = QFont("Fio UI", 10, QFont.Bold)
 
         self._hud_health_orange = QColor(179, 75, 0)
         self._hud_ammo_green = QColor("#0b4519")
@@ -1954,7 +1954,7 @@ class QtGameView(QOpenGLWidget):
             ("Y", float(p.y)),
             ("Z", float(p.z)),
         )
-        font = QFont("Arial", 11)
+        font = QFont("Fio UI", 11)
         font.setStyleHint(QFont.Monospace)
         painter.setFont(font)
         metrics = QFontMetrics(font)
@@ -2898,7 +2898,7 @@ class QtGameView(QOpenGLWidget):
 
         # Title
         title = self._cached_level_complete_ui.get('title', 'Complete')
-        painter.setFont(QFont("Arial", 48, QFont.Bold))
+        painter.setFont(QFont("Fio UI", 48, QFont.Bold))
         fm = painter.fontMetrics()
         tw = fm.horizontalAdvance(title)
         painter.setPen(QColor(255, 215, 0))
@@ -2912,7 +2912,7 @@ class QtGameView(QOpenGLWidget):
         painter.setBrush(QBrush(QColor(60, 60, 60, 220)))
         painter.drawRoundedRect(btn_x, btn_y, btn_w, btn_h, 8, 8)
 
-        painter.setFont(QFont("Arial", 16, QFont.Bold))
+        painter.setFont(QFont("Fio UI", 16, QFont.Bold))
         painter.setPen(QColor(255, 255, 255))
         btn_text = self._cached_level_complete_ui.get('button_text', 'Continue to Next Map')
         fm = painter.fontMetrics()
@@ -2923,7 +2923,7 @@ class QtGameView(QOpenGLWidget):
         self._level_complete_btn_rect = QRect(btn_x, btn_y, btn_w, btn_h)
 
         # Hint
-        painter.setFont(QFont("Arial", 12))
+        painter.setFont(QFont("Fio UI", 12))
         painter.setPen(QColor(180, 180, 180))
         hint = "E to continue, Esc to cancel"
         fm = painter.fontMetrics()
@@ -2936,7 +2936,7 @@ class QtGameView(QOpenGLWidget):
 
     #: Bundled face the menu is set in (assets/fonts), and the fallback.
     PAUSE_MENU_FONT = "HornetDisplay-Regular.ttf"
-    PAUSE_MENU_FALLBACK_FONT = "Arial"
+    PAUSE_MENU_FALLBACK_FONT = "Fio UI"
 
     @property
     def pause_menu_active(self) -> bool:

@@ -71,6 +71,20 @@ def test_spacing_and_indicator_metrics_are_explicit(qt_app):
     assert style.pixelMetric(QStyle.PM_ScrollBarExtent) == 12
 
 
+def test_label_height_tracks_font_changes_without_staying_enlarged(qt_app):
+    label = QLabel('Label text')
+    label.show()
+    qt_app.processEvents()
+    for size in (16, 11):
+        font = label.font()
+        font.setPointSize(size)
+        label.setFont(font)
+        qt_app.processEvents()
+        assert label.minimumHeight() == label.fontMetrics().height()
+    label.close()
+    label.deleteLater()
+
+
 def test_fresh_startup_converts_points_to_windows_logical_pixels():
     result = subprocess.run([sys.executable, '-c', '''
 from editor.desktop_style import prepare_qt, install_editor_style
