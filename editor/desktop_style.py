@@ -1,6 +1,7 @@
 """The editor's Windows layout rules, shared on every desktop platform."""
 
 from pathlib import Path
+import os
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QFontDatabase
@@ -17,6 +18,9 @@ def prepare_qt():
     conversion is fixed at 96 DPI; Retina still renders at its native density.
     """
     if QApplication.instance() is None:
+        # Stylesheet point sizes use the screen DPI too; AA_Use96Dpi alone
+        # only normalizes standalone QFont instances on some Qt 5 backends.
+        os.environ["QT_FONT_DPI"] = "96"
         QApplication.setAttribute(Qt.AA_Use96Dpi, True)
         QApplication.setAttribute(Qt.AA_DontUseNativeMenuBar, True)
 

@@ -48,12 +48,20 @@ def test_fresh_startup_converts_points_to_windows_logical_pixels():
     result = subprocess.run([sys.executable, '-c', '''
 from editor.desktop_style import prepare_qt, install_editor_style
 prepare_qt()
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QLabel
 from PyQt5.QtGui import QFont, QFontInfo
 app = QApplication([])
 install_editor_style(app)
 assert QFontInfo(QFont("Selawik", 11)).pixelSize() == 15
 assert QFontInfo(QFont("Selawik", 16)).pixelSize() == 21
+from main import dark_stylesheet
+app.setStyleSheet(dark_stylesheet)
+font = app.font()
+font.setPointSize(16)
+app.setFont(font)
+label = QLabel("Styled text")
+label.ensurePolished()
+assert QFontInfo(label.font()).pixelSize() == 21
 '''], cwd=Path(__file__).resolve().parents[2], env=dict(os.environ, QT_QPA_PLATFORM='offscreen'),
         capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr

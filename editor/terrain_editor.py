@@ -710,6 +710,7 @@ class TerrainEditorPanel(QWidget):
         
         # Size info
         self.size_info_label = QLabel()
+        self.size_info_label.setWordWrap(True)
         self.size_info_label.setStyleSheet("""
             QLabel {
                 background-color: #2a3a38;
@@ -1095,6 +1096,7 @@ class TerrainEditorPanel(QWidget):
             }
         """)
         self.stats_label.setAlignment(Qt.AlignCenter)
+        self.stats_label.setWordWrap(True)
         content_layout.addWidget(self.stats_label)
 
         scroll_area.setWidget(content_widget)
