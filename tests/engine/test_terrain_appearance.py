@@ -223,6 +223,23 @@ def test_wheat_and_tundra_keep_their_full_blade_populations(terrain, channels, b
     np.testing.assert_array_equal(terrain._generate_grass_blades(slot), expected)
 
 
+def test_tundra_stand_has_twice_as_many_tufts_as_before(terrain, monkeypatch):
+    """Dense heath doubles its placement budget, not the wheat or other biomes."""
+    _paint_vegetation(terrain, tb.TUNDRA)
+    terrain.set_grass(True, density=0.05)
+    terrain.set_grass_quality("high")
+    slot = _slot(terrain)
+
+    assert tb.TUNDRA_MAX_PER_CHUNK == 28000
+    dense = len(terrain._generate_tundra_blades(slot))
+    with monkeypatch.context() as m:
+        m.setattr(tb, "TUNDRA_MAX_PER_CHUNK", 14000)
+        previous = len(terrain._generate_tundra_blades(slot))
+    assert previous > 0
+    assert 1.9 < dense / previous < 2.1
+    assert tb.WHEAT_MAX_PER_CHUNK == 13500
+
+
 @pytest.mark.parametrize("biome", [tb.WHEAT, tb.TUNDRA])
 def test_grass_blades_sit_on_the_ground(terrain, biome):
     _paint_vegetation(terrain, biome)

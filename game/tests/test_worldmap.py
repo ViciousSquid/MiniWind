@@ -113,3 +113,63 @@ def _ready_world():
     w.bounds = ((-3200.0, 3200.0), (-3200.0, 3200.0))
     w.cell = 100.0
     return w
+
+
+def test_painted_biome_colours_are_visible_on_the_map():
+    """The map reflects region paint, not just the old height-only relief."""
+    from engine import terrain_biomes as tb
+
+    h = np.tile(np.linspace(0.0, 180.0, 40, dtype=np.float32), (40, 1))
+    weights = np.zeros((40, 40, 5), np.float32)
+    weights[:, 20:, tb.TUNDRA] = 1.0
+    original = worldmap.colour_terrain(h, 20.0)
+    painted = worldmap.colour_terrain(h, 20.0, weights)
+    np.testing.assert_array_equal(painted[:, :20], original[:, :20])
+    assert not np.array_equal(painted[:, 20:], original[:, 20:])
+    # The heath has russet-brown ground, rather than the upland height ramp.
+    r, g, b = painted[20, 30].astype(int)
+    assert r > g > b
+    # The normal hillshade remains, including where a biome is fully painted.
+    assert np.unique(painted[20, 20:, 0]).size > 1
+
+
+def test_the_worldmap_builder_samples_current_biome_paint(tmp_path, monkeypatch):
+    """Both the minimap and MAP page consume the shared newly painted image."""
+    from engine import terrain_biomes as tb
+
+    class BiomeTerrain:
+        biome_map = np.zeros((2, 2, 5), np.uint8)
+
+        def get_terrain_bounds(self):
+            return ((-1000.0, 1000.0), (-1000.0, 1000.0))
+
+        def _get_heights_batch(self, x, z):
+            return np.zeros_like(x, dtype=np.float32)
+
+        def biome_weights_batch(self, x, z):
+            out = np.zeros((len(x), 5), dtype=np.float32)
+            out[np.asarray(x) < 0, tb.DESERT] = 1.0
+            out[np.asarray(x) >= 0, tb.TUNDRA] = 1.0
+            return out
+
+    monkeypatch.setattr(worldmap, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(worldmap, "RESOLUTION", 64)
+    world = worldmap.WorldMap()
+    world.ensure(BiomeTerrain(), [], terrain_data={"seed": 2})
+    deadline = time.time() + 10
+    while not world.ready and world.error is None and time.time() < deadline:
+        time.sleep(0.02)
+    assert world.error is None
+    assert world.ready
+    desert = world.rgb[32, 10].astype(int)
+    tundra = world.rgb[32, 50].astype(int)
+    assert desert.sum() > tundra.sum()
+    assert tundra[0] > tundra[1] > tundra[2]
+
+
+def test_replacing_the_world_file_invalidates_the_cached_picture(tmp_path):
+    path = tmp_path / "world.json"
+    path.write_text("first version", encoding="utf-8")
+    first = worldmap.WorldMap.cache_key(path, None)
+    path.write_text("second version with new geography", encoding="utf-8")
+    assert worldmap.WorldMap.cache_key(path, None) != first
