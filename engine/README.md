@@ -51,6 +51,7 @@
 | `prop_runtime.py` | Prop carrying, collecting, dropping and respawning. |
 | `qt_game_view.py` | The 3D view widget: drawing, input, Play mode, HUD, pause menu, audio. |
 | `render_cull.py` | Distance culling over dense positions. |
+| `render_camera.py` | Interpolates presentation camera poses between simulation ticks. |
 | `render_keys.py` | Packs draw state into sortable keys and finds equal-key runs. |
 | `render_table.py` | Dense table of brushes for rendering. |
 | `savegame.py` | Play-session save and load (`.fiosave`). |

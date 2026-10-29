@@ -65,6 +65,7 @@ from engine.glasses import (
     glasses_sprite_key, normalize_glasses,
 )
 from engine.logic_thread import LogicThread
+from engine.render_camera import interpolate_camera
 from engine.constants import RENDER_MODE_LIT, RENDER_MODE_UNLIT, RENDER_MODE_WIREFRAME, RENDER_MODE_VERTEX
 from editor.debug_console import CommandInput, DebugConsole, debug_log
 from .sysmon import SysMon
@@ -149,7 +150,8 @@ class QtGameView(QOpenGLWidget):
         super().__init__(editor)
         self._logic_tick_fault_signal.connect(self._handle_logic_tick_fault)
 
-        fmt = QSurfaceFormat()
+        # Preserve the launcher's swap interval (and its other surface defaults).
+        fmt = QSurfaceFormat(QSurfaceFormat.defaultFormat())
         fmt.setVersion(3, 3)
         fmt.setProfile(QSurfaceFormat.CoreProfile)
         fmt.setDepthBufferSize(24)
@@ -307,6 +309,7 @@ class QtGameView(QOpenGLWidget):
 
         # Timer to poll gamepad state regularly
         self.gamepad_timer = QTimer(self)
+        self.gamepad_timer.setTimerType(Qt.PreciseTimer)
         self.gamepad_timer.timeout.connect(self._poll_gamepad)
         self.gamepad_timer.start(16)  # ~60 Hz
 
@@ -479,9 +482,11 @@ class QtGameView(QOpenGLWidget):
         self.setAttribute(Qt.WA_NoSystemBackground)
 
         timer = QTimer(self)
+        timer.setTimerType(Qt.PreciseTimer)
         timer.setInterval(16)
         timer.timeout.connect(self.update_loop)
         timer.start()
+        self.frameSwapped.connect(self._frame_swapped)
 
         self.setFocusPolicy(Qt.ClickFocus)
         self.setMouseTracking(True)
@@ -1463,16 +1468,6 @@ class QtGameView(QOpenGLWidget):
     def update_loop(self):
         if not self.play_mode and self.editor.state.stream_editor_camera(self.camera.pos):
             self.editor.update_all_ui()
-        current_time = time.perf_counter()
-        delta = current_time - self.last_time
-        self.last_time = current_time
-        self.frame_count += 1
-        fps_elapsed = current_time - self.last_fps_time
-        if fps_elapsed > 1.0:
-            self.fps = self.frame_count / fps_elapsed
-            self.frame_count = 0
-            self.last_fps_time = current_time
-        self.sysmon.record_frame_time(delta * 1000.0)
         self._process_sound_queue()
         self._process_console_command_queue()
 
@@ -1484,18 +1479,28 @@ class QtGameView(QOpenGLWidget):
             self.game_state.set_keys(keys)
             # Update Player 2 input from arrow keys (if no gamepad)
             self._update_p2_keyboard_input()
-            # Paint only a frame that is new. Repainting the one already on
-            # screen draws the same image again, and -- publication being
-            # double-buffered -- borrows the published frame for the whole
-            # paint, so back-to-back repaints leave the logic thread no gap
-            # to publish the next one in. Input that changes only editor
-            # overlays asks Qt for a paint on its own (``update()``).
-            if self.game_state.try_swap():
+            new_frame = self.game_state.try_swap()
+            # Play may need an interpolated camera frame between publications.
+            # This timer also restarts presentation after exposure/minimising;
+            # frameSwapped normally schedules the next vsynced play frame.
+            if new_frame or self.play_mode:
                 self.update()
-                if self.play_mode:
-                    self.editor.update_views()
+            if new_frame and self.play_mode:
+                # Only visible editor views need the moving camera/actors.
+                # update_views() also rescans terrain settings and resets every
+                # editor interaction, even when fullscreen has hidden them all.
+                for view in (self.editor.view_top, self.editor.view_front, self.editor.view_side):
+                    if view.isVisible():
+                        view.update()
         else:
             self.repaint()
+
+    def _frame_swapped(self):
+        # Qt's compositor supplies the cadence, including ProMotion's refresh
+        # rate. A separate 16 ms timer beats against both 60 and 120 Hz vsync.
+        # Keep the timer as the fallback when vsync is disabled or hidden.
+        if self.play_mode and self.isVisible() and self.format().swapInterval() > 0:
+            self.update()
 
     @staticmethod
     def _sound_radius_gain(distance, radius):
@@ -1887,8 +1892,18 @@ class QtGameView(QOpenGLWidget):
             render_state = self.game_state.get_render_state()
         if render_state is None:
             return
-        self._animate_textures()
         try:
+            now = time.perf_counter()
+            self.frame_count += 1
+            fps_elapsed = now - self.last_fps_time
+            if fps_elapsed > 1.0:
+                self.fps = self.frame_count / fps_elapsed
+                self.frame_count = 0
+                self.last_fps_time = now
+            self.sysmon.record_frame_time((now - self.last_time) * 1000.0)
+            self.last_time = now
+            interpolate_camera(render_state, now, LogicThread.TICK_DURATION)
+            self._animate_textures()
             self._paint_frame(render_state)
         finally:
             # The render state is a borrowed snapshot, and publication waits

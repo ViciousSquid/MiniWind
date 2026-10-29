@@ -19,6 +19,7 @@ class RenderState:
     def __init__(self):
         # Camera / View
         self.camera_view_matrix = glm.mat4(1.0)
+        self.camera_frames = None
         self.projection_matrix = glm.mat4(1.0)
         self.is_play_mode = False
         
@@ -130,6 +131,7 @@ class RenderState:
     def reset(self):
         """Reset all fields to defaults for reuse (avoids per-frame allocation)."""
         self.camera_view_matrix = glm.mat4(1.0)
+        self.camera_frames = None
         self.projection_matrix = glm.mat4(1.0)
         self.is_play_mode = False
         self.editor_camera_pos = glm.vec3(0, 0, 0)
