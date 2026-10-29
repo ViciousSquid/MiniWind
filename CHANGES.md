@@ -1,5 +1,33 @@
 # Changes
 
+## Storyteller and simulation hot paths
+
+- `knowledge.facts_view()` / `derived_view()`: shared, read-only parsed beliefs
+  (and memoised filters of them), re-parsed only when the serialized beliefs
+  change. The storyteller and the director's report pass read through them;
+  `knowledge.facts()` still returns fresh copies for writers.
+- `peek_actor_key()` / `peek_mem_key()` read identity without writing to an
+  actor, replacing whole-properties copies in the storyteller, faction
+  identity and `Director.evaluate()`. The disposition module is resolved once
+  instead of imported on every identity call.
+- Storyteller: per-sample memo of reported/settled events and holder towns,
+  one history scan for vendetta discharges, member-only lookups in
+  `materialisation_weight` (it scanned every holder for every streaming
+  candidate), and the live region read only when respite could suppress.
+- Batched with NumPy at scale, scalar below it: gossip pair search
+  (`VECTOR_MIN` = 48 awake actors), witness-to-officer reach (48 lawful), and
+  `WorldIndex.counts_by_tier(near=...)` for the visible-hostile sensor (64
+  rows). Batched paths keep loop order and confirm each hit with `dist2d`, so
+  outcomes, RNG draws and gossip budgets are unchanged. NumPy is imported
+  lazily; `game.sim` still imports without it.
+
+Measured, not timed in tests: a 3,000-actor storyteller fixture samples in
+~40 ms (was ~120 ms) and answers a board update's streaming queries ~20x
+faster; a 367-actor settlement session runs its sim tick ~2.1x faster.
+Old/new runs over seeded worlds produce identical stores, histories, RNG
+state, levers and reasons. `game/tests/test_sim_hot_paths.py` pins parse
+counts, holders consulted, predicate calls and batched == scalar.
+
 ## Storyteller as a first-class simulation subsystem
 
 - Move the storyteller into the reactive simulation as `game/sim/storyteller.py`.
