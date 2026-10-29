@@ -90,6 +90,7 @@ def materials():
         "purple": ((.13, .025, .17), 0, .35, .1),
         "milk": ((.88, .83, .68), 0, .32, 0),
         "bread": ((.35, .14, .035), 0, .8, .9),
+        "straw": ((.64, .40, .10), 0, .72, .3),
         "glass": ((.75, .88, .85), 0, .08, 0, 1),
         "fire": ((1, .24, .015), 0, .28, 0, .15, 2),
         "gem": ((.06, .38, .33), .25, .14, 0, .2),
@@ -551,6 +552,19 @@ def misc(iid, record):
     if "bonemeal" in iid:
         lathe([(-.4, .3), (-.25, .6), (.1, .7), (.14, .63), (-.19, .52)], "wood")
         sphere((0, -.02, 0), (.58, .13, .58), "bone")
+        return
+    if iid == "wheat":
+        # Three ripe ears with paired grains and fine awns, tied as a sheaf.
+        for x, y in [(-.38, .45), (0, .72), (.38, .5)]:
+            tube([(x * .2, -.95, 0), (x * .6, -.1, 0), (x, y + .5, 0)], .018, "straw")
+            for i in range(6):
+                gy = y - .32 + i * .13
+                for side in (-1, 1):
+                    grain = sphere((x + side * .065, gy, .025), (.065, .12, .055), "straw")
+                    grain.rotation_euler[2] = -side * .45
+                    rod((x + side * .09, gy + .04, 0),
+                        (x + side * .19, gy + .34, 0), .006, "straw")
+        tube([(-.15, -.43, .04), (0, -.48, .08), (.15, -.43, .04)], .025, "leather")
         return
     # Flax / nightshade and the ingredient fallback: stems, leaves and flowers.
     for i in range(3):

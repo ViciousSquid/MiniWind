@@ -31,10 +31,10 @@ def _create(window, name=None, pos=(0, 40, 0)):
     return start
 
 
-def _delete(window, *things):
-    """Delete with the Delete key, as an author does."""
+def _delete(window, *things, key=Qt.Key_Delete):
+    """Delete with either editor deletion key, as an author does."""
     window.set_selected_objects(list(things))
-    window.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Delete, Qt.NoModifier))
+    window.keyPressEvent(QKeyEvent(QEvent.KeyPress, key, Qt.NoModifier))
 
 
 def _primaries(window):
@@ -110,7 +110,8 @@ def test_the_primary_checkbox_moves_the_primary_and_is_undoable(window):
 
 # -- deleting ------------------------------------------------------------------
 
-def test_deleting_the_primary_promotes_the_earliest_created_remaining(window):
+@pytest.mark.parametrize("delete_key", [Qt.Key_Delete, Qt.Key_Backspace])
+def test_deleting_the_primary_promotes_the_earliest_created_remaining(window, delete_key):
     a = _create(window, "A")
     _create(window, "B", (100, 40, 0))
     _create(window, "C", (200, 40, 0))
@@ -118,7 +119,7 @@ def test_deleting_the_primary_promotes_the_earliest_created_remaining(window):
     things = window.state.things
     things[1], things[2] = things[2], things[1]
 
-    _delete(window, a)
+    _delete(window, a, key=delete_key)
 
     assert _primaries(window) == ["B"]
     window.undo()

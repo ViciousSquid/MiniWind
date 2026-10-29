@@ -613,6 +613,13 @@
       }
     ]
   },
+  "wheat": {
+    "name": "Wheat",
+    "category": "ingredient",
+    "value": 1,
+    "weight": 0.1,
+    "desc": "Golden wheat harvested from a field."
+  },
   "ingr_flax": {
     "name": "Flax Flower",
     "category": "ingredient",

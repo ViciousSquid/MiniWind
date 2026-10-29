@@ -123,6 +123,9 @@ def test_grass_draws_in_both_detail_levels(context):
     assert t.grass_shader_program, "grass program failed to link"
     bare = _render(context, t, eye=(40.0, 0.0, 120.0), target=(40.0, 0.0, 0.0))
     t.set_grass(True, density=0.06)
+    biome_map = np.zeros((2, 2, 4), dtype=np.uint8)
+    biome_map[..., 3] = 255  # wheat fields retain blades on otherwise bare terrain
+    t.set_biome_map(biome_map)
     t.set_appearance(layer_heights=(0.0, 1.0, 1.0))
     t.GRASS_MIN_NORMAL_Y = 0.0
     y = t._get_height_scalar(40.0, 80.0)

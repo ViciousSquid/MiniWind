@@ -814,7 +814,7 @@ class MiniwindSession(SettlementLaw):
         from .held_weapons import HeldWeapons
         self.held = HeldWeapons(self)
         #: Farmers reaping with a scythe and tending livestock by day.
-        self.farm_work = farm_work.FarmWork()
+        self.farm_work = farm_work.FarmWork(on_collect=self.float_item_gain)
         from .dragon_fire import DragonFire
         from .wildlife import Wildlife
         from .map_memory import MapMemory
@@ -1771,14 +1771,14 @@ class MiniwindSession(SettlementLaw):
         # PERF: iterate only the actor buckets (npc/creature/monster) from the
         # cached type index instead of scanning + normalising the whole scene —
         # and only those the player could actually watch swing. An attack
-        # animation is a purely visual 0.2 s decay; running it for an actor
+        # animation is a 0.2 s decay; running it for an actor
         # outside the camera's reach changes nothing anyone sees.
         for t in self._live_actors():
             tp = t.properties
             if tp.get("_sim_tier", TIER_NEAR) > TIER_ACTIVE:
                 continue
             if tp.get("_farm_work"):
-                self.farm_work.update(delta, (t,))     # the scythe's swing
+                self.farm_work.update(delta, (t,), fio.terrain(self.logic))
             was = tp.get("_was_shooting", False)
             now = tp.get("is_shooting", False)
             if now and not was:
@@ -4324,6 +4324,42 @@ class MiniwindSession(SettlementLaw):
                            item=yielded.item_id,
                            item_name=item.properties["display_name"])
 
+    def collect_produce(self, collector, producer, item_id) -> int:
+        """Collect one available yield beside a tended producer and show it.
+
+        Taking a world yield frees its production slot, just as a player
+        pickup does. Producers configured to keep goods in their inventory
+        can also hand over one item at a time.
+        """
+        if (collector.pos is None or producer.pos is None
+                or producer.properties.get("dead") or producer.properties.get("hidden")
+                or self._dist2d(collector.pos, producer.pos) > farm_work.TEND_DISTANCE):
+            return 0
+        if producer.properties.get("produce_into") == sim_prod.INTO_SELF:
+            qty = inv.transfer(inv.get_inventory(producer), inv.get_inventory(collector), item_id, 1)
+            if qty:
+                self.float_item_gain(collector, item_id, qty)
+            return qty
+        for pickup in self._things_of_type("itempickup"):
+            p = pickup.properties
+            if (p.get("dead") or p.get("hidden") or p.get("item_id") != item_id
+                    or p.get("_produced_by") != id(producer) or pickup.pos is None
+                    or self._dist2d(pickup.pos, producer.pos) > farm_work.TEND_DISTANCE):
+                continue
+            qty = int(p.get("quantity", 1))
+            if qty <= 0:
+                continue
+            kept = p.get("_stack")
+            stack = (dict(kept, qty=qty) if isinstance(kept, dict)
+                     else rpg_items.make(item_id, qty) or inv.make_item(item_id, qty=qty))
+            inv.add_item(inv.get_inventory(collector), stack)
+            sim_prod.note_collected(producer.properties, 1)
+            p["dead"] = p["hidden"] = True
+            _journal(pickup)
+            self.float_item_gain(collector, item_id, qty)
+            return qty
+        return 0
+
     # -- turning intents into behaviour --------------------------------------
     def _apply_sim_intent(self, npc, *, fresh_assault=False) -> bool:
         """Let what this NPC *knows* override its daily schedule.
@@ -4754,9 +4790,17 @@ class MiniwindSession(SettlementLaw):
         return out
 
     # -------------------------------------------------------------- floats
+    def float_item_gain(self, thing, item_id, qty=1) -> None:
+        """Show an item collection as ``+N <item>`` over its collector's head."""
+        if qty <= 0:
+            return
+        item = rpg_items.get(item_id)
+        name = item.name if item is not None else str(item_id).replace("_", " ")
+        self.float_text(thing, f"+{int(qty)} {name.lower()}")
+
     def float_text(self, thing, text, seconds: float = FIZZLE_SECONDS) -> None:
         """Float *text* up from *thing*'s head and let it fade: a word about
-        what just happened to it (a fizzled spell), not something it says.
+        what just happened to it (an item collected or a fizzled spell).
         Like :meth:`bark`, only for those near enough to be on screen."""
         if thing is None or not text or getattr(thing, "pos", None) is None:
             return
