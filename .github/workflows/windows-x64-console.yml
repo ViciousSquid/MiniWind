@@ -27,6 +27,18 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install nuitka
 
+      - name: Mark the version as the Windows x64 build
+        # Shown in Help -> About, the console banner and the start-up log.
+        shell: pwsh
+        run: |
+          $path = "editor/version.txt"
+          $text = ([IO.File]::ReadAllText($path)).TrimEnd()
+          if ($text -notmatch '^version \d+(\.\d+)+$') {
+            throw "Unexpected editor/version.txt: '$text'"
+          }
+          [IO.File]::WriteAllText($path, "$text WinX64`n")
+          Write-Host "editor/version.txt: $([IO.File]::ReadAllText($path).TrimEnd())"
+
       - name: Build standalone executable (console visible)
         run: |
           python -m nuitka main.py `

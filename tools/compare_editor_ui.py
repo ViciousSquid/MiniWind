@@ -92,8 +92,10 @@ def build_report(captures, output):
                 "matched_frames": len(wf.keys() & mf.keys()),
                 "missing_windows": sorted(mf.keys() - wf.keys()),
                 "missing_macos": sorted(wf.keys() - mf.keys()),
-                "windows": {k: wd[k] for k in ("commit", "qt_platform", "style", "logical_dpi", "native_dpr")},
-                "macos": {k: md[k] for k in ("commit", "qt_platform", "style", "logical_dpi", "native_dpr")}}
+                "windows": {k: wd.get(k) for k in ("commit", "qt_platform", "style", "logical_dpi", "native_dpr",
+                                                   "available_geometry")},
+                "macos": {k: md.get(k) for k in ("commit", "qt_platform", "style", "logical_dpi", "native_dpr",
+                                                 "available_geometry")}}
         summary["pairs"].append(pair)
         if wd["commit"] != md["commit"]:
             raise ValueError("The operating systems captured different commits")
@@ -168,6 +170,13 @@ d.hidden=!d.dataset.search.includes(q))})</script></html>"""
     print("UI_PARITY_SUMMARY " + json.dumps(summary, separators=(",", ":")), flush=True)
     priorities = [d for d in all_diffs if d["kind"].startswith(("oversized", "new-text", "missing"))]
     print("UI_PARITY_PRIORITY " + json.dumps(priorities[:100], separators=(",", ":")), flush=True)
+    # Remaining review observations, one compact record per finding, so the
+    # log alone shows which surfaces still differ without the report ZIP.
+    review = [{k: d.get(k) for k in ("config", "frame", "kind", "class", "key", "text", "windows", "macos")}
+              for d in all_diffs if d not in priorities]
+    for diff in review[:400]:
+        diff["text"] = (diff["text"] or "")[:40]
+        print("UI_PARITY_REVIEW " + json.dumps(diff, separators=(",", ":"), ensure_ascii=False), flush=True)
     return summary
 
 

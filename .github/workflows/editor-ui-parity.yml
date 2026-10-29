@@ -99,6 +99,29 @@ jobs:
           path: captures
       - name: Build searchable side-by-side report and measured differences
         run: python tools/compare_editor_ui.py --captures captures --output report
+      - name: Log the default editor window from each OS for review
+        if: always()
+        run: |
+          python -m pip install --quiet Pillow
+          python - <<'PY'
+          import base64, io, json
+          from pathlib import Path
+          from PIL import Image
+          # Artifact downloads can be unavailable to reviewers; the log is not.
+          for path in sorted(Path('captures').rglob('manifest.json')):
+              data = json.loads(path.read_text(encoding='utf-8'))
+              if data.get('font_size') != 11 or data.get('scale_factor') != '1':
+                  continue
+              frame = next((f for f in data['frames'] if f['id'].startswith('main/editor/') and f['image']), None)
+              if frame is None:
+                  continue
+              image = Image.open(path.parent / frame['image']).convert('RGB')
+              image.thumbnail((1200, 1200))
+              buffer = io.BytesIO()
+              image.save(buffer, 'JPEG', quality=60, optimize=True)
+              print('UI_PARITY_IMAGE', data['platform'], frame['id'],
+                    base64.b64encode(buffer.getvalue()).decode(), flush=True)
+          PY
       - name: Write run summary
         if: always()
         shell: bash

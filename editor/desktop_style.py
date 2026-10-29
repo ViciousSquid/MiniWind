@@ -4,12 +4,12 @@ from pathlib import Path
 import os
 import sys
 
-from PyQt5.QtCore import QEvent, QObject, Qt
-from PyQt5.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QIcon, QPalette
+from PyQt5.QtCore import QCoreApplication, QEvent, QObject, QSize, Qt
+from PyQt5.QtGui import QColor, QCursor, QFont, QFontDatabase, QFontMetrics, QGuiApplication, QIcon, QPalette
 from PyQt5.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDialogButtonBox,
                              QFileDialog, QFileIconProvider,
                              QFormLayout, QHeaderView, QLabel, QMessageBox, QProxyStyle, QSizePolicy, QStyle, QStyleFactory,
-                             QRadioButton, QTabWidget, QToolTip, QWidget)
+                             QRadioButton, QSplitter, QTabWidget, QToolTip, QWidget)
 
 UI_FONT = "Fio UI"
 MONO_FONT = "IBM Plex Mono"
@@ -35,6 +35,82 @@ def prepare_qt(high_dpi=True):
         QApplication.setAttribute(Qt.AA_DontUseNativeMenuBar, True)
         QApplication.setAttribute(Qt.AA_DontUseNativeDialogs, True)
         QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+
+
+def message_box_size(box):
+    """Qt 5's QMessageBoxPrivate::updateSize() with its Windows width limit.
+
+    Qt wraps message text at 420px on macOS and 500px elsewhere; this repeats
+    the same calculation with the single shared limit.
+    """
+    layout = box.layout()
+    label = box.findChild(QLabel, 'qt_msgbox_label')
+    informative = box.findChild(QLabel, 'qt_msgbox_informativelabel')
+    screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+    available = screen.availableGeometry().width()
+    hard_limit = available if available <= 1024 else min(available - 480, 1000)
+    soft_limit = min(available // 2, 500)
+
+    def minimum_width():
+        layout.activate()
+        return layout.totalMinimumSize().width()
+
+    # Qt's pass leaves the label's policy changed; start from QLabel's default
+    # exactly as Qt's first pass does, or the result depends on prior passes.
+    label.setSizePolicy(QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred, QSizePolicy.Label))
+    if informative is not None:
+        informative.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+    label.setWordWrap(False)
+    width = minimum_width()
+    if width > soft_limit:
+        label.setWordWrap(True)
+        width = min(max(soft_limit, minimum_width()), hard_limit)
+    if informative is not None:
+        label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        policy = QSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
+        policy.setHeightForWidth(True)
+        informative.setSizePolicy(policy)
+        width = min(max(width, minimum_width()), hard_limit)
+        policy.setHeightForWidth(label.wordWrap())
+        label.setSizePolicy(policy)
+    title = QFontMetrics(QApplication.font('QMdiSubWindowTitleBar'))
+    width = max(width, min(title.horizontalAdvance(box.windowTitle()) + 50, hard_limit))
+    layout.activate()
+    height = (layout.totalHeightForWidth(width) if layout.hasHeightForWidth()
+              else layout.totalMinimumSize().height())
+    return QSize(width, height)
+
+
+_pending_message_titles = []
+
+
+def keep_message_box_titles():
+    """Qt 5's QMessageBox.setWindowTitle() does nothing on macOS, so its
+    message boxes lose the title Windows shows. Keep it for every entry point."""
+    if getattr(QMessageBox, '_fio_titles_kept', False):
+        return
+    construct = QMessageBox.__init__
+
+    def init(self, *args, **kwargs):
+        construct(self, *args, **kwargs)
+        title = args[1] if len(args) > 1 else None
+        if isinstance(title, str) and title:
+            QWidget.setWindowTitle(self, title)
+
+    def static(original):
+        def show(*args, **kwargs):
+            _pending_message_titles.append(args[1] if len(args) > 1 else '')
+            try:
+                return original(*args, **kwargs)
+            finally:
+                _pending_message_titles.pop()
+        return staticmethod(show)
+
+    QMessageBox.__init__ = init
+    QMessageBox.setWindowTitle = lambda self, title: QWidget.setWindowTitle(self, title)
+    for name in ('information', 'warning', 'critical', 'question', 'about'):
+        setattr(QMessageBox, name, static(getattr(QMessageBox, name)))
+    QMessageBox._fio_titles_kept = True
 
 
 class EditorStyle(QProxyStyle):
@@ -132,6 +208,21 @@ class EditorFileIcons(QFileIconProvider):
 class EditorLayoutRules(QObject):
     """Assign layout properties to actual widgets, including deferred pages."""
 
+    @staticmethod
+    def size_message_box(box):
+        if box.property('_fio_sizing'):
+            return False
+        box.setProperty('_fio_sizing', True)
+        try:
+            size = message_box_size(box)
+            changed = size != box.size()
+            if changed:
+                box.setFixedSize(size)
+            QCoreApplication.removePostedEvents(box, QEvent.LayoutRequest)
+            return changed
+        finally:
+            box.setProperty('_fio_sizing', False)
+
     def eventFilter(self, obj, event):
         if not isinstance(obj, QWidget):
             return False
@@ -146,6 +237,31 @@ class EditorLayoutRules(QObject):
                 obj.setProperty('_fio_label_floor', floor or 0)
                 obj.setProperty('_fio_label_height', height)
                 obj.setMinimumHeight(height)
+        if event.type() == QEvent.Show and isinstance(obj, QFileDialog) and not obj.property('_fio_sized'):
+            # QFileDialog's constructor resizes itself to a hint derived from
+            # its sidebar entries ("My Computer" vs "Computer", user folders),
+            # after Polish. Assign the window and sidebar sizes once shown.
+            obj.setProperty('_fio_sized', True)
+            line = obj.fontMetrics().height()
+            # Keep the whole frame, title bar included, within the work area.
+            available = obj.screen().availableGeometry().size() - (obj.frameGeometry().size() - obj.size())
+            obj.resize(QSize(36 * line, 24 * line).boundedTo(available).expandedTo(obj.minimumSizeHint()))
+            splitter = obj.findChild(QSplitter, 'splitter')
+            if splitter is not None and splitter.count() == 2:
+                sidebar = 7 * line
+                splitter.setSizes([sidebar, max(0, splitter.width() - splitter.handleWidth() - sidebar)])
+        if isinstance(obj, QMessageBox):
+            if event.type() == QEvent.Show and not obj.windowTitle() and _pending_message_titles:
+                QWidget.setWindowTitle(obj, _pending_message_titles[-1])
+            # Qt sizes the box in showEvent and whenever its text changes while
+            # shown. Replace a macOS-only result before it is painted.
+            if event.type() == QEvent.ShowToParent:
+                obj.setProperty('_fio_shown', True)
+                self.size_message_box(obj)
+            elif event.type() == QEvent.Hide:
+                obj.setProperty('_fio_shown', False)
+            elif event.type() == QEvent.Resize and obj.property('_fio_shown'):
+                return self.size_message_box(obj)
         if event.type() != QEvent.Polish:
             return False
         if isinstance(obj, QTabWidget):
@@ -158,7 +274,6 @@ class EditorLayoutRules(QObject):
             obj.setOption(QFileDialog.DontUseNativeDialog, True)
             obj.setOption(QFileDialog.DontUseCustomDirectoryIcons, True)
             obj.setIconProvider(QApplication.instance()._fio_file_icons)
-            obj.resize(720, 480)
         if isinstance(obj, QMessageBox):
             # Qt 5 hardcodes different Cocoa margins, spacers and button
             # columns inside QMessageBox, independently of QStyle/QSS.
@@ -234,6 +349,8 @@ def install_editor_style(app):
     app.setPalette(palette)
     app._fio_file_icons = EditorFileIcons()
     app.setLayoutDirection(Qt.LeftToRight)
+    if sys.platform == 'darwin':
+        keep_message_box_titles()
     app._fio_layout_rules = EditorLayoutRules(app)
     app.installEventFilter(app._fio_layout_rules)
     set_editor_font_size(app, 11)
@@ -244,6 +361,7 @@ def set_editor_font_size(app, size):
     font = QFont(UI_FONT, int(size))
     font.setHintingPreference(QFont.PreferNoHinting)
     app.setFont(font)
-    for widget_class in ('QMenu', 'QMenuBar', 'QMessageBox'):
+    # QMdiSubWindowTitleBar is the font QMessageBox measures its title with.
+    for widget_class in ('QMenu', 'QMenuBar', 'QMessageBox', 'QMdiSubWindowTitleBar'):
         app.setFont(font, widget_class)
     QToolTip.setFont(font)
