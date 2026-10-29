@@ -2,7 +2,7 @@
 
 import math
 
-from .storyteller import StorytellerHooks, TUNING
+from .sim.storyteller import StorytellerHooks, TUNING
 
 
 class SessionStorytellerHooks(StorytellerHooks):

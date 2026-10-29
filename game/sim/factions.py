@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 from . import appraisal, crime, knowledge, moods
 from .director import actor_key
+from .system import SimSystem
 
 STORE_KEY = "factions.state"
 VERSION = 1
@@ -60,7 +61,10 @@ def ledger(faction, accounts):
     return dict(totals=totals, receipts=rows)
 
 
-class FactionSpine:
+class FactionSpine(SimSystem):
+    # Driven by the living board (decide/pending), so it keeps the default tick.
+    name = "factions"
+
     def __init__(self, store, director, enabled=lambda: True):
         self.store, self.director, self.enabled = store, director, enabled
         self.board = None

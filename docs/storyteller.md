@@ -1,8 +1,10 @@
 # Storyteller pacing
 
-`game/storyteller.py` is a headless sampler over the reactive simulation. It
+`game/sim/storyteller.py` is a headless sampler over the reactive simulation. It
 creates no events, knowledge, witnesses or NPC intentions. It cannot move or
-spawn actors. Designer content is `game/data/storyteller.json`; a mod can
+spawn actors. It is a simulation subsystem (`game.sim.SimSystem`) that the
+session attaches to the `Director`, beside the faction spine; see
+[Lifecycle](#lifecycle). Designer content is `game/data/storyteller.json`; a mod can
 override it at `game/data/mods/<name>/storyteller.json`. `TUNING` loads that
 content over `DEFAULT_TUNING` code fallbacks. Tuning lists replace rather than
 append, so overriding a two-hour departure window preserves two endpoints.
@@ -61,7 +63,8 @@ the town holding the memory, not the event's hidden location. They influence
 departures, subsequent legs and local market trips; legal destinations remain
 available.
 
-Vendetta staging requires a cached, clean kin `FIGHT` intent against the player
+Vendetta staging requires a cached, clean kin `FIGHT` intent (read through
+`Director.cached_intents()`, which never appraises) against the player
 and the corresponding identified death fact in the actor's own knowledge.
 Facts preserve the event's `actor_faction` snapshot through storage and gossip,
 so appraisal can also produce ordinary faction-threat fight/flee intentions.
@@ -85,7 +88,6 @@ and homeward leg. Distant, dirty, forgotten, discharged or unjustified fights
 keep ordinary destination sampling. Holder identities are cached once per
 sample, while facts, current intentions and discharges are revalidated at use.
 
-The session samples world time immediately before ticking the living board.
 `WorldHooks` exposes the lever and sampling queries to board/streaming code.
 Every decision updates a plain-English explanation shown in the existing
 mental-state inspector's **Storyteller decisions** section beside ranked
@@ -152,6 +154,26 @@ tuning table. The sampler consumes no random numbers; board choices use the
 session's reseeded RNG as before. Board consumers share one detached lever
 snapshot per update or seed, rather than copying the dictionary per lookup.
 
+## Lifecycle
+
+The director owns the storyteller like the rest of the simulation's state:
+
+- **Tick.** After each reactive-simulation pass (rumours, reports, production,
+  memory fade), `Director.tick()` ticks attached subsystems at absolute world
+  time, `day * 24 + hour`. The storyteller samples the state that pass just
+  produced, on its own `sample_hours` interval, whatever the frame rate. The
+  living board reads the published levers on its next update.
+- **Persist / restore.** `Director.persist()` and `Director.restore()` save and
+  load the event history first, then each subsystem in attachment order, so a
+  restored storyteller sees the past already loaded.
+- **New game.** `Director.reset()` clears the history and decided intents and
+  returns every subsystem to its authored start (CALM, no observations).
+
+Consumers keep one handle, `session.storyteller` (the same object as
+`session.director.system("storyteller")`). Board hooks ask it for levers,
+weights and `player_town()`; nothing outside the module reaches into its
+hooks or the director's private intent cache.
+
 Faction actors, goodwill, footprint pricing and on-demand moods are documented
 in [Factions: the world prices drama](factions.md). Faction decisions stay in the
 reactive simulation. Prosperity only prices legal bandit destinations; notoriety
@@ -163,7 +185,8 @@ sample. The pristine switch leaves these additional sensors and decisions idle.
 Run the mechanism tests with:
 
 ```sh
-python -m pytest game/tests/test_storyteller.py game/tests/test_storyteller_window.py -q
+python -m pytest game/tests/test_storyteller.py game/tests/test_storyteller_window.py \
+  game/tests/test_sim_systems.py -q
 FIO_HEADLESS_TIER=1 python -m pytest -m 'not qt and not gl and not benchmark'
 ```
 

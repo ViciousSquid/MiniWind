@@ -14,7 +14,7 @@ from ..sim import appraisal, knowledge, moods
 from ..sim.director import Director
 from ..sim.events import WorldEvent
 from ..sim.factions import FactionSpine, STORE_KEY, VERSION, identity, ledger
-from ..storyteller import Storyteller, TUNING
+from ..sim.storyteller import Storyteller, TUNING
 from .test_storyteller import Store, actor, board, setup
 
 

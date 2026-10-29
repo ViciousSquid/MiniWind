@@ -1,5 +1,24 @@
 # Changes
 
+## Storyteller as a first-class simulation subsystem
+
+- Move the storyteller into the reactive simulation as `game/sim/storyteller.py`.
+  It is now a `game.sim.SimSystem` (new `game/sim/system.py`). The faction
+  spine is one too.
+- The `Director` owns attached subsystems: `attach()`/`system()`, a tick after
+  each pipeline pass at absolute world hours, and `persist()`/`restore()`/`reset()`
+  that cover the event history first and then each subsystem in attachment order.
+  The session no longer ticks, saves, loads or resets the storyteller and faction
+  spine one by one, and no longer ticks pacing from the frame loop.
+- Add `Director.cached_intents()`, a read-only view of decided intents. The
+  storyteller no longer reads the director's private `_intents`/`_dirty`.
+  Board hooks ask `Storyteller.player_town()` instead of reaching into its hooks.
+- No snapshot schema changes: `storyteller.state` stays at schema 3 and
+  `factions.state` at schema 1.
+- New `game/tests/test_sim_systems.py` covers tick order and world time, unique
+  names, lifecycle order, intent reads that never appraise, session wiring, and
+  new-game reset.
+
 ## Cache faction projections per board update
 
 - Restore `Director.intents()` caching with a mood provider. Board-update and

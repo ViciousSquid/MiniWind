@@ -17,7 +17,7 @@ from ..living import journeys, roads
 from ..sim import appraisal, crime, knowledge
 from ..sim.director import Director, actor_key
 from ..sim.law import Writs
-from ..storyteller import Storyteller, StorytellerHooks, TUNING
+from ..sim.storyteller import Storyteller, StorytellerHooks, TUNING
 from ..storyteller_session import SessionStorytellerHooks
 
 
@@ -156,7 +156,7 @@ sys.meta_path.insert(0, Block())
 pkg = types.ModuleType('game')
 pkg.__path__ = [{root!r}]
 sys.modules['game'] = pkg
-from game.storyteller import Storyteller
+from game.sim.storyteller import Storyteller
 s = Storyteller()
 s.tick(0)
 s.tick(8)
@@ -959,7 +959,8 @@ def test_feedback_writ_age_and_rng_restore_exactly_in_an_active_pressure_window(
 
 
 def test_tuning_loads_mod_overlays_replaces_hour_windows_and_keeps_code_fallbacks(tmp_path, monkeypatch):
-    from .. import data, storyteller
+    from .. import data
+    from ..sim import storyteller
 
     monkeypatch.setattr(data, "_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(data, "_MODS_DIR", str(tmp_path / "mods"))

@@ -8,7 +8,7 @@ from PyQt5.QtGui import QColor, QFont, QFontMetrics
 from engine.floating_windows import FloatingWindow
 
 from ..living.journeys import KINDS
-from ..storyteller import TUNING
+from ..sim.storyteller import TUNING
 from ..storyteller_studio import world_explanations
 
 

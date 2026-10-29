@@ -885,13 +885,16 @@ class MiniwindSession(SettlementLaw):
         #: as data far away and as actors near the player. Built at install.
         self.living = None
 
-        from .storyteller import Storyteller
+        # The simulation's long-lived subsystems. The director owns their
+        # lifecycle: each ticks after the pipeline on world time and resets,
+        # persists and restores with the event history.
+        from .sim.storyteller import Storyteller
         from .storyteller_session import SessionStorytellerHooks
-        self.storyteller = Storyteller(self.store, self.director,
-                                      SessionStorytellerHooks(self))
+        self.storyteller = self.director.attach(Storyteller(
+            self.store, self.director, SessionStorytellerHooks(self)))
         from .sim.factions import FactionSpine
-        self.faction_spine = FactionSpine(self.store, self.director,
-                                         enabled=lambda: self.storyteller.enabled)
+        self.faction_spine = self.director.attach(FactionSpine(
+            self.store, self.director, enabled=lambda: self.storyteller.enabled))
         self.director.mood_context = self.faction_spine.mood
         self.director.mood_context_key = self.faction_spine.context_key
         self.director.fact_reader = self.faction_spine.facts
@@ -1027,11 +1030,9 @@ class MiniwindSession(SettlementLaw):
         self._deaths_seen = set()
         # A new game means a world with no history and nobody who remembers
         # anything: the store wipe above already erased every actor's knowledge,
-        # so only the in-memory event log and intent cache remain.
-        self.director.bus.clear()
-        self.director.invalidate()
-        self.storyteller.reset()
-        self.faction_spine.reset()
+        # so only the in-memory event log, intent cache and the simulation's
+        # subsystems (pacing, factions) remain.
+        self.director.reset()
         self._sim_hours = 0.0
         if self.logic is not None:
             try:
@@ -1707,7 +1708,6 @@ class MiniwindSession(SettlementLaw):
 
         # The roads: journeys advance off-screen on the clock, and parties
         # inside Big World's live region walk as actors (game/living).
-        self.storyteller.tick(float(self.clock.day) * 24.0 + float(self.clock.hour))
         if self.living is not None:
             self.living.tick(delta)
 
@@ -1722,7 +1722,8 @@ class MiniwindSession(SettlementLaw):
 
         # The reactive simulation: rumours spread on foot traffic, witnesses
         # reach the watch, and producing objects (a cow, a hen, a well) make
-        # their goods. Runs on game hours, so it is unaffected by frame rate.
+        # their goods; then its subsystems (the storyteller's pacing) sample
+        # the result. Runs on game hours, so it is unaffected by frame rate.
         self._tick_sim(delta)
 
         # world placeables: item pickups, spellbooks and quest triggers --
@@ -9582,19 +9583,17 @@ class MiniwindSession(SettlementLaw):
             # save carries what happened and what it caused — everything else
             # the simulation knows (who believes what, who was wronged, which
             # crimes were charged) already lives in the store as it is written.
+            # The director persists its subsystems (pacing, factions) with it.
             self.director.persist()
             self.law.persist()
-            self.storyteller.persist()
-            self.faction_spine.persist()
 
     def restore(self) -> None:
         # The event history first, so anything that reads it during the rest of
-        # the restore sees the world's past rather than an empty log.
+        # the restore sees the world's past rather than an empty log; the
+        # director restores its subsystems (pacing, factions) right after it.
         self.director.restore()
         self.director.invalidate()
         self.law.restore()
-        self.storyteller.restore()
-        self.faction_spine.restore()
         self._clear_arrest()
         if getattr(self, "living", None) is not None:
             self.living.restore()

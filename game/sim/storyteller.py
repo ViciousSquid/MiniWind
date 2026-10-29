@@ -1,8 +1,10 @@
 """Drama pacing by sampling existing opportunities, never by authoring events.
 
-Only the KV key owned here is writable. Hooks supply read-only world views;
-consumers ask for lever values and sampling weights. No engine/Qt dependency.
-All designer tuning is in TUNING. Hours and dwell times are game hours.
+A :class:`~.system.SimSystem`: the director ticks it after each simulation pass
+and resets, persists and restores it with the world's history. Only the KV key
+owned here is writable. Hooks supply read-only world views; consumers ask for
+lever values and sampling weights. No engine/Qt dependency. All designer
+tuning is in TUNING. Hours and dwell times are game hours.
 """
 
 from __future__ import annotations
@@ -12,9 +14,10 @@ import json
 import math
 from types import SimpleNamespace
 
-from . import data
-from .sim import appraisal, crime, knowledge
-from .sim.director import PLAYER_KEY, actor_key
+from .. import data
+from . import appraisal, crime, knowledge
+from .director import PLAYER_KEY, actor_key
+from .system import SimSystem
 
 
 DEFAULT_TUNING = {
@@ -161,7 +164,9 @@ class StorytellerHooks:
         return 0.0
 
 
-class Storyteller:
+class Storyteller(SimSystem):
+    name = "storyteller"
+
     def __init__(self, store=None, director=None, hooks=None):
         self.store = store
         self.director = director
@@ -215,7 +220,7 @@ class Storyteller:
         """Studio edits only numeric lever data, never sensors, facts or intents."""
         if state not in TUNING["states"]:
             raise ValueError("Unknown pacing state")
-        from .living.journeys import KINDS
+        from ..living.journeys import KINDS
         path = tuple(path)
         if len(path) == 1:
             key = path[0]
@@ -319,10 +324,11 @@ class Storyteller:
         if self.director is None:
             return out
         for key, actor in holders.items():
-            if actor.properties.get("dead") or key in self.director._dirty:
+            cached = self.director.cached_intents(key)
+            if actor.properties.get("dead") or cached is None:
                 continue
             known = {f.get("e"): f for f in knowledge.facts(self.store, key)}
-            for intent in self.director._intents.get(key, ()):
+            for intent in cached:
                 fact = known.get(intent.event_id)
                 if (intent.reaction != appraisal.FIGHT or intent.target != PLAYER_KEY
                         or not fact or fact.get("kind") != "death"
@@ -393,7 +399,7 @@ class Storyteller:
         self._vendetta_view = {key: dict(reason=intent.reason, staging="Awaiting an ordinary trip or nearby arrival",
             holder=holders[key].properties.get("display_name") or holders[key].properties.get("name") or key,
             event=intent.event_id) for key, intent in vendettas.items()}
-        from .footprint import evaluate
+        from ..footprint import evaluate
         footprint = evaluate(((key, knowledge.facts(self.store, key)) for key in holders),
                              threads=len(ids), writs=law, vendettas=len(vendettas),
                              traffic=self.hooks.market_traffic(), wealth=self.hooks.player_wealth(),
@@ -531,6 +537,10 @@ class Storyteller:
         # Replace atomically so the UI can read history while the session ticks.
         self._observations = (*self._observations, observation)[-TUNING["observation_cap"]:]
         self.persist()
+
+    def player_town(self):
+        """The town the player is standing in, through the read-only hooks."""
+        return self.hooks.player_town()
 
     def destination_weight(self, town):
         if not self.enabled:

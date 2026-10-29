@@ -144,37 +144,42 @@ class SessionHooks(jn.WorldHooks):
     def __init__(self, world: "LivingWorld"):
         self.w = world
 
+    @property
+    def _storyteller(self):
+        """The simulation's pacing subsystem, or None for a session without one."""
+        return getattr(self.w.session, "storyteller", None)
+
     def journey_levers(self):
-        storyteller = getattr(self.w.session, "storyteller", None)
+        storyteller = self._storyteller
         return storyteller.board_levers() if storyteller is not None else {}
 
     def resident_destination(self, resident_id, towns, origin):
-        storyteller = getattr(self.w.session, "storyteller", None)
+        storyteller = self._storyteller
         if storyteller is None or not storyteller.enabled:
             return None
-        town = storyteller.hooks.player_town()
+        town = storyteller.player_town()
         target, home = self.w.places.get(town), self.w.places.get(origin)
         distance = math.hypot(target["x"] - home["x"], target["z"] - home["z"]) if target and home else math.inf
         return storyteller.resident_destination(resident_id, towns, distance)
 
     def journey_weight(self, kind, position, hostile):
-        storyteller = getattr(self.w.session, "storyteller", None)
+        storyteller = self._storyteller
         return storyteller.journey_weight(kind, position, hostile) if storyteller is not None else 1.0
 
     def journey_sampled(self, journey, t, *, arrived=False, destination_sampled=False):
-        storyteller = getattr(self.w.session, "storyteller", None)
+        storyteller = self._storyteller
         if storyteller is not None:
             storyteller.record_journey(journey, t, arrived=arrived, destination_sampled=destination_sampled)
 
     def destination_weight(self, place_key):
-        storyteller = getattr(self.w.session, "storyteller", None)
+        storyteller = self._storyteller
         return storyteller.destination_weight(place_key) if storyteller is not None else 1.0
 
     def bandit_destination_weight(self, place_key):
-        storyteller = getattr(self.w.session, "storyteller", None)
+        storyteller = self._storyteller
         if storyteller is None or not storyteller.enabled:
             return 1.0
-        target = self.w.places.get(storyteller.hooks.player_town())
+        target = self.w.places.get(storyteller.player_town())
         place = self.w.places.get(place_key)
         if target is None or place is None:
             return 1.0
@@ -197,7 +202,7 @@ class SessionHooks(jn.WorldHooks):
             spine.encounter(winner, loser, t, where, fallen)
 
     def materialisation_weight(self, actor_keys, distance):
-        storyteller = getattr(self.w.session, "storyteller", None)
+        storyteller = self._storyteller
         return storyteller.materialisation_weight(actor_keys, distance) if storyteller is not None else 1.0
 
     def site_strength(self, place_key):

@@ -9,6 +9,10 @@ knows about more than one system, and it deliberately knows nothing about any
 particular scenario: it never asks "was this the blacksmith?", only "who
 perceived it, what do they now believe, and what does that make them want?".
 
+It also owns the simulation's long-lived **subsystems** (:mod:`.system`): the
+storyteller's pacing and the faction actors are attached here, tick after the
+pipeline on world time, and reset, persist and restore with the event history.
+
 It also keeps the **explanation trail** — the ranked intents and the plain
 sentence behind each one — which is what the editor's Live Simulation
 Inspector reads when a designer asks why an NPC is doing what it is doing.
@@ -25,6 +29,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence
 from . import appraisal, crime, knowledge, ownership, perception, production
 from .appraisal import Intent
 from .events import EventBus, WorldEvent
+from .system import SimSystem
 
 #: The player's stable identity key. The player is an actor like any other as
 #: far as this package is concerned — which is why NPCs can witness, remember
@@ -191,12 +196,43 @@ class Director:
         #: Yields produced this tick, drained by the session which places them
         #: in the world (the director has no way to spawn an entity itself).
         self.pending_yields: List = []
+        #: name -> attached subsystem, in attachment (tick / restore) order.
+        self._systems: Dict[str, SimSystem] = {}
+
+    # ------------------------------------------------------------ subsystems
+    def attach(self, system: SimSystem) -> SimSystem:
+        """Own *system*'s lifecycle from now on; returns it for the caller's handle."""
+        if not system.name or system.name in self._systems:
+            raise ValueError(f"subsystem needs a unique name, got {system.name!r}")
+        self._systems[system.name] = system
+        return system
+
+    def system(self, name: str) -> Optional[SimSystem]:
+        return self._systems.get(name)
+
+    @property
+    def systems(self) -> List[SimSystem]:
+        return list(self._systems.values())
+
+    def reset(self) -> None:
+        """A new world: no history, no decided intents, every subsystem at its start."""
+        self.bus.clear()
+        self.invalidate()
+        for system in self.systems:
+            system.reset()
 
     # ------------------------------------------------------------------ time
     def _now(self):
         day = int(getattr(self.clock, "day", 0) or 0)
         hour = float(getattr(self.clock, "hour", 12.0) or 12.0)
         return day, hour
+
+    def world_hours(self) -> float:
+        """Absolute world time in game hours: what subsystems are ticked at."""
+        if self.clock is None:
+            return self.sim_time
+        return (float(getattr(self.clock, "day", 0) or 0) * 24.0
+                + float(getattr(self.clock, "hour", 0.0) or 0.0))
 
     # ----------------------------------------------------------- emit events
     def emit(self, kind: str, actor=None, target=None, pos=None,
@@ -361,6 +397,15 @@ class Director:
             self._dirty.discard(key)
         return self._intents[key]
 
+    def cached_intents(self, key: str) -> Optional[List[Intent]]:
+        """The intents already decided for *key*, or None while they are stale.
+
+        Never appraises, so a sampler can read decisions without making one:
+        the cache, dirty flags and revision are untouched."""
+        if key in self._dirty or key not in self._intents:
+            return None
+        return list(self._intents[key])
+
     def top_intent(self, thing) -> Optional[Intent]:
         got = self.intents(thing)
         return got[0] if got else None
@@ -423,6 +468,10 @@ class Director:
             self._coarse_clock = 0.0
             self._coarse_from = self.sim_time
         self._roll_day(actors + distant)
+        # Subsystems sample the state this pass just produced.
+        now = self.world_hours()
+        for system in self.systems:
+            system.tick(now)
 
     def spread_rumours(self, actors: Sequence) -> int:
         """One pass of people telling each other what they know.
@@ -653,11 +702,17 @@ class Director:
     def persist(self) -> None:
         if self.store is not None:
             self.store.set(self.HISTORY_KEY, self.bus.to_json())
+        for system in self.systems:
+            system.persist()
 
     def restore(self) -> int:
-        if self.store is None:
-            return 0
-        return self.bus.load_json(self.store.get(self.HISTORY_KEY, ""))
+        """The history first, then each subsystem; returns the events loaded."""
+        loaded = 0
+        if self.store is not None:
+            loaded = self.bus.load_json(self.store.get(self.HISTORY_KEY, ""))
+        for system in self.systems:
+            system.restore()
+        return loaded
 
     # ------------------------------------------------------------ inspection
     def report_lines(self, limit: int = 25) -> List[str]:
