@@ -8,9 +8,10 @@ import sys
 import pytest
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QFontInfo
-from PyQt5.QtWidgets import QDialogButtonBox, QFormLayout, QLabel, QMessageBox, QStyle, QTabWidget, QWidget
+from PyQt5.QtWidgets import (QDialogButtonBox, QFileDialog, QFormLayout, QLabel, QMessageBox, QSplitter, QStyle,
+                             QTabWidget, QWidget)
 
-from editor.desktop_style import MONO_FONT, UI_FONT
+from editor.desktop_style import MONO_FONT, UI_FONT, keep_message_box_titles, message_box_size
 from main import dark_stylesheet
 
 pytestmark = pytest.mark.qt
@@ -118,6 +119,67 @@ def test_message_box_keeps_content_and_buttons_in_the_shared_layout(qt_app):
         box.close()
         box.deleteLater()
 
+
+def test_message_box_uses_the_windows_wrap_width_after_any_platform_sizing(qt_app):
+    # Qt wraps message text at 420px on macOS and 500px elsewhere.
+    box = QMessageBox(QMessageBox.Warning, 'Title', 'A long explanation of a problem. ' * 30, QMessageBox.Ok)
+    box.setInformativeText('Further detail that also wraps. ' * 12)
+    box.show()
+    qt_app.processEvents()
+    try:
+        expected = message_box_size(box)
+        assert box.size() == expected
+        box.setFixedSize(expected.width() - 80, expected.height() + 40)
+        qt_app.processEvents()
+        assert box.size() == expected
+    finally:
+        box.close()
+        box.deleteLater()
+
+
+def test_message_box_titles_survive_every_entry_point(qt_app, monkeypatch):
+    # Qt 5 drops QMessageBox titles on macOS, inside its constructor and
+    # static helpers alike; the editor restores them on that platform.
+    seen = []
+
+    def untitled_question(*args, **kwargs):
+        box = QMessageBox()
+        box.show()
+        qt_app.processEvents()
+        seen.append(box.windowTitle())
+        box.close()
+        box.deleteLater()
+        return QMessageBox.No
+
+    for name in ('__init__', 'setWindowTitle', 'information', 'warning', 'critical', 'about'):
+        monkeypatch.setattr(QMessageBox, name, getattr(QMessageBox, name))
+    monkeypatch.setattr(QMessageBox, 'question', staticmethod(untitled_question))
+    monkeypatch.setattr(QMessageBox, '_fio_titles_kept', False, raising=False)
+    keep_message_box_titles()
+    assert QMessageBox.question(None, 'Delete Map', 'Delete it?') == QMessageBox.No
+    assert seen == ['Delete Map']
+    box = QMessageBox(QMessageBox.Information, 'Project Overview', 'Text')
+    assert box.windowTitle() == 'Project Overview'
+    box.setWindowTitle('Renamed')
+    assert box.windowTitle() == 'Renamed'
+    box.deleteLater()
+
+
+def test_file_picker_size_does_not_depend_on_sidebar_entries(qt_app):
+    # Qt names the first sidebar entry "My Computer" on Windows and
+    # "Computer" elsewhere, and sizes the dialog from it unless overridden.
+    dialog = QFileDialog(None, 'Open Map', 'maps', 'Maps (*.json)')
+    dialog.show()
+    qt_app.processEvents()
+    try:
+        line = dialog.fontMetrics().height()
+        available = dialog.screen().availableGeometry()
+        assert dialog.width() == min(36 * line, available.width())
+        assert dialog.height() == min(24 * line, available.height())
+        assert dialog.findChild(QSplitter, 'splitter').sizes()[0] == 7 * line
+    finally:
+        dialog.reject()
+        dialog.deleteLater()
 
 def test_fresh_startup_converts_points_to_windows_logical_pixels():
     result = subprocess.run([sys.executable, '-c', '''

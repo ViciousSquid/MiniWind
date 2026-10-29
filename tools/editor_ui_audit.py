@@ -390,11 +390,15 @@ def run_audit(audit, window, sections):
                                                          editor_state=window.state),
             "package-export": lambda: PackageMetadataDialog("audit.json", window),
             "procedural-generator": lambda: ProceduralMapWidget(window),
-            "open-map-picker": lambda: QtWidgets.QFileDialog(window, 'Open Map', 'maps', 'Maps (*.json)'),
             "colour-picker": lambda: QtWidgets.QColorDialog(audit.G.QColor('#F08000'), window),
         }
         for name, factory in factories.items():
             audit.attempt("dialogs/" + name, factory)
+        # Open the picker through the static helper the editor itself uses, in
+        # the size it takes on any screen large enough for it (36x24 lines).
+        line = audit.G.QFontMetrics(QtWidgets.QApplication.font()).height()
+        audit.modal("dialogs/open-map-picker", lambda: QtWidgets.QFileDialog.getOpenFileName(
+            window, 'Open Map', 'maps', 'Maps (*.json)'), size=(36 * line, 24 * line))
         audit.modal("dialogs/project-overview", window.open_project_overview)
         audit.modal("dialogs/grid-colours", window.open_grid_colours_dialog)
         audit.modal("dialogs/about", window.show_about)
@@ -409,8 +413,10 @@ def run_audit(audit, window, sections):
         audit.attempt("game/quest-wizard", lambda: classes["QuestWizard"]([], window, window))
         audit.attempt("game/world-simulation", lambda: sim_editor.open_world_window(window))
         audit.attempt("game/dungeon-designer", lambda: DungeonDesigner(window, window))
-        audit.modal("game/npc-wizard", lambda: editor_wizards.npc_wizard(window))
-        audit.modal("game/creature-wizard", lambda: editor_wizards.creature_wizard(window))
+        # Both wizards request 500x360. At scale 2 the macOS runner's logical
+        # screen is too short for that, and Cocoa shrinks the modal window.
+        audit.modal("game/npc-wizard", lambda: editor_wizards.npc_wizard(window), size=(500, 360))
+        audit.modal("game/creature-wizard", lambda: editor_wizards.creature_wizard(window), size=(500, 360))
         audit.modal("game/spell-editor", lambda: editor_ui.open_spell_editor(window), size=(800, 900))
         integration._open_dice_test(window)
         audit.surface("game/dice-test", window._dice_test_dialog)
@@ -521,6 +527,7 @@ def main():
         "scale_factor": os.environ.get("QT_SCALE_FACTOR", "native"),
         "logical_dpi": [screen.logicalDotsPerInchX(), screen.logicalDotsPerInchY()],
         "native_dpr": screen.devicePixelRatio(), "native_menubar": window.menuBar().isNativeMenuBar(),
+        "available_geometry": [screen.availableGeometry().width(), screen.availableGeometry().height()],
         "commit": subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"],
                                  capture_output=True, text=True, check=True).stdout.strip(),
         "exclusions": ["3D scene rendering and gameplay HUD", "OS file/colour pickers",

@@ -92,8 +92,10 @@ def build_report(captures, output):
                 "matched_frames": len(wf.keys() & mf.keys()),
                 "missing_windows": sorted(mf.keys() - wf.keys()),
                 "missing_macos": sorted(wf.keys() - mf.keys()),
-                "windows": {k: wd[k] for k in ("commit", "qt_platform", "style", "logical_dpi", "native_dpr")},
-                "macos": {k: md[k] for k in ("commit", "qt_platform", "style", "logical_dpi", "native_dpr")}}
+                "windows": {k: wd.get(k) for k in ("commit", "qt_platform", "style", "logical_dpi", "native_dpr",
+                                                   "available_geometry")},
+                "macos": {k: md.get(k) for k in ("commit", "qt_platform", "style", "logical_dpi", "native_dpr",
+                                                 "available_geometry")}}
         summary["pairs"].append(pair)
         if wd["commit"] != md["commit"]:
             raise ValueError("The operating systems captured different commits")
