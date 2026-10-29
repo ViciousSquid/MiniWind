@@ -56,6 +56,7 @@ jobs:
           tests/editor/test_desktop_style.py
           tests/editor/test_terrain_panel_layout.py
       - name: Capture every editor surface at the default font size
+        if: ${{ !cancelled() }}
         id: capture_default
         continue-on-error: true
         run: >-
@@ -63,7 +64,7 @@ jobs:
           --output artifacts/${{ matrix.platform }}-scale-${{ matrix.scale }}/font-11
           --font-size 11
       - name: Audit every surface with enlarged text
-        if: steps.capture_default.outcome == 'success'
+        if: ${{ !cancelled() && steps.capture_default.outcome == 'success' }}
         continue-on-error: true
         run: >-
           python tools/editor_ui_audit.py

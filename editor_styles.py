@@ -98,6 +98,8 @@ CONTROL_STYLESHEET = """
     QTabBar::close-button { image: url(assets/ui/controls/close.svg); width: 12px; height: 12px; }
 
     QScrollBar:vertical { width: 12px; margin: 0px; border: none; background: #252729; }
+    QScrollArea { border: none; padding: 0px; margin: 0px; }
+    QAbstractScrollArea::corner { border: none; background: #2b2b2b; }
     QScrollBar:horizontal { height: 12px; margin: 0px; border: none; background: #252729; }
     QScrollBar::handle:vertical { min-height: 24px; background: #55595d; border-radius: 4px; }
     QScrollBar::handle:horizontal { min-width: 24px; background: #55595d; border-radius: 4px; }

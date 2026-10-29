@@ -70,6 +70,9 @@ def build_report(captures, output):
         for side, manifest in (("windows", wd), ("macos", md)):
             summary["capture_errors"].extend(dict(e, platform=side, config=label)
                                              for e in manifest["errors"])
+            if not manifest.get("capture_complete", True):
+                summary["capture_errors"].append({"surface": "audit-driver", "platform": side,
+                    "config": label, "traceback": "Capture terminated before visiting all surfaces"})
         wf, mf = ({f["id"]: f for f in d["frames"]} for d in (wd, md))
         pair = {"config": label, "windows_frames": len(wf), "macos_frames": len(mf),
                 "matched_frames": len(wf.keys() & mf.keys()),

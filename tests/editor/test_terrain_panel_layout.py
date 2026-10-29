@@ -4,6 +4,7 @@ import pytest
 
 pytest.importorskip("PyQt5")
 from PyQt5.QtWidgets import QPushButton, QScrollArea
+from PyQt5.QtTest import QTest
 
 from editor.terrain_editor import TerrainEditorPanel
 from engine.terrain import Terrain
@@ -25,6 +26,8 @@ def terrain_panel(request, qt_app):
     panel._terrain_tabs.setCurrentIndex(panel._sculpt_stamp_tab_index)
     for _ in range(3):
         qt_app.processEvents()
+    QTest.qWait(50)
+    qt_app.processEvents()
     try:
         yield panel
     finally:
@@ -50,7 +53,13 @@ def test_actions_fit_the_font_without_large_empty_buttons(terrain_panel):
 def test_hidden_palette_page_does_not_force_horizontal_scrolling(terrain_panel):
     panel = terrain_panel
     scroll = panel.findChild(QScrollArea)
-    assert scroll.horizontalScrollBar().maximum() == 0
+    assert scroll.horizontalScrollBar().maximum() == 0, {
+        'scroll': [scroll.width(), scroll.height()], 'frame': scroll.frameWidth(),
+        'viewport': [scroll.viewport().width(), scroll.viewport().height()],
+        'content': [scroll.widget().width(), scroll.widget().height()],
+        'minimum': [scroll.widget().minimumSizeHint().width(), scroll.widget().minimumSizeHint().height()],
+        'tabs': [panel._terrain_tabs.width(), panel._terrain_tabs.minimumSizeHint().width()],
+    }
     assert panel._terrain_tabs.width() <= scroll.viewport().width()
     assert scroll.verticalScrollBar().maximum() > 0
     for button in [*panel.palette_swatches, panel.palette_add_btn, panel.palette_remove_btn]:

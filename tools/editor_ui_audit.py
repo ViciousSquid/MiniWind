@@ -53,7 +53,7 @@ class Audit:
         from PyQt5 import QtCore, QtGui, QtWidgets
         self.C, self.G, self.W = QtCore, QtGui, QtWidgets
         self.app, self.output, self.screenshots = app, output, screenshots
-        self.manifest = dict(metadata, frames=[], surfaces=[], errors=[])
+        self.manifest = dict(metadata, frames=[], surfaces=[], errors=[], capture_complete=False)
         self._seen = set()
 
     def settle(self):
@@ -428,7 +428,7 @@ def run_audit(audit, window, sections):
 
 def main():
     faulthandler.enable()
-    faulthandler.dump_traceback_later(300, exit=True)
+    faulthandler.dump_traceback_later(600, exit=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--output", type=Path, required=True)
@@ -522,6 +522,7 @@ def main():
         try:
             print("AUDIT_STAGE visiting-surfaces", flush=True)
             run_audit(audit, window, set(filter(None, args.sections.split(","))))
+            audit.manifest["capture_complete"] = True
         except Exception:
             audit.error("audit-driver")
         audit.save()
