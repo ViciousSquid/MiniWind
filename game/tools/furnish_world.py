@@ -2,7 +2,7 @@
 Furnish the world: containers in the cottages, the inns and the camps, many
 more in the caves, and books everywhere (game/library.py).
 
-On the overworld (``maps/village_walled_source.json``) this tool adds:
+On the overworld (``maps/miniwind_world.json``) this tool adds:
 
 * **Homes.** A chest, sack or barrel against the wall of every townsfolk home
   that has none, owned by the person who lives there (taking from it is

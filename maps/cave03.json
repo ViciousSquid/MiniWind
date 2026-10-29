@@ -1820,7 +1820,7 @@
     "type": "levelchanger",
     "name": "LevelChanger_cave03_out",
     "id": "f64e26f6-3d8d-4144-98c8-f1514746ad9b",
-    "target_map": "maps/village_walled_source.json",
+    "target_map": "maps/miniwind_world.json",
     "delay": 0.0,
     "fade_time": 0.5,
     "show_radius": false,
@@ -3027,6 +3027,6 @@
  },
  "_miniwind_cave": {
   "name": "Glowcap Grotto",
-  "overworld": "maps/village_walled_source.json"
+  "overworld": "maps/miniwind_world.json"
  }
 }

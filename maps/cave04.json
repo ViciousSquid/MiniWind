@@ -1610,7 +1610,7 @@
     "type": "levelchanger",
     "name": "LevelChanger_cave04_out",
     "id": "fd295d97-7870-4c95-b90b-6cbf1f5c8e04",
-    "target_map": "maps/village_walled_source.json",
+    "target_map": "maps/miniwind_world.json",
     "delay": 0.0,
     "fade_time": 0.5,
     "show_radius": false,
@@ -2827,6 +2827,6 @@
  },
  "_miniwind_cave": {
   "name": "Greenskin Hole",
-  "overworld": "maps/village_walled_source.json"
+  "overworld": "maps/miniwind_world.json"
  }
 }

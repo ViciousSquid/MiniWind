@@ -1946,7 +1946,7 @@
     "type": "levelchanger",
     "name": "LevelChanger_cave05_out",
     "id": "508424bd-0b76-4acf-a1b8-8abdafbcb58e",
-    "target_map": "maps/village_walled_source.json",
+    "target_map": "maps/miniwind_world.json",
     "delay": 0.0,
     "fade_time": 0.5,
     "show_radius": false,
@@ -3205,6 +3205,6 @@
  },
  "_miniwind_cave": {
   "name": "Frostfang Cavern",
-  "overworld": "maps/village_walled_source.json"
+  "overworld": "maps/miniwind_world.json"
  }
 }

@@ -231,7 +231,7 @@ def test_a_cave_is_furnished_on_open_floor_and_a_second_run_changes_nothing():
 
 
 def test_the_maps_carry_the_furnishing():
-    with open(os.path.join(REPO, "maps", "village_walled_source.json")) as f:
+    with open(os.path.join(REPO, "maps", "miniwind_world.json")) as f:
         world = json.load(f)
     added = [t for t in world["things"] if t["properties"].get("_furnished")]
     owned = [t for t in added if t["properties"].get("owner")]

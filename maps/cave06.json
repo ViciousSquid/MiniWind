@@ -1757,7 +1757,7 @@
     "type": "levelchanger",
     "name": "LevelChanger_cave06_out",
     "id": "c2ad8d87-0a8d-4651-926a-7c448659481e",
-    "target_map": "maps/village_walled_source.json",
+    "target_map": "maps/miniwind_world.json",
     "delay": 0.0,
     "fade_time": 0.5,
     "show_radius": false,
@@ -4957,6 +4957,6 @@
  },
  "_miniwind_cave": {
   "name": "Whisperdeep",
-  "overworld": "maps/village_walled_source.json"
+  "overworld": "maps/miniwind_world.json"
  }
 }

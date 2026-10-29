@@ -239,3 +239,17 @@ def test_patrol_nodes_are_never_roads_for_live_walkers_or_travellers():
     assert [n[0] for n in authored] == ["ROAD_1", "ROAD_2", "ROAD_3"]
     net = living_roads.RoadNetwork.build(authored, [])
     assert net.authored_nodes == 3
+
+
+def test_walkers_keep_to_a_winding_road_rather_than_cut_across_country():
+    # A road that bows far out to the side: about 1.8 times the straight line.
+    pts = [(-4000.0, 0.0), (-2500.0, 2600.0), (0.0, 3400.0), (2500.0, 2600.0), (4000.0, 0.0)]
+    things = []
+    for i, (x, z) in enumerate(pts):
+        links = f"ROAD_{i + 1}" if i + 1 < len(pts) else ""
+        things.append(_Node(f"ROAD_{i}", x, z, links))
+    g = RoadGraph.build(road_nodes(things))
+    leg = g.plan((-4000.0, -200.0), (4000.0, -200.0))
+    assert leg is not None and leg[0] == pts[0] and leg[-1] == pts[-1]
+    # Only a road far more roundabout than that is left for open country.
+    assert road_nav.ROAD_COST * 2.5 <= 1.0 + 1e-9

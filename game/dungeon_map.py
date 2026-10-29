@@ -31,7 +31,7 @@ import numpy as np
 
 from . import tilemap_gen as tg
 
-DEFAULT_EXIT_MAP = "maps/village_walled_source.json"
+DEFAULT_EXIT_MAP = "maps/miniwind_world.json"
 MARKER_KINDS = ("entrance", "monster", "chest", "light")
 STYLES = {
     # walls, wall tops, floor

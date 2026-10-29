@@ -145,6 +145,12 @@ ENCOUNTER_RADIUS = 700.0
 WALK_SPEED = 90.0
 #: How long a party lingers at its destination before the next leg, hours.
 REST_HOURS = (2.0, 7.0)
+#: A faction force that reaches the place its order named holds it at least
+#: this long (game hours): a hostile presence, not a rest stop.
+PRESENCE_HOURS = 6.0
+#: Faction kinds whose forces take livestock while they hold a place, as
+#: raiders do; others only ask after their quarry.
+RAIDING_FACTIONS = ("bandits", "cultists", "monsters")
 #: News is forgotten after this many game hours.
 NEWS_HOURS = 24.0 * 6
 NEWS_CAP = 80
@@ -217,6 +223,10 @@ class WorldHooks:
         pass
 
     def faction_returned(self, journey):
+        pass
+
+    def faction_present(self, journey, t):
+        """A faction force has reached the place its order named and holds it."""
         pass
 
     def encounter_resolved(self, winner, loser, t, where, fallen):
@@ -656,8 +666,47 @@ class JourneyBoard:
             return
         j.state = "rest"
         j.rest_until = t + self.rng.uniform(*REST_HOURS)
+        if j.cause and j.dest != j.home:
+            # The same draw as any rest; a force holds the place for longer.
+            j.rest_until = max(j.rest_until, t + PRESENCE_HOURS)
+            self._hold(j, t, made)
         j.route = [j.route[-1]] if j.route else []
         j.cum = roads.cumulative(j.route)
+
+    def _hold(self, j: Journey, t: float, made: List[str]) -> None:
+        """A faction force arrives where its order sent it and holds the place.
+
+        Everything here is an existing mechanism applied to a party that is
+        really there: news of it, heard first in that place; livestock taken
+        through the same hook wolves and greenskins use, for raiding factions;
+        for raiding factions off screen; and the faction spine's account of
+        who saw them and what the locals told them (``faction_present``). Nobody is attacked by fiat: fights
+        still need the parties to meet (:meth:`_encounters` includes a holding
+        force) or live opponents in sight."""
+        place = j.dest
+        name = self.place_name(place)
+        home = self.place_name(j.home)
+        fact = j.cause.get("fact") or {}
+        quarry = (self.hooks.player_name() if j.cause.get("target") == "player"
+                  else fact.get("actor_name") or "someone")
+        who = j.cause.get("faction", "a faction").title()
+        taken = 0
+        if j.cause.get("faction") in RAIDING_FACTIONS and not j.live:
+            # Off screen only: a live force has to be seen doing it.
+            taken = self.hooks.raid_place(place, j.strength())
+        text = f"{who} out of {home} are holding {name}, asking after {quarry}"
+        text += (f", and have carried off {taken} head of livestock." if taken else ".")
+        nid = self.say(text, t, place, "presence", "player" if j.cause.get("target") == "player" else "")
+        made.append(nid)
+        if nid not in j.news:
+            j.news.append(nid)
+        self.hooks.faction_present(j, t)
+
+    def holding(self, place: str) -> List[Journey]:
+        """Faction forces holding *place* now (resting where their order sent them)."""
+        return [j for j in self.journeys.values()
+                if j.cause and j.state == "rest" and j.dest == place
+                and j.dest != j.home and j.alive()]
 
     def next_leg(self, j: Journey, t: float) -> None:
         """Rest is over: set out again -- home if this was the last leg."""
@@ -748,8 +797,10 @@ class JourneyBoard:
 
     # -- encounters on the road ------------------------------------------------
     def _encounters(self, t: float, made: List[str]) -> None:
+        # A force holding a place meets whoever comes near it there.
         moving = [j for j in self.journeys.values()
-                  if j.state == "travel" and not j.live and j.alive()]
+                  if (j.state == "travel" or j.cause and j.state == "rest" and j.dest != j.home)
+                  and not j.live and j.alive()]
         for i, a in enumerate(moving):
             ax, az = a.position_at(t)
             for b in moving[i + 1:]:

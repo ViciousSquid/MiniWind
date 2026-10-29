@@ -1,7 +1,7 @@
 """
 Expand the Vale of MiniWind into a huge, spread-out world.
 
-Takes the hand-built village map (``maps/village_walled_source.json``) and:
+Takes the hand-built village map (``maps/miniwind_world.json``) and:
 
 * **Grows the terrain** from 11 x 11 chunks (about 22 km square in world
   units) to ``--chunks`` per side (default 40: about 82 000 units square).
@@ -57,7 +57,7 @@ import uuid
 
 import numpy as np
 
-MAP = os.path.join("maps", "village_walled_source.json")
+MAP = os.path.join("maps", "miniwind_world.json")
 
 #: Sites closer than this to Millbrook do not move.
 R0 = 1500.0

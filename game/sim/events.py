@@ -86,6 +86,9 @@ EVENT_KINDS: Dict[str, Dict] = {
     "give": dict(
         tags=("social", "property"), loudness=110.0, severity=0.2,
         phrase="{actor} handed {target} {item}"),
+    "muster": dict(
+        tags=("notable",), loudness=0.0, severity=0.6,
+        phrase="{actor}'s company came asking after {target}"),
     "rumour": dict(
         tags=("social",), loudness=110.0, severity=0.05,
         phrase="{actor} told {target} about {item}"),

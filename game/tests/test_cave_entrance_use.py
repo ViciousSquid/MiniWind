@@ -38,7 +38,7 @@ def _prepare(logic, things, player_pos, angle):
 
 
 def test_every_shipped_cave_entrance_activates_from_the_clear_approach(logic):
-    path = MAPS / 'village_walled_source.json'
+    path = MAPS / 'miniwind_world.json'
     world = json.loads(path.read_text())
     mouths = CaveMouths(world)
     for record in world['things']:

@@ -1505,7 +1505,7 @@
     "type": "levelchanger",
     "name": "LevelChanger_cave16_out",
     "id": "cd4b022b-c150-4518-85cd-56d765a405a5",
-    "target_map": "maps/village_walled_source.json",
+    "target_map": "maps/miniwind_world.json",
     "delay": 0.0,
     "fade_time": 0.5,
     "show_radius": false,
@@ -2718,6 +2718,6 @@
  },
  "_miniwind_cave": {
   "name": "Redfang Burrow",
-  "overworld": "maps/village_walled_source.json"
+  "overworld": "maps/miniwind_world.json"
  }
 }

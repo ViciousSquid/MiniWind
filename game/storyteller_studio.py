@@ -13,7 +13,8 @@ def world_explanations(story):
             "; ".join(f"{r.get('holder_name', r['holder'])} ({r['holder']}) remembers {r['kind']} #{r['event']}" for r in evidence),
             sorted({r["event"] for r in evidence})))
     for key, row in view["vendettas"].items():
-        rows.append(("Vendettas", f"{row.get('holder', key)} ({key})", f"{row['reason']}. {row['staging']}", [row["event"]]))
+        rows.append(("Justified journeys", f"{row.get('holder', key)} ({key}) · {row.get('kind', 'vendetta')}",
+                     f"{row['reason']}. {row['staging']}", [row["event"]]))
     for row in view["receipts"]:
         rows.append(("Journey outcomes", f"{row['journey']} {row.get('party', row['kind'])} ({row['kind']}) → {row['destination']} · {row['outcome']}",
             f"Hour {row['time']:.2f}, {row['state']}: {row['reason']}", row["events"]))

@@ -1043,7 +1043,7 @@
     "type": "levelchanger",
     "name": "LevelChanger_cave19_out",
     "id": "d2d62b12-aa2d-4d0d-9003-97db264cd8c8",
-    "target_map": "maps/village_walled_source.json",
+    "target_map": "maps/miniwind_world.json",
     "delay": 0.0,
     "fade_time": 0.5,
     "show_radius": false,
@@ -1951,6 +1951,6 @@
  },
  "_miniwind_cave": {
   "name": "Blackwater Hideout",
-  "overworld": "maps/village_walled_source.json"
+  "overworld": "maps/miniwind_world.json"
  }
 }

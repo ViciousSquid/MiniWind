@@ -44,6 +44,7 @@ from .rpg import items as rpg_items
 from . import library
 from . import warrior_fist
 from . import held_weapons
+from . import farm_work
 from . import party
 from .rpg import magic as rpg_magic
 from .rpg import guilds
@@ -353,6 +354,24 @@ BARK_FADE = 0.4
 CHAT_RADIUS = 160.0
 CHAT_COOLDOWN = 60.0
 CHAT_CHANCE = 0.04
+#: A resident volunteering to the player something they believe
+#: (game/sim/rumours.py): how close the player must be, how long the line is
+#: up, the chance per decision pass (more at an inn: tavern talk), and how
+#: long before that resident volunteers again (s).
+VOLUNTEER_RADIUS = 220.0
+VOLUNTEER_SECONDS = 5.5
+VOLUNTEER_CHANCE = 0.03
+TAVERN_FACTOR = 3.0
+VOLUNTEER_COOLDOWN = 90.0
+#: Grass parting (engine Terrain.set_grass_pushers): the player's push
+#: radius, how far from the player actors still part the grass, and the
+#: most actors reported. An actor's radius follows its sprite's width.
+PLAYER_GRASS_RADIUS = 46.0
+GRASS_PUSH_REACH = 1400.0
+GRASS_PUSHERS = 20
+#: Where in the farming year (0 = first day of spring) day 0 falls: a new
+#: game opens in late summer, the wheat standing tall and turning gold.
+YEAR_START = 0.42
 #: The routines in which somebody has time to chat.
 CHAT_STATES = frozenset(("", "IDLE", "WANDER", "WORKING", "GOING_TO_WORK",
                          "GOING_HOME", "PATROL"))
@@ -794,6 +813,8 @@ class MiniwindSession(SettlementLaw):
                                      self._tier_of, busy=lambda t: id(t) in self.archery.drawing)
         from .held_weapons import HeldWeapons
         self.held = HeldWeapons(self)
+        #: Farmers reaping with a scythe and tending livestock by day.
+        self.farm_work = farm_work.FarmWork()
         from .dragon_fire import DragonFire
         from .wildlife import Wildlife
         from .map_memory import MapMemory
@@ -1606,6 +1627,7 @@ class MiniwindSession(SettlementLaw):
             self._arrow_tags.clear()
         self._keep_player_in_world()
         self.clock.advance(delta)
+        self._update_grass()
         self.game.tick(delta, self._sprint(delta))
         self._announce_skill_raises()
         self._update_encumbrance()
@@ -1691,6 +1713,7 @@ class MiniwindSession(SettlementLaw):
                 self._decide(npc)
             self._update_thoughts()
             self._update_small_talk()
+            self._update_volunteering()
         for i, npc in enumerate(npcs):
             if npc.properties.get("resurrection_used") and npc.properties.get("follow_player"):
                 self._guard_raised_follower(npc)
@@ -1754,6 +1777,8 @@ class MiniwindSession(SettlementLaw):
             tp = t.properties
             if tp.get("_sim_tier", TIER_NEAR) > TIER_ACTIVE:
                 continue
+            if tp.get("_farm_work"):
+                self.farm_work.update(delta, (t,))     # the scythe's swing
             was = tp.get("_was_shooting", False)
             now = tp.get("is_shooting", False)
             if now and not was:
@@ -4954,6 +4979,120 @@ class MiniwindSession(SettlementLaw):
                 a.properties["_chat_until"] = b.properties["_chat_until"] = now + CHAT_COOLDOWN
                 return
 
+    def _update_volunteering(self) -> None:
+        """Now and then the resident nearest the player, with nothing more
+        pressing on, volunteers something they have heard -- three times as
+        often at an inn. Only what they themselves believe, each thing once
+        (game/sim/rumours.py); narration that changes no one's knowledge."""
+        living = getattr(self, "living", None)
+        if living is None or living.board is None or self.dialogue is not None:
+            return
+        ppos = self._player_pos()
+        if ppos is None:
+            return
+        rng = self.__dict__.setdefault("_chat_rng", random.Random())
+        here = living.board.nearest_place(ppos[0], ppos[2])
+        tavern = living.board.places.get(here, {}).get("kind") == "inn"
+        if rng.random() >= VOLUNTEER_CHANCE * (TAVERN_FACTOR if tavern else 1.0):
+            return
+        import time as _time
+        now = _time.monotonic()
+        talking = self.__dict__.get("barks") or {}
+        best = None
+        for npc in self._things_of_type("npc"):
+            p = npc.properties
+            if (p.get("dead") or npc.pos is None or p.get("_sim_tier", TIER_NEAR) > TIER_NEAR
+                    or str(p.get("aggression")) == "hostile"
+                    or str(p.get("sched_state", "")).upper() not in CHAT_STATES
+                    or p.get("_rumour_until", 0.0) > now or id(npc) in talking):
+                continue
+            d = self._dist2d(npc.pos, ppos)
+            if d <= VOLUNTEER_RADIUS and (best is None or d < best[0]):
+                best = (d, npc)
+        if best is None:
+            return
+        npc = best[1]
+        npc.properties["_rumour_until"] = now + VOLUNTEER_COOLDOWN
+        told = npc.properties.setdefault("_told_player", [])
+        said = living.rumours(npc, 1, skip=told)
+        if not said:
+            return
+        eid, text = said[0]
+        self.bark(npc, text, VOLUNTEER_SECONDS)
+        if id(npc) in self.__dict__.get("barks", {}):
+            told.append(eid)
+
+    # ---------------------------------------------------------- notice boards
+    def nearest_notice_board(self, player_pos, radius: float = TALK_RADIUS):
+        """The nearest ``notice_board`` thing within *radius*, or None."""
+        best, best_d = None, radius * radius
+        for board in self._things_of_type("notice_board"):
+            if board.pos is None or board.properties.get("hidden"):
+                continue
+            dx, dz = board.pos[0] - player_pos[0], board.pos[2] - player_pos[2]
+            if dx * dx + dz * dz < best_d:
+                best, best_d = board, dx * dx + dz * dz
+        return best
+
+    def notice_board_posts(self, board) -> List[str]:
+        """What is pinned to *board*: the writ on the player's head in this
+        jurisdiction, the watch's appeals over reported crimes, who has set out
+        from this town and why, and news travellers brought. Every post is
+        something already true; reading them changes nothing."""
+        posts = []
+        try:
+            bounty = int(self.law.bounty(self._law_region(board.pos, board)) or 0)
+        except Exception:
+            bounty = 0
+        if bounty > 0:
+            name = getattr(self.game.character, "name", "") or "the stranger"
+            posts.append(f"WANTED: {name}, for crimes against this town. "
+                         f"{bounty} gold to whoever brings them to the watch.")
+        living = getattr(self, "living", None)
+        if living is not None and living.board is not None:
+            place = living.board.nearest_place(board.pos[0], board.pos[2])
+            posts += living.notices(place, 3)
+            posts += living.departures(place, 2)
+            posts += living.board.news_at(place, 3)
+        return posts
+
+    def _notice_board_tree(self, board) -> Dict:
+        posts = self.notice_board_posts(board)
+        text = "\n\n".join(posts) if posts else "The board is bare but for old nail holes."
+        return {"start": "board", "nodes": {"board": {
+            "text": text, "responses": [{"text": "Step away.", "goto": "END"}]}}}
+
+    # ----------------------------------------------------------------- grass
+    def _update_grass(self) -> None:
+        """Tell the terrain who walks through its grass, so the blades part
+        round them and close again behind, and how far into the farming year
+        the clock has come, so the wheat grows with the seasons."""
+        ter = fio.terrain(self.logic)
+        if ter is None or not hasattr(ter, "set_grass_pushers"):
+            return
+        from engine import terrain_biomes
+        ppos = self._player_pos()
+        pushers = []
+        if ppos is not None:
+            pushers.append(("player", ppos[0], ppos[2], PLAYER_GRASS_RADIUS))
+            near = []
+            for t in self._live_actors():
+                p = t.properties
+                if p.get("dead") or p.get("hidden") or t.pos is None:
+                    continue
+                d = self._dist2d(t.pos, ppos)
+                if d <= GRASS_PUSH_REACH:
+                    try:
+                        width = float(p.get("sprite_width", 90) or 90)
+                    except (TypeError, ValueError):
+                        width = 90.0
+                    near.append((d, (id(t), t.pos[0], t.pos[2], max(28.0, width * 0.42))))
+            near.sort(key=lambda n: n[0])
+            pushers += [row for _d, row in near[:GRASS_PUSHERS - 1]]
+        ter.set_grass_pushers(pushers)
+        days = float(self.clock.day) + float(self.clock.hour) / 24.0
+        ter.set_season(YEAR_START + days / terrain_biomes.YEAR_DAYS)
+
     # -------------------------------------------------------------- thoughts
     def _npc_thoughts_enabled(self) -> bool:
         """Whether to show what nearby NPCs are thinking (GAME → "Show NPC
@@ -5079,6 +5218,12 @@ class MiniwindSession(SettlementLaw):
             else:
                 p.pop("_need_reason", None)
 
+        if state == sched.WORKING and farm_work.is_farmer(p):
+            # By day a farmer reaps the wheat or tends the animals.
+            if self.farm_work.drive(self, npc):
+                return
+        elif p.get("_farm_tool"):
+            farm_work.stop(p)
         if state in (sched.WORKING, sched.GOING_TO_WORK) and p.get("patrol_markers"):
             if self._patrol(npc):
                 return
@@ -8642,6 +8787,13 @@ class MiniwindSession(SettlementLaw):
         tree = npc.properties.get("dialogue")
         self.dialogue_selected = 0
         self.dialogue_npc = npc
+        if str(npc.properties.get("type", "")).replace("_", "").lower() == "noticeboard":
+            # A board has no memory of the player, no face and no topics.
+            self.dialogue = DialogueRunner(self._notice_board_tree(npc), store=self.store)
+            if self.dialogue.start() is None:
+                self.end_dialogue()
+                return False
+            return True
         if (npc is self._arrest_guard and self._arrest_state == "ready"
                 and int(self.game.character.bounty or 0) > 0):
             tree = self._arrest_tree(npc)

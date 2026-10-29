@@ -1589,7 +1589,7 @@
     "type": "levelchanger",
     "name": "LevelChanger_cave08_out",
     "id": "345721b7-9807-4ddc-a267-89704d511fce",
-    "target_map": "maps/village_walled_source.json",
+    "target_map": "maps/miniwind_world.json",
     "delay": 0.0,
     "fade_time": 0.5,
     "show_radius": false,
@@ -2816,6 +2816,6 @@
  },
  "_miniwind_cave": {
   "name": "Gloomroot Hollow",
-  "overworld": "maps/village_walled_source.json"
+  "overworld": "maps/miniwind_world.json"
  }
 }

@@ -2,7 +2,7 @@
 arrow points at it, and the expanded world it sits in.
 
 The session tests are headless (fake logic, fake things); the map tests read
-``maps/village_walled_source.json`` as data.
+``maps/miniwind_world.json`` as data.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from ..rpg import quests
 from .fio_logic import FioLogic
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-MAP = os.path.join(ROOT, "maps", "village_walled_source.json")
+MAP = os.path.join(ROOT, "maps", "miniwind_world.json")
 
 
 class _FakeThing:
@@ -192,7 +192,9 @@ def test_every_lake_is_one_water_brush_over_a_sculpted_depression():
         for c in rects[i + 1:]:
             assert not (a[0] <= c[2] and c[0] <= a[2] and a[1] <= c[3] and c[1] <= a[3])
     terrain = _terrain(m["terrain_data"], heightmap=_load_heightmap(m["terrain_data"]))
-    lakes = [b for b in water if b["size"][0] > 600]
+    # The south-east ocean (make_road_map.make_ocean) meets the map's edge:
+    # it is no lake, though it may overlap none of them (checked above).
+    lakes = [b for b in water if 600 < b["size"][0] < 20000]
     assert len(lakes) >= 4                # Mirrormere and the new ponds
     for b in lakes:
         x0, z0, x1, z1 = rect(b)

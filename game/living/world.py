@@ -196,6 +196,11 @@ class SessionHooks(jn.WorldHooks):
     def faction_returned(self, journey):
         self.w.session.faction_spine.returned(journey)
 
+    def faction_present(self, journey, t):
+        spine = getattr(self.w.session, "faction_spine", None)
+        if spine is not None:
+            spine.present(journey, t)
+
     def encounter_resolved(self, winner, loser, t, where, fallen):
         spine = getattr(self.w.session, "faction_spine", None)
         if spine is not None:
@@ -257,6 +262,10 @@ class SessionHooks(jn.WorldHooks):
             # Journey sampling may read appraisal, never populate its cache.
             intents = self.w.session.director.evaluate(t)
             if intents and intents[0].reaction == "MOURN":
+                return False
+            # Nobody sets out past an armed company holding their town.
+            if t.pos is not None and self.w.board.holding(
+                    self.w.board.nearest_place(t.pos[0], t.pos[2])):
                 return False
         return parked or tier >= TIER_DISTANT
 
@@ -934,6 +943,8 @@ class LivingWorld:
                     and not offender.properties.get("dead")
                     and math.hypot(x.pos[0] - offender.pos[0], x.pos[2] - offender.pos[2]) <= SIGHT
                     and s._law_visible(x, offender.pos) and s._apply_sim_intent(x)):
+                if offender is getattr(s, "player_actor", None):
+                    self._say_why(x)
                 return True
         p = x.properties
         combatant = bool(p.get("combatant"))
@@ -1028,8 +1039,34 @@ class LivingWorld:
             p["sched_state"] = "RESTING"
 
     # ---------------------------------------------------------- dialogue
+    def _justified_line(self, x) -> str:
+        """Why this traveller came looking for the player, once, if they did.
+
+        Reads the storyteller's sampled justification for the same social
+        identity; the journey and the intent behind it already exist."""
+        story = getattr(self.session, "storyteller", None)
+        if story is None or not story.enabled or x.properties.get("_justified_said"):
+            return ""
+        from ..sim.director import peek_actor_key
+        from .. import chatter
+        row = story.justified_view(peek_actor_key(x))
+        if not row or row.get("destination") != self.board.nearest_place(x.pos[0], x.pos[2], jn.TOWNS):
+            return ""
+        speaker = x.properties.get("display_name") or x.properties.get("name") or ""
+        return chatter.justified_line(row.get("kind", ""), row.get("victim", ""), speaker)
+
+    def _say_why(self, x) -> None:
+        line = self._justified_line(x)
+        if line:
+            x.properties["_justified_said"] = True
+            self.session.bark(x, line)
+
     def _greeting(self, j, leader) -> str:
         s = self.session
+        line = self._justified_line(leader)
+        if line:
+            leader.properties["_justified_said"] = True
+            return line
         if self.board.knows_bounty(j) and self.board.hooks.player_bounty() > 0 \
                 and j.kind not in ("hunters", "bandits"):
             return s.rng.choice(("You're the one they're paying for...",
@@ -1064,6 +1101,87 @@ class LivingWorld:
                      "responses": [{"text": "Thanks for the word.", "goto": "greet"}]},
         }}
 
+    # ----------------------------------------------------------- rumours
+    def _place_label(self, x, z) -> str:
+        key = self.board.nearest_place(x, z) if self.board is not None else None
+        return self.board.place_name(key) if key else ""
+
+    def _today(self):
+        clock = getattr(self.session, "clock", None)
+        return int(getattr(clock, "day", 0)) if clock is not None else None
+
+    def rumours(self, npc, limit: int = 2, skip=()) -> List:
+        """``[(event id, sentence)]``: what *npc* believes and would volunteer.
+
+        Narration of their own stored facts (game/sim/rumours.py); reading
+        them writes nothing and draws no random number."""
+        from ..sim import knowledge, rumours
+        from ..sim.director import peek_actor_key
+        store = getattr(self.session, "store", None)
+        key = peek_actor_key(npc)
+        if store is None or not key or self.board is None:
+            return []
+        name = npc.properties.get("display_name") or npc.properties.get("name") or ""
+        picked = rumours.pick(knowledge.facts_view(store, key), limit, skip)
+        return [(int(f.get("e", 0) or 0),
+                 rumours.line(f, self._place_label, self._today(), speaker=name,
+                              place_name=self.board.place_name))
+                for f in picked]
+
+    def departures(self, place, limit: int = 2) -> List[str]:
+        """Neighbours' accounts of actual journeys that set out from *place*:
+        faction orders, and residents on justified trips."""
+        from ..sim import rumours
+        from ..sim.director import PLAYER_KEY, peek_actor_key
+        if self.board is None or not place:
+            return []
+        story = getattr(self.session, "storyteller", None)
+        out = []
+        for j in sorted(self.board.journeys.values(), key=lambda j: -j.depart_t):
+            if j.state != "travel" or j.home != place or j.dest == place:
+                continue
+            dest = self.board.place_name(j.dest)
+            if j.cause:
+                fact = j.cause.get("fact") or {}
+                target = "you" if j.cause.get("target") == PLAYER_KEY else (
+                    fact.get("actor_name") or j.cause.get("target", ""))
+                out.append(rumours.departure("", dest, faction=j.cause.get("faction", ""),
+                                             target=target, reason_fact=fact or None))
+            elif j.resident and story is not None and story.enabled:
+                lead = j.members[0] if j.members else {}
+                row = story.justified_view(peek_actor_key(j.resident))
+                if row and row.get("destination") == j.dest:
+                    out.append(rumours.departure(lead.get("display", "Someone"), dest,
+                                                 row.get("kind", ""), row.get("victim", "")))
+            if len(out) >= limit:
+                break
+        return out
+
+    def notices(self, place, limit: int = 4) -> List[str]:
+        """What the watch has posted in *place*: reported crimes its residents
+        know of, newest first. Only reported accounts are posted."""
+        from ..sim import crime, knowledge, rumours
+        from ..sim.director import peek_actor_key
+        store = getattr(self.session, "store", None)
+        if store is None or self.board is None or not place:
+            return []
+        best = {}
+        for npc in self.session._things_of_type("npc"):
+            p = npc.properties
+            if p.get("dead") or p.get("_journey") or npc.pos is None:
+                continue
+            if self.board.nearest_place(npc.pos[0], npc.pos[2]) != place:
+                continue
+            for f in knowledge.facts_view(store, peek_actor_key(npc)):
+                eid = int(f.get("e", 0) or 0)
+                if (not eid or not f.get("reported") or not crime.is_crime(f)
+                        or crime.settled(store, eid)):
+                    continue
+                if eid not in best or float(f.get("certainty", 0)) > float(best[eid].get("certainty", 0)):
+                    best[eid] = f
+        rows = sorted(best.values(), key=lambda f: (-int(f.get("day", 0)), -float(f.get("hour", 0.0)), -int(f["e"])))
+        return [rumours.notice(f, self._place_label, self._today()) for f in rows[:limit]]
+
     def news_text(self, ids, place=None) -> str:
         lines = self.board.news_for(ids, 3) if ids else []
         if place and not lines:
@@ -1091,14 +1209,21 @@ class LivingWorld:
         if p.get("aggression") == "hostile" or jid:
             return tree
         place = self.board.nearest_place(npc.pos[0], npc.pos[2])
-        if not place or not self.board.heard.get(place):
+        if not place:
+            return tree
+        # What they themselves believe, who has set out from here and why,
+        # then what travellers have brought: all of it already true.
+        lines = [text for _e, text in self.rumours(npc, 2)] + self.departures(place, 1)
+        if self.board.heard.get(place):
+            lines += self.board.news_at(place, 2 if lines else 3)
+        if not lines:
             return tree
         start = tree.get("start")
         if start not in nodes:
             return tree
         tree = copy.deepcopy(tree)
         tree["nodes"]["_town_news"] = {
-            "text": self.news_text(None, place),
+            "text": "  ".join(lines),
             "responses": [{"text": "Interesting.", "goto": start}]}
         resp = tree["nodes"][start].setdefault("responses", [])
         at = max(0, len(resp) - 1)

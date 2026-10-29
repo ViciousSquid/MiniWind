@@ -103,10 +103,29 @@ def test_rolls_made_together_are_shown_together(config):
 # ------------------------------------------------------------- the thoughts
 def test_a_thought_says_why_in_the_decisions_own_words():
     key, text = mental_state.thought({
-        "name": "Ann", "sched_state": "REPORT", "_sim_intent": "REPORT",
-        "_sim_reason": "Somebody must tell the watch what Rufus did"})
-    assert key.startswith("intent:REPORT")
-    assert text == "Somebody must tell the watch what Rufus did."
+        "name": "Ann", "sched_state": "CONFRONT", "_sim_intent": "CONFRONT",
+        "_sim_reason": "Rufus took what is mine"})
+    assert key.startswith("intent:CONFRONT")
+    assert text == "Rufus took what is mine."
+
+
+def test_a_witness_running_to_the_watch_sometimes_cries_for_the_guard():
+    reason = "Somebody must tell the watch what Rufus did"
+    texts = {}
+    for name in (f"Witness {i}" for i in range(60)):
+        props = {"name": name, "sched_state": "REPORT", "_sim_intent": "REPORT",
+                 "_sim_reason": reason}
+        key, text = mental_state.thought(props)
+        assert key.startswith("intent:REPORT")
+        assert mental_state.thought(props) == (key, text)       # stable, not random
+        texts[name] = text
+    said = set(texts.values())
+    assert said == {reason + ".", *mental_state.REPORT_CRIES}   # the reason is kept too
+    cries = sum(t in mental_state.REPORT_CRIES for t in texts.values())
+    assert 0 < cries < len(texts) / 2
+    # Without a reason to give, a reporting witness may still shout.
+    bare = {mental_state.thought({"name": n, "sched_state": "REPORT"})[1] for n in texts}
+    assert bare == {"", *mental_state.REPORT_CRIES}
 
 
 def test_a_thought_keeps_the_working_for_the_inspector():
@@ -114,6 +133,34 @@ def test_a_thought_keeps_the_working_for_the_inspector():
         "name": "Bram", "sched_state": "FLEE", "_flee": True, "_sim_intent": "FLEE",
         "_sim_reason": "Rufus attacked me and I am no fighter (courage 0.12)"})
     assert text == "Rufus attacked me and I am no fighter."
+
+
+def test_a_reason_too_long_for_a_bubble_is_said_briefly_naming_who():
+    props = {"name": "Ann", "sched_state": "COMBAT", "_sim_intent": "FIGHT", "_sim_target": "Rufus",
+             "_sim_reason": "Rufus killed Mara, my sister, and I swore an oath"}
+    key, text = mental_state.thought(props)
+    assert key == "intent:FIGHT:" + props["_sim_reason"]
+    assert text in [t.format(who="Rufus") for t in mental_state._INTENT_THOUGHTS["FIGHT"]]
+
+
+def test_every_thought_is_brief():
+    lines = [t for options in (*mental_state._THOUGHTS.values(),
+                                *mental_state._INTENT_THOUGHTS.values()) for t in options]
+    lines += list(mental_state.REPORT_CRIES)
+    for text in lines:
+        assert len(text.format(target="X", who="X").split()) <= mental_state.THOUGHT_WORDS, text
+    # Most are very short.
+    assert sum(len(t.split()) <= 4 for t in lines) > len(lines) * 2 / 3
+
+
+def test_new_situations_have_thoughts():
+    for state in ("TRAVEL", "RESTING", "AWAKENED", "INVESTIGATE", "CONFRONT"):
+        assert mental_state.thought({"name": "F", "sched_state": state})[1], state
+    key, text = mental_state.thought({"name": "F", "sched_state": "WANDER",
+                                      "health": 10, "max_health": 100})
+    assert key == "wounded" and text
+    assert mental_state.thought({"name": "F", "sched_state": "WANDER",
+                                 "health": 90, "max_health": 100})[1] == ""
 
 
 def test_needs_and_routine_have_thoughts_and_idling_has_none():

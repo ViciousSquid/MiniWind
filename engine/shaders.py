@@ -2008,6 +2008,10 @@ uniform float uFadeStart;
 uniform float uFadeEnd;
 uniform float uBladeHeight;
 uniform float uBladeWidth;
+// Actors in the grass: (x, z, radius, strength). Blades lean and flatten away
+// from each; a fading trail behind a walker lets the grass spring back.
+uniform vec4 uPushers[32];
+uniform int uPusherCount;
 
 float hash1(float n) {
     return fract(sin(n) * 43758.5453123);
@@ -2117,6 +2121,25 @@ void main() {
     float bendStrength = mix(0.15, 0.45, seedA) * height;
     float bendStart = mix(0.0, 0.3, seedB);
 
+    // Parting: sum each actor's push away from it, strongest at its centre.
+    vec2 push = vec2(0.0);
+    for (int i = 0; i < uPusherCount; ++i) {
+        vec2 d = iPosition.xz - uPushers[i].xy;
+        float r = uPushers[i].z;
+        float d2 = dot(d, d);
+        if (d2 < r * r) {
+            float dist = sqrt(d2);
+            float f = 1.0 - dist / r;
+            f = f * f * (3.0 - 2.0 * f) * uPushers[i].w;
+            push += (dist > 1e-3 ? d / dist : forward) * f;
+        }
+    }
+    float pushLen = length(push);
+    vec2 pushVec = pushLen > 1.0 ? push / pushLen : push;
+    // A pushed blade leans from its root, up to nearly flat; per-blade
+    // stiffness keeps the parting ragged rather than a clean circle.
+    pushVec *= height * mix(0.85, 1.1, seedB);
+
     // Taper: the detailed blade narrows gently and then closes in the tip
     // triangle; the far blade is a plain triangle. Morph between the two.
     float widthHigh = halfWidth * (1.0 - 0.45 * level);
@@ -2124,7 +2147,8 @@ void main() {
     float width = mix(widthHigh, widthLow, lod);
 
     vec2 offset = centreOffset(level, lod, forward, windDir,
-                               bendStrength, bendStart, strong, gentle);
+                               bendStrength, bendStart, strong, gentle)
+                + pushVec * level;
     // Keep the blade roughly its own length as it leans over.
     float rise = level * height;
     float y = sqrt(max(rise * rise - dot(offset, offset) * 0.6, 0.2 * rise * rise));
@@ -2139,8 +2163,10 @@ void main() {
     // blade.
     float h2 = min(level + 0.05, 1.0);
     float h1 = h2 - 0.05;
-    vec2 o1 = centreOffset(h1, lod, forward, windDir, bendStrength, bendStart, strong, gentle);
-    vec2 o2 = centreOffset(h2, lod, forward, windDir, bendStrength, bendStart, strong, gentle);
+    vec2 o1 = centreOffset(h1, lod, forward, windDir, bendStrength, bendStart, strong, gentle)
+            + pushVec * h1;
+    vec2 o2 = centreOffset(h2, lod, forward, windDir, bendStrength, bendStart, strong, gentle)
+            + pushVec * h2;
     vec3 tangent = vec3(o2.x - o1.x, (h2 - h1) * height, o2.y - o1.y);
     vec3 side3 = vec3(sideDir.x, 0.0, sideDir.y);
     vec3 n = cross(side3, tangent);

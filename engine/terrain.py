@@ -474,11 +474,14 @@ class Terrain:
         self.grass_shader_program: int = 0
         self.grass_uniforms: Dict[str, int] = {}
         self.grass_time = 0.0
-        self.GRASS_MAX_PER_CHUNK = 16384         # tufts per chunk
-        self.GRASS_BLADES_PER_TUFT = 5
+        self.GRASS_MAX_PER_CHUNK = 32768         # tufts per chunk (thick meadows)
+        self.GRASS_BLADES_PER_TUFT = 7
+        #: Share of meadow tufts that grow medium-length stalks; the rest
+        #: are short grass.
+        self.GRASS_MEDIUM_SHARE = 0.35
         self.GRASS_TUFT_RADIUS = 2.5             # world units
         self.GRASS_BLADE_HEIGHT = DEFAULT_GRASS_HEIGHT  # see grass_height
-        self.GRASS_BLADE_WIDTH = 0.35            # half width at the root
+        self.GRASS_BLADE_WIDTH = 0.45            # half width at the root
         self.GRASS_MAX_DISTANCE = 3072.0
         # Chunks nearer than this draw detailed blades; blades morph onto the
         # single-triangle far blade between LOD_START and LOD_DISTANCE.
@@ -641,7 +644,8 @@ class Terrain:
             'uAmbient': gl.glGetUniformLocation(self.grass_shader_program, 'uAmbient'),
         }
         for name in ('grassTipColor', 'uMatchGround', 'uTipAuto', 'uSegments', 'uLodStart', 'uLodEnd',
-                     'uFadeStart', 'uFadeEnd', 'uBladeHeight', 'uBladeWidth'):
+                     'uFadeStart', 'uFadeEnd', 'uBladeHeight', 'uBladeWidth',
+                     'uPushers', 'uPusherCount'):
             self.grass_uniforms[name] = gl.glGetUniformLocation(
                 self.grass_shader_program, name)
 
@@ -747,11 +751,12 @@ class Terrain:
     # ------------------------------------------------------------------
     def set_biome_map(self, biome_map: Optional[np.ndarray]):
         """Paint regional biomes over the terrain (HxWx4 uint8: desert,
-        snow, swamp, wheat), or clear them with None. Grass regrows."""
+        snow, swamp, wheat; or HxWx5 adding tundra, which only grass reads),
+        or clear them with None. Grass regrows."""
         if biome_map is not None:
             biome_map = np.ascontiguousarray(biome_map, dtype=np.uint8)
-            if biome_map.ndim != 3 or biome_map.shape[2] != 4:
-                raise ValueError("biome map must be HxWx4")
+            if biome_map.ndim != 3 or biome_map.shape[2] not in (4, 5):
+                raise ValueError("biome map must be HxWx4 (or HxWx5 with tundra)")
         self.biome_map = biome_map
         self._biome_version += 1
         self.table.mark_grass_dirty()
@@ -780,8 +785,10 @@ class Terrain:
         if self._biome_gpu_version != self._biome_version:
             h, w = self.biome_map.shape[:2]
             gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 1)
+            # The GPU texture is the four RGBA biomes; tundra is CPU-only.
+            gpu = np.ascontiguousarray(self.biome_map[..., :terrain_biomes.GPU_CHANNELS])
             gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA8, w, h, 0,
-                            gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, self.biome_map)
+                            gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, gpu)
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
             gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
@@ -1144,6 +1151,18 @@ class Terrain:
             return
         with self._gl_scope():
             self._free_gl_slots(slots)
+
+    def _release_grass(self, slots):
+        """Free the grass of chunks far out of view; it regrows on return."""
+        self._sync_gl_columns()
+        for slot in slots:
+            if self._grass_vao[slot]:
+                gl.glDeleteVertexArrays(1, [int(self._grass_vao[slot])])
+            if self._grass_vbo[slot]:
+                gl.glDeleteBuffers(1, [int(self._grass_vbo[slot])])
+            self._grass_vao[slot] = self._grass_vbo[slot] = 0
+            self._grass_count[slot] = 0
+            self.table.grass_dirty[slot] = True
 
     def _free_gl_slots(self, slots):
         self._sync_gl_columns()
@@ -1542,20 +1561,21 @@ class Terrain:
         meadow = self._generate_meadow_blades(slot)
         if self.biome_map is None:
             return meadow
-        wheat = self._generate_wheat_blades(slot)
-        if len(wheat) == 0:
+        parts = [p for p in (meadow, self._generate_wheat_blades(slot),
+                             self._generate_tundra_blades(slot)) if len(p)]
+        if not parts:
             return meadow
-        return np.concatenate([meadow, wheat]) if len(meadow) else wheat
+        return np.concatenate(parts) if len(parts) > 1 else parts[0]
 
     def _generate_meadow_blades(self, slot: int) -> np.ndarray:
         """The ordinary grass of :meth:`_generate_grass_blades`: none on
         sand or snow, reeds in the swamp."""
         table = self.table
         size = float(table.size[slot])
-        tufts = min(
+        tufts = int(min(
             self.GRASS_MAX_PER_CHUNK,
             int(max(0.0, self.grass_density) * size * size)
-        )
+        ) * self._grass_budget())
         if tufts <= 0:
             return np.empty((0, 9), dtype=np.float32)
 
@@ -1617,7 +1637,9 @@ class Terrain:
         data[:, 0] = bx
         data[:, 1] = self._get_heights_batch(bx, bz)
         data[:, 2] = bz
-        data[:, 3] = rng.uniform(0.65, 1.25, count)
+        # A mix of short grass and medium stalks, tuft by tuft.
+        medium = np.repeat(rng.random(len(tx)) < self.GRASS_MEDIUM_SHARE, per_tuft)
+        data[:, 3] = np.where(medium, rng.uniform(1.5, 2.6, count), rng.uniform(0.6, 1.05, count))
         data[:, 4] = rng.uniform(0.0, 6.2831853, count)
         data[:, 5] = rng.uniform(0.82, 1.12, count)
         # The colour of the ground each blade stands on, for grass that
@@ -1629,7 +1651,7 @@ class Terrain:
             # Reeds: taller, darker, olive.
             reed = np.repeat(biomes[:, terrain_biomes.SWAMP], per_tuft)
             lo, hi = terrain_biomes.REED_SIZE
-            reed_size = rng.uniform(lo, hi, count)
+            reed_size = rng.uniform(lo, hi, count) * self._biome_size_scale()
             t = np.clip(reed * 1.4, 0.0, 1.0)
             data[:, 3] = data[:, 3] * (1.0 - t) + reed_size * t
             data[:, 6:9] = (data[:, 6:9] * (1.0 - t[:, None])
@@ -1651,8 +1673,11 @@ class Terrain:
         if float(np.max(coarse)) < 0.3:
             return np.empty((0, 9), dtype=np.float32)
         density_scale = min(1.0, max(0.0, self.grass_density) / 0.02)
+        height, ripeness, season_cover = self.wheat_stage
         tufts = int(terrain_biomes.WHEAT_MAX_PER_CHUNK * min(1.0, cover * 1.3 + 0.1)
-                    * max(0.35, density_scale))
+                    * max(0.35, density_scale) * season_cover
+                    # low quality: the original 9,000 of today's 13,500
+                    * (1.0 if self.grass_quality != 'low' else 2.0 / 3.0))
         if tufts <= 0:
             return np.empty((0, 9), dtype=np.float32)
         seed = ((int(self.seed) * 2654435761)
@@ -1661,7 +1686,8 @@ class Terrain:
         rng = np.random.default_rng(seed)
         tx = x0 + rng.random(tufts) * size
         tz = z0 + rng.random(tufts) * size
-        w = self.biome_weights_batch(tx, tz)[:, terrain_biomes.WHEAT]
+        weights = self.biome_weights_batch(tx, tz)
+        w = weights[:, terrain_biomes.WHEAT] * terrain_biomes.bare_keep(weights)
         # Fields have crisp edges: a smoothstep on the painted weight.
         t = np.clip((w - 0.35) / 0.25, 0.0, 1.0)
         keep = rng.random(tufts) < t * t * (3.0 - 2.0 * t)
@@ -1686,13 +1712,185 @@ class Terrain:
         data[:, 1] = self._get_heights_batch(bx, bz)
         data[:, 2] = bz
         lo, hi = terrain_biomes.WHEAT_SIZE
-        data[:, 3] = rng.uniform(lo, hi, count)
+        data[:, 3] = rng.uniform(lo, hi, count) * height * self._biome_size_scale()
         data[:, 4] = rng.uniform(0.0, 6.2831853, count)
         data[:, 5] = rng.uniform(0.9, 1.1, count)
         ripe = rng.random(count)[:, None]
-        data[:, 6:9] = (terrain_biomes.WHEAT_COLOUR[None, :] * (1.0 - ripe * 0.5)
-                        + terrain_biomes.WHEAT_TIP[None, :] * ripe * 0.5)
+        gold = (terrain_biomes.WHEAT_COLOUR[None, :] * (1.0 - ripe * 0.5)
+                + terrain_biomes.WHEAT_TIP[None, :] * ripe * 0.5)
+        # Green while young, gold as it ripens, straw once cut.
+        r = np.clip(ripeness + (ripe[:, 0] - 0.5) * 0.15, 0.0, 1.0)[:, None]
+        colour = terrain_biomes.WHEAT_YOUNG[None, :] * (1.0 - r) + gold * r
+        if height < 0.2 and ripeness >= 1.0:
+            colour = terrain_biomes.WHEAT_STUBBLE[None, :] * (0.85 + 0.3 * ripe)
+        data[:, 6:9] = np.clip(colour, 0.0, 1.0)
         return data
+
+    #: The wheat's growth stage, ``(height, ripeness, cover)``
+    #: (:func:`terrain_biomes.wheat_stage`); full-grown until a season is set.
+    wheat_stage = (1.0, 1.0, 1.0)
+
+    def set_season(self, year_fraction: float) -> bool:
+        """Grow the wheat to this point in the farming year (0 = first day of
+        spring). Fields regrow only when the stage has visibly changed, so a
+        game clock can call this every frame. Returns True when it regrew."""
+        stage = terrain_biomes.wheat_stage(year_fraction)
+        old = self.wheat_stage
+        if self.__dict__.get('wheat_stage') is not None and max(
+                abs(a - b) for a, b in zip(stage, old)) < 0.04:
+            return False
+        self.wheat_stage = stage
+        self.season = terrain_biomes.season_of(year_fraction)
+        if self.biome_map is not None and np.any(self.biome_map[..., terrain_biomes.WHEAT]):
+            self.table.mark_grass_dirty()
+        return True
+
+    #: 'high' (thick meadows) or 'low' (the original grass: half the tufts,
+    #: narrower blades) -- settings.ini [Renderer] low_grass.
+    grass_quality = 'high'
+    #: (tuft budget multiplier, blade half-width) per quality.
+    GRASS_QUALITIES = {'high': (1.0, 0.45), 'low': (0.5, 0.35)}
+
+    def set_grass_quality(self, quality) -> bool:
+        """Switch grass quality; grass regrows only when it changes."""
+        quality = str(quality or 'high').lower()
+        if quality not in self.GRASS_QUALITIES:
+            quality = 'high'
+        if quality == self.grass_quality:
+            return False
+        self.grass_quality = quality
+        self.GRASS_BLADE_WIDTH = self.GRASS_QUALITIES[quality][1]
+        self.table.mark_grass_dirty()
+        return True
+
+    def _grass_budget(self) -> float:
+        return self.GRASS_QUALITIES.get(self.grass_quality, (1.0, 0.45))[0]
+
+    def _biome_size_scale(self) -> float:
+        """Wheat, reeds and tundra keep their own real heights whatever the
+        map's meadow blade height: their sizes are authored against
+        :data:`DEFAULT_GRASS_HEIGHT`, and the shader multiplies by the map's."""
+        return DEFAULT_GRASS_HEIGHT / max(float(self.grass_height), 0.5)
+
+    def _generate_tundra_blades(self, slot: int) -> np.ndarray:
+        """Tundra heath: dense, tall leafy shrub-grass wherever the biome map's
+        fifth channel paints it, green with drifts of flame-orange, red and
+        gold shoots (:func:`terrain_biomes.tundra_colours`). Its own budget,
+        like wheat, so a heath is never sparse."""
+        if self.biome_map is None or self.biome_map.shape[2] <= terrain_biomes.TUNDRA:
+            return np.empty((0, 9), dtype=np.float32)
+        table = self.table
+        size = float(table.size[slot])
+        x0 = float(table.world[slot, 0])
+        z0 = float(table.world[slot, 1])
+        g = np.linspace(0.0, size, 9, dtype=np.float32)
+        GX, GZ = np.meshgrid(x0 + g, z0 + g)
+        coarse = self.biome_weights_batch(GX.ravel(), GZ.ravel())[:, terrain_biomes.TUNDRA]
+        if float(np.max(coarse)) < 0.15:
+            return np.empty((0, 9), dtype=np.float32)
+        density_scale = min(1.0, max(0.0, self.grass_density) / 0.02)
+        tufts = int(terrain_biomes.TUNDRA_MAX_PER_CHUNK * min(1.0, float(np.mean(coarse)) * 1.3 + 0.1)
+                    * max(0.35, density_scale) * self._grass_budget())
+        if tufts <= 0:
+            return np.empty((0, 9), dtype=np.float32)
+        seed = ((int(self.seed) * 2246822519)
+                ^ (int(table.coord[slot, 0]) * 3266489917)
+                ^ (int(table.coord[slot, 1]) * 668265263)) & 0xFFFFFFFF
+        rng = np.random.default_rng(seed)
+        tx = x0 + rng.random(tufts) * size
+        tz = z0 + rng.random(tufts) * size
+        weights = self.biome_weights_batch(tx, tz)
+        w = weights[:, terrain_biomes.TUNDRA] * terrain_biomes.bare_keep(weights)
+        # A soft edge: the heath thins out into the meadow around it.
+        t = np.clip((w - 0.15) / 0.45, 0.0, 1.0)
+        keep = rng.random(tufts) < t * t * (3.0 - 2.0 * t)
+        eps = 1.0
+        h0 = self._get_raw_heights_batch(tx, tz)
+        gx = (self._get_raw_heights_batch(tx + eps, tz) - h0) / eps
+        gz = (self._get_raw_heights_batch(tx, tz + eps) - h0) / eps
+        keep &= 1.0 / np.sqrt(1.0 + gx * gx + gz * gz) >= self.GRASS_MIN_NORMAL_Y
+        if self.texture_paint_maps:
+            keep &= self._paint_alpha_batch(tx, tz) < self.GRASS_PAINT_CLEAR
+        tx, tz, w = tx[keep], tz[keep], w[keep]
+        if len(tx) == 0:
+            return np.empty((0, 9), dtype=np.float32)
+        per = terrain_biomes.TUNDRA_STEMS_PER_TUFT
+        count = len(tx) * per
+        angle = rng.uniform(0.0, 6.2831853, count)
+        radius = np.sqrt(rng.random(count)) * terrain_biomes.TUNDRA_TUFT_RADIUS
+        bx = np.repeat(tx, per) + np.cos(angle) * radius
+        bz = np.repeat(tz, per) + np.sin(angle) * radius
+        data = np.empty((count, 9), dtype=np.float32)
+        data[:, 0] = bx
+        data[:, 1] = self._get_heights_batch(bx, bz)
+        data[:, 2] = bz
+        lo, hi = terrain_biomes.TUNDRA_SIZE
+        # Shorter towards the heath's edge, tallest in its heart.
+        data[:, 3] = (rng.uniform(lo, hi, count) * np.repeat(0.6 + 0.4 * np.clip(w, 0.0, 1.0), per)
+                      * self._biome_size_scale())
+        data[:, 4] = rng.uniform(0.0, 6.2831853, count)
+        data[:, 5] = rng.uniform(0.9, 1.1, count)
+        # Drifts of colour: a broad noise field decides where the flame
+        # shoots crowd in, so the heath glows in patches.
+        patch = self.noise.noise2d_batch(
+            (bx - self.offset_x) * 0.0022 + 17.3, (bz - self.offset_z) * 0.0022 - 41.9)
+        data[:, 6:9] = terrain_biomes.tundra_colours(
+            rng, count, np.clip(patch * 0.8 + 0.5, 0.0, 1.0))
+        return data
+
+    # ------------------------------------------------------------------
+    # Grass parting: actors push the blades aside as they walk through.
+    # ------------------------------------------------------------------
+    #: Most pushers (actors and their fading trails) the shader takes.
+    MAX_GRASS_PUSHERS = 32
+    #: Seconds trodden grass takes to spring back up.
+    GRASS_RECOVER_SECONDS = 1.6
+
+    def set_grass_pushers(self, pushers) -> None:
+        """Where actors stand in the grass this frame: ``(key, x, z, radius)``.
+
+        Blades within *radius* lean and flatten away from them. As an actor
+        moves on it leaves a short trail behind, which springs back up over
+        :data:`GRASS_RECOVER_SECONDS`, so a path through tall grass is seen
+        parting and closing behind the walker. Safe to call from the game
+        thread: the shader reads a list replaced whole."""
+        import time
+        now = time.perf_counter()
+        trails = dict(getattr(self, '_grass_trails', {}))
+        live = []
+        for key, x, z, r in pushers or ():
+            x, z, r = float(x), float(z), max(1.0, float(r))
+            live.append((x, z, r, None))
+            trail = [p for p in trails.get(key, ()) if now - p[3] < self.GRASS_RECOVER_SECONDS]
+            if not trail or math.hypot(x - trail[-1][0], z - trail[-1][1]) > r * 0.35:
+                trail.append((x, z, r, now))
+            trails[key] = trail[-12:]
+        # Trails of actors no longer reported still fade out where they were.
+        for key in list(trails):
+            trails[key] = [p for p in trails[key] if now - p[3] < self.GRASS_RECOVER_SECONDS]
+            if not trails[key]:
+                del trails[key]
+        self._grass_trails = trails
+        fading = sorted((p for trail in trails.values() for p in trail), key=lambda p: -p[3])
+        self._grass_pushers = (live + fading)[:self.MAX_GRASS_PUSHERS]
+
+    def _grass_pusher_array(self, now) -> Tuple[np.ndarray, int]:
+        """``(x, z, radius, strength)`` rows for the shader."""
+        rows = []
+        for x, z, r, t0 in getattr(self, '_grass_pushers', ()):
+            if t0 is None:
+                strength = 1.0
+            else:
+                age = (now - t0) / self.GRASS_RECOVER_SECONDS
+                if age >= 1.0:
+                    continue
+                k = 1.0 - age
+                strength = k * k * (3.0 - 2.0 * k)
+            rows.append((x, z, r, strength))
+        out = np.zeros((self.MAX_GRASS_PUSHERS, 4), dtype=np.float32)
+        if rows:
+            out[:len(rows)] = rows[:self.MAX_GRASS_PUSHERS]
+        return out, min(len(rows), self.MAX_GRASS_PUSHERS)
 
     def _ground_colors(self, slot: int, y: np.ndarray, raw: np.ndarray,
                        slope: np.ndarray) -> np.ndarray:
@@ -1806,6 +2004,11 @@ class Terrain:
         gl.glUniform1f(u['uFadeEnd'], self.GRASS_MAX_DISTANCE)
         gl.glUniform1f(u['uBladeHeight'], self.grass_height)
         gl.glUniform1f(u['uBladeWidth'], self.GRASS_BLADE_WIDTH)
+        pushers, n_pushers = self._grass_pusher_array(now)
+        if u.get('uPusherCount', -1) != -1:
+            gl.glUniform1i(u['uPusherCount'], n_pushers)
+            if n_pushers and u.get('uPushers', -1) != -1:
+                gl.glUniform4fv(u['uPushers'], n_pushers, pushers)
 
         if env_uniforms:
             for name, value in env_uniforms.items():
@@ -2072,15 +2275,28 @@ class Terrain:
 
         # Grass has its own dirty queue. It is rebuilt in the same bounded
         # fashion as terrain meshes, so moving the density slider cannot spike
-        # the frame by rebuilding every resident chunk at once.
-        if self.grass_enabled:
-            grass_updates = slots[table.grass_dirty[slots]]
-            for slot in grass_updates[:self.MAX_UPDATES_PER_FRAME]:
-                self._upload_grass_chunk(int(slot))
+        # the frame by rebuilding every resident chunk at once. settings.ini
+        # [Renderer] grass = False (grass_allowed) turns it off everywhere.
+        grass_on = self.grass_enabled and getattr(self, 'grass_allowed', True)
+        if grass_on:
+            # Grass exists only where the camera can see it: chunks in the
+            # frustum and within grass range grow theirs (nearest first);
+            # chunks well out of range give theirs back, regrowing on return.
+            cam_d = table.nearest_dist_sq(slots, float(camera_pos.x), float(camera_pos.z))
+            reach_sq = self.GRASS_MAX_DISTANCE * self.GRASS_MAX_DISTANCE
+            in_view = table.visible(slots, frustum_planes) & (cam_d <= reach_sq)
+            wanted = np.nonzero(table.grass_dirty[slots] & in_view)[0]
+            for i in wanted[np.argsort(cam_d[wanted], kind='stable')][:self.MAX_UPDATES_PER_FRAME]:
+                self._upload_grass_chunk(int(slots[i]))
+            far = slots[(self._grass_count[slots] > 0) & (cam_d > reach_sq * 2.56)]
+            if len(far):
+                self._release_grass(far)
         else:
             self._grass_count[slots] = 0
+            # Regrow when grass is allowed again.
+            table.grass_dirty[slots] = True
 
-        if self.grass_enabled:
+        if grass_on:
             # After this frame's builds, as the chunk bounds may have moved.
             candidates = slots[table.built[slots] & (self._grass_count[slots] > 0)]
             visible_grass = candidates[table.visible(candidates, frustum_planes)]

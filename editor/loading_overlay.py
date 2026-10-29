@@ -8,7 +8,7 @@ used to sit frozen on whatever it showed last, which looks exactly like a
 crash.
 
 :class:`LoadingOverlay` covers the window with a dark veil, a title ("Loading
-village_walled_source") and the same progress bar as the startup splash
+miniwind_world") and the same progress bar as the startup splash
 (``main.py``), reading "Building terrain (50%)". Work on the UI thread cannot
 be interrupted to animate anything, so the long operations call :meth:`step`
 between their stages: each call names the stage, moves the bar on and repaints

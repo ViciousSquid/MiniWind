@@ -1169,7 +1169,7 @@
     "type": "levelchanger",
     "name": "LevelChanger_cave02_out",
     "id": "051bebfe-df1f-4d4c-89a8-53186c89dd95",
-    "target_map": "maps/village_walled_source.json",
+    "target_map": "maps/miniwind_world.json",
     "delay": 0.0,
     "fade_time": 0.5,
     "show_radius": false,
@@ -2295,6 +2295,6 @@
  },
  "_miniwind_cave": {
   "name": "The Bonepit",
-  "overworld": "maps/village_walled_source.json"
+  "overworld": "maps/miniwind_world.json"
  }
 }

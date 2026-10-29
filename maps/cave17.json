@@ -1400,7 +1400,7 @@
     "type": "levelchanger",
     "name": "LevelChanger_cave17_out",
     "id": "aee3a0fc-57a7-410c-9173-6d9c2c978b32",
-    "target_map": "maps/village_walled_source.json",
+    "target_map": "maps/miniwind_world.json",
     "delay": 0.0,
     "fade_time": 0.5,
     "show_radius": false,
@@ -2377,6 +2377,6 @@
  },
  "_miniwind_cave": {
   "name": "Rimeclaw Den",
-  "overworld": "maps/village_walled_source.json"
+  "overworld": "maps/miniwind_world.json"
  }
 }
