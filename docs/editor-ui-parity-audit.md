@@ -1,111 +1,115 @@
-# Windows / macOS editor UI parity audit
+# Windows / macOS editor UI parity
 
-The native comparison completed successfully on GitHub Actions for commit
-`9aad76e1cff0cefbaeed821294108eb81b554105`. **The editor does not yet have
-visual parity between Windows and macOS.** A successful workflow means the
-captures and comparison completed; it does not mean their appearances match.
+The shared presentation implementation is committed on `CANARY`. The
+[completed native run for `9df5925`](https://github.com/ViciousSquid/MiniWind/actions/runs/40882539900)
+recorded **zero font differences, zero tab-geometry differences and zero
+oversized macOS controls** across Windows/macOS, font settings 11/16 and scale
+factors 1/2. This includes every font metric recorded by the audit: family,
+point/pixel size, weight, italic, line height and sample width.
 
-- [Completed native run](https://github.com/ViciousSquid/MiniWind/actions/runs/40864744663)
-- [Download the searchable comparison report](https://github.com/ViciousSquid/MiniWind/actions/runs/40864744663/artifacts/12893820778)
+That run still found clipped radio controls in Dungeon Designer and other
+geometry differences. Commit `de1a9ad` makes the dungeon sidebar scrollable,
+protects checkbox/radio text height, replaces more symbol buttons with SVGs,
+and fixes equal-viewport comparison of modal dialogs and wizards. Its
+[follow-up native run](https://github.com/ViciousSquid/MiniWind/actions/runs/40884265845)
+is in progress. **Full control-by-control geometry parity is not yet certified.**
 
-Download the report ZIP, extract it, and open `index.html`. Search by entity,
-dialog, tab, font size, or scale. `differences.csv` and `differences.json`
-contain the individual control measurements. Original platform artifacts
-include the screenshots and complete `manifest.json` files. GitHub retains
-these artifacts for 14 days from the run.
+- [Searchable comparison report for `9df5925`](https://github.com/ViciousSquid/MiniWind/actions/runs/40882539900/artifacts/12901058884)
 
-## Coverage
+A completed capture job alone does not establish visual parity; inspect the
+measured differences and paired screenshots as well.
 
-The matrix used native Windows Qt and Cocoa Qt, font settings 11 and 16,
-and scale factors 1 and 2. Both platforms used the same source, deterministic
-scene, application stylesheet, and settings.
+## Explicit presentation contract
 
-Each configuration captured 76 editor surfaces, including all 26 registered
-entity types' property tabs, brush variants, terrain tabs, settings, asset
-browser tabs, consoles, toolbars, menus, inspectors, item editor, logic tools,
-cutscenes, quest tools, spell editor, NPC/creature wizards, dungeon designer,
-simulation tools, loading overlay, and debug tables. Nested tabs and
-scrollable form content were visited.
+- Bundled Fio UI and IBM Plex Mono fonts, loaded directly by Qt. Fio UI is an
+  OFL-licensed Selawik derivative with normalized line metrics. Both systems
+  convert point sizes at 96 logical DPI while retaining Retina pixel density.
+- A shared Qt Windows renderer with explicit layout metrics and style hints,
+  plus control styles for buttons, inputs, spin boxes, combo boxes, checks,
+  radios, tabs, groups, views, headers, menus, sliders, scrollbars, toolbars,
+  docks, progress bars and tooltips. Colours, control states, borders, padding,
+  indicators, icons and spacing are defined by the application.
+- Left-aligned, non-expanding tabs; left-aligned form labels, headers and spin
+  text; Windows dialog button order. Actual widget policies also apply to
+  deferred pages and dialogs with component stylesheets.
+- Application-owned SVG control/action/file icons, explicit menu and popup
+  fonts, an application palette for every colour group, and non-native Qt
+  file/colour dialogs. macOS native control themes and emoji glyphs no longer
+  determine the affected control geometry.
+- Compact terrain controls, responsive option rows, wrapped summaries and
+  scrollable cutscene pages. Label height follows the font when enlarged or
+  reduced, preventing layout compression from cutting off a text line.
 
-| Platform | Font | Scale | Captures | Capture errors |
-| --- | ---: | ---: | ---: | ---: |
-| Windows | 11 | 1 | 927 | 0 |
-| macOS | 11 | 1 | 811 | 0 |
-| Windows | 11 | 2 | 1,032 | 0 |
-| macOS | 11 | 2 | 852 | 0 |
-| Windows | 16 | 1 | 1,089 | 0 |
-| macOS | 16 | 1 | 876 | 0 |
-| Windows | 16 | 2 | 1,202 | 0 |
-| macOS | 16 | 2 | 933 | 0 |
+The keyboard fix is separate: controller polling uses SDL's dummy video
+backend so it cannot pump Cocoa window/keyboard events alongside Qt. Qt
+continues to own editor and console text input.
 
-Total: **7,722 captures**. Every non-scroll frame/tab identifier had a
-counterpart on the other platform. Different scroll-page counts reflect
-different text metrics, wrapping and layout heights, rather than missing tabs.
+Definitions live in `editor/desktop_style.py`, `editor_styles.py`, and
+`assets/ui/controls/`. Font sources, modifications and licences are documented
+in `assets/fonts/editor/README.md`.
 
-The requested main window was 1440×900 logical pixels. Native layout settled
-at 1280×800 on both scale-1 runners. Always use each frame's recorded `size`;
-the original report's introductory 1440×900 description refers to the requested
-size, not a guaranteed final size. Images are normalized to logical pixels;
-device pixel ratio and logical DPI are retained separately.
+## Native verification
 
-## Confirmed differences
+The reusable workflow is `.github/workflows/editor-ui-parity.yml`. It runs
+actual Windows Qt and Cocoa Qt at scale factors 1 and 2. Every runner checks
+alignment, fonts and terrain layout before capturing all editor surfaces at
+font setting 11 and measuring them again at setting 16. Partial captures and
+missing configurations cause report generation to fail.
 
-### Fonts and control proportions
+The fixture visits all 26 registered entity types, brush variants, nested
+property tabs, terrain tabs, settings, assets, consoles, menus, toolbars,
+inspectors, item/logic/quest/spell tools, cutscenes, creature/NPC wizards,
+dungeon tools, simulation tools, loading/debug surfaces and Qt file/colour
+pickers. Scrollable content is visited page by page. Logical capture viewports
+are fixed to avoid differences caused by the runners' desktop work areas.
 
-The shared stylesheet requests Segoe UI. Windows has that font; macOS falls
-back to Arial. The runners report logical DPI 96 on Windows and 72 on macOS,
-which also changes the conversion from points to logical pixels.
+Download **editor-ui-parity-report** from the run, extract it, and open
+`index.html`. Search by surface, tab, font size or scale. `differences.csv` and
+`differences.json` contain individual measurements, including resolved font
+family, pixel size, weight, line height and sample width. Each platform
+artifact includes screenshots and complete `manifest.json` files. Artifacts
+expire after 14 days.
 
-| Metric at font setting 11, scale 1 | Windows | macOS |
+Local verification of the final implementation: **113 regression tests and
+four SDL/controller isolation tests passed**; the strengthened native font
+and terrain checks also passed in all four runner jobs. A focused enlarged-font 2×
+capture completed with **204 frames and no capture errors**.
+
+## Original baseline
+
+The [initial audit](https://github.com/ViciousSquid/MiniWind/actions/runs/40864744663)
+exposed the OS defaults that motivated the shared contract:
+
+| Font setting 11, scale 1 | Original Windows | Original macOS |
 | --- | --- | --- |
 | Resolved family | Segoe UI | Arial |
 | Resolved pixel size | 15 | 11 |
-| Typical font metric height | 20 | 12 |
-| Settings → Editor dialog size | 600×668 | 640×733 |
-| Terrain Reset Defaults button size | 117×30 | 95×23 |
+| Typical line height | 20 | 12 |
+| Settings dialog | 600×668 | 640×733 |
 
-At setting 16, the common resolved pixel sizes are 21 on Windows and 16 on
-macOS. Therefore, using the same point-size setting does not provide the
-same text size or wrapping. Fixed indicator sizes and padding take up a larger
-proportion of the Mac text. The Settings screenshots visibly demonstrate this
-with the checkbox indicators, group spacing, labels, and tabs.
+The completed shared-font run measured the same results on both platforms:
 
-### Enlarged-font clipping
+| Metric | Setting 11 | Setting 16 |
+| --- | ---: | ---: |
+| Fio UI pixel size | 15 | 21 |
+| Line height | 20 | 28 |
+| Settings dialog | 604×695 | 646×741 |
 
-At font setting 16, Cutscenes → Events → I/O Input has Mac controls whose
-allocated height is smaller than their font metrics. At scale 1, labels
-“At time”, “Input”, and “Parameter” receive 8 pixels; “Target entity” receives
-9 pixels; “Add I/O input” receives 9 pixels. Windows allocates 38 pixels to
-those labels and 42 pixels to the button. Scale 2 also reproduces the problem.
+Across all eight configurations the run recorded 8,631 frame measurements
+and no capture errors. Frame counts can differ for scroll pages. Structural
+paths through Qt's internal anonymous widgets also differ between platforms;
+raw missing-control counts require reviewing their text and screenshots.
 
-Terrain → Appearance also has a “0%” label allocated 16 pixels at font setting
-16, below its Mac font metric height. These should be corrected before
-claiming enlarged-text parity.
+A local 2× check of `de1a9ad` confirms all six dungeon radio controls retain
+full text height at both settings, the sidebar scrolls vertically, and it
+requires no horizontal scrolling.
 
-### Native layout differences
+## Scope
 
-Settings dialog margins, slider appearance, button order, and tab widths
-differ. Some are native platform conventions, such as Cancel/OK order; they
-should be distinguished from clipping and disproportionate sizing.
-
-The raw report includes internal Qt arrow buttons and repeated observations
-of controls in multiple states. Its flag counts are not counts of unique
-product defects. Wider checkbox widget rectangles can result from form growth
-without a wider painted checkbox indicator.
-
-## Scope limits and next work
-
-The audit excludes 3D scene rendering, gameplay HUD, OS file/colour pickers,
-and arbitrary combinations of every field value. The real editor widgets and
-native styles are used, with a layout-only viewport substitute because hosted
-Windows runners do not supply the engine's required OpenGL context.
-
-The next implementation work is to establish a font family and text-size
-conversion that preserve the Windows reference metrics, make fixed control
-dimensions follow that text size, and repair the enlarged-font layouts above.
-This audit commit records and measures these remaining issues; it does not
-silently change the editor's fonts or native platform conventions.
-
-The reusable workflow is `.github/workflows/editor-ui-parity.yml`. Capture is
-implemented in `tools/editor_ui_audit.py`; report generation is in
-`tools/compare_editor_ui.py`.
+The audit exercises real editor widgets using the platform's Qt backend.
+Only the 3D viewport is replaced by a layout placeholder because hosted
+Windows runners do not provide the engine's required OpenGL context. It does
+not compare rendered game scenes or arbitrary combinations of every property
+value. Shared fonts and dimensions do not make CoreText and Windows text
+antialiasing byte-identical; screenshots remain useful alongside geometry
+and font measurements.
