@@ -480,6 +480,9 @@ def main():
     # QOpenGLWidget from forcing a GL compositor on otherwise ordinary UI.
     native_gl_widget = QtWidgets.QOpenGLWidget
     class LayoutViewport(QtWidgets.QWidget):
+        # QtGameView paces frames from QOpenGLWidget's swap notification.
+        frameSwapped = QtCore.pyqtSignal()
+
         def setFormat(self, value):
             self._audit_format = value
 

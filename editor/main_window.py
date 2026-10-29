@@ -1655,6 +1655,7 @@ class MainWindow(QMainWindow):
                         border: 1px solid #B71C1C;
                         border-radius: 3px;
                         padding: 5px 15px;
+                        min-width: 0px;
                         font-weight: bold;
                     }
                     QPushButton:hover {
@@ -1674,6 +1675,7 @@ class MainWindow(QMainWindow):
                         border: 1px solid #1B5E20;
                         border-radius: 3px;
                         padding: 5px 15px;
+                        min-width: 0px;
                         font-weight: bold;
                     }
                     QPushButton:hover {

@@ -69,6 +69,39 @@ def test_the_scene_hierarchy_has_a_compact_collapse_arrow(main_window, qt_app):
     assert dock.toggle_button.arrowType() == Qt.LeftArrow
     assert dock.MIN_WIDTH <= dock.width() < 260
 
+def test_the_tool_strip_starts_down_the_right_edge(main_window, qt_app):
+    host = main_window
+    qt_app.processEvents()
+    assert host.toolBarArea(host.tool_toolbar) == Qt.RightToolBarArea
+    assert host.tool_toolbar.orientation() == Qt.Vertical
+    # The global 60px button minimum must not widen the rotated Play button.
+    icon = host._toolbar_icon_size
+    assert host.play_button.size().width() == icon + 16
+    assert host.play_button.height() > host.play_button.width()
+
+
+def test_the_asset_browser_takes_a_third_of_its_column(main_window, qt_app):
+    host = main_window
+    host.resize(1600, 980)
+    qt_app.processEvents()
+    column = host.view_3d_dock.height() + host.asset_browser_dock.height()
+    assert host.asset_browser_dock.height() / column == pytest.approx(1 / 3, abs=0.03)
+    # Level with the Properties/Console dock beside it.
+    assert abs(host.asset_browser_dock.y() - host.properties_dock.y()) <= 8
+
+
+def test_view_menu_sets_the_asset_thumbnail_size(main_window):
+    host = main_window
+    host.thumbnail_size_actions['smallest'].trigger()
+    assert host.asset_browser.thumbnail_size == 'smallest'
+    assert host.asset_browser.tab_textures.thumb_size == 58
+    assert host.config.get('AssetBrowser', 'thumbnail_size') == 'smallest'
+    host.asset_browser.set_thumbnail_size('small')
+    menu = host.thumbnail_size_actions['small'].parent()
+    menu.aboutToShow.emit()
+    assert host.thumbnail_size_actions['small'].isChecked()
+    assert not host.thumbnail_size_actions['smallest'].isChecked()
+
 # ────────────────────────────
 # The version gate
 # ────────────────────────────
@@ -93,7 +126,7 @@ def test_a_current_layout_is_restored(main_window, qt_app):
     host = main_window
     config = _saved_layout(host, LAYOUT_VERSION)
     host.addDockWidget(Qt.TopDockWidgetArea, host.view_3d_dock)
-    assert host.toolBarArea(host.tool_toolbar) != Qt.RightToolBarArea
+    assert host.dockWidgetArea(host.view_3d_dock) == Qt.TopDockWidgetArea
     host.config = config
 
     host.load_layout()
