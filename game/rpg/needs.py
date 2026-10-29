@@ -47,7 +47,8 @@ HIGH_FATIGUE = 0.9
 HIGH_HUNGER = 0.85
 
 #: States during which fatigue accrues at the working (faster) rate.
-_WORK_STATES = {sched.WORKING, sched.GOING_TO_WORK, sched.PATROL}
+_WORK_STATES = {sched.WORKING, sched.GOING_TO_WORK, sched.PATROL,
+                "COLLECTING_FLOUR", "QUEUEING_FLOUR", "RETURNING_FLOUR", "BUYING_FLOUR"}
 #: States during which the NPC is taken to be eating (heading home counts —
 #: they reach the table and the meal settles their hunger).
 _MEAL_STATES = {sched.IDLE, sched.GOING_HOME}
@@ -99,7 +100,7 @@ def advance(npc_props: Dict, hours: float, state: str) -> None:
     npc_props[FATIGUE] = _clamp01(fatigue)
 
     hunger = _get(npc_props, HUNGER, 0.0)
-    if state in _MEAL_STATES:
+    if state in _MEAL_STATES and not npc_props.get("flour_dependent"):
         hunger += _HUNGER_MEAL * hours
     elif state == sched.SLEEPING:
         hunger += _HUNGER_SLEEP * hours

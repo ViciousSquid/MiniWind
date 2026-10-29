@@ -461,6 +461,21 @@ def potion(iid):
 
 
 def misc(iid, record):
+    if iid == "flour":
+        # An open linen sack, with pale flour and a wheat mark on the front.
+        sack = material("flour sack linen", (.38, .27, .14), rough=.9, grain=.55)
+        powder = material("fresh flour", (.92, .89, .80), rough=.95, grain=.12)
+        sphere((0, -.12, 0), (.62, .74, .36), sack)
+        sphere((0, .46, .08), (.48, .22, .32), sack)
+        sphere((0, .49, .27), (.41, .14, .16), powder)
+        tube([(-.43, .46, .31), (-.32, .38, .38), (0, .34, .40),
+              (.32, .38, .38), (.43, .46, .31)], .045, "paper")
+        tube([(-.47, -.65, .20), (-.51, -.22, .30), (-.43, .22, .30)], .012, "paper")
+        rod((0, -.46, .37), (0, .12, .37), .014, "straw")
+        for y in (-.20, -.07, .06):
+            rod((0, y, .38), (-.10, y + .08, .39), .027, "straw")
+            rod((0, y, .38), (.10, y + .08, .39), .027, "straw")
+        return
     if "ring" in iid:
         ring((0, 0, 0), .65, .11, "copper" if "copper" in iid else "gold")
         if "protection" in iid:
@@ -594,7 +609,7 @@ def build(iid, record):
         else:
             mat = "cloth" if any(s in iid for s in ("cloth", "sandals", "hood")) else "hide" if "hide" in iid else "leather" if any(s in iid for s in ("leather", "studded")) else "fur" if "fur" in iid else mat
             armor(iid, mat)
-    elif category == "potion" and iid != "bread":
+    elif category == "potion" and iid not in ("bread", "flour"):
         potion(iid)
     else:
         misc(iid, record)

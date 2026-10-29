@@ -276,6 +276,10 @@ class SessionHooks(jn.WorldHooks):
             self.w.set_hidden(t, True)
 
     def resident_home(self, resident_id, journey, alive):
+        flour = getattr(self.w, "flour_roads", None)
+        if flour is not None and flour.handles(journey):
+            flour.home(journey, alive)
+            return
         t = self.w.resident_thing(resident_id)
         if t is None:
             return
@@ -290,6 +294,19 @@ class SessionHooks(jn.WorldHooks):
             t.properties["dead"] = True
             t.properties["health"] = 0
         self.w.set_hidden(t, False)
+
+    def resident_arrived(self, journey, t):
+        flour = getattr(self.w, "flour_roads", None)
+        return flour.arrive(journey, t) if flour is not None else False
+
+    def resident_waited(self, journey, t):
+        flour = getattr(self.w, "flour_roads", None)
+        return flour.arrive(journey, t) if flour is not None else False
+
+    def robbed_cargo(self, loser, winner):
+        flour = getattr(self.w, "flour_roads", None)
+        if flour is not None:
+            flour.robbed(loser, winner)
 
 
 class LivingWorld:
@@ -482,6 +499,8 @@ class LivingWorld:
         self._board_t += delta
         if self._board_t >= BOARD_INTERVAL:
             self._board_t = 0.0
+            if getattr(self, "flour_roads", None) is not None:
+                self.flour_roads.tick()
             spine = getattr(s, "faction_spine", None)
             if spine is not None:
                 spine.begin_tick()
@@ -593,6 +612,9 @@ class LivingWorld:
                     counts[region] = counts.get(region, 0) + 1
 
     def _abstract_pos(self, j, t):
+        if getattr(self, "flour_roads", None) is not None and self.flour_roads.handles(j):
+            if j.state == "rest":
+                return tuple(j.members[0].get("flour_pos", j.route[-1]))
         if j.state == "rest":
             p = self.places.get(j.dest)
             if p is not None:
@@ -662,6 +684,8 @@ class LivingWorld:
         j.live = True
         self.live[j.id] = {"things": things, "calm_since": time.monotonic(),
                            "greeted": False}
+        if getattr(self, "flour_roads", None) is not None and self.flour_roads.handles(j):
+            self.flour_roads.bind(j, things[0])
         if j.resident:
             # The real townsperson stays hidden at home; this is them.
             pass
@@ -743,6 +767,13 @@ class LivingWorld:
                 if key in m:
                     props[key] = copy.deepcopy(m[key])
             props["_faction_cause"] = j.provenance()
+        if "inventory" in m:
+            if m.get("cargo_only"):
+                props["inventory"].extend(copy.deepcopy(m["inventory"]))
+            else:
+                props["inventory"] = copy.deepcopy(m["inventory"])
+        if getattr(self, "flour_roads", None) is not None and self.flour_roads.handles(j):
+            props.update(self.flour_roads.actor_props(j))
         return props
 
     def _despawn(self, jid, j) -> None:
@@ -752,6 +783,8 @@ class LivingWorld:
             return
         s = self.session
         things = entry["things"]
+        if j is not None and getattr(self, "flour_roads", None) is not None and self.flour_roads.handles(j):
+            self.flour_roads.unbind(j, things[0])
         if j is not None:
             alive = [x for x in things if not x.properties.get("dead")]
             by_member = {x.properties.get("_member"): x for x in things}
@@ -773,6 +806,9 @@ class LivingWorld:
                             j.news.append(nid)
                 else:
                     m["health"] = max(1, int(p.get("health", m.get("health", 50)) or 1))
+                if "inventory" in m:
+                    m["inventory"] = copy.deepcopy(p.get("inventory", []))
+                    m.pop("cargo_only", None)  # now a complete physical pack
                 if j.cause and m.get("resident"):
                     real = self.resident_thing(m["resident"])
                     for key in ("inventory", "equipped_weapon", "alignment"):
@@ -860,7 +896,7 @@ class LivingWorld:
             from ..entities import Container
         except Exception:
             return None
-        inv = []
+        inv = copy.deepcopy(r.get("inventory", []))
         if r.get("gold"):
             g = rpg_items.make("gold", int(r["gold"]))
             if g:
@@ -890,6 +926,9 @@ class LivingWorld:
         j = self.board.journeys.get(jid)
         entry = self.live.get(jid)
         if j is None or entry is None:
+            return
+        if getattr(self, "flour_roads", None) is not None and self.flour_roads.handles(j):
+            self.flour_roads.drive(j, entry["things"][0])
             return
         s = self.session
         things = [x for x in entry["things"] if not x.properties.get("dead")]
@@ -1370,13 +1409,15 @@ class LivingWorld:
     def persist(self) -> None:
         if self.board is None:
             return
+        if getattr(self, "flour_roads", None) is not None:
+            self.flour_roads.sync_live()
         self._persist_t = time.monotonic()
         # Live parties are saved where they stand.
         t = _now_hours(self.session.clock)
         for jid, entry in self.live.items():
             j = self.board.journeys.get(jid)
             alive = [x for x in entry["things"] if not x.properties.get("dead")]
-            if j is not None and j.cause:
+            if j is not None and (j.cause or any("inventory" in m for m in j.members)):
                 for thing in entry["things"]:
                     m = j.members[thing.properties["_member"]]
                     m["alive"] = not bool(thing.properties.get("dead"))
@@ -1384,6 +1425,7 @@ class LivingWorld:
                     for key in ("inventory", "equipped_weapon", "alignment"):
                         if key in thing.properties:
                             m[key] = copy.deepcopy(thing.properties[key])
+                    m.pop("cargo_only", None)
             if j is not None and j.state == "travel" and alive and len(j.route) >= 2:
                 j.set_progress(roads.project(j.route, j.cum, alive[0].pos[0],
                                              alive[0].pos[2]), t)

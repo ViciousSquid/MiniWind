@@ -671172,12 +671172,12 @@
                 "work_location": "elowen_shop",
                 "schedule": [
                     {
-                        "hour": 7,
+                        "hour": 5.0,
                         "state": "IDLE",
                         "location": "home"
                     },
                     {
-                        "hour": 9,
+                        "hour": 9.5,
                         "state": "WORKING",
                         "location": "work"
                     },
@@ -671436,7 +671436,9 @@
                 "_facing": -2.5490146306033434,
                 "dead": false,
                 "can_defend": true,
-                "io_enabled": true
+                "io_enabled": true,
+                "flour_target": 8,
+                "gold": 30
             },
             "io_connections": []
         },
@@ -675001,12 +675003,12 @@
                 "follow_distance": 220.0,
                 "schedule": [
                     {
-                        "hour": 6,
+                        "hour": 5.0,
                         "state": "IDLE",
                         "location": "home"
                     },
                     {
-                        "hour": 8,
+                        "hour": 9.5,
                         "state": "WORKING",
                         "location": "work"
                     },
@@ -675034,7 +675036,9 @@
                 "entity_type": "npc",
                 "courage": 0.2,
                 "sched_state": "IDLE",
-                "io_enabled": true
+                "io_enabled": true,
+                "flour_target": 8,
+                "gold": 30
             },
             "io_connections": []
         },
@@ -676504,12 +676508,12 @@
                 "follow_distance": 220.0,
                 "schedule": [
                     {
-                        "hour": 6,
+                        "hour": 5.0,
                         "state": "IDLE",
                         "location": "home"
                     },
                     {
-                        "hour": 8,
+                        "hour": 9.5,
                         "state": "WORKING",
                         "location": "work"
                     },
@@ -676537,7 +676541,9 @@
                 "entity_type": "npc",
                 "courage": 0.2,
                 "sched_state": "IDLE",
-                "io_enabled": true
+                "io_enabled": true,
+                "flour_target": 8,
+                "gold": 30
             },
             "io_connections": []
         },
@@ -690750,12 +690756,12 @@
                 "work_location": "the_wanderer_s_rest_bar",
                 "schedule": [
                     {
-                        "hour": 7,
+                        "hour": 5.0,
                         "state": "IDLE",
                         "location": "home"
                     },
                     {
-                        "hour": 9,
+                        "hour": 9.5,
                         "state": "WORKING",
                         "location": "work"
                     },
@@ -690888,7 +690894,9 @@
                 "need_hunger": 0.05333600000006553,
                 "dead": false,
                 "can_defend": true,
-                "io_enabled": true
+                "io_enabled": true,
+                "flour_target": 8,
+                "gold": 30
             },
             "io_connections": []
         },
@@ -702628,12 +702636,12 @@
                 "work_location": "the_pilgrim_s_lantern_bar",
                 "schedule": [
                     {
-                        "hour": 7,
+                        "hour": 5.0,
                         "state": "IDLE",
                         "location": "home"
                     },
                     {
-                        "hour": 9,
+                        "hour": 9.5,
                         "state": "WORKING",
                         "location": "work"
                     },
@@ -702766,7 +702774,9 @@
                 "need_hunger": 0.05333600000006553,
                 "dead": false,
                 "can_defend": true,
-                "io_enabled": true
+                "io_enabled": true,
+                "flour_target": 8,
+                "gold": 30
             },
             "io_connections": []
         },
@@ -764004,6 +764014,370 @@
                 "place_name": "Windmill",
                 "discover_radius": 350.0,
                 "stop_on_escape": true
+            },
+            "io_connections": []
+        },
+        {
+            "type": "npc",
+            "pos": [
+                -5938.0,
+                256.0,
+                5440.0
+            ],
+            "properties": {
+                "name": "flour_runner_maud",
+                "display_name": "Reedhollow Flour Runner",
+                "npc_role": "villager",
+                "faction": "villagers",
+                "team": "villagers",
+                "aggression": "passive",
+                "attack_style": "melee",
+                "combatant": false,
+                "health": 60,
+                "max_health": 60,
+                "damage": 5,
+                "creature_level": 1,
+                "xp_value": 0,
+                "loot": "",
+                "move_speed": 90.0,
+                "sight_range": 1024,
+                "monster_type": "human",
+                "sprite_width": 128,
+                "sprite_height": 128,
+                "portrait": "assets/portraits/miniwind/villager.png",
+                "persistent": true,
+                "spells": [],
+                "head": "head05",
+                "custom_idle": "assets/sprites/heads/head05.png",
+                "custom_shoot": "assets/sprites/heads/head05.png",
+                "equipped_weapon": "iron_shortsword",
+                "home": [
+                    -5816.0,
+                    260.0,
+                    5070.0
+                ],
+                "work_location": "maud_stall",
+                "merchant": false,
+                "merchant_gold": 0,
+                "merchant_gold_base": 0,
+                "inventory": [],
+                "dialogue": {},
+                "respawn": false,
+                "autonomy": true,
+                "wander_radius": 160.0,
+                "quest_flags": {},
+                "relationships": {},
+                "disposition_base": 45,
+                "follow_player": false,
+                "follow_distance": 220.0,
+                "schedule": [
+                    {
+                        "hour": 5.0,
+                        "state": "IDLE",
+                        "location": "work"
+                    },
+                    {
+                        "hour": 20.0,
+                        "state": "GOING_HOME",
+                        "location": "home"
+                    },
+                    {
+                        "hour": 22.0,
+                        "state": "SLEEPING",
+                        "location": "home"
+                    }
+                ],
+                "type": "npc",
+                "id": "0f9a1c64-0ac0-5f28-bb96-2c23e91f1647",
+                "monster_id": 0,
+                "triggered": true,
+                "wake_on_sight": true,
+                "awake": false,
+                "patrol": false,
+                "patrol_target": "",
+                "patrol_mode": "loop",
+                "variant": "<None>",
+                "entity_type": "npc",
+                "courage": 0.3,
+                "sched_state": "IDLE",
+                "io_enabled": true,
+                "flour_runner": true,
+                "gold": 30,
+                "need_hunger": 0.0,
+                "need_fatigue": 0.0
+            },
+            "io_connections": []
+        },
+        {
+            "type": "npc",
+            "pos": [
+                8102.0,
+                260.0,
+                6120.0
+            ],
+            "properties": {
+                "name": "flour_runner_hollin",
+                "display_name": "Hollin's Cross Flour Runner",
+                "npc_role": "villager",
+                "faction": "villagers",
+                "team": "villagers",
+                "aggression": "passive",
+                "attack_style": "melee",
+                "combatant": false,
+                "health": 60,
+                "max_health": 60,
+                "damage": 5,
+                "creature_level": 1,
+                "xp_value": 0,
+                "loot": "",
+                "move_speed": 90.0,
+                "sight_range": 1024,
+                "monster_type": "human",
+                "sprite_width": 128,
+                "sprite_height": 128,
+                "portrait": "assets/portraits/miniwind/villager.png",
+                "persistent": true,
+                "spells": [],
+                "head": "head05",
+                "custom_idle": "assets/sprites/heads/head05.png",
+                "custom_shoot": "assets/sprites/heads/head05.png",
+                "equipped_weapon": "iron_shortsword",
+                "home": [
+                    7982.0,
+                    260.0,
+                    6120.0
+                ],
+                "work_location": "hollin_bar",
+                "merchant": false,
+                "merchant_gold": 0,
+                "merchant_gold_base": 0,
+                "inventory": [],
+                "dialogue": {},
+                "respawn": false,
+                "autonomy": true,
+                "wander_radius": 160.0,
+                "quest_flags": {},
+                "relationships": {},
+                "disposition_base": 45,
+                "follow_player": false,
+                "follow_distance": 220.0,
+                "schedule": [
+                    {
+                        "hour": 5.0,
+                        "state": "IDLE",
+                        "location": "work"
+                    },
+                    {
+                        "hour": 20.0,
+                        "state": "GOING_HOME",
+                        "location": "home"
+                    },
+                    {
+                        "hour": 22.0,
+                        "state": "SLEEPING",
+                        "location": "home"
+                    }
+                ],
+                "type": "npc",
+                "id": "e90584fd-c699-5fc5-ba72-16080a379dbd",
+                "monster_id": 0,
+                "triggered": true,
+                "wake_on_sight": true,
+                "awake": false,
+                "patrol": false,
+                "patrol_target": "",
+                "patrol_mode": "loop",
+                "variant": "<None>",
+                "entity_type": "npc",
+                "courage": 0.3,
+                "sched_state": "IDLE",
+                "io_enabled": true,
+                "flour_runner": true,
+                "gold": 30,
+                "need_hunger": 0.0,
+                "need_fatigue": 0.0
+            },
+            "io_connections": []
+        },
+        {
+            "type": "npc",
+            "pos": [
+                -5207.1,
+                232.9,
+                13571.7
+            ],
+            "properties": {
+                "name": "flour_runner_wynn_the_wanderer_s_rest",
+                "display_name": "Wynn's Flour Runner",
+                "npc_role": "villager",
+                "faction": "villagers",
+                "team": "villagers",
+                "aggression": "passive",
+                "attack_style": "melee",
+                "combatant": false,
+                "health": 60,
+                "max_health": 60,
+                "damage": 5,
+                "creature_level": 1,
+                "xp_value": 0,
+                "loot": "",
+                "move_speed": 90.0,
+                "sight_range": 1024,
+                "monster_type": "human",
+                "sprite_width": 128,
+                "sprite_height": 128,
+                "portrait": "assets/portraits/miniwind/villager.png",
+                "persistent": true,
+                "spells": [],
+                "head": "head05",
+                "custom_idle": "assets/sprites/heads/head05.png",
+                "custom_shoot": "assets/sprites/heads/head05.png",
+                "equipped_weapon": "iron_shortsword",
+                "home": [
+                    -5327.1,
+                    236.7,
+                    13311.7
+                ],
+                "work_location": "the_wanderer_s_rest_bar",
+                "merchant": false,
+                "merchant_gold": 0,
+                "merchant_gold_base": 0,
+                "inventory": [],
+                "dialogue": {},
+                "respawn": false,
+                "autonomy": true,
+                "wander_radius": 160.0,
+                "quest_flags": {},
+                "relationships": {},
+                "disposition_base": 45,
+                "follow_player": false,
+                "follow_distance": 220.0,
+                "schedule": [
+                    {
+                        "hour": 5.0,
+                        "state": "IDLE",
+                        "location": "work"
+                    },
+                    {
+                        "hour": 20.0,
+                        "state": "GOING_HOME",
+                        "location": "home"
+                    },
+                    {
+                        "hour": 22.0,
+                        "state": "SLEEPING",
+                        "location": "home"
+                    }
+                ],
+                "type": "npc",
+                "id": "00578ab7-971d-53a8-a6bd-0ff8fabcc785",
+                "monster_id": 0,
+                "triggered": true,
+                "wake_on_sight": true,
+                "awake": false,
+                "patrol": false,
+                "patrol_target": "",
+                "patrol_mode": "loop",
+                "variant": "<None>",
+                "entity_type": "npc",
+                "courage": 0.3,
+                "sched_state": "IDLE",
+                "io_enabled": true,
+                "flour_runner": true,
+                "gold": 30,
+                "need_hunger": 0.0,
+                "need_fatigue": 0.0
+            },
+            "io_connections": []
+        },
+        {
+            "type": "npc",
+            "pos": [
+                13556.6,
+                217.6,
+                -3733.1
+            ],
+            "properties": {
+                "name": "flour_runner_nell_the_pilgrim_s_lantern",
+                "display_name": "Nell's Flour Runner",
+                "npc_role": "villager",
+                "faction": "villagers",
+                "team": "villagers",
+                "aggression": "passive",
+                "attack_style": "melee",
+                "combatant": false,
+                "health": 60,
+                "max_health": 60,
+                "damage": 5,
+                "creature_level": 1,
+                "xp_value": 0,
+                "loot": "",
+                "move_speed": 90.0,
+                "sight_range": 1024,
+                "monster_type": "human",
+                "sprite_width": 128,
+                "sprite_height": 128,
+                "portrait": "assets/portraits/miniwind/villager.png",
+                "persistent": true,
+                "spells": [],
+                "head": "head05",
+                "custom_idle": "assets/sprites/heads/head05.png",
+                "custom_shoot": "assets/sprites/heads/head05.png",
+                "equipped_weapon": "iron_shortsword",
+                "home": [
+                    13436.6,
+                    219.7,
+                    -3993.1
+                ],
+                "work_location": "the_pilgrim_s_lantern_bar",
+                "merchant": false,
+                "merchant_gold": 0,
+                "merchant_gold_base": 0,
+                "inventory": [],
+                "dialogue": {},
+                "respawn": false,
+                "autonomy": true,
+                "wander_radius": 160.0,
+                "quest_flags": {},
+                "relationships": {},
+                "disposition_base": 45,
+                "follow_player": false,
+                "follow_distance": 220.0,
+                "schedule": [
+                    {
+                        "hour": 5.0,
+                        "state": "IDLE",
+                        "location": "work"
+                    },
+                    {
+                        "hour": 20.0,
+                        "state": "GOING_HOME",
+                        "location": "home"
+                    },
+                    {
+                        "hour": 22.0,
+                        "state": "SLEEPING",
+                        "location": "home"
+                    }
+                ],
+                "type": "npc",
+                "id": "cf4005fa-c792-53d2-a3a6-2c59ad5abc4e",
+                "monster_id": 0,
+                "triggered": true,
+                "wake_on_sight": true,
+                "awake": false,
+                "patrol": false,
+                "patrol_target": "",
+                "patrol_mode": "loop",
+                "variant": "<None>",
+                "entity_type": "npc",
+                "courage": 0.3,
+                "sched_state": "IDLE",
+                "io_enabled": true,
+                "flour_runner": true,
+                "gold": 30,
+                "need_hunger": 0.0,
+                "need_fatigue": 0.0
             },
             "io_connections": []
         }

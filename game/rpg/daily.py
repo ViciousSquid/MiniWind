@@ -116,6 +116,8 @@ def _restock_shelves(p: Dict) -> bool:
     for entry in stock:
         if not isinstance(entry, dict) or "qty" not in entry or "restock" not in entry:
             continue
+        if entry.get("id") == "flour" and p.get("flour_target"):
+            continue  # flour comes from the distribution network, never a daily refill
         try:
             full = int(entry["restock"])
             qty = int(entry.get("qty") or 0)

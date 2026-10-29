@@ -1391,7 +1391,8 @@ def _draw_trade(painter, session, w, h):
             shown = i - top + 1
             iid = entry["id"] if isinstance(entry, dict) else entry
             d = rpg_items.get(iid)
-            price = session._price(d.value if d else 0, buying, npc=npc)
+            price = session._price(d.value if d else 0, buying, npc=npc,
+                                   item_id=d.id if d else None)
             selected = st["side"] == side and st["row"] == i
             row = QRect(cx, ry, col_w, row_h - 2)
             trade_anim.record_row(side, iid, row)
@@ -1439,7 +1440,8 @@ def _draw_trade(painter, session, w, h):
         entry = lst[min(st["row"], len(lst) - 1)]
         d = rpg_items.get(entry["id"] if isinstance(entry, dict) else entry)
         buying = st["side"] == 0
-        price = session._price(d.value if d else 0, buying, npc=npc)
+        price = session._price(d.value if d else 0, buying, npc=npc,
+                                   item_id=d.id if d else None)
         name_ = d.name if d else "item"
         sold_out = buying and session.stock_left(entry) == 0
         can = (c.gold >= price and not sold_out) if buying else True
@@ -1498,31 +1500,8 @@ def _trade_select(side, row):
 
 
 def _merchant_stock(npc):
-    if npc is None:
-        return []
-    stock = npc.properties.get("stock")
-    if isinstance(stock, list) and stock:
-        return [{"id": s} if isinstance(s, str) else s for s in stock]
-    # default stock by role
-    role = str(npc.properties.get("npc_role", "merchant"))
-    defaults = {
-        "merchant": ["potion_heal_minor", "potion_magicka", "torch", "lockpick",
-                     "cloth_robe", "cloth_hood", "sandals", "hide_boots", "copper_ring",
-                     "iron_arrow", "bread"],
-        "blacksmith": ["iron_longsword", "iron_mace", "steel_longsword", "iron_shield",
-                       "iron_cuirass", "iron_helmet", "short_bow", "iron_arrow",
-                       "crossbow", "iron_bolt",
-                       "chain_shirt", "chain_coif", "scale_mail", "kite_shield",
-                       "plate_helm", "plate_armour", "tower_shield", "buckler"],
-        "armourer": ["leather_cuirass", "hide_armour", "studded_leather",
-                     "chain_shirt", "scale_mail", "plate_armour", "plate_helm",
-                     "plate_greaves", "round_shield", "kite_shield"],
-    }
-    # A merchant who deals in books keeps a few titles of their own
-    # (game/library.py); a smith or a brewer keeps none.
-    from .. import library
-    shelf = defaults.get(role, defaults["merchant"]) + library.shop_books(npc.properties)
-    return [{"id": i} for i in shelf]
+    from ..rpg.shops import stock_for
+    return stock_for(npc)
 
 
 def _handle_trade(session, key):
@@ -1544,7 +1523,8 @@ def _handle_trade(session, key):
         iid = entry["id"] if isinstance(entry, dict) else entry
         buying = st["side"] == 0
         d = rpg_items.get(iid)
-        price = session._price(d.value if d else 0, buying, npc=npc)
+        price = session._price(d.value if d else 0, buying, npc=npc,
+                                   item_id=d.id if d else None)
         # Whether the item already has a row on the side it is going to: if
         # so it lands on that row, otherwise its new row waits for it.
         to_list = sell if buying else stock

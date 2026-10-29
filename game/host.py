@@ -513,6 +513,14 @@ class MiniwindGame:
             prop("merchant_gold_base", "int", "Merchant gold (restock)", default=0,
                  min=0, max=1000000, group="INVENTORY",
                  help="The purse the merchant is restocked back up to each day."),
+            prop("flour_target", "int", "Flour shelf target", default=0, min=0, max=1000,
+                 group="FOOD SUPPLY", help="Positive: collect flour before opening at 09:30. "
+                 "Stock is physical inventory, never automatically refilled."),
+            prop("flour_runner", "bool", "Available for flour errands", default=False,
+                 group="FOOD SUPPLY", help="An idle resident who can collect for a distant shop. "
+                 "Danger, needs and personal intentions still take precedence."),
+            prop("gold", "int", "Personal coin", default=30, min=0, max=1000000,
+                 group="FOOD SUPPLY", help="Finite coin used to buy meals from the local shop."),
             prop("loot", "string", "Loot table", default="", group="LOOT",
                  help="Loot-table id rolled on death (see game/rpg/loot)."),
             prop("trainer_skills", "string", "Trains skills", default="", group="TEACHING",
@@ -616,6 +624,8 @@ class MiniwindGame:
                  "Its sails turn while wheat remains in stock."),
             prop("mill_rotor_for", "string", "Rotor's mill id", default="",
                  group="WINDMILL", help="On a windmill rotor Prop, the entity id of its tower."),
+            prop("mill_batch_hours", "float", "Milling batch (game hours)", default=0.25,
+                 min=0.01, max=24, group="WINDMILL", help="Each batch converts 10 wheat into 1 flour."),
         ])
 
         npc_io = dict(

@@ -193,6 +193,16 @@ class WorldHooks:
     def resident_home(self, resident_id: str, journey, alive: bool) -> None:
         pass
 
+    def resident_arrived(self, journey, t: float) -> bool:
+        """An authored supply errand may own its stop and return leg."""
+        return False
+
+    def resident_waited(self, journey, t: float) -> bool:
+        return False
+
+    def robbed_cargo(self, loser, winner) -> None:
+        pass
+
     def journey_levers(self) -> Dict:
         """Optional session pacing values; defaults preserve the authored board."""
         return {}
@@ -636,6 +646,8 @@ class JourneyBoard:
         for nid in heard[-10:]:
             if nid not in j.news:
                 j.news.append(nid)
+        if self.hooks.resident_arrived(j, t):
+            return
         if j.kind == "adventurers" and place in self.places_of(DANGER):
             self._delve(j, place, t, made)
         elif spec.get("raid"):
@@ -710,6 +722,8 @@ class JourneyBoard:
 
     def next_leg(self, j: Journey, t: float) -> None:
         """Rest is over: set out again -- home if this was the last leg."""
+        if self.hooks.resident_waited(j, t):
+            return
         here = j.dest
         destination_sampled = False
         if j.legs <= 0:
@@ -792,6 +806,10 @@ class JourneyBoard:
                              "gold": int(member.get("gold", 0)), "t": t,
                              "home": j.home, "place": place, "journey": j.id,
                              "keepsake": j.kind == "adventurers"})
+        if isinstance(member.get("inventory"), list):
+            self.remains[-1]["inventory"] = member.pop("inventory")
+            if any(s.get("id") == "gold" for s in self.remains[-1]["inventory"]):
+                self.remains[-1]["gold"] = 0  # the actual coin stack already holds it
         if len(self.remains) > REMAINS_CAP:
             self.remains = self.remains[-REMAINS_CAP:]
 
@@ -838,6 +856,7 @@ class JourneyBoard:
             taken = sum(int(m.get("gold", 0)) for m in loser.alive())
             for m in loser.alive():
                 m["gold"] = 0
+            self.hooks.robbed_cargo(loser, winner)
             dead = 0
             for m in list(loser.alive()):
                 if self.rng.random() < 0.3:

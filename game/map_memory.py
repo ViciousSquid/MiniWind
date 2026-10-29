@@ -101,7 +101,7 @@ class MapMemory:
         self.session = session
         self.key = ""
         self.record = {"dead": {}, "taken": [], "containers": {}, "locks": {},
-                       "raised": {}, "departed": {}}
+                       "raised": {}, "departed": {}, "supply": {}}
         self._originals: Dict[str, Dict] = {}     # memory key -> (props, pos)
         self._known_dead = set()
         self._accum = 0.0
@@ -146,7 +146,8 @@ class MapMemory:
                                    "containers": dict(rec.get("containers") or {}),
                                    "locks": dict(rec.get("locks") or {}),
                                    "raised": dict(rec.get("raised") or {}),
-                                   "departed": dict(rec.get("departed") or {})}
+                                   "departed": dict(rec.get("departed") or {}),
+                                   "supply": dict(rec.get("supply") or {})}
             except ValueError:
                 pass
 
@@ -187,6 +188,17 @@ class MapMemory:
         for t in things:
             kind = _kind(t)
             p = t.properties
+            supply = self.record["supply"].get(self.actor_key(t))
+            if isinstance(supply, dict):
+                from .flour_supply import MEMORY_FIELDS
+                for field in MEMORY_FIELDS:
+                    if field in supply.get("props", {}):
+                        p[field] = copy.deepcopy(supply["props"][field])
+                    else:
+                        p.pop(field, None)
+                if supply.get("pos") is not None:
+                    t.pos = list(supply["pos"])
+                changed = True
             if kind in ACTOR_TYPES:
                 key = self.actor_key(t)
                 if not key:
@@ -356,6 +368,9 @@ class MapMemory:
     def save(self) -> None:
         if not self.key:
             return
+        supply = getattr(self.session, "flour_supply", None)
+        if supply is not None and supply.roads is not None:
+            supply.roads.sync_live()
         for t in self.session._container_things():
             cid = str(t.properties.get("id") or "")
             if cid:
@@ -368,6 +383,13 @@ class MapMemory:
         # it carries now.
         dead, raised = self.record["dead"], self.record["raised"]
         for t in fio.things(self.session.logic):
+            p = t.properties
+            if (not p.get("_journey") and (p.get("flour_dependent") or p.get("flour_target")
+                    or p.get("flour_runner") or p.get("flour_job") or p.get("windmill"))):
+                from .flour_supply import MEMORY_FIELDS
+                self.record["supply"][self.actor_key(t)] = {
+                    "props": {k: copy.deepcopy(p[k]) for k in MEMORY_FIELDS if k in p},
+                    "pos": list(t.pos)}
             if _kind(t) not in ACTOR_TYPES:
                 continue
             key = self.actor_key(t)

@@ -14,11 +14,14 @@ import glm
 
 from engine.change_journal import touch
 from . import fio
-from .rpg import inventory
+from .rpg import inventory, items
 
 MILL = "windmill"
 ROTOR_FOR = "mill_rotor_for"
 WHEAT = "wheat"
+FLOUR = "flour"
+WHEAT_PER_FLOUR = 10
+MILL_BATCH_HOURS = 0.25
 HUB = (0.0, 550.0, 170.0)
 DELIVERY_OFFSET = (0.0, 0.0, 210.0)   # outside the door and foundation
 RUN_SPEED = 45.0                 # degrees per real second (7.5 rpm)
@@ -26,14 +29,14 @@ SPIN_UP_SECONDS = 3.0
 SPIN_DOWN_SECONDS = 3.0
 
 
-def wheat_stock(owner) -> int:
-    """Count wheat across all stacks, including stacks stored by the player."""
-    stocks = owner.properties.get("inventory")
+def item_stock(owner, item_id: str) -> int:
+    """Count positive quantities across all stacks of an ordinary inventory."""
+    stocks = getattr(owner, "properties", owner).get("inventory")
     if not isinstance(stocks, list):
         return 0
     quantity = 0
     for stack in stocks:
-        if not isinstance(stack, dict) or stack.get("id") != WHEAT:
+        if not isinstance(stack, dict) or stack.get("id") != item_id:
             continue
         try:
             quantity += max(0, int(stack.get("qty", 0)))
@@ -42,9 +45,62 @@ def wheat_stock(owner) -> int:
     return quantity
 
 
+def wheat_stock(owner) -> int:
+    return item_stock(owner, WHEAT)
+
+
+def take_stock(owner, item_id: str, quantity: int) -> int:
+    """Remove a quantity across stacks, including inventories split by the UI."""
+    remaining = max(0, int(quantity))
+    stocks = inventory.get_inventory(owner)
+    for stack in list(stocks):
+        if not isinstance(stack, dict) or stack.get("id") != item_id:
+            continue
+        try:
+            have = max(0, int(stack.get("qty", 0)))
+        except (TypeError, ValueError):
+            continue
+        moved = min(remaining, have)
+        if moved:
+            stack["qty"] = have - moved
+            remaining -= moved
+            if not stack["qty"]:
+                stocks.remove(stack)
+        if not remaining:
+            break
+    return max(0, int(quantity)) - remaining
+
+
+def mill_flour(mill, hours: float) -> int:
+    """Consume ten wheat per flour, using game time and persistent progress."""
+    if not math.isfinite(hours) or hours <= 0 or not is_producing(mill):
+        return 0
+    batches = wheat_stock(mill) // WHEAT_PER_FLOUR
+    props = mill.properties
+    if not batches:
+        props["mill_progress"] = 0.0
+        return 0
+    try:
+        every = max(0.01, float(props.get("mill_batch_hours", MILL_BATCH_HOURS)))
+        progress = max(0.0, float(props.get("mill_progress", 0.0)))
+    except (TypeError, ValueError):
+        every, progress = MILL_BATCH_HOURS, 0.0
+    if not math.isfinite(every) or not math.isfinite(progress):
+        every, progress = MILL_BATCH_HOURS, 0.0
+    progress += hours
+    made = min(batches, int((progress + 1e-9) / every))
+    if made:
+        take_stock(mill, WHEAT, made * WHEAT_PER_FLOUR)
+        inventory.add_item(inventory.get_inventory(mill), items.make(FLOUR, made))
+    props["mill_progress"] = (max(0.0, progress - made * every)
+                              if wheat_stock(mill) >= WHEAT_PER_FLOUR else 0.0)
+    return made
+
+
 def is_producing(mill) -> bool:
     props = mill.properties
-    return not props.get("disabled") and not props.get("dead") and wheat_stock(mill) > 0
+    return (not props.get("_bw_parked_disabled", props.get("disabled"))
+            and not props.get("dead") and wheat_stock(mill) > 0)
 
 
 def _basis(props):
@@ -145,7 +201,8 @@ class Windmills:
 
     def find(self, entity_id):
         body = self._bodies.get(entity_id)
-        if body is None or body.properties.get("dead") or body.properties.get("disabled"):
+        if body is None or body.properties.get("dead") or body.properties.get(
+                "_bw_parked_disabled", body.properties.get("disabled")):
             return None
         return body
 
@@ -179,6 +236,20 @@ class Windmills:
         for mill in self.mills:
             mill.motion.advance(delta, is_producing(mill.body))
             mill.place()
+
+    def produce(self, hours: float) -> None:
+        for body in self._bodies.values():
+            mill_flour(body, hours)
+
+    def produce_until(self, world_hour: float, *, initial_hours: float = 0.0) -> None:
+        """Include waiting/sleeping clock jumps and time spent in another map."""
+        for body in self._bodies.values():
+            try:
+                last = float(body.properties.get("mill_updated_at", world_hour - initial_hours))
+            except (TypeError, ValueError):
+                last = world_hour
+            body.properties["mill_updated_at"] = world_hour
+            mill_flour(body, max(0.0, world_hour - last))
 
     def clear(self) -> None:
         for mill in self.mills:

@@ -620,6 +620,15 @@
     "weight": 0.1,
     "desc": "Golden wheat harvested from a field."
   },
+  "flour": {
+    "name": "Flour",
+    "category": "potion",
+    "value": 10,
+    "weight": 1.0,
+    "desc": "A filling staple, milled from ten measures of wheat. Eaten directly for now.",
+    "food": true,
+    "effects": [{"kind": "restore_health", "magnitude": 8, "duration": 0}]
+  },
   "ingr_flax": {
     "name": "Flax Flower",
     "category": "ingredient",
