@@ -53,6 +53,7 @@ from . import burning as burning_mod
 from .rpg import disposition as disp
 from .rpg import needs as rpg_needs
 from .rpg import heads
+from .rpg.head_registry import WorldHeadRegistry, identity as head_identity, npc as is_head_npc
 from .rpg import attributes as attr
 from .rpg import charisma as rpg_cha
 from .rpg import fortune as rpg_fortune
@@ -656,6 +657,7 @@ class MiniwindSession(SettlementLaw):
         #: A cave or dungeon (Game Settings): it has cave music (game/music.py).
         self.underground = bool(cfg.get("underground", False))
         self.store = StateStore(globals_store, str(cfg.get("state_store", "miniwind")))
+        self.head_registry = WorldHeadRegistry(self.store)
 
         self.rng = random.Random()
         self.game = GameState(self.store, rng=self.rng)
@@ -1402,6 +1404,8 @@ class MiniwindSession(SettlementLaw):
             c.active_spell = c.known_spells[0]
         # A Warrior's fists are a weapon of their own, in quick slot 1.
         warrior_fist.ensure_fist(self)
+        # New character, new world identity ledger; an old save cannot own faces.
+        self.head_registry.reset()
         # The player is the chosen head; record it so NPCs never reuse it.
         self._ensure_player_head()
         # Give every NPC/creature a head that is never the player's.
@@ -1429,31 +1433,41 @@ class MiniwindSession(SettlementLaw):
             self.store.set("player_head", head)
         except Exception:
             pass
+        self.head_registry.set_player(head)
         self._apply_player_head(head)
         return head
 
     def _assign_npc_heads(self) -> None:
-        """Give every NPC/creature a head sprite — never the player's.
+        """Reconcile faces across the *whole* world, not per spawn.
 
-        A head explicitly set in the editor is respected — regular head,
-        special guard head, or any browsed PNG under assets/sprites/heads/ —
-        unless it is the player's head: no NPC ever wears that. A head is
-        assigned when none was set (the '(random)' option, i.e. an
-        empty/invalid head) or the set one is the player's:
-
-        * an animal gets a head of its own kind (:func:`heads.animal_head`):
-          its own image once drawn, the placeholder head until then;
-        * a guard or a town archer (:data:`heads.GUARD_ROLES`) always wears a
-          *guard* head: one set in the editor is kept, anything else (no head,
-          or a regular one) is swapped for a random guard head (guard01…guard26);
-        * everyone else gets a random regular head that is never the player's.
+        People (including parked and dead authored NPCs) and journey-board
+        members reserve one image per stable identity. Resident travellers are
+        another representation of their resident, not an extra person. Existing
+        saves are repaired deterministically and assignments are persisted.
+        Animal and monster species sprites remain independent of NPC identity.
         """
         from .rpg import heads
+        from .rpg.head_registry import member_identity
+        from .living.world import ACTOR_ROLES
         player_head = str(getattr(self.game.character, "head", "") or "")
-        things = fio.things(self.logic)
+        registry = self.head_registry
+        registry.set_player(player_head)
+        things = list(fio.things(self.logic))
         changed = False
-        deck = {}           # animal heads are dealt, so a flock is mixed evenly
-        for t in things:
+        deck = {}
+
+        def authored_first(thing):
+            p = getattr(thing, "properties", None)
+            if not is_head_npc(p):
+                return 2
+            cur = str(p.get("head", "") or "")
+            return 0 if (heads.is_any_head(cur) and cur != player_head
+                         and (heads.is_guard_head(cur) == heads.is_guard(p))) else 1
+
+        # Claim all valid authored faces first. Otherwise an earlier anonymous
+        # grain carrier could take a later named character's chosen portrait.
+        # Stable sort preserves authored scene order for legacy duplicates.
+        for t in sorted(things, key=authored_first):
             p = getattr(t, "properties", None)
             if not isinstance(p, dict):
                 continue
@@ -1461,36 +1475,60 @@ class MiniwindSession(SettlementLaw):
             if ttype not in ("npc", "creature", "monster"):
                 continue
             cur = str(p.get("head", "") or "")
-            # Respect a head explicitly set in the editor (regular, guard, or
-            # browsed) unless it is the player's. Otherwise roll one.
             role = str(p.get("npc_role", "") or "").lower()
-            # An animal still on the stand-in (from a save made before its art
-            # was drawn) looks again, so new art reaches it.
-            stand_in = cur == heads.PLACEHOLDER_HEAD and role in heads.ANIMAL_ROLES
             guard = heads.is_guard(p)
-            # Guard heads are for the guards alone, and the guards wear nothing else.
-            fits = cur.lower().startswith("guard") == guard
-            if (heads.is_any_head(cur) and cur != player_head and not stand_in
-                    and fits):
-                head = cur
-            elif role in heads.ANIMAL_ROLES:
-                head = heads.animal_head(role, self.rng, deck)
-            elif guard:
-                head = heads.random_guard_head(self.rng)
+            if is_head_npc(p):
+                owner = head_identity(p)
+                if not owner:
+                    owner = p["_head_identity"] = str(uuid.uuid4())
+                head = registry.assign(owner, cur, guard=guard)
             else:
-                head = heads.random_head(self.rng, exclude={player_head})
+                # Beasts share species images, not human identities. Existing
+                # authored monster art remains intact when it isn't the player.
+                stand_in = cur == heads.PLACEHOLDER_HEAD and role in heads.ANIMAL_ROLES
+                fits = cur.lower().startswith("guard") == guard
+                if (heads.is_any_head(cur) and cur != player_head and
+                        not stand_in and fits):
+                    head = cur
+                elif role in heads.ANIMAL_ROLES:
+                    head = heads.animal_head(role, self.rng, deck)
+                elif guard:
+                    head = heads.random_guard_head(self.rng)
+                else:
+                    head = heads.random_head(self.rng, exclude={player_head})
             path = heads.any_head_path(head)
-            size = heads.size_for(p, head)   # one size, bar giants and chickens
-            if (p.get("head") != head or p.get("custom_idle") != path
-                    or p.get("sprite_width") != size
-                    or p.get("sprite_height") != size):
+            size = heads.size_for(p, head)
+            if (p.get("head") != head or p.get("custom_idle") != path or
+                    p.get("custom_shoot") != path or
+                    p.get("sprite_width") != size or
+                    p.get("sprite_height") != size):
                 p["head"] = head
                 p["custom_idle"] = path
                 p["custom_shoot"] = path
                 p["sprite_width"] = p["sprite_height"] = size
-                p.pop("custom_dead", None)   # no custom death sprite (removed)
+                p.pop("custom_dead", None)
                 _journal(t)
                 changed = True
+
+        # The board holds real people even when they are not materialised.
+        # Reserve them *now*, before an unrelated NPC can claim their face.
+        living = getattr(self, "living", None)
+        if living is not None and living.board is not None:
+            for journey in sorted(living.board.journeys.values(), key=lambda j: str(j.id)):
+                for index, member in enumerate(journey.members):
+                    role = str(member.get("role", "")).lower()
+                    if role in heads.ANIMAL_ROLES or role in ("wolf", "greenskin"):
+                        continue
+                    owner = member_identity(member)
+                    if not owner:
+                        owner = f"journey:{journey.id}:{index}"
+                    member.setdefault("_head_identity", owner)
+                    actor_role = ACTOR_ROLES.get(role, ("villager",))[0]
+                    head = registry.assign(
+                        owner, member.get("head", ""),
+                        guard=actor_role in heads.GUARD_ROLES)
+                    member["head"] = head
+
         if changed:
             try:
                 from editor.things import Monster
@@ -9901,5 +9939,6 @@ class MiniwindSession(SettlementLaw):
             warrior_fist.ensure_fist(self)
             self._sync_engine_health(full=True)
             # Re-apply the saved head so the player billboard matches on load.
+            self.head_registry.reload()  # a loaded save may replace the store
             self._ensure_player_head()
             self._assign_npc_heads()
