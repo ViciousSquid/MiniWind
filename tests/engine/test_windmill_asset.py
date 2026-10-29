@@ -61,6 +61,27 @@ def test_both_model_texture_paths_resolve_in_the_packaged_layout():
     assert (FOLDER / glb.materials['Brick']['texture']).is_file()
 
 
+def test_the_separate_body_and_hub_centered_rotor_reconstruct_the_static_model():
+    models = {}
+    for name in ('windmill', 'windmill_body', 'windmill_rotor'):
+        model = GLBLoader()
+        assert model.load(str(FOLDER / f'{name}.glb'))
+        models[name] = np.asarray(model.get_flattened_vertices())
+    hub = np.asarray([0, 550, 170])
+    combined = np.concatenate([models['windmill_body'], models['windmill_rotor'] + hub])
+    full = models['windmill']
+    # Compare the actual vertex cloud, including the brick tower and sail
+    # lattice, rather than accepting two models with merely similar bounds.
+    assert combined.shape == full.shape
+    for points, reference in ((combined, full), (full, combined)):
+        points, reference = np.unique(points, axis=0), np.unique(reference, axis=0)
+        for start in range(0, len(points), 128):
+            distances = np.sum((points[start:start + 128, None] - reference) ** 2, axis=-1)
+            assert np.max(np.min(distances, axis=1)) < 1e-6
+    assert np.ptp(models['windmill_rotor'][:, 2]) < 20
+    assert models['windmill_body'][:, 1].max() < 720
+
+
 @pytest.mark.parametrize('name', ['windmill_topdown.png', 'windmill_overhead.png'])
 def test_rendered_sprites_have_real_alpha_and_a_clear_gutter(name):
     with Image.open(ROOT / 'assets/sprites/scenery' / name) as image:

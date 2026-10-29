@@ -823,6 +823,8 @@ class MiniwindSession(SettlementLaw):
         self.memory = MapMemory(self)
         self.wildlife = Wildlife(self)
         self.dragon_fire = DragonFire(self)
+        from .windmills import Windmills
+        self.windmills = Windmills(self.logic)
         #: Flare's fires: who is burning, and fires on the ground (game/burning.py).
         from .burning import Burning
         self.burning = Burning(self)
@@ -1108,6 +1110,7 @@ class MiniwindSession(SettlementLaw):
         self._assign_npc_handedness()  # random handedness (left rare) where unset
         self._arm_fighters()           # a bow for the swordsman, a blade for the archer
         self.dragon_fire.install(fio.things(self.logic))
+        self.windmills.install()
         self._show_prison_signs()      # the gaol is marked in the world
         self._refresh_roads(force=True)  # the road graph, built before anyone walks
         self._assign_npc_stats()       # STRENGTH / ENDURANCE / CHARISMA for everyone
@@ -1129,6 +1132,7 @@ class MiniwindSession(SettlementLaw):
     def uninstall(self) -> None:
         global _current_session
         _current_session = None
+        self.windmills.clear()
         if self.living is not None:
             try:
                 self.living.persist()
@@ -1610,6 +1614,7 @@ class MiniwindSession(SettlementLaw):
         warrior_fist.clear_spent(self)
         self.held.update()
         self.dragon_fire.update(delta)
+        self.windmills.update(delta)
         self.burning.update(delta)
         self.wildlife.update(delta)
         if self.__dict__.get("_party_due") and self._player_pos() is not None:

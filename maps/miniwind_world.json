@@ -763895,10 +763895,11 @@
                     -60.0,
                     0.0
                 ],
-                "model_path": "assets/models/windmill.glb",
+                "model_path": "assets/models/windmill_body.glb",
                 "type": "prop",
                 "io_enabled": true,
                 "name": "windmill",
+                "mill_producing": true,
                 "id": "250882b7-d724-4931-b8f8-107fd10617b7",
                 "sprite_path": "assets/sprites/pickup.png",
                 "sprite_size": [
@@ -763948,6 +763949,37 @@
                     1,
                     1
                 ]
+            },
+            "io_connections": []
+        },
+        {
+            "type": "prop",
+            "pos": [
+                3164.775680541992,
+                726.0,
+                788.9999923706055
+            ],
+            "properties": {
+                "type": "prop",
+                "name": "windmill_sails",
+                "id": "c8221915-2837-5158-bfcb-b5a8283f2502",
+                "render_mode": "model",
+                "model_path": "assets/models/windmill_rotor.glb",
+                "mill_rotor_for": "250882b7-d724-4931-b8f8-107fd10617b7",
+                "rotation": [
+                    0.0,
+                    -60.0,
+                    0.0
+                ],
+                "scale": [
+                    1,
+                    1,
+                    1
+                ],
+                "carry_enabled": false,
+                "collect_enabled": false,
+                "physics_enabled": false,
+                "no_collision": true
             },
             "io_connections": []
         }

@@ -610,6 +610,17 @@ class MiniwindGame:
                  group="STATE"),
         ])
 
+        api.register_extra_fields("prop", [
+            prop("mill_producing", "bool", "Mill producing", default=True,
+                 group="WINDMILL", help="Turn the sails while this mill is working. "
+                 "They briefly accelerate or coast to a stop when this changes."),
+            prop("mill_rotor_for", "string", "Rotor's mill id", default="",
+                 group="WINDMILL", help="On a windmill rotor Prop, the entity id of its tower."),
+        ])
+        api.extend_io("prop", inputs=[
+            io_def("SetMillProducing", "Start or stop a mill's sails (true/false)", "bool"),
+        ])
+
         npc_io = dict(
             inputs=[
                 io_def("StartDialogue", "Open this NPC's dialogue tree"),
@@ -705,6 +716,12 @@ class MiniwindGame:
     # --------------------------------------------------------- runtime I/O
     def register_runtime(self, api):
         from .rpg import inventory as inv
+
+        def _set_mill_producing(entity, param, logic):
+            from .windmills import set_producing
+            set_producing(entity, str(param).strip().lower() in ("true", "1", "yes", "on"))
+
+        api.register_input_handler("prop", "setmillproducing", _set_mill_producing)
 
         def _start_dialogue(entity, param, logic):
             session = getattr(logic, "_miniwind", None)
