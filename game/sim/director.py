@@ -63,6 +63,11 @@ SIM_AT_KEY = "_sim_at"
 SIM_DAY_KEY = "_sim_day"
 
 
+#: Below this many actors a plain nested loop beats NumPy's per-call overhead;
+#: at or above it, proximity searches are batched (see :func:`_near_pairs`).
+VECTOR_MIN = 48
+
+
 def slug(text) -> str:
     """Lowercase, alnum-only identity slug (matches runtime/disposition)."""
     return "".join(ch.lower() if ch.isalnum() else "_"
@@ -160,6 +165,53 @@ def _props(thing) -> Dict:
 def _pos(thing):
     p = getattr(thing, "pos", None)
     return list(p) if p is not None else None
+
+
+def _xz(things):
+    """An ``(n, 2)`` array of planar positions; a missing one is NaN, so it
+    never compares as near (as :func:`perception.dist2d` makes it infinite)."""
+    import numpy as np          # lazily: the package imports without NumPy
+    out = np.full((len(things), 2), np.nan)
+    for i, thing in enumerate(things):
+        p = getattr(thing, "pos", None)
+        if p is not None:
+            out[i, 0] = p[0]
+            out[i, 1] = p[2]
+    return out
+
+
+def _pad(radius: float) -> float:
+    # Batched tests over-include by a hair; callers confirm with dist2d, so a
+    # pair on the boundary is decided exactly as the scalar loop decides it.
+    return (radius * 1.0001 + 1e-6) ** 2
+
+
+def _near_pairs(points, radius: float, block: int = 64):
+    """``(i, j)`` with ``i < j`` that may be within *radius*, in nested-loop
+    order (by ``i``, then ``j``), computed a block of rows at a time so a
+    caller that stops early never pays for the rest of the square."""
+    import numpy as np
+    n = len(points)
+    r2 = _pad(radius)
+    x, z = points[:, 0], points[:, 1]
+    cols = np.arange(n)
+    for start in range(0, n - 1, block):
+        stop = min(n, start + block)
+        dx = x[start:stop, None] - x[None, :]
+        dz = z[start:stop, None] - z[None, :]
+        hit = (dx * dx + dz * dz <= r2) & (cols[None, :] > np.arange(start, stop)[:, None])
+        rows, js = np.nonzero(hit)
+        yield from zip((rows + start).tolist(), js.tolist())
+
+
+def _within(points, pos, radius: float):
+    """Indices of *points* that may be within *radius* of *pos*, ascending."""
+    import numpy as np
+    if pos is None:
+        return []
+    dx = points[:, 0] - float(pos[0])
+    dz = points[:, 1] - float(pos[2])
+    return np.nonzero(dx * dx + dz * dz <= _pad(radius))[0].tolist()
 
 
 class _DirtyActors(set):
@@ -528,41 +580,41 @@ class Director:
         awake = [a for a in actors
                  if str(_props(a).get("sched_state", "")).upper() != "SLEEPING"]
         exchanges = 0
-        for i, speaker in enumerate(awake):
+        n = len(awake)
+        keys = [actor_key(a) for a in awake]
+        # Every pair in nested-loop order; a crowd batches the distance test.
+        pairs = (_near_pairs(_xz(awake), GOSSIP_RADIUS) if n >= VECTOR_MIN
+                 else ((i, j) for i in range(n) for j in range(i + 1, n)))
+        for i, j in pairs:
             if exchanges >= GOSSIP_BUDGET:
                 break
-            skey = actor_key(speaker)
-            if not skey:
+            skey, lkey = keys[i], keys[j]
+            if not skey or not lkey or lkey == skey:
                 continue
-            for listener in awake[i + 1:]:
-                if exchanges >= GOSSIP_BUDGET:
-                    break
-                lkey = actor_key(listener)
-                if not lkey or lkey == skey:
-                    continue
-                if perception.dist2d(_pos(speaker), _pos(listener)) > GOSSIP_RADIUS:
-                    continue
-                passed = knowledge.gossip(self.store, skey, lkey, self.rng,
-                                          decay=self.rumour_decay)
-                back = knowledge.gossip(self.store, lkey, skey, self.rng,
-                                        decay=self.rumour_decay)
+            speaker, listener = awake[i], awake[j]
+            if perception.dist2d(_pos(speaker), _pos(listener)) > GOSSIP_RADIUS:
+                continue
+            passed = knowledge.gossip(self.store, skey, lkey, self.rng,
+                                      decay=self.rumour_decay)
+            back = knowledge.gossip(self.store, lkey, skey, self.rng,
+                                    decay=self.rumour_decay)
+            if passed:
+                self._dirty.add(lkey)
+                self._on_learned(listener, lkey, passed[0])
+            if back:
+                self._dirty.add(skey)
+                self._on_learned(speaker, skey, back[0])
+            if self.on_gossip is not None:
                 if passed:
-                    self._dirty.add(lkey)
-                    self._on_learned(listener, lkey, passed[0])
-                if back:
-                    self._dirty.add(skey)
-                    self._on_learned(speaker, skey, back[0])
-                if self.on_gossip is not None:
-                    if passed:
-                        self.on_gossip(speaker, listener, passed[0])
-                    elif back:
-                        self.on_gossip(listener, speaker, back[0])
-                if passed or back:
-                    exchanges += 1
-                    ev = self.bus.get((passed or back)[0].get("e", 0))
-                    if ev is not None:
-                        ev.note(f"{actor_name(speaker)} and {actor_name(listener)} "
-                                f"spoke of it")
+                    self.on_gossip(speaker, listener, passed[0])
+                elif back:
+                    self.on_gossip(listener, speaker, back[0])
+            if passed or back:
+                exchanges += 1
+                ev = self.bus.get((passed or back)[0].get("e", 0))
+                if ev is not None:
+                    ev.note(f"{actor_name(speaker)} and {actor_name(listener)} "
+                            f"spoke of it")
         return exchanges
 
     def resolve_reports(self, actors: Sequence) -> int:
@@ -580,16 +632,24 @@ class Director:
         charges = 0
 
         # (1) an ordinary witness passes a crime on to a nearby lawful actor
+        okeys = officers = None
         for witness in actors:
             wkey = actor_key(witness)
             if not wkey or crime.is_lawful(_props(witness)):
                 continue
-            crimes = [f for f in knowledge.facts(self.store, wkey)
+            # Read-only: tell() copies a fact before passing it on.
+            crimes = [f for f in knowledge.facts_view(self.store, wkey)
                       if crime.is_crime(f) and not f.get("reported")]
             if not crimes:
                 continue
-            for officer in lawful:
-                okey = actor_key(officer)
+            if okeys is None:
+                okeys = [actor_key(officer) for officer in lawful]
+                officers = _xz(lawful) if len(lawful) >= VECTOR_MIN else None
+            # In list order, so the first officer in reach is still the one told.
+            reach = (range(len(lawful)) if officers is None
+                     else _within(officers, _pos(witness), TELL_RADIUS))
+            for k in reach:
+                officer, okey = lawful[k], okeys[k]
                 if not okey or okey == wkey:
                     continue
                 if perception.dist2d(_pos(witness), _pos(officer)) > TELL_RADIUS:
@@ -619,7 +679,8 @@ class Director:
             if not okey:
                 continue
             oprops = _props(officer)
-            for f in list(knowledge.facts(self.store, okey)):
+            # A snapshot: marking one charge reported does not change this list.
+            for f in knowledge.facts_view(self.store, okey):
                 amount = crime.report(self.store, f, okey, oprops)
                 if amount <= 0:
                     continue

@@ -5,6 +5,10 @@ import math
 from .sim.storyteller import StorytellerHooks, TUNING
 
 
+#: Slack (world units) on the hostile prefilter for movement since the rebuild.
+REBUILD_MARGIN = 512.0
+
+
 class SessionStorytellerHooks(StorytellerHooks):
     def __init__(self, session):
         self.session = session
@@ -72,7 +76,10 @@ class SessionStorytellerHooks(StorytellerHooks):
                     and math.hypot(actor.pos[0] - player.pos[0], actor.pos[2] - player.pos[2]) <= TUNING["sight_radius"]
                     and s._law_visible(player, actor.pos))
 
-        return index.counts_by_tier(predicate=perceived_hostile)
+        # The index's positions date from this tick's rebuild; the margin keeps
+        # anyone who has stepped into sight since, and the predicate decides.
+        near = (player.pos[0], player.pos[2], TUNING["sight_radius"] + REBUILD_MARGIN)
+        return index.counts_by_tier(predicate=perceived_hostile, near=near)
 
     def law_pressure(self):
         # Reading bounty()/record() would create records; project existing rows.

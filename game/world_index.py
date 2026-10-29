@@ -71,6 +71,11 @@ from engine.spatial import (CELL_SIZE, PARKED_DISABLED_KEY, PARKED_HIDDEN_KEY,
                       TIER_NEAR, tier_of as _stamped_tier)
 
 
+#: Below this many rows a predicate loop over every actor is cheaper than a
+#: vectorised radius prefilter (see :meth:`WorldIndex.counts_by_tier`).
+SCALAR_ROWS = 64
+
+
 def _is_parked(props: dict) -> bool:
     """Whether Big World has parked this actor — not whether it is hidden.
 
@@ -402,10 +407,21 @@ class WorldIndex:
             (i for i in range(n) if _stamped_tier(actors[i], TIER_NEAR) == tier),
             dtype=np.intp)
 
-    def counts_by_tier(self, predicate=None) -> Dict[int, int]:
-        """``{tier: count}``; optionally count only actors in a read-only view."""
+    def counts_by_tier(self, predicate=None, near=None) -> Dict[int, int]:
+        """``{tier: count}``; optionally count only actors in a read-only view.
+
+        *near* ``(x, z, radius)`` limits the count to rows within that radius
+        of the rebuild's positions, found with one vectorised :meth:`rows_near`
+        once the cast is large enough to pay for it -- so a predicate that
+        tests distance itself is asked about the few nearby rows, not all.
+        Rows keep scene order either way.
+        """
         counts: Dict[int, int] = {}
-        for a in self.actors[:self.n]:
+        rows = self.actors[:self.n]
+        if near is not None and self.n >= SCALAR_ROWS:
+            # A copy: rows_near may hand back a view into the shared bins.
+            rows = [rows[i] for i in np.sort(self.rows_near(*near)).tolist()]
+        for a in rows:
             if predicate is not None and not predicate(a):
                 continue
             t = _stamped_tier(a, TIER_NEAR)
