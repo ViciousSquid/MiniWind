@@ -309,7 +309,7 @@ class MainWindow(QMainWindow):
             "Ctrl+Tab: Cycle 2D views",
             "Shift+Space: Clone, then click to place it",
             "H: Hide selected, Shift+H: Unhide all",
-            "Delete: Remove selected brush/object",
+            "Delete / Backspace: Remove selected brush/object",
             "Add Player Start before Play Mode",
             "Shift+Wheel on Light: Adjust radius",
             "Ctrl+Wheel on Light: Adjust intensity",
@@ -3888,8 +3888,8 @@ class MainWindow(QMainWindow):
                 self.show_toast("Nothing to paste", is_error=True)
             return
 
-        # Delete key
-        if self.primary_selection() and event.key() == Qt.Key_Delete:
+        # Delete / Backspace
+        if self.primary_selection() and event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
             self.save_state()
             for obj in list(self.state.selected_objects):
                 if isinstance(obj, dict):
@@ -4872,6 +4872,9 @@ class MainWindow(QMainWindow):
 
         for dock in self.findChildren(QDockWidget):
             dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        hierarchy = getattr(self, 'scene_hierarchy_dock', None)
+        if hierarchy is not None and hierarchy.collapsed:
+            hierarchy.dock_left()
 
         # Clamp floating editor panels to a real screen.  QMainWindow will not
         # repair an old state that was saved with a floating window entirely
@@ -4898,10 +4901,14 @@ class MainWindow(QMainWindow):
 
     def _restore_default_layout(self):
         """Restore the layout captured immediately after UI construction."""
+        hierarchy = self.scene_hierarchy_dock
+        hierarchy.set_collapsed(False)
+        hierarchy.restore_width(hierarchy.DEFAULT_WIDTH)
         state = getattr(self, '_default_layout_state', None)
         if state is not None and not state.isEmpty():
             if self.restoreState(QByteArray(state), LAYOUT_VERSION):
                 self._enforce_layout_constraints()
+                hierarchy.restore_width(hierarchy.DEFAULT_WIDTH)
                 if self.menuBar():
                     self.menuBar().setVisible(True)
                 self.statusBar().setVisible(True)
@@ -4919,6 +4926,8 @@ class MainWindow(QMainWindow):
         self.config['Layout']['geometry'] = self.saveGeometry().toHex().data().decode()
         self.config['Layout']['state'] = self.saveState(LAYOUT_VERSION).toHex().data().decode()
         self.config['Layout']['version'] = str(LAYOUT_VERSION)
+        self.config['Layout']['scene_hierarchy_collapsed'] = str(self.scene_hierarchy_dock.collapsed)
+        self.config['Layout']['scene_hierarchy_width'] = str(self.scene_hierarchy_dock.expanded_width)
         self.save_config()
         self.statusBar().showMessage("Layout saved.", 2000)
 
@@ -4938,6 +4947,7 @@ class MainWindow(QMainWindow):
                 geometry_ok = self.restoreGeometry(
                     QByteArray.fromHex(self.config['Layout']['geometry'].encode()))
             if self.config.has_option('Layout', 'state'):
+                self._load_hierarchy_layout()
                 state_ok = self.restoreState(
                     QByteArray.fromHex(self.config['Layout']['state'].encode()),
                     LAYOUT_VERSION)
@@ -4973,6 +4983,11 @@ class MainWindow(QMainWindow):
             import traceback
             traceback.print_exc()
 
+    def _load_hierarchy_layout(self):
+        dock = self.scene_hierarchy_dock
+        dock.set_collapsed(self.config.getboolean('Layout', 'scene_hierarchy_collapsed', fallback=False))
+        dock.restore_width(self.config.getint('Layout', 'scene_hierarchy_width', fallback=dock.DEFAULT_WIDTH))
+
     def load_layout(self):
         """Restore the saved window layout, unless the default has moved on.
 
@@ -4998,6 +5013,7 @@ class MainWindow(QMainWindow):
 
         if self.config.has_option('Layout', 'state'):
             try:
+                self._load_hierarchy_layout()
                 state_ok = self.restoreState(
                     QByteArray.fromHex(self.config['Layout']['state'].encode()),
                     LAYOUT_VERSION)

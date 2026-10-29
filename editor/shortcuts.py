@@ -56,6 +56,7 @@ _MENU_CATEGORY = {
 DECLARED = (
     ('Edit', 'Esc', 'Back out: cancel a drag, leave a mode, or deselect'),
     ('Edit', 'Del', 'Delete the selection'),
+    ('Edit', 'Backspace', 'Delete the selection'),
     ('Edit', 'Ctrl+C', 'Copy the selected brush or multi-selection'),
     ('Edit', 'Ctrl+V', 'Paste the copied brush or multi-selection, offset by one grid step'),
     ('Edit', 'Shift+Space', 'Clone the selection and place the copy'),

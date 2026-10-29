@@ -52,7 +52,8 @@ def _assert_published_matches_authored(session):
     assert _published_brushes(session) == _authored_brushes(session.state.brushes)
 
 
-def test_delete_undo_redo_save_and_reload_round_trip(fio_session, tmp_path):
+@pytest.mark.parametrize("delete_key", [Qt.Key_Delete, Qt.Key_Backspace])
+def test_delete_undo_redo_save_and_reload_round_trip(fio_session, tmp_path, delete_key):
     session = fio_session(scenes.write(tmp_path, "level.json", scenes.showcase()))
     window = session.window
     with open(session.window.file_path, encoding="utf-8") as handle:
@@ -64,9 +65,9 @@ def test_delete_undo_redo_save_and_reload_round_trip(fio_session, tmp_path):
     victim_id = victim["id"]
     count = len(session.state.brushes)
 
-    # Delete it with the Delete key.
+    # Both deletion keys use the same undoable editor action.
     window.set_selected_objects([victim])
-    QTest.keyClick(window, Qt.Key_Delete)
+    QTest.keyClick(window, delete_key)
     assert victim_id not in {b["id"] for b in session.state.brushes}
     assert len(session.state.brushes) == count - 1
     published = _published_brushes(session)
