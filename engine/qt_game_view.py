@@ -442,7 +442,7 @@ class QtGameView(QOpenGLWidget):
         # Up repeats the last command (the history every console shares).
         self._console_input = CommandInput(self, repeat_text=False)
         self._console_input.setPlaceholderText("Enter command…   Esc to close")
-        self._console_input.setFont(QFont("Consolas", 11))
+        self._console_input.setFont(QFont("IBM Plex Mono", 11))
         self._console_input.setStyleSheet("""
             QLineEdit {
                 background-color: rgba(10, 10, 10, 220);
@@ -450,7 +450,7 @@ class QtGameView(QOpenGLWidget):
                 border: none;
                 border-top: 2px solid #F08000;
                 padding: 6px 10px;
-                font-family: Consolas, monospace;
+                font-family: "IBM Plex Mono";
                 font-size: 11pt;
             }
         """)

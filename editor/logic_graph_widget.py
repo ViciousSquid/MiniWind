@@ -1524,7 +1524,7 @@ class LogicGraphWindow(QWidget):
             QWidget {
                 background: #1c1c20;
                 color: #ddd;
-                font-family: 'Segoe UI', Arial;
+                font-family: "Selawik";
             }
             QPushButton {
                 background: #3a3a44;

@@ -1108,6 +1108,10 @@ class TerrainEditorPanel(QWidget):
             form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
             form.setRowWrapPolicy(QFormLayout.WrapLongRows)
 
+        for label in self.findChildren(QLabel):
+            if not label.wordWrap():
+                label.setMinimumHeight(label.fontMetrics().height())
+
         self._building_ui = False
 
     # ------------------------------------------------------------------

@@ -33,7 +33,7 @@ dark_stylesheet = """
     QWidget {
         background-color: #2b2b2b;
         color: #e0e0e0;
-        font-family: "Segoe UI", Arial, sans-serif;
+        font-family: "Selawik";
     }
     QPushButton {
         background-color: #3c3f41;
@@ -102,6 +102,9 @@ dark_stylesheet = """
         background-color: #3c3f41;
         padding: 8px 12px;
         border-right: 1px solid #555;
+    }
+    QTabWidget::tab-bar {
+        alignment: left;
     }
     QTabBar::tab:selected {
         background-color: #2b2b2b;
@@ -248,8 +251,11 @@ if __name__ == "__main__":
         def finish(self, main_window):
             self.close()
 
+    from editor.desktop_style import prepare_qt, install_editor_style
+    prepare_qt()
     # Create app
     app = QApplication(sys.argv)
+    install_editor_style(app)
     # Without this PyQt5 aborts the process on any exception escaping a Qt
     # callback, losing the open map.
     from editor.debug_console import install_excepthook

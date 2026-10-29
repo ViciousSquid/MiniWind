@@ -316,7 +316,14 @@ class CutsceneWizard(QtWidgets.QDialog):
         # it no longer makes the primary wizard vertically enormous.
         # -----------------------------------------------------------------
         events_page = QtWidgets.QWidget()
-        events_layout = QtWidgets.QVBoxLayout(events_page)
+        events_outer = QtWidgets.QVBoxLayout(events_page)
+        events_scroll = QtWidgets.QScrollArea(events_page)
+        events_scroll.setWidgetResizable(True)
+        events_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        events_content = QtWidgets.QWidget()
+        events_layout = QtWidgets.QVBoxLayout(events_content)
+        events_scroll.setWidget(events_content)
+        events_outer.addWidget(events_scroll)
         events_tabs = QtWidgets.QTabWidget()
         self._build_message_tab(events_tabs)
         self._build_io_tab(events_tabs)

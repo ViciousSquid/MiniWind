@@ -43,7 +43,10 @@ def main():
     fmt.setProfile(QSurfaceFormat.CoreProfile)
     fmt.setDepthBufferSize(24)
     QSurfaceFormat.setDefaultFormat(fmt)
+    from editor.desktop_style import prepare_qt, install_editor_style
+    prepare_qt()
     app = QApplication([])
+    install_editor_style(app)
     from main import dark_stylesheet
     app.setStyleSheet(dark_stylesheet)
     font = app.font()

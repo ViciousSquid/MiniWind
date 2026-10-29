@@ -186,6 +186,8 @@ class MainWindow(QMainWindow):
         self.config.optionxform = str          # preserve case of option names
         self.config_path = 'settings.ini'
         self.load_config()
+        from editor.desktop_style import install_editor_style
+        install_editor_style(QApplication.instance())
         self.load_key_bindings()
 
         self.unsaved_changes = False
@@ -853,7 +855,7 @@ class MainWindow(QMainWindow):
 
         self._play_console_input = CommandInput(self._play_console_frame, repeat_text=False)
         self._play_console_input.setPlaceholderText("Enter command...")
-        self._play_console_input.setFont(QFont("Consolas", 12))
+        self._play_console_input.setFont(QFont("IBM Plex Mono", 12))
         self._play_console_input.setStyleSheet("""
             QLineEdit {
                 background-color: rgba(30, 30, 30, 220);

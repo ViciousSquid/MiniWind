@@ -227,17 +227,23 @@ class Audit:
 
     def attempt(self, name, factory):
         root = None
+        host = None
         try:
             root = factory()
             if root is None:
                 raise RuntimeError("Surface factory returned no widget")
+            if not root.isWindow() and hasattr(root.parentWidget(), "_show_overlay"):
+                host = root.parentWidget()
+                host._show_overlay(root)
             self.surface(name, root)
         except Exception:
             self.error(name)
         finally:
             if root is not None:
                 # Reject dialogs: never save edits, export, generate or restart.
-                if isinstance(root, self.W.QDialog):
+                if host is not None:
+                    host._close_current_overlay()
+                elif isinstance(root, self.W.QDialog):
                     root.reject()
                 else:
                     root.hide()
@@ -316,7 +322,10 @@ def run_audit(audit, window, sections):
         for name, options in (("solid", {}), ("trigger", {"is_trigger": True}),
                               ("mover", {"is_mover": True}),
                               ("door", {"is_mover": True, "is_door": True}),
-                              ("water", {"shader": "water"})):
+                              ("water", {"shader": "Water"}),
+                              ("glass", {"shader": "Glass"}),
+                              ("fog", {"shader": "Fog"}),
+                              ("glow", {"shader": "Glow"})):
             try:
                 brush = {"id": str(uuid.uuid5(uuid.NAMESPACE_URL, "audit://brush-" + name)),
                          "name": "Audit " + name, "pos": [0., 0., 0.], "size": [128., 64., 128.],
@@ -437,7 +446,10 @@ def main():
     config = prepare_runtime(source, output, args.font_size)
 
     from PyQt5 import QtCore, QtWidgets
+    from editor.desktop_style import prepare_qt, install_editor_style
+    prepare_qt()
     app = QtWidgets.QApplication([])
+    install_editor_style(app)
     from main import dark_stylesheet
     app.setStyleSheet(dark_stylesheet)
     font = app.font()

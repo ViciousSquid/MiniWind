@@ -7,6 +7,9 @@ on:
       - '.github/workflows/editor-ui-parity.yml'
       - 'tools/editor_ui_audit.py'
       - 'tools/compare_editor_ui.py'
+      - 'editor/**'
+      - 'assets/fonts/editor/**'
+      - 'main.py'
   workflow_dispatch:
 
 permissions:
@@ -24,14 +27,17 @@ jobs:
           - platform: windows
             os: windows-latest
             qt_platform: windows
+            opengl_platform: win32
           - platform: macos
             os: macos-latest
             qt_platform: cocoa
+            opengl_platform: darwin
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     env:
       QT_QPA_PLATFORM: ${{ matrix.qt_platform }}
       QT_SCALE_FACTOR: ${{ matrix.scale }}
+      PYOPENGL_PLATFORM: ${{ matrix.opengl_platform }}
       SDL_AUDIODRIVER: dummy
       PYTHONUNBUFFERED: '1'
     steps:
@@ -41,7 +47,12 @@ jobs:
           python-version: '3.14'
           cache: pip
       - name: Install the same desktop dependencies
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -r requirements.txt pytest
+      - name: Verify shared fonts, left-aligned tabs and compact controls
+        run: >-
+          python -m pytest -q
+          tests/editor/test_desktop_style.py
+          tests/editor/test_terrain_panel_layout.py
       - name: Capture every editor surface at the default font size
         id: capture_default
         continue-on-error: true
