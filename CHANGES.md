@@ -19,6 +19,12 @@
   names, lifecycle order, intent reads that never appraise, session wiring, and
   new-game reset.
 
+Validation: full headless suite on clean `2dfaf1b`: 4,251 passed, 34 skipped,
+1,974 deselected, and the five failures that were already failing (listed in
+`docs/factions.md`). With this change: 4,260 passed, the same skips,
+deselections and five failures. The extra 9 are the 6 new tests plus 3
+suite-integrity checks that cover the new test file automatically.
+
 ## Cache faction projections per board update
 
 - Restore `Director.intents()` caching with a mood provider. Board-update and
