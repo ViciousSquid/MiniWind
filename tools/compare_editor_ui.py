@@ -132,7 +132,8 @@ details{border:1px solid #484e59;padding:12px;margin:8px 0}summary{cursor:pointe
 img{width:100%;height:auto}td,th{text-align:left;padding:6px;border-bottom:1px solid #454950}
 table{width:100%;font-size:12px}pre{white-space:pre-wrap}</style>
 <h1>MiniWind — Windows / macOS editor parity</h1>
-<p>Native Qt styles; identical source, scene, settings and 1440×900 logical editor window.
+<p>Native Qt styles; identical source, scene and settings. The requested editor size is 1440×900;
+actual logical window and panel sizes after native layout are recorded for every frame.
 Images are normalized to logical pixels. Resolved fonts, DPI and native DPR are in the manifests.
 Font fallback and native theme differences are reported, not silently treated as equivalent.
 3D rendering, gameplay HUD, OS file/colour pickers, and arbitrary field-value combinations are excluded.</p>
