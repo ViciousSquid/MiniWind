@@ -452,6 +452,11 @@ _THOUGHTS = {
     "PATROL": ("All quiet. Keep walking.", "Eyes open, stay sharp."),
 }
 
+#: What a witness running to the watch sometimes shouts instead of thinking
+#: their reason through: one in REPORT_CRY_ODDS, stable per actor and errand.
+REPORT_CRIES = ("HELP!  GUARD!", "GUARD!")
+REPORT_CRY_ODDS = 3
+
 #: Situations urgent enough to think aloud the moment an actor is first seen,
 #: rather than waiting for its state to change.
 URGENT_THOUGHTS = frozenset(("flee", "rally", "alert", "subdue", "combat", "hunt",
@@ -461,6 +466,14 @@ URGENT_THOUGHTS = frozenset(("flee", "rally", "alert", "subdue", "combat", "hunt
 def _pick(options, *salt) -> str:
     import zlib
     return options[zlib.crc32("|".join(str(s) for s in salt).encode()) % len(options)]
+
+
+def _report_cry(name: str, key: str, text: str) -> str:
+    """*text*, or now and then a shout for the guard, for a reporting witness."""
+    import zlib
+    if zlib.crc32(f"{name}|{key}|cry".encode()) % REPORT_CRY_ODDS == 0:
+        return _pick(REPORT_CRIES, name, key)
+    return text
 
 
 def _plain_reason(reason: str) -> str:
@@ -513,7 +526,13 @@ def thought(props, target_name: Optional[str] = None) -> Tuple[str, str]:
     reason = props.get("_sim_reason")
     acting_on_it = state in ("REPORT", "CONFRONT", "INVESTIGATE", "COMBAT")
     if reason and (intent == "MOURN" or (acting_on_it and intent not in ("IGNORE", "WARM"))):
-        return "intent:" + intent + ":" + str(reason), _plain_reason(reason) + "."
+        key = "intent:" + intent + ":" + str(reason)
+        text = _plain_reason(reason) + "."
+        if state == "REPORT":
+            text = _report_cry(name, key, text)
+        return key, text
+    if state == "REPORT":
+        return "report", _report_cry(name, "report", "")
     if state == "COMBAT" and props.get("_aggro_target") is not None:
         return "combat:" + str(props.get("_aggro_target")), line(
             "combat", target=target)[1]

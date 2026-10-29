@@ -103,10 +103,29 @@ def test_rolls_made_together_are_shown_together(config):
 # ------------------------------------------------------------- the thoughts
 def test_a_thought_says_why_in_the_decisions_own_words():
     key, text = mental_state.thought({
-        "name": "Ann", "sched_state": "REPORT", "_sim_intent": "REPORT",
-        "_sim_reason": "Somebody must tell the watch what Rufus did"})
-    assert key.startswith("intent:REPORT")
-    assert text == "Somebody must tell the watch what Rufus did."
+        "name": "Ann", "sched_state": "CONFRONT", "_sim_intent": "CONFRONT",
+        "_sim_reason": "Rufus took what is mine"})
+    assert key.startswith("intent:CONFRONT")
+    assert text == "Rufus took what is mine."
+
+
+def test_a_witness_running_to_the_watch_sometimes_cries_for_the_guard():
+    reason = "Somebody must tell the watch what Rufus did"
+    texts = {}
+    for name in (f"Witness {i}" for i in range(60)):
+        props = {"name": name, "sched_state": "REPORT", "_sim_intent": "REPORT",
+                 "_sim_reason": reason}
+        key, text = mental_state.thought(props)
+        assert key.startswith("intent:REPORT")
+        assert mental_state.thought(props) == (key, text)       # stable, not random
+        texts[name] = text
+    said = set(texts.values())
+    assert said == {reason + ".", *mental_state.REPORT_CRIES}   # the reason is kept too
+    cries = sum(t in mental_state.REPORT_CRIES for t in texts.values())
+    assert 0 < cries < len(texts) / 2
+    # Without a reason to give, a reporting witness may still shout.
+    bare = {mental_state.thought({"name": n, "sched_state": "REPORT"})[1] for n in texts}
+    assert bare == {"", *mental_state.REPORT_CRIES}
 
 
 def test_a_thought_keeps_the_working_for_the_inspector():
