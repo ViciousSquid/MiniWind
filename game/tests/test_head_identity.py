@@ -118,3 +118,15 @@ def test_exhaustion_is_an_error_not_a_reused_guard(monkeypatch):
     assert r.assign("one", guard=True) == "guard01"
     with pytest.raises(HeadPoolExhausted, match="No unused guard head"):
         r.assign("two", guard=True)
+
+
+def test_authored_human_creatures_have_individual_faces():
+    bandits = [_actor(f"Bandit {i}", "head08", kind="creature",
+                      role="bandit") for i in range(4)]
+    cultists = [_actor(f"Cultist {i}", "head08", kind="creature",
+                       role="cultist") for i in range(3)]
+    s = _session(bandits + cultists)
+    s.begin_new_character("Player", "imperial", "warrior", head="head13")
+    faces = [image_key(t.properties["head"]) for t in bandits + cultists]
+    assert len(faces) == len(set(faces))
+    assert image_key("head13") not in faces
