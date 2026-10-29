@@ -9,6 +9,8 @@ busy instead of standing at a marker:
   :data:`SWING_EVERY` seconds, gathering one wheat per stroke in a field;
 * **tending** -- going to the nearest sheep, cow or hen and working beside
   it with a pitchfork, collecting any milk a tended cow has produced.
+* **delivering** -- carrying a batch of harvested wheat to the nearest mill,
+  depositing it at the door, then resuming the day's farm work.
 
 Tasks alternate through the day. The swing uses the same ``is_shooting`` pulse
 every weapon overlay animates from (game/held_weapons.py), without striking a
@@ -51,6 +53,9 @@ SCYTHE = "scythe"
 PITCHFORK = "pitchfork"
 REAPING = "REAPING"
 TENDING = "TENDING"
+DELIVERING = "DELIVERING_WHEAT"
+DELIVERY_BATCH = 5
+DELIVERY_DISTANCE = 70.0
 
 
 def is_farmer(props) -> bool:
@@ -100,10 +105,16 @@ def field_rows(terrain, centre) -> List[List[float]]:
 
 def stop(props) -> None:
     """Put the tool away and leave the farm routine."""
+    _put_tool_away(props)
+    for key in ("_farm_task", "_farm_delivery"):
+        props.pop(key, None)
+
+
+def _put_tool_away(props) -> None:
     tool = props.pop("_farm_tool", None)
     if tool and props.get("_active_weapon") == tool:
         props.pop("_active_weapon", None)
-    for key in ("_farm_task", "_farm_work", "_farm_swing"):
+    for key in ("_farm_work", "_farm_swing"):
         props.pop(key, None)
     if props.get("_farm_swinging"):
         props.pop("_farm_swinging", None)
@@ -126,10 +137,13 @@ class FarmWork:
         p = npc.properties
         clock = session.clock
         hour = float(clock.hour)
-        if not (WORK_HOURS[0] <= hour < WORK_HOURS[1]) or npc.pos is None:
+        if (not is_farmer(p) or p.get("dead") or npc.pos is None
+                or not (WORK_HOURS[0] <= hour < WORK_HOURS[1])):
             stop(p)
             return False
         now = float(clock.day) * 24.0 + hour
+        if self._deliver(session, npc, now):
+            return True
         task = p.get("_farm_task")
         if not task or now >= float(task.get("until", 0.0)) or now < float(task.get("since", 0.0)):
             task = self._choose(session, npc, now, task)
@@ -139,6 +153,47 @@ class FarmWork:
         if task["kind"] == "reap":
             return self._reap(npc, task)
         return self._tend(session, npc, task)
+
+    def _deliver(self, session, npc, now) -> bool:
+        from . import windmills
+        from .rpg import inventory
+
+        p = npc.properties
+        quantity = windmills.wheat_stock(npc)
+        task = p.get("_farm_task") or {}
+        finished_reaping = (task.get("kind") == "reap"
+                            and now >= float(task.get("until", 0.0)))
+        if quantity <= 0 or not (p.get("_farm_delivery") or quantity >= DELIVERY_BATCH or finished_reaping):
+            p.pop("_farm_delivery", None)
+            return False
+        mills = getattr(session, "windmills", None)
+        mill = mills.find(p.get("_farm_delivery")) if mills is not None else None
+        if mill is None and mills is not None:
+            mill = mills.nearest(npc.pos)
+        if mill is None:
+            p.pop("_farm_delivery", None)
+            return False
+        _put_tool_away(p)
+        p["_farm_delivery"] = mill.properties["id"]
+        p["sched_state"] = DELIVERING
+        target = windmills.delivery_point(mill)
+        if _dist(npc.pos, target) > DELIVERY_DISTANCE:
+            p["_dest"] = [target[0], npc.pos[1], target[2]]
+            return True
+        # Only arrival moves goods. Preserve every other item the farmer has.
+        carried, stock = inventory.get_inventory(npc), inventory.get_inventory(mill)
+        for stack in list(carried):
+            if isinstance(stack, dict) and stack.get("id") == windmills.WHEAT:
+                try:
+                    qty = int(stack.get("qty", 0))
+                except (TypeError, ValueError):
+                    continue
+                if qty > 0:
+                    inventory.add_item(stock, stack, qty=qty)
+                    carried.remove(stack)
+        p.pop("_farm_delivery", None)
+        p.pop("_dest", None)
+        return True
 
     def _choose(self, session, npc, now, last) -> Optional[Dict]:
         p = npc.properties

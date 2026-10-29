@@ -1,8 +1,8 @@
-"""Windmill sails, driven by an explicit production flag.
+"""Windmill stock and sails: wheat in the inventory keeps the rotor turning.
 
 The mill and its rotor are ordinary Props. ``mill_rotor_for`` on the rotor
-names the mill's stable entity id; ``mill_producing`` on the mill is the seam
-for the future production system. No goods or production rules live here.
+names the mill's stable entity id. The tower owns the ordinary, persistent
+item inventory that farmers deliver to and the player can open.
 """
 
 from __future__ import annotations
@@ -14,18 +14,54 @@ import glm
 
 from engine.change_journal import touch
 from . import fio
+from .rpg import inventory
 
-PRODUCING = "mill_producing"
+MILL = "windmill"
 ROTOR_FOR = "mill_rotor_for"
+WHEAT = "wheat"
 HUB = (0.0, 550.0, 170.0)
+DELIVERY_OFFSET = (0.0, 0.0, 210.0)   # outside the door and foundation
 RUN_SPEED = 45.0                 # degrees per real second (7.5 rpm)
 SPIN_UP_SECONDS = 3.0
 SPIN_DOWN_SECONDS = 3.0
 
 
-def set_producing(mill, producing: bool) -> None:
-    """Future production code sets this when work starts or stops."""
-    mill.properties[PRODUCING] = bool(producing)
+def wheat_stock(owner) -> int:
+    """Count wheat across all stacks, including stacks stored by the player."""
+    stocks = owner.properties.get("inventory")
+    if not isinstance(stocks, list):
+        return 0
+    quantity = 0
+    for stack in stocks:
+        if not isinstance(stack, dict) or stack.get("id") != WHEAT:
+            continue
+        try:
+            quantity += max(0, int(stack.get("qty", 0)))
+        except (TypeError, ValueError):
+            continue
+    return quantity
+
+
+def is_producing(mill) -> bool:
+    props = mill.properties
+    return not props.get("disabled") and not props.get("dead") and wheat_stock(mill) > 0
+
+
+def _basis(props):
+    rotation = props.get("rotation", (0.0, 0.0, 0.0))
+    basis = glm.rotate(glm.mat4(1.0), math.radians(rotation[1]), glm.vec3(0, 1, 0))
+    basis = glm.rotate(basis, math.radians(rotation[0]), glm.vec3(1, 0, 0))
+    return glm.rotate(basis, math.radians(rotation[2]), glm.vec3(0, 0, 1))
+
+
+def delivery_point(mill) -> list:
+    """The drop-off point in front of the placed tower's door."""
+    scale = mill.properties.get("scale", (1, 1, 1))
+    if isinstance(scale, (int, float)):
+        scale = (scale, scale, scale)
+    offset = _basis(mill.properties) * glm.vec4(
+        *(DELIVERY_OFFSET[i] * scale[i] for i in range(3)), 0.0)
+    return [float(mill.pos[i] + offset[i]) for i in range(3)]
 
 
 @dataclass
@@ -80,10 +116,7 @@ class _Mill:
         if isinstance(scale, (int, float)):
             scale = (scale, scale, scale)
         # Fio's model rotation order is Y, X, Z.
-        basis = glm.rotate(glm.mat4(1.0), math.radians(rotation[1]), glm.vec3(0, 1, 0))
-        basis = glm.rotate(basis, math.radians(rotation[0]), glm.vec3(1, 0, 0))
-        basis = glm.rotate(basis, math.radians(rotation[2]), glm.vec3(0, 0, 1))
-        offset = basis * glm.vec4(*(HUB[i] * scale[i] for i in range(3)), 0.0)
+        offset = _basis(props) * glm.vec4(*(HUB[i] * scale[i] for i in range(3)), 0.0)
         pos = [float(self.body.pos[i] + offset[i]) for i in range(3)]
         if list(self.rotor.pos) != pos:
             self.rotor.pos = pos
@@ -105,6 +138,21 @@ class Windmills:
     def __init__(self, logic):
         self.logic = logic
         self.mills: list[_Mill] = []
+        self._bodies: dict[str, object] = {}
+
+    def bodies(self) -> tuple:
+        return tuple(self._bodies.values())
+
+    def find(self, entity_id):
+        body = self._bodies.get(entity_id)
+        if body is None or body.properties.get("dead") or body.properties.get("disabled"):
+            return None
+        return body
+
+    def nearest(self, pos):
+        available = [body for key in self._bodies if (body := self.find(key)) is not None]
+        return min(available, key=lambda b: math.hypot(b.pos[0] - pos[0], b.pos[2] - pos[2]),
+                   default=None)
 
     def install(self) -> None:
         self.clear()
@@ -118,6 +166,9 @@ class Windmills:
             body = by_id.get(target)
             if body is None or body is rotor:
                 continue
+            body.properties[MILL] = True
+            inventory.get_inventory(body)
+            self._bodies[body.properties["id"]] = body
             angle = (rotor.properties.get("rotation", (0, 0, 0))[2]
                      - body.properties.get("rotation", (0, 0, 0))[2])
             mill = _Mill(body, rotor, RotorMotion(angle=angle % 360.0))
@@ -126,12 +177,11 @@ class Windmills:
 
     def update(self, delta: float) -> None:
         for mill in self.mills:
-            props = mill.body.properties
-            producing = bool(props.get(PRODUCING, True)) and not props.get("disabled", False)
-            mill.motion.advance(delta, producing)
+            mill.motion.advance(delta, is_producing(mill.body))
             mill.place()
 
     def clear(self) -> None:
         for mill in self.mills:
             mill.restore()
         self.mills.clear()
+        self._bodies.clear()

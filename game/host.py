@@ -611,14 +611,11 @@ class MiniwindGame:
         ])
 
         api.register_extra_fields("prop", [
-            prop("mill_producing", "bool", "Mill producing", default=True,
-                 group="WINDMILL", help="Turn the sails while this mill is working. "
-                 "They briefly accelerate or coast to a stop when this changes."),
+            prop("windmill", "bool", "Mill inventory", default=False,
+                 group="WINDMILL", help="The mill's inventory receives harvested wheat. "
+                 "Its sails turn while wheat remains in stock."),
             prop("mill_rotor_for", "string", "Rotor's mill id", default="",
                  group="WINDMILL", help="On a windmill rotor Prop, the entity id of its tower."),
-        ])
-        api.extend_io("prop", inputs=[
-            io_def("SetMillProducing", "Start or stop a mill's sails (true/false)", "bool"),
         ])
 
         npc_io = dict(
@@ -668,7 +665,7 @@ class MiniwindGame:
             api.register_property_tab("Simulation", sim_editor.make_simulation_tab,
                                       entity_type="creature")
             # Ownership + production for the objects a settlement is made of.
-            for _etype in ("creature", "itempickup", "container"):
+            for _etype in ("creature", "itempickup", "container", "prop"):
                 api.register_property_tab("Ownership & Production",
                                           sim_editor.make_object_tab,
                                           entity_type=_etype)
@@ -692,6 +689,8 @@ class MiniwindGame:
             # inventory uses (a separate list from the player's).
             api.register_property_tab("Contents", editor_ui.make_inventory_tab,
                                       entity_type="container")
+            api.register_property_tab("Contents", editor_ui.make_inventory_tab,
+                                      entity_type="prop")
         except Exception:
             pass
 
@@ -716,12 +715,6 @@ class MiniwindGame:
     # --------------------------------------------------------- runtime I/O
     def register_runtime(self, api):
         from .rpg import inventory as inv
-
-        def _set_mill_producing(entity, param, logic):
-            from .windmills import set_producing
-            set_producing(entity, str(param).strip().lower() in ("true", "1", "yes", "on"))
-
-        api.register_input_handler("prop", "setmillproducing", _set_mill_producing)
 
         def _start_dialogue(entity, param, logic):
             session = getattr(logic, "_miniwind", None)

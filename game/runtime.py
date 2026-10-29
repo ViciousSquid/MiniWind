@@ -2679,6 +2679,9 @@ class MiniwindSession(SettlementLaw):
             name = str(p.get("place_name") or p.get("name") or "").strip()
             if not name or p.get("_discovered"):
                 continue
+            if self.store.get(f"visited.{self._slug(name)}", "0") == "1":
+                p["_discovered"] = True
+                continue
             if self._dist2d(ppos, mk.pos) <= float(p.get("discover_radius", 200.0)):
                 p["_discovered"] = True
                 self.store.set(f"visited.{self._slug(name)}", "1")
@@ -4676,6 +4679,12 @@ class MiniwindSession(SettlementLaw):
             else:
                 p.pop("_need_reason", None)
 
+        if state == sched.WORKING and farm_work.is_farmer(p):
+            if self.farm_work.drive(self, npc):
+                return
+        elif p.get("_farm_tool") or p.get("_farm_delivery"):
+            farm_work.stop(p)
+
         # (d) PATROL: an on-duty guard/combatant with an authored patrol circuit
         #     walks between its markers rather than standing at one work spot, so
         #     the town has a visibly moving watch. Combat (b) pre-empts this; the
@@ -5268,10 +5277,10 @@ class MiniwindSession(SettlementLaw):
                 p.pop("_need_reason", None)
 
         if state == sched.WORKING and farm_work.is_farmer(p):
-            # By day a farmer reaps the wheat or tends the animals.
+            # Farm work and wheat deliveries continue outside the camera too.
             if self.farm_work.drive(self, npc):
                 return
-        elif p.get("_farm_tool"):
+        elif p.get("_farm_tool") or p.get("_farm_delivery"):
             farm_work.stop(p)
         if state in (sched.WORKING, sched.GOING_TO_WORK) and p.get("patrol_markers"):
             if self._patrol(npc):
@@ -9218,11 +9227,15 @@ class MiniwindSession(SettlementLaw):
                 best, best_d = thing, d
         return best
 
+    def _container_things(self):
+        """Stock containers, including the inventories on placed mills."""
+        return _chain(self._things_of_type("container"), self.windmills.bodies())
+
     def nearest_container(self, player_pos, radius: float = TALK_RADIUS):
         """The nearest usable container within its own use radius."""
         best, best_d = None, None
         px, pz = player_pos[0], player_pos[2]
-        for c in self._things_of_type("container"):
+        for c in self._container_things():
             r = float(c.properties.get("use_radius", radius))
             pos = c.pos
             dx = px - pos[0]
@@ -9488,6 +9501,13 @@ class MiniwindSession(SettlementLaw):
             return f"{self.corpse_name(t)} (dead)"
         return str(t.properties.get("display_name") or "Container")
 
+    def container_take_is_theft(self) -> bool:
+        if self.container_thing is None:
+            return False
+        actor = self.player_actor
+        return sim_own.is_theft(self.container_thing.properties, actor_key(actor),
+                               actor.properties.get("faction", ""))
+
     def take_from_container(self, index: int) -> bool:
         """Move one stack from the open container into the player's inventory."""
         items = self.container_inventory()
@@ -9509,8 +9529,6 @@ class MiniwindSession(SettlementLaw):
             item_name=name, value=int(stack.get("value", 0) or 0) * max(1, int(stack.get("qty", 1) or 1)),
             pos=list(self.container_thing.pos) if self.container_thing else None)
         if event is not None and event.kind == "theft":
-            sim_own.mark_stolen(stack, sim_own.owner_of(props),
-                                sim_own.owner_name_of(props))
             self.notify(f"Stole {name}")
         else:
             if stack.get("id") != rpg_items.GOLD:
@@ -9520,7 +9538,12 @@ class MiniwindSession(SettlementLaw):
             # more of it than lies there.
             self._credit_found_gold(int(stack.get("qty", 1) or 0), "Took")
         else:
-            inv.add_item(self.game.character.inventory, stack)
+            received = inv.add_item(self.game.character.inventory, stack)
+            if event is not None and event.kind == "theft":
+                # Adding to a stack the player already carries must retain the
+                # stolen brand rather than laundering the goods by stacking.
+                sim_own.mark_stolen(received, sim_own.owner_of(props),
+                                    sim_own.owner_name_of(props))
         return True
 
     def store_in_container(self, index: int) -> bool:

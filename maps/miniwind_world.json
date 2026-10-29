@@ -763899,7 +763899,6 @@
                 "type": "prop",
                 "io_enabled": true,
                 "name": "windmill",
-                "mill_producing": true,
                 "id": "250882b7-d724-4931-b8f8-107fd10617b7",
                 "sprite_path": "assets/sprites/pickup.png",
                 "sprite_size": [
@@ -763948,7 +763947,14 @@
                     1,
                     1,
                     1
-                ]
+                ],
+                "windmill": true,
+                "display_name": "Windmill",
+                "inventory": [],
+                "use_radius": 280.0,
+                "owner": "8e3851c7_edf9_4d1f_b9ea_37a0b6161d38",
+                "owner_name": "Bram the Farmer",
+                "owner_faction": "villagers"
             },
             "io_connections": []
         },
@@ -763980,6 +763986,24 @@
                 "collect_enabled": false,
                 "physics_enabled": false,
                 "no_collision": true
+            },
+            "io_connections": []
+        },
+        {
+            "type": "marker",
+            "pos": [
+                3312.0,
+                176.0,
+                704.0
+            ],
+            "properties": {
+                "type": "marker",
+                "name": "loc_windmill",
+                "id": "c1d33aca-693a-5746-84b4-3014b5128030",
+                "marker_kind": "location",
+                "place_name": "Windmill",
+                "discover_radius": 350.0,
+                "stop_on_escape": true
             },
             "io_connections": []
         }

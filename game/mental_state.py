@@ -59,6 +59,7 @@ _STATE_BLURB = {
     "CONFRONT": "Going to confront someone",
     "REAPING": "Reaping the wheat",
     "TENDING": "Tending the animals",
+    "DELIVERING_WHEAT": "Delivering wheat to the mill",
 }
 
 
@@ -463,6 +464,7 @@ _THOUGHTS = {
     "REAPING": ("Row after row.", "Good crop this year.", "Mind the blade.",
                 "Get it in before rain."),
     "TENDING": ("Easy, girl.", "Hungry, are you?", "Good beast.", "There you go."),
+    "DELIVERING_WHEAT": ("Off to the mill.", "Wheat for the mill.", "Time to deliver this."),
 }
 
 #: Thoughts driven by what an actor knows, by intent, for when the decision's

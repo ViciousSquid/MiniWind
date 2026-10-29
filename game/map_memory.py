@@ -226,7 +226,7 @@ class MapMemory:
                 p["dead"] = True
                 p["hidden"] = True
                 changed = True
-            elif kind == "container":
+            elif kind == "container" or p.get("windmill"):
                 cid = str(p.get("id"))
                 if cid in conts:
                     p["inventory"] = copy.deepcopy(conts[cid])
@@ -356,7 +356,7 @@ class MapMemory:
     def save(self) -> None:
         if not self.key:
             return
-        for t in self.session._things_of_type("container"):
+        for t in self.session._container_things():
             cid = str(t.properties.get("id") or "")
             if cid:
                 self.record["containers"][cid] = t.properties.get("inventory") or []

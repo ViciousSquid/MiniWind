@@ -107,6 +107,8 @@ def test_the_placed_mill_keeps_its_silhouette_at_rest_and_only_the_sails_move():
             full = draw([complete])
             at_rest = draw([body, rotor])
             assert np.mean(np.max(np.abs(full.astype(float) - at_rest), axis=-1) > 8) < 0.005
+            from game.rpg import inventory, items
+            inventory.add_item(inventory.get_inventory(body), items.make('wheat'))
             mills.update(SPIN_UP_SECONDS)
             turning = draw([body, rotor])
             changed = np.max(np.abs(turning.astype(float) - at_rest), axis=-1) > 8

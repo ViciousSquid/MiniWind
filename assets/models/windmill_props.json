@@ -28,7 +28,12 @@
         "collect_enabled": false,
         "physics_enabled": false,
         "no_collision": true,
-        "mill_producing": true
+        "windmill": true,
+        "display_name": "Windmill",
+        "inventory": [],
+        "use_radius": 280.0,
+        "owner_faction": "villagers",
+        "owner_name": "the villagers"
       },
       "io_connections": []
     },
