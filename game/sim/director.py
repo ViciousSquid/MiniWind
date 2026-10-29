@@ -214,6 +214,11 @@ def _within(points, pos, radius: float):
     return np.nonzero(dx * dx + dz * dz <= _pad(radius))[0].tolist()
 
 
+def _unreported_crimes(facts):
+    """The crimes in *facts* this holder has not yet reported, in order."""
+    return [f for f in facts if crime.is_crime(f) and not f.get("reported")]
+
+
 class _DirtyActors(set):
     """Dirty flags with a revision that survives a decision consuming a flag."""
 
@@ -638,8 +643,7 @@ class Director:
             if not wkey or crime.is_lawful(_props(witness)):
                 continue
             # Read-only: tell() copies a fact before passing it on.
-            crimes = [f for f in knowledge.facts_view(self.store, wkey)
-                      if crime.is_crime(f) and not f.get("reported")]
+            crimes = knowledge.derived_view(self.store, wkey, _unreported_crimes)
             if not crimes:
                 continue
             if okeys is None:
@@ -679,8 +683,9 @@ class Director:
             if not okey:
                 continue
             oprops = _props(officer)
-            # A snapshot: marking one charge reported does not change this list.
-            for f in knowledge.facts_view(self.store, okey):
+            # Only crimes not yet reported can be charged (report() checks the
+            # rest). A snapshot: marking one reported does not change this list.
+            for f in knowledge.derived_view(self.store, okey, _unreported_crimes):
                 amount = crime.report(self.store, f, okey, oprops)
                 if amount <= 0:
                     continue
