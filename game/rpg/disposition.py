@@ -114,6 +114,37 @@ def mem_key(npc_props: Dict) -> str:
     return key
 
 
+def peek_mem_key(npc_props: Dict) -> str:
+    """:func:`mem_key` without caching it: never writes to *npc_props*.
+
+    For read-only projections (the storyteller, faction ledgers), which used to
+    copy every actor's whole properties dict just to keep mem_key's cache off it.
+    """
+    if not isinstance(npc_props, dict):
+        return ""
+    cached = npc_props.get(_MEM_KEY_CACHE)
+    if cached is not None:
+        return cached
+    for field in ("_memory_identity", "id", "name", "display_name", "npc_role"):
+        v = npc_props.get(field)
+        if v:
+            # An uninspected actor is peeked at every sample: memoise its slug
+            # here, since its own properties are not ours to cache it on.
+            key = _PEEKED.get(v) if isinstance(v, str) else None
+            if key is None:
+                key = _slug(v)
+                if isinstance(v, str):
+                    if len(_PEEKED) >= 16384:
+                        _PEEKED.clear()
+                    _PEEKED[v] = key
+            return key
+    return ""
+
+
+#: identity string -> slug, for :func:`peek_mem_key` (bounded).
+_PEEKED: Dict[str, str] = {}
+
+
 def forget_mem_key(npc_props: Dict) -> None:
     """Drop a cached identity key after renaming or re-identifying an actor."""
     if isinstance(npc_props, dict):

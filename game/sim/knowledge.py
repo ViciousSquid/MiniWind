@@ -128,6 +128,38 @@ def facts(store, key: str) -> List[Dict]:
     return [f for f in data if isinstance(f, dict)] if isinstance(data, list) else []
 
 
+#: ``store key -> (serialized beliefs, parsed facts)`` behind :func:`facts_view`.
+#: Validated against the serialized string on every read, so a write by any
+#: path is seen at once; bounded so a long session cannot grow it unchecked.
+_VIEWS: Dict[str, tuple] = {}
+_VIEW_CAP = 8192
+
+
+def facts_view(store, key: str) -> List[Dict]:
+    """:func:`facts` for read-only callers: parsed once per change, shared.
+
+    The list and its facts are shared with every other reader of the same
+    beliefs and must not be mutated; copy a fact before changing it. The hot
+    samplers (the storyteller, the director's report pass) read the same
+    unchanged beliefs every tick, and JSON parsing was most of their cost."""
+    raw = token(store, key)
+    if raw in (None, "", "false"):
+        return []
+    base = _base(key)
+    cached = _VIEWS.get(base)
+    if cached is not None and (cached[0] is raw or cached[0] == raw):
+        return cached[1]
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        data = None
+    parsed = [f for f in data if isinstance(f, dict)] if isinstance(data, list) else []
+    if len(_VIEWS) >= _VIEW_CAP:
+        _VIEWS.clear()
+    _VIEWS[base] = (raw, parsed)
+    return parsed
+
+
 def _write(store, key: str, items: Sequence[Dict]) -> None:
     if store is None or not key:
         return

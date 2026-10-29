@@ -69,6 +69,24 @@ def slug(text) -> str:
                    for ch in str(text)).strip("_")
 
 
+def _disposition():
+    """game.rpg.disposition, resolved once (None where the rpg core is absent).
+
+    Identity is asked for every actor several times per tick; an import
+    statement in the call cost a trip through the import machinery each time."""
+    global _DISPOSITION
+    if _DISPOSITION is None:
+        try:
+            from ..rpg import disposition
+        except Exception:
+            disposition = False
+        _DISPOSITION = disposition
+    return _DISPOSITION or None
+
+
+_DISPOSITION = None
+
+
 def actor_key(thing) -> str:
     """A stable identity key for any actor.
 
@@ -86,14 +104,41 @@ def actor_key(thing) -> str:
         return ""
     if props.get("is_player") or props.get("_player"):
         return PLAYER_KEY
-    try:
-        from ..rpg.disposition import mem_key
-        return mem_key(props)
-    except Exception:
-        for field in ("id", "name", "display_name", "npc_role"):
-            v = props.get(field)
-            if v:
-                return slug(v)
+    disposition = _disposition()
+    if disposition is not None:
+        try:
+            return disposition.mem_key(props)
+        except Exception:
+            pass
+    for field in ("id", "name", "display_name", "npc_role"):
+        v = props.get(field)
+        if v:
+            return slug(v)
+    return ""
+
+
+def peek_actor_key(thing) -> str:
+    """:func:`actor_key` for read-only callers: the same key, but the actor's
+    properties are never written (no identity cache is stored on them)."""
+    if thing is None:
+        return ""
+    if isinstance(thing, str):
+        return slug(thing)
+    props = getattr(thing, "properties", None)
+    if not isinstance(props, dict):
+        return ""
+    if props.get("is_player") or props.get("_player"):
+        return PLAYER_KEY
+    disposition = _disposition()
+    if disposition is not None:
+        try:
+            return disposition.peek_mem_key(props)
+        except Exception:
+            pass
+    for field in ("id", "name", "display_name", "npc_role"):
+        v = props.get(field)
+        if v:
+            return slug(v)
     return ""
 
 
@@ -377,12 +422,12 @@ class Director:
 
     def evaluate(self, thing) -> List[Intent]:
         """Read-only appraisal at a mention/materialisation/journey touchpoint."""
-        from types import SimpleNamespace
-        view = SimpleNamespace(properties=dict(_props(thing)))
-        key = actor_key(view)
+        props = _props(thing)
+        key = peek_actor_key(thing)
         facts = self.fact_reader(key) if self.fact_reader is not None else knowledge.facts(self.store, key)
         mood = self.mood_context(thing, facts) if self.mood_context is not None else None
-        return appraisal.appraise_all(view.properties, key, facts, self.ctx, mood=mood)
+        # Appraisal reads a detached copy, so nothing it does reaches the actor.
+        return appraisal.appraise_all(dict(props), key, facts, self.ctx, mood=mood)
 
     def intents(self, thing, refresh: bool = False) -> List[Intent]:
         """This actor's ranked intents, recomputed only when their beliefs moved."""
@@ -426,8 +471,7 @@ class Director:
             self._dirty.add(key)
 
     def knowledge_lines(self, thing, limit: int = 8) -> List[str]:
-        from types import SimpleNamespace
-        return knowledge.summary(self.store, actor_key(SimpleNamespace(properties=dict(_props(thing)))), limit)
+        return knowledge.summary(self.store, peek_actor_key(thing), limit)
 
     # ----------------------------------------------------------------- ticks
     def tick(self, actors: Sequence, hours: float, distant: Sequence = ()) -> None:
