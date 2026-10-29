@@ -1,0 +1,113 @@
+{
+  "description": "Fio Prop placement records at game scale; model origins and sprite footprint anchors are ground-centered.",
+  "things": [
+    {
+      "type": "prop",
+      "pos": [
+        -1050,
+        0,
+        0
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Windmill GLB",
+        "id": "ef9ca1cb-0e2f-55e2-87df-0853cb0eb7e8",
+        "render_mode": "model",
+        "model_path": "assets/models/windmill.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        -350,
+        0,
+        0
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Windmill OBJ",
+        "id": "9f5e4394-24c0-5688-b74b-34b35b0e684b",
+        "render_mode": "model",
+        "model_path": "assets/models/windmill/windmill.obj",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        350,
+        1,
+        0
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "windmill_topdown",
+        "id": "8972310e-06b4-5321-af1c-3a7a3d0c98a9",
+        "render_mode": "billboard",
+        "sprite_path": "assets/sprites/scenery/windmill_topdown.png",
+        "sprite_size": [
+          720,
+          720
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        1050,
+        1,
+        0
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "windmill_overhead",
+        "id": "4189f339-fd63-51ae-8a43-a61b462cda3a",
+        "render_mode": "billboard",
+        "sprite_path": "assets/sprites/scenery/windmill_overhead.png",
+        "sprite_size": [
+          860,
+          860
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true
+      },
+      "io_connections": []
+    }
+  ]
+}

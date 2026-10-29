@@ -1,0 +1,72 @@
+"""The bundled windmill imports at the same human scale in both Fio loaders."""
+
+import json
+from pathlib import Path
+
+import numpy as np
+import pytest
+from PIL import Image
+
+pytest.importorskip('OpenGL')
+from engine.obj_loader import OBJLoader
+from engine.glb_loader import GLBLoader
+
+ROOT = Path(__file__).resolve().parents[2]
+FOLDER = ROOT / 'assets/models/windmill'
+pytestmark = pytest.mark.qt
+
+
+def _load_obj():
+    obj = OBJLoader()
+    assert obj.load(str(FOLDER / 'windmill.obj'))
+    return obj
+
+
+def test_obj_and_glb_have_the_same_upright_ground_origin_and_dimensions():
+    obj = _load_obj()
+    glb = GLBLoader()
+    assert glb.load(str(FOLDER.parent / 'windmill.glb'))
+    a, b = np.asarray(obj.vertices), np.asarray(glb.get_flattened_vertices())
+    assert obj.up_axis == 'y'
+    np.testing.assert_allclose(a.min(0), b.min(0), atol=1e-3)
+    np.testing.assert_allclose(a.max(0), b.max(0), atol=1e-3)
+    assert a[:, 1].min() == pytest.approx(0)
+    assert 800 < a[:, 1].max() < 900             # about eight 100-unit players
+    assert 570 < np.ptp(a[:, 0]) < 600
+    assert len(obj.faces) < 10000 and len(glb.get_flattened_triangles()) < 10000
+    info = json.loads((FOLDER / 'windmill.json').read_text())
+    np.testing.assert_allclose(a.max(0), info['bounds_max'], atol=1e-3)
+
+
+def test_the_door_fits_the_100_unit_player_and_sails_clear_their_head():
+    obj = _load_obj()
+    def material_vertices(name):
+        return np.asarray([obj.vertices[index[0]] for face in obj.faces
+                           if face['material'] == name for index in face['vertices']])
+    door = material_vertices('Door')
+    door = door[door[:, 1] < 120]               # the same timber also frames upper windows
+    assert np.ptp(door[:, 1]) == pytest.approx(106)
+    assert material_vertices('Sail_red')[:, 1].min() > 200
+
+
+def test_both_model_texture_paths_resolve_in_the_packaged_layout():
+    obj = _load_obj()
+    brick = obj.materials['Brick']
+    assert brick['texture'] == 'brick_albedo.png'
+    assert (FOLDER / brick['texture']).is_file()
+    assert tuple(brick['color']) == (1, 1, 1)
+    glb = GLBLoader()
+    assert glb.load(str(FOLDER.parent / 'windmill.glb'))
+    assert glb.materials['Brick']['texture'] == 'windmill/brick_albedo.png'
+    assert (FOLDER.parent / glb.materials['Brick']['texture']).is_file()
+
+
+@pytest.mark.parametrize('name', ['windmill_topdown.png', 'windmill_overhead.png'])
+def test_rendered_sprites_have_real_alpha_and_a_clear_gutter(name):
+    with Image.open(ROOT / 'assets/sprites/scenery' / name) as image:
+        assert image.mode == 'RGBA' and image.size == (1024, 1024)
+        alpha = image.getchannel('A')
+        assert alpha.getextrema() == (0, 255)
+        left, top, right, bottom = alpha.getbbox()
+        assert min(left, top) >= 8 and max(right, bottom) <= 1016
+        assert alpha.getpixel((512, 512)) > 240    # footprint stays at canvas center
