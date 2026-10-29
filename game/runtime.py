@@ -1452,10 +1452,22 @@ class MiniwindSession(SettlementLaw):
         player_head = str(getattr(self.game.character, "head", "") or "")
         registry = self.head_registry
         registry.set_player(player_head)
-        things = fio.things(self.logic)
+        things = list(fio.things(self.logic))
         changed = False
         deck = {}
-        for t in things:
+
+        def authored_first(thing):
+            p = getattr(thing, "properties", None)
+            if not is_head_npc(p):
+                return 2
+            cur = str(p.get("head", "") or "")
+            return 0 if (heads.is_any_head(cur) and cur != player_head
+                         and (heads.is_guard_head(cur) == heads.is_guard(p))) else 1
+
+        # Claim all valid authored faces first. Otherwise an earlier anonymous
+        # grain carrier could take a later named character's chosen portrait.
+        # Stable sort preserves authored scene order for legacy duplicates.
+        for t in sorted(things, key=authored_first):
             p = getattr(t, "properties", None)
             if not isinstance(p, dict):
                 continue
