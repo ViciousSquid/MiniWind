@@ -100,7 +100,7 @@ def wheat_stage(year_fraction: float) -> Tuple[float, float, float]:
 #: Tundra: tall leafy shrub-grass. Sizes are multiples of the blade height;
 #: tufts per chunk at full coverage, stems per tuft and tuft radius.
 TUNDRA_SIZE = (6.0, 11.0)
-TUNDRA_MAX_PER_CHUNK = 14000
+TUNDRA_MAX_PER_CHUNK = 28000
 TUNDRA_STEMS_PER_TUFT = 7
 TUNDRA_TUFT_RADIUS = 16.0
 #: The heath's colours, and how often each grows (green leaves dominate;
