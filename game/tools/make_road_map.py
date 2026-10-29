@@ -22,6 +22,9 @@ copy (``maps/village_roads_test.json``) in which:
   ``next_node`` lists every neighbour, comma separated: the two-way
   navigation graph :mod:`game.road_nav` and :mod:`game.living.roads` walk.
 
+* **An ocean** in the south-east instead of the snowy corner: the ground
+  eases down to a flat sea floor with a sandy beach, no cliffs, and the coast
+  bends round the pass, shrine and cave there.
 * **Wheat fields** round farms, hamlets and towns and in open country (they
   grow with the seasons and part when walked through), and **pastures**:
   fenced paddocks with a gate and grazing sheep and cows.
@@ -165,11 +168,12 @@ def terrain_of(data):
 
 
 def water_rects(data):
+    """``(x0, z0, x1, z1, surface)`` of every water brush."""
     out = []
     for b in data["brushes"]:
         if b.get("shader") == "Water" or b.get("water_plane"):
-            (x, _y, z), (sx, _sy, sz) = b["pos"], b["size"]
-            out.append((x - sx / 2, z - sz / 2, x + sx / 2, z + sz / 2))
+            (x, y, z), (sx, sy, sz) = b["pos"], b["size"]
+            out.append((x - sx / 2, z - sz / 2, x + sx / 2, z + sz / 2, y + sy / 2))
     return out
 
 
@@ -321,7 +325,8 @@ def paint_fields(terrain, data, places, water):
                     continue
                 if any(math.hypot(cx - q["x"], cz - q["z"]) < float(q.get("radius", 900)) * 0.8 for q in places):
                     continue
-                if any(x0 - reach < cx < x1 + reach and z0 - reach < cz < z1 + reach for x0, z0, x1, z1 in water):
+                if any(x0 - reach < cx < x1 + reach and z0 - reach < cz < z1 + reach
+                       for x0, z0, x1, z1, _top in water):
                     continue
                 if float(desert_weight(terrain, [cx], [cz])[0]) > 0.3:
                     continue
@@ -462,6 +467,110 @@ def paint_tundra(terrain, places):
     out[..., 4] = np.clip(t * 255.0 + 0.5, 0, 255).astype(np.uint8)
     terrain.set_biome_map(out)
     return float((t > 0.5).mean())
+
+
+#: The south-east ocean: a quarter-disc from that corner reaching
+#: OCEAN_REACH of the map's width, its edge blended over OCEAN_BAND. The
+#: coast keeps OCEAN_CLEAR_IN..OUT from anything placed (a gentle peninsula,
+#: never an island cliff); the sea floor lies OCEAN_DEPTH under the surface.
+OCEAN_REACH = 0.42
+OCEAN_BAND = 0.10
+OCEAN_CLEAR_IN = 1500.0
+OCEAN_CLEAR_OUT = 6000.0
+OCEAN_DEPTH = 140.0
+BEACH_WIDTH = (-40.0, 45.0)
+
+
+def ocean_weight(terrain, gx, gz, seed=SEED + 83):
+    (min_x, max_x), (min_z, max_z) = terrain.get_terrain_bounds()
+    width = max_x - min_x
+    u = (max_x - np.asarray(gx, float)) / width
+    v = (np.asarray(gz, float) - min_z) / (max_z - min_z)
+    r = np.hypot(u, v)
+    ang = np.arctan2(v, u)
+    wobble = 0.035 * np.sin(ang * 9.0 + 0.4) + 0.02 * np.sin(ang * 23.0 + 2.9)
+    t = np.clip((OCEAN_REACH + wobble + OCEAN_BAND / 2 - r) / OCEAN_BAND, 0.0, 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def make_ocean(terrain, data):
+    """Replace the snowy south-east corner with sea.
+
+    The ground eases down to a flat sea floor (no cliffs), staying clear of
+    everything placed so the pass, shrine and cave there stand on a gently
+    sloping peninsula; one ocean water brush covers it at a sea level below
+    all the dry land it spans. Snow goes, a beach of sand runs along the
+    shore and trees left over water are felled. Returns (sea level, area)."""
+    hm = terrain.heightmap_data.astype(np.float64)
+    xs, zs = _pixel_world(terrain)
+    gx, gz = np.meshgrid(xs, zs)
+    ground = terrain._get_heights_batch(gx.ravel().astype(np.float32),
+                                        gz.ravel().astype(np.float32)).reshape(hm.shape)
+    ocean = ocean_weight(terrain, gx, gz)
+    # Stay clear of content: distance to anything placed (trees aside).
+    dist = np.full(hm.shape, np.inf)
+    step = float(xs[1] - xs[0])
+    reach = OCEAN_CLEAR_OUT
+    for x, z in ([(t["pos"][0], t["pos"][2]) for t in data["things"]]
+                 + [(b["pos"][0], b["pos"][2]) for b in data["brushes"] if not _is_tree(b)]):
+        c0 = max(0, int((x - reach - xs[0]) // step)); c1 = min(len(xs) - 1, int((x + reach - xs[0]) // step) + 1)
+        r0 = max(0, int((z - reach - zs[0]) // step)); r1 = min(len(zs) - 1, int((z + reach - zs[0]) // step) + 1)
+        if c1 < c0 or r1 < r0:
+            continue
+        dx = (xs[c0:c1 + 1] - x)[None, :]
+        dz = (zs[r0:r1 + 1] - z)[:, None]
+        win = dist[r0:r1 + 1, c0:c1 + 1]
+        np.minimum(win, np.sqrt(dx * dx + dz * dz), out=win)
+    clear = np.clip((dist - OCEAN_CLEAR_IN) / (OCEAN_CLEAR_OUT - OCEAN_CLEAR_IN), 0.0, 1.0)
+    o = ocean * clear * clear * (3 - 2 * clear)
+    # The water brush spans where the sea reaches; below every bit of dry land
+    # inside it, so nothing outside the sea is flooded.
+    wet = o > 0.02
+    rows, cols = np.nonzero(wet)
+    x0, x1 = float(xs[cols.min()]), float(xs[cols.max()])
+    z0, z1 = float(zs[rows.min()]), float(zs[rows.max()])
+    inside = (gx >= x0) & (gx <= x1) & (gz >= z0) & (gz <= z1)
+    sea = float(np.min(ground[inside & (o < 0.3)])) - 25.0
+    floor = sea - OCEAN_DEPTH
+    target = ground + o * (floor - ground)
+    delta = np.minimum(target - ground, 0.0) * protection(terrain, data, [])
+    strength = float(terrain.heightmap_strength) * float(terrain.mesh_scale)
+    terrain.heightmap_data = (hm + delta / strength).astype(terrain.heightmap_data.dtype)
+    terrain.invalidate_height_range()
+    proto = next(b for b in data["brushes"] if b.get("shader") == "Water")
+    brush = copy.deepcopy(proto)
+    brush.update(pos=[round((x0 + x1) / 2, 1), round(sea - 16.0, 1), round((z0 + z1) / 2, 1)],
+                 size=[round(x1 - x0, 1), 32.0, round(z1 - z0, 1)],
+                 id=str(uuid.uuid5(ID_NAMESPACE, "ocean")), water_wave_enabled=True,
+                 water_tint=[0.0, 0.32, 0.5], water_opacity=0.75)
+    data["brushes"].append(brush)
+    # Biomes: no snow at sea or on the shore; sand along the beach.
+    bm = terrain.biome_map.astype(np.float32)
+    brows, bcols = bm.shape[:2]
+    (min_x, max_x), (min_z, max_z) = terrain.get_terrain_bounds()
+    bx = min_x + (np.arange(bcols) + 0.5) * (max_x - min_x) / bcols
+    bz = min_z + (np.arange(brows) + 0.5) * (max_z - min_z) / brows
+    BX, BZ = np.meshgrid(bx, bz)
+    after = terrain._get_heights_batch(BX.ravel().astype(np.float32),
+                                       BZ.ravel().astype(np.float32)).reshape(brows, bcols)
+    near = ocean_weight(terrain, BX, BZ)
+    coast = np.clip(near * 3.0, 0.0, 1.0)
+    bm[..., 1] *= (1.0 - coast)
+    lo, hi = BEACH_WIDTH
+    beach = np.clip(1.0 - np.abs(after - sea - (lo + hi) / 2) / ((hi - lo) / 2), 0.0, 1.0) * coast
+    bm[..., 0] = np.maximum(bm[..., 0], beach * 255.0)
+    for ch in range(2, bm.shape[2]):
+        bm[..., ch] *= np.where(after < sea + hi, 0.0, 1.0) * coast + (1.0 - coast)
+    terrain.set_biome_map(np.clip(bm + 0.5, 0, 255).astype(np.uint8))
+    # Fell trees standing over water.
+    keep = []
+    for b in data["brushes"]:
+        if _is_tree(b) and x0 <= b["pos"][0] <= x1 and z0 <= b["pos"][2] <= z1 \
+                and float(terrain.get_height_at(b["pos"][0], b["pos"][2])) < sea + 20.0:
+            continue
+        keep.append(b)
+    data["brushes"] = keep
+    return sea, float((o > 0.5).mean())
 
 
 def realism(terrain, data, places):
@@ -688,8 +797,9 @@ class Grid:
         gx, gz = np.meshgrid(xs, zs, indexing="ij")
         self.h = terrain._get_heights_batch(gx.ravel(), gz.ravel()).reshape(self.nx, self.nz)
         self.water = np.zeros((self.nx, self.nz), bool)
-        for x0, z0, x1, z1 in water:
-            self.water |= (gx >= x0) & (gx <= x1) & (gz >= z0) & (gz <= z1)
+        for x0, z0, x1, z1, top in water:
+            # Wet only where the ground is actually under the surface.
+            self.water |= (gx >= x0) & (gx <= x1) & (gz >= z0) & (gz <= z1) & (self.h < top + 1.0)
         self.used = np.zeros((self.nx, self.nz), bool)
         # Mountains, relative to where people actually live.
         homes = [float(terrain.get_height_at(p["x"], p["z"])) for p in places] or [float(np.median(self.h))]
@@ -967,8 +1077,7 @@ def render(path, grid, places, roads, nodes, edges, terrain=None, data=None, siz
     legend = [("Town", colour["town"]), ("Hamlet", colour["hamlet"]), ("Inn", colour["inn"]),
               ("Farm", colour["farm"]), ("Road (stamped)", (214, 172, 108)),
               ("Desert", (214, 180, 118)), ("Tundra heath", (196, 104, 38)),
-              ("Wheat field", (226, 190, 70)),
-              ("Wheat", (206, 172, 80)), ("Tree brush", (28, 72, 30)),
+              ("Wheat field", (226, 190, 70)), ("Tree brush", (28, 72, 30)), ("Ocean / water", (60, 110, 170)),
               ("ROAD_* path node / link", (255, 230, 40))]
     draw.rectangle((10, 10, 260, 22 + 22 * len(legend)), fill=(0, 0, 0, 160))
     for i, (label, c) in enumerate(legend):
@@ -995,6 +1104,7 @@ def make(source=SOURCE, out=OUT, preview=PREVIEW):
     feet = footprint_points(data)
     before = terrain._get_heights_batch(feet[:, 0], feet[:, 1])
     protected, reshaped = realism(terrain, data, list(places.values()))
+    sea, ocean = make_ocean(terrain, data)
     after = terrain._get_heights_batch(feet[:, 0], feet[:, 1])
     moved = float(np.abs(after - before).max()) if len(feet) else 0.0
     # Never let anything end up inside or under the terrain.
@@ -1030,7 +1140,7 @@ def make(source=SOURCE, out=OUT, preview=PREVIEW):
                 nodes=len(nodes), links=len(edges), protected_pixels=protected,
                 max_reshape=round(reshaped, 1), checked_points=len(feet),
                 max_change_under_placed=round(moved, 4), desert_fraction=round(desert, 3),
-                tundra_fraction=round(tundra, 3), wheat_plots=plots, paddocks=paddocks, animals=animals,
+                tundra_fraction=round(tundra, 3), sea_level=round(sea, 1), ocean_fraction=round(ocean, 3), wheat_plots=plots, paddocks=paddocks, animals=animals,
                 forest=forest, desert_trees=dried, trees=seated)
 
 
