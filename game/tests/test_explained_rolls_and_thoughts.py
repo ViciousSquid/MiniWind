@@ -135,6 +135,34 @@ def test_a_thought_keeps_the_working_for_the_inspector():
     assert text == "Rufus attacked me and I am no fighter."
 
 
+def test_a_reason_too_long_for_a_bubble_is_said_briefly_naming_who():
+    props = {"name": "Ann", "sched_state": "COMBAT", "_sim_intent": "FIGHT", "_sim_target": "Rufus",
+             "_sim_reason": "Rufus killed Mara, my sister, and I swore an oath"}
+    key, text = mental_state.thought(props)
+    assert key == "intent:FIGHT:" + props["_sim_reason"]
+    assert text in [t.format(who="Rufus") for t in mental_state._INTENT_THOUGHTS["FIGHT"]]
+
+
+def test_every_thought_is_brief():
+    lines = [t for options in (*mental_state._THOUGHTS.values(),
+                                *mental_state._INTENT_THOUGHTS.values()) for t in options]
+    lines += list(mental_state.REPORT_CRIES)
+    for text in lines:
+        assert len(text.format(target="X", who="X").split()) <= mental_state.THOUGHT_WORDS, text
+    # Most are very short.
+    assert sum(len(t.split()) <= 4 for t in lines) > len(lines) * 2 / 3
+
+
+def test_new_situations_have_thoughts():
+    for state in ("TRAVEL", "RESTING", "AWAKENED", "INVESTIGATE", "CONFRONT"):
+        assert mental_state.thought({"name": "F", "sched_state": state})[1], state
+    key, text = mental_state.thought({"name": "F", "sched_state": "WANDER",
+                                      "health": 10, "max_health": 100})
+    assert key == "wounded" and text
+    assert mental_state.thought({"name": "F", "sched_state": "WANDER",
+                                 "health": 90, "max_health": 100})[1] == ""
+
+
 def test_needs_and_routine_have_thoughts_and_idling_has_none():
     assert mental_state.thought({"name": "F", "sched_state": "GOING_HOME",
                                  "_need_reason": "hungry"})[0] == "hungry"

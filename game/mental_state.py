@@ -428,29 +428,57 @@ def _build_tasks(props, sched_state, target, investigating, confidence):
 #: First-person lines per situation. One is picked per actor and situation
 #: (stable, not random) so an NPC does not change its mind about how to put it.
 _THOUGHTS = {
-    "flee": ("Too dangerous — I'm getting out of here!", "Run! Run!",
-             "I'm no fighter. I need to hide."),
-    "rally": ("There are enough of us — we can take them!",
-              "Together! Drive them off!"),
-    "alert": ("Something's wrong... I'll keep my distance.",
-              "Easy now. Watch them closely."),
-    "subdue": ("Enough brawling — break it up!",),
-    "combat": ("{target} — you'll regret this!", "Have at you, {target}!",
-               "{target}! To arms!"),
-    "hunt": ("Fresh meat...", "There — prey!", "Easy pickings."),
-    "pursue": ("You won't escape the law!", "After them!"),
-    "search": ("Where did they go?", "They can't have gone far..."),
-    "arrest": ("Stop right there, criminal!",),
-    "escort": ("Come quietly now.",),
-    "follow": ("Right behind you.", "Lead on."),
-    "exhausted": ("So tired... I need to lie down.", "Can barely keep my eyes open."),
-    "hungry": ("My stomach's growling — time to eat.", "Can't work on an empty belly."),
-    "GOING_TO_WORK": ("Time to get to work.", "Another day, another coin."),
-    "WORKING": ("Back to it.", "Busy, busy."),
-    "GOING_HOME": ("That's enough for today.", "Home for the night."),
+    "flee": ("I'm no fighter. I need to hide.", "Run!", "Run! Run!", "Get away!", "Not today!", "I need to hide.",
+             "Too dangerous!", "Help me!"),
+    "rally": ("Together! Drive them off!", "With me!", "We outnumber them!",
+              "Stand fast!", "Hold the line!"),
+    "alert": ("Something's not right here. Keep your distance.", "Something's wrong...", "Easy now.", "Watch them.", "What was that?",
+              "Careful..."),
+    "subdue": ("Break it up!", "Enough!", "Stop this!"),
+    "combat": ("{target}! To arms!", "Have at you, {target}!", "You'll regret this!",
+               "Die, {target}!", "Come on, then!", "For my life!"),
+    "hunt": ("Fresh meat...", "There — prey!", "Easy pickings.", "Fresh blood...",
+             "Get them!"),
+    "pursue": ("After them!", "Stop, thief!", "You won't escape!", "Halt!"),
+    "search": ("They can't have gone far, keep looking.", "Where did they go?", "Can't be far...", "Check over there.",
+               "Show yourself!"),
+    "arrest": ("Stop, criminal!", "Halt, in the law's name!", "You're under arrest!"),
+    "escort": ("Come quietly now.", "This way.", "No tricks."),
+    "follow": ("Right behind you.", "Lead on.", "With you."),
+    "exhausted": ("So tired...", "Need my bed.", "Can't keep my eyes open."),
+    "hungry": ("Time to eat.", "So hungry...", "Stomach's growling."),
+    "wounded": ("I need a healer.", "It hurts...", "Need to rest.", "Bleeding..."),
+    "GOING_TO_WORK": ("Off to work.", "Another day, another coin.", "Mustn't be late."),
+    "WORKING": ("This won't finish itself, will it?", "Back to it.", "Busy, busy.", "Nearly done.", "Hard work."),
+    "GOING_HOME": ("That's enough for one day, I reckon.", "Home for the night.", "Enough for today.", "Supper awaits."),
     "SLEEPING": ("Zzz...",),
-    "PATROL": ("All quiet. Keep walking.", "Eyes open, stay sharp."),
+    "AWAKENED": ("What was that?", "Who's there?", "Huh? Trouble?"),
+    "PATROL": ("All quiet. Keep walking, eyes open.", "All quiet.", "Eyes open.", "Stay sharp.", "Quiet night."),
+    "TRAVEL": ("Should reach town before dark, gods willing.", "Long road yet.", "Keep moving.", "Mind the road."),
+    "RESTING": ("A moment's rest.", "Good to stop.", "Sore feet."),
+    "INVESTIGATE": ("What happened here?", "Something's off.", "Let's have a look."),
+    "CONFRONT": ("Where are they?", "I'll have words.", "Not letting this go."),
 }
+
+#: Thoughts driven by what an actor knows, by intent, for when the decision's
+#: own reason is too long for a bubble: short, naming *who* (the intent's
+#: target). The full reason always stays in the inspector.
+_INTENT_THOUGHTS = {
+    "FIGHT": ("{who} will pay!", "Get {who}!", "No mercy, {who}!", "Now, {who}!"),
+    "FLEE": ("Run!", "Away from {who}!", "Not me!", "Must hide!"),
+    "REPORT": ("Must tell the watch!", "To the watch!", "The guards must know!"),
+    "CONFRONT": ("{who} took mine!", "Oi, {who}!", "I want it back!"),
+    "ARREST": ("Halt, {who}!", "{who}, you're arrested!", "In the law's name!"),
+    "INVESTIGATE": ("What happened here?", "Something's off.", "Trouble here..."),
+    "MOURN": ("Gone...", "Why them?", "I can't bear it.", "Rest easy..."),
+}
+
+#: Most words a thought may use: bubbles are glanced at, not read. Most
+#: lines are far shorter; a decision's own reason is shown when it fits.
+THOUGHT_WORDS = 8
+#: At or under this fraction of maximum health, an otherwise idle actor
+#: thinks of its wounds.
+WOUNDED_FRACTION = 0.35
 
 #: What a witness running to the watch sometimes shouts instead of thinking
 #: their reason through: one in REPORT_CRY_ODDS, stable per actor and errand.
@@ -466,6 +494,15 @@ URGENT_THOUGHTS = frozenset(("flee", "rally", "alert", "subdue", "combat", "hunt
 def _pick(options, *salt) -> str:
     import zlib
     return options[zlib.crc32("|".join(str(s) for s in salt).encode()) % len(options)]
+
+
+def _brief(reason, intent: str, name: str, key: str, who: str) -> str:
+    """The decision's own words when they fit a bubble, else a short line."""
+    plain = _plain_reason(reason) + "."
+    options = _INTENT_THOUGHTS.get(intent)
+    if len(plain.split()) <= THOUGHT_WORDS or not options:
+        return plain
+    return _pick(options, name, key).format(who=who)
 
 
 def _report_cry(name: str, key: str, text: str) -> str:
@@ -490,9 +527,10 @@ def thought(props, target_name: Optional[str] = None) -> Tuple[str, str]:
 
     *situation* is a stable key that changes only when the actor's reason for
     what it is doing changes — the HUD shows a fresh thought on each change.
-    *text* is the first-person line to show ("Somebody must tell the watch
-    what Rufus did."), empty when there is nothing worth saying (idling,
-    wandering). Pure: reads only the actor's properties.
+    *text* is the first-person line to show, at most :data:`THOUGHT_WORDS`
+    words ("Rufus took what is mine.", "Must tell the watch!"), empty when
+    there is nothing worth saying (idling, wandering). Pure: reads only the
+    actor's properties.
     """
     if not isinstance(props, dict) or props.get("dead"):
         return "", ""
@@ -504,10 +542,12 @@ def thought(props, target_name: Optional[str] = None) -> Tuple[str, str]:
     def line(key, **fmt):
         return key, _pick(_THOUGHTS[key], name, key).format(**fmt)
 
+    who = str(props.get("_sim_target") or target_name or "them")
     if props.get("_flee") or state == "FLEE":
         reason = props.get("_sim_reason") if props.get("_sim_intent") == "FLEE" else ""
         if reason:
-            return "flee:" + str(reason), _plain_reason(reason) + "."
+            key = "flee:" + str(reason)
+            return key, _brief(reason, "FLEE", name, key, who)
         return line("flee")
     if props.get("_subduing"):
         return line("subdue")
@@ -521,13 +561,15 @@ def thought(props, target_name: Optional[str] = None) -> Tuple[str, str]:
         return line("search")
     if state == "ESCORT":
         return line("escort")
-    # Something the actor knows is driving it: say it in the decision's words.
+    # Something the actor knows is driving it: say it in the decision's words
+    # when they are brief, else a few words about whom. The full reason is
+    # always the inspector's and "What's on your mind?"'s.
     intent = str(props.get("_sim_intent") or "")
     reason = props.get("_sim_reason")
     acting_on_it = state in ("REPORT", "CONFRONT", "INVESTIGATE", "COMBAT")
     if reason and (intent == "MOURN" or (acting_on_it and intent not in ("IGNORE", "WARM"))):
         key = "intent:" + intent + ":" + str(reason)
-        text = _plain_reason(reason) + "."
+        text = _brief(reason, intent, name, key, who)
         if state == "REPORT":
             text = _report_cry(name, key, text)
         return key, text
@@ -544,6 +586,12 @@ def thought(props, target_name: Optional[str] = None) -> Tuple[str, str]:
     need = props.get("_need_reason")
     if need in ("exhausted", "hungry"):
         return line(need)
+    try:
+        hurt = float(props["health"]) / float(props["max_health"]) <= WOUNDED_FRACTION
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        hurt = False
+    if hurt and state not in ("SLEEPING",):
+        return line("wounded")
     if state in _THOUGHTS:
         return line(state)
     return state.lower(), ""
