@@ -37,10 +37,21 @@ def member_identity(member):
                or member.get("id") or member.get("name") or "").strip()
 
 
+# Human opponents are authored as Fio creatures but are still individuals.
+# Wildlife, skeletons, wraiths and other species-specific visuals are excluded.
+PERSON_CREATURE_ROLES = frozenset({
+    "bandit", "bandit_archer", "bandit_chief", "cultist",
+})
+
+
 def npc(props):
-    """The rule applies to people; animal/monster species sprites are separate."""
-    return (isinstance(props, dict) and
-            str(props.get("type", "")).replace("_", "").lower() == "npc")
+    """Every human individual, irrespective of their Fio entity class."""
+    if not isinstance(props, dict):
+        return False
+    kind = str(props.get("type", "")).replace("_", "").lower()
+    return kind == "npc" or (
+        kind in ("creature", "monster")
+        and str(props.get("npc_role", "")).lower() in PERSON_CREATURE_ROLES)
 
 
 def image_key(head_id):
