@@ -22,6 +22,13 @@ copy (``maps/village_roads_test.json``) in which:
   ``next_node`` lists every neighbour, comma separated: the two-way
   navigation graph :mod:`game.road_nav` and :mod:`game.living.roads` walk.
 
+* **Terrain realism**: craggier ridged mountains and gently rolling lowlands,
+  baked into the heightmap. The terrain is untouched within
+  :data:`PROTECT_IN` of every thing, brush footprint and settlement, and the
+  tool refuses to save if the ground moves by more than 0.01 units under
+  anything placed. Nothing can end up inside or under the terrain. Roads are
+  routed afterwards, on the final ground.
+
 It also renders a top-down preview of the result (``docs/screenshots/``).
 Deterministic: the same source always gives the same map, ids included.
 """
@@ -82,6 +89,16 @@ STAMP_FEATHER = 0.55
 NODE_SPACING = 640.0
 NODE_MERGE = 320.0
 NODE_LIFT = 24.0
+#: Terrain realism (world units): craggy ridged detail on mountains, up to
+#: RIDGE_AMP, scaled by how far above the settlements' level the ground is;
+#: gentle rolling relief of LOW_AMP on the lowlands.
+RIDGE_AMP = 340.0
+LOW_AMP = 34.0
+#: Nothing placed is ever touched: the terrain is unchanged within
+#: PROTECT_IN of every thing, every brush's footprint and every settlement,
+#: and only fully reshaped beyond PROTECT_OUT.
+PROTECT_IN = 320.0
+PROTECT_OUT = 1100.0
 ID_NAMESPACE = uuid.UUID("7d9b2e3e-58e4-4a6f-9b0a-6e2f1f4c1a77")
 
 
@@ -114,6 +131,105 @@ def water_rects(data):
             (x, _y, z), (sx, _sy, sz) = b["pos"], b["size"]
             out.append((x - sx / 2, z - sz / 2, x + sx / 2, z + sz / 2))
     return out
+
+
+# ------------------------------------------------------------------- terrain
+def _pixel_world(terrain):
+    """World x (per column) and z (per row) of every heightmap pixel."""
+    (min_x, max_x), (min_z, max_z) = terrain.get_terrain_bounds()
+    rows, cols = terrain.heightmap_data.shape
+    return (min_x + np.arange(cols) * (max_x - min_x) / (cols - 1),
+            min_z + np.arange(rows) * (max_z - min_z) / (rows - 1))
+
+
+def protection(terrain, data, places):
+    """Per-pixel weight 0..1: 0 wherever anything placed could be affected.
+
+    The distance from each heightmap pixel to the nearest thing, brush
+    footprint or settlement, eased from 0 at PROTECT_IN to 1 at PROTECT_OUT.
+    PROTECT_IN exceeds a pixel's diagonal, so every pixel a protected point
+    is interpolated from has weight 0: its ground cannot move at all."""
+    xs, zs = _pixel_world(terrain)
+    step = float(xs[1] - xs[0])
+    dist = np.full((len(zs), len(xs)), np.inf)
+    reach = PROTECT_OUT
+
+    def mark(cx, cz, hx, hz):
+        c0 = max(0, int((cx - hx - reach - xs[0]) // step))
+        c1 = min(len(xs) - 1, int((cx + hx + reach - xs[0]) // step) + 1)
+        r0 = max(0, int((cz - hz - reach - zs[0]) // step))
+        r1 = min(len(zs) - 1, int((cz + hz + reach - zs[0]) // step) + 1)
+        if c1 < c0 or r1 < r0:
+            return
+        dx = np.maximum(np.abs(xs[c0:c1 + 1] - cx) - hx, 0.0)[None, :]
+        dz = np.maximum(np.abs(zs[r0:r1 + 1] - cz) - hz, 0.0)[:, None]
+        window = dist[r0:r1 + 1, c0:c1 + 1]
+        np.minimum(window, np.sqrt(dx * dx + dz * dz), out=window)
+
+    for t in data["things"]:
+        pos = t.get("pos") or (0, 0, 0)
+        mark(float(pos[0]), float(pos[2]), 0.0, 0.0)
+    for b in data["brushes"]:
+        (x, _y, z), (sx, _sy, sz) = b["pos"], b["size"]
+        mark(float(x), float(z), abs(float(sx)) / 2, abs(float(sz)) / 2)
+    for p in places:
+        r = float(p.get("radius", 900.0))
+        mark(p["x"], p["z"], r * 0.7, r * 0.7)
+    t = np.clip((dist - PROTECT_IN) / (PROTECT_OUT - PROTECT_IN), 0.0, 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def ridged(shape, scale, seed, octaves=4):
+    """Ridged multifractal in [0, 1]: sharp crests and creased gullies."""
+    out = np.zeros(shape)
+    total = 0.0
+    for o in range(octaves):
+        n = noise_field(shape[1], shape[0], scale / 2 ** o, seed + o).T
+        r = 1.0 - np.abs(2.0 * n - 1.0)
+        weight = 0.55 ** o
+        out += weight * r * r
+        total += weight
+    return out / total
+
+
+def realism(terrain, data, places):
+    """Craggier mountains and gently rolling lowlands, away from anything placed.
+
+    Returns ``(protected, max_change)``. Only heightmap pixels with
+    protection weight above zero change."""
+    hm = terrain.heightmap_data.astype(np.float64)
+    xs, zs = _pixel_world(terrain)
+    gx, gz = np.meshgrid(xs, zs)
+    ground = terrain._get_heights_batch(gx.ravel().astype(np.float32),
+                                        gz.ravel().astype(np.float32)).reshape(hm.shape)
+    homes = [float(terrain.get_height_at(p["x"], p["z"])) for p in places] or [float(np.median(ground))]
+    base = float(np.percentile(homes, 80)) + 80.0
+    top = max(base + 1.0, float(np.percentile(ground, 99)))
+    mountain = np.clip((ground - base) / (top - base), 0.0, 1.0) ** 0.8
+    crags = ridged(hm.shape, 26.0, SEED + 11)            # ~2.8 km features down to ~350 m
+    rolling = noise_field(hm.shape[1], hm.shape[0], 14.0, SEED + 23).T
+    delta = (mountain * RIDGE_AMP * (crags - 0.45)
+             + (1.0 - mountain) * LOW_AMP * (2.0 * rolling - 1.0))
+    weight = protection(terrain, data, places)
+    delta *= weight
+    strength = float(terrain.heightmap_strength) * float(terrain.mesh_scale)
+    terrain.heightmap_data = (hm + delta / strength).astype(terrain.heightmap_data.dtype)
+    terrain.invalidate_height_range()
+    return int((weight == 0).sum()), float(np.abs(delta).max())
+
+
+def footprint_points(data):
+    """Where something placed meets the ground: every thing, and a grid over
+    every brush's footprint (its corners and edges included)."""
+    pts = [(float(t["pos"][0]), float(t["pos"][2])) for t in data["things"] if t.get("pos")]
+    for b in data["brushes"]:
+        (x, _y, z), (sx, _sy, sz) = b["pos"], b["size"]
+        hx, hz = abs(float(sx)) / 2, abs(float(sz)) / 2
+        nx, nz = max(2, int(2 * hx // 64) + 2), max(2, int(2 * hz // 64) + 2)
+        for u in np.linspace(-hx, hx, nx):
+            for v in np.linspace(-hz, hz, nz):
+                pts.append((float(x) + u, float(z) + v))
+    return np.array(pts, dtype=np.float32)
 
 
 # ------------------------------------------------------------------- routing
@@ -428,6 +544,14 @@ def make(source=SOURCE, out=OUT, preview=PREVIEW):
     data = load(source)
     places = settlements(data)
     terrain = terrain_of(data)
+    feet = footprint_points(data)
+    before = terrain._get_heights_batch(feet[:, 0], feet[:, 1])
+    protected, reshaped = realism(terrain, data, list(places.values()))
+    after = terrain._get_heights_batch(feet[:, 0], feet[:, 1])
+    moved = float(np.abs(after - before).max()) if len(feet) else 0.0
+    # Never let anything end up inside or under the terrain.
+    if moved > 0.01:
+        raise RuntimeError(f"terrain moved by {moved:.3f} under something placed")
     grid = Grid(terrain, water_rects(data), places.values())
     roads = build_roads(places, grid)
     stamps = stamp_roads(terrain, roads)
@@ -440,13 +564,16 @@ def make(source=SOURCE, out=OUT, preview=PREVIEW):
     terrain_data = terrain.to_dict()
     # Keep every saved terrain field; add the baked road paint.
     data["terrain_data"] = dict(data["terrain_data"], texture_paint=terrain_data["texture_paint"],
-                                texture_paint_resolution=terrain_data["texture_paint_resolution"])
+                                texture_paint_resolution=terrain_data["texture_paint_resolution"],
+                                heightmap_blob=terrain_data["heightmap_blob"])
     with open(out, "w", encoding="utf-8") as f:
         json.dump(data, f)
     if preview:
         render(preview, grid, places, roads, nodes, edges)
     return dict(settlements=len(places), roads=len(roads), stamps=stamps,
-                nodes=len(nodes), links=len(edges))
+                nodes=len(nodes), links=len(edges), protected_pixels=protected,
+                max_reshape=round(reshaped, 1), checked_points=len(feet),
+                max_change_under_placed=round(moved, 4))
 
 
 if __name__ == "__main__":
