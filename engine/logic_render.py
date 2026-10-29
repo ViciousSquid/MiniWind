@@ -17,6 +17,7 @@ from .change_journal import JOURNAL, STATE
 from .entity_table import ENT_PROP
 from .logic_combat import NO_PROJECTILES as _NO_PROJECTILES
 from .view_distance import ViewDistance
+from .render_camera import CameraHistory
 
 
 class LogicRender:
@@ -27,6 +28,7 @@ class LogicRender:
         self.view_distance = ViewDistance()
         self.culling_enabled = True
         self._last_edited = {}
+        self._camera_history = CameraHistory()
 
         # Health HUD fade is render-owned state. LogicThread supplies the
         # authoritative health value; this runtime owns the projection timing
@@ -617,4 +619,13 @@ class LogicRender:
             write_state.splitscreen_active = False
 
         write_state.level_complete_ui = logic.interaction_runtime.level_complete_ui
+        context = None
+        if (write_state.is_play_mode and not logic.session_runtime.world_paused
+                and logic._camera_sample_time is not None
+                and getattr(logic, 'time_scale', 1.0) > 0.0):
+            context = (id(logic.player_runtime.player), logic.camera.camera_mode,
+                       write_state.cinematic_camera_active, write_state.camera_transition_active,
+                       write_state.splitscreen_active, getattr(logic, 'time_scale', 1.0))
+        self._camera_history.capture(write_state, logic._simulation_serial,
+                                     logic._camera_sample_time, context)
         write_state.prepare_ms = (time.perf_counter() - started) * 1000.0
