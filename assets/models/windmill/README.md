@@ -24,9 +24,13 @@ All transforms are baked into the exported mesh for Fio's current loaders.
 - `../windmill.glb`: GLB model with the shared `windmill/brick_albedo.png` texture.
 - `windmill.obj`: keep `windmill.mtl` and `brick_albedo.png` beside it.
 - `windmill.json`: dimensions and sprite placement metadata.
+- `windmill.blend`: editable source with packed texture and a named rotor pivot.
 
 Keep the supplied folder structure when copying the assets into Fio. The GLB
 uses an external texture so Fio's current renderer displays the brickwork.
+
+The complete downloadable kit is `docs/downloads/miniwind-windmill-kit.zip`.
+Model and 100-unit scale previews are in `docs/screenshots/windmill-*.png`.
 
 Drop either model into the editor from the Models browser. It becomes a Prop.
 `maps/Windmill_Comparison.json` places both formats and both rendered sprites
