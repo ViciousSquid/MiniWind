@@ -74,6 +74,7 @@ class EditorStyle(QProxyStyle):
             QStyle.PM_ComboBoxFrameWidth: 1, QStyle.PM_ButtonMargin: 6,
             QStyle.PM_ButtonDefaultIndicator: 0, QStyle.PM_ButtonShiftHorizontal: 0,
             QStyle.PM_ButtonShiftVertical: 0, QStyle.PM_ScrollBarExtent: 12,
+            QStyle.PM_MenuButtonIndicator: 12, QStyle.PM_ButtonIconSize: 16,
             QStyle.PM_ScrollBarSliderMin: 24, QStyle.PM_SliderThickness: 20,
             QStyle.PM_SliderLength: 14, QStyle.PM_SliderControlThickness: 14,
             QStyle.PM_IndicatorWidth: 16, QStyle.PM_IndicatorHeight: 16,

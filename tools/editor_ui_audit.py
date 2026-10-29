@@ -56,9 +56,9 @@ class Audit:
         self.manifest = dict(metadata, frames=[], surfaces=[], errors=[], capture_complete=False)
         self._seen = set()
 
-    def settle(self):
+    def settle(self, milliseconds=20):
         loop = self.C.QEventLoop()
-        self.C.QTimer.singleShot(20, loop.quit)
+        self.C.QTimer.singleShot(milliseconds, loop.quit)
         loop.exec_(self.C.QEventLoop.ExcludeUserInputEvents)
 
     def error(self, surface):
@@ -137,7 +137,8 @@ class Audit:
         if name in self._seen:
             return
         self._seen.add(name)
-        self.settle()
+        # Asset thumbnails reflow after a 50ms resize debounce.
+        self.settle(80 if name.startswith(('main/', 'docks/assets')) else 20)
         image_name = slug(name)[:140] + "-" + hashlib.sha1(name.encode()).hexdigest()[:8] + ".png"
         pixmap = root.grab() if self.screenshots else None
         dpr = root.devicePixelRatioF()

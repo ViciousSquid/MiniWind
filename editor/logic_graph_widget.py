@@ -1419,7 +1419,8 @@ class LogicGraphWindow(QWidget):
             lambda on: self.graph_scene.set_all_pins_expanded(on))
         tb_lay.addWidget(self._chk_pins)
 
-        btn_arrange = QPushButton("⇄ Arrange")
+        btn_arrange = QPushButton("Arrange")
+        btn_arrange.setIcon(QIcon("assets/ui/controls/move.svg"))
         btn_arrange.setToolTip("Lay the graph out left-to-right by signal flow")
         btn_arrange.setFixedWidth(120)
         btn_arrange.clicked.connect(self._arrange)

@@ -679,9 +679,11 @@ class AssetBrowserTab(QWidget):
             return
         
         # Compute number of columns
-        item_width = 110  # 100px item width + 10px spacing
-        available_width = self.scroll_area.viewport().width()
-        col_count = max(1, available_width // item_width)
+        item_width = 100
+        spacing = self.grid_layout.horizontalSpacing()
+        margins = self.grid_layout.contentsMargins()
+        available_width = self.scroll_area.viewport().width() - margins.left() - margins.right()
+        col_count = max(1, (available_width + spacing) // (item_width + spacing))
         
         if col_count == self.current_cols and not force:
             return  # no change, keep existing layout
