@@ -24,7 +24,7 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install Pillow numpy
       - name: Generate distinct PNG heads
-        run: python -m game.tools.create_25_heads
+        run: python game/tools/create_25_heads.py
       - name: Confirm all 25 outputs are present and not identical
         run: |
           python - <<'PY'
