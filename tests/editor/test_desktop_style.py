@@ -174,8 +174,12 @@ def test_file_picker_size_does_not_depend_on_sidebar_entries(qt_app):
     try:
         line = dialog.fontMetrics().height()
         available = dialog.screen().availableGeometry().size() - (dialog.frameGeometry().size() - dialog.size())
-        assert dialog.width() == min(36 * line, available.width())
-        assert dialog.height() == min(24 * line, available.height())
+        if available.width() >= 36 * line and available.height() >= 24 * line:
+            assert (dialog.width(), dialog.height()) == (36 * line, 24 * line)
+        else:
+            # A work area smaller than the picker (the 512x339 macOS runner at
+            # scale 2): the window manager may shrink it further still.
+            assert dialog.width() <= available.width() and dialog.height() <= available.height()
         assert dialog.findChild(QSplitter, 'splitter').sizes()[0] == 7 * line
     finally:
         dialog.reject()
