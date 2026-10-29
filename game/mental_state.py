@@ -57,6 +57,8 @@ _STATE_BLURB = {
     "PATROL": "Patrolling",
     "REPORT": "Going to tell the watch",
     "CONFRONT": "Going to confront someone",
+    "REAPING": "Reaping the wheat",
+    "TENDING": "Tending the animals",
 }
 
 
@@ -458,6 +460,9 @@ _THOUGHTS = {
     "RESTING": ("A moment's rest.", "Good to stop.", "Sore feet."),
     "INVESTIGATE": ("What happened here?", "Something's off.", "Let's have a look."),
     "CONFRONT": ("Where are they?", "I'll have words.", "Not letting this go."),
+    "REAPING": ("Row after row.", "Good crop this year.", "Mind the blade.",
+                "Get it in before rain."),
+    "TENDING": ("Easy, girl.", "Hungry, are you?", "Good beast.", "There you go."),
 }
 
 #: Thoughts driven by what an actor knows, by intent, for when the decision's

@@ -44,6 +44,7 @@ from .rpg import items as rpg_items
 from . import library
 from . import warrior_fist
 from . import held_weapons
+from . import farm_work
 from . import party
 from .rpg import magic as rpg_magic
 from .rpg import guilds
@@ -812,6 +813,8 @@ class MiniwindSession(SettlementLaw):
                                      self._tier_of, busy=lambda t: id(t) in self.archery.drawing)
         from .held_weapons import HeldWeapons
         self.held = HeldWeapons(self)
+        #: Farmers reaping with a scythe and tending livestock by day.
+        self.farm_work = farm_work.FarmWork()
         from .dragon_fire import DragonFire
         from .wildlife import Wildlife
         from .map_memory import MapMemory
@@ -1774,6 +1777,8 @@ class MiniwindSession(SettlementLaw):
             tp = t.properties
             if tp.get("_sim_tier", TIER_NEAR) > TIER_ACTIVE:
                 continue
+            if tp.get("_farm_work"):
+                self.farm_work.update(delta, (t,))     # the scythe's swing
             was = tp.get("_was_shooting", False)
             now = tp.get("is_shooting", False)
             if now and not was:
@@ -5213,6 +5218,12 @@ class MiniwindSession(SettlementLaw):
             else:
                 p.pop("_need_reason", None)
 
+        if state == sched.WORKING and farm_work.is_farmer(p):
+            # By day a farmer reaps the wheat or tends the animals.
+            if self.farm_work.drive(self, npc):
+                return
+        elif p.get("_farm_tool"):
+            farm_work.stop(p)
         if state in (sched.WORKING, sched.GOING_TO_WORK) and p.get("patrol_markers"):
             if self._patrol(npc):
                 return
