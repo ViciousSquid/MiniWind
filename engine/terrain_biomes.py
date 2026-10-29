@@ -58,7 +58,7 @@ WHEAT_SIZE = (11.0, 17.0)
 WHEAT_COLOUR = np.array((0.86, 0.70, 0.32), np.float32)
 WHEAT_TIP = np.array((0.95, 0.84, 0.52), np.float32)
 #: Wheat tufts per chunk at full coverage, stalks per tuft, tuft radius.
-WHEAT_MAX_PER_CHUNK = 9000
+WHEAT_MAX_PER_CHUNK = 13500
 WHEAT_STALKS_PER_TUFT = 8
 WHEAT_TUFT_RADIUS = 9.0
 
@@ -100,7 +100,7 @@ def wheat_stage(year_fraction: float) -> Tuple[float, float, float]:
 #: Tundra: tall leafy shrub-grass. Sizes are multiples of the blade height;
 #: tufts per chunk at full coverage, stems per tuft and tuft radius.
 TUNDRA_SIZE = (6.0, 11.0)
-TUNDRA_MAX_PER_CHUNK = 7000
+TUNDRA_MAX_PER_CHUNK = 14000
 TUNDRA_STEMS_PER_TUFT = 7
 TUNDRA_TUFT_RADIUS = 16.0
 #: The heath's colours, and how often each grows (green leaves dominate;

@@ -474,14 +474,14 @@ class Terrain:
         self.grass_shader_program: int = 0
         self.grass_uniforms: Dict[str, int] = {}
         self.grass_time = 0.0
-        self.GRASS_MAX_PER_CHUNK = 16384         # tufts per chunk
+        self.GRASS_MAX_PER_CHUNK = 32768         # tufts per chunk (thick meadows)
         self.GRASS_BLADES_PER_TUFT = 7
         #: Share of meadow tufts that grow medium-length stalks; the rest
         #: are short grass.
         self.GRASS_MEDIUM_SHARE = 0.35
         self.GRASS_TUFT_RADIUS = 2.5             # world units
         self.GRASS_BLADE_HEIGHT = DEFAULT_GRASS_HEIGHT  # see grass_height
-        self.GRASS_BLADE_WIDTH = 0.35            # half width at the root
+        self.GRASS_BLADE_WIDTH = 0.45            # half width at the root
         self.GRASS_MAX_DISTANCE = 3072.0
         # Chunks nearer than this draw detailed blades; blades morph onto the
         # single-triangle far blade between LOD_START and LOD_DISTANCE.
