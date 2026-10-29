@@ -208,7 +208,7 @@ class Audit:
     def surface(self, name, root, wizard=False):
         # Compare an identical logical viewport, not each runner's available
         # desktop area (Cocoa otherwise clamps tool windows below menu/dock).
-        if root.isWindow() and not isinstance(root, (self.W.QMenu, self.W.QWizard)):
+        if root.isWindow() and not isinstance(root, self.W.QMenu):
             root.ensurePolished()
             preferred = root.size() if root.testAttribute(self.C.Qt.WA_Resized) else root.sizeHint()
             preferred = preferred.expandedTo(root.minimumSizeHint()).expandedTo(root.minimumSize())
@@ -255,7 +255,7 @@ class Audit:
                 else:
                     root.hide()
 
-    def modal(self, name, opener):
+    def modal(self, name, opener, size=None):
         captured = []
 
         def capture():
@@ -264,6 +264,9 @@ class Audit:
                 return
             captured.append(True)
             try:
+                if size is not None:
+                    # exec() has already let the host desktop clamp the window.
+                    root.setFixedSize(*size)
                 self.surface(name, root)
             except Exception:
                 self.error(name)
@@ -407,7 +410,7 @@ def run_audit(audit, window, sections):
         audit.attempt("game/dungeon-designer", lambda: DungeonDesigner(window, window))
         audit.modal("game/npc-wizard", lambda: editor_wizards.npc_wizard(window))
         audit.modal("game/creature-wizard", lambda: editor_wizards.creature_wizard(window))
-        audit.modal("game/spell-editor", lambda: editor_ui.open_spell_editor(window))
+        audit.modal("game/spell-editor", lambda: editor_ui.open_spell_editor(window), size=(800, 900))
         integration._open_dice_test(window)
         audit.surface("game/dice-test", window._dice_test_dialog)
         window._dice_test_dialog.reject()

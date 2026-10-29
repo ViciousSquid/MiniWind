@@ -6,10 +6,10 @@ import sys
 
 from PyQt5.QtCore import QEvent, QObject, Qt
 from PyQt5.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QIcon, QPalette
-from PyQt5.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QDialogButtonBox,
+from PyQt5.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDialogButtonBox,
                              QFileDialog, QFileIconProvider,
                              QFormLayout, QHeaderView, QLabel, QProxyStyle, QStyle, QStyleFactory,
-                             QTabWidget, QToolTip, QWidget)
+                             QRadioButton, QTabWidget, QToolTip, QWidget)
 
 UI_FONT = "Fio UI"
 MONO_FONT = "IBM Plex Mono"
@@ -134,13 +134,14 @@ class EditorLayoutRules(QObject):
     def eventFilter(self, obj, event):
         if not isinstance(obj, QWidget):
             return False
-        if event.type() in (QEvent.Polish, QEvent.FontChange) and isinstance(obj, QLabel):
+        if event.type() in (QEvent.Polish, QEvent.FontChange) and isinstance(obj, (QLabel, QCheckBox, QRadioButton)):
             if obj.text() and obj.maximumHeight() == 16777215:
                 previous = obj.property('_fio_label_height')
                 floor = obj.property('_fio_label_floor')
                 if previous is None or obj.minimumHeight() != previous:
                     floor = obj.minimumHeight()
-                height = max(floor or 0, obj.fontMetrics().height())
+                padding = 1 if isinstance(obj, (QCheckBox, QRadioButton)) else 0
+                height = max(floor or 0, obj.fontMetrics().height() + padding)
                 obj.setProperty('_fio_label_floor', floor or 0)
                 obj.setProperty('_fio_label_height', height)
                 obj.setMinimumHeight(height)
