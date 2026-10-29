@@ -6,6 +6,7 @@ import html
 import json
 from pathlib import Path
 import shutil
+from collections import Counter
 
 
 def compare_frames(windows, mac):
@@ -111,6 +112,12 @@ def build_report(captures, output):
                 '<th>macOS</th></tr>' + rows + '</table></details>')
     (output / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     (output / "differences.json").write_text(json.dumps(all_diffs, indent=2, ensure_ascii=False), encoding="utf-8")
+    font_pairs = Counter((d["kind"], str(d["windows"]), str(d["macos"]))
+                         for d in all_diffs if d["kind"].startswith("font-"))
+    summary["common_font_differences"] = [
+        {"metric": kind, "windows": win, "macos": mac, "occurrences": count}
+        for (kind, win, mac), count in font_pairs.most_common(40)]
+    (output / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     fields = ("config", "frame", "kind", "key", "class", "text", "windows", "macos")
     with (output / "differences.csv").open("w", encoding="utf-8", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")

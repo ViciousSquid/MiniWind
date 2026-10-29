@@ -57,10 +57,9 @@ class Audit:
         self._seen = set()
 
     def settle(self):
-        from PyQt5.QtTest import QTest
-        self.app.processEvents()
-        QTest.qWait(20)
-        self.app.processEvents()
+        loop = self.C.QEventLoop()
+        self.C.QTimer.singleShot(20, loop.quit)
+        loop.exec_(self.C.QEventLoop.ExcludeUserInputEvents)
 
     def error(self, surface):
         message = traceback.format_exc()
@@ -507,19 +506,24 @@ def main():
             "".join(traceback.format_exception(kind, value, tb))})
         audit.save()
     sys.excepthook = exception_hook
-    try:
-        print("AUDIT_STAGE visiting-surfaces", flush=True)
-        run_audit(audit, window, set(filter(None, args.sections.split(","))))
-    except Exception:
-        audit.error("audit-driver")
-    finally:
+    def perform_audit():
+        try:
+            print("AUDIT_STAGE visiting-surfaces", flush=True)
+            run_audit(audit, window, set(filter(None, args.sections.split(","))))
+        except Exception:
+            audit.error("audit-driver")
         audit.save()
         window.unsaved_changes = False
         window.close()
+        app.exit(1 if audit.manifest["errors"] else 0)
+
+    app.setQuitOnLastWindowClosed(False)
+    QtCore.QTimer.singleShot(100, perform_audit)
+    outcome = app.exec_()
     print("AUDIT_COMPLETE", len(audit.manifest["frames"]), "frames,",
           len(audit.manifest["errors"]), "errors", flush=True)
     faulthandler.cancel_dump_traceback_later()
-    return 1 if audit.manifest["errors"] else 0
+    return outcome
 
 
 if __name__ == "__main__":
