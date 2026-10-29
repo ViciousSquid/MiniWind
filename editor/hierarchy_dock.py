@@ -5,8 +5,8 @@ from PyQt5.QtWidgets import QDockWidget, QWidget, QHBoxLayout, QLabel, QToolButt
 
 
 class SceneHierarchyDock(QDockWidget):
-    DEFAULT_WIDTH = 200
-    MIN_WIDTH = 180
+    DEFAULT_WIDTH = 160
+    MIN_WIDTH = 140
     MAX_WIDTH = 400
     STRIP_WIDTH = 28
 

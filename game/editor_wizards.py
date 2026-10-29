@@ -69,6 +69,7 @@ def npc_wizard(parent=None):
     wiz = QtWidgets.QWizard(parent)
     wiz.setWindowTitle("New NPC — MiniWind")
     wiz.setWizardStyle(QtWidgets.QWizard.ModernStyle)
+    wiz.resize(500, 360)
 
     # -- Page 1: identity & role --
     p1 = QtWidgets.QWizardPage()
@@ -148,6 +149,7 @@ def creature_wizard(parent=None):
     wiz = QtWidgets.QWizard(parent)
     wiz.setWindowTitle("New Monster — MiniWind")
     wiz.setWizardStyle(QtWidgets.QWizard.ModernStyle)
+    wiz.resize(500, 360)
 
     page = QtWidgets.QWizardPage()
     page.setTitle("Creature")

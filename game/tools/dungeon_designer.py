@@ -25,11 +25,11 @@ import random
 
 import numpy as np
 from PyQt5.QtCore import QPoint, QRect, Qt, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QKeySequence, QPainter, QPen
+from PyQt5.QtGui import QColor, QFont, QIcon, QKeySequence, QPainter, QPen
 from PyQt5.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDialog,
                              QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
                              QLabel, QLineEdit, QMessageBox, QPushButton,
-                             QRadioButton, QShortcut, QSpinBox, QVBoxLayout,
+                             QRadioButton, QScrollArea, QShortcut, QSpinBox, QVBoxLayout,
                              QWidget)
 
 from .. import dungeon_map as dm
@@ -96,7 +96,7 @@ class GridCanvas(QWidget):
                 p.drawLine(ox + j * size, oy, ox + j * size, oy + d.height * size)
             for i in range(d.height + 1):
                 p.drawLine(ox, oy + i * size, ox + d.width * size, oy + i * size)
-        font = QFont("Arial", max(6, int(size * 0.55)), QFont.Bold)
+        font = QFont("Fio UI", max(6, int(size * 0.55)), QFont.Bold)
         p.setFont(font)
         for m in d.markers:
             colour, letter = MARKER_STYLE.get(m["kind"], (QColor("white"), "?"))
@@ -200,8 +200,14 @@ class DungeonDesigner(QDialog):
         self.canvas.about_to_change.connect(self._push_undo)
         self.canvas.changed.connect(self._refresh_status)
         root.addWidget(self.canvas, 1)
-        side = QVBoxLayout()
-        root.addLayout(side)
+        side_widget = QWidget()
+        side = QVBoxLayout(side_widget)
+        side.setContentsMargins(0, 0, 0, 0)
+        side_scroll = QScrollArea()
+        side_scroll.setWidgetResizable(True)
+        side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        side_scroll.setWidget(side_widget)
+        root.addWidget(side_scroll)
 
         box = QGroupBox("Map")
         form = QFormLayout(box)
@@ -238,7 +244,8 @@ class DungeonDesigner(QDialog):
         self.seed_spin = QSpinBox()
         self.seed_spin.setRange(0, 999999)
         self.seed_spin.setValue(random.randint(0, 999999))
-        dice = QPushButton("🎲")
+        dice = QPushButton()
+        dice.setIcon(QIcon("assets/ui/controls/dice.svg"))
         dice.setFixedWidth(34)
         dice.setToolTip("A new random seed")
         dice.clicked.connect(lambda: self.seed_spin.setValue(random.randint(0, 999999)))
@@ -314,6 +321,7 @@ class DungeonDesigner(QDialog):
         buttons.addWidget(save_open)
         side.addLayout(buttons)
         QShortcut(QKeySequence.Undo, self, activated=self._undo_last)
+        side_scroll.setMinimumWidth(side_widget.minimumSizeHint().width() + 12)
 
     # -- fields <-> design ----------------------------------------------------------
     def _load_fields(self):

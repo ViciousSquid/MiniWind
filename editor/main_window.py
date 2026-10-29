@@ -186,6 +186,8 @@ class MainWindow(QMainWindow):
         self.config.optionxform = str          # preserve case of option names
         self.config_path = 'settings.ini'
         self.load_config()
+        from editor.desktop_style import install_editor_style
+        install_editor_style(QApplication.instance())
         self.load_key_bindings()
 
         self.unsaved_changes = False
@@ -853,7 +855,7 @@ class MainWindow(QMainWindow):
 
         self._play_console_input = CommandInput(self._play_console_frame, repeat_text=False)
         self._play_console_input.setPlaceholderText("Enter command...")
-        self._play_console_input.setFont(QFont("Consolas", 12))
+        self._play_console_input.setFont(QFont("IBM Plex Mono", 12))
         self._play_console_input.setStyleSheet("""
             QLineEdit {
                 background-color: rgba(30, 30, 30, 220);
@@ -975,6 +977,7 @@ class MainWindow(QMainWindow):
             background-color: {bg};
             color: {fg};
             font-weight: bold;
+            font-size: 14px;
             padding: 2px 10px;
             border-radius: 3px;
         """)
@@ -993,6 +996,7 @@ class MainWindow(QMainWindow):
             background-color: #2b2b2b;
             color: white;
             font-weight: bold;
+            font-size: 14px;
             padding: 2px 10px;
             border-radius: 3px;
         """)
@@ -1651,6 +1655,7 @@ class MainWindow(QMainWindow):
                         border: 1px solid #B71C1C;
                         border-radius: 3px;
                         padding: 5px 15px;
+                        min-width: 0px;
                         font-weight: bold;
                     }
                     QPushButton:hover {
@@ -1670,6 +1675,7 @@ class MainWindow(QMainWindow):
                         border: 1px solid #1B5E20;
                         border-radius: 3px;
                         padding: 5px 15px;
+                        min-width: 0px;
                         font-weight: bold;
                     }
                     QPushButton:hover {
@@ -1986,9 +1992,8 @@ class MainWindow(QMainWindow):
 
     def update_global_font(self):
         font_size = self.config.getint('Display', 'font_size', fallback=11)
-        font = QApplication.font()
-        font.setPointSize(font_size)
-        QApplication.setFont(font)
+        from editor.desktop_style import set_editor_font_size
+        set_editor_font_size(QApplication.instance(), font_size)
 
     def show_settings_dialog(self):
         # Store old values to check for changes

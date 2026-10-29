@@ -33,7 +33,7 @@ dark_stylesheet = """
     QWidget {
         background-color: #2b2b2b;
         color: #e0e0e0;
-        font-family: "Segoe UI", Arial, sans-serif;
+        font-family: "Fio UI";
     }
     QPushButton {
         background-color: #3c3f41;
@@ -103,6 +103,9 @@ dark_stylesheet = """
         padding: 8px 12px;
         border-right: 1px solid #555;
     }
+    QTabWidget::tab-bar {
+        alignment: left;
+    }
     QTabBar::tab:selected {
         background-color: #2b2b2b;
         border-bottom: 2px solid #007acc;
@@ -123,6 +126,9 @@ dark_stylesheet = """
         border: 1px solid #555;
     }
 """
+
+from editor_styles import CONTROL_STYLESHEET
+dark_stylesheet += CONTROL_STYLESHEET
 
 def _missing_mandatory_plugins(config):
     """Names in ``[Plugins] mandatory`` that discovery did not find.
@@ -248,8 +254,11 @@ if __name__ == "__main__":
         def finish(self, main_window):
             self.close()
 
+    from editor.desktop_style import prepare_qt, install_editor_style, set_editor_font_size
+    prepare_qt(config.getboolean('Display', 'high_dpi_scaling', fallback=True))
     # Create app
     app = QApplication(sys.argv)
+    install_editor_style(app)
     # Without this PyQt5 aborts the process on any exception escaping a Qt
     # callback, losing the open map.
     from editor.debug_console import install_excepthook
@@ -258,9 +267,7 @@ if __name__ == "__main__":
 
     # The user's font size, applied up front so the splash and a game's
     # launcher match the editor rather than only the main window honouring it.
-    app_font = app.font()
-    app_font.setPointSize(config.getint('Display', 'font_size', fallback=11))
-    app.setFont(app_font)
+    set_editor_font_size(app, config.getint('Display', 'font_size', fallback=11))
 
     # ---------------------------------------------------------
     # Built-in game layer ([Startup] game_module in settings.ini)
