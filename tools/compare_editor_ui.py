@@ -15,6 +15,20 @@ def compare_frames(windows, mac):
     result = []
     win = {w["key"]: w for w in windows["widgets"]}
     cocoa = {w["key"]: w for w in mac["widgets"]}
+    # Cocoa and Windows can insert different anonymous wrapper widgets into
+    # the same wizard header. Match unique controls by their own identity
+    # before calling them missing; still compare every font and rectangle.
+    def identity(widget):
+        return widget['class'], widget.get('name', ''), widget.get('text', '')
+    win_only = {key: value for key, value in win.items() if key not in cocoa}
+    mac_only = {key: value for key, value in cocoa.items() if key not in win}
+    win_counts = Counter(identity(value) for value in win_only.values())
+    mac_counts = Counter(identity(value) for value in mac_only.values())
+    mac_keys = {identity(value): key for key, value in mac_only.items()}
+    for key, value in win_only.items():
+        signature = identity(value)
+        if win_counts[signature] == mac_counts[signature] == 1:
+            cocoa[key] = cocoa.pop(mac_keys[signature])
     for key in sorted(win.keys() | cocoa.keys()):
         a, b = win.get(key), cocoa.get(key)
         if a is None or b is None:
@@ -135,11 +149,12 @@ details{border:1px solid #484e59;padding:12px;margin:8px 0}summary{cursor:pointe
 img{width:100%;height:auto}td,th{text-align:left;padding:6px;border-bottom:1px solid #454950}
 table{width:100%;font-size:12px}pre{white-space:pre-wrap}</style>
 <h1>MiniWind — Windows / macOS editor parity</h1>
-<p>Native Qt styles; identical source, scene and settings. The requested editor size is 1440×900;
+<p>Shared application styles on native Windows and Cocoa Qt; identical source, scene and settings.
+The requested editor size is 1440×900;
 actual logical window and panel sizes after native layout are recorded for every frame.
 Images are normalized to logical pixels. Resolved fonts, DPI and native DPR are in the manifests.
 Font fallback and native theme differences are reported, not silently treated as equivalent.
-3D rendering, gameplay HUD, OS file/colour pickers, and arbitrary field-value combinations are excluded.</p>
+Qt file/colour pickers are included. 3D rendering, gameplay HUD and arbitrary field-value combinations are excluded.</p>
 <p>All measured differences are in differences.csv and differences.json. Priority findings are
 new text-height clipping, missing controls, and controls enlarged on macOS. A pixel-perfect
 pass is not implied by a successful capture job.</p><input id="search" placeholder="Filter by dialog, entity, tab or configuration">
@@ -162,7 +177,9 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     result = build_report(args.captures, args.output)
-    return 1 if (not result["pairs"] or result["capture_errors"] or result["missing_platforms"]) else 0
+    critical = any(count and kind.startswith(('font-', 'tab-geometry', 'oversized-', 'new-text-height-clipping'))
+                   for kind, count in result['findings'].items())
+    return 1 if (critical or not result["pairs"] or result["capture_errors"] or result["missing_platforms"]) else 0
 
 
 if __name__ == "__main__":

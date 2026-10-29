@@ -8,7 +8,7 @@ import sys
 import pytest
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QFontInfo
-from PyQt5.QtWidgets import QDialogButtonBox, QFormLayout, QLabel, QStyle, QTabWidget, QWidget
+from PyQt5.QtWidgets import QDialogButtonBox, QFormLayout, QLabel, QMessageBox, QStyle, QTabWidget, QWidget
 
 from editor.desktop_style import MONO_FONT, UI_FONT
 from main import dark_stylesheet
@@ -97,6 +97,26 @@ def test_label_height_tracks_font_changes_without_staying_enlarged(qt_app):
         assert label.minimumHeight() == label.fontMetrics().height()
     label.close()
     label.deleteLater()
+
+
+def test_message_box_keeps_content_and_buttons_in_the_shared_layout(qt_app):
+    box = QMessageBox(QMessageBox.Information, 'Title', 'Message body', QMessageBox.Ok | QMessageBox.Cancel)
+    box.setInformativeText('Additional explanation')
+    box.show()
+    qt_app.processEvents()
+    try:
+        assert box.contentsMargins().left() == 0
+        assert box.layout().getContentsMargins() == (9, 9, 9, 9)
+        assert box.findChild(QLabel, 'qt_msgbox_label').isVisible()
+        assert box.findChild(QLabel, 'qt_msgbox_informativelabel').isVisible()
+        buttons = box.findChild(QDialogButtonBox)
+        row, column, _, span = box.layout().getItemPosition(box.layout().indexOf(buttons))
+        assert column == 0 and span == box.layout().columnCount()
+        box.button(QMessageBox.Ok).click()
+        assert box.result() == QMessageBox.Ok
+    finally:
+        box.close()
+        box.deleteLater()
 
 
 def test_fresh_startup_converts_points_to_windows_logical_pixels():

@@ -3757,7 +3757,7 @@ class PropertyEditor(QWidget):
         radius_spin = _make_spin(thing.properties.get('radius', 256.0), 1.0, 99999.0,
                                  suffix=" u", decimals=1, step=16.0)
         show_btn = QToolButton()
-        show_btn.setText("⊙")
+        show_btn.setIcon(QIcon("assets/ui/controls/target.svg"))
         show_btn.setCheckable(True)
         show_btn.setChecked(bool(thing.properties.get('show_radius', False)))
         show_btn.setStyleSheet("""

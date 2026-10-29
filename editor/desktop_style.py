@@ -8,7 +8,7 @@ from PyQt5.QtCore import QEvent, QObject, Qt
 from PyQt5.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QIcon, QPalette
 from PyQt5.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDialogButtonBox,
                              QFileDialog, QFileIconProvider,
-                             QFormLayout, QHeaderView, QLabel, QProxyStyle, QStyle, QStyleFactory,
+                             QFormLayout, QHeaderView, QLabel, QMessageBox, QProxyStyle, QSizePolicy, QStyle, QStyleFactory,
                              QRadioButton, QTabWidget, QToolTip, QWidget)
 
 UI_FONT = "Fio UI"
@@ -157,6 +157,34 @@ class EditorLayoutRules(QObject):
             obj.setOption(QFileDialog.DontUseNativeDialog, True)
             obj.setOption(QFileDialog.DontUseCustomDirectoryIcons, True)
             obj.setIconProvider(QApplication.instance()._fio_file_icons)
+            obj.resize(720, 480)
+        if isinstance(obj, QMessageBox):
+            # Qt 5 hardcodes different Cocoa margins, spacers and button
+            # columns inside QMessageBox, independently of QStyle/QSS.
+            grid = obj.layout()
+            obj.setContentsMargins(0, 0, 0, 0)
+            grid.setContentsMargins(9, 9, 9, 9)
+            grid.setHorizontalSpacing(6)
+            grid.setVerticalSpacing(6)
+            grid.setRowStretch(1, 0)
+            grid.setRowMinimumHeight(2, 0)
+            for index in range(grid.count()):
+                spacer = grid.itemAt(index).spacerItem()
+                if spacer is not None:
+                    hint = spacer.sizeHint()
+                    if hint.height() == 1:
+                        spacer.changeSize(7 if obj.icon() != QMessageBox.NoIcon else 15,
+                                          1, QSizePolicy.Fixed, QSizePolicy.Fixed)
+                    elif hint.width() == 1:
+                        spacer.changeSize(1, 7, QSizePolicy.Fixed, QSizePolicy.Fixed)
+            informative = obj.findChild(QLabel, 'qt_msgbox_informativelabel')
+            if informative is not None:
+                informative.setContentsMargins(0, 7, 0, 7)
+            buttons = obj.findChild(QDialogButtonBox)
+            if buttons is not None:
+                row, _, _, _ = grid.getItemPosition(grid.indexOf(buttons))
+                grid.removeWidget(buttons)
+                grid.addWidget(buttons, row, 0, 1, grid.columnCount())
         if isinstance(obj, QHeaderView):
             obj.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         if isinstance(obj, QAbstractSpinBox):

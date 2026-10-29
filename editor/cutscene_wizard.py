@@ -412,9 +412,9 @@ class CutsceneWizard(QtWidgets.QDialog):
         playback_box = QtWidgets.QGroupBox("Preview")
         playback = QtWidgets.QHBoxLayout(playback_box)
         playback.setContentsMargins(8, 6, 8, 6)
-        self.rewind_button = QtWidgets.QPushButton("⏪ RW")
-        self.play_button = QtWidgets.QPushButton("▶ Play")
-        self.fast_forward_button = QtWidgets.QPushButton("FF ⏩")
+        self.rewind_button = QtWidgets.QPushButton("Rewind")
+        self.play_button = QtWidgets.QPushButton("Play")
+        self.fast_forward_button = QtWidgets.QPushButton("Fast Forward")
         self.play_button.setStyleSheet(
             "QPushButton { background: #238636; color: white; font-weight: bold; "
             "padding: 6px 18px; border-radius: 4px; }"
@@ -653,28 +653,28 @@ class CutsceneWizard(QtWidgets.QDialog):
             self._preview_time = 0.0
         self._preview_rate = 1.0
         self._preview_timer.start()
-        self.play_button.setText("⏸ Pause")
+        self.play_button.setText("Pause")
         self._preview_apply()
 
     def _preview_rewind(self):
         self._preview_start()
         self._preview_rate = -2.0
         self._preview_timer.start()
-        self.play_button.setText("▶ Play")
+        self.play_button.setText("Play")
         self._preview_apply()
 
     def _preview_fast_forward(self):
         self._preview_start()
         self._preview_rate = 2.0
         self._preview_timer.start()
-        self.play_button.setText("▶ Play")
+        self.play_button.setText("Play")
         self._preview_apply()
 
     def _preview_stop_and_restore(self):
         self._refresh_actor_objects_from_state()
         self._preview_timer.stop()
         self._preview_rate = 0.0
-        self.play_button.setText("▶ Play")
+        self.play_button.setText("Play")
         for aid, baseline in self._preview_actor_baseline.items():
             actor = self.actor_objects.get(aid)
             if actor is not None:
