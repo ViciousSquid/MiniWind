@@ -1651,7 +1651,7 @@ class Terrain:
             # Reeds: taller, darker, olive.
             reed = np.repeat(biomes[:, terrain_biomes.SWAMP], per_tuft)
             lo, hi = terrain_biomes.REED_SIZE
-            reed_size = rng.uniform(lo, hi, count)
+            reed_size = rng.uniform(lo, hi, count) * self._biome_size_scale()
             t = np.clip(reed * 1.4, 0.0, 1.0)
             data[:, 3] = data[:, 3] * (1.0 - t) + reed_size * t
             data[:, 6:9] = (data[:, 6:9] * (1.0 - t[:, None])
@@ -1710,7 +1710,7 @@ class Terrain:
         data[:, 1] = self._get_heights_batch(bx, bz)
         data[:, 2] = bz
         lo, hi = terrain_biomes.WHEAT_SIZE
-        data[:, 3] = rng.uniform(lo, hi, count) * height
+        data[:, 3] = rng.uniform(lo, hi, count) * height * self._biome_size_scale()
         data[:, 4] = rng.uniform(0.0, 6.2831853, count)
         data[:, 5] = rng.uniform(0.9, 1.1, count)
         ripe = rng.random(count)[:, None]
@@ -1742,6 +1742,12 @@ class Terrain:
         if self.biome_map is not None and np.any(self.biome_map[..., terrain_biomes.WHEAT]):
             self.table.mark_grass_dirty()
         return True
+
+    def _biome_size_scale(self) -> float:
+        """Wheat, reeds and tundra keep their own real heights whatever the
+        map's meadow blade height: their sizes are authored against
+        :data:`DEFAULT_GRASS_HEIGHT`, and the shader multiplies by the map's."""
+        return DEFAULT_GRASS_HEIGHT / max(float(self.grass_height), 0.5)
 
     def _generate_tundra_blades(self, slot: int) -> np.ndarray:
         """Tundra heath: dense, tall leafy shrub-grass wherever the biome map's
@@ -1797,7 +1803,8 @@ class Terrain:
         data[:, 2] = bz
         lo, hi = terrain_biomes.TUNDRA_SIZE
         # Shorter towards the heath's edge, tallest in its heart.
-        data[:, 3] = rng.uniform(lo, hi, count) * np.repeat(0.6 + 0.4 * np.clip(w, 0.0, 1.0), per)
+        data[:, 3] = (rng.uniform(lo, hi, count) * np.repeat(0.6 + 0.4 * np.clip(w, 0.0, 1.0), per)
+                      * self._biome_size_scale())
         data[:, 4] = rng.uniform(0.0, 6.2831853, count)
         data[:, 5] = rng.uniform(0.9, 1.1, count)
         # Drifts of colour: a broad noise field decides where the flame
