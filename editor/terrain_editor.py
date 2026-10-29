@@ -84,21 +84,22 @@ class TerrainEditorPanel(QWidget):
             self._base_font_size = 11
         self.setFont(app_font)
 
-        # Apply global stylesheet
+        # Qt sizes text in logical pixels and applies Retina scaling itself.
+        # Let the font determine control heights instead of stacking large
+        # content minimums on top of padding and borders.
         terrain_style = """
             QWidget#TerrainEditorPanel {
                 background-color: #2b2b2b;
                 color: #f0f0f0;
             }
             QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit {
-                padding: 5px;
-                min-height: 30px;
+                padding: 2px 4px;
                 background-color: #444;
                 color: #f0f0f0;
                 border: 1px solid #666;
             }
             QCheckBox {
-                spacing: 10px;
+                spacing: 6px;
             }
             QCheckBox::indicator:checked {
                 background-color: #F08000;
@@ -111,8 +112,8 @@ class TerrainEditorPanel(QWidget):
                 border-radius: 3px;
             }
             QCheckBox::indicator {
-                width: 24px;
-                height: 24px;
+                width: 14px;
+                height: 14px;
             }
             QGroupBox {
                 font-weight: bold;
@@ -129,11 +130,10 @@ class TerrainEditorPanel(QWidget):
                 padding: 0 8px;
                 background-color: #2d3d3b;
                 color: #F08000;
-                font-size: __GROUP_TITLE_FONT__pt;
             }
             QPushButton {
-                padding: 8px 14px;
-                min-height: 34px;
+                padding: 4px 10px;
+                min-width: 0px;
                 background-color: #555;
                 color: #f0f0f0;
                 border: 1px solid #666;
@@ -145,6 +145,17 @@ class TerrainEditorPanel(QWidget):
             QPushButton:pressed {
                 background-color: #F08000;
             }
+            QPushButton:checked {
+                background-color: #a65a00;
+                border-color: #F08000;
+            }
+            QPushButton[terrainSwatch="true"] {
+                padding: 0px;
+                min-width: 26px;
+                max-width: 26px;
+                min-height: 26px;
+                max-height: 26px;
+            }
             QTabBar::tab:selected { 
                 background: #F08000; 
                 color: white; 
@@ -153,8 +164,8 @@ class TerrainEditorPanel(QWidget):
             QTabBar::tab { 
                 background: #425f5d; 
                 color: #ccc; 
-                padding: 10px 18px; 
-                min-width: 70px;
+                padding: 5px 10px;
+                min-width: 0px;
             }
             QTabBar::tab:hover { 
                 background: #5a7a82; 
@@ -166,12 +177,10 @@ class TerrainEditorPanel(QWidget):
             }
             QLabel {
                 color: #f0f0f0;
+                border: none;
             }
         """
-        self.setStyleSheet(
-            terrain_style
-            .replace("__GROUP_TITLE_FONT__", str(self._base_font_size + 3))
-        )
+        self.setStyleSheet(terrain_style)
         
         self.paint_tool_mode = 'sculpt'
         self._sculpt_mode = 'raise'
@@ -190,8 +199,8 @@ class TerrainEditorPanel(QWidget):
         self._building_ui = True
         
         main_layout = QVBoxLayout(self)
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(6)
+        main_layout.setContentsMargins(8, 8, 8, 8)
         
         # Top action row: Regenerate / Reset / Close. Mirrors the procedural
         # map generator's button row so terrain editing lives in the dock
@@ -205,36 +214,36 @@ class TerrainEditorPanel(QWidget):
                 background-color: #F08000;
                 color: white;
                 font-weight: bold;
-                padding: 12px 20px;
             }
             QPushButton:hover {
                 background-color: #FF9020;
             }
         """)
         regenerate_btn.clicked.connect(self.regenerate_terrain)
-        top_button_layout.addWidget(regenerate_btn, 2)
+        top_button_layout.addWidget(regenerate_btn)
 
         reset_btn = QPushButton("Reset Defaults")
         reset_btn.clicked.connect(self.reset_to_defaults)
-        top_button_layout.addWidget(reset_btn, 1)
+        top_button_layout.addWidget(reset_btn)
+        top_button_layout.addStretch()
 
         close_btn = QPushButton("✕ Close")
         close_btn.clicked.connect(self.request_close)
-        top_button_layout.addWidget(close_btn, 1)
+        top_button_layout.addWidget(close_btn)
 
         main_layout.addLayout(top_button_layout)
 
         # Everything below the fixed action row lives in a vertical scroll area
         # so the panel keeps its size in the dock and scrolls instead of forcing
         # the pane larger when the tabs need more room.
-        scroll_area = QScrollArea()
+        scroll_area = QScrollArea(self)
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.NoFrame)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll_area.verticalScrollBar().setStyleSheet("""
             QScrollBar:vertical {
-                width: 26px;
+                width: 12px;
                 background: #222;
                 border: none;
                 margin: 0px;
@@ -249,14 +258,14 @@ class TerrainEditorPanel(QWidget):
                 height: 0px;
             }
         """)
-        content_widget = QWidget()
+        content_widget = QWidget(self)
         content_layout = QVBoxLayout(content_widget)
         content_layout.setSpacing(10)
         content_layout.setContentsMargins(0, 0, 0, 0)
 
         # Top controls row (Textures, Wireframe, Solid, Flat)
         controls_layout = QHBoxLayout()
-        controls_layout.setSpacing(20)
+        controls_layout.setSpacing(10)
         
         self.textures_checkbox = QCheckBox("Use Textures")
         self.textures_checkbox.setChecked(DEFAULT_USE_TEXTURES)
@@ -289,8 +298,10 @@ class TerrainEditorPanel(QWidget):
         # a child of the content layout. This prevents PyQt from dropping the
         # wrapper during panel construction, which can otherwise destroy the
         # native QComboBox children before load_from_terrain() runs.
-        self._terrain_tabs = QTabWidget()
+        self._terrain_tabs = QTabWidget(content_widget)
         tabs = self._terrain_tabs
+        tabs.setUsesScrollButtons(True)
+        tabs.tabBar().setExpanding(False)
         
         # === BIOME TAB ===
         biome_tab = QWidget()
@@ -305,7 +316,6 @@ class TerrainEditorPanel(QWidget):
         biome_group_layout.setContentsMargins(12, 20, 12, 12)
         
         self.biome_combo = QComboBox()
-        self.biome_combo.setMinimumHeight(36)
         for name, biome in BIOMES.items():
             self.biome_combo.addItem(biome.name, name)
         self.biome_combo.currentIndexChanged.connect(self.on_biome_changed)
@@ -906,11 +916,11 @@ class TerrainEditorPanel(QWidget):
         for label, mode in (("Sculpt", "sculpt"), ("Stamp", "stamp")):
             btn = QPushButton(label, shared_group)
             btn.setCheckable(True)
-            btn.setMinimumHeight(40)
             btn.setProperty("paintTool", mode)
             btn.clicked.connect(lambda _checked, m=mode: self.set_paint_tool_mode(m))
             mode_row.addWidget(btn)
             self.paint_tool_buttons[mode] = btn
+        mode_row.addStretch()
         shared_layout.addLayout(mode_row)
 
         brush_size_row = QHBoxLayout()
@@ -966,11 +976,11 @@ class TerrainEditorPanel(QWidget):
         for label, mode in (("Raise", "raise"), ("Lower", "lower"), ("Flatten", "flatten")):
             btn = QPushButton(label, self.sculpt_controls_widget)
             btn.setCheckable(True)
-            btn.setMinimumHeight(38)
             btn.setProperty("sculptMode", mode)
             btn.clicked.connect(lambda _checked, m=mode: self.set_sculpt_mode(m))
             sculpt_mode_row.addWidget(btn)
             self.sculpt_mode_buttons[mode] = btn
+        sculpt_mode_row.addStretch()
         sculpt_controls_layout.addLayout(sculpt_mode_row)
 
         strength_row = QHBoxLayout()
@@ -997,7 +1007,6 @@ class TerrainEditorPanel(QWidget):
         sculpt_controls_layout.addWidget(self.sculpt_strength_slider)
 
         clear_sculpt_btn = QPushButton("Clear Sculpt")
-        clear_sculpt_btn.setMinimumHeight(36)
         clear_sculpt_btn.setStyleSheet("""
             QPushButton {
                 background-color: #4a3030;
@@ -1055,7 +1064,6 @@ class TerrainEditorPanel(QWidget):
         stamp_controls_layout.addWidget(self.stamp_feather_slider)
 
         clear_stamps_btn = QPushButton("Clear Texture Paint")
-        clear_stamps_btn.setMinimumHeight(36)
         clear_stamps_btn.clicked.connect(self.clear_texture_stamps)
         stamp_controls_layout.addWidget(clear_stamps_btn)
 
@@ -1092,6 +1100,14 @@ class TerrainEditorPanel(QWidget):
         scroll_area.setWidget(content_widget)
         main_layout.addWidget(scroll_area)
 
+        # Cocoa's default form policy can keep fields at their size hints.
+        # Wrap long rows and let editors fill the available dock width.
+        for form in self.findChildren(QFormLayout):
+            form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+            form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+
         self._building_ui = False
 
     # ------------------------------------------------------------------
@@ -1103,7 +1119,7 @@ class TerrainEditorPanel(QWidget):
         Every control drives exactly one ``TerrainAppearance`` option, so the
         presets are only starting points - any option can be changed after.
         """
-        tab = QWidget()
+        tab = QWidget(tabs)
         layout = QVBoxLayout(tab)
         layout.setSpacing(12)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -1111,7 +1127,7 @@ class TerrainEditorPanel(QWidget):
         self._appearance_widgets = {}
 
         def group(title):
-            box = QGroupBox(title)
+            box = QGroupBox(title, tab)
             form = QFormLayout(box)
             form.setSpacing(8)
             form.setContentsMargins(12, 20, 12, 12)
@@ -1179,7 +1195,6 @@ class TerrainEditorPanel(QWidget):
         # -- Look preset -------------------------------------------------
         form = group("Look")
         self.appearance_preset_combo = QComboBox()
-        self.appearance_preset_combo.setMinimumHeight(32)
         for key, label in terrain_style.PRESET_LABELS.items():
             self.appearance_preset_combo.addItem(label, key)
         self.appearance_preset_combo.addItem("Custom", 'custom')
@@ -1212,17 +1227,20 @@ class TerrainEditorPanel(QWidget):
         swatch_row.setSpacing(4)
         self.palette_swatches = []
         for i in range(terrain_style.MAX_PALETTE):
-            btn = QPushButton()
+            btn = QPushButton(tab)
+            btn.setProperty("terrainSwatch", True)
             btn.setFixedSize(26, 26)
             btn.setToolTip(f"Colour {i + 1}: click to change")
             btn.clicked.connect(lambda _c=False, i=i: self.choose_palette_color(i))
             swatch_row.addWidget(btn)
             self.palette_swatches.append(btn)
-        self.palette_remove_btn = QPushButton("−")
+        self.palette_remove_btn = QPushButton("−", tab)
+        self.palette_remove_btn.setProperty("terrainSwatch", True)
         self.palette_remove_btn.setFixedSize(26, 26)
         self.palette_remove_btn.setToolTip("One colour fewer")
         self.palette_remove_btn.clicked.connect(lambda: self.change_palette_size(-1))
-        self.palette_add_btn = QPushButton("+")
+        self.palette_add_btn = QPushButton("+", tab)
+        self.palette_add_btn.setProperty("terrainSwatch", True)
         self.palette_add_btn.setFixedSize(26, 26)
         self.palette_add_btn.setToolTip("One colour more")
         self.palette_add_btn.clicked.connect(lambda: self.change_palette_size(1))

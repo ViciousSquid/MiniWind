@@ -22,6 +22,7 @@ from editor.things import (
     LogicGate, LogicRelay, LogicTimer, LevelChanger, Portal
 )
 from engine.player import Player
+from engine.sdl_runtime import init_input as init_sdl_input
 from engine.game_input import modal_input_active as _game_modal_input_active
 from engine.game_input import modal_escape_active as _game_modal_escape_active
 from engine.game_input import owns_number_keys as _game_owns_number_keys
@@ -285,9 +286,8 @@ class QtGameView(QOpenGLWidget):
             'Appearance', 'glasses', fallback=DEFAULT_GLASSES
         ))
 
-        # PYGAME INIT (MUST happen before _init_sound_system)
-        pygame.init()
-        pygame.joystick.init()
+        # Qt owns native events; SDL supplies controllers and audio only.
+        init_sdl_input()
         
         # Initialize pygame mixer BEFORE any sound loading
         try:
