@@ -71,6 +71,20 @@ def test_spacing_and_indicator_metrics_are_explicit(qt_app):
     assert style.pixelMetric(QStyle.PM_ScrollBarExtent) == 12
 
 
+@pytest.mark.parametrize('points,pixels,height', [(11, 15, 20), (16, 21, 28)])
+def test_native_widget_fonts_use_windows_logical_metrics(qt_app, points, pixels, height):
+    label = QLabel('Native widget metrics')
+    label.setFont(QFont(UI_FONT, points))
+    label.show()
+    qt_app.processEvents()
+    try:
+        assert QFontInfo(label.font()).pixelSize() == pixels
+        assert label.fontMetrics().height() == height
+    finally:
+        label.close()
+        label.deleteLater()
+
+
 def test_label_height_tracks_font_changes_without_staying_enlarged(qt_app):
     label = QLabel('Label text')
     label.show()

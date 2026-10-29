@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import os
+import sys
 
 from PyQt5.QtCore import QEvent, QObject, Qt
 from PyQt5.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QIcon, QPalette
@@ -25,7 +26,10 @@ def prepare_qt(high_dpi=True):
         # Stylesheet point sizes use the screen DPI too; AA_Use96Dpi alone
         # only normalizes standalone QFont instances on some Qt 5 backends.
         os.environ["QT_FONT_DPI"] = "96"
-        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, high_dpi)
+        # Cocoa already handles Retina backing pixels. Qt 5's additional
+        # screen-DPI scaling turns 96/72 into a 4/3 device scale there and
+        # restores 72-DPI widget fonts, undoing the shared logical text size.
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, high_dpi and sys.platform != 'darwin')
         QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
         QApplication.setAttribute(Qt.AA_Use96Dpi, True)
         QApplication.setAttribute(Qt.AA_DontUseNativeMenuBar, True)
