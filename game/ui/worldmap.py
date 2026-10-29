@@ -3,7 +3,8 @@ The world's map picture, and the minimap drawn from it.
 
 :class:`WorldMap` paints the whole world once: the terrain's height sampled
 over a grid, coloured by height and slope (meadow, upland, rock, snow) and
-hill-shaded from the north-west, with the map's water, woods and buildings laid
+hill-shaded from the north-west, with the map's painted biome regions (desert,
+snow, swamp, wheat and tundra), water, woods and buildings laid
 over it from its brushes. That takes a few seconds for a big world, so it runs
 on a background thread, in strips, and is cached on disk per map (``cache/``),
 so a map is only ever painted once. Until it is ready the minimap says so.
@@ -36,7 +37,7 @@ MINIMAP_SPAN = 6400.0
 #: Where cached map pictures are kept.
 CACHE_DIR = "cache"
 #: Bumped whenever the painting changes, so old caches are not reused.
-STYLE_VERSION = 2
+STYLE_VERSION = 3
 
 _TREE_HINT = "tree"
 
@@ -66,8 +67,8 @@ def _brush_kind(brush):
     return "building"
 
 
-def colour_terrain(heights, cell):
-    """``(H, W, 3)`` uint8 colours for a height grid sampled every *cell* units."""
+def colour_terrain(heights, cell, biome_weights=None):
+    """``(H, W, 3)`` map colours including painted regional biomes, if supplied."""
     h = np.asarray(heights, dtype=np.float32)
     lo, hi = float(np.percentile(h, 1)), float(np.percentile(h, 99.5))
     hn = np.clip((h - lo) / max(1e-3, hi - lo), 0.0, 1.0)
@@ -83,6 +84,20 @@ def colour_terrain(heights, cell):
     # Steep ground is bare rock, whatever its height.
     rock = np.clip((slope - 0.45) / 0.6, 0.0, 1.0)[..., None]
     rgb = rgb * (1.0 - rock) + np.array([122, 116, 108], np.float32) * rock
+    if biome_weights is not None:
+        # The terrain renderer colours regional biomes from this same painted
+        # weight map. Blend before applying hill-shading so even a fully
+        # painted field still shows slopes and contours on both map views.
+        from engine import terrain_biomes
+        weights = np.asarray(biome_weights, dtype=np.float32)
+        if (weights.ndim != 3 or weights.shape[:2] != h.shape
+                or weights.shape[2] not in (4, 5)):
+            raise ValueError("biome weights must be HxWx4 or HxWx5")
+        rgb = (terrain_biomes.blend_colors(
+            (rgb / 255.0).reshape(-1, 3),
+            weights.reshape(-1, weights.shape[2]),
+            slope=slope.reshape(-1),
+        ).reshape(h.shape + (3,)) * 255.0)
     # Hill shade, lit from the north-west (top-left of the map).
     nx, nz = -gx, -gz
     ny = np.full_like(h, 1.0)
@@ -151,8 +166,11 @@ class WorldMap:
         h.update(str(STYLE_VERSION).encode())
         h.update(str(RESOLUTION).encode())
         try:
-            h.update(os.path.abspath(str(map_path)).encode())
-            h.update(str(os.path.getmtime(map_path)).encode())
+            path = os.fspath(map_path)
+            stat = os.stat(path)
+            h.update(os.path.abspath(path).encode())
+            # Nanosecond mtime and size distinguish edits even on fast saves.
+            h.update(f"{stat.st_mtime_ns}:{stat.st_size}".encode())
         except (OSError, TypeError):
             h.update(repr(sorted((terrain_data or {}).items()))[:4096].encode())
         return h.hexdigest()[:20]
@@ -188,15 +206,28 @@ class WorldMap:
             rows = max(2, int(round((max_z - min_z) / cell)))
             xs = min_x + (np.arange(cols) + 0.5) * cell
             heights = np.empty((rows, cols), dtype=np.float32)
+            # A map's region paint is stored separately from its heightfield.
+            # Sample the same biome weights used by the terrain renderer,
+            # including the fifth (tundra) channel.
+            biome_map = getattr(terrain, "biome_map", None)
+            has_biomes = (biome_map is not None and getattr(biome_map, "ndim", 0) == 3
+                          and biome_map.shape[2] in (4, 5)
+                          and callable(getattr(terrain, "biome_weights_batch", None)))
+            weights = (np.empty((rows, cols, biome_map.shape[2]), dtype=np.float32)
+                       if has_biomes else None)
             strip = 24      # rows per batch: short enough to let the game run
             for r0 in range(0, rows, strip):
                 r1 = min(rows, r0 + strip)
                 zs = min_z + (np.arange(r0, r1) + 0.5) * cell
                 X, Z = np.meshgrid(xs, zs)
+                xs_batch, zs_batch = X.ravel(), Z.ravel()
                 heights[r0:r1] = terrain._get_heights_batch(
-                    X.ravel(), Z.ravel()).reshape(r1 - r0, cols)
+                    xs_batch, zs_batch).reshape(r1 - r0, cols)
+                if weights is not None:
+                    weights[r0:r1] = terrain.biome_weights_batch(
+                        xs_batch, zs_batch).reshape(r1 - r0, cols, weights.shape[2])
                 time.sleep(0.002)
-            rgb = colour_terrain(heights, cell)
+            rgb = colour_terrain(heights, cell, weights)
             bounds = ((min_x, max_x), (min_z, max_z))
             paint_brushes(rgb, brushes, bounds, cell)
             if key != self._key:
