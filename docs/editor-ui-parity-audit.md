@@ -1,23 +1,33 @@
 # Windows / macOS editor UI parity
 
-The shared presentation implementation is committed on `CANARY`. The
-[completed native run for `9df5925`](https://github.com/ViciousSquid/MiniWind/actions/runs/40882539900)
-recorded **zero font differences, zero tab-geometry differences and zero
-oversized macOS controls** across Windows/macOS, font settings 11/16 and scale
-factors 1/2. This includes every font metric recorded by the audit: family,
-point/pixel size, weight, italic, line height and sample width.
+The implementation is pushed to `CANARY` through code commit `0ad2e2b`.
 
-That run still found clipped radio controls in Dungeon Designer and other
-geometry differences. Commit `de1a9ad` makes the dungeon sidebar scrollable,
-protects checkbox/radio text height, replaces more symbol buttons with SVGs,
-and fixes equal-viewport comparison of modal dialogs and wizards. Its
-[follow-up native run](https://github.com/ViciousSquid/MiniWind/actions/runs/40884265845)
-is in progress. **Full control-by-control geometry parity is not yet certified.**
+The [completed native run for `ff6127f`](https://github.com/ViciousSquid/MiniWind/actions/runs/40886539573)
+passed all four Windows/macOS jobs and the comparison gate. Across font
+settings 11/16 and scale factors 1/2 it recorded **zero font differences,
+zero tab-geometry differences, zero clipped controls and zero oversized
+macOS controls**, with no capture errors or missing configurations. Each OS
+recorded 953 frames per scale at setting 11 and 1,153 at setting 16: 8,424
+frame measurements across the eight configurations.
 
-- [Searchable comparison report for `9df5925`](https://github.com/ViciousSquid/MiniWind/actions/runs/40882539900/artifacts/12901058884)
+That report still contains **140 geometry observations and seven scrollbar
+visibility observations**. These are repeated measurements across configurations,
+not counts of unique defects. Full control-by-control geometry parity is not
+certified. File-picker layout and rich-text overview sizing are among the
+remaining observations.
 
-A completed capture job alone does not establish visual parity; inspect the
-measured differences and paired screenshots as well.
+Commit `0ad2e2b` additionally specifies menu-indicator metrics and wizard
+starting sizes, replaces another fallback symbol, fixes asset-grid column
+calculation to include margins, and lets captures settle after thumbnail
+reflow. Its [native run](https://github.com/ViciousSquid/MiniWind/actions/runs/40887507209)
+is still capturing as this document is written; all four runners have passed
+the font, layout, message-box and asset-browser checks. Do not confuse those
+passed checks with a completed final capture comparison.
+
+The comparison now fails CI for font, tab, clipping or oversized-control
+regressions. It matches uniquely identified controls across differences in
+Qt's anonymous wrapper hierarchy, while retaining ambiguous or missing controls
+for review. Other geometry differences remain visible in the report.
 
 ## Explicit presentation contract
 
@@ -53,8 +63,9 @@ in `assets/fonts/editor/README.md`.
 The reusable workflow is `.github/workflows/editor-ui-parity.yml`. It runs
 actual Windows Qt and Cocoa Qt at scale factors 1 and 2. Every runner checks
 alignment, fonts and terrain layout before capturing all editor surfaces at
-font setting 11 and measuring them again at setting 16. Partial captures and
-missing configurations cause report generation to fail.
+font setting 11 and measuring them again at setting 16. Partial captures,
+missing configurations, and font/tab/clipping/oversize regressions cause
+report generation to fail.
 
 The fixture visits all 26 registered entity types, brush variants, nested
 property tabs, terrain tabs, settings, assets, consoles, menus, toolbars,
