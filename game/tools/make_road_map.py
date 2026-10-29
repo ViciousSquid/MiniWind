@@ -22,6 +22,9 @@ copy (``maps/village_roads_test.json``) in which:
   ``next_node`` lists every neighbour, comma separated: the two-way
   navigation graph :mod:`game.road_nav` and :mod:`game.living.roads` walk.
 
+* **Trees are canopies**: MiniWind is top down, so every tree brush is a flat
+  8-unit slab floating 230 above the highest ground beneath it, over the
+  player and every actor sprite and under the closest camera.
 * **A south-west desert** over 30% of the map, blending through steppe into
   the green, with low dunes; and **a dense forest** of tree brushes of many
   sizes on open lowland, kept clear of roads, buildings and everything else.
@@ -116,7 +119,12 @@ DUNE_LENGTH = 900.0
 FOREST_RADIUS = 5600.0
 FOREST_SPACING = 175.0
 TREE_SIZES = (110.0, 330.0)
-TREE_LIFT = 190.0
+#: MiniWind is top down: a tree is its canopy, a flat TREE_THICKNESS slab
+#: floating TREE_CLEARANCE above the highest ground under it -- clear of the
+#: player (100 tall) and the tallest actor sprite (210), and well under the
+#: closest camera (300 above the player).
+TREE_THICKNESS = 8.0
+TREE_CLEARANCE = 230.0
 CLEAR_ROAD = 230.0
 CLEAR_BRUSH = 160.0
 FOREST_TREES = {"broadleaf": ("tree01.png", "tree02.png", "tree03.png", "tree04.png",
@@ -404,15 +412,38 @@ def plant_forest(terrain, data, places, roads, grid):
         tex = names[int(rng.integers(len(names)))]
         # Mostly mid-sized, a few saplings and a few great old trees.
         size = float(np.clip(rng.lognormal(math.log(190.0), 0.3), *TREE_SIZES))
-        lift = TREE_LIFT * (0.75 + 0.5 * (size - TREE_SIZES[0]) / (TREE_SIZES[1] - TREE_SIZES[0]))
         data["brushes"].append({
-            "pos": [round(float(X[k]), 1), round(float(ground[k]) + lift, 1), round(float(Z[k]), 1)],
-            "size": [round(size, 1), 16.0, round(size, 1)],
+            "pos": [round(float(X[k]), 1), round(float(ground[k]) + TREE_CLEARANCE, 1), round(float(Z[k]), 1)],
+            "size": [round(size, 1), TREE_THICKNESS, round(size, 1)],
             "textures": {**{f: "nodraw.jpg" for f in ("north", "south", "east", "west", "down")}, "top": tex},
             "uv_scale": copy.deepcopy(proto.get("uv_scale", {})),
             "id": str(uuid.uuid5(ID_NAMESPACE, f"forest-{k}"))})
         counts[kind] = counts.get(kind, 0) + 1
     return dict(centre=(round(cx), round(cz)), **counts)
+
+
+def seat_trees(terrain, data):
+    """Every tree a flat TREE_THICKNESS canopy, its underside TREE_CLEARANCE
+    above the highest ground anywhere beneath it (sampled across the whole
+    footprint, so a canopy on a slope still clears whoever walks under its
+    uphill edge). Returns how many trees were seated."""
+    trees = [b for b in data["brushes"] if _is_tree(b)]
+    if not trees:
+        return 0
+    k = np.linspace(-0.5, 0.5, 9)
+    du, dv = (a.ravel() for a in np.meshgrid(k, k))
+    X = np.concatenate([b["pos"][0] + du * abs(b["size"][0]) for b in trees]).astype(np.float32)
+    Z = np.concatenate([b["pos"][2] + dv * abs(b["size"][2]) for b in trees]).astype(np.float32)
+    H = terrain._get_heights_batch(X, Z).reshape(len(trees), len(k), len(k))
+    # Between samples the ground can rise by about one step's difference
+    # more: add the steepest step, so a canopy on a slope never dips.
+    rise = np.maximum(np.abs(np.diff(H, axis=1)).max(axis=(1, 2)),
+                      np.abs(np.diff(H, axis=2)).max(axis=(1, 2)))
+    top = H.max(axis=(1, 2)) + rise
+    for b, ground in zip(trees, top):
+        b["size"][1] = TREE_THICKNESS
+        b["pos"][1] = round(float(ground) + TREE_CLEARANCE + TREE_THICKNESS / 2, 1)
+    return len(trees)
 
 
 # ------------------------------------------------------------------- routing
@@ -759,6 +790,7 @@ def make(source=SOURCE, out=OUT, preview=PREVIEW):
     nodes, edges = place_nodes(terrain, roads)
     dried = dry_out_trees(terrain, data, grid)
     forest = plant_forest(terrain, data, list(places.values()), roads, grid)
+    seated = seat_trees(terrain, data)
     # Replace any earlier ROAD_* nodes; keep everything else (patrol chains too).
     data["things"] = [t for t in data["things"]
                       if not (t.get("properties", {}).get("type") == "path_node"
@@ -778,7 +810,7 @@ def make(source=SOURCE, out=OUT, preview=PREVIEW):
                 nodes=len(nodes), links=len(edges), protected_pixels=protected,
                 max_reshape=round(reshaped, 1), checked_points=len(feet),
                 max_change_under_placed=round(moved, 4), desert_fraction=round(desert, 3),
-                forest=forest, desert_trees=dried)
+                forest=forest, desert_trees=dried, trees=seated)
 
 
 if __name__ == "__main__":
