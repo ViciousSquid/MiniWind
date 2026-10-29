@@ -44,13 +44,15 @@ ROAD_NAME = re.compile(r"^road_", re.IGNORECASE)
 AUTO_LINK_RADIUS = 1400.0
 AUTO_LINK_NEIGHBOURS = 2
 #: Trips shorter than this are walked straight (world units).
-MIN_TRIP = 1200.0
+MIN_TRIP = 900.0
 #: How far a walker will go to join a road, or from its end to the goal.
-JOIN_RADIUS = 2000.0
+JOIN_RADIUS = 3000.0
 #: How many of the nearest nodes are weighed as places to join or leave.
 CANDIDATES = 5
-#: Walking a road costs this much of its length, against 1.0 off it.
-ROAD_COST = 0.7
+#: Walking a road costs this much of its length, against 1.0 off it. Low,
+#: so people keep to the roads (as in Morrowind and Oblivion) unless the road
+#: is more than 2.5 times further than cutting across country.
+ROAD_COST = 0.4
 #: The road must make the trip at least this much cheaper to be taken.
 MIN_SAVING = 0.05
 
