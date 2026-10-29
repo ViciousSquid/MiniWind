@@ -1,0 +1,50 @@
+{
+  "player_height": 100,
+  "door_height": 106.0,
+  "base_diameter": 288,
+  "hub_height": 550.0,
+  "bounds_min": [
+    -292.7421875,
+    0.0,
+    -144.0
+  ],
+  "bounds_max": [
+    292.7421875,
+    842.7421875,
+    194.0
+  ],
+  "triangle_count": 3238,
+  "up_axis": "Y",
+  "front_axis": "+Z",
+  "origin": "ground center",
+  "model_scale": [
+    1,
+    1,
+    1
+  ],
+  "model_rotation": [
+    0,
+    0,
+    0
+  ],
+  "sprites": {
+    "windmill_topdown.png": {
+      "elevation": 90,
+      "sprite_size": [
+        720,
+        720
+      ]
+    },
+    "windmill_overhead.png": {
+      "elevation": 60,
+      "sprite_size": [
+        860,
+        860
+      ]
+    }
+  },
+  "sprite_ground_anchor": [
+    0.5,
+    0.5
+  ]
+}

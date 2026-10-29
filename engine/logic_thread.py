@@ -305,6 +305,8 @@ class LogicThread(threading.Thread):
         self.actual_tps = 0.0
         self._tick_count = 0
         self._last_tps_time = time.perf_counter()
+        self._simulation_serial = 0
+        self._camera_sample_time = None
 
         # A failed simulation tick enters a controlled fault state instead of
         # continuing from a partially mutated world. The current play session
@@ -380,6 +382,7 @@ class LogicThread(threading.Thread):
 
     def run(self):
         last_time = time.perf_counter()
+        deadline = last_time
         accumulator = 0.0
         
         while self.running:
@@ -394,12 +397,20 @@ class LogicThread(threading.Thread):
             # seconds per real second. The tick itself stays fixed, so a slow
             # world runs fewer ticks and a fast one more, never a longer tick.
             accumulator += frame_time * max(0.0, float(getattr(self, "time_scale", 1.0)))
-            accumulator = self._step_frame(accumulator)
+            accumulator = self._step_frame(accumulator, frame_time=current_time)
             self._publish_frame()
-            
-            sleep_time = self.TICK_DURATION - (time.perf_counter() - current_time)
+
+            # Absolute deadlines preserve the 60 Hz cadence despite sleep
+            # overshoot. Sleeping 90% of the remainder ran this loop faster
+            # than the simulation, periodically publishing duplicate poses.
+            deadline += self.TICK_DURATION
+            sleep_time = deadline - time.perf_counter()
             if sleep_time > 0:
-                time.sleep(sleep_time * 0.9)
+                time.sleep(sleep_time)
+            else:
+                # The accumulator handles simulation debt. Do not also spin
+                # through missed scheduling deadlines after a slow frame.
+                deadline = time.perf_counter()
                 
     def _publish_frame(self) -> bool:
         """Hand the frame just prepared to the renderer, if it is not reading.
@@ -415,7 +426,7 @@ class LogicThread(threading.Thread):
         self.combat_runtime.muzzle_flash_active = False
         return True
 
-    def _step_frame(self, accumulator: float) -> float:
+    def _step_frame(self, accumulator: float, *, frame_time=None) -> float:
         """Run every whole tick *accumulator* holds, then project the frame.
 
         One acquisition of the tick lock per frame, so a play-mode change or a
@@ -470,11 +481,19 @@ class LogicThread(threading.Thread):
                     accumulator = 0.0
                     break
                 accumulator -= self.TICK_DURATION
+                self._simulation_serial += 1
                 #: Milliseconds the last simulation tick took (Debug Tables).
                 self.tick_ms = (time.perf_counter() - started) * 1000.0
                 self._update_tps_counter()
 
             try:
+                scale = max(0.0, float(getattr(self, 'time_scale', 1.0)))
+                # Date the pose at the last simulation boundary, not at the
+                # end of variable-cost world projection. No-tick iterations
+                # keep the same serial and therefore the same camera sample.
+                self._camera_sample_time = (
+                    None if frame_time is None else
+                    frame_time - accumulator / scale if scale > 0.0 else frame_time)
                 self.render_runtime.prepare_render_state()
                 self._frame_prepared = True
             except Exception:

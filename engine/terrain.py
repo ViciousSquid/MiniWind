@@ -1550,113 +1550,18 @@ class Terrain:
         return triangles
 
     def _generate_grass_blades(self, slot: int) -> np.ndarray:
-        """Deterministic per-blade instance records ``(x, y, z, size, yaw, tint)``.
+        """Blade instances for wheat fields and tundra heath only.
 
-        Tufts are scattered over the chunk and each spreads a handful of
-        blades around its centre, so a field reads as clumps rather than an
-        even carpet. Every blade root is sampled on the (possibly terraced)
-        surface. Tufts are dropped on steep ground, outside the grass height
-        layer (high rock and snow, low sand) and in broad noise clearings.
+        Ordinary terrain stays clear of meadow grass and swamp reeds. The
+        two authored biomes keep their own density, colour and growth.
         """
-        meadow = self._generate_meadow_blades(slot)
         if self.biome_map is None:
-            return meadow
-        parts = [p for p in (meadow, self._generate_wheat_blades(slot),
+            return np.empty((0, 9), dtype=np.float32)
+        parts = [p for p in (self._generate_wheat_blades(slot),
                              self._generate_tundra_blades(slot)) if len(p)]
         if not parts:
-            return meadow
+            return np.empty((0, 9), dtype=np.float32)
         return np.concatenate(parts) if len(parts) > 1 else parts[0]
-
-    def _generate_meadow_blades(self, slot: int) -> np.ndarray:
-        """The ordinary grass of :meth:`_generate_grass_blades`: none on
-        sand or snow, reeds in the swamp."""
-        table = self.table
-        size = float(table.size[slot])
-        tufts = int(min(
-            self.GRASS_MAX_PER_CHUNK,
-            int(max(0.0, self.grass_density) * size * size)
-        ) * self._grass_budget())
-        if tufts <= 0:
-            return np.empty((0, 9), dtype=np.float32)
-
-        seed = (
-            (int(self.seed) * 73856093)
-            ^ (int(table.coord[slot, 0]) * 19349663)
-            ^ (int(table.coord[slot, 1]) * 83492791)
-        ) & 0xFFFFFFFF
-        rng = np.random.default_rng(seed)
-        tx = float(table.world[slot, 0]) + rng.random(tufts) * size
-        tz = float(table.world[slot, 1]) + rng.random(tufts) * size
-        edge_roll = rng.random(tufts)
-
-        # Slope from the unterraced surface: terrace risers are a styling of
-        # the ground, not cliffs, and should not strip the grass off a hill.
-        eps = 1.0
-        h0 = self._get_raw_heights_batch(tx, tz)
-        gx = (self._get_raw_heights_batch(tx + eps, tz) - h0) / eps
-        gz = (self._get_raw_heights_batch(tx, tz + eps) - h0) / eps
-        normal_y = 1.0 / np.sqrt(1.0 + gx * gx + gz * gz)
-        keep = normal_y >= self.GRASS_MIN_NORMAL_Y
-        # Grass grows only between its lowest and highest height - by
-        # default the grass texture layer, so never on the high rock and
-        # snow nor down on the sand - thinning out across each edge.
-        low, high = self.grass_height_bounds()
-        weight = terrain_style.grass_layer_weight(
-            self._normalized_layer_height(h0), (low, high, 1.0),
-            self.appearance.layer_blend * 2.0)
-        # Broad clearings so a meadow is never an even carpet.
-        clearing = self.noise.noise2d_batch(
-            (tx - self.offset_x) * 0.0035 + 91.7, (tz - self.offset_z) * 0.0035 - 13.3)
-        weight = weight * np.clip((clearing + 0.3) / 0.45, 0.0, 1.0)
-        biomes = None
-        if self.biome_map is not None:
-            biomes = self.biome_weights_batch(tx, tz)
-            # Swamp reeds grow anywhere wet, whatever the height layer.
-            weight = np.maximum(weight, biomes[:, terrain_biomes.SWAMP] * 0.8)
-            weight = weight * terrain_biomes.grass_keep(biomes)
-        keep &= edge_roll < weight
-        if self.texture_paint_maps:
-            keep &= self._paint_alpha_batch(tx, tz) < self.GRASS_PAINT_CLEAR
-        tx = tx[keep]
-        tz = tz[keep]
-        tuft_raw = h0[keep]
-        tuft_slope = 1.0 - normal_y[keep]
-        if biomes is not None:
-            biomes = biomes[keep]
-        if len(tx) == 0:
-            return np.empty((0, 9), dtype=np.float32)
-
-        per_tuft = self.GRASS_BLADES_PER_TUFT
-        count = len(tx) * per_tuft
-        angle = rng.uniform(0.0, 6.2831853, count)
-        radius = np.sqrt(rng.random(count)) * self.GRASS_TUFT_RADIUS
-        bx = np.repeat(tx, per_tuft) + np.cos(angle) * radius
-        bz = np.repeat(tz, per_tuft) + np.sin(angle) * radius
-
-        data = np.empty((count, 9), dtype=np.float32)
-        data[:, 0] = bx
-        data[:, 1] = self._get_heights_batch(bx, bz)
-        data[:, 2] = bz
-        # A mix of short grass and medium stalks, tuft by tuft.
-        medium = np.repeat(rng.random(len(tx)) < self.GRASS_MEDIUM_SHARE, per_tuft)
-        data[:, 3] = np.where(medium, rng.uniform(1.5, 2.6, count), rng.uniform(0.6, 1.05, count))
-        data[:, 4] = rng.uniform(0.0, 6.2831853, count)
-        data[:, 5] = rng.uniform(0.82, 1.12, count)
-        # The colour of the ground each blade stands on, for grass that
-        # matches the terrain (the default until a blade colour is chosen).
-        data[:, 6:9] = self._ground_colors_at(
-            slot, data[:, 0], data[:, 2], data[:, 1], np.repeat(tuft_raw, per_tuft),
-            np.repeat(tuft_slope, per_tuft))
-        if biomes is not None:
-            # Reeds: taller, darker, olive.
-            reed = np.repeat(biomes[:, terrain_biomes.SWAMP], per_tuft)
-            lo, hi = terrain_biomes.REED_SIZE
-            reed_size = rng.uniform(lo, hi, count) * self._biome_size_scale()
-            t = np.clip(reed * 1.4, 0.0, 1.0)
-            data[:, 3] = data[:, 3] * (1.0 - t) + reed_size * t
-            data[:, 6:9] = (data[:, 6:9] * (1.0 - t[:, None])
-                            + terrain_biomes.REED_COLOUR[None, :] * t[:, None])
-        return data
 
     def _generate_wheat_blades(self, slot: int) -> np.ndarray:
         """Wheat: dense clumps of tall golden stalks wherever the biome map

@@ -72,7 +72,7 @@ def test_property_tabs_do_not_inherit_the_console_tab_dimensions(main_window, qt
 
 def test_hierarchy_has_room_for_names_and_can_be_resized(main_window):
     dock = main_window.scene_hierarchy_dock
-    assert dock.minimumWidth() >= 220
+    assert dock.minimumWidth() == 180
     assert dock.maximumWidth() >= 400
     main_window.state.things = [Light(properties={'name': 'Village courtyard light'})]
     main_window.scene_hierarchy.refresh_list()

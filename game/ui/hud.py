@@ -289,14 +289,14 @@ def draw_barks(painter, session, viewport, width, height):
     painter.restore()
 
 
-#: A float (a fizzled spell) rises this far (px) over its life as it fades.
+#: A float (an item collected or a fizzled spell) rises this far as it fades.
 FLOAT_RISE_PX = 26.0
 _FLOAT_INK = (214, 200, 255)
 
 
 def draw_floats(painter, session, viewport, width, height):
-    """Words floating up from a head and fading -- "*fizzled*" over a caster,
-    the player or anyone else, whose spell came to nothing."""
+    """Words floating up from a head and fading, such as "+1 wheat" or
+    "*fizzled*" over a caster."""
     if viewport is None:
         return
     floats = session.live_floats() if hasattr(session, "live_floats") else ()

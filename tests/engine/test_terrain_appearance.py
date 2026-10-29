@@ -9,6 +9,7 @@ import pytest
 
 pytest.importorskip("OpenGL", reason="engine.terrain imports PyOpenGL")
 
+from engine import terrain_biomes as tb
 from engine import terrain_style as ts                 # noqa: E402
 from engine.terrain import Terrain, grass_vertex_count  # noqa: E402
 
@@ -194,7 +195,37 @@ def test_grass_vertex_counts():
     assert grass_vertex_count(5) == 27
 
 
-def test_grass_blades_sit_on_the_ground(terrain):
+def _paint_vegetation(terrain, biome, channels=5):
+    biome_map = np.zeros((2, 2, channels), dtype=np.uint8)
+    if biome is not None:
+        biome_map[..., biome] = 255
+    terrain.set_biome_map(biome_map)
+
+
+@pytest.mark.parametrize("biome", [None, tb.DESERT, tb.SNOW, tb.SWAMP])
+def test_ordinary_terrain_has_no_grass_or_reeds(terrain, biome):
+    terrain.set_grass(True, density=0.06)
+    assert terrain._generate_grass_blades(_slot(terrain)).shape == (0, 9)
+    _paint_vegetation(terrain, biome)
+    assert terrain._generate_grass_blades(_slot(terrain)).shape == (0, 9)
+
+
+@pytest.mark.parametrize("channels, biome", [(4, tb.WHEAT), (5, tb.WHEAT), (5, tb.TUNDRA)])
+@pytest.mark.parametrize("quality", ["low", "high"])
+def test_wheat_and_tundra_keep_their_full_blade_populations(terrain, channels, biome, quality):
+    terrain.set_grass(True, density=0.05)
+    terrain.set_grass_quality(quality)
+    _paint_vegetation(terrain, biome, channels)
+    slot = _slot(terrain)
+    expected = (terrain._generate_wheat_blades(slot) if biome == tb.WHEAT
+                else terrain._generate_tundra_blades(slot))
+    assert len(expected) > 0
+    np.testing.assert_array_equal(terrain._generate_grass_blades(slot), expected)
+
+
+@pytest.mark.parametrize("biome", [tb.WHEAT, tb.TUNDRA])
+def test_grass_blades_sit_on_the_ground(terrain, biome):
+    _paint_vegetation(terrain, biome)
     terrain.set_grass(True, density=0.05)
     for mode in ('none', 'blocks'):
         terrain.set_appearance(terrace_mode=mode)
@@ -204,45 +235,13 @@ def test_grass_blades_sit_on_the_ground(terrain):
         np.testing.assert_allclose(blades[:, 1], ground, atol=1e-3)
 
 
-def test_grass_is_deterministic(terrain):
+@pytest.mark.parametrize("biome", [tb.WHEAT, tb.TUNDRA])
+def test_grass_is_deterministic(terrain, biome):
+    _paint_vegetation(terrain, biome)
     terrain.set_grass(True, density=0.05)
     a = terrain._generate_grass_blades(_slot(terrain))
     b = terrain._generate_grass_blades(_slot(terrain))
     np.testing.assert_array_equal(a, b)
-
-
-def test_no_grass_at_high_elevation(terrain):
-    """Grass grows only in the grass height layer - never on the heights."""
-    terrain.set_grass(True, density=0.06)
-    terrain.set_appearance(layer_heights=(0.0, 0.4, 1.0), layer_blend=0.02)
-    blades = []
-    for cx in (-1, 0):
-        for cz in (-1, 0):
-            blades.append(terrain._generate_grass_blades(_slot(terrain, cx, cz)))
-    blades = np.concatenate(blades)
-    assert len(blades) > 0
-    raw = terrain._get_raw_heights_batch(blades[:, 0], blades[:, 2])
-    frac = terrain._normalized_layer_height(raw)
-    # Boundary + blend band, plus the slope across a tuft's spread.
-    assert frac.max() < 0.4 + 2 * 2 * 0.02 + 0.05
-
-    # And the high ground really exists here, so the check above is not vacuous.
-    xs = np.linspace(-256, 255, 64, dtype=np.float32)
-    gx, gz = np.meshgrid(xs, xs)
-    ground = terrain._normalized_layer_height(
-        terrain._get_raw_heights_batch(gx.ravel(), gz.ravel()))
-    assert np.mean(ground > 0.5) > 0.1
-
-
-def test_grass_leaves_clearings(terrain):
-    """Even on all-grass ground the cover is patchy, not an even carpet."""
-    terrain.set_grass(True, density=0.06)
-    terrain.set_appearance(layer_heights=(0.0, 1.0, 1.0))
-    terrain.GRASS_MIN_NORMAL_Y = 0.0
-    blades = terrain._generate_grass_blades(_slot(terrain))
-    tufts = len(blades) / terrain.GRASS_BLADES_PER_TUFT
-    placed = min(terrain.GRASS_MAX_PER_CHUNK, int(0.06 * terrain.chunk_size ** 2))
-    assert 0.2 * placed < tufts < 0.9 * placed
 
 
 def test_editing_a_band_colour_makes_a_custom_palette(terrain):
@@ -269,26 +268,14 @@ def test_choosing_custom_starts_from_the_current_colours(terrain):
 
 
 def test_grass_height_range_is_controllable(terrain):
-    """Grass grows only between its lowest and highest height."""
+    """Authored grass height settings still round-trip with the terrain."""
     terrain.set_grass(True, density=0.06)
     terrain.GRASS_MIN_NORMAL_Y = 0.0
     terrain.set_appearance(layer_blend=0.02)
     assert terrain.grass_height_bounds() == terrain._layer_heights()[:2]
 
-    def blade_heights():
-        out = []
-        for cx in (-1, 0):
-            for cz in (-1, 0):
-                out.append(terrain._generate_grass_blades(_slot(terrain, cx, cz)))
-        blades = np.concatenate(out)
-        raw = terrain._get_raw_heights_batch(blades[:, 0], blades[:, 2])
-        return terrain._normalized_layer_height(raw)
-
     terrain.set_grass(True, height_range=(0.45, 0.7))
-    frac = blade_heights()
-    assert len(frac) > 0
-    # Edge blend (2 x 2 x 0.02) plus the spread of a tuft across a slope.
-    assert frac.min() > 0.45 - 0.13 and frac.max() < 0.7 + 0.13
+    assert terrain.grass_height_range == (0.45, 0.7)
 
     terrain.set_grass(True, height_range=(0.9, 0.2))    # given backwards
     assert terrain.grass_height_range == (0.2, 0.9)
@@ -308,32 +295,6 @@ def test_changing_the_grass_range_rebuilds_grass(terrain):
     terrain.table.grass_dirty[:] = False
     terrain.set_grass(True, height_range=(0.1, 0.5))
     assert terrain.table.grass_dirty[terrain.table.live_slots()].all()
-
-
-def test_grass_matches_the_ground_by_default(terrain):
-    """Each blade carries the colour terrain.frag paints where it stands."""
-    terrain.set_grass(True, density=0.05)
-    assert not terrain.grass_color_custom
-    slot = _slot(terrain)
-
-    # Textures on: the height-blended mean texture colour.
-    terrain.set_use_textures(True)
-    blades = terrain._generate_grass_blades(slot)
-    averages = ts.terrain_texture_averages()
-    assert averages is not None
-    grass_tex = averages[1] * 1.1
-    # Grass grows in the grass layer, so its colour is (almost always) the
-    # grass texture's; blades near a layer edge blend towards the next one.
-    close = np.abs(blades[:, 6:9] - grass_tex).max(axis=1) < 0.12
-    assert close.mean() > 0.8
-
-    # Strata: the palette at each blade's band.
-    terrain.apply_appearance_preset('painted_strata')
-    terrain.set_grass(True, height_range=(0.0, 1.0))
-    blades = terrain._generate_grass_blades(slot)
-    expected = ts.palette_ground_colors(terrain.appearance, blades[:, 1],
-                                        terrain._layer_height_range(), terrain.mesh_scale)
-    np.testing.assert_allclose(blades[:, 6:9], np.clip(expected, 0, 1), atol=1e-5)
 
 
 def test_ground_coloured_grass_follows_look_changes(terrain):
