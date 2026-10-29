@@ -205,6 +205,8 @@ Consumers keep one handle, `session.storyteller` (the same object as
 weights and `player_town()`; nothing outside the module reaches into its
 hooks or the director's private intent cache.
 
+What residents say about all of this is the [rumour layer](rumours.md).
+
 Faction actors, goodwill, footprint pricing and on-demand moods are documented
 in [Factions: the world prices drama](factions.md). Faction decisions stay in the
 reactive simulation. Prosperity only prices legal bandit destinations; notoriety

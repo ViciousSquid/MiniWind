@@ -1150,6 +1150,15 @@ class MiniwindGame:
                 session.start_dialogue(npc, player)
                 self._hold_interact()
             return
+        board = session.nearest_notice_board(player.pos, TALK_RADIUS)
+        if board is not None:
+            prompt = f"{controls.press('interact')} to read the notice board"
+            ctx.set_prompt(prompt, priority=5)
+            session.interact_prompt = prompt
+            if K_INTERACT in just or ctx.use_pressed:
+                session.start_dialogue(board, player)
+                self._hold_interact()
+            return
         # No NPC to talk to — offer a nearby container to open, or a body to
         # loot, with the same key (whichever is nearer).
         container = session.nearest_container(player.pos, TALK_RADIUS)

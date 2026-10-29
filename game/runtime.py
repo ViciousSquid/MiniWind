@@ -353,6 +353,15 @@ BARK_FADE = 0.4
 CHAT_RADIUS = 160.0
 CHAT_COOLDOWN = 60.0
 CHAT_CHANCE = 0.04
+#: A resident volunteering to the player something they believe
+#: (game/sim/rumours.py): how close the player must be, how long the line is
+#: up, the chance per decision pass (more at an inn: tavern talk), and how
+#: long before that resident volunteers again (s).
+VOLUNTEER_RADIUS = 220.0
+VOLUNTEER_SECONDS = 5.5
+VOLUNTEER_CHANCE = 0.03
+TAVERN_FACTOR = 3.0
+VOLUNTEER_COOLDOWN = 90.0
 #: The routines in which somebody has time to chat.
 CHAT_STATES = frozenset(("", "IDLE", "WANDER", "WORKING", "GOING_TO_WORK",
                          "GOING_HOME", "PATROL"))
@@ -1691,6 +1700,7 @@ class MiniwindSession(SettlementLaw):
                 self._decide(npc)
             self._update_thoughts()
             self._update_small_talk()
+            self._update_volunteering()
         for i, npc in enumerate(npcs):
             if npc.properties.get("resurrection_used") and npc.properties.get("follow_player"):
                 self._guard_raised_follower(npc)
@@ -4953,6 +4963,89 @@ class MiniwindSession(SettlementLaw):
                 self.bark_later(b, reply, BARK_SECONDS - BARK_FADE)
                 a.properties["_chat_until"] = b.properties["_chat_until"] = now + CHAT_COOLDOWN
                 return
+
+    def _update_volunteering(self) -> None:
+        """Now and then the resident nearest the player, with nothing more
+        pressing on, volunteers something they have heard -- three times as
+        often at an inn. Only what they themselves believe, each thing once
+        (game/sim/rumours.py); narration that changes no one's knowledge."""
+        living = getattr(self, "living", None)
+        if living is None or living.board is None or self.dialogue is not None:
+            return
+        ppos = self._player_pos()
+        if ppos is None:
+            return
+        rng = self.__dict__.setdefault("_chat_rng", random.Random())
+        here = living.board.nearest_place(ppos[0], ppos[2])
+        tavern = living.board.places.get(here, {}).get("kind") == "inn"
+        if rng.random() >= VOLUNTEER_CHANCE * (TAVERN_FACTOR if tavern else 1.0):
+            return
+        import time as _time
+        now = _time.monotonic()
+        talking = self.__dict__.get("barks") or {}
+        best = None
+        for npc in self._things_of_type("npc"):
+            p = npc.properties
+            if (p.get("dead") or npc.pos is None or p.get("_sim_tier", TIER_NEAR) > TIER_NEAR
+                    or str(p.get("aggression")) == "hostile"
+                    or str(p.get("sched_state", "")).upper() not in CHAT_STATES
+                    or p.get("_rumour_until", 0.0) > now or id(npc) in talking):
+                continue
+            d = self._dist2d(npc.pos, ppos)
+            if d <= VOLUNTEER_RADIUS and (best is None or d < best[0]):
+                best = (d, npc)
+        if best is None:
+            return
+        npc = best[1]
+        npc.properties["_rumour_until"] = now + VOLUNTEER_COOLDOWN
+        told = npc.properties.setdefault("_told_player", [])
+        said = living.rumours(npc, 1, skip=told)
+        if not said:
+            return
+        eid, text = said[0]
+        self.bark(npc, text, VOLUNTEER_SECONDS)
+        if id(npc) in self.__dict__.get("barks", {}):
+            told.append(eid)
+
+    # ---------------------------------------------------------- notice boards
+    def nearest_notice_board(self, player_pos, radius: float = TALK_RADIUS):
+        """The nearest ``notice_board`` thing within *radius*, or None."""
+        best, best_d = None, radius * radius
+        for board in self._things_of_type("notice_board"):
+            if board.pos is None or board.properties.get("hidden"):
+                continue
+            dx, dz = board.pos[0] - player_pos[0], board.pos[2] - player_pos[2]
+            if dx * dx + dz * dz < best_d:
+                best, best_d = board, dx * dx + dz * dz
+        return best
+
+    def notice_board_posts(self, board) -> List[str]:
+        """What is pinned to *board*: the writ on the player's head in this
+        jurisdiction, the watch's appeals over reported crimes, who has set out
+        from this town and why, and news travellers brought. Every post is
+        something already true; reading them changes nothing."""
+        posts = []
+        try:
+            bounty = int(self.law.bounty(self._law_region(board.pos, board)) or 0)
+        except Exception:
+            bounty = 0
+        if bounty > 0:
+            name = getattr(self.game.character, "name", "") or "the stranger"
+            posts.append(f"WANTED: {name}, for crimes against this town. "
+                         f"{bounty} gold to whoever brings them to the watch.")
+        living = getattr(self, "living", None)
+        if living is not None and living.board is not None:
+            place = living.board.nearest_place(board.pos[0], board.pos[2])
+            posts += living.notices(place, 3)
+            posts += living.departures(place, 2)
+            posts += living.board.news_at(place, 3)
+        return posts
+
+    def _notice_board_tree(self, board) -> Dict:
+        posts = self.notice_board_posts(board)
+        text = "\n\n".join(posts) if posts else "The board is bare but for old nail holes."
+        return {"start": "board", "nodes": {"board": {
+            "text": text, "responses": [{"text": "Step away.", "goto": "END"}]}}}
 
     # -------------------------------------------------------------- thoughts
     def _npc_thoughts_enabled(self) -> bool:
@@ -8642,6 +8735,13 @@ class MiniwindSession(SettlementLaw):
         tree = npc.properties.get("dialogue")
         self.dialogue_selected = 0
         self.dialogue_npc = npc
+        if str(npc.properties.get("type", "")).replace("_", "").lower() == "noticeboard":
+            # A board has no memory of the player, no face and no topics.
+            self.dialogue = DialogueRunner(self._notice_board_tree(npc), store=self.store)
+            if self.dialogue.start() is None:
+                self.end_dialogue()
+                return False
+            return True
         if (npc is self._arrest_guard and self._arrest_state == "ready"
                 and int(self.game.character.bounty or 0) > 0):
             tree = self._arrest_tree(npc)
