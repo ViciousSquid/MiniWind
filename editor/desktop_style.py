@@ -7,7 +7,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QFontDatabase
 from PyQt5.QtWidgets import QApplication, QDialogButtonBox, QFormLayout, QProxyStyle, QStyle, QStyleFactory
 
-UI_FONT = "Selawik"
+UI_FONT = "Fio UI"
 MONO_FONT = "IBM Plex Mono"
 
 

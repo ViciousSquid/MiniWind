@@ -302,6 +302,9 @@ class TerrainEditorPanel(QWidget):
         tabs = self._terrain_tabs
         tabs.setUsesScrollButtons(True)
         tabs.tabBar().setExpanding(False)
+        # A hidden page's width hint must not widen the entire scrolling
+        # panel. Active forms wrap to the dock; the tab strip scrolls itself.
+        tabs.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         
         # === BIOME TAB ===
         biome_tab = QWidget()

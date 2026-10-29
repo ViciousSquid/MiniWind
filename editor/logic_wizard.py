@@ -880,7 +880,7 @@ WIZARD_STYLE = """
 QWizard, QWizardPage {
     background: #1e1e24;
     color: #ddd;
-    font-family: "Selawik";
+    font-family: "Fio UI";
 }
 QLabel { color: #ccc; }
 QComboBox {

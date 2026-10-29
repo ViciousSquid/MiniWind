@@ -160,7 +160,7 @@ class LoadingOverlay(QWidget):
             if _TITLE_FONT.wordSpacing() == 0:
                 font.setWordSpacing(size * 0.5)   # display faces' spaces run thin
         else:
-            font = QFont("Selawik", size, QFont.Bold)
+            font = QFont("Fio UI", size, QFont.Bold)
         p.setFont(font)
         fm = p.fontMetrics()
         top = self.bar.y() - fm.height() - 14

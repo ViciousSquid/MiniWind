@@ -52,8 +52,8 @@ from PyQt5.QtWidgets import QApplication, QLabel
 from PyQt5.QtGui import QFont, QFontInfo
 app = QApplication([])
 install_editor_style(app)
-assert QFontInfo(QFont("Selawik", 11)).pixelSize() == 15
-assert QFontInfo(QFont("Selawik", 16)).pixelSize() == 21
+assert QFontInfo(QFont("Fio UI", 11)).pixelSize() == 15
+assert QFontInfo(QFont("Fio UI", 16)).pixelSize() == 21
 from main import dark_stylesheet
 app.setStyleSheet(dark_stylesheet)
 font = app.font()
@@ -62,6 +62,7 @@ app.setFont(font)
 label = QLabel("Styled text")
 label.ensurePolished()
 assert QFontInfo(label.font()).pixelSize() == 21
+assert label.fontMetrics().height() == 28
 '''], cwd=Path(__file__).resolve().parents[2], env=dict(os.environ, QT_QPA_PLATFORM='offscreen'),
         capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr

@@ -51,6 +51,7 @@ def test_hidden_palette_page_does_not_force_horizontal_scrolling(terrain_panel):
     panel = terrain_panel
     scroll = panel.findChild(QScrollArea)
     assert scroll.horizontalScrollBar().maximum() == 0
+    assert panel._terrain_tabs.width() <= scroll.viewport().width()
     assert scroll.verticalScrollBar().maximum() > 0
     for button in [*panel.palette_swatches, panel.palette_add_btn, panel.palette_remove_btn]:
         assert button.width() <= 30
