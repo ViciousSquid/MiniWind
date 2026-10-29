@@ -100,8 +100,8 @@ def test_materialisation_weight_consults_only_the_journeys_own_members(monkeypat
     hooks.cast.extend(actor(f"Bystander {i}") for i in range(200))
     rising(story)
     seen = []
-    real = story._vendettas
-    monkeypatch.setattr(story, "_vendettas", lambda holders: seen.append(set(holders)) or real(holders))
+    real = story._justified
+    monkeypatch.setattr(story, "_justified", lambda holders: seen.append(set(holders)) or real(holders))
     story.materialisation_weight([actor_key(kin), "stranger"], 300)
     assert seen == [{actor_key(kin)}]
 

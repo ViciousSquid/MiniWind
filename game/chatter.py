@@ -48,6 +48,21 @@ _SMALL_TALK = {
 }
 
 
+#: What someone on a justified journey says on finding the player, by kind
+#: (:func:`game.sim.storyteller.justification`).
+_JUSTIFIED = {
+    "vendetta": ("You killed {victim}. I've walked a long road to find you.",
+                 "{Victim} was my blood. You'll answer for it.",
+                 "They told me where you'd be. This is for {victim}."),
+    "reckoning": ("You! You struck me and walked away. Not this time.",
+                  "I've not forgotten what you did to me."),
+    "restitution": ("You're the one who robbed me. The watch will hear of it here too.",
+                    "I came a long way for what you took from me."),
+    "gratitude": ("It's you! You were good to {victim}. I came to thank you.",
+                  "I hoped I'd find you here. I owe you for {victim}."),
+}
+
+
 def _pick(options, *salt):
     return options[zlib.crc32("|".join(str(s) for s in salt).encode()) % len(options)]
 
@@ -74,6 +89,18 @@ def gossip_lines(fact: Dict, speaker: str = "", listener: str = "") -> Tuple[str
     tags = events.kind_spec(fact.get("kind", ""))["tags"]
     kind = next((t for t in ("grave", "violence", "property", "social") if t in tags), "")
     return opener, _pick(_REPLIES[kind], *salt)
+
+
+def justified_line(kind: str, victim: str = "", speaker: str = "") -> str:
+    """What *speaker* says on reaching the player, for a justified journey.
+
+    Narration only: the journey and the intent behind it already exist."""
+    options = _JUSTIFIED.get(str(kind))
+    if not options:
+        return ""
+    victim = str(victim or "me")       # blank: it was done to the speaker
+    return _pick(options, speaker, kind, victim).format(
+        victim=victim, Victim=victim[:1].upper() + victim[1:])
 
 
 def small_talk(a: str, b: str, hour: float) -> Tuple[str, str]:

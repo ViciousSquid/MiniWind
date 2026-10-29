@@ -32,6 +32,7 @@
   "sight_radius": 1800.0,
   "staging_distance": 900.0,
   "vendetta_trip_distance": 6000.0,
+  "justified_journeys": {"vendetta": 1.0, "reckoning": 1.0, "restitution": 0.5, "gratitude": 0.5},
   "arrival_window_hours": 2.0,
   "unpaid_writ_hours": 24.0,
   "states": {

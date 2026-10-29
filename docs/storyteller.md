@@ -88,6 +88,37 @@ and homeward leg. Distant, dirty, forgotten, discharged or unjustified fights
 keep ordinary destination sampling. Holder identities are cached once per
 sample, while facts, current intentions and discharges are revalidated at use.
 
+### Justified journeys
+
+Kin vendettas are one case of a general rule: **every strong, evidenced intent
+toward the player can justify an ordinary trip or nearby arrival**, through the
+same staging and market-destination mechanism. `justification()` reads one
+cached intent and the holder's own identified account (certainty at least the
+reporting threshold) of a player deed:
+
+| Kind | Cached intent | Holder's account | Discharged by |
+| --- | --- | --- | --- |
+| `vendetta` | FIGHT | death of kin | the holder's own later blow |
+| `reckoning` | FIGHT | criminal attack on the holder | the holder's own later blow |
+| `restitution` | CONFRONT | unreported, unsettled theft or broken lock of the holder's | reporting or settlement |
+| `gratitude` | WARM | heal or gift to the holder or a loved one | reaching the player's region once |
+
+`justified_journeys` in the tuning gives each kind a share of the state's
+`vendetta_bias` bonus: the weight is `1 + (vendetta_bias - 1) * scale`, so
+vendettas keep exactly their old weight and a scale of 0 leaves a kind ordinary.
+The same health, town, staging-distance and trip-distance gates apply, and the
+destination draw is unchanged. A friend's death, warmth toward a stranger, a
+lawful blow and someone else's loss justify nothing. Mourners still stay home,
+so there is no "searching for a lost relative" kind: appraisal has no intent
+for it, and the storyteller does not invent one.
+
+The `vendettas` sensor and footprint notoriety still count only kin vendettas;
+`justified` counts every kind. Studio's **World** tab lists each holder with its
+kind. A trip's chosen destination survives resampling. When a justified traveller
+reaches the town it was sent to and sees the player, it says once why it came
+(`chatter.justified_line`): "You killed Bram. I've walked a long road to find
+you." The line narrates an existing intent; it changes nothing.
+
 `WorldHooks` exposes the lever and sampling queries to board/streaming code.
 Every decision updates a plain-English explanation shown in the existing
 mental-state inspector's **Storyteller decisions** section beside ranked

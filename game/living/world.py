@@ -934,6 +934,8 @@ class LivingWorld:
                     and not offender.properties.get("dead")
                     and math.hypot(x.pos[0] - offender.pos[0], x.pos[2] - offender.pos[2]) <= SIGHT
                     and s._law_visible(x, offender.pos) and s._apply_sim_intent(x)):
+                if offender is getattr(s, "player_actor", None):
+                    self._say_why(x)
                 return True
         p = x.properties
         combatant = bool(p.get("combatant"))
@@ -1028,8 +1030,34 @@ class LivingWorld:
             p["sched_state"] = "RESTING"
 
     # ---------------------------------------------------------- dialogue
+    def _justified_line(self, x) -> str:
+        """Why this traveller came looking for the player, once, if they did.
+
+        Reads the storyteller's sampled justification for the same social
+        identity; the journey and the intent behind it already exist."""
+        story = getattr(self.session, "storyteller", None)
+        if story is None or not story.enabled or x.properties.get("_justified_said"):
+            return ""
+        from ..sim.director import peek_actor_key
+        from .. import chatter
+        row = story.justified_view(peek_actor_key(x))
+        if not row or row.get("destination") != self.board.nearest_place(x.pos[0], x.pos[2], jn.TOWNS):
+            return ""
+        speaker = x.properties.get("display_name") or x.properties.get("name") or ""
+        return chatter.justified_line(row.get("kind", ""), row.get("victim", ""), speaker)
+
+    def _say_why(self, x) -> None:
+        line = self._justified_line(x)
+        if line:
+            x.properties["_justified_said"] = True
+            self.session.bark(x, line)
+
     def _greeting(self, j, leader) -> str:
         s = self.session
+        line = self._justified_line(leader)
+        if line:
+            leader.properties["_justified_said"] = True
+            return line
         if self.board.knows_bounty(j) and self.board.hooks.player_bounty() > 0 \
                 and j.kind not in ("hunters", "bandits"):
             return s.rng.choice(("You're the one they're paying for...",

@@ -45,6 +45,10 @@ DEFAULT_TUNING = {
     "sight_radius": 1800.0,
     "staging_distance": 900.0,
     "vendetta_trip_distance": 6000.0,
+    # Fraction of a state's vendetta_bias bonus each justified journey kind
+    # receives (1 + (bias - 1) * scale); 0 leaves that kind ordinary.
+    "justified_journeys": {"vendetta": 1.0, "reckoning": 1.0,
+                           "restitution": 0.5, "gratitude": 0.5},
     "arrival_window_hours": 2.0,
     "unpaid_writ_hours": 24.0,
     "states": {
@@ -116,6 +120,44 @@ def load_tuning():
 
 
 TUNING = load_tuning()
+
+#: Justified kinds whose holder means the player harm; their staging is
+#: discharged by the holder's own later blow, as for kin vendettas.
+HOSTILE_JUSTIFIED = ("vendetta", "reckoning")
+
+
+def justification(props, holder, intent, fact):
+    """Which justified journey a cached intent supports, or ``None``.
+
+    Every kind needs the holder's own identified, sufficiently certain account
+    of a player deed, and the intent appraisal already decided from it:
+
+    * ``vendetta``    FIGHT over a kin's death (the original rule);
+    * ``reckoning``   FIGHT over a criminal attack on the holder;
+    * ``restitution`` CONFRONT over an unreported, unsettled theft or broken
+      lock of the holder's own (the creditor come to collect);
+    * ``gratitude``   WARM over a heal or gift to the holder or a loved one.
+
+    Nothing here appraises, invents a grievance or changes an intention.
+    """
+    if (not fact or intent.target != PLAYER_KEY or fact.get("actor") != PLAYER_KEY
+            or not fact.get("identified", True)
+            or float(fact.get("certainty", 0)) < crime.REPORT_CERTAINTY):
+        return None
+    kind, victim = fact.get("kind"), fact.get("target", "")
+    tie = appraisal.relationship_to(props, victim, fact.get("target_name", ""))
+    if intent.reaction == appraisal.FIGHT:
+        if kind == "death" and tie in appraisal.KIN_TIES:
+            return "vendetta"
+        if kind == "attack" and victim == holder and crime.is_crime(fact):
+            return "reckoning"
+    elif intent.reaction == appraisal.CONFRONT:
+        if kind in ("theft", "lockpick") and victim == holder and not fact.get("reported"):
+            return "restitution"
+    elif intent.reaction == appraisal.WARM:
+        if kind in ("heal", "gift") and (victim == holder or tie in appraisal.WARM_TIES):
+            return "gratitude"
+    return None
 
 
 class StorytellerHooks:
@@ -330,40 +372,57 @@ class Storyteller(SimSystem):
         return self._holder_cache
 
     def _vendettas(self, holders):
-        """Read cached intentions only; never appraise, dirty or replace them."""
+        """Clean kin vendettas only: the original staging rule and sensor."""
+        return {key: row[0] for key, row in self._justified(holders).items()
+                if row[1] == "vendetta"}
+
+    def _justified(self, holders):
+        """{holder: (intent, kind)} for strong, evidenced intents toward the player.
+
+        Read cached intentions only; never appraise, dirty or replace them.
+        """
         out = {}
         if self.director is None:
             return out
         strikes = None          # the history scan, only once a fight qualifies
+        scales = TUNING["justified_journeys"]
         for key, actor in holders.items():
             cached = self.director.cached_intents(key)
             if actor.properties.get("dead") or not cached:
                 continue
             known = None
             for intent in cached:
-                if intent.reaction != appraisal.FIGHT or intent.target != PLAYER_KEY:
+                if intent.target != PLAYER_KEY:
                     continue
                 if known is None:
                     known = {f.get("e"): f for f in self._facts(key)}
                 fact = known.get(intent.event_id)
-                if (not fact or fact.get("kind") != "death"
-                        or fact.get("actor") != PLAYER_KEY
-                        or not fact.get("identified", True)
-                        or float(fact.get("certainty", 0)) < crime.REPORT_CERTAINTY):
+                kind = justification(actor.properties, key, intent, fact)
+                if kind is None or not scales.get(kind, 0):
+                    continue
+                if kind == "restitution" and crime.settled(self.store, intent.event_id):
                     continue
                 token = (key, intent.event_id)
-                if strikes is None:
-                    strikes = self._strikes()
-                if strikes.get(key, 0) > intent.event_id:
-                    self._discharged.add(token)
+                if kind in HOSTILE_JUSTIFIED:
+                    if strikes is None:
+                        strikes = self._strikes()
+                    if strikes.get(key, 0) > intent.event_id:
+                        self._discharged.add(token)
                 if token in self._discharged:
                     continue
-                tie = appraisal.relationship_to(actor.properties, fact.get("target", ""),
-                                                 fact.get("target_name", ""))
-                if tie in appraisal.KIN_TIES:
-                    out[key] = intent
-                    break
+                out[key] = (intent, kind)
+                break
         return out
+
+    def _bias(self, kind):
+        """The state's justified arrival bonus, scaled for this kind."""
+        scale = TUNING["justified_journeys"].get(kind, 0) if kind else 0
+        return 1.0 + (self._levers["vendetta_bias"] - 1.0) * scale
+
+    def justified_view(self, key):
+        """The sampled justification row for one holder, detached; no sampling."""
+        row = self._vendetta_view.get(key)
+        return copy.deepcopy(row) if row else None
 
     def _sense(self, now):
         self._holder_cache = holders = self._holders()
@@ -419,10 +478,21 @@ class Storyteller(SimSystem):
         pressure = any(row.get("bounty", 0) >= TUNING["pressure_bounty"]
                        or row.get("phase") in TUNING["pressure_phases"]
                        for row in law.values())
-        vendettas = self._vendettas(holders)
+        justified = self._justified(holders)
+        previous = self._vendetta_view
+        vendettas = {key: row for key, row in justified.items() if row[1] == "vendetta"}
         self._vendetta_view = {key: dict(reason=intent.reason, staging="Awaiting an ordinary trip or nearby arrival",
             holder=holders[key].properties.get("display_name") or holders[key].properties.get("name") or key,
-            event=intent.event_id) for key, intent in vendettas.items()}
+            event=intent.event_id, kind=kind,
+            # Blank when the deed was done to the holder: "you healed me".
+            victim="" if (intent.fact or {}).get("target") == key
+            else str((intent.fact or {}).get("target_name", "")))
+            for key, (intent, kind) in justified.items()}
+        for key, row in self._vendetta_view.items():
+            # A trip already sent toward the player keeps its destination
+            # across samples, so its arrival can still be recognised.
+            if previous.get(key, {}).get("event") == row["event"] and previous[key].get("destination"):
+                row["destination"] = previous[key]["destination"]
         from ..footprint import evaluate
         footprint = evaluate(((key, self._facts(key)) for key in holders),
                              threads=len(ids), writs=law, vendettas=len(vendettas),
@@ -432,6 +502,7 @@ class Storyteller(SimSystem):
                       + deaths * TUNING["death_tension"] + hostiles * TUNING["hostile_tension"])
         return dict(health=health, attacks=attacks, deaths=deaths, hostiles=hostiles,
                     tension=tension, loose_threads=len(ids), vendettas=len(vendettas),
+                    justified=len(justified),
                     law=law, law_pressure=pressure, footprint=footprint)
 
     def _outcomes(self, now, sensors):
@@ -552,7 +623,8 @@ class Storyteller(SimSystem):
         self._reason("State decision", f"{previous} → {self.state}: {explanation} After {age:.2f} hours: "
                      f"health {s['health']:.0%}, tension {s['tension']:.2f}, "
                      f"{s['attacks']} recent attacks, {s['deaths']} deaths, {s['hostiles']} visible hostiles, "
-                     f"{s['loose_threads']} unreported memories, {s['vendettas']} kin vendettas; "
+                     f"{s['loose_threads']} unreported memories, {s['vendettas']} kin vendettas, "
+                     f"{s.get('justified', s['vendettas'])} justified journeys; "
                      f"law pressure {'present' if s['law_pressure'] else 'absent'}; "
                      f"{s['hostile_arrivals_per_hour']:.2f} hostile arrivals per game hour. "
                      + ("Population growth is capped after an empty pressure window." if s["arrival_stalled"] else ""))
@@ -584,16 +656,18 @@ class Storyteller(SimSystem):
             return 1.0
         holders = self._cached_holders()
         # Only this journey's few members: never a scan of every holder.
-        vendettas = self._vendettas({key: holders[key] for key in actor_keys if key in holders})
-        eligible = next((key for key in actor_keys if key in vendettas), None)
+        justified = self._justified({key: holders[key] for key in actor_keys if key in holders})
+        eligible = next((key for key in actor_keys if key in justified), None)
         ready = (eligible and self.hooks.player_town()
                  and self.hooks.player_health_fraction() >= TUNING["healthy"]
                  and distance <= TUNING["staging_distance"])
-        weight = self._levers["vendetta_bias"] if ready else 1.0
+        kind = justified[eligible][1] if eligible else None
+        weight = self._bias(kind) if ready else 1.0
         why = f"Weight {weight:g}: " + (
-            f"{eligible} already intends to fight ({vendettas[eligible].reason}); "
+            f"{eligible} already intends {justified[eligible][0].label.lower()} "
+            f"({kind}: {justified[eligible][0].reason}); "
             "the player is healthy in town and this journey is already nearby."
-            if ready else "No nearby justified kin fight is ready for a healthy player in town.")
+            if ready else "No nearby justified journey is ready for a healthy player in town.")
         self._reason("Vendetta staging", why)
         if eligible in self._vendetta_view:
             self._vendetta_view[eligible]["staging"] = why
@@ -612,15 +686,16 @@ class Storyteller(SimSystem):
             return None
         key = actor_key(resident_id)
         holder = self._cached_holders().get(key)
-        vendettas = self._vendettas({key: holder}) if holder is not None else {}
+        justified = self._justified({key: holder}) if holder is not None else {}
         town = self.hooks.player_town()
-        ready = (key in vendettas and town in towns
+        kind = justified[key][1] if key in justified else None
+        ready = (kind is not None and self._bias(kind) > 1.0 and town in towns
                  and self.hooks.player_health_fraction() >= TUNING["healthy"]
                  and distance <= TUNING["vendetta_trip_distance"])
         why = (
-            f"{key} already intends to fight ({vendettas[key].reason}); weight the ordinary market trip "
-            f"toward {town}, where the healthy player is staying."
-            if ready else "Keep the authored market destinations: no nearby clean, undischarged kin fight can approach a healthy player in town.")
+            f"{key} already intends {justified[key][0].label.lower()} ({kind}: {justified[key][0].reason}); "
+            f"weight the ordinary market trip toward {town}, where the healthy player is staying."
+            if ready else "Keep the authored market destinations: no nearby clean, undischarged justified journey can approach a healthy player in town.")
         self._reason("Vendetta market destination", why)
         if key in self._vendetta_view:
             self._vendetta_view[key].update(staging=why, destination=town if ready else None)
@@ -671,6 +746,11 @@ class Storyteller(SimSystem):
         for member in journey.members:
             key = actor_key(member.get("resident", ""))
             staged = self._vendetta_view.get(key, {})
+            if (arrived and staged.get("kind") not in (None, *HOSTILE_JUSTIFIED)
+                    and staged.get("destination") == journey.dest):
+                # Peaceful justified trips end once they actually reach the
+                # player's region: one visit per remembered deed.
+                self._discharged.add((key, int(staged["event"])))
             if destination_sampled and staged.get("destination") == journey.dest:
                 influenced = True
                 why = staged["staging"]
