@@ -684,7 +684,7 @@ class PassesMixin:
             self.render_stats.visible_tris += terrain.get_tri_count()
         # settings.ini [Renderer] grass = False switches grass off globally.
         terrain.grass_allowed = bool(getattr(self, 'grass_enabled', True))
-        # [Renderer] grass_quality = low keeps the original, thinner grass.
+        # [Renderer] low_grass = True keeps the original, thinner grass.
         terrain.set_grass_quality(getattr(self, 'grass_quality', 'high'))
         terrain.update_and_render(
             projection, view, camera_pos, frustum_planes, terrain_lights, active_lights_count,

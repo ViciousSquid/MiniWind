@@ -1745,8 +1745,8 @@ class Terrain:
             self.table.mark_grass_dirty()
         return True
 
-    #: settings.ini [Renderer] grass_quality: 'high' (thick meadows) or 'low'
-    #: (the original grass: half the tufts, narrower blades).
+    #: 'high' (thick meadows) or 'low' (the original grass: half the tufts,
+    #: narrower blades) -- settings.ini [Renderer] low_grass.
     grass_quality = 'high'
     #: (tuft budget multiplier, blade half-width) per quality.
     GRASS_QUALITIES = {'high': (1.0, 0.45), 'low': (0.5, 0.35)}
