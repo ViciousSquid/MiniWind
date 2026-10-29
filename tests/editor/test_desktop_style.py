@@ -173,7 +173,7 @@ def test_file_picker_size_does_not_depend_on_sidebar_entries(qt_app):
     qt_app.processEvents()
     try:
         line = dialog.fontMetrics().height()
-        available = dialog.screen().availableGeometry()
+        available = dialog.screen().availableGeometry().size() - (dialog.frameGeometry().size() - dialog.size())
         assert dialog.width() == min(36 * line, available.width())
         assert dialog.height() == min(24 * line, available.height())
         assert dialog.findChild(QSplitter, 'splitter').sizes()[0] == 7 * line

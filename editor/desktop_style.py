@@ -243,7 +243,8 @@ class EditorLayoutRules(QObject):
             # after Polish. Assign the window and sidebar sizes once shown.
             obj.setProperty('_fio_sized', True)
             line = obj.fontMetrics().height()
-            available = obj.screen().availableGeometry().size()
+            # Keep the whole frame, title bar included, within the work area.
+            available = obj.screen().availableGeometry().size() - (obj.frameGeometry().size() - obj.size())
             obj.resize(QSize(36 * line, 24 * line).boundedTo(available).expandedTo(obj.minimumSizeHint()))
             splitter = obj.findChild(QSplitter, 'splitter')
             if splitter is not None and splitter.count() == 2:
