@@ -11,7 +11,8 @@ import json
 from types import SimpleNamespace
 
 from . import appraisal, crime, knowledge, moods
-from .director import actor_key
+from .director import peek_actor_key
+from .system import SimSystem
 
 STORE_KEY = "factions.state"
 VERSION = 1
@@ -21,8 +22,8 @@ KINDNESS = {"heal": 12, "gift": 5, "trade": 2}
 
 
 def identity(actor):
-    # mem_key may memoise on properties: projections must use a detached view.
-    return actor_key(SimpleNamespace(properties=dict(actor.properties)))
+    # mem_key memoises on properties; projections must never write to them.
+    return peek_actor_key(actor)
 
 
 def ledger(faction, accounts):
@@ -60,7 +61,10 @@ def ledger(faction, accounts):
     return dict(totals=totals, receipts=rows)
 
 
-class FactionSpine:
+class FactionSpine(SimSystem):
+    # Driven by the living board (decide/pending), so it keeps the default tick.
+    name = "factions"
+
     def __init__(self, store, director, enabled=lambda: True):
         self.store, self.director, self.enabled = store, director, enabled
         self.board = None

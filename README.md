@@ -122,7 +122,10 @@ scenario-free:
 Everything here is pure Python — no Qt, no engine imports — and headlessly
 tested. The **director** owns the bus and drives the chain; parked, distant
 actors are simulated coarsely (gossip, reports, production in hour-long
-catch-up passes), and truly dormant ones not at all.
+catch-up passes), and truly dormant ones not at all. It also owns the
+simulation's long-lived subsystems — the [storyteller](docs/storyteller.md)'s
+pacing and the [faction actors](docs/factions.md) — which tick after each pass
+on world time and reset, save and load with the event history.
 
 ### The settlement watch
 
@@ -256,7 +259,8 @@ game/
                     powers, bios, heads, gib/gore — and authoring.py, the
                     dialogue condition/action grammar
   sim/              the reactive simulation: events, perception, knowledge,
-                    appraisal, ownership, crime, production, director
+                    appraisal, ownership, crime, production, director — and its
+                    subsystems: storyteller (pacing), factions
   living/           the off-screen world: journeys, roads, materialisation
   ui/               Qt overlays: hud, screens (creation/inventory/sheet/journal/
                     spells/trade/levelup/map), dialogue, launcher, theme, book window

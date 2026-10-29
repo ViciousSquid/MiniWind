@@ -123,7 +123,7 @@ def test_inspector_survives_session_end_and_can_open_on_new_session(qt_app):
 
 
 def test_studio_drags_a_numeric_cell_into_live_board_data_and_retains_edits(qt_app):
-    from ..storyteller import Storyteller
+    from ..sim.storyteller import Storyteller
     from .test_storyteller import board
 
     story, director, hooks, store = setup()

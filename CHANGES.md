@@ -1,5 +1,58 @@
 # Changes
 
+## Storyteller and simulation hot paths
+
+- `knowledge.facts_view()` / `derived_view()`: shared, read-only parsed beliefs
+  (and memoised filters of them), re-parsed only when the serialized beliefs
+  change. The storyteller and the director's report pass read through them;
+  `knowledge.facts()` still returns fresh copies for writers.
+- `peek_actor_key()` / `peek_mem_key()` read identity without writing to an
+  actor, replacing whole-properties copies in the storyteller, faction
+  identity and `Director.evaluate()`. The disposition module is resolved once
+  instead of imported on every identity call.
+- Storyteller: per-sample memo of reported/settled events and holder towns,
+  one history scan for vendetta discharges, member-only lookups in
+  `materialisation_weight` (it scanned every holder for every streaming
+  candidate), and the live region read only when respite could suppress.
+- Batched with NumPy at scale, scalar below it: gossip pair search
+  (`VECTOR_MIN` = 48 awake actors), witness-to-officer reach (48 lawful), and
+  `WorldIndex.counts_by_tier(near=...)` for the visible-hostile sensor (64
+  rows). Batched paths keep loop order and confirm each hit with `dist2d`, so
+  outcomes, RNG draws and gossip budgets are unchanged. NumPy is imported
+  lazily; `game.sim` still imports without it.
+
+Measured, not timed in tests: a 3,000-actor storyteller fixture samples in
+~40 ms (was ~120 ms) and answers a board update's streaming queries ~20x
+faster; a 367-actor settlement session runs its sim tick ~2.1x faster.
+Old/new runs over seeded worlds produce identical stores, histories, RNG
+state, levers and reasons. `game/tests/test_sim_hot_paths.py` pins parse
+counts, holders consulted, predicate calls and batched == scalar.
+
+## Storyteller as a first-class simulation subsystem
+
+- Move the storyteller into the reactive simulation as `game/sim/storyteller.py`.
+  It is now a `game.sim.SimSystem` (new `game/sim/system.py`). The faction
+  spine is one too.
+- The `Director` owns attached subsystems: `attach()`/`system()`, a tick after
+  each pipeline pass at absolute world hours, and `persist()`/`restore()`/`reset()`
+  that cover the event history first and then each subsystem in attachment order.
+  The session no longer ticks, saves, loads or resets the storyteller and faction
+  spine one by one, and no longer ticks pacing from the frame loop.
+- Add `Director.cached_intents()`, a read-only view of decided intents. The
+  storyteller no longer reads the director's private `_intents`/`_dirty`.
+  Board hooks ask `Storyteller.player_town()` instead of reaching into its hooks.
+- No snapshot schema changes: `storyteller.state` stays at schema 3 and
+  `factions.state` at schema 1.
+- New `game/tests/test_sim_systems.py` covers tick order and world time, unique
+  names, lifecycle order, intent reads that never appraise, session wiring, and
+  new-game reset.
+
+Validation: full headless suite on clean `2dfaf1b`: 4,251 passed, 34 skipped,
+1,974 deselected, and the five failures that were already failing (listed in
+`docs/factions.md`). With this change: 4,260 passed, the same skips,
+deselections and five failures. The extra 9 are the 6 new tests plus 3
+suite-integrity checks that cover the new test file automatically.
+
 ## Cache faction projections per board update
 
 - Restore `Director.intents()` caching with a mood provider. Board-update and

@@ -16,6 +16,14 @@ small, composable mechanisms whose *interactions* produce the stories:
 ``director``     the glue: EVENT → PERCEPTION → INTERPRETATION → STATE CHANGE →
                  BEHAVIOUR, plus the explanation trail the editor inspects
 
+Long-lived **subsystems** (``system.SimSystem``) sit beside that pipeline. The
+director owns them: each ticks after a pipeline pass on world time and resets,
+persists and restores with the event history:
+
+``storyteller``  drama pacing: samples the pipeline's results read-only and
+                 publishes levers and sampling weights the living roads ask for
+``factions``     faction actors grounded in members' knowledge
+
 The pipeline is deliberately one-directional and general-purpose::
 
     session emits a WorldEvent
@@ -23,6 +31,7 @@ The pipeline is deliberately one-directional and general-purpose::
             → knowledge stores a Fact per witness (certainty, source)
                 → appraisal turns each Fact into a ranked Intent + a reason
                     → the runtime's decision tick honours the top Intent
+                        → subsystems sample the new state (pacing, factions)
 
 No step knows what event it is handling, so a new event kind, a new actor or a
 new object gains the whole chain for free. Every module here is pure Python:
@@ -31,3 +40,4 @@ no Qt, no OpenGL, no engine imports — so all of it is headlessly testable.
 
 from .events import WorldEvent, EventBus, EVENT_KINDS  # noqa: F401
 from .director import Director, Intent  # noqa: F401
+from .system import SimSystem  # noqa: F401

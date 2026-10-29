@@ -1,8 +1,10 @@
 """Drama pacing by sampling existing opportunities, never by authoring events.
 
-Only the KV key owned here is writable. Hooks supply read-only world views;
-consumers ask for lever values and sampling weights. No engine/Qt dependency.
-All designer tuning is in TUNING. Hours and dwell times are game hours.
+A :class:`~.system.SimSystem`: the director ticks it after each simulation pass
+and resets, persists and restores it with the world's history. Only the KV key
+owned here is writable. Hooks supply read-only world views; consumers ask for
+lever values and sampling weights. No engine/Qt dependency. All designer
+tuning is in TUNING. Hours and dwell times are game hours.
 """
 
 from __future__ import annotations
@@ -10,11 +12,11 @@ from __future__ import annotations
 import copy
 import json
 import math
-from types import SimpleNamespace
 
-from . import data
-from .sim import appraisal, crime, knowledge
-from .sim.director import PLAYER_KEY, actor_key
+from .. import data
+from . import appraisal, crime, knowledge
+from .director import PLAYER_KEY, actor_key, peek_actor_key
+from .system import SimSystem
 
 
 DEFAULT_TUNING = {
@@ -161,7 +163,9 @@ class StorytellerHooks:
         return 0.0
 
 
-class Storyteller:
+class Storyteller(SimSystem):
+    name = "storyteller"
+
     def __init__(self, store=None, director=None, hooks=None):
         self.store = store
         self.director = director
@@ -215,7 +219,7 @@ class Storyteller:
         """Studio edits only numeric lever data, never sensors, facts or intents."""
         if state not in TUNING["states"]:
             raise ValueError("Unknown pacing state")
-        from .living.journeys import KINDS
+        from ..living.journeys import KINDS
         path = tuple(path)
         if len(path) == 1:
             key = path[0]
@@ -301,12 +305,24 @@ class Storyteller:
         for actor in self.hooks.actors():
             if actor.properties.get("dead"):
                 continue
-            # actor_key caches on properties. Resolve against a detached view
-            # so even a previously uninspected actor remains entirely read-only.
-            key = actor_key(SimpleNamespace(properties=dict(actor.properties)))
+            # actor_key caches on properties; the peek leaves even a previously
+            # uninspected actor entirely read-only, without copying its props.
+            key = peek_actor_key(actor)
             if key:
                 holders[key] = actor
         return holders
+
+    def _facts(self, key):
+        """Shared parsed beliefs: read-only, re-parsed only when they change."""
+        return knowledge.facts_view(self.store, key)
+
+    def _strikes(self):
+        """{actor: newest attack/death event id against the player}, one history scan."""
+        strikes = {}
+        for ev in self.director.bus.recent(limit=TUNING["event_limit"], actor=PLAYER_KEY):
+            if ev.target == PLAYER_KEY and ev.kind in ("attack", "death") and ev.id > strikes.get(ev.actor, 0):
+                strikes[ev.actor] = ev.id
+        return strikes
 
     def _cached_holders(self):
         if self._holder_cache is None:
@@ -318,22 +334,27 @@ class Storyteller:
         out = {}
         if self.director is None:
             return out
+        strikes = None          # the history scan, only once a fight qualifies
         for key, actor in holders.items():
-            if actor.properties.get("dead") or key in self.director._dirty:
+            cached = self.director.cached_intents(key)
+            if actor.properties.get("dead") or not cached:
                 continue
-            known = {f.get("e"): f for f in knowledge.facts(self.store, key)}
-            for intent in self.director._intents.get(key, ()):
+            known = None
+            for intent in cached:
+                if intent.reaction != appraisal.FIGHT or intent.target != PLAYER_KEY:
+                    continue
+                if known is None:
+                    known = {f.get("e"): f for f in self._facts(key)}
                 fact = known.get(intent.event_id)
-                if (intent.reaction != appraisal.FIGHT or intent.target != PLAYER_KEY
-                        or not fact or fact.get("kind") != "death"
+                if (not fact or fact.get("kind") != "death"
                         or fact.get("actor") != PLAYER_KEY
                         or not fact.get("identified", True)
                         or float(fact.get("certainty", 0)) < crime.REPORT_CERTAINTY):
                     continue
                 token = (key, intent.event_id)
-                if any(ev.actor == key and ev.target == PLAYER_KEY
-                       and ev.kind in ("attack", "death") and ev.id > intent.event_id
-                       for ev in self.director.bus.recent(limit=TUNING["event_limit"], actor=PLAYER_KEY)):
+                if strikes is None:
+                    strikes = self._strikes()
+                if strikes.get(key, 0) > intent.event_id:
                     self._discharged.add(token)
                 if token in self._discharged:
                     continue
@@ -352,21 +373,30 @@ class Storyteller:
         open_ids = {ev.id for ev in crime.unsolved(
             self.store, bus, limit=TUNING["event_limit"])} if bus is not None else set()
         threads, ids, evidence = {}, set(), {}
+        closed = {}             # event id -> reported or settled, this sample
         for key, actor in holders.items():
             if key == PLAYER_KEY:
                 continue
-            for fact in knowledge.facts(self.store, key):
+            town = None
+            located = False
+            for fact in self._facts(key):
                 eid = fact.get("e")
+                if (not eid or fact.get("reported") or not crime.is_crime(fact)
+                        or float(fact.get("certainty", 0)) < knowledge.FORGET_BELOW):
+                    continue
                 # A remembered crime can outlive the bounded event history.
                 # Unknown events must not erase a living holder's loose thread
                 # merely by pushing its event out of unsolved()'s history tail.
-                reported = eid not in open_ids and crime.already_reported(self.store, eid)
-                if (not eid or reported or not crime.is_crime(fact)
-                        or fact.get("reported") or crime.settled(self.store, eid)
-                        or float(fact.get("certainty", 0)) < knowledge.FORGET_BELOW):
+                done = closed.get(eid)
+                if done is None:
+                    done = closed[eid] = bool(
+                        (eid not in open_ids and crime.already_reported(self.store, eid))
+                        or crime.settled(self.store, eid))
+                if done:
                     continue
                 ids.add(eid)
-                town = self.hooks.actor_town(actor)
+                if not located:
+                    town, located = self.hooks.actor_town(actor), True
                 if town:
                     threads.setdefault(town, set()).add(eid)
                     evidence.setdefault(town, []).append(dict(event=eid, holder=key,
@@ -393,8 +423,8 @@ class Storyteller:
         self._vendetta_view = {key: dict(reason=intent.reason, staging="Awaiting an ordinary trip or nearby arrival",
             holder=holders[key].properties.get("display_name") or holders[key].properties.get("name") or key,
             event=intent.event_id) for key, intent in vendettas.items()}
-        from .footprint import evaluate
-        footprint = evaluate(((key, knowledge.facts(self.store, key)) for key in holders),
+        from ..footprint import evaluate
+        footprint = evaluate(((key, self._facts(key)) for key in holders),
                              threads=len(ids), writs=law, vendettas=len(vendettas),
                              traffic=self.hooks.market_traffic(), wealth=self.hooks.player_wealth(),
                              karma=self.hooks.player_karma())
@@ -532,6 +562,10 @@ class Storyteller:
         self._observations = (*self._observations, observation)[-TUNING["observation_cap"]:]
         self.persist()
 
+    def player_town(self):
+        """The town the player is standing in, through the read-only hooks."""
+        return self.hooks.player_town()
+
     def destination_weight(self, town):
         if not self.enabled:
             return 1.0
@@ -548,9 +582,9 @@ class Storyteller:
         """
         if not self.enabled:
             return 1.0
-        keys = set(actor_keys)
-        vendettas = self._vendettas({key: actor for key, actor in self._cached_holders().items()
-                                    if key in keys})
+        holders = self._cached_holders()
+        # Only this journey's few members: never a scan of every holder.
+        vendettas = self._vendettas({key: holders[key] for key in actor_keys if key in holders})
         eligible = next((key for key in actor_keys if key in vendettas), None)
         ready = (eligible and self.hooks.player_town()
                  and self.hooks.player_health_fraction() >= TUNING["healthy"]
@@ -596,14 +630,20 @@ class Storyteller:
         """Local relief samples a computed board position; live actors keep control."""
         if not self.enabled:
             return 1.0
-        region = self.hooks.player_region()
-        nearby = region is not None and math.hypot(position[0] - region[0], position[1] - region[1]) <= region[2]
-        suppressed = self.state == "RESPITE" and hostile and nearby
-        # Respite's hostile entries now tune local admission. Zero suppresses;
-        # raising a weight in the Studio immediately admits ordinary candidates.
-        bounty = max((r.get("bounty", 0) for r in self.sensors.get("law", {}).values()), default=0)
-        override = self._local_weights.get(kind, float(bounty >= self._local_hunter_bounty) if kind == "hunters" else 0)
-        weight = override if suppressed else 1.0
+        suppressed = False
+        if self.state == "RESPITE" and hostile:
+            # The live region is only consulted when respite could suppress.
+            region = self.hooks.player_region()
+            suppressed = region is not None and math.hypot(
+                position[0] - region[0], position[1] - region[1]) <= region[2]
+        weight = 1.0
+        if suppressed:
+            # Respite's hostile entries now tune local admission. Zero suppresses;
+            # raising a weight in the Studio immediately admits ordinary candidates.
+            weight = self._local_weights.get(kind)
+            if weight is None:
+                bounty = max((r.get("bounty", 0) for r in self.sensors.get("law", {}).values()), default=0)
+                weight = float(bounty >= self._local_hunter_bounty) if kind == "hunters" else 0
         self._reason("Local relief", f"Incoming {kind} weight {weight:g}: " + (
             "this hostile journey's computed position is inside the player's live region during respite."
             if suppressed else "this journey is peaceful, distant, or respite is inactive; ordinary ecology applies."))
