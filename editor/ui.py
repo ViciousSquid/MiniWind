@@ -98,7 +98,7 @@ def toolbar_metrics(config):
 #: an older version is dropped once, so a new default actually reaches an
 #: install that has been opened before -- settings.ini stores the layout on
 #: every close, and restoreState() would otherwise win forever.
-LAYOUT_VERSION = 6
+LAYOUT_VERSION = 7
 
 
 
@@ -379,7 +379,7 @@ class Ui_MainWindow(object):
         # 2D Views Dock (Right, Tabbed)
         MainWindow.right_dock = QDockWidget("2D Views", MainWindow)
         MainWindow.right_dock.setObjectName("2DViewsDock")
-        MainWindow.right_dock.setMinimumWidth(610)
+        MainWindow.right_dock.setMinimumWidth(470)  # its three 150px view tabs
         MainWindow.right_tabs = QTabWidget()
         MainWindow.right_tabs.addTab(MainWindow.view_top, "Top (XZ)")
         MainWindow.right_tabs.addTab(MainWindow.view_side, "Side (YZ)")
@@ -415,10 +415,11 @@ class Ui_MainWindow(object):
         MainWindow.splitDockWidget(MainWindow.view_3d_dock, MainWindow.right_dock, Qt.Horizontal)
         MainWindow.splitDockWidget(MainWindow.right_dock, MainWindow.properties_dock, Qt.Vertical)
 
-        # 3D view 40%, 2D views 60%.  resizeDocks reads these as proportions
-        # rather than pixels, so the split holds at any window size.
+        # 3D view and 2D views share the width equally.  resizeDocks reads
+        # these as proportions rather than pixels, so the split holds at any
+        # window size.
         MainWindow.resizeDocks([MainWindow.view_3d_dock, MainWindow.right_dock],
-                               [40, 60], Qt.Horizontal)
+                               [50, 50], Qt.Horizontal)
         MainWindow.resizeDocks([MainWindow.right_dock, MainWindow.properties_dock], [600, 300], Qt.Vertical)
 
         # Tab Styling
@@ -473,7 +474,7 @@ class Ui_MainWindow(object):
         MainWindow.resizeDocks([MainWindow.scene_hierarchy_dock],
                                [SceneHierarchyDock.DEFAULT_WIDTH], Qt.Horizontal)
         MainWindow.resizeDocks([MainWindow.view_3d_dock, MainWindow.right_dock],
-                               [40, 60], Qt.Horizontal)
+                               [50, 50], Qt.Horizontal)
 
     def create_menu_bar(self, MainWindow):
         menubar = MainWindow.menuBar()
