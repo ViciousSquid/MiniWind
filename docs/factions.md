@@ -98,10 +98,38 @@ knowledge can support later appraisal; there is no private revenge counter.
 Off-screen kill attribution is coarse: the winner's leader represents the winning
 party, rather than an individually simulated killer. This is party testimony.
 
-A force reaching a hostile destination uses the existing rest/loiter period.
-Off-screen resolution requires parties to meet on the road; live forces require
-visible opponents. Without actual contact, an order can rest and return home
-without accomplishing a battle. Arrival alone does not imply a successful attack.
+### Holding the destination
+
+A force reaching the place its order named **holds** it for at least
+`PRESENCE_HOURS` (6 game hours). It uses the same single rest draw as any party,
+so board RNG is unchanged. Holding is made only of existing mechanisms applied to
+a party that is really there:
+
+- **News.** "Bandits out of Blacktooth Camp are holding Kettlewick, asking after
+  Rufus" is heard first in that town and carried by travellers. The rumour layer
+  repeats it.
+- **Witnesses.** Residents at home there witness an armed company asking after its
+  quarry. This ordinary, non-criminal `muster` event carries the order's receipt.
+  Appraisal finds nothing in it to act on, so no new grievance or alarm is
+  invented.
+- **Asking after the quarry.** Each local's identified, sufficiently certain
+  accounts of the quarry's deeds pass to the force's members as ordinary hearsay,
+  decayed as any telling. Survivors carry them home through `returned()`. This
+  can give the faction a fresher trail for a later order. There is still no
+  oracle for the quarry's position.
+- **Livestock.** Raiding factions (`bandits`, `cultists`, `monsters`) take
+  livestock through the same `raid_place` hook wolves and greenskins use. They do
+  so only while the force is off screen, because a live force has to be seen
+  doing it.
+- **A closed town.** No resident of the held town sets out on a trip or order
+  until the force moves on.
+- **Contact.** A holding force is stationary in the board's encounter pass.
+  Hostile parties that come within the encounter radius meet it, and dice decide
+  as on the road. Live forces still require visible opponents.
+
+Nobody is attacked by fiat, and arrival alone still does not imply a successful
+attack. When nothing comes near, the force holds the place, then returns home
+with what it was told.
 
 ## Footprint and the drama price
 

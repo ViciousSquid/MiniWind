@@ -196,6 +196,11 @@ class SessionHooks(jn.WorldHooks):
     def faction_returned(self, journey):
         self.w.session.faction_spine.returned(journey)
 
+    def faction_present(self, journey, t):
+        spine = getattr(self.w.session, "faction_spine", None)
+        if spine is not None:
+            spine.present(journey, t)
+
     def encounter_resolved(self, winner, loser, t, where, fallen):
         spine = getattr(self.w.session, "faction_spine", None)
         if spine is not None:
@@ -257,6 +262,10 @@ class SessionHooks(jn.WorldHooks):
             # Journey sampling may read appraisal, never populate its cache.
             intents = self.w.session.director.evaluate(t)
             if intents and intents[0].reaction == "MOURN":
+                return False
+            # Nobody sets out past an armed company holding their town.
+            if t.pos is not None and self.w.board.holding(
+                    self.w.board.nearest_place(t.pos[0], t.pos[2])):
                 return False
         return parked or tier >= TIER_DISTANT
 

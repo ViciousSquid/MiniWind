@@ -333,6 +333,57 @@ class FactionSpine(SimSystem):
                 for fact in self.facts(identity(actor)):
                     self._tell(identity(actor), key, fact)
 
+    def present(self, journey, t):
+        """A force holds the place its order named: the locals see it, and
+        tell the force what they know of its quarry.
+
+        Residents at home there witness an armed company asking after its
+        target (an ordinary, non-criminal event). Each local's identified,
+        sufficiently certain accounts of the quarry's deeds pass to the force's
+        members as ordinary hearsay; survivors carry them home in
+        :meth:`returned`. No damage, no new grievance, no position oracle.
+        """
+        cause = journey.cause
+        if not self.enabled() or not cause or self.board is None:
+            return None
+        place = self.board.places.get(journey.dest)
+        if place is None:
+            return None
+        lead = journey.leader() or (journey.members[0] if journey.members else None)
+        if lead is None:
+            return None
+        real = self.member(lead.get("resident"))
+        props = dict(real.properties) if real is not None else dict(name=lead.get("name", ""))
+        props.update(faction=cause["faction"], _faction_cause=journey.provenance(), _journey=journey.id,
+                     display_name=lead.get("display") or props.get("display_name"))
+        leader = SimpleNamespace(properties=props, pos=[place["x"], 0, place["z"]])
+        fact = cause.get("fact") or {}
+        quarry = SimpleNamespace(properties=dict(id=cause["target"], name=cause["target"],
+                                                 display_name=fact.get("actor_name") or cause["target"],
+                                                 faction=cause.get("target_faction", "")),
+                                 pos=leader.pos)
+        if cause["target"] == "player":
+            quarry.properties.update(_player=True)
+        event = self.director.emit("muster", actor=leader, target=quarry, pos=leader.pos,
+                                   observers=(), at=t, crime=False, victim_knows=False)
+        locals_ = [member for key, row in sorted(self.entities.items())
+                   if row["home"] == journey.dest for member in self._at_home(key)]
+        force = [identity(a) for a in (self.member(m.get("resident")) for m in journey.alive())
+                 if a is not None]
+        for holder in locals_:
+            seen = knowledge.fact_from_event(event, 0.9, knowledge.SOURCE_WITNESSED)
+            if knowledge.learn(self.store, holder, seen):
+                self.director.invalidate(holder)
+            for known in self.facts(holder):
+                if (known.get("actor") == cause["target"] and known.get("identified", True)
+                        and float(known.get("certainty", 0)) >= crime.REPORT_CERTAINTY):
+                    for member in force:
+                        if knowledge.tell(self.store, holder, member, known):
+                            self.director.invalidate(member)
+        if locals_:
+            event.note(f"seen by {len(locals_)} at {self.board.place_name(journey.dest)}")
+        return event
+
     def encounter(self, winner, loser, t, where, fallen):
         """Existing board combat enters the same attack/death knowledge pipeline.
 
