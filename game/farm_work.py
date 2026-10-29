@@ -6,13 +6,13 @@ busy instead of standing at a marker:
 
 * **reaping** -- walking the nearest wheat field row by row (read off the
   terrain's biome map), scythe in hand, swinging it every
-  :data:`SWING_EVERY` seconds;
+  :data:`SWING_EVERY` seconds, gathering one wheat per stroke in a field;
 * **tending** -- going to the nearest sheep, cow or hen and working beside
-  it with a pitchfork.
+  it with a pitchfork, collecting any milk a tended cow has produced.
 
-Tasks alternate through the day. The swing is the same ``is_shooting`` pulse
-every weapon overlay animates from (game/held_weapons.py), so nothing new is
-drawn and no blow is struck. Dusk puts the tool away and hands the farmer
+Tasks alternate through the day. The swing uses the same ``is_shooting`` pulse
+every weapon overlay animates from (game/held_weapons.py), without striking a
+combat blow. Dusk puts the tool away and hands the farmer
 back to the ordinary schedule. Threats and appraisal run before this, so a
 farmer still flees or fights as before.
 """
@@ -113,9 +113,11 @@ def stop(props) -> None:
 class FarmWork:
     """Drives farmers' working day for the session."""
 
-    def __init__(self):
+    def __init__(self, on_collect=None):
         #: id(farmer) -> the animal being tended (a scene thing).
         self._animal: Dict[int, object] = {}
+        #: Optional notification after an item is added: (actor, item_id, qty).
+        self._on_collect = on_collect
 
     # ------------------------------------------------------------ deciding
     def drive(self, session, npc) -> bool:
@@ -218,16 +220,18 @@ class FarmWork:
         else:
             p.pop("_dest", None)
             p["_facing"] = math.atan2(animal.pos[0] - npc.pos[0], animal.pos[2] - npc.pos[2])
+            if str(animal.properties.get("npc_role", "")).lower() == "cow":
+                session.collect_produce(npc, animal, "milk")
         return True
 
     # ------------------------------------------------------------- swinging
-    def update(self, delta, actors) -> None:
+    def update(self, delta, actors, terrain=None) -> None:
         """Swing the scythe (and work the fork) of farmers at it, near the
-        player. A purely visual pulse on ``is_shooting``."""
+        player. Each reaping stroke in a wheat field gathers one wheat."""
         for t in actors:
             p = t.properties
             work = p.get("_farm_work")
-            if not work:
+            if not work or p.get("dead") or p.get("hidden"):
                 continue
             every = SWING_EVERY if work == "reap" else FORK_EVERY
             clock = float(p.get("_farm_swing", 0.0)) + float(delta)
@@ -238,4 +242,21 @@ class FarmWork:
                 clock = 0.0
                 p["is_shooting"] = True
                 p["_farm_swinging"] = True
+                if work == "reap" and p.get("_active_weapon") == SCYTHE and is_farmer(p):
+                    self._harvest(t, terrain)
             p["_farm_swing"] = clock
+
+    def _harvest(self, npc, terrain) -> None:
+        """Gather only where the farmer stands in a painted wheat field."""
+        if npc.pos is None or terrain is None or getattr(terrain, "biome_map", None) is None:
+            return
+        from engine import terrain_biomes as tb
+        if terrain.biome_map.shape[2] <= tb.WHEAT:
+            return
+        weights = terrain.biome_weights_batch([npc.pos[0]], [npc.pos[2]])
+        if weights[0, tb.WHEAT] * tb.bare_keep(weights)[0] < FIELD_WHEAT:
+            return
+        from .rpg import inventory, items
+        inventory.add_item(inventory.get_inventory(npc), items.make("wheat"))
+        if self._on_collect is not None:
+            self._on_collect(npc, "wheat", 1)
