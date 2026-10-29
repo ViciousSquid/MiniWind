@@ -725,6 +725,10 @@ class LivingWorld:
         }
         if head:
             props["head"] = head
+        if m.get("_head_identity"):
+            # The scene UUID of a materialised traveller is transient. Keep
+            # the journey member's world identity on the scene proxy as well.
+            props["_head_identity"] = m["_head_identity"]
         if weapon and rpg_items.get(weapon):
             props["inventory"].append(rpg_items.make(weapon, 1))
             props["equipped_weapon"] = weapon
