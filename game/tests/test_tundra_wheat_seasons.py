@@ -43,3 +43,13 @@ def test_wheat_sprouts_grows_very_tall_ripens_is_cut_and_lies_bare():
     assert np.allclose(tb.wheat_stage(1.45), tb.wheat_stage(0.45))   # years repeat
     # Ripe wheat stands about shoulder high on a 100-unit player.
     assert tb.WHEAT_SIZE[1] * 5.0 >= 80.0
+
+
+def test_no_grass_of_any_kind_on_sand_or_snow_even_at_their_edges():
+    w = np.zeros((4, 5), np.float32)
+    w[0, tb.DESERT] = 0.4
+    w[1, tb.SNOW] = 0.34
+    w[2, tb.SNOW] = 0.1
+    keep = tb.bare_keep(w)
+    assert keep[0] == 0.0 and keep[1] == 0.0 and 0.0 < keep[2] < 1.0 and keep[3] == 1.0
+    assert (tb.grass_keep(w)[:2] == 0.0).all()

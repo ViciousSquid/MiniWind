@@ -475,7 +475,10 @@ class Terrain:
         self.grass_uniforms: Dict[str, int] = {}
         self.grass_time = 0.0
         self.GRASS_MAX_PER_CHUNK = 16384         # tufts per chunk
-        self.GRASS_BLADES_PER_TUFT = 5
+        self.GRASS_BLADES_PER_TUFT = 7
+        #: Share of meadow tufts that grow medium-length stalks; the rest
+        #: are short grass.
+        self.GRASS_MEDIUM_SHARE = 0.35
         self.GRASS_TUFT_RADIUS = 2.5             # world units
         self.GRASS_BLADE_HEIGHT = DEFAULT_GRASS_HEIGHT  # see grass_height
         self.GRASS_BLADE_WIDTH = 0.35            # half width at the root
@@ -1149,6 +1152,18 @@ class Terrain:
         with self._gl_scope():
             self._free_gl_slots(slots)
 
+    def _release_grass(self, slots):
+        """Free the grass of chunks far out of view; it regrows on return."""
+        self._sync_gl_columns()
+        for slot in slots:
+            if self._grass_vao[slot]:
+                gl.glDeleteVertexArrays(1, [int(self._grass_vao[slot])])
+            if self._grass_vbo[slot]:
+                gl.glDeleteBuffers(1, [int(self._grass_vbo[slot])])
+            self._grass_vao[slot] = self._grass_vbo[slot] = 0
+            self._grass_count[slot] = 0
+            self.table.grass_dirty[slot] = True
+
     def _free_gl_slots(self, slots):
         self._sync_gl_columns()
         for slot in slots:
@@ -1622,7 +1637,9 @@ class Terrain:
         data[:, 0] = bx
         data[:, 1] = self._get_heights_batch(bx, bz)
         data[:, 2] = bz
-        data[:, 3] = rng.uniform(0.65, 1.25, count)
+        # A mix of short grass and medium stalks, tuft by tuft.
+        medium = np.repeat(rng.random(len(tx)) < self.GRASS_MEDIUM_SHARE, per_tuft)
+        data[:, 3] = np.where(medium, rng.uniform(1.5, 2.6, count), rng.uniform(0.6, 1.05, count))
         data[:, 4] = rng.uniform(0.0, 6.2831853, count)
         data[:, 5] = rng.uniform(0.82, 1.12, count)
         # The colour of the ground each blade stands on, for grass that
@@ -1667,7 +1684,8 @@ class Terrain:
         rng = np.random.default_rng(seed)
         tx = x0 + rng.random(tufts) * size
         tz = z0 + rng.random(tufts) * size
-        w = self.biome_weights_batch(tx, tz)[:, terrain_biomes.WHEAT]
+        weights = self.biome_weights_batch(tx, tz)
+        w = weights[:, terrain_biomes.WHEAT] * terrain_biomes.bare_keep(weights)
         # Fields have crisp edges: a smoothstep on the painted weight.
         t = np.clip((w - 0.35) / 0.25, 0.0, 1.0)
         keep = rng.random(tufts) < t * t * (3.0 - 2.0 * t)
@@ -1752,7 +1770,8 @@ class Terrain:
         rng = np.random.default_rng(seed)
         tx = x0 + rng.random(tufts) * size
         tz = z0 + rng.random(tufts) * size
-        w = self.biome_weights_batch(tx, tz)[:, terrain_biomes.TUNDRA]
+        weights = self.biome_weights_batch(tx, tz)
+        w = weights[:, terrain_biomes.TUNDRA] * terrain_biomes.bare_keep(weights)
         # A soft edge: the heath thins out into the meadow around it.
         t = np.clip((w - 0.15) / 0.45, 0.0, 1.0)
         keep = rng.random(tufts) < t * t * (3.0 - 2.0 * t)
@@ -2230,9 +2249,18 @@ class Terrain:
         # [Renderer] grass = False (grass_allowed) turns it off everywhere.
         grass_on = self.grass_enabled and getattr(self, 'grass_allowed', True)
         if grass_on:
-            grass_updates = slots[table.grass_dirty[slots]]
-            for slot in grass_updates[:self.MAX_UPDATES_PER_FRAME]:
-                self._upload_grass_chunk(int(slot))
+            # Grass exists only where the camera can see it: chunks in the
+            # frustum and within grass range grow theirs (nearest first);
+            # chunks well out of range give theirs back, regrowing on return.
+            cam_d = table.nearest_dist_sq(slots, float(camera_pos.x), float(camera_pos.z))
+            reach_sq = self.GRASS_MAX_DISTANCE * self.GRASS_MAX_DISTANCE
+            in_view = table.visible(slots, frustum_planes) & (cam_d <= reach_sq)
+            wanted = np.nonzero(table.grass_dirty[slots] & in_view)[0]
+            for i in wanted[np.argsort(cam_d[wanted], kind='stable')][:self.MAX_UPDATES_PER_FRAME]:
+                self._upload_grass_chunk(int(slots[i]))
+            far = slots[(self._grass_count[slots] > 0) & (cam_d > reach_sq * 2.56)]
+            if len(far):
+                self._release_grass(far)
         else:
             self._grass_count[slots] = 0
             # Regrow when grass is allowed again.

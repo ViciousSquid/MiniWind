@@ -211,11 +211,17 @@ def blend_colors(colors: np.ndarray, weights: np.ndarray,
     return np.clip(out, 0.0, 1.0)
 
 
+def bare_keep(weights: np.ndarray) -> np.ndarray:
+    """0 on desert sand and snowfields, 1 clear of them: no grass of any
+    kind (meadow, wheat or tundra) grows on either, even at their edges."""
+    bare = np.maximum(weights[:, DESERT], weights[:, SNOW])
+    return np.clip(1.0 - bare * 3.0, 0.0, 1.0)
+
+
 def grass_keep(weights: np.ndarray) -> np.ndarray:
     """How much ordinary grass survives (0..1): none on sand, snow or in a
     wheat field (which grows its own), thinned in the swamp."""
-    bare = np.maximum(weights[:, DESERT], weights[:, SNOW])
-    keep = np.clip(1.0 - bare * 1.6, 0.0, 1.0) * np.clip(1.0 - weights[:, WHEAT] * 2.0, 0.0, 1.0)
+    keep = bare_keep(weights) * np.clip(1.0 - weights[:, WHEAT] * 2.0, 0.0, 1.0)
     if weights.shape[1] > TUNDRA:
         # The heath grows its own (:func:`tundra_colours`); meadow thins under it.
         keep = keep * np.clip(1.0 - weights[:, TUNDRA] * 1.5, 0.0, 1.0)

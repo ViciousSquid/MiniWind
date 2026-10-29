@@ -135,6 +135,10 @@ CLEAR_BRUSH = 160.0
 FOREST_TREES = {"broadleaf": ("tree01.png", "tree02.png", "tree03.png", "tree04.png",
                               "tree05.png", "tree06.png", "tree07.png", "trees0.png"),
                 "pine": ("pine01.png", "pine02.png"), "willow": ("willow01.png",)}
+#: Meadow grass on the test map: blade height (short tufts ~knee high on
+#: the 100-unit player, medium stalks ~thigh high) and density.
+GRASS_HEIGHT = 12.0
+GRASS_DENSITY = 0.05
 ID_NAMESPACE = uuid.UUID("7d9b2e3e-58e4-4a6f-9b0a-6e2f1f4c1a77")
 
 
@@ -1014,7 +1018,10 @@ def make(source=SOURCE, out=OUT, preview=PREVIEW):
     data["terrain_data"] = dict(data["terrain_data"], texture_paint=terrain_data["texture_paint"],
                                 texture_paint_resolution=terrain_data["texture_paint_resolution"],
                                 heightmap_blob=terrain_data["heightmap_blob"],
-                                biome_map_blob=terrain_data["biome_map_blob"])
+                                biome_map_blob=terrain_data["biome_map_blob"],
+                                # Lush grass: short tufts and medium stalks.
+                                grass_enabled=True, grass_height=GRASS_HEIGHT,
+                                grass_density=GRASS_DENSITY)
     with open(out, "w", encoding="utf-8") as f:
         json.dump(data, f)
     if preview:
