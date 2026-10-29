@@ -1391,7 +1391,8 @@ def _draw_trade(painter, session, w, h):
             shown = i - top + 1
             iid = entry["id"] if isinstance(entry, dict) else entry
             d = rpg_items.get(iid)
-            price = session._price(d.value if d else 0, buying, npc=npc)
+            price = session._price(d.value if d else 0, buying, npc=npc,
+                                   item_id=d.id if d else None)
             selected = st["side"] == side and st["row"] == i
             row = QRect(cx, ry, col_w, row_h - 2)
             trade_anim.record_row(side, iid, row)
@@ -1439,7 +1440,8 @@ def _draw_trade(painter, session, w, h):
         entry = lst[min(st["row"], len(lst) - 1)]
         d = rpg_items.get(entry["id"] if isinstance(entry, dict) else entry)
         buying = st["side"] == 0
-        price = session._price(d.value if d else 0, buying, npc=npc)
+        price = session._price(d.value if d else 0, buying, npc=npc,
+                                   item_id=d.id if d else None)
         name_ = d.name if d else "item"
         sold_out = buying and session.stock_left(entry) == 0
         can = (c.gold >= price and not sold_out) if buying else True
@@ -1498,31 +1500,8 @@ def _trade_select(side, row):
 
 
 def _merchant_stock(npc):
-    if npc is None:
-        return []
-    stock = npc.properties.get("stock")
-    if isinstance(stock, list) and stock:
-        return [{"id": s} if isinstance(s, str) else s for s in stock]
-    # default stock by role
-    role = str(npc.properties.get("npc_role", "merchant"))
-    defaults = {
-        "merchant": ["potion_heal_minor", "potion_magicka", "torch", "lockpick",
-                     "cloth_robe", "cloth_hood", "sandals", "hide_boots", "copper_ring",
-                     "iron_arrow", "bread"],
-        "blacksmith": ["iron_longsword", "iron_mace", "steel_longsword", "iron_shield",
-                       "iron_cuirass", "iron_helmet", "short_bow", "iron_arrow",
-                       "crossbow", "iron_bolt",
-                       "chain_shirt", "chain_coif", "scale_mail", "kite_shield",
-                       "plate_helm", "plate_armour", "tower_shield", "buckler"],
-        "armourer": ["leather_cuirass", "hide_armour", "studded_leather",
-                     "chain_shirt", "scale_mail", "plate_armour", "plate_helm",
-                     "plate_greaves", "round_shield", "kite_shield"],
-    }
-    # A merchant who deals in books keeps a few titles of their own
-    # (game/library.py); a smith or a brewer keeps none.
-    from .. import library
-    shelf = defaults.get(role, defaults["merchant"]) + library.shop_books(npc.properties)
-    return [{"id": i} for i in shelf]
+    from ..rpg.shops import stock_for
+    return stock_for(npc)
 
 
 def _handle_trade(session, key):
@@ -1544,7 +1523,8 @@ def _handle_trade(session, key):
         iid = entry["id"] if isinstance(entry, dict) else entry
         buying = st["side"] == 0
         d = rpg_items.get(iid)
-        price = session._price(d.value if d else 0, buying, npc=npc)
+        price = session._price(d.value if d else 0, buying, npc=npc,
+                                   item_id=d.id if d else None)
         # Whether the item already has a row on the side it is going to: if
         # so it lands on that row, otherwise its new row waits for it.
         to_list = sell if buying else stock
@@ -1920,10 +1900,11 @@ def _draw_container(painter, session, w, h):
     st = _cont_state(session)
     citems = session.container_inventory()
     pitems = c.inventory
+    taking = "steal" if session.container_take_is_theft() else "take"
     x, y, bw, bh = _panel_rect(w, h)
     inner = T.panel(painter, x, y, bw, bh)
     ty = T.heading(painter, inner, session.container_name(),
-                   f"{c.gold} gold    ·    {controls.label('click')} to take / store   ·   "
+                   f"{c.gold} gold    ·    {controls.label('click')} to {taking} / store   ·   "
                    f"{controls.label('back')} close")
 
     st["row_c"] = max(0, min(st["row_c"], max(0, len(citems) - 1)))
@@ -1960,7 +1941,7 @@ def _draw_container(painter, session, w, h):
                 painter.fillRect(QRect(cx, ry, col_w, row_h - 2), T.SELECT)
             name = stack.get("name", stack.get("id"))
             _row_target(painter, QRect(cx, ry, col_w, row_h - 2),
-                        _cont_click(side, i), f"{'take' if side == 0 else 'store'}:{i}")
+                        _cont_click(side, i), f"{taking if side == 0 else 'store'}:{i}")
             CONTAINER_DRAG["cells"].append(
                 (QRect(cx, ry, col_w, row_h - 2),
                  ("container", i, stack.get("id")) if side == 0
@@ -1982,12 +1963,12 @@ def _draw_container(painter, session, w, h):
 
     bw, bh = 120, 30
     by = inner.bottom() - bh
-    button(painter, QRect(inner.x(), by, bw, bh), "Take all",
+    button(painter, QRect(inner.x(), by, bw, bh), "Steal all" if taking == "steal" else "Take all",
            lambda sess: sess.take_all_from_container(), enabled=bool(citems),
            primary=True)
     button(painter, QRect(inner.right() - bw, by, bw, bh), "Close",
            lambda sess: sess.close_container())
-    hint = "Enter: take →" if st["side"] == 0 else "← Enter: store"
+    hint = f"Enter: {taking} →" if st["side"] == 0 else "← Enter: store"
     sel = (citems[st["row_c"]] if st["side"] == 0 and citems
            else pitems[st["row_p"]] if st["side"] == 1 and pitems else None)
     if sel and _book_with_text(sel.get("id")):

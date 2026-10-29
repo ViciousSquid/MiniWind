@@ -18,7 +18,7 @@ import struct
 import sys
 
 import bpy
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 ROOT = Path(__file__).resolve().parents[2]
 HUB_HEIGHT = 550.0
@@ -267,14 +267,14 @@ def render(scene, path, elevation, span, target=(0, 0, 0), azimuth=0):
     bpy.ops.render.render(write_still=True)
 
 
-def export(folder, work):
+def export_mesh(folder, work, name, parts, origin=(0, 0, 0), *, obj_format=False):
     # Fio's current GLB path reads mesh attributes directly. Bake every
     # object's world transform into one identity-transform mesh so neither
     # format depends on a loader applying node/parent transforms.
     copies = []
-    for obj in PARTS:
+    for obj in parts:
         mesh = obj.data.copy()
-        mesh.transform(obj.matrix_world)
+        mesh.transform(Matrix.Translation(-Vector(origin)) @ obj.matrix_world)
         copy = bpy.data.objects.new('Windmill_export', mesh)
         bpy.context.collection.objects.link(copy)
         copies.append(copy)
@@ -284,20 +284,21 @@ def export(folder, work):
     bpy.context.view_layer.objects.active = copies[0]
     bpy.ops.object.join()
     merged = bpy.context.object
-    merged.name = 'Windmill'
-    bpy.ops.wm.obj_export(filepath=str(folder / 'windmill.obj'), export_selected_objects=True,
-                         forward_axis='NEGATIVE_Z', up_axis='Y', global_scale=1.0,
-                         export_triangulated_mesh=True, export_materials=True,
-                         path_mode='RELATIVE')
-    obj = folder / 'windmill.obj'
-    obj.write_text('# fio:up=y\n' + obj.read_text())
-    mtl = folder / 'windmill.mtl'
-    text = mtl.read_text()
-    text = '\n'.join('map_Kd windmill_brick_albedo.png' if line.startswith('map_Kd ') else line
-                     for line in text.splitlines()) + '\n'
-    text = text.replace('newmtl Brick\n', 'newmtl Brick\nKd 1.000000 1.000000 1.000000\n')
-    mtl.write_text(text)
-    temporary_glb = work / 'windmill_export.glb'
+    merged.name = name.title()
+    if obj_format:
+        bpy.ops.wm.obj_export(filepath=str(folder / f'{name}.obj'), export_selected_objects=True,
+                             forward_axis='NEGATIVE_Z', up_axis='Y', global_scale=1.0,
+                             export_triangulated_mesh=True, export_materials=True,
+                             path_mode='RELATIVE')
+        obj = folder / f'{name}.obj'
+        obj.write_text('# fio:up=y\n' + obj.read_text())
+        mtl = folder / f'{name}.mtl'
+        text = mtl.read_text()
+        text = '\n'.join('map_Kd windmill_brick_albedo.png' if line.startswith('map_Kd ') else line
+                         for line in text.splitlines()) + '\n'
+        text = text.replace('newmtl Brick\n', 'newmtl Brick\nKd 1.000000 1.000000 1.000000\n')
+        mtl.write_text(text)
+    temporary_glb = work / f'{name}_export.glb'
     bpy.ops.export_scene.gltf(filepath=str(temporary_glb), export_format='GLB',
                               use_selection=True, export_yup=True, export_apply=True,
                               export_animations=False, export_cameras=False, export_lights=False)
@@ -317,8 +318,22 @@ def export(folder, work):
     binary_chunks = data[20 + json_length:]
     packed = struct.pack('<III', 0x46546C67, 2, 20 + len(json_chunk) + len(binary_chunks))
     packed += struct.pack('<II', len(json_chunk), 0x4E4F534A) + json_chunk + binary_chunks
-    (folder / 'windmill.glb').write_bytes(packed)
+    (folder / f'{name}.glb').write_bytes(packed)
     bpy.data.objects.remove(merged, do_unlink=True)
+
+
+def export_rotating_parts(folder, work):
+    """The tower stays at ground origin; the sails rotate about their hub."""
+    pivot = bpy.data.objects['Rotor_pivot']
+    rotor_parts = [obj for obj in PARTS if obj.parent == pivot]
+    body_parts = [obj for obj in PARTS if obj.parent != pivot]
+    export_mesh(folder, work, 'windmill_body', body_parts)
+    export_mesh(folder, work, 'windmill_rotor', rotor_parts, pivot.location)
+
+
+def export(folder, work):
+    export_mesh(folder, work, 'windmill', PARTS, obj_format=True)
+    export_rotating_parts(folder, work)
 
 
 def statistics():
@@ -336,7 +351,10 @@ def statistics():
             'model_scale': [1, 1, 1], 'model_rotation': [0, 0, 0],
             'sprites': {'windmill_topdown.png': {'elevation': 90, 'sprite_size': [720, 720]},
                         'windmill_overhead.png': {'elevation': 60, 'sprite_size': [860, 860]}},
-            'sprite_ground_anchor': [0.5, 0.5]}
+            'sprite_ground_anchor': [0.5, 0.5],
+            'rotor': {'body_model': 'windmill_body.glb',
+                      'rotor_model': 'windmill_rotor.glb',
+                      'pivot': [0.0, HUB_HEIGHT, 170.0], 'axis': [0, 0, 1]}}
 
 
 def main():

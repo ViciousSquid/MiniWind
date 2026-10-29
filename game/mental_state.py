@@ -59,6 +59,13 @@ _STATE_BLURB = {
     "CONFRONT": "Going to confront someone",
     "REAPING": "Reaping the wheat",
     "TENDING": "Tending the animals",
+    "DELIVERING_WHEAT": "Delivering wheat to the mill",
+    "COLLECTING_FLOUR": "Collecting flour for the shop",
+    "QUEUEING_FLOUR": "Waiting to be served at the mill",
+    "RETURNING_FLOUR": "Returning with the shop's flour",
+    "BUYING_FLOUR": "Buying flour from the local shopkeeper",
+    "EATING_FLOUR": "Eating flour",
+    "OPENING_SHOP": "Getting the shop ready to open",
 }
 
 
@@ -200,6 +207,10 @@ def snapshot(thing, monster_state: Optional[dict] = None,
     need_reason = props.get("_need_reason")
     if need_reason:
         ai.append(("Need driving them", str(need_reason)))
+    if props.get("_food_reason"):
+        ai.append(("Food", str(props["_food_reason"])))
+    if props.get("_supply_reason"):
+        ai.append(("Flour supply", str(props["_supply_reason"])))
 
     # Optional confidence read from the live MiniWind session.
     confidence = None
@@ -463,6 +474,13 @@ _THOUGHTS = {
     "REAPING": ("Row after row.", "Good crop this year.", "Mind the blade.",
                 "Get it in before rain."),
     "TENDING": ("Easy, girl.", "Hungry, are you?", "Good beast.", "There you go."),
+    "DELIVERING_WHEAT": ("Off to the mill.", "Wheat for the mill.", "Time to deliver this."),
+    "COLLECTING_FLOUR": ("Flour for the shop.", "Best be back before opening."),
+    "QUEUEING_FLOUR": ("My turn soon.", "Hope there's enough left."),
+    "RETURNING_FLOUR": ("Back to the shop.", "Mind the flour."),
+    "BUYING_FLOUR": ("Time to buy a meal.", "Hope the shop has flour."),
+    "EATING_FLOUR": ("That's better.", "A filling meal."),
+    "OPENING_SHOP": ("Almost ready.", "A little behind this morning."),
 }
 
 #: Thoughts driven by what an actor knows, by intent, for when the decision's

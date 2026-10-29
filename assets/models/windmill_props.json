@@ -13,7 +13,44 @@
         "name": "Windmill GLB",
         "id": "ef9ca1cb-0e2f-55e2-87df-0853cb0eb7e8",
         "render_mode": "model",
-        "model_path": "assets/models/windmill.glb",
+        "model_path": "assets/models/windmill_body.glb",
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "carry_enabled": false,
+        "collect_enabled": false,
+        "physics_enabled": false,
+        "no_collision": true,
+        "windmill": true,
+        "display_name": "Windmill",
+        "inventory": [],
+        "use_radius": 280.0,
+        "owner_faction": "villagers",
+        "owner_name": "the villagers"
+      },
+      "io_connections": []
+    },
+    {
+      "type": "prop",
+      "pos": [
+        -1050,
+        550,
+        170
+      ],
+      "properties": {
+        "type": "prop",
+        "name": "Windmill GLB sails",
+        "id": "75ecd560-80fb-544e-b82a-aca057ede613",
+        "render_mode": "model",
+        "model_path": "assets/models/windmill_rotor.glb",
+        "mill_rotor_for": "ef9ca1cb-0e2f-55e2-87df-0853cb0eb7e8",
         "rotation": [
           0,
           0,

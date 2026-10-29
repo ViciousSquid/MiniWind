@@ -46,5 +46,19 @@
   "sprite_ground_anchor": [
     0.5,
     0.5
-  ]
+  ],
+  "rotor": {
+    "body_model": "windmill_body.glb",
+    "rotor_model": "windmill_rotor.glb",
+    "pivot": [
+      0.0,
+      550.0,
+      170.0
+    ],
+    "axis": [
+      0,
+      0,
+      1
+    ]
+  }
 }

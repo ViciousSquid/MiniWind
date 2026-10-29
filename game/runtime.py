@@ -823,6 +823,10 @@ class MiniwindSession(SettlementLaw):
         self.memory = MapMemory(self)
         self.wildlife = Wildlife(self)
         self.dragon_fire = DragonFire(self)
+        from .windmills import Windmills
+        self.windmills = Windmills(self.logic)
+        from .flour_supply import FlourSupply
+        self.flour_supply = FlourSupply(self)
         #: Flare's fires: who is burning, and fires on the ground (game/burning.py).
         from .burning import Burning
         self.burning = Burning(self)
@@ -1108,6 +1112,9 @@ class MiniwindSession(SettlementLaw):
         self._assign_npc_handedness()  # random handedness (left rare) where unset
         self._arm_fighters()           # a bow for the swordsman, a blade for the archer
         self.dragon_fire.install(fio.things(self.logic))
+        self.windmills.install()
+        self.windmills.produce_until(float(self.clock.day) * 24.0 + self.clock.hour)
+        self.flour_supply.install()
         self._show_prison_signs()      # the gaol is marked in the world
         self._refresh_roads(force=True)  # the road graph, built before anyone walks
         self._assign_npc_stats()       # STRENGTH / ENDURANCE / CHARISMA for everyone
@@ -1119,6 +1126,8 @@ class MiniwindSession(SettlementLaw):
             self.living = LivingWorld(self)
             if not self.living.build():
                 self.living = None
+            else:
+                self.flour_supply.connect_roads(self.living)
         except Exception as exc:
             import traceback
             traceback.print_exc()
@@ -1129,6 +1138,7 @@ class MiniwindSession(SettlementLaw):
     def uninstall(self) -> None:
         global _current_session
         _current_session = None
+        self.windmills.clear()
         if self.living is not None:
             try:
                 self.living.persist()
@@ -1610,6 +1620,7 @@ class MiniwindSession(SettlementLaw):
         warrior_fist.clear_spent(self)
         self.held.update()
         self.dragon_fire.update(delta)
+        self.windmills.update(delta)
         self.burning.update(delta)
         self.wildlife.update(delta)
         if self.__dict__.get("_party_due") and self._player_pos() is not None:
@@ -1627,6 +1638,9 @@ class MiniwindSession(SettlementLaw):
             self._arrow_tags.clear()
         self._keep_player_in_world()
         self.clock.advance(delta)
+        if not self.clock.paused:
+            self.windmills.produce_until(float(self.clock.day) * 24.0 + self.clock.hour,
+                                         initial_hours=delta * self.clock.hours_per_second)
         self._update_grass()
         self.game.tick(delta, self._sprint(delta))
         self._announce_skill_raises()
@@ -1714,6 +1728,7 @@ class MiniwindSession(SettlementLaw):
             self._update_thoughts()
             self._update_small_talk()
             self._update_volunteering()
+            self.flour_supply.refresh()
         for i, npc in enumerate(npcs):
             if npc.properties.get("resurrection_used") and npc.properties.get("follow_player"):
                 self._guard_raised_follower(npc)
@@ -2673,6 +2688,9 @@ class MiniwindSession(SettlementLaw):
                 continue
             name = str(p.get("place_name") or p.get("name") or "").strip()
             if not name or p.get("_discovered"):
+                continue
+            if self.store.get(f"visited.{self._slug(name)}", "0") == "1":
+                p["_discovered"] = True
                 continue
             if self._dist2d(ppos, mk.pos) <= float(p.get("discover_radius", 200.0)):
                 p["_discovered"] = True
@@ -4485,7 +4503,8 @@ class MiniwindSession(SettlementLaw):
         if p.get("resurrection_used") and p.get("follow_player"):
             self._guard_raised_follower(npc)
             return
-        if p.get("_journey") and not p.get("_arrest_state") and self.living is not None:
+        if (p.get("_journey") and not p.get("_flour_driving")
+                and not p.get("_arrest_state") and self.living is not None):
             return          # a traveller: its party is driven by game/living
         if p.get("away_on_journey"):
             return          # away on a trip; a stand-in walks the road
@@ -4670,6 +4689,20 @@ class MiniwindSession(SettlementLaw):
                 p["_need_reason"] = reason
             else:
                 p.pop("_need_reason", None)
+
+        # Food and supply errands are work goals. All immediate reactions,
+        # remembered intentions, companionship and urgent needs above still win.
+        if p.get("flour_dependent") and self._is_combatant(npc):
+            self._advance_needs(npc, state)
+        if ((p.get("flour_dependent") or p.get("flour_target") or p.get("flour_job"))
+                and self.flour_supply.drive(npc, state)):
+            return
+
+        if state == sched.WORKING and farm_work.is_farmer(p):
+            if self.farm_work.drive(self, npc):
+                return
+        elif p.get("_farm_tool") or p.get("_farm_delivery"):
+            farm_work.stop(p)
 
         # (d) PATROL: an on-duty guard/combatant with an authored patrol circuit
         #     walks between its markers rather than standing at one work spot, so
@@ -5262,11 +5295,19 @@ class MiniwindSession(SettlementLaw):
             else:
                 p.pop("_need_reason", None)
 
+        # Food and supply errands are work goals. All immediate reactions,
+        # remembered intentions, companionship and urgent needs above still win.
+        if p.get("flour_dependent") and self._is_combatant(npc):
+            self._advance_needs(npc, state)
+        if ((p.get("flour_dependent") or p.get("flour_target") or p.get("flour_job"))
+                and self.flour_supply.drive(npc, state)):
+            return
+
         if state == sched.WORKING and farm_work.is_farmer(p):
-            # By day a farmer reaps the wheat or tends the animals.
+            # Farm work and wheat deliveries continue outside the camera too.
             if self.farm_work.drive(self, npc):
                 return
-        elif p.get("_farm_tool"):
+        elif p.get("_farm_tool") or p.get("_farm_delivery"):
             farm_work.stop(p)
         if state in (sched.WORKING, sched.GOING_TO_WORK) and p.get("patrol_markers"):
             if self._patrol(npc):
@@ -9133,6 +9174,12 @@ class MiniwindSession(SettlementLaw):
         elif op == "resist_arrest":
             self._start_arrest_pursuit()
         elif op == "open_trade":
+            if (npc.properties.get("flour_target")
+                    and not self.flour_supply.is_open(npc)):
+                self.end_dialogue()
+                self.merchant_npc = None
+                self.notify("The shop is closed.", 4.0)
+                return
             region = self._law_region(npc.pos, npc)
             if self.law.curfew(region, self._law_now()):
                 self.end_dialogue()
@@ -9213,11 +9260,15 @@ class MiniwindSession(SettlementLaw):
                 best, best_d = thing, d
         return best
 
+    def _container_things(self):
+        """Stock containers, including the inventories on placed mills."""
+        return _chain(self._things_of_type("container"), self.windmills.bodies())
+
     def nearest_container(self, player_pos, radius: float = TALK_RADIUS):
         """The nearest usable container within its own use radius."""
         best, best_d = None, None
         px, pz = player_pos[0], player_pos[2]
-        for c in self._things_of_type("container"):
+        for c in self._container_things():
             r = float(c.properties.get("use_radius", radius))
             pos = c.pos
             dx = px - pos[0]
@@ -9483,6 +9534,13 @@ class MiniwindSession(SettlementLaw):
             return f"{self.corpse_name(t)} (dead)"
         return str(t.properties.get("display_name") or "Container")
 
+    def container_take_is_theft(self) -> bool:
+        if self.container_thing is None:
+            return False
+        actor = self.player_actor
+        return sim_own.is_theft(self.container_thing.properties, actor_key(actor),
+                               actor.properties.get("faction", ""))
+
     def take_from_container(self, index: int) -> bool:
         """Move one stack from the open container into the player's inventory."""
         items = self.container_inventory()
@@ -9504,8 +9562,6 @@ class MiniwindSession(SettlementLaw):
             item_name=name, value=int(stack.get("value", 0) or 0) * max(1, int(stack.get("qty", 1) or 1)),
             pos=list(self.container_thing.pos) if self.container_thing else None)
         if event is not None and event.kind == "theft":
-            sim_own.mark_stolen(stack, sim_own.owner_of(props),
-                                sim_own.owner_name_of(props))
             self.notify(f"Stole {name}")
         else:
             if stack.get("id") != rpg_items.GOLD:
@@ -9515,7 +9571,12 @@ class MiniwindSession(SettlementLaw):
             # more of it than lies there.
             self._credit_found_gold(int(stack.get("qty", 1) or 0), "Took")
         else:
-            inv.add_item(self.game.character.inventory, stack)
+            received = inv.add_item(self.game.character.inventory, stack)
+            if event is not None and event.kind == "theft":
+                # Adding to a stack the player already carries must retain the
+                # stolen brand rather than laundering the goods by stacking.
+                sim_own.mark_stolen(received, sim_own.owner_of(props),
+                                    sim_own.owner_name_of(props))
         return True
 
     def store_in_container(self, index: int) -> bool:
@@ -9581,12 +9642,16 @@ class MiniwindSession(SettlementLaw):
         d = rpg_items.get(item_id)
         if not d:
             return False
+        supplied = (item_id == "flour" and self.merchant_npc is not None
+                    and self.merchant_npc.properties.get("flour_target"))
+        if supplied:
+            self.flour_supply.sync_shelf(self.merchant_npc)
         entry = self.stock_entry(self.merchant_npc, item_id)
         left = self.stock_left(entry)
         if left == 0:
-            self.notify(f"{d.name}: sold out until tomorrow")
+            self.notify(f"{d.name}: sold out" if supplied else f"{d.name}: sold out until tomorrow")
             return False
-        price = self._price(d.value, buying=True, npc=self.merchant_npc)
+        price = self._price(d.value, buying=True, npc=self.merchant_npc, item_id=item_id)
         if c.gold < price:
             self.notify("Not enough gold")
             return False
@@ -9598,6 +9663,11 @@ class MiniwindSession(SettlementLaw):
             entry.setdefault("restock", left)
             entry["qty"] = left - 1
         c.gold -= price
+        if supplied:
+            from .windmills import take_stock
+            take_stock(self.merchant_npc, "flour", 1)
+            self.merchant_npc.properties["merchant_gold"] += price
+            self.flour_supply.sync_shelf(self.merchant_npc)
         self.game.pick_up(item_id, 1)
         c.use_skill("mercantile", 0.5)
         self._remember_trade()
@@ -9615,8 +9685,17 @@ class MiniwindSession(SettlementLaw):
         if not self.merchant_will_buy(item_id):
             self.notify(library.NOT_INTERESTED)
             return False
-        price = self._price(d.value, buying=False, npc=self.merchant_npc)
+        price = self._price(d.value, buying=False, npc=self.merchant_npc, item_id=item_id)
+        supplied = (item_id == "flour" and self.merchant_npc is not None
+                    and self.merchant_npc.properties.get("flour_target"))
+        if supplied and int(self.merchant_npc.properties.get("merchant_gold", 0)) < price:
+            self.notify("The shopkeeper cannot afford that flour.")
+            return False
         inv.remove_item(c.inventory, item_id, 1)
+        if supplied:
+            inv.add_item(inv.get_inventory(self.merchant_npc), rpg_items.make(item_id))
+            self.merchant_npc.properties["merchant_gold"] -= price
+            self.flour_supply.sync_shelf(self.merchant_npc)
         c.gold += price
         c.use_skill("mercantile", 0.5)
         self._remember_trade()
@@ -9716,7 +9795,10 @@ class MiniwindSession(SettlementLaw):
             self.director.emit("trade", actor=self.player_actor, target=npc,
                                observers=self._sim_observers())
 
-    def _price(self, base_value: int, buying: bool, npc=None) -> int:
+    def _price(self, base_value: int, buying: bool, npc=None, *, item_id=None) -> int:
+        if buying and item_id == "flour" and npc is not None and npc.properties.get("flour_target"):
+            from .flour_supply import shelf_price
+            base_value = shelf_price(npc)
         c = self.game.character
         merc = c.skill("mercantile")
         pers = c.attrs.get("personality", 40)
