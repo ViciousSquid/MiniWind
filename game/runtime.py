@@ -53,7 +53,8 @@ from . import burning as burning_mod
 from .rpg import disposition as disp
 from .rpg import needs as rpg_needs
 from .rpg import heads
-from .rpg.head_registry import WorldHeadRegistry, identity as head_identity, npc as is_head_npc
+from .rpg.head_registry import (HeadPoolExhausted, WorldHeadRegistry,
+                                identity as head_identity, npc as is_head_npc)
 from .rpg import attributes as attr
 from .rpg import charisma as rpg_cha
 from .rpg import fortune as rpg_fortune
@@ -1455,6 +1456,8 @@ class MiniwindSession(SettlementLaw):
         things = list(fio.things(self.logic))
         changed = False
         deck = {}
+        overflow = {"regular": 0, "guard": 0}
+        from .entities import sprite_for
 
         def authored_first(thing):
             p = getattr(thing, "properties", None)
@@ -1481,7 +1484,14 @@ class MiniwindSession(SettlementLaw):
                 owner = head_identity(p)
                 if not owner:
                     owner = p["_head_identity"] = str(uuid.uuid4())
-                head = registry.assign(owner, cur, guard=guard)
+                try:
+                    head = registry.assign(owner, cur, guard=guard)
+                except HeadPoolExhausted:
+                    # There are more world identities than portrait images.
+                    # Never recycle another person's head: the actor remains
+                    # in the world with its existing, non-head role sprite.
+                    head = ""
+                    overflow["guard" if guard else "regular"] += 1
             else:
                 # Beasts share species images, not human identities. Existing
                 # authored monster art remains intact when it isn't the player.
@@ -1496,7 +1506,7 @@ class MiniwindSession(SettlementLaw):
                     head = heads.random_guard_head(self.rng)
                 else:
                     head = heads.random_head(self.rng, exclude={player_head})
-            path = heads.any_head_path(head)
+            path = heads.any_head_path(head) if head else sprite_for(role)
             size = heads.size_for(p, head)
             if (p.get("head") != head or p.get("custom_idle") != path or
                     p.get("custom_shoot") != path or
@@ -1524,10 +1534,23 @@ class MiniwindSession(SettlementLaw):
                         owner = f"journey:{journey.id}:{index}"
                     member.setdefault("_head_identity", owner)
                     actor_role = ACTOR_ROLES.get(role, ("villager",))[0]
-                    head = registry.assign(
-                        owner, member.get("head", ""),
-                        guard=actor_role in heads.GUARD_ROLES)
+                    is_guard = actor_role in heads.GUARD_ROLES
+                    try:
+                        head = registry.assign(owner, member.get("head", ""),
+                                               guard=is_guard)
+                    except HeadPoolExhausted:
+                        # Board members are people too, even while off-screen.
+                        # Reserve nothing when the pool is full; use role art
+                        # if/when the traveller materialises.
+                        head = ""
+                        overflow["guard" if is_guard else "regular"] += 1
                     member["head"] = head
+
+        if any(overflow.values()):
+            print("[MiniWind] Unique NPC head images exhausted: "
+                  f"{overflow['regular']} regular and {overflow['guard']} guard "
+                  "characters are using non-head role sprites. "
+                  "No head portraits were reused.")
 
         if changed:
             try:
