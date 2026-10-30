@@ -2113,6 +2113,17 @@ class QtGameView(QOpenGLWidget):
         self._render_config["terrain"] = (
             None if not self.play_mode and not _filters.shows('terrain')
             else self.editor.terrain)
+        # Big World defaults to a 2048-unit terrain stream, but the editor
+        # camera can see out to 4096 (or the user's current Cull Dist).
+        # Without a preview-only floor, objects beyond the stream ring float
+        # over blank ground. Never widen the authored stream radius or Play.
+        _terrain = self.editor.terrain
+        if _terrain is not None:
+            _terrain.editor_stream_horizon = (
+                float(self.view_distance.visual_horizon)
+                if not self.play_mode and _filters.shows('terrain')
+                else 0.0
+            )
         # Both editor and play rendering consume the same canonical dense
         # projection published by LogicRender. There is no editor-side table.
         self._render_config["render_table"] = render_state.render_table
