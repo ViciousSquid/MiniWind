@@ -133,7 +133,7 @@ def test_authored_human_creatures_have_individual_faces():
 
 def test_character_creation_finishes_with_more_people_than_unique_heads(monkeypatch):
     """Exhaustion uses role sprites rather than trapping the Begin button."""
-    monkeypatch.setattr(heads, "HEAD_IDS", ["head01", "head02"])
+    monkeypatch.setattr(heads, "HEAD_IDS", ["head01", "head02", "head13"])
     actors = [_actor(f"Villager {i}") for i in range(5)]
     s = _session(actors)
     s.open_screen = "charcreate"
@@ -159,7 +159,7 @@ def test_guards_fall_back_separately_and_keep_unique_guard_heads(monkeypatch):
 
 
 def test_offscreen_journeys_do_not_block_character_creation_when_exhausted(monkeypatch):
-    monkeypatch.setattr(heads, "HEAD_IDS", ["head01"])
+    monkeypatch.setattr(heads, "HEAD_IDS", ["head01", "head13"])
     m = dict(role="merchant", name="road_merchant_1", display="Traveller",
              alive=True, head="")
     s = _session([_actor("Resident")])
