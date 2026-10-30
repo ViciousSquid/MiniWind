@@ -173,3 +173,59 @@ def test_replacing_the_world_file_invalidates_the_cached_picture(tmp_path):
     first = worldmap.WorldMap.cache_key(path, None)
     path.write_text("second version with new geography", encoding="utf-8")
     assert worldmap.WorldMap.cache_key(path, None) != first
+
+
+def test_baked_road_texture_paint_is_visible_on_both_maps():
+    """Roads are terrain RGBA paint, not brushes or biome paint."""
+    class PaintedTerrain(_Terrain):
+        chunk_size = 1000.0
+        offset_x = -1000.0
+        offset_z = -1000.0
+
+        def __init__(self):
+            road = np.zeros((4, 4, 4), np.uint8)
+            road[:, :, :3] = (180, 102, 48)
+            road[:, :, 3] = 255
+            self.texture_paint_maps = {(0, 0): road}
+
+    terrain = PaintedTerrain()
+    base = np.full((8, 8, 3), 70, np.uint8)
+    worldmap.paint_texture_paint(base, terrain,
+                                ((-1000, 1000), (-1000, 1000)), 250.0)
+    # Terrain paint arrays index x first, while the map indexes z first.
+    assert tuple(base[1, 1]) == (180, 102, 48)
+    assert tuple(base[1, 6]) == (70, 70, 70)
+    assert tuple(base[6, 1]) == (70, 70, 70)
+
+
+def test_rebuilding_paints_baked_roads(tmp_path, monkeypatch):
+    class PaintedTerrain(_Terrain):
+        chunk_size = 2000.0
+        offset_x = -1000.0
+        offset_z = -1000.0
+
+        def __init__(self):
+            road = np.zeros((16, 16, 4), np.uint8)
+            road[4:12, :, :3] = (190, 110, 60)
+            road[4:12, :, 3] = 255
+            self.texture_paint_maps = {(0, 0): road}
+
+    monkeypatch.setattr(worldmap, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(worldmap, "RESOLUTION", 64)
+    world = worldmap.WorldMap()
+    world.ensure(PaintedTerrain(), [], terrain_data={"seed": 999})
+    deadline = time.time() + 10
+    while not world.ready and world.error is None and time.time() < deadline:
+        time.sleep(0.02)
+    assert world.error is None
+    assert world.ready
+    road = world.rgb[32, 32].astype(int)
+    off_road = world.rgb[32, 5].astype(int)
+    assert road[0] > road[1] > road[2]
+    assert not np.array_equal(road, off_road)
+
+
+def test_fallback_cache_key_includes_late_terrain_changes():
+    first = {"heightmap_blob": "a" * 6000 + "old"}
+    second = {"heightmap_blob": "a" * 6000 + "new"}
+    assert worldmap.WorldMap.cache_key(None, first) != worldmap.WorldMap.cache_key(None, second)

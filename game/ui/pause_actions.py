@@ -369,8 +369,9 @@ class PauseActions:
         session = self._session()
         if session is None:
             return worldmap.WORLD, {"player": None, "places": [], "quests": []}
-        if not worldmap.WORLD.ready and not worldmap.WORLD.building:
-            worldmap.ensure_for(self._logic(), self.view)
+        # Opening the full map should validate the source even when a cached
+        # picture is already ready (for example after loading a new world).
+        worldmap.ensure_for(self._logic(), self.view)
         return worldmap.WORLD, worldmap.map_features(session)
 
     def pause_menu_toggle_waypoint(self, x, z, pick):

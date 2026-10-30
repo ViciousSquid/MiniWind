@@ -37,7 +37,7 @@ MINIMAP_SPAN = 6400.0
 #: Where cached map pictures are kept.
 CACHE_DIR = "cache"
 #: Bumped whenever the painting changes, so old caches are not reused.
-STYLE_VERSION = 3
+STYLE_VERSION = 4
 
 _TREE_HINT = "tree"
 
@@ -109,6 +109,48 @@ def colour_terrain(heights, cell, biome_weights=None):
     return np.clip(rgb, 0, 255).astype(np.uint8)
 
 
+def paint_texture_paint(rgb, terrain, bounds, cell):
+    """Composite the terrain's baked RGBA paint onto its map picture.
+
+    Roads, plazas and ground decals are stored as per-chunk texture paint,
+    not brushes or biome weights. The terrain samples each paint chunk in
+    [x, z] order, whereas the map image is [z, x].
+    """
+    maps = getattr(terrain, "texture_paint_maps", None)
+    if not maps:
+        return
+    size = float(getattr(terrain, "chunk_size", 0.0))
+    if size <= 0:
+        return
+    (min_x, _), (min_z, _) = bounds
+    rows, cols = rgb.shape[:2]
+    # The map's sample centres match the height and biome sampling grid.
+    xs = min_x + (np.arange(cols) + 0.5) * cell
+    zs = min_z + (np.arange(rows) + 0.5) * cell
+    fx = (xs - float(getattr(terrain, "offset_x", 0.0))) / size
+    fz = (zs - float(getattr(terrain, "offset_z", 0.0))) / size
+    cx, cz = np.floor(fx).astype(np.int64), np.floor(fz).astype(np.int64)
+    for chunk_x in np.unique(cx):
+        columns = np.flatnonzero(cx == chunk_x)
+        for chunk_z in np.unique(cz):
+            paint = maps.get((int(chunk_x), int(chunk_z)))
+            if paint is None or getattr(paint, "ndim", 0) != 3 or paint.shape[2] != 4:
+                continue
+            lines = np.flatnonzero(cz == chunk_z)
+            px = np.clip(((fx[columns] - chunk_x) * paint.shape[0]).astype(np.int64),
+                         0, paint.shape[0] - 1)
+            pz = np.clip(((fz[lines] - chunk_z) * paint.shape[1]).astype(np.int64),
+                         0, paint.shape[1] - 1)
+            # Advanced indices come back in [x, z] order; transpose to [z, x].
+            sample = paint[px[:, None], pz[None, :]].transpose(1, 0, 2)
+            alpha = sample[..., 3:4].astype(np.float32) / 255.0
+            if not np.any(alpha):
+                continue
+            region = rgb[np.ix_(lines, columns)].astype(np.float32)
+            blended = region * (1.0 - alpha) + sample[..., :3] * alpha
+            rgb[np.ix_(lines, columns)] = np.clip(blended, 0, 255).astype(np.uint8)
+
+
 def paint_brushes(rgb, brushes, bounds, cell):
     """Lay water, woods and buildings over the terrain colours, in place."""
     (min_x, _max_x), (min_z, _max_z) = bounds
@@ -150,6 +192,7 @@ class WorldMap:
         self._thread = None
         self._key = None
         self.error = None
+        self._fallback_source = None
 
     @property
     def ready(self) -> bool:
@@ -172,14 +215,32 @@ class WorldMap:
             # Nanosecond mtime and size distinguish edits even on fast saves.
             h.update(f"{stat.st_mtime_ns}:{stat.st_size}".encode())
         except (OSError, TypeError):
-            h.update(repr(sorted((terrain_data or {}).items()))[:4096].encode())
+            # A truncated repr misses changes late in large sculpt/biome/paint
+            # blobs. The fallback must fingerprint all terrain data.
+            for name, value in sorted((terrain_data or {}).items()):
+                h.update(str(name).encode("utf-8"))
+                h.update(repr(value).encode("utf-8"))
         return h.hexdigest()[:20]
 
     def ensure(self, terrain, brushes, map_path=None, terrain_data=None):
         """Start painting this world if it is not painted (or being painted)."""
+        # If no map path is available, full content hashing is expensive:
+        # these can be very large baked terrain blobs. Reuse the key while
+        # the same live terrain and source objects/revisions remain loaded.
+        fallback = None
+        if not map_path:
+            fallback = (id(terrain), id(terrain_data), id(brushes),
+                        getattr(terrain, "_biome_version", None),
+                        getattr(terrain, "_paint_version_counter", None),
+                        getattr(terrain, "_sculpt_version", None),
+                        id(getattr(terrain, "heightmap_data", None)))
+            if fallback == self._fallback_source and (self.ready or self.building):
+                return
         key = self.cache_key(map_path, terrain_data)
         if key == self._key and (self.ready or self.building):
+            self._fallback_source = fallback
             return
+        self._fallback_source = fallback
         self._key = key
         self.rgb = None
         self._image = None
@@ -229,6 +290,7 @@ class WorldMap:
                 time.sleep(0.002)
             rgb = colour_terrain(heights, cell, weights)
             bounds = ((min_x, max_x), (min_z, max_z))
+            paint_texture_paint(rgb, terrain, bounds, cell)
             paint_brushes(rgb, brushes, bounds, cell)
             if key != self._key:
                 return                      # a newer world asked meanwhile
@@ -289,6 +351,10 @@ def ensure_for(logic, view=None):
     brushes = getattr(state, "brushes", None)
     terrain_data = getattr(state, "terrain_data", None)
     if map_path and os.path.isfile(str(map_path)):
+        # Avoid reopening a large world JSON every second when the picture
+        # already matches the source file.
+        if WORLD._key == WORLD.cache_key(map_path, terrain_data) and (WORLD.ready or WORLD.building):
+            return
         # The map file holds every brush, streamed in or not.
         brushes = _map_brushes(map_path) or brushes
     WORLD.ensure(terrain, brushes, map_path, terrain_data)
@@ -299,7 +365,8 @@ _BRUSH_CACHE = {}
 
 def _map_brushes(path):
     try:
-        mtime = os.path.getmtime(path)
+        stat = os.stat(path)
+        mtime = (stat.st_mtime_ns, stat.st_size)
     except OSError:
         return None
     got = _BRUSH_CACHE.get(path)
