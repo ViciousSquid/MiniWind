@@ -1378,14 +1378,18 @@ class MiniwindGame:
     def _close_overlay_screen(self, session, screen):
         """Close-button handler for a menu-screen window (mirrors Esc)."""
         if screen == "charcreate":
-            # Closing character creation commits the current picks (a valid
-            # character is always required before play resumes).
+            # The X and Begin paths must both finish character creation. Do
+            # not dismiss a failed commit as if a valid player existed: the
+            # original window will be removed by the window manager, so clear
+            # its cached reference to allow a fresh window on the next paint.
+            from .ui import screens as _screens
             try:
-                from .ui import screens as _screens
                 _screens._finish_charcreate(session)
             except Exception:
-                pass
-            session.needs_char_creation = False
+                session._overlay_win = None
+                session._overlay_key = None
+                raise
+            return
         if screen == "trade":
             from .ui import screens as _screens
             _screens.close_trade(session)
