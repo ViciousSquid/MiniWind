@@ -82,6 +82,17 @@ Top-level files: `python_runtime.py`, `editor_styles.py`, `clean.py`,
    `user_paths` and `ui_scale` imports. Milestone 1's settings-isolation design
    builds on `user_paths`, so MiniWind will gain it with the dependency
    switch. MiniWind does not need to backport it first.
+4. **Both test suites write into the checkout's own `settings.ini`.** Running
+   the Qt-offscreen tier added a `[Layout]` section to MiniWind's
+   `settings.ini`. On Fio it replaced the file, leaving only `[Layout]` and
+   dropping the shipped `[Display]`, `[Settings]`, `[Renderer]`, `[Kiosk]`
+   and `[Editor]` defaults. `user_paths.settings_path()` falls back to a
+   per-user file only when the root is *not writable*, so a writable
+   `vendor/fio` checkout would be modified the same way. This makes the
+   Milestone 1 "Settings isolation" and "Read-only project/engine" tests
+   necessary rather than defensive. Editor tests that save settings should
+   target a temporary project root. The bootstrap should take the settings
+   path from the project context, not assume the engine root.
 
 ## Game policy that has leaked into the copied trees
 
@@ -268,13 +279,41 @@ on both repos.
 
 | Repo | Result |
 | --- | --- |
-| MiniWind @ `68c0ba8b2` | _see below_ |
-| Fio @ `c2d8ed5b3` | _see below_ |
+| MiniWind @ `68c0ba8b2` | 7652 passed, 17 failed, 2 errors, 34 skipped (15 min, `-n 4 --timeout 180`) |
+| Fio @ `c2d8ed5b3` | 5973 passed, 34 skipped (12 min, `-n 4 --timeout 180`) |
 
-Known pre-existing MiniWind failures, unrelated to this audit:
-`tests/test_suite_integrity.py::test_machinery_tests_do_not_use_object_new_as_a_constructor_bypass`
-and `…_do_not_construct_production_owners_by_bypassing_init`. They flag
-`object.__new__` in `tests/renderer/test_camera_interpolation.py:46` and
-`tests/threading/test_frame_pacing.py:17`.
+A serial MiniWind run (no xdist) hung in
+`tests/tools/test_debug_tables.py::test_the_terrain_table_is_shown` at 74%
+and was killed after 25 minutes. The serial Fio run was killed at the same
+limit. Under `pytest-xdist` with `pytest-timeout`, both runs completed and
+nothing timed out. Use `-n 4 --timeout 180` until the hang is understood.
+
+MiniWind failures on unchanged `main`, grouped by what they say about the
+migration:
+
+- **Boundary:** `tests/integration/test_backport_boundaries.py::test_no_module_imports_a_game_package`.
+  `tests/test_additional_head_pool.py`, `tools/editor_ui_audit.py`,
+  `tools/benchmark_navigation.py`, `tests/visual/test_windmill_asset.py` and
+  `tests/engine/test_sdl_runtime.py` import `game`. These are Fio-shaped
+  test/tool locations that already depend on the game.
+- **Diverged engine default:** `tests/engine/test_effect_primitive.py`
+  (2 tests). Fio's tests expect `fire01.gif`, and MiniWind's `effect_entity.py`
+  defaults to `fire02.gif`. This is the leak listed above.
+- **Suite integrity:** `tests/test_suite_integrity.py` (2 tests). They flag
+  `object.__new__` in `tests/renderer/test_camera_interpolation.py:46` and
+  `tests/threading/test_frame_pacing.py:17`.
+- **Shipped world data:** `test_release_final_pass.py::test_every_shipped_connection_resolves[miniwind_world.json]`.
+  PathNode targets are stored as comma lists (`'ROAD_0002,ROAD_0004,ROAD_0067'`),
+  and Fio's validator reads each list as one name.
+  `game/tests/test_cave_entrances.py` and `game/tests/test_windmills.py` also fail.
+- **Editor layout (Qt offscreen):** `tests/editor/test_toolbar_button_size.py`
+  (3 tests) and `tests/editor/test_macos_layout.py`.
+- **Game logic, not investigated:** `game/tests/test_disposition.py`,
+  `test_editor_integration.py`, `test_faction_spine.py`,
+  `test_inventory_artwork.py` and `test_storyteller.py` (one test each). Some
+  may depend on test order under xdist.
+- **Errors at teardown:** `tests/engine/test_audio_backoff.py` and
+  `tests/editor/test_pause_menu.py`. The container has no audio device, and
+  creating a Qt OpenGL context fails.
 
 GUI and GL tiers (`-m gl`, desktop smoke, player/Android) were **not** run.
