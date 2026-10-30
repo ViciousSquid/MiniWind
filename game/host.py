@@ -1306,8 +1306,12 @@ class MiniwindGame:
                 # status frame draws (painted once, in the background, then
                 # cached per map).
                 from .ui import worldmap
-                if not getattr(session, "_worldmap_requested", False):
-                    session._worldmap_requested = True
+                # World/terrain changes and map reloads must invalidate the
+                # same artwork used by the minimap and the pause menu map.
+                # Do not stat the large world file on every paint frame.
+                now = time.monotonic()
+                if now - getattr(session, "_worldmap_checked_at", -1e9) >= 1.0:
+                    session._worldmap_checked_at = now
                     worldmap.ensure_for(logic, viewport)
                 # The HUD jolts with the screen (game/runtime.py shake()).
                 jolt = _hud_jolt(session, h)
