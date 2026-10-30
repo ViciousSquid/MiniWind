@@ -1,6 +1,6 @@
 """
 Character **heads** — the portrait/billboard sprites under
-``assets/sprites/heads/head00.png`` … ``head161.png``.
+``assets/sprites/heads/head00.png`` … ``head161.png`` (and installed extra numbered portraits).
 
 A head is the player's whole visual identity (no gender, no animation frames):
 the player picks one at character creation, it becomes the player's overhead
@@ -26,12 +26,36 @@ import os
 import random as _random
 from typing import Iterable, Optional
 
-#: Heads are numbered head00 … head161 (162 in total).
+#: Keep the original 162 ids stable for authored characters and saved worlds.
+#: Additional numbered PNGs are recognised at startup without another code
+#: change. The base set stays available even when assets are not installed
+#: (for example in headless tests).
 HEAD_FIRST = 0
-HEAD_LAST = 161
-HEAD_COUNT = HEAD_LAST - HEAD_FIRST + 1
+_BASE_HEAD_LAST = 161
 HEAD_DIR = "assets/sprites/heads"
-HEAD_IDS = [f"head{n:02d}" for n in range(HEAD_FIRST, HEAD_LAST + 1)]
+
+
+def _numbered_head_ids(directory=None) -> list[str]:
+    """Built-in IDs plus existing extra headNNN.png files, in numeric order."""
+    if directory is None:
+        directory = os.path.join(
+            os.path.dirname(__file__), os.pardir, os.pardir, HEAD_DIR)
+    try:
+        filenames = os.listdir(directory)
+    except OSError:
+        filenames = ()
+    extra = sorted({
+        int(name[4:-4]) for name in filenames
+        if name.startswith("head") and name.endswith(".png")
+        and name[4:-4].isdigit() and int(name[4:-4]) > _BASE_HEAD_LAST
+    })
+    return ([f"head{n:02d}" for n in range(HEAD_FIRST, _BASE_HEAD_LAST + 1)]
+            + [f"head{n:02d}" for n in extra])
+
+
+HEAD_IDS = _numbered_head_ids()
+HEAD_LAST = int(HEAD_IDS[-1][4:])
+HEAD_COUNT = len(HEAD_IDS)
 
 #: Special guard heads — assets/sprites/heads/guard01.png … guard26.png.
 #: A separate pool from HEAD_IDS: NPC-only, opt-in (never random, never the
