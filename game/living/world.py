@@ -708,8 +708,15 @@ class LivingWorld:
             if not owner:
                 owner = f"journey:{j.id}:{index}"
             m.setdefault("_head_identity", owner)
-            head = s.head_registry.assign(
-                owner, head, guard=role in rpg_heads.GUARD_ROLES)
+            from ..rpg.head_registry import HeadPoolExhausted
+            try:
+                head = s.head_registry.assign(
+                    owner, head, guard=role in rpg_heads.GUARD_ROLES)
+            except HeadPoolExhausted:
+                # Do not block a journey becoming an actor when the worldwide
+                # head pool is full. With no head id, MiniWind's normal actor
+                # initialiser uses role art rather than a duplicated portrait.
+                head = ""
             m["head"] = head
         faction = faction or j.faction
         if j.cause:
