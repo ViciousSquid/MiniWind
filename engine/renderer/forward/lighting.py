@@ -180,6 +180,15 @@ class LightingMixin:
         active['color'][:, :3] = table.light_color[active_lights]
         active['color'][:, 3] = 1.0
         active['params'][:, :2] = table.light_params[active_lights]
+        # Spare std140 lanes: terrain-only silhouette shadows share the
+        # existing 64-byte light UBO without changing other shader semantics.
+        shadow_strength = getattr(table, 'light_terrain_shadow_strength', None)
+        if shadow_strength is not None:
+            active['params'][:, 2] = shadow_strength[active_lights]
+        shadow_only = getattr(table, 'light_terrain_shadow_only', None)
+        if shadow_only is not None:
+            active['indices'][:, 1] = shadow_only[active_lights].astype(
+                np.int32, copy=False)
         # Shared by brush, model, terrain and water shaders. Never change the
         # table's authored intensity (which also drives flicker and I/O).
         active['params'][:, 0] *= weights

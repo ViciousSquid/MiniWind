@@ -21,6 +21,8 @@ def table_at(*xs):
         light_enabled=np.ones(count, dtype=bool),
         light_color=np.ones((count, 3), dtype=np.float32),
         light_params=np.array([(2.0, 512.0)] * count, dtype=np.float32),
+        light_terrain_shadow_only=np.zeros(count, dtype=bool),
+        light_terrain_shadow_strength=np.full(count, 0.5, dtype=np.float32),
     )
 
 
@@ -102,10 +104,14 @@ def test_shared_gpu_payload_fades_live_without_mutating_authored_lights(monkeypa
     renderer = Renderer()
     table = table_at(ACTIVE_LIGHT_RANGE)
     original = table.light_params.copy()
+    table.light_terrain_shadow_only[0] = True
+    table.light_terrain_shadow_strength[0] = 0.65
     config = dict(entity_table=table, light_focus=(128, 0, 0), play_mode=True)
     packet = renderer._get_active_lights(config)
     renderer._upload_light_ubo(packet, 1)
     assert uploads[-1]['params'][0, :2].tolist() == [1, 512]
+    assert uploads[-1]['params'][0, 2] == pytest.approx(0.65)
+    assert uploads[-1]['indices'][0, 1] == 1
     # Same slots/generation, different player position: cache must not reuse
     # the old intensity. Every lit shader consumes this shared payload.
     config['light_focus'] = (256, 0, 0)

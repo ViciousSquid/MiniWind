@@ -139,6 +139,14 @@ def _local_lights(session):
     except Exception:
         lights = ()
     for t in lights:
+        # A silhouette light casts a shadow in the 3D terrain shader, but is
+        # not a lamp and must not punch a bright hole through the night mask.
+        mode = t.properties.get("terrain_shadow_only", False)
+        if mode is True or (
+            isinstance(mode, str)
+            and mode.strip().lower() in ("true", "1", "yes", "on")
+        ):
+            continue
         params = _light_params(t.properties)
         if params is not None:
             out.append((t.pos,) + params)
