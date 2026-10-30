@@ -536,6 +536,10 @@ class Terrain:
         self.stream_radius: float = 4096.0
         self.stream_evict_padding: float = 512.0
         self.streamed_chunks: int = 0
+        # The editor may see further than Big World's activation radius.
+        # This transient floor is set by the viewport, never saved to the map
+        # and cleared for Play; the authored radius is left untouched.
+        self.editor_stream_horizon: float = 0.0
         # A ``set_bounds(..., prune=False)`` defers its out-of-bounds chunk
         # deletion (a GL op) to the next render on the GL thread.
         self._pending_prune: bool = False
@@ -1071,7 +1075,8 @@ class Terrain:
         (nothing, for a chunk that was never uploaded), so it runs headlessly.
         """
         freed = self.table.stream(
-            camera_pos.x, camera_pos.z, self.chunk_size, self.stream_radius,
+            camera_pos.x, camera_pos.z, self.chunk_size,
+            max(self.stream_radius, self.editor_stream_horizon),
             self.stream_evict_padding, self._chunk_bounds(),
             self.offset_x, self.offset_z)
         self._free_gl(freed)
