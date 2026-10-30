@@ -3565,6 +3565,43 @@ class PropertyEditor(QWidget):
                 form.addRow("", cb)
                 continue
 
+            # Light-specific controls. The flag does not allocate another
+            # shadow map: it changes how terrain receives this light's shadows.
+            if isinstance(thing, Light) and key == 'terrain_shadow_only':
+                enabled = value if isinstance(value, bool) else (
+                    str(value).strip().lower() in ('true', '1', 'yes', 'on')
+                )
+                cb = _make_checkbox(
+                    "Terrain shadow only",
+                    enabled,
+                    lambda checked: self.update_object_prop(
+                        'terrain_shadow_only', checked
+                    ),
+                    _Style.CHECKBOX,
+                )
+                cb.setToolTip(
+                    "Darken terrain under this light's moving shadows without "
+                    "brightening the ground. Enable Casts Shadows as well."
+                )
+                form.addRow("", cb)
+                continue
+
+            if isinstance(thing, Light) and key == 'terrain_shadow_strength':
+                spin = QDoubleSpinBox()
+                spin.setRange(0.0, 1.0)
+                spin.setDecimals(2)
+                spin.setSingleStep(0.05)
+                spin.setValue(float(value))
+                spin.setToolTip(
+                    "Shadow-only terrain darkness (0 = none, 1 = darkest). "
+                    "Requires Terrain Shadow Only and Casts Shadows."
+                )
+                spin.valueChanged.connect(
+                    lambda v: self.update_object_prop('terrain_shadow_strength', v)
+                )
+                form.addRow(QLabel("Terrain Shadow Strength:"), spin)
+                continue
+
             # Light shadow-map size.
             if isinstance(thing, Light) and key == 'shadow_map_size':
                 spin = QSpinBox()

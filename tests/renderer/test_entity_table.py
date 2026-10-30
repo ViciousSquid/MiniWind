@@ -43,6 +43,29 @@ def test_persistent_sprite_tint_is_published_and_returns_to_white_when_cleared()
     np.testing.assert_allclose(table.sprite_tint[0], [1., 1., 1.])
 
 
+def test_light_terrain_shadow_only_is_opt_in_and_tracks_edits():
+    lamp = make_thing(Light, 'mill_shadow')
+    table = _synced([lamp])
+    assert not table.light_terrain_shadow_only[0]
+    assert table.light_terrain_shadow_strength[0] == pytest.approx(0.5)
+
+    lamp.properties['casts_shadows'] = True
+    lamp.properties['terrain_shadow_only'] = True
+    lamp.properties['terrain_shadow_strength'] = 0.65
+    touch(lamp)
+    table.begin_frame([lamp], epoch=1)
+    assert table.light_casts_shadows[0]
+    assert table.light_terrain_shadow_only[0]
+    assert table.light_terrain_shadow_strength[0] == pytest.approx(0.65)
+
+    lamp.properties['terrain_shadow_only'] = 'off'
+    lamp.properties['terrain_shadow_strength'] = 5.0
+    touch(lamp)
+    table.begin_frame([lamp], epoch=1)
+    assert not table.light_terrain_shadow_only[0]
+    assert table.light_terrain_shadow_strength[0] == pytest.approx(1.0)
+
+
 @pytest.fixture
 def renderer():
     pytest.importorskip("OpenGL", reason="renderer entity-slot tests require OpenGL")

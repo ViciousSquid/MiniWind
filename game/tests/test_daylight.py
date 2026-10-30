@@ -102,6 +102,20 @@ def test_lamps_cut_holes_in_the_dark_but_fill_lights_do_not(qt_app):
     assert rgb == (255, 200, 130)
 
 
+def test_shadow_only_lights_do_not_brighten_the_night_mask(qt_app):
+    from ..ui import daylight
+    shadow = _T((100.0, 300.0, 0.0), type="light", radius=420.0,
+                intensity=12.0, state="on", terrain_shadow_only=True,
+                casts_shadows=True)
+    normal = _T((300.0, 300.0, 0.0), type="light", radius=420.0,
+                intensity=1.0, state="on")
+    session = _session([shadow, normal])
+    assert len(daylight._local_lights(session)) == 1
+    assert daylight._local_lights(session)[0][0] == normal.pos
+    shadow.properties["terrain_shadow_only"] = "false"
+    assert len(daylight._local_lights(session)) == 2
+
+
 def test_night_is_dark_except_by_the_lamp(qt_app):
     pytest.importorskip("glm")
     from PyQt5.QtGui import QColor, QPainter, QPixmap

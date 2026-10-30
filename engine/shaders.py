@@ -189,8 +189,8 @@ def light_ubo_source(source):
         "struct Light {\n"
         "    highp vec4 position;\n"
         "    vec4 color;\n"
-        "    vec4 params;       // x=intensity, y=radius\n"
-        "    ivec4 indices;     // x=shadow index\n"
+        "    vec4 params;       // x=intensity, y=radius, z=terrain shadow strength\n"
+        "    ivec4 indices;     // x=shadow index, y=terrain shadow only\n"
         "};\n"
         "layout(std140) uniform FioLightBlock {\n"
         f"    Light lights[{count}];\n"
@@ -202,6 +202,14 @@ def light_ubo_source(source):
     result = re.sub(r"lights\[([^]]+)\]\.color\b", r"lights[\1].color.xyz", result)
     result = re.sub(r"lights\[([^]]+)\]\.intensity\b", r"lights[\1].params.x", result)
     result = re.sub(r"lights\[([^]]+)\]\.radius\b", r"lights[\1].params.y", result)
+    result = re.sub(
+        r"lights\[([^]]+)\]\.terrainShadowStrength\b",
+        r"lights[\1].params.z", result,
+    )
+    result = re.sub(
+        r"lights\[([^]]+)\]\.terrainShadowOnly\b",
+        r"lights[\1].indices.y", result,
+    )
     result = re.sub(
         r"lights\[([^]]+)\]\.shadowIndex\b",
         r"int(lights[\1].indices.x)",
@@ -1691,6 +1699,8 @@ struct Light {
     float intensity;
     highp float radius;
     int shadowIndex;
+    int terrainShadowOnly;
+    float terrainShadowStrength;
 };
 
 uniform Light lights[""" + str(MAX_LIGHTS_TERRAIN) + """];
@@ -1949,6 +1959,9 @@ void main() {
     float fillDiff = max(dot(norm, fillDir), 0.0) * 0.2;
     result += fillDiff * skyColor * texColor;
 
+    // A shadow-only light multiplies the *final* terrain illumination, not
+    // just sunlight or whichever ordinary light happened to be processed first.
+    float terrainShadowMask = 1.0;
     for (int i = 0; i < active_lights && i < """ + str(MAX_LIGHTS_TERRAIN) + """; i++) {
         highp vec3  toLight  = lights[i].position - FragPos;
         highp float distance = length(toLight);
@@ -1958,9 +1971,17 @@ void main() {
             float attenuation = 1.0 - smoothstep(0.0, lights[i].radius, distance);
             attenuation       = attenuation * attenuation;
             float shadow      = calcPointShadow(lights[i].shadowIndex, toLight, lights[i].radius, diff);
-            result += (1.0 - shadow) * diff * lights[i].color * lights[i].intensity * attenuation * texColor;
+            if (lights[i].terrainShadowOnly != 0) {
+                if (diff > 0.0) {
+                    float strength = clamp(lights[i].terrainShadowStrength, 0.0, 1.0);
+                    terrainShadowMask *= 1.0 - shadow * strength * attenuation;
+                }
+            } else {
+                result += (1.0 - shadow) * diff * lights[i].color * lights[i].intensity * attenuation * texColor;
+            }
         }
     }
+    result *= terrainShadowMask;
 
     float gray = dot(result, vec3(0.299, 0.587, 0.114));
     result = mix(vec3(gray), result, 1.15);
