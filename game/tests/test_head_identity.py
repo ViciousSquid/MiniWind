@@ -130,3 +130,44 @@ def test_authored_human_creatures_have_individual_faces():
     faces = [image_key(t.properties["head"]) for t in bandits + cultists]
     assert len(faces) == len(set(faces))
     assert image_key("head13") not in faces
+
+def test_character_creation_finishes_with_more_people_than_unique_heads(monkeypatch):
+    """Exhaustion uses role sprites rather than trapping the Begin button."""
+    monkeypatch.setattr(heads, "HEAD_IDS", ["head01", "head02"])
+    actors = [_actor(f"Villager {i}") for i in range(5)]
+    s = _session(actors)
+    s.open_screen = "charcreate"
+    s.begin_new_character("Player", "imperial", "warrior", head="head13")
+    assert not s.needs_char_creation
+    assert s.open_screen is None
+    assigned = [a.properties["head"] for a in actors]
+    assert sorted(h for h in assigned if h) == ["head01", "head02"]
+    assert assigned.count("") == 3
+    assert all(a.properties["custom_idle"] == "assets/sprites/miniwind/farmer.png"
+               for a in actors if not a.properties["head"])
+
+
+def test_guards_fall_back_separately_and_keep_unique_guard_heads(monkeypatch):
+    monkeypatch.setattr(heads, "GUARD_HEAD_IDS", ["guard01"])
+    actors = [_actor(f"Guard {i}", role="guard") for i in range(3)]
+    s = _session(actors)
+    s.begin_new_character("Player", "imperial", "warrior", head="head13")
+    assert [a.properties["head"] for a in actors].count("guard01") == 1
+    assert [a.properties["head"] for a in actors].count("") == 2
+    assert all(a.properties["custom_idle"] == "assets/sprites/miniwind/guard.png"
+               for a in actors if not a.properties["head"])
+
+
+def test_offscreen_journeys_do_not_block_character_creation_when_exhausted(monkeypatch):
+    monkeypatch.setattr(heads, "HEAD_IDS", ["head01"])
+    m = dict(role="merchant", name="road_merchant_1", display="Traveller",
+             alive=True, head="")
+    s = _session([_actor("Resident")])
+    trip = SimpleNamespace(id="j1", members=[m])
+    s.living = SimpleNamespace(board=SimpleNamespace(journeys={"j1": trip}))
+    s.begin_new_character("Player", "imperial", "warrior", head="head13")
+    assert not s.needs_char_creation
+    assert m["head"] == ""
+    assert len(set(s.head_registry.assignments.values())) == 1
+
+
