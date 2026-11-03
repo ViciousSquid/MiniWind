@@ -45,7 +45,9 @@ def shadow_casters_in_reach(table, slots, lx, ly, lz, reach):
     dx = center[:, 0] - lx
     dy = center[:, 1] - ly
     dz = center[:, 2] - lz
-    limit = reach + table.half[slots].max(axis=1)
+    # The half diagonal encloses every corner under any brush rotation.
+    # max(half) excludes corners that can still intersect the light sphere.
+    limit = reach + np.linalg.norm(table.half[slots], axis=1)
     selected = slots[(dx * dx + dy * dy + dz * dz) <= limit * limit]
     if not len(selected):
         return selected, ()
