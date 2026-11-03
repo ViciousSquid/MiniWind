@@ -118,6 +118,40 @@ def test_two_assigned_players_move_independently_and_menus_do_not_pause(coop_gam
     assert coop.root.clock.hour > hour
 
 
+def test_keyboard_turns_from_north_to_east_before_wasd_movement(coop_game):
+    import math
+
+    from PyQt5.QtCore import Qt
+
+    coop = coop_game.logic.game_session.coop
+    player = coop.local_players[0]
+    body = player.physics
+    # Exercise the live input queue and movement runtime without momentum
+    # from the previous direction affecting the next key's displacement.
+    body.physics_enabled = False
+    coop_game.game_state.set_aim(yaw=math.pi)  # north: negative world Z
+    coop_game.step(2)
+    assert body.angle == pytest.approx(math.pi)
+    coop_game.game_state.set_aim(yaw=math.pi / 2)  # turn clockwise to east
+    coop_game.step(2)
+    assert body.angle == pytest.approx(math.pi / 2)
+    assert coop.heading == pytest.approx(math.pi)  # camera still north-up
+
+    for key, axis, sign in (
+        (Qt.Key_W, 0, 1),   # forward: east
+        (Qt.Key_S, 0, -1),  # backward: west
+        (Qt.Key_A, 2, -1),  # strafe left: north
+        (Qt.Key_D, 2, 1),   # strafe right: south
+    ):
+        coop_game.step(2)
+        before = tuple(body.pos)
+        coop_game.step(10, keys={key})
+        assert (body.pos[axis] - before[axis]) * sign > 1
+        cross_axis = 2 if axis == 0 else 0
+        assert body.pos[cross_axis] == pytest.approx(before[cross_axis], abs=0.001)
+        assert body.angle == pytest.approx(math.pi / 2)
+
+
 def test_hand_attacks_use_each_characters_own_weapon_and_cooldown(coop_game):
     coop = coop_game.logic.game_session.coop
     first, second, third, _ = list(coop.players.values())
