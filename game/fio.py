@@ -188,6 +188,19 @@ def spawn_projectile(logic, pos, vel, **kwargs):
     return runtime.spawn_projectile(pos, vel, **kwargs)
 
 
+def set_projectile_deflector(logic, hook):
+    """Install the game's pre-impact missile response (None clears it)."""
+    runtime = getattr(logic, "combat_runtime", None)
+    if runtime is not None:
+        runtime.projectile_deflector = hook
+
+
+def clear_projectile_deflector(logic, hook):
+    runtime = getattr(logic, "combat_runtime", None)
+    if runtime is not None and getattr(runtime, "projectile_deflector", None) == hook:
+        runtime.projectile_deflector = None
+
+
 def projectile_tag(logic, row) -> int:
     """The tag Fio gave the projectile in *row* (0 for one without hooks)."""
     runtime = getattr(logic, "combat_runtime", None)

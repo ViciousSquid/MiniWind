@@ -91,7 +91,9 @@ from .spatial import PARKED_DISABLED_KEY, PARKED_HIDDEN_KEY
 #: explicit ``save_mode`` metadata and delta/both support; v1 saves (no
 #: ``save_mode``) still load, treated as legacy ``full``. v3 saves the weapons
 #: the player has (``runtime.weapons``) in place of v2's ``gun2_obtained``.
-SAVE_VERSION = 3
+#: v4 adds the optional co-op campaign; ordinary games still write v3.
+SAVE_VERSION = 4
+SOLO_SAVE_VERSION = 3
 
 #: Marker key so a stray JSON file is never mistaken for a Fio save.
 _MAGIC = "fio_savegame"
@@ -429,9 +431,11 @@ def _build_full_snapshot(logic, *, map_name: str = "", with_level: bool = True) 
             for i, s in (logic.mover_runtime.mover_path_states or {}).items()},
     }
 
+    coop = getattr(getattr(logic,"game_session",None),"coop",None)
     return {
         _MAGIC: True,
-        "save_version": SAVE_VERSION,
+        "save_version": SAVE_VERSION if coop is not None else SOLO_SAVE_VERSION,
+        **({"coop": coop.campaign()} if coop is not None else {}),
         "save_mode": SAVE_MODE_FULL,
         "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "map": map_name or "",
@@ -614,7 +618,8 @@ def build_snapshot(logic, *, map_name: str = "",
         base_map = base_world or _base_map_identity(base_level or {}, map_name)
         return {
             _MAGIC: True,
-            "save_version": SAVE_VERSION,
+            "save_version": full["save_version"],
+            **({"coop":full["coop"]} if "coop" in full else {}),
             "save_mode": SAVE_MODE_DELTA,   # forced: Big World never full-saves
             "world_mode": WORLD_MODE_BIGWORLD,
             "saved_at": full.get("saved_at"),
@@ -633,7 +638,8 @@ def build_snapshot(logic, *, map_name: str = "",
     base_map = _base_map_identity(base_level, map_name)
     common = {
         _MAGIC: True,
-        "save_version": SAVE_VERSION,
+        "save_version": full["save_version"],
+        **({"coop":full["coop"]} if "coop" in full else {}),
         "saved_at": full.get("saved_at"),
         "map": map_name or "",
         "base_map": base_map,
@@ -754,6 +760,11 @@ def _restore_runtime_and_players(logic, data: dict) -> None:
     entity overlay. Caller is responsible for having overlaid entity state first.
     """
     runtime = data.get("runtime", {}) or {}
+    coop = getattr(getattr(logic,"game_session",None),"coop",None)
+    if data.get("coop"):
+        if coop is None:
+            raise ValueError("Open this campaign through Multiplayer in the launcher.")
+        coop.restore_campaign(data["coop"])
 
     # Linked portals share one active state; a save from before that rule
     # may hold a pair that disagrees.
@@ -901,6 +912,19 @@ def _restore_runtime_and_players(logic, data: dict) -> None:
     logic.world_runtime.notify_authored_visibility_changed()
 
 
+def _validate_party_save(logic, data):
+    saved = data.get("coop")
+    if not saved:
+        return
+    coop = getattr(getattr(logic, "game_session", None), "coop", None)
+    if coop is None:
+        raise ValueError("Open this campaign through Multiplayer in the launcher.")
+    if saved.get("campaign_id") != coop.lobby.state["campaign_id"]:
+        raise ValueError("This save belongs to a different co-op campaign.")
+    if set(saved.get("players", {})) != set(coop.players):
+        raise ValueError("Resume this save from Multiplayer to restore its roster.")
+
+
 def restore_snapshot(logic, data: dict) -> None:
     """Apply a full snapshot from :func:`build_snapshot` onto a live session.
 
@@ -910,6 +934,7 @@ def restore_snapshot(logic, data: dict) -> None:
     """
     if not isinstance(data, dict) or not data.get(_MAGIC):
         raise ValueError("not a Fio save file")
+    _validate_party_save(logic, data)
     # Live entity state first, so anything derived from it below is consistent.
     _overlay_entities(logic, data.get("level", {}) or {}, complete=True)
     _restore_runtime_and_players(logic, data)
@@ -930,6 +955,7 @@ def restore_delta(logic, data: dict, base_level: Optional[dict] = None) -> None:
     """
     if not isinstance(data, dict) or not data.get(_MAGIC):
         raise ValueError("not a Fio save file")
+    _validate_party_save(logic, data)
     delta_level = ((data.get("delta") or {}).get("level")) or {}
     if base_level:
         in_delta = {(t.get("properties") or {}).get("id")
@@ -1019,6 +1045,7 @@ def restore_auto(logic, data: dict, *, current_map_name: str = "",
     """
     if not isinstance(data, dict) or not data.get(_MAGIC):
         raise ValueError("not a Fio save file")
+    _validate_party_save(logic, data)
 
     # Big World delta save: a per-cell registry rather than a flat delta level.
     if data.get("world_mode") == WORLD_MODE_BIGWORLD:

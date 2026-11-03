@@ -1,5 +1,6 @@
 {
   "id": "lost_amulet",
+  "coop_shared_items": ["silver_amulet"],
   "name": "The Lost Amulet",
   "giver": "Elowen",
   "faction": "town",

@@ -568,7 +568,8 @@ class LogicThread(threading.Thread):
         self.game_state.consume_shot()
         self.game_state.consume_secondary_shot()
         self.game_state.consume_weapon_slots()
-        if self.cutscene_runtime.state or self.player_runtime.player_dead or self.interaction_runtime.level_complete_ui:
+        coop = getattr(getattr(self, "game_session", None), "coop", None)
+        if self.cutscene_runtime.state or (self.player_runtime.player_dead and coop is None) or self.interaction_runtime.level_complete_ui:
             return
         if self.plugins is not None and self.plugins.wants_tick():
             self.plugins.tick(
@@ -580,6 +581,12 @@ class LogicThread(threading.Thread):
             )
 
     def _tick_play_mode(self, delta):
+        coop = getattr(getattr(self, "game_session", None), "coop", None)
+        if coop is not None and not coop.authority:
+            self.world_runtime.watch_world_rows()
+            coop.move_all(delta)
+            self._tick_paused_world(delta)
+            return
         if not self.player_runtime.player:
             return
         self.world_runtime.watch_world_rows()
@@ -620,7 +627,7 @@ class LogicThread(threading.Thread):
             return
 
         # ---- Player dead: freeze all gameplay input ----
-        if self.player_runtime.player_dead:
+        if self.player_runtime.player_dead and coop is None:
             self.game_state.consume_mouse_delta()
             self.game_state.consume_use_key()
             self.game_state.consume_shot()
@@ -657,7 +664,8 @@ class LogicThread(threading.Thread):
         player_runtime.update_water_sounds(delta)
 
         # Gameplay
-        self.interaction_runtime.handle(use_key)
+        if coop is None:
+            self.interaction_runtime.handle(use_key)
         self.prop_runtime.tick(delta, use_key)
         physics_world = self.session_runtime.physics_world
         if physics_world is not None:
@@ -694,9 +702,9 @@ class LogicThread(threading.Thread):
         for slot in self.game_state.consume_weapon_slots():
             if not modal:
                 self.combat_runtime.select_slot(slot)
-        if self.game_state.consume_shot() and not modal:
+        if self.game_state.consume_shot() and not modal and coop is None:
             self.combat_runtime._handle_shooting()
-        if self.game_state.consume_secondary_shot() and not modal:
+        if self.game_state.consume_secondary_shot() and not modal and coop is None:
             self.combat_runtime._handle_shooting(secondary=True)
             
         combat_runtime = self.combat_runtime

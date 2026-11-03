@@ -84,6 +84,8 @@ def arm_fighters(things, rng, make_stack) -> int:
         if ttype not in ("npc", "creature", "monster") or p.get("dead"):
             continue
         role = str(p.get("npc_role", "") or "").lower()
+        from .rpg.blocking import ready_npc_shield
+        ready_npc_shield(p)
         if _arm_caster(p, ttype, role, make_stack):
             armed += 1
         # Some casters know a ward to raise before a fight (game/npc_magic.py).
@@ -189,6 +191,7 @@ class HeldWeapons:
         #: blades trail and overshoot a turn just as the player's do.
         self._sway = {}
         self._clock = None
+        self._blocks = {}
 
     def update(self) -> None:
         """Facing for every actor near the player, eased into each turn and
@@ -211,6 +214,8 @@ class HeldWeapons:
                  else {id(t): t for t in actors})
         last = {}
         for t in actors:
+            if t.properties.get("multiplayer_player"):
+                continue  # Player physics owns facing, including while strafing.
             x, z = float(t.pos[0]), float(t.pos[2])
             dx, dz = x - ppos[0], z - ppos[2]
             if dx * dx + dz * dz > r2:
@@ -234,6 +239,7 @@ class HeldWeapons:
                     fx = fz = 0.0
             if fx or fz:
                 face_heading(p, fx, fz, delta)
+            self._update_block(t, target, getattr(s, "_archery_clock", now))
             # Whoever turned it (this, the schedule mover, a bow's aim), the
             # head sprite turns too.
             facing = p.get("_facing")
@@ -243,13 +249,47 @@ class HeldWeapons:
                     touch(t, FACING)
         self._last = last
         self._published = published
+        self._blocks = {key: value for key, value in self._blocks.items() if key in last}
         # overhead() (UI thread) adds springs; drop those of actors gone out
         # of range, from a copy of the keys.
         for key in [k for k in list(self._sway) if k not in last]:
             self._sway.pop(key, None)
 
+    def _update_block(self, thing, target, now):
+        """Shield users raise it between attacks, after a human reaction delay."""
+        from .rpg.blocking import npc_shield
+        from . import npc_stamina
+
+        p = thing.properties
+        shield = npc_shield(p)
+        state = self._blocks.get(id(thing))
+        if shield is None and state is None:
+            p.pop("_shield_blocking", None)
+            p.pop("_shield_pose", None)
+            return
+        if state is None:
+            state = self._blocks[id(thing)] = {
+                "fighting": False, "ready": now, "at": now, "pose": 0.0,
+            }
+        fighting = (target is not None and shield is not None
+                    and not any(p.get(k) for k in ("dead", "hidden", "disabled", "_flee")))
+        if fighting and not state["fighting"]:
+            state["ready"] = now + self.session.rng.uniform(0.2, 0.55)
+        if p.get("is_shooting") or float(p.get("_attack_anim", 0) or 0) > 0:
+            state["ready"] = max(state["ready"], now + 0.2)
+        raised = bool(fighting and now >= state["ready"]
+                      and npc_stamina.stamina(p, now) > 0)
+        step = max(0.0, min(0.1, now - state["at"])) / 0.18
+        pose = state["pose"]
+        pose = min(1.0, pose + step) if raised else max(0.0, pose - step)
+        if shield is None:
+            pose = 0.0
+        state.update(fighting=fighting, at=now, pose=pose)
+        p["_shield_blocking"] = raised
+        p["_shield_pose"] = pose * pose * (3 - 2 * pose)
+
     def overhead(self):
-        """``[(pos, facing, weapon_id, handed, attacking, size)]`` for the
+        """``[(pos, facing, weapon_id, handed, attacking, size[, block])]`` for the
         actors near the player who hold something."""
         s = self.session
         ppos = s._player_pos()
@@ -262,8 +302,8 @@ class HeldWeapons:
         now = time.perf_counter()
         for t in s._actors:
             p = t.properties
-            if p.get("dead") or p.get("hidden") or p.get("_bw_parked_hidden") \
-                    or p.get("away_on_journey"):
+            if (p.get("multiplayer_player") or p.get("dead") or p.get("hidden")
+                    or p.get("_bw_parked_hidden") or p.get("away_on_journey")):
                 continue
             if p.get("_reaper") and float(p.get("_opacity", 1.0) or 0.0) < 0.3:
                 continue          # Death's scythe comes and goes with him
@@ -292,7 +332,8 @@ class HeldWeapons:
             if off_item and not two_handed(weapon):
                 other = "left" if handed == "right" else "right"
                 striking = bool(p.get("_offhand_anim", 0.0)) and not p.get("_torch_lit")
-                out.append(((x, y, z), off_facing, off_item, other, striking, size))
+                out.append(((x, y, z), off_facing, off_item, other, striking, size,
+                            float(p.get("_shield_pose", 0))))
         return out
 
 

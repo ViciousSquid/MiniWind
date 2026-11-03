@@ -1122,6 +1122,7 @@ class QtGameView(QOpenGLWidget):
         during a cinematic, or when disabled.
         """
         _lt = self.logic_thread
+        coop = getattr(getattr(_lt, "game_session", None), "coop", None)
         _lt_overhead = bool(_lt.camera.is_overhead()) if _lt is not None else False
         if not (self.play_mode and self.overhead_sprite_enabled
                 and (self._is_overhead() or _lt_overhead)):
@@ -1139,12 +1140,10 @@ class QtGameView(QOpenGLWidget):
             from engine.overhead_sprite import SpriteController, OverheadSpriteRenderer
         except Exception:
             return
-        if self._overhead_sprite_ctrl is None:
-            self._overhead_sprite_ctrl = SpriteController(walk_fps=float(self.overhead_walk_fps))
         # A game can replace the player's look with one still image
         # (``logic.player_head_sprite``, a repo-relative path): every frame maps
         # to it, and the renderer is rebuilt whenever it changes.
-        head_rel = getattr(lt, "player_head_sprite", None)
+        head_rel = getattr(lt, "player_head_sprite", None) if coop is None else None
         if head_rel and head_rel != getattr(self, "_overhead_head", None):
             root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             head_abs = os.path.join(root, head_rel)
@@ -1160,6 +1159,15 @@ class QtGameView(QOpenGLWidget):
             self._overhead_sprite_renderer = OverheadSpriteRenderer(
                 size=float(self.overhead_sprite_size),
                 facing_offset_deg=float(self.overhead_sprite_facing_offset))
+
+        sess = getattr(lt, "game_session", None)
+        if coop is not None:
+            # Co-op heads already use published actor sprites. Their held
+            # equipment still needs the same overlay used in solo play.
+            self._draw_overhead_actor_weapons(sess)
+            return
+        if self._overhead_sprite_ctrl is None:
+            self._overhead_sprite_ctrl = SpriteController(walk_fps=float(self.overhead_walk_fps))
 
         pos = render_state.player_pos
         if pos is None:
@@ -1177,7 +1185,6 @@ class QtGameView(QOpenGLWidget):
         # -> seconds``, ``overhead_player_weapon() -> (weapon_id, handed)`` (or
         # a list of ``(weapon_id, handed[, attacking])``, one per hand) and
         # ``overhead_weapon_kind(weapon_id) -> "melee" | "bow" | "staff"``.
-        sess = getattr(lt, "game_session", None)
         pose = getattr(sess, "overhead_pose", None)
         if pose is not None:
             try:
@@ -1230,9 +1237,15 @@ class QtGameView(QOpenGLWidget):
                 weapon_kind=self._weapon_kind(weapon_id, sess),
                 handed=handed,
                 block=float(entry[4] or 0.0) if len(entry) > 4 else 0.0)
-        # Everyone else nearby holds their weapon too, through the same path:
-        # ``overhead_actor_weapons() -> [(pos, facing, weapon_id, handed,
-        # attacking, size)]``.
+        self._draw_overhead_actor_weapons(sess)
+
+    def _draw_overhead_actor_weapons(self, sess):
+        """Draw nearby actors' held items, including every co-op character.
+
+        ``overhead_actor_weapons()`` supplies ``(pos, facing, item, handed,
+        attacking, size[, block])`` entries. The optional block pose lets
+        each co-op shield use its owner's normal single-player animation.
+        """
         others = getattr(sess, "overhead_actor_weapons", None)
         if others is None:
             return
@@ -1243,7 +1256,8 @@ class QtGameView(QOpenGLWidget):
             return
         now = time.perf_counter()
         player_size = max(1.0, float(self.overhead_sprite_size))
-        for a_pos, a_facing, a_weapon, a_handed, a_attacking, a_size in held_list:
+        for entry in held_list:
+            a_pos, a_facing, a_weapon, a_handed, a_attacking, a_size = entry[:6]
             path = self._weapon_asset_path(a_weapon)
             if not path:
                 continue
@@ -1252,7 +1266,8 @@ class QtGameView(QOpenGLWidget):
                 now, attacking=a_attacking,
                 weapon_kind=self._weapon_kind(a_weapon, sess),
                 size=player_size * 0.55 * (a_size / player_size),
-                handed=a_handed)
+                handed=a_handed,
+                block=float(entry[6] or 0.0) if len(entry) > 6 else 0.0)
 
     @staticmethod
     def _weapon_asset_path(weapon_id):
@@ -2983,7 +2998,7 @@ class QtGameView(QOpenGLWidget):
         else:
             self._pause_window.window_rect.moveTo(*self._pause_window_pos)
         logic = self.logic_thread
-        if logic is not None:
+        if logic is not None and getattr(getattr(logic, "game_session", None), "coop", None) is None:
             logic.session_runtime.set_world_paused(logic.session_runtime.PAUSE_MENU, True)
         while QApplication.overrideCursor() is not None:
             QApplication.restoreOverrideCursor()
@@ -3506,6 +3521,8 @@ class QtGameView(QOpenGLWidget):
             self.update()
 
     def _toggle_splitscreen(self):
+        if getattr(getattr(self.logic_thread,"game_session",None),"coop",None) is not None:
+            return
         self.splitscreen_mode = not self.splitscreen_mode
         if self.play_mode:
             pos = self._last_player_start_pos
@@ -4205,6 +4222,15 @@ class QtGameView(QOpenGLWidget):
                                           shear=armed['shear'])
 
     def mousePressEvent(self, event):
+        coop=getattr(getattr(self.logic_thread,"game_session",None),"coop",None)
+        if (self.play_mode and coop is not None and self.pause_menu is None and not _play_menu_open(self)
+                and not self.console_overlay_active
+                and coop.ui_session is not None
+                and (coop.ui_session.open_screen is not None or coop.ui_session.dialogue is not None)):
+            owner=coop.players.get(coop.ui_session.player_id)
+            if owner is not None and owner.profile["device"]!="keyboard" and event.button() in (Qt.LeftButton,Qt.RightButton):
+                self.game_pointer.party_world_press(event, coop)
+                return
         if _play_menu_open(self):
             self.play_menu.handle_mouse_press(event)
             return
@@ -4450,6 +4476,9 @@ class QtGameView(QOpenGLWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        coop = getattr(getattr(self.logic_thread, "game_session", None), "coop", None)
+        if self.play_mode and coop is not None and event.button() in (Qt.LeftButton, Qt.RightButton):
+            coop.mouse_hand("primary" if event.button()==Qt.LeftButton else "secondary", False)
         if _play_menu_open(self):
             release = getattr(self.play_menu, 'handle_mouse_release', None)
             if release is not None:

@@ -36,6 +36,10 @@ from .system import SimSystem
 #: and gossip about the player without a single player-specific branch.
 PLAYER_KEY = "player"
 
+
+def is_player_key(key):
+    return key == PLAYER_KEY or str(key).startswith("player:")
+
 #: How near two actors must be to exchange gossip, and how often (game hours)
 #: a gossip pass runs. Deliberately unhurried: news travelling at the speed of
 #: people walking past each other is what makes outrunning it possible.
@@ -108,6 +112,8 @@ def actor_key(thing) -> str:
     if not isinstance(props, dict):
         return ""
     if props.get("is_player") or props.get("_player"):
+        if props.get("player_id"):
+            return "player:" + str(props["player_id"])
         return PLAYER_KEY
     disposition = _disposition()
     if disposition is not None:
@@ -133,6 +139,8 @@ def peek_actor_key(thing) -> str:
     if not isinstance(props, dict):
         return ""
     if props.get("is_player") or props.get("_player"):
+        if props.get("player_id"):
+            return "player:" + str(props["player_id"])
         return PLAYER_KEY
     disposition = _disposition()
     if disposition is not None:
@@ -374,7 +382,7 @@ class Director:
             pos=pos, day=day, hour=hour, data=data)
         self.bus.emit(event)
         percepts = self.dispatch(event, observers, actor_thing=actor, target_thing=target)
-        if (event.is_crime and event.actor == PLAYER_KEY and percepts
+        if (event.is_crime and is_player_key(event.actor) and percepts
                 and self.on_witness is not None):
             self.on_witness(event, any(pc.mode == "sight" for pc in percepts))
         return event
@@ -447,7 +455,7 @@ class Director:
         yours moves your opinion of them. It is done here rather than at the
         moment of the crime precisely so that opinion only changes for people
         who actually find out."""
-        if fact.get("actor") != PLAYER_KEY or not fact.get("identified", True):
+        if not is_player_key(fact.get("actor")) or not fact.get("identified", True):
             return
         mem = crime.memory_event(fact.get("kind", ""))
         if not mem:
@@ -468,7 +476,9 @@ class Director:
             # A half-remembered rumour moves an opinion less than testimony.
             base = disp.EVENTS.get(mem, (0, False))[0]
             scaled = int(round(base * max(0.3, float(fact.get("certainty", 1.0)))))
-            disp.remember(self.store, props, mem, amount=scaled)
+            store_for_actor = getattr(self,"store_for_actor",None)
+            store = store_for_actor(fact.get("actor")) if store_for_actor is not None else self.store
+            disp.remember(store, props, mem, amount=scaled)
         except Exception:
             pass
 
@@ -692,7 +702,7 @@ class Director:
                 knowledge.mark_reported(self.store, okey, f.get("e", 0))
                 charges += 1
                 ev = self.bus.get(f.get("e", 0))
-                if f.get("actor") == PLAYER_KEY and self.on_bounty is not None:
+                if is_player_key(f.get("actor")) and self.on_bounty is not None:
                     # The bounded history may have shed an old crime. Testimony
                     # still carries the scene's jurisdiction and charge value.
                     reported_event = ev or WorldEvent(

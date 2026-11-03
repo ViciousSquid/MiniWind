@@ -46,16 +46,20 @@ def run(module, scenario, npcs, seconds, hz):
             return max(abs(math.floor(x / cell)), abs(math.floor(z / cell))) == 2
         return scenario == "wall" and -400 < x < 400 and 200 < z < 260
 
-    nav = measured_type(module)(blocked, lambda: now[0])
+    nav = measured_type(module)(blocked, lambda: now[0], track_stats=True)
     actors = [object() for _ in range(npcs)]
     starts = [(24, 0, 24)] * npcs
     targets = [(24, 0, 1000)] * npcs
     started = time.perf_counter()
+    peak_ms = 0.0
     for tick in range(round(seconds * hz)):
         now[0] = tick / hz
+        tick_started = time.perf_counter()
         nav.steer_many(actors, starts, targets)
+        peak_ms = max(peak_ms, (time.perf_counter() - tick_started) * 1000.0)
     elapsed = (time.perf_counter() - started) * 1000
-    return nav.searches, nav.probes, elapsed
+    searches = sum(stat['searches'] for stat in nav.search_stats().values())
+    return searches, nav.probes, elapsed, peak_ms
 
 
 def corridor(module):
@@ -89,12 +93,12 @@ def main():
     if args.reference:
         modules.insert(0, ("reference", load_reference(args.reference)))
     print(f"{args.npcs} NPCs, {args.seconds:g} seconds, {args.hz} Hz; stationary starts")
-    print(f"{'version':10} {'scenario':12} {'searches':>9} {'A*/NPC/s':>9} {'LOS probes':>11} {'ms':>10}")
+    print(f"{'version':10} {'scenario':12} {'searches':>9} {'A*/NPC/s':>9} {'LOS probes':>11} {'ms':>10} {'peak tick ms':>12}")
     for name, module in modules:
         for scenario in ("open", "wall", "unreachable"):
-            searches, probes, elapsed = run(module, scenario, args.npcs, args.seconds, args.hz)
+            searches, probes, elapsed, peak = run(module, scenario, args.npcs, args.seconds, args.hz)
             print(f"{name:10} {scenario:12} {searches:9} {searches / args.npcs / args.seconds:9.2f} "
-                  f"{probes:11} {elapsed:10.2f}")
+                  f"{probes:11} {elapsed:10.2f} {peak:12.2f}")
         probes, elapsed, points = corridor(module)
         print(f"{name:10} {'smoothing':12} {'-':>9} {'-':>9} {probes:11} {elapsed:10.2f} "
               f"({points} waypoints)")
@@ -102,3 +106,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

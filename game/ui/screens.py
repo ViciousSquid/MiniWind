@@ -1865,6 +1865,10 @@ def _handle_levelup(session, key):
         st["row"] = int(key) - 1; return True
     if key in ("return", "enter", "space"):
         choice, label, _desc = rows[st["row"] % n]
+        coop=getattr(session,"coop",None)
+        if coop is not None and not coop.authority:
+            coop.request(session.player_id,"character_level_up",[choice])
+            return True
         res = c.level_up(choice=choice)
         session.notify(f"Welcome to level {res['level']}!  "
                        f"{label} +{int(res.get('choice_gain', 0))}", 5.0)

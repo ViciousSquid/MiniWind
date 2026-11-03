@@ -112,12 +112,54 @@ def test_player_picture_wins_over_legacy_ownership():
     assert fresh.assign("old-npc", "head13") != "head13"
 
 
-def test_exhaustion_is_an_error_not_a_reused_guard(monkeypatch):
+def test_exhaustion_reuses_a_guard_and_keeps_its_identity(monkeypatch):
     monkeypatch.setattr(heads, "GUARD_HEAD_IDS", ["guard01"])
     r = WorldHeadRegistry(_Store())
     assert r.assign("one", guard=True) == "guard01"
-    with pytest.raises(HeadPoolExhausted, match="No unused guard head"):
-        r.assign("two", guard=True)
+    assert r.assign("two", guard=True) == "guard01"
+    assert r.assign("two", "guard02", guard=True) == "guard01"
+
+
+@pytest.mark.parametrize("guard,pool_attr,pool,player", [
+    (False, "HEAD_IDS", ["head01", "head02", "head13"], "head13"),
+    (True, "GUARD_HEAD_IDS", ["guard01", "guard02"], "head13"),
+])
+def test_reuse_cycles_in_assignment_order_across_save_load(monkeypatch, guard, pool_attr, pool, player):
+    monkeypatch.setattr(heads, pool_attr, pool)
+    store = _Store()
+    r = WorldHeadRegistry(store)
+    r.set_player(player)
+    # Names deliberately sort in the opposite order to assignment.
+    first = r.assign("z-first", pool[1], guard=guard)
+    second = r.assign("a-second", pool[0], guard=guard)
+    assert r.assign("third", guard=guard) == first
+    resumed = WorldHeadRegistry(store)
+    resumed.set_player(player)
+    assert resumed.assign("fourth", guard=guard) == second
+    assert resumed.assign("fifth", guard=guard) == first
+    assert resumed.assign("third", guard=guard) == first
+    assert player not in resumed.assignments.values()
+
+
+def test_empty_pool_still_reports_no_usable_portrait(monkeypatch):
+    monkeypatch.setattr(heads, "GUARD_HEAD_IDS", [])
+    with pytest.raises(HeadPoolExhausted, match="No usable guard head"):
+        WorldHeadRegistry(_Store()).assign("guard", guard=True)
+
+
+def test_reuse_never_takes_any_coop_party_portrait(monkeypatch):
+    monkeypatch.setattr(heads, "HEAD_IDS", ["head01", "head02", "head03"])
+    store = _Store()
+    r = WorldHeadRegistry(store)
+    r.assign("legacy-npc", "head02")
+    r.set_player("head01")
+    r.set_players({"human": "head01", "companion": "head02"})
+    assert r.assign("legacy-npc") == "head03"
+    assert r.assign("another-npc") == "head03"
+    resumed = WorldHeadRegistry(store)
+    resumed.set_player("head01")
+    resumed.set_players({"human": "head01", "companion": "head02"})
+    assert resumed.assign("new-npc") == "head03"
 
 
 def test_authored_human_creatures_have_individual_faces():
@@ -132,7 +174,7 @@ def test_authored_human_creatures_have_individual_faces():
     assert image_key("head13") not in faces
 
 def test_character_creation_finishes_with_more_people_than_unique_heads(monkeypatch):
-    """Exhaustion uses role sprites rather than trapping the Begin button."""
+    """Every person retains a head after the pool starts cycling."""
     monkeypatch.setattr(heads, "HEAD_IDS", ["head01", "head02", "head13"])
     actors = [_actor(f"Villager {i}") for i in range(5)]
     s = _session(actors)
@@ -141,21 +183,19 @@ def test_character_creation_finishes_with_more_people_than_unique_heads(monkeypa
     assert not s.needs_char_creation
     assert s.open_screen is None
     assigned = [a.properties["head"] for a in actors]
-    assert sorted(h for h in assigned if h) == ["head01", "head02"]
-    assert assigned.count("") == 3
-    assert all(a.properties["custom_idle"] == "assets/sprites/miniwind/farmer.png"
-               for a in actors if not a.properties["head"])
+    assert len(set(assigned)) == 2
+    assert assigned == [assigned[0], assigned[1], assigned[0], assigned[1], assigned[0]]
+    assert all(a.properties["custom_idle"] == heads.any_head_path(a.properties["head"])
+               for a in actors)
 
 
-def test_guards_fall_back_separately_and_keep_unique_guard_heads(monkeypatch):
+def test_guards_reuse_guard_portraits_when_their_pool_runs_out(monkeypatch):
     monkeypatch.setattr(heads, "GUARD_HEAD_IDS", ["guard01"])
     actors = [_actor(f"Guard {i}", role="guard") for i in range(3)]
     s = _session(actors)
     s.begin_new_character("Player", "imperial", "warrior", head="head13")
-    assert [a.properties["head"] for a in actors].count("guard01") == 1
-    assert [a.properties["head"] for a in actors].count("") == 2
-    assert all(a.properties["custom_idle"] == "assets/sprites/miniwind/guard.png"
-               for a in actors if not a.properties["head"])
+    assert [a.properties["head"] for a in actors] == ["guard01"] * 3
+    assert all(a.properties["custom_idle"] == heads.guard_head_path("guard01") for a in actors)
 
 
 def test_offscreen_journeys_do_not_block_character_creation_when_exhausted(monkeypatch):
@@ -167,7 +207,7 @@ def test_offscreen_journeys_do_not_block_character_creation_when_exhausted(monke
     s.living = SimpleNamespace(board=SimpleNamespace(journeys={"j1": trip}))
     s.begin_new_character("Player", "imperial", "warrior", head="head13")
     assert not s.needs_char_creation
-    assert m["head"] == ""
+    assert m["head"] == "head01"
     assert len(set(s.head_registry.assignments.values())) == 1
 
 

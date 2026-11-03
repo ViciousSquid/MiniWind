@@ -13,6 +13,7 @@ import glm
 import numpy as np
 
 from engine import render_table
+from engine.render_cull import shadow_casters_in_reach
 from engine import entity_table as entity_projection
 from engine.portal_transform import (
     map_point as _portal_map_point,
@@ -326,22 +327,7 @@ class VisibilityMixin:
         these bytes say -- and comparing them is a memcmp over a few kilobytes
         instead of building thousands of Python tuples.
         """
-        if not len(slots):
-            return slots, ()
-        center = table.center[slots]
-        dx = center[:, 0] - lx
-        dy = center[:, 1] - ly
-        dz = center[:, 2] - lz
-        # A brush counts when the light reaches its bounding sphere, whose
-        # radius is the largest half-extent -- the same test as before.
-        limit = reach + table.half[slots].max(axis=1)
-        sel = slots[(dx * dx + dy * dy + dz * dz) <= limit * limit]
-        if not len(sel):
-            return sel, ()
-        geometry = np.concatenate((table.center[sel].ravel(),
-                                   table.half[sel].ravel(),
-                                   table.rot[sel].ravel().astype(np.float64)))
-        return sel, (sel.tobytes(), geometry.tobytes())
+        return shadow_casters_in_reach(table, slots, lx, ly, lz, reach)
 
     @staticmethod
     def _dense_shadow_model_slots(table, hidden=None):
@@ -613,3 +599,4 @@ class VisibilityMixin:
                 table.pos[clip], self._portal_slot_basis(table, clip),
                 positions[self_index]), sprites[self_index]))
         return tuple(others)
+

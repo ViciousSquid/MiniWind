@@ -475,6 +475,11 @@ class Launcher(QDialog):
         buttons.addWidget(self.edit_button)
         body.addLayout(buttons)
 
+        self.multiplayer_button = QPushButton("MULTIPLAYER")
+        self.multiplayer_button.setToolTip("Play with friends or AI companions in a party of up to four.")
+        self.multiplayer_button.clicked.connect(self._multiplayer)
+        body.addWidget(self.multiplayer_button)
+
         footer = QHBoxLayout()
         footer.setSpacing(int(unit * 0.7))
 
@@ -620,6 +625,14 @@ class Launcher(QDialog):
         self._loading = False
 
     # -- finishing ---------------------------------------------------------
+    def _multiplayer(self):
+        from .multiplayer import MultiplayerDialog
+        dialog = MultiplayerDialog(self.banner.root_dir if hasattr(self.banner, "root_dir")
+                                   else os.path.dirname(os.path.abspath(self.settings.path)),
+                                   self.settings.path, self)
+        if dialog.exec_() == QDialog.Accepted and dialog.handed_off:
+            self._finish(PLAY)
+
     def _finish(self, choice: str):
         self.choice = choice
         self._save()

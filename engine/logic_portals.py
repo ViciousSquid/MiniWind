@@ -264,6 +264,8 @@ class LogicPortals:
             portal_from=portal_a,
             portal_to=portal_b,
         )
+        coop=getattr(getattr(logic,"game_session",None),"coop",None)
+        if coop is not None:coop.portal_arrived(player)
 
     def transit_projectile_through_portals(
         self, projectiles, index, prev_pos

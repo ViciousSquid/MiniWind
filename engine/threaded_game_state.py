@@ -314,6 +314,7 @@ class ThreadedGameState:
         # second to play all at once when the UI came back.
         self._sound_lock = threading.Lock()
         self.sound_queue = deque(maxlen=self.SOUND_QUEUE_LIMIT)
+        self.sound_observer = None
 
         # Console command queue — thread-safe. The I/O system (logic thread)
         # enqueues command strings (e.g. from a logic_command entity fired by a
@@ -581,6 +582,8 @@ class ThreadedGameState:
         """Thread-safe: enqueue a sound request from any thread."""
         with self._sound_lock:
             self.sound_queue.append(request)
+            if self.sound_observer is not None:
+                self.sound_observer(request)
 
     def clear_sounds(self) -> int:
         """Cancel all pending sound requests and return how many were removed."""

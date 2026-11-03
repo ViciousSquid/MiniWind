@@ -181,7 +181,10 @@ class PauseMenu:
         the menu nor be thawed by it closing.
         """
         from .. import fio
-        fio.set_world_paused(getattr(self.view, 'logic_thread', None),
+        logic = getattr(self.view, 'logic_thread', None)
+        if getattr(getattr(logic, "game_session", None), "coop", None) is not None:
+            return
+        fio.set_world_paused(logic,
                              PAUSE_OWNER, bool(paused))
 
     def _grab_blurred_frame(self):

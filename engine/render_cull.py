@@ -32,6 +32,32 @@ from engine.view_distance import DEFAULT_VIEW_DISTANCE
 WORLD_SLAB_MARGIN = 512.0
 
 
+def shadow_casters_in_reach(table, slots, lx, ly, lz, reach):
+    """Light-range caster slots and a cache key including actual shape revisions.
+
+    Slots can be reused after reconciliation, and a convex shape can change
+    without moving its box. Generation and geometry epochs distinguish both.
+    Kept GL-free so shadow selection can be tested without a graphics context.
+    """
+    if not len(slots):
+        return slots, ()
+    center = table.center[slots]
+    dx = center[:, 0] - lx
+    dy = center[:, 1] - ly
+    dz = center[:, 2] - lz
+    # The half diagonal encloses every corner under any brush rotation.
+    # max(half) excludes corners that can still intersect the light sphere.
+    limit = reach + np.linalg.norm(table.half[slots], axis=1)
+    selected = slots[(dx * dx + dy * dy + dz * dz) <= limit * limit]
+    if not len(selected):
+        return selected, ()
+    geometry = np.concatenate((table.center[selected].ravel(),
+                               table.half[selected].ravel(),
+                               table.rot[selected].ravel().astype(np.float64)))
+    return selected, (selected.tobytes(), geometry.tobytes(),
+                      table.geo_epoch[selected].tobytes(), int(table.generation))
+
+
 def visible_xz_bounds(cam, corners, y_min, y_max,
                       max_dist=DEFAULT_VIEW_DISTANCE):
     """The XZ box the camera can actually see, given the world's height slab.
@@ -269,3 +295,4 @@ def sort_by_distance(objects: Sequence, positions, cx: float, cz: float,
     distances = dx * dx + dz * dz
     order = np.argsort(-distances if reverse else distances, kind="stable")
     return [objects[int(index)] for index in order]
+

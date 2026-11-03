@@ -449,6 +449,7 @@ class Terrain:
         self._paint_map_versions: Dict[Tuple[int, int], int] = {}
         self._paint_version_counter = 0
         self._paint_pages: List[int] = []
+        self._empty_paint_texture = 0
         self._paint_page_layers = 0
         self._paint_gpu_version = np.zeros(0, dtype=np.int64)
         self._empty_vao = 0
@@ -1504,6 +1505,8 @@ class Terrain:
         if not self._empty_vao:
             self._empty_vao = int(gl.glGenVertexArrays(1))
         gl.glBindVertexArray(self._empty_vao)
+        if paint_unit is not None:
+            self._bind_empty_paint(paint_unit)
         gl.glActiveTexture(gl.GL_TEXTURE0 + unit)
         lods = table.lod[slots].tolist() if lod_level_loc != -1 else None
         loc_chunk_i, loc_chunk_x, loc_chunk_y = (
@@ -2167,6 +2170,9 @@ class Terrain:
         unit = height_texture_unit
         drawn = slots[visible & table.built[slots]]
         if blocks:
+            self._bind_empty_paint(paint_texture_unit)
+            gl.glUniform1i(u['uPaintEnabled'], 0)
+            gl.glActiveTexture(gl.GL_TEXTURE0)
             self.total_triangles = self.draw_block_slots(drawn)
         else:
             self.set_heightfield_frame_uniforms(u, unit)
@@ -2943,6 +2949,29 @@ class Terrain:
         """Compatibility alias for the old stamp tool name."""
         self.clear_texture_paint()
 
+    def _bind_empty_paint(self, unit: int):
+        """Keep the paint sampler complete even when no chunk has paint.
+
+        Drivers validate active samplers even behind uPaintEnabled == 0.
+        Texture zero is incomplete and can trigger macOS GLD unloadable-array
+        warnings (or a failed draw). A single transparent texel is sufficient.
+        """
+        gl.glActiveTexture(gl.GL_TEXTURE0 + unit)
+        if not self._empty_paint_texture:
+            self._empty_paint_texture = int(gl.glGenTextures(1))
+            gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self._empty_paint_texture)
+            gl.glTexImage3D(gl.GL_TEXTURE_2D_ARRAY, 0, gl.GL_RGBA8, 1, 1, 1, 0,
+                            gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, bytes(4))
+            for pname, value in (
+                    (gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR),
+                    (gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR),
+                    (gl.GL_TEXTURE_MAX_LEVEL, 0),
+                    (gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE),
+                    (gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)):
+                gl.glTexParameteri(gl.GL_TEXTURE_2D_ARRAY, pname, value)
+        else:
+            gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self._empty_paint_texture)
+
     def _ensure_paint_page(self, page: int) -> int:
         if not self._paint_page_layers:
             limit = int(gl.glGetIntegerv(gl.GL_MAX_ARRAY_TEXTURE_LAYERS))
@@ -3047,6 +3076,9 @@ class Terrain:
 
     def _cleanup_gl(self):
         self._free_gl(self.table.clear())
+        if self._empty_paint_texture:
+            gl.glDeleteTextures(1, [self._empty_paint_texture])
+            self._empty_paint_texture = 0
         if self.block_program:
             try:
                 gl.glDeleteProgram(self.block_program)

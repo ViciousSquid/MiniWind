@@ -150,6 +150,11 @@ def benefits(character):
                 f"Charisma {charm}: people doubt ill of the charming", sign(fade - 1.0)))
     crit = combat.critical_chance(character)
     out.append(("Critical hits", f"{crit * 100:.0f}%", f"Luck {luck}", sign(luck - 40)))
+    from .blocking import deflection_chance
+    ricochet = deflection_chance(luck)
+    out.append(("Shield missile deflection", f"{ricochet:.2%}",
+                f"Luck {luck}; while blocking a missile from the front (needs Luck 60)",
+                True if ricochet else None))
     out.append(("Loot drop chance", f"{(luck - 40) * 0.2:+.0f}%", f"Luck {luck}",
                 sign(luck - 40)))
     out.append(("Special finds", f"{(luck - 40) * 0.1:+.0f}%", f"Luck {luck}",

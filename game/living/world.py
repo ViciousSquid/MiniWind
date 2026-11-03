@@ -714,8 +714,8 @@ class LivingWorld:
                     owner, head, guard=role in rpg_heads.GUARD_ROLES)
             except HeadPoolExhausted:
                 # Do not block a journey becoming an actor when the worldwide
-                # head pool is full. With no head id, MiniWind's normal actor
-                # initialiser uses role art rather than a duplicated portrait.
+                # head pool has no usable image, even for reuse. With no head
+                # id, MiniWind's normal actor initialiser uses role art.
                 head = ""
             m["head"] = head
         faction = faction or j.faction

@@ -83,6 +83,8 @@ class Burning:
     def landed(self, spell, pos, target=None, by=None) -> None:
         """A bolt of *spell* came down at *pos*, on *target* (None: on no one).
         *by* is who cast it (None: the player)."""
+        if target is not None and target is fio.player(self.session.logic):
+            target = PLAYER
         burn = burn_of(spell)
         if burn is None:
             return
@@ -99,6 +101,8 @@ class Burning:
         again while it burns, it burns on from now -- the harder of the two."""
         is_player = thing is PLAYER or bool((getattr(thing, "properties", None) or {})
                                             .get("is_player"))
+        if (getattr(thing,"properties",None) or {}).get("multiplayer_player"):
+            is_player=False  # each co-op body owns its own ongoing burn
         key = PLAYER if is_player else id(thing)
         burn = self.burns.get(key)
         if burn is None:
@@ -124,6 +128,8 @@ class Burning:
                                                 GROUND_FLAME_SIZE)})
 
     def burning(self, thing) -> bool:
+        if (getattr(thing,"properties",None) or {}).get("multiplayer_player"):
+            return id(thing) in self.burns
         if thing is PLAYER or (getattr(thing, "properties", None) or {}).get("is_player"):
             return PLAYER in self.burns
         return id(thing) in self.burns
@@ -197,6 +203,8 @@ class Burning:
 
     def _hurt(self, thing, damage, by) -> None:
         s = self.session
+        if (getattr(thing,"properties",None) or {}).get("multiplayer_player"):
+            return s.coop.damage(thing.properties["player_id"],damage,"fire",by,"burning")
         if thing is PLAYER:
             trig = getattr(s.logic, "trigger_runtime", None)
             if trig is not None:
@@ -210,7 +218,7 @@ class Burning:
         ai = getattr(s.logic, "monster_ai", None)
         if ai is not None:
             try:
-                ai._apply_monster_damage(thing, damage, attacker=by)
+                ai._apply_monster_damage(thing, damage, attacker=by, damage_kind="fire")
                 return
             except Exception:
                 pass

@@ -37,13 +37,15 @@ MINIMAP_SPAN = 6400.0
 #: Where cached map pictures are kept.
 CACHE_DIR = "cache"
 #: Bumped whenever the painting changes, so old caches are not reused.
-STYLE_VERSION = 4
+STYLE_VERSION = 5
 
 _TREE_HINT = "tree"
 
 
 def _brush_kind(brush):
     """'water', 'tree', 'paving' or 'building' (None: draws nothing)."""
+    if brush.get("is_trigger") or brush.get("hidden"):
+        return None
     try:
         from engine.constants import is_water_brush
         if is_water_brush(brush):
@@ -56,8 +58,6 @@ def _brush_kind(brush):
     if any(_TREE_HINT in n for n in names):
         return "tree"
     if not names or all("nodraw" in n for n in names):
-        return None
-    if brush.get("is_trigger") or brush.get("hidden"):
         return None
     try:
         if float((brush.get("size") or (0, 64, 0))[1]) < 24.0:
@@ -151,7 +151,7 @@ def paint_texture_paint(rgb, terrain, bounds, cell):
             rgb[np.ix_(lines, columns)] = np.clip(blended, 0, 255).astype(np.uint8)
 
 
-def paint_brushes(rgb, brushes, bounds, cell):
+def paint_brushes(rgb, brushes, bounds, cell, heights=None):
     """Lay water, woods and buildings over the terrain colours, in place."""
     (min_x, _max_x), (min_z, _max_z) = bounds
     rows, cols = rgb.shape[:2]
@@ -164,12 +164,12 @@ def paint_brushes(rgb, brushes, bounds, cell):
         if kind is None:
             continue
         try:
-            px, _py, pz = (float(v) for v in brush.get("pos", (0, 0, 0)))
-            sx, _sy, sz = (float(v) for v in brush.get("size", (64, 64, 64)))
+            px, py, pz = (float(v) for v in brush.get("pos", (0, 0, 0)))
+            sx, sy, sz = (float(v) for v in brush.get("size", (64, 64, 64)))
         except Exception:
             continue
-        drawn.append((order[kind], kind, px, pz, sx, sz))
-    for _o, kind, px, pz, sx, sz in sorted(drawn, key=lambda d: d[0]):
+        drawn.append((order[kind], kind, px, pz, sx, sz, py + sy / 2))
+    for _o, kind, px, pz, sx, sz, top in sorted(drawn, key=lambda d: d[0]):
         c0 = int((px - sx / 2 - min_x) / cell)
         c1 = int(math.ceil((px + sx / 2 - min_x) / cell))
         r0 = int((pz - sz / 2 - min_z) / cell)
@@ -178,7 +178,13 @@ def paint_brushes(rgb, brushes, bounds, cell):
         c1, r1 = min(cols, max(c1, c0 + 1)), min(rows, max(r1, r0 + 1))
         if c0 >= cols or r0 >= rows or c1 <= 0 or r1 <= 0:
             continue
-        rgb[r0:r1, c0:c1] = colours[kind]
+        region = rgb[r0:r1, c0:c1]
+        if kind == "water" and heights is not None:
+            # Water volumes can extend under hills for kilometres. Only the
+            # surface above the sampled ground is visible in the world.
+            region[heights[r0:r1, c0:c1] < top] = colours[kind]
+        else:
+            region[:] = colours[kind]
 
 
 class WorldMap:
@@ -291,7 +297,7 @@ class WorldMap:
             rgb = colour_terrain(heights, cell, weights)
             bounds = ((min_x, max_x), (min_z, max_z))
             paint_texture_paint(rgb, terrain, bounds, cell)
-            paint_brushes(rgb, brushes, bounds, cell)
+            paint_brushes(rgb, brushes, bounds, cell, heights=heights)
             if key != self._key:
                 return                      # a newer world asked meanwhile
             self.bounds, self.cell, self.rgb = bounds, cell, rgb

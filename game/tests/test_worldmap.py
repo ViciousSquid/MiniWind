@@ -48,6 +48,38 @@ def test_brushes_are_painted_where_they_stand():
     assert tuple(rgb[80, 80]) == (0, 0, 0)
 
 
+def test_water_only_paints_ground_below_its_surface():
+    rgb = np.full((10, 10, 3), 90, np.uint8)
+    heights = np.zeros((10, 10), np.float32)
+    heights[:, 5:] = 200
+    water = {"shader": "Water", "pos": [50, 40, 50], "size": [100, 20, 100]}
+    worldmap.paint_brushes(rgb, [water], ((0, 100), (0, 100)), 10, heights=heights)
+    assert np.all(rgb[:, :5] == (62, 112, 168))
+    assert np.all(rgb[:, 5:] == 90)
+    assert worldmap._brush_kind(dict(water, hidden=True)) is None
+    assert worldmap._brush_kind(dict(water, is_trigger=True)) is None
+
+
+def test_map_builder_clips_a_buried_water_volume(tmp_path, monkeypatch):
+    class Shore:
+        def get_terrain_bounds(self):
+            return ((0, 100), (0, 100))
+
+        def _get_heights_batch(self, x, z):
+            return np.where(x < 50, 0, 100).astype(np.float32)
+
+    monkeypatch.setattr(worldmap, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(worldmap, "RESOLUTION", 16)
+    world = worldmap.WorldMap()
+    world._key = "shore"
+    world._build("shore", Shore(), [
+        {"is_water": True, "pos": [50, 25, 50], "size": [100, 10, 100]}
+    ])
+    assert world.error is None and world.ready
+    assert tuple(world.rgb[8, 3]) == (62, 112, 168)
+    assert tuple(world.rgb[8, 12]) != (62, 112, 168)
+
+
 class _Terrain:
     def get_terrain_bounds(self):
         return (-1000.0, 1000.0), (-1000.0, 1000.0)

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ..navigation import CELL, Navigator, RETRY_SECONDS, ROUTE_SECONDS
+from ..navigation import CELL, Navigator, PlanningBudget, RETRY_SECONDS, ROUTE_SECONDS
 from engine.spatial import SIM_TIER_KEY, TIER_ACTIVE, TIER_DISTANT, TIER_DORMANT, TIER_NEAR
 
 
@@ -63,6 +63,145 @@ def test_new_target_cell_invalidates_a_cached_clear_answer():
     assert nav.steer("npc", (24, 0, 24), clear) is clear
     target = (168, 0, 24)
     assert nav.steer("npc", (24, 0, 24), target) != target
+
+
+def test_collision_revision_observes_a_closing_passage_immediately():
+    state = {"closed": False, "revision": 0}
+    clock = Clock()
+    nav = Navigator(lambda x, y, z: state["closed"] and 48 <= x < 96,
+                    clock, revision=lambda: state["revision"])
+    start, goal = (24, 0, 24), (168, 0, 24)
+    assert nav.steer("npc", start, goal) == goal
+    state.update(closed=True, revision=1)
+    # Perception uses line_clear directly, without a steer call in between.
+    assert not nav.line_clear(24, 24, 168, 24, 0)
+    assert nav._clear == {}
+
+
+def test_collision_revision_retries_a_newly_open_passage_without_waiting():
+    state = {"closed": True, "revision": 0}
+    nav = CountingNavigator(lambda x, y, z: state["closed"] and enclosed(x, y, z), Clock())
+    nav._revision_source = lambda: state["revision"]
+    start, goal = (24, 0, 24), (1000, 0, 1000)
+    nav.steer("npc", start, goal)
+    assert nav._failed
+    state.update(closed=False, revision=1)
+    assert nav.steer("npc", start, goal) == goal
+    assert not nav._failed
+
+
+def test_moving_unrelated_obstacles_preserves_a_valid_route():
+    revision = [0]
+    clock = Clock()
+    nav = CountingNavigator(lambda x, y, z: -400 < x < 400 and 200 < z < 260, clock)
+    nav._revision_source = lambda: revision[0]
+    start, goal = (24, 0, 24), (24, 0, 1000)
+    waypoint = nav.steer("npc", start, goal)
+    assert nav.has_route("npc")
+    for tick in range(1, 15):
+        revision[0] += 1
+        clock.now = tick / 30
+        assert nav.steer("npc", start, goal) == waypoint
+    assert nav.search_stats()["npc"]["searches"] == 1
+
+
+def test_live_door_movement_and_grid_rebuild_reach_the_navigation_cache():
+    import numpy as np
+    from engine.mover_table import MoverTable
+    from ..runtime import MiniwindSession
+
+    door = {"pos": [72, 0, 24], "size": [48, 128, 48], "is_door": True}
+    table = MoverTable()
+    table.doors.ensure([(0, door)])
+    grid = SimpleNamespace(navigation_revision=0)
+    session = object.__new__(MiniwindSession)
+    session.logic = SimpleNamespace(
+        monster_ai=SimpleNamespace(_grid=grid),
+        mover_runtime=SimpleNamespace(_mover_table=table))
+    nav = Navigator(lambda x, y, z: abs(x - door["pos"][0]) < 24
+                    and abs(z - door["pos"][2]) < 24,
+                    Clock(), revision=session._navigation_revision)
+    assert not nav.line_clear(24, 24, 168, 24, 0)
+    table.doors._write_positions(np.array([0]), np.array([[72, 0, 240]]), None)
+    assert nav.line_clear(24, 24, 168, 24, 0)
+    revision = table.doors.position_revision
+    table.doors._write_positions(np.array([0]), np.array([[72, 0, 240]]), None)
+    assert table.doors.position_revision == revision
+    # Static geometry can change without moving a door.
+    door["pos"] = [72, 0, 24]
+    grid.navigation_revision += 1
+    assert not nav.line_clear(24, 24, 168, 24, 0)
+
+
+def test_a_shared_planning_budget_bounds_the_whole_crowd_not_each_actor():
+    clock = Clock()
+    budget = PlanningBudget(max_nodes=64, max_seconds=math.inf)
+    wall = lambda x, y, z: -400 < x < 400 and 200 < z < 260
+    navigators = [Navigator(wall, clock, planning_budget=budget) for _ in range(2)]
+    for nav in navigators:
+        for actor in range(50):
+            nav.steer(actor, (24, 0, 24), (24, 0, 1000))
+    assert budget.nodes == 64
+    # Re-entering from another movement/perception caller cannot reset the quota.
+    for nav in navigators:
+        nav.steer(0, (24, 0, 24), (24, 0, 1000))
+    assert budget.nodes == 64
+
+
+def test_queued_searches_resume_and_every_actor_eventually_gets_a_safe_route():
+    clock = Clock()
+    budget = PlanningBudget(max_nodes=128, max_seconds=math.inf)
+    nav = Navigator(lambda x, y, z: -400 < x < 400 and 200 < z < 260,
+                    clock, track_stats=True, planning_budget=budget)
+    start, goal = (24, 0, 24), (24, 0, 1000)
+    solved = set()
+    for tick in range(300):
+        clock.now = tick / 60
+        for actor in range(12):
+            waypoint = nav.steer(actor, start, goal)
+            if nav.has_route(actor):
+                solved.add(actor)
+                assert nav.line_clear(start[0], start[2], waypoint[0], waypoint[2], 0)
+        assert budget.nodes <= 128
+        if len(solved) == 12:
+            break
+    assert solved == set(range(12)), "queued actors must not starve behind the first request"
+    assert all(stat["searches"] == 1 for stat in nav.search_stats().values())
+
+
+def test_suspending_an_actor_cancels_its_queued_frontier():
+    budget = PlanningBudget(max_nodes=1, max_seconds=math.inf)
+    nav = Navigator(lambda x, y, z: -400 < x < 400 and 200 < z < 260,
+                    Clock(), planning_budget=budget)
+    assert nav.steer("npc", (24, 0, 24), (24, 0, 1000)) == (24, 0, 24)
+    plan = nav._pending["npc"]
+    nav.suspend("npc")
+    assert plan.cancelled
+    budget.run(1.0)
+    assert budget.nodes == 0
+    assert not nav.has_route("npc")
+
+
+def test_schedule_movement_waits_when_its_route_is_queued():
+    from .test_npc_movement import _NPC, _Walker, _WALL_ACROSS_PATH
+
+    walker = _Walker(_WALL_ACROSS_PATH)
+    walker.nav = Navigator(walker._blocked_by_wall, Clock(),
+                           planning_budget=PlanningBudget(max_nodes=1, max_seconds=math.inf))
+    npc = _NPC(pos=(24, 0, 24), dest=(24, 0, 1000), _blocked_ticks=1)
+    walker._move(npc, 0.1)
+    assert npc.pos == [24, 0, 24]
+    assert id(npc) in walker.nav._pending
+
+
+def test_a_changed_goal_replaces_a_queued_search():
+    nav = Navigator(lambda x, y, z: -400 < x < 400 and 200 < z < 260,
+                    Clock(), planning_budget=PlanningBudget(max_nodes=1, max_seconds=math.inf))
+    nav.steer("npc", (24, 0, 24), (24, 0, 1000))
+    previous = nav._pending["npc"]
+    nav.steer("npc", (24, 0, 24), (24, 0, 2000))
+    assert previous.cancelled
+    assert nav._pending["npc"].goal == (24, 2000)
 
 
 @pytest.mark.parametrize("start,end", [((24, 24), (72, 72)), ((72, 72), (24, 24))])
@@ -223,3 +362,4 @@ def test_generated_routes_keep_every_smoothed_segment_walkable():
         assert path and path[-1] == goal, seed
         for a, b in zip([start, *path], path):
             assert nav.line_clear(*a, *b, 0), (seed, a, b)
+

@@ -61,7 +61,8 @@ def offhand_strike(session, thing, aggro_monster, rng) -> bool:
     props = thing.properties
     off = offhand_in_use(props)
     d = items.get(off) if off else None
-    if d is None or d.get("kind", items.KIND_MELEE) != items.KIND_MELEE:
+    if d is None or d.category != items.WEAPON \
+            or d.get("kind", items.KIND_MELEE) != items.KIND_MELEE:
         return False
     props["_offhand_anim"] = OFFHAND_ANIM
     if rng.random() > offhand_chance(props):

@@ -89,6 +89,32 @@ def _world():
     return smith, session, logic, _View(logic)
 
 
+def test_inspecting_companion_shows_actual_personality_without_changing_it(qt_app):
+    from types import SimpleNamespace
+    from game.multiplayer.companion_behavior import CompanionMind
+
+    companion, session, logic, view = _world()
+    companion.properties.update(multiplayer_player=True, player_id="companion")
+    mind = CompanionMind("inspect-campaign", "companion")
+    context = SimpleNamespace(
+        player_id="companion", bot=True, actor=companion, mind=mind,
+        task="Falling back", bot_target=None,
+    )
+    session.coop = SimpleNamespace(players={"companion": context})
+    before = mind.to_dict()
+    win = inspector.open_inspector(view, companion)
+    for _ in range(3):
+        rows = win.build_rows()
+        assert ("head", "Companion personality", "") in rows
+        values = {label: value for kind, label, value in rows if kind == "row"}
+        assert all(values[label] == value for label, value in mind.inspector_rows())
+        assert values["Companion task"] == "Falling back"
+    assert mind.to_dict() == before
+    _paint(win)
+    context.bot = False
+    assert not any(label == "Companion personality" for kind, label, _ in win.build_rows())
+
+
 def test_the_destination_follows_the_schedule_unless_something_overrides_it(qt_app):
     smith, session, logic, _view = _world()
     pos, why = inspector.destination(session, logic, smith)

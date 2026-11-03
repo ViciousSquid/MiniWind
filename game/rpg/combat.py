@@ -110,6 +110,19 @@ def attack_odds(character, target_props: Dict, hand: str = "main",
 # ---------------------------------------------------------------------------
 # Player outgoing damage
 # ---------------------------------------------------------------------------
+def base_ranged_damage(character, *, hand="main", ammo=None, draw=1.0):
+    """An arrow's physical energy before critical/sneak and class bonuses."""
+    weapon = eq.hand_weapon(character, hand)
+    if weapon is None or weapon.get("kind") not in items.RANGED_KINDS:
+        return 0.0
+    base = float(weapon.get("damage", 5)) * eq.rarity_stat(character, eq.hand_slot(hand))
+    skill = character.skill(weapon.get("skill", sk.MARKSMAN))
+    damage = base * (0.4 + skill / 110.0) + (float(ammo.get("damage", 0)) if ammo else 0)
+    if weapon.get("kind") == items.KIND_BOW:
+        damage *= 0.5 + 0.5 * max(0.1, min(1.0, draw))
+    return damage
+
+
 def player_attack(character, target_props: Dict, *, sneaking: bool = False,
                   draw: float = 1.0, rng: Optional[random.Random] = None,
                   dice: Optional[DiceRoller] = None,
@@ -190,11 +203,8 @@ def player_attack(character, target_props: Dict, *, sneaking: bool = False,
         dmg *= 0.7 + character.attrs.get(attr.STRENGTH, 40) / 100.0
         # A gathered blow (a warrior's charged fist) multiplies it.
         dmg *= max(0.1, float(power))
-    elif kind == items.KIND_BOW:
-        dmg += float(shot.get("damage", 0)) if shot else 0.0
-        dmg *= 0.5 + 0.5 * max(0.1, min(1.0, draw))   # a fuller draw hits harder
-    elif kind == items.KIND_CROSSBOW:
-        dmg += float(shot.get("damage", 0)) if shot else 0.0   # no draw: always full
+    elif kind in items.RANGED_KINDS:
+        dmg = base_ranged_damage(character, hand=hand, ammo=shot, draw=draw)
     elif kind == items.KIND_STAFF:
         dmg *= 0.7 + character.skill(sk.OFFENSIVE) / 100.0
 
@@ -249,6 +259,8 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
     hit the player ("Bandit rolls to hit you: 9 (need 13+)"): a miss is a blow
     the armour turned aside. A ``quiet`` roll -- the roll log, not the dice
     panel, so the player's own rolls stay on screen mid-fight.
+    A held block then makes its own d20 saving throw; only a success reduces
+    the damage. The player's saving throw may animate like other player rolls.
     """
     from . import races
     rng = rng or random
@@ -276,14 +288,18 @@ def resolve_incoming(character, raw_damage: float, *, damage_kind: str = "physic
             result["final"] = 0.0
             return result
 
-    # Block: a shield + Block skill soaks a fraction of a physical blow.
-    if blocking and damage_kind == "physical":
+    # A held block is an attempted saving throw, not guaranteed mitigation.
+    if blocking and damage_kind == "physical" and dmg > 0 and character.stamina > 0:
+        from .blocking import block_save
         shield = eq.shield(character)
         block_skill = character.skill(sk.BLOCK)
-        block_frac = min(0.75, (0.2 if shield else 0.05) + block_skill / 200.0)
-        blocked = dmg * block_frac
-        result["blocked"] = round(blocked, 1)
-        dmg -= blocked
+        saved = block_save(
+            dmg, block_skill, character.attrs.get(attr.ENDURANCE, 40),
+            character.stamina / max(1, character.max_stamina), shield=shield,
+            dice=dice, rng=rng, defender=character.name or "You",
+        )
+        dmg = saved["damage"]
+        result.update(blocked=saved["blocked"], block_roll=saved["block_roll"])
         character.use_skill(sk.BLOCK, 1.0)
 
     # Armour rating: each point reduces damage with diminishing returns.
