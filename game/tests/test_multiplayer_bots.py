@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 from game.multiplayer.bots import PartyBots, distance
+from game.multiplayer.companion_behavior import CompanionMind
 from game.multiplayer.model import InputFrame
 from game.tests.test_multiplayer_integration import coop_game  # noqa: F401 - shared runtime fixture
 
@@ -11,6 +12,7 @@ def companions(coop):
     players = list(coop.players.values())
     for player in players[1:]:
         player.bot = True
+        player.mind = CompanionMind("bot-regressions", player.profile["name"])
         player.profile["device"] = "bot:" + player.player_id
         member = coop.lobby.lobby.member(player.player_id)
         member.bot, member.ready = True, True
@@ -20,6 +22,15 @@ def companions(coop):
         if not actor.properties.get("multiplayer_player"):
             actor.properties["disabled"] = True
     return players
+
+
+def think_until(brain, predicate, seconds=3):
+    """Wait for a human reaction while keeping the real action assertions."""
+    for _ in range(round(seconds / 0.05)):
+        brain.tick(0.05)
+        if predicate():
+            return
+    assert predicate(), "Companion did not act within a bounded reaction window"
 
 
 def test_three_bots_follow_without_consuming_human_input(coop_game):
@@ -80,7 +91,7 @@ def test_bot_defends_party_with_own_weapon_and_ignores_innocent_npcs(coop_game):
     brain = PartyBots(coop)
     assert brain._threat(bot, human) is enemy
     stamina = bot.session.game.character.stamina
-    brain.tick(0.016)
+    think_until(brain, lambda: bot.session._attack_cooldown > 0)
     assert bot.task == "Defending the party"
     assert bot.session._attack_cooldown > 0
     assert bot.session.game.character.stamina < stamina
@@ -159,7 +170,7 @@ def test_mage_companion_heals_itself_and_changes_weapon_when_magicka_runs_out(
     potions = inventory.quantity(mage.inventory, "potion_heal_minor")
     before = mage.health
     brain = PartyBots(coop)
-    brain.tick(0.016)
+    think_until(brain, lambda: mage.health > before)
     assert mage.health > before
     assert inventory.quantity(mage.inventory, "potion_heal_minor") == potions
     assert mage.magicka < mage.max_magicka
@@ -185,7 +196,7 @@ def test_bots_revive_the_only_human_instead_of_freezing_when_player_one_falls(
         bot.physics.pos = human.physics.pos + glm.vec3(40 + index * 20, 0, 0)
     human.session.game.character.health = 0
     coop._sync_actor(human)
-    coop_game.step(195)
+    coop_game.step(270)
     assert not human.session.game.character.is_dead
     assert human.session.game.character.health > 0
     assert not coop.logic.player_runtime.player_dead
@@ -256,6 +267,41 @@ def test_bots_use_navigation_and_only_run_on_the_host(coop_game):
         bot.session.nav = original
 
 
+def test_companion_personality_and_choices_survive_save_and_live_restore(coop_game, tmp_path):
+    from engine import savegame
+
+    coop = coop_game.logic.game_session.coop
+    _, bot, *_ = companions(coop)
+    brain = coop._bots = PartyBots(coop)
+    think_until(brain, lambda: bool(bot.task))
+    before = bot.mind.to_dict()
+    personality = bot.mind.personality
+    path = tmp_path / "companion-habits.fiosave"
+    savegame.write(str(path), savegame.build_snapshot(coop.logic))
+    saved = savegame.read(str(path))["coop"]
+    assert saved["players"][bot.player_id]["companion"] == before
+    # New map sessions recreate contexts but must keep each mind's identity.
+    member = next(p for p in coop.lobby.state["members"]
+                  if p["player_id"] == bot.player_id)
+    coop.lobby.travelling = True
+    try:
+        arrived = coop._create_player(member, saved=saved["players"][bot.player_id])
+        assert arrived.mind.to_dict() == before
+    finally:
+        coop.players[bot.player_id] = bot
+        coop.lobby.travelling = False
+    expected = [bot.mind.uniform(0, 1) for _ in range(10)]
+    coop.restore_campaign(saved)
+    assert bot.mind.personality == personality
+    assert [bot.mind.uniform(0, 1) for _ in range(10)] == expected
+    assert coop._bots is not brain and not coop._bots.sightings
+    assert bot.bot_target is None and bot.frame == InputFrame()
+    # Existing saves do not need a format migration.
+    saved["players"][bot.player_id].pop("companion")
+    coop.restore_campaign(saved)
+    assert bot.mind.to_dict() == CompanionMind(saved["campaign_id"], bot.player_id).to_dict()
+
+
 def test_bots_automatically_accept_party_travel(coop_game):
     from pathlib import Path
 
@@ -295,7 +341,7 @@ def test_companion_uses_healing_effects_and_does_not_chug_every_think(coop_game,
     c.health = 1
     human_items = list(human.session.game.character.inventory)
     brain = PartyBots(coop)
-    brain.tick(0.016)
+    think_until(brain, lambda: c.health == 76)
     assert c.health == 76
     assert inventory.quantity(c.inventory, potion.id) == 1
     # Sustained damage must not consume a potion on every AI think.
@@ -303,8 +349,8 @@ def test_companion_uses_healing_effects_and_does_not_chug_every_think(coop_game,
     brain.tick(0.1)
     brain.tick(0.1)
     assert inventory.quantity(c.inventory, potion.id) == 1
-    brain.clock += 1
-    brain.tick(0.1)
+    brain.clock = brain.next_heal[bot.player_id] + 0.1
+    think_until(brain, lambda: c.health == 76)
     assert c.health == 76 and inventory.quantity(c.inventory, potion.id) == 0
     assert human.session.game.character.inventory == human_items
     c.inventory[:] = [items.make("potion_heal"), items.make("potion_heal_minor")]

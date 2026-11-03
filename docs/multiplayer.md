@@ -46,13 +46,49 @@ player collision, defend the nearby party with their own equipment, drink
 their healing potions and help revive downed companions. They choose blades
 at close range and bows or staves at a distance, taking clear shots, ammunition,
 magicka, weapon quality and skills into account. They select a suitable healing
-dose from their own inventory when injured. When every human is
+dose from their own inventory when injured, with individual preferences rather
+than perfect efficiency. When every human is
 down, rescue takes priority. They automatically consent to party map travel.
 Humans choose conversations and quests; bots participate in the shared
 adventure, receive their own rewards and advance their characters. Bot choices
 and character progress persist in the campaign save, including when it is
 resumed. All companion decisions run on the host. Normal single-player Play
 keeps its existing behavior; use the local Multiplayer lobby for a bot party.
+
+Each new campaign gives companions a fresh mix of courage, concentration,
+thrift, sociability and fighting preferences. They react at different speeds,
+occasionally miss an opening, aim imperfectly, and fall back when hurt or
+exhausted. They notice enemies in their own vicinity with clear sight; when an
+attacker disappears, they briefly search its last seen position. Familiar
+weapons and spells, different following distances and occasional pauses give
+each teammate habits. These choices vary as play continues. Campaign saves
+keep their personalities and the progress of their random decisions, including
+across map travel. Older campaigns acquire stable personalities when resumed.
+
+To see a companion's personality, enter **`inspect`** in the console and click
+the companion. The **Overview** shows **Companion personality**, including the
+traits and preferences driving its decisions, healing and fallback habits,
+typical reaction time and current task. Inspecting does not reroll its traits.
+
+NPCs and companions with an available shield raise it during combat. Each
+physical hit against a raised block makes a **d20 saving throw**, using Block,
+Endurance and current stamina. Success reduces the hit; failure gives no block
+reduction. A bow, torch or spell occupying that hand prevents shield use.
+Spell and fire damage do not trigger a shield save. Companions put their
+shields back on when changing from a bow to a one-handed weapon.
+
+With **Luck 60 or more**, a blocking shield bearer also has a rare chance to
+ricochet an incoming arrow or spell bolt from the front. This is a separate
+**2d20 Luck save**: about **0.25%** at Luck 60, up to **5.25%** at Luck 100.
+Success bounces the actual missile away before damage or burning effects;
+it keeps flying and can hit another actor, including the original shooter.
+Ordinary shield block saves still apply to physical hits when the Luck save
+fails. The character sheet's Fortune page shows the current ricochet chance.
+
+Only human characters' own rolls animate, when dice animations are enabled.
+NPC and companion rolls, including shield saves and NPC casting checks, appear
+in the rolling log without replacing the player's roll. Multiplayer clients
+receive the log and their character's dice animation from the host.
 
 The host can enable **Respawn at village** in the lobby before starting.
 After three seconds downed, an AI companion respawns at the map's starting

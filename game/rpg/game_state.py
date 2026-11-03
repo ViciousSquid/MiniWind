@@ -116,6 +116,7 @@ class GameState:
         self.dice = DiceRoller(rng=self.rng)
         self.log: List[str] = []          # recent game messages (for the HUD log)
         self.sneaking = False
+        self._fired_ammo = {}
 
     # ------------------------------------------------------------------ setup
     @classmethod
@@ -321,6 +322,7 @@ class GameState:
         if a is None:
             self.message(out_of_ammo_text(weapon))
             return False
+        self._fired_ammo[hand] = a.id
         inv.remove_item(char.inventory, a.id, 1)
         if inv.quantity(char.inventory, a.id) <= 0 and eq.equipped_id(
                 char, items.SLOT_AMMO) == a.id:
@@ -349,6 +351,11 @@ class GameState:
         char = self.character
         if not res["hit"]:
             return res
+        from .blocking import npc_block
+        physical = res.get("kind") in (items.KIND_MELEE, *items.RANGED_KINDS)
+        res.update(npc_block(target_props, res["damage"], dice=self.dice,
+                             damage_kind="physical" if physical else "magic",
+                             rng=self.rng, against_player=True))
         res["damage"] = _warded(target_props, res["damage"])
         hp = int(target_props.get("health", 30))
         hp -= int(round(res["damage"]))

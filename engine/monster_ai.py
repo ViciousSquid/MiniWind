@@ -175,17 +175,20 @@ class MonsterAI:
     #: ``hook(victim, damage, attacker) -> damage``: a game's say in the damage
     #: an actor takes (a ward soaking some of it). None leaves it whole.
     _damage_filter = None
+    _damage_filter_kinds = False
 
     @classmethod
-    def install_damage_filter(cls, hook):
-        """Install the game's damage filter (see :attr:`_damage_filter`)."""
+    def install_damage_filter(cls, hook, *, damage_kinds=False):
+        """Install a filter; opt in to its ``damage_kind`` keyword argument."""
         cls._damage_filter = hook
+        cls._damage_filter_kinds = bool(damage_kinds)
 
     @classmethod
     def clear_damage_filter(cls, hook=None):
         """Remove the damage filter (only if it is still *hook*, when given)."""
         if hook is None or cls._damage_filter == hook:
             cls._damage_filter = None
+            cls._damage_filter_kinds = False
 
     #: ``hook(things, starts, targets) -> [waypoint or None, ...]``: an
     #: optional game hook that steers chasing monsters. Called once a tick
@@ -1655,16 +1658,20 @@ the scalar fallback for callers that do not have the dense table.
 
         return best_victim
 
-    def _apply_monster_damage(self, victim, damage: int, attacker=None):
+    def _apply_monster_damage(self, victim, damage: int, attacker=None, damage_kind="physical"):
         """Deal damage to a monster from another monster (infighting).
         Sets the victim's aggro target to the attacker so it retaliates."""
         coop = getattr(getattr(self.lt, "game_session", None), "coop", None)
         if coop is not None and victim.properties.get("multiplayer_player"):
-            return coop.damage(victim.properties["player_id"], damage, source=attacker)
+            return coop.damage(victim.properties["player_id"], damage,
+                               damage_kind, source=attacker)
         hook = MonsterAI._damage_filter
         if hook is not None:
             try:
-                damage = hook(victim, damage, attacker)
+                if MonsterAI._damage_filter_kinds:
+                    damage = hook(victim, damage, attacker, damage_kind=damage_kind)
+                else:
+                    damage = hook(victim, damage, attacker)
             except Exception as exc:
                 debug_log("MonsterAI", f"damage filter failed: {exc}")
         health_raw = victim.properties.get('health', 100)

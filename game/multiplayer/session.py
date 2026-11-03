@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from .. import fio
 from ..rpg import equipment, heads
 from ..rpg.character import Character
+from .companion_behavior import CompanionMind
 from .model import InputFrame, LobbyError
 from .quests import CoopGameState, PartyQuests
 
@@ -42,6 +43,7 @@ class PlayerContext:
     task: str = ""
     bot_target: object = None
     returning: bool = False
+    mind: CompanionMind | None = None
 
 
 class PlayerLogic:
@@ -310,6 +312,11 @@ class CoopSession:
             connected=member.get("connected", True),
             bot=bool(member.get("bot", False)),
         )
+        if context.bot:
+            context.mind = CompanionMind(
+                (self.lobby.state or self.lobby.lobby.snapshot())["campaign_id"],
+                pid, (saved or {}).get("companion")
+            )
         if (
             saved
             and saved.get("position")
@@ -1571,6 +1578,10 @@ class CoopSession:
                     "position": list(p.physics.pos),
                     "angle": p.physics.angle,
                     "returning": p.returning,
+                    "companion": (
+                        (p.mind or CompanionMind(self.lobby.state["campaign_id"], pid)).to_dict()
+                        if p.bot else None
+                    ),
                 }
                 for pid, p in self.players.items()
             },
@@ -1656,6 +1667,10 @@ class CoopSession:
             p.physics.pos = glm.vec3(*data["position"])
             p.physics.velocity = glm.vec3(0)
             p.returning = p.bot and bool(data.get("returning", False))
+            p.mind = (CompanionMind(saved["campaign_id"], pid, data.get("companion"))
+                      if p.bot else None)
+            p.frame = p.previous = InputFrame()
+            p.bot_target = None
             p.prediction.clear()
             p.actor = next(
                 (
@@ -1678,6 +1693,10 @@ class CoopSession:
         )
         self._wipe_at = None
         self._bot_deaths.clear()
+        # References and reaction deadlines belong to the old live world.
+        if hasattr(self, "_bots"):
+            from .bots import PartyBots
+            self._bots = PartyBots(self)
 
     def snapshot(self):
         from .replication import capture

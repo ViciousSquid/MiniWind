@@ -12,7 +12,7 @@ from game.entities import NPC
 from game.multiplayer.bots import PartyBots, distance
 from game.multiplayer.model import InputFrame
 from game.rpg import equipment, magic
-from game.tests.test_multiplayer_bots import companions
+from game.tests.test_multiplayer_bots import companions, think_until
 from game.tests.test_multiplayer_integration import coop_game  # noqa: F401
 
 
@@ -50,7 +50,7 @@ def test_companion_casts_ward_attack_and_healing_with_real_costs(coop_game, monk
     enemy = enemy_near(coop, bot)
     brain = PartyBots(coop)
     mana = c.magicka
-    brain.tick(0.016)
+    think_until(brain, lambda: c.effect_magnitude("shield") > 0)
     assert c.effect_magnitude("shield") > 0
     assert c.magicka == pytest.approx(mana - magic.cast_cost(c, magic.for_caster(c, "sp_shield")))
     assert bot.session._cast_cooldown > 0
@@ -60,7 +60,7 @@ def test_companion_casts_ward_attack_and_healing_with_real_costs(coop_game, monk
     bot.session._cast_cooldown = 0
     before = len(coop.logic.combat_runtime._monster_projectiles)
     brain.clock += 1
-    brain.tick(0.016)
+    think_until(brain, lambda: len(coop.logic.combat_runtime._monster_projectiles) > before)
     assert c.active_spell == "flare"
     assert equipment.spell_equipped(c, "flare")
     assert len(coop.logic.combat_runtime._monster_projectiles) == before + 1
@@ -77,7 +77,7 @@ def test_companion_casts_ward_attack_and_healing_with_real_costs(coop_game, monk
     bot.session._cast_cooldown = 0
     c.health = 10
     brain.clock += 1
-    brain.tick(0.016)
+    think_until(brain, lambda: c.health > 10)
     assert c.health > 10
     assert c.spell_practice["heal_minor"] == 1
     # No resources means no spell request; a warrior never casts either.
@@ -120,7 +120,7 @@ def test_actual_assaults_trigger_defense_and_distant_bots_defend_themselves(coop
     assert brain._threat(bot, human) is None
     coop.damage(bot.player_id, 2, source=enemy)
     assert brain._threat(bot, human) is enemy
-    brain.tick(0.016)
+    think_until(brain, lambda: enemy.properties["health"] < 500)
     assert bot.bot_target is enemy and bot.task == "Defending the party"
     assert enemy.properties["health"] < 500
     assert bot.returning
