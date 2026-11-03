@@ -778,8 +778,12 @@ class MiniwindSession(SettlementLaw):
         #: id(actor) -> (x, z, y) where it was last stood on the ground.
         self._grounded = {}
         #: Routes round walls for every walker (game/navigation.py).
-        from .navigation import Navigator
-        self.nav = Navigator(self._blocked_by_wall, revision=self._navigation_revision)
+        from .navigation import Navigator, PlanningBudget
+        budget = getattr(logic, '_miniwind_navigation_budget', None)
+        if budget is None:
+            budget = logic._miniwind_navigation_budget = PlanningBudget()
+        self.nav = Navigator(self._blocked_by_wall, revision=self._navigation_revision,
+                             planning_budget=budget)
         #: The map's ROAD_* nodes as a prebuilt navigation graph
         #: (game/road_nav.py), rebuilt only when the roads change; and each
         #: walker's current road leg, by id.
@@ -1162,6 +1166,7 @@ class MiniwindSession(SettlementLaw):
     def uninstall(self) -> None:
         global _current_session
         _current_session = None
+        self.nav.invalidate()
         self.windmills.clear()
         if self.living is not None:
             try:
@@ -6259,8 +6264,9 @@ class MiniwindSession(SettlementLaw):
             way = nav.steer_actor(npc, pos, dest)
             wx, wz = way[0] - pos[0], way[2] - pos[2]
             wd = math.hypot(wx, wz)
-            if wd > 1e-3:
-                dx, dz, dist = wx, wz, wd
+            if wd <= 1e-3:
+                return          # planning is queued, or the safe endpoint is reached
+            dx, dz, dist = wx, wz, wd
         step = min(speed * delta, dist)
         nx = pos[0] + dx / dist * step
         nz = pos[2] + dz / dist * step

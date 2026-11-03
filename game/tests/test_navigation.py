@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ..navigation import CELL, Navigator, RETRY_SECONDS, ROUTE_SECONDS
+from ..navigation import CELL, Navigator, PlanningBudget, RETRY_SECONDS, ROUTE_SECONDS
 from engine.spatial import SIM_TIER_KEY, TIER_ACTIVE, TIER_DISTANT, TIER_DORMANT, TIER_NEAR
 
 
@@ -131,6 +131,77 @@ def test_live_door_movement_and_grid_rebuild_reach_the_navigation_cache():
     door["pos"] = [72, 0, 24]
     grid.navigation_revision += 1
     assert not nav.line_clear(24, 24, 168, 24, 0)
+
+
+def test_a_shared_planning_budget_bounds_the_whole_crowd_not_each_actor():
+    clock = Clock()
+    budget = PlanningBudget(max_nodes=64, max_seconds=math.inf)
+    wall = lambda x, y, z: -400 < x < 400 and 200 < z < 260
+    navigators = [Navigator(wall, clock, planning_budget=budget) for _ in range(2)]
+    for nav in navigators:
+        for actor in range(50):
+            nav.steer(actor, (24, 0, 24), (24, 0, 1000))
+    assert budget.nodes == 64
+    # Re-entering from another movement/perception caller cannot reset the quota.
+    for nav in navigators:
+        nav.steer(0, (24, 0, 24), (24, 0, 1000))
+    assert budget.nodes == 64
+
+
+def test_queued_searches_resume_and_every_actor_eventually_gets_a_safe_route():
+    clock = Clock()
+    budget = PlanningBudget(max_nodes=128, max_seconds=math.inf)
+    nav = Navigator(lambda x, y, z: -400 < x < 400 and 200 < z < 260,
+                    clock, track_stats=True, planning_budget=budget)
+    start, goal = (24, 0, 24), (24, 0, 1000)
+    solved = set()
+    for tick in range(300):
+        clock.now = tick / 60
+        for actor in range(12):
+            waypoint = nav.steer(actor, start, goal)
+            if nav.has_route(actor):
+                solved.add(actor)
+                assert nav.line_clear(start[0], start[2], waypoint[0], waypoint[2], 0)
+        assert budget.nodes <= 128
+        if len(solved) == 12:
+            break
+    assert solved == set(range(12)), "queued actors must not starve behind the first request"
+    assert all(stat["searches"] == 1 for stat in nav.search_stats().values())
+
+
+def test_suspending_an_actor_cancels_its_queued_frontier():
+    budget = PlanningBudget(max_nodes=1, max_seconds=math.inf)
+    nav = Navigator(lambda x, y, z: -400 < x < 400 and 200 < z < 260,
+                    Clock(), planning_budget=budget)
+    assert nav.steer("npc", (24, 0, 24), (24, 0, 1000)) == (24, 0, 24)
+    plan = nav._pending["npc"]
+    nav.suspend("npc")
+    assert plan.cancelled
+    budget.run(1.0)
+    assert budget.nodes == 0
+    assert not nav.has_route("npc")
+
+
+def test_schedule_movement_waits_when_its_route_is_queued():
+    from .test_npc_movement import _NPC, _Walker, _WALL_ACROSS_PATH
+
+    walker = _Walker(_WALL_ACROSS_PATH)
+    walker.nav = Navigator(walker._blocked_by_wall, Clock(),
+                           planning_budget=PlanningBudget(max_nodes=1, max_seconds=math.inf))
+    npc = _NPC(pos=(24, 0, 24), dest=(24, 0, 1000), _blocked_ticks=1)
+    walker._move(npc, 0.1)
+    assert npc.pos == [24, 0, 24]
+    assert id(npc) in walker.nav._pending
+
+
+def test_a_changed_goal_replaces_a_queued_search():
+    nav = Navigator(lambda x, y, z: -400 < x < 400 and 200 < z < 260,
+                    Clock(), planning_budget=PlanningBudget(max_nodes=1, max_seconds=math.inf))
+    nav.steer("npc", (24, 0, 24), (24, 0, 1000))
+    previous = nav._pending["npc"]
+    nav.steer("npc", (24, 0, 24), (24, 0, 2000))
+    assert previous.cancelled
+    assert nav._pending["npc"].goal == (24, 2000)
 
 
 @pytest.mark.parametrize("start,end", [((24, 24), (72, 72)), ((72, 72), (24, 24))])

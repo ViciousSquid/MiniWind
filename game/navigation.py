@@ -30,6 +30,8 @@ from __future__ import annotations
 import heapq
 import math
 import time
+import threading
+from collections import deque
 
 from engine.spatial import TIER_ACTIVE, tier_of
 
@@ -53,6 +55,70 @@ SEARCH_MARGIN = 1600.0
 MAX_NODES = 6000
 #: Whether a cell is open is remembered this long (doors and movers change).
 CELL_MEMORY_SECONDS = 20.0
+
+# Aggregate planning work across every walker sharing a logic host. Searches
+# retain their frontier rather than starting over when this budget runs out.
+PLANNING_NODES = 1024
+PLANNING_SECONDS = 0.003
+PLANNING_HZ = 60
+
+
+class PlanningBudget:
+    """Round-robin A* work, bounded per real-time simulation scheduling slot."""
+
+    def __init__(self, max_nodes=PLANNING_NODES, max_seconds=PLANNING_SECONDS):
+        self.max_nodes = max(1, int(max_nodes))
+        self.max_seconds = max_seconds
+        self._queue = deque()
+        self._slot = None
+        self.nodes = 0
+        self.seconds = 0.0
+        self._lock = threading.RLock()
+
+    def submit(self, plan):
+        with self._lock:
+            self._queue.append(plan)
+
+    def run(self, now):
+        with self._lock:
+            self._run(now)
+
+    def _run(self, now):
+        slot = math.floor(now * PLANNING_HZ + 1e-7)
+        if slot != self._slot:
+            self._slot = slot
+            self.nodes = 0
+            self.seconds = 0.0
+        while (self._queue and self.nodes < self.max_nodes
+               and self.seconds < self.max_seconds):
+            plan = self._queue.popleft()
+            if plan.cancelled:
+                continue
+            started = time.perf_counter()
+            try:
+                for _ in range(min(32, self.max_nodes - self.nodes)):
+                    next(plan.steps)
+                    self.nodes += 1
+            except StopIteration as result:
+                plan.points = result.value
+                plan.done = True
+            elapsed = time.perf_counter() - started
+            self.seconds += elapsed
+            plan.seconds += elapsed
+            if not plan.done:
+                self._queue.append(plan)
+
+
+class _Plan:
+    def __init__(self, origin, goal, reason):
+        self.steps = None
+        self.origin = origin
+        self.goal = goal
+        self.reason = reason
+        self.metrics = {}
+        self.seconds = 0.0
+        self.done = self.cancelled = False
+        self.points = None
 
 _NEIGHBOURS = ((1, 0, 1.0), (-1, 0, 1.0), (0, 1, 1.0), (0, -1, 1.0),
                (1, 1, 1.4142), (1, -1, 1.4142), (-1, 1, 1.4142), (-1, -1, 1.4142))
@@ -99,11 +165,14 @@ class Navigator:
     A changed token refreshes occupancy and validates retained routes before use.
     """
 
-    def __init__(self, blocked, clock=time.monotonic, *, track_stats=False, revision=None):
+    def __init__(self, blocked, clock=time.monotonic, *, track_stats=False, revision=None,
+                 planning_budget=None):
         self._blocked = blocked
         self._clock = clock
         self._revision_source = revision
         self._revision = object()
+        self.planning_budget = planning_budget if planning_budget is not None else PlanningBudget()
+        self._pending = {}
         self._cells = {}
         self._cells_since = clock()
         self._routes = {}
@@ -120,6 +189,8 @@ class Navigator:
         self._cells.clear()
         if routes:
             self._routes.clear()
+            for key in list(self._pending):
+                self._cancel_plan(key)
         self._clear.clear()
         self._failed.clear()
         self._debug.clear()
@@ -203,6 +274,15 @@ class Navigator:
         """Corner points ``[(x, z), ...]`` of a route from *start* to *goal*
         (each ``(x, z)``) for a body at height *y*, ending at the goal; or
         None when there is no way within the search's reach."""
+        steps = self._find_path_steps(start, goal, y, _metrics=_metrics)
+        while True:
+            try:
+                next(steps)
+            except StopIteration as result:
+                return result.value
+
+    def _find_path_steps(self, start, goal, y, *, _metrics=None):
+        """The same search, yielding after each node expansion for live steering."""
         self._sync_revision()
         sx, sz = int(math.floor(start[0] / CELL)), int(math.floor(start[1] / CELL))
         gx, gz = int(math.floor(goal[0] / CELL)), int(math.floor(goal[1] / CELL))
@@ -255,6 +335,7 @@ class Navigator:
                     cost[(nx, nz)] = ng
                     came[(nx, nz)] = cell
                     heapq.heappush(open_, (ng + h(nx, nz), ng, (nx, nz)))
+            yield
         if _metrics is not None:
             _metrics["expanded_nodes"] = expanded
         if not found:
@@ -384,6 +465,7 @@ class Navigator:
                 self._routes.pop(key, None)
         if route is None:
             if self._goal_clear(key, x, z, gx, gz, y, origin, now):
+                self._cancel_plan(key)
                 self._failed.pop(key, None)
                 return goal
             failed = self._failed.get(key)
@@ -393,21 +475,39 @@ class Navigator:
                         and math.hypot(gx - old_goal[0], gz - old_goal[1]) <= ROUTE_GOAL_SLACK):
                     return goal
                 reason = "retry"
+            plan = self._pending.get(key)
+            if plan is not None and (
+                    origin[2] != plan.origin[2]
+                    or abs(origin[0] - plan.origin[0]) > 2
+                    or abs(origin[1] - plan.origin[1]) > 2
+                    or math.hypot(gx - plan.goal[0], gz - plan.goal[1]) > ROUTE_GOAL_SLACK):
+                self._cancel_plan(key)
+                plan = None
+            if plan is None:
+                plan = _Plan(origin, (gx, gz), reason)
+                plan.steps = self._find_path_steps((x, z), (gx, gz), y, _metrics=plan.metrics)
+                self._pending[key] = plan
+                self.planning_budget.submit(plan)
+                if stats is not None:
+                    stats.searches += 1
+                    stats.reasons[reason] = stats.reasons.get(reason, 0) + 1
+            self.planning_budget.run(now)
+            if not plan.done:
+                return (x, y, z)
+            self._pending.pop(key, None)
+            points = plan.points
             if stats is not None:
-                stats.searches += 1
-                stats.reasons[reason] = stats.reasons.get(reason, 0) + 1
-                metrics = {}
-                started = time.perf_counter()
-                points = self.find_path((x, z), (gx, gz), y, _metrics=metrics)
-                elapsed = time.perf_counter() - started
-                stats.expanded_nodes += metrics.get("expanded_nodes", 0)
-                stats.smoothing_checks += metrics.get("smoothing_checks", 0)
-                stats.search_seconds += elapsed
-                stats.last_search = dict(metrics, at=now, reason=reason,
+                stats.expanded_nodes += plan.metrics.get("expanded_nodes", 0)
+                stats.smoothing_checks += plan.metrics.get("smoothing_checks", 0)
+                stats.search_seconds += plan.seconds
+                stats.last_search = dict(plan.metrics, at=now, reason=plan.reason,
                                          outcome="found" if points else "unreachable",
-                                         elapsed_ms=elapsed * 1000.0)
-            else:
-                points = self.find_path((x, z), (gx, gz), y)
+                                         elapsed_ms=plan.seconds * 1000.0)
+            if points and not all(self.line_clear(*a, *b, y)
+                                  for a, b in zip([(x, z), *points], points)):
+                # The actor or a door may have moved while the frontier waited.
+                # Retry next update; never publish a path through changed walls.
+                return (x, y, z)
             if not points:
                 self._failed[key] = (now, origin, (gx, gz))
                 if stats is not None:
@@ -505,6 +605,12 @@ class Navigator:
         self._clear.pop(key, None)
         self._failed.pop(key, None)
         self._debug.pop(key, None)
+        self._cancel_plan(key)
+
+    def _cancel_plan(self, key):
+        plan = self._pending.pop(key, None)
+        if plan is not None:
+            plan.cancelled = True
 
     def steer_many(self, things, starts, targets):
         """The engine's steer hook: for each chasing *thing*, its next
