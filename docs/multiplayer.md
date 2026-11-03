@@ -46,13 +46,29 @@ player collision, defend the nearby party with their own equipment, drink
 their healing potions and help revive downed companions. They choose blades
 at close range and bows or staves at a distance, taking clear shots, ammunition,
 magicka, weapon quality and skills into account. They select a suitable healing
-dose from their own inventory when injured. When every human is
+dose from their own inventory when injured, with individual preferences rather
+than perfect efficiency. When every human is
 down, rescue takes priority. They automatically consent to party map travel.
 Humans choose conversations and quests; bots participate in the shared
 adventure, receive their own rewards and advance their characters. Bot choices
 and character progress persist in the campaign save, including when it is
 resumed. All companion decisions run on the host. Normal single-player Play
 keeps its existing behavior; use the local Multiplayer lobby for a bot party.
+
+Each new campaign gives companions a fresh mix of courage, concentration,
+thrift, sociability and fighting preferences. They react at different speeds,
+occasionally miss an opening, aim imperfectly, and fall back when hurt or
+exhausted. They notice enemies in their own vicinity with clear sight; when an
+attacker disappears, they briefly search its last seen position. Familiar
+weapons and spells, different following distances and occasional pauses give
+each teammate habits. These choices vary as play continues. Campaign saves
+keep their personalities and the progress of their random decisions, including
+across map travel. Older campaigns acquire stable personalities when resumed.
+
+To see a companion's personality, enter **`inspect`** in the console and click
+the companion. The **Overview** shows **Companion personality**, including the
+traits and preferences driving its decisions, healing and fallback habits,
+typical reaction time and current task. Inspecting does not reroll its traits.
 
 The host can enable **Respawn at village** in the lobby before starting.
 After three seconds downed, an AI companion respawns at the map's starting

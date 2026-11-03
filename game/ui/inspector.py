@@ -396,7 +396,8 @@ class ActorInspectorWindow(FloatingWindow):
             # Shown sections, in order, under the window's own headings: the
             # rest (identity, vitals, anchors) is already above or in the
             # schedule.
-            shown = {"Why": "Why", "AI State": "AI State",
+            shown = {"Why": "Why", "Personality": "Companion personality",
+                     "AI State": "AI State",
                      "Intents (ranked)": "Goals", "Needs": "Needs",
                      "Player Standing": "Player Standing",
                      "Knowledge": "Knows"}

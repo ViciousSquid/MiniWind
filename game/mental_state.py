@@ -266,6 +266,21 @@ def snapshot(thing, monster_state: Optional[dict] = None,
         ("Vitals & Combat", vitals),
         ("AI State", ai),
     ]
+    coop = getattr(session, "coop", None)
+    companion = getattr(coop, "players", {}).get(props.get("player_id"))
+    if (props.get("multiplayer_player") and companion is not None
+            and companion.bot and companion.actor is thing):
+        from .multiplayer.companion_behavior import CompanionMind
+
+        # Inspection must not initialise the brain or advance its decision RNG.
+        mind = companion.mind or CompanionMind(
+            coop.lobby.state["campaign_id"], companion.player_id
+        )
+        sections.insert(1, ("Personality", mind.inspector_rows()))
+        ai.insert(0, ("Companion task", companion.task or "Getting ready"))
+        if not dead:
+            tasks = [(PRI_COMBAT if companion.bot_target is not None else PRI_IDLE,
+                      companion.task or "Getting ready", True)]
     if "need_fatigue" in props or "need_hunger" in props:
         sections.append(("Needs", [
             ("Hunger", _fmt(_get(props, "need_hunger", default=0.0))),
