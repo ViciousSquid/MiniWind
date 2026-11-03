@@ -101,6 +101,120 @@ def test_four_lobby_characters_enter_without_character_creation(coop_game):
     coop_game.step(3)
 
 
+def _draw_overhead_weapons(game, monkeypatch, *, publish=True):
+    from types import SimpleNamespace
+
+    weapons, heads = [], []
+
+    def draw_weapon(projection, view, pos, facing, path, now, **kwargs):
+        weapons.append(dict(pos=tuple(pos), facing=facing, item=Path(path).stem, **kwargs))
+
+    view = game.view
+    with monkeypatch.context() as patch:
+        patch.setattr(view, "overhead_sprite_enabled", True)
+        patch.setattr(view, "_overhead_head",
+                      getattr(game.logic, "player_head_sprite", None), raising=False)
+        patch.setattr(view, "_overhead_sprite_renderer", SimpleNamespace(
+            draw=lambda *args, **kwargs: heads.append(args), draw_weapon=draw_weapon,
+        ))
+        if publish:
+            game.publish()
+        with game.render_state() as frame:
+            view._draw_overhead_sprite(frame)
+    return weapons, heads
+
+
+def test_party_starter_weapons_are_drawn_for_human_and_companions(coop_game, monkeypatch):
+    from game.rpg import equipment
+
+    coop = coop_game.logic.game_session.coop
+    for index, player in enumerate(coop.players.values()):
+        player.bot = index > 0
+        c = player.session.game.character
+        assert equipment.equipped_id(c, "weapon") == "iron_longsword"
+        assert equipment.equipped_id(c, "shield") == "iron_shield"
+    weapons, heads = _draw_overhead_weapons(coop_game, monkeypatch)
+    assert not heads, "Co-op heads are already published as actor sprites"
+    for player in coop.players.values():
+        held = [w for w in weapons if w["pos"] == tuple(player.actor.pos)]
+        assert [(w["item"], w["handed"]) for w in held] == [
+            ("iron_longsword", "right"), ("iron_shield", "left"),
+        ]
+
+
+def test_party_weapons_follow_equipment_hands_and_replica_state(coop_game, monkeypatch):
+    import json
+    import time
+
+    coop = coop_game.logic.game_session.coop
+    coop_game.publish()
+    shield, dual, bow, mage = list(coop.players.values())
+    shield.session.game.character.handed = "left"
+    shield.session._blocking = True
+    shield.session._block_at = time.perf_counter() - 1
+    for item in ("iron_mace", "iron_dagger"):
+        dual.session.game.pick_up(item)
+    dual.session.game.equip("iron_mace")
+    dual.session.game.equip("iron_dagger", "shield")
+    dual.session._attack_anim_time = 0.18
+    dual.session._offhand_anim_time = 0.12
+    bow.session.game.equip("short_bow")
+    mage.session.game.pick_up("apprentice_staff")
+    mage.session.game.equip("apprentice_staff")
+    mage.session._cast_cooldown = 0.65
+    for player in coop.players.values():
+        coop._sync_actor(player)
+
+    def check_draws():
+        weapons, heads = _draw_overhead_weapons(coop_game, monkeypatch, publish=False)
+        assert not heads
+        held = {
+            p.player_id: [w for w in weapons if w["pos"] == tuple(p.actor.pos)]
+            for p in coop.players.values()
+        }
+        assert [(w["item"], w["handed"]) for w in held[shield.player_id]] == [
+            ("iron_longsword", "left"), ("iron_shield", "right"),
+        ]
+        assert held[shield.player_id][1]["block"] == 1
+        assert [w["item"] for w in held[dual.player_id]] == ["iron_mace", "iron_dagger"]
+        assert all(w["attacking"] for w in held[dual.player_id])
+        assert [w["item"] for w in held[bow.player_id]] == ["short_bow"]
+        assert held[bow.player_id][0]["weapon_kind"] == "bow"
+        assert [w["item"] for w in held[mage.player_id]] == ["apprentice_staff", "iron_shield"]
+        assert held[mage.player_id][0]["weapon_kind"] == "staff"
+        assert held[mage.player_id][0]["attacking"]
+
+    check_draws()
+    snapshot = json.loads(json.dumps(coop.snapshot()))
+    for player in coop.players.values():
+        player.session._attack_anim_time = 0
+        player.session._offhand_anim_time = 0
+        player.session._cast_cooldown = 0
+    coop.authority = False
+    try:
+        coop.apply_snapshot(snapshot)
+        check_draws()
+        shield.session.game.character.health = 0
+        dual.connected = False
+        bow.actor.properties["hidden"] = True
+        weapons, _ = _draw_overhead_weapons(coop_game, monkeypatch, publish=False)
+        absent = {tuple(p.actor.pos) for p in (shield, dual, bow)}
+        assert not any(w["pos"] in absent for w in weapons)
+    finally:
+        coop.authority = True
+
+
+def test_solo_weapon_overlay_still_draws_the_player_once(coop_game, monkeypatch):
+    coop = coop_game.logic.game_session.coop
+    coop_game.publish()
+    with monkeypatch.context() as patch:
+        patch.setattr(coop.root, "coop", None)
+        weapons, heads = _draw_overhead_weapons(coop_game, monkeypatch, publish=False)
+    assert len(heads) == 1
+    held = [w for w in weapons if w["pos"] == tuple(coop.root.logic.player_runtime.player.pos)]
+    assert [w["item"] for w in held] == ["iron_longsword", "iron_shield"]
+
+
 def test_two_assigned_players_move_independently_and_menus_do_not_pause(coop_game):
     coop = coop_game.logic.game_session.coop
     players = list(coop.players.values())

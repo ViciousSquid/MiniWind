@@ -423,9 +423,11 @@ class CoopSession:
             _facing=context.physics.angle,
             equipped_weapon=equipment.equipped_id(c, "weapon"),
             offhand_weapon=equipment.equipped_id(c, "shield"),
+            handed=c.handed,
             sneaking=context.session.game.sneaking,
             alignment=float(getattr(c, "alignment", 0)),
             _attack_anim=context.session._attack_anim_time,
+            _offhand_anim=context.session._offhand_anim_time,
         )
         actor.pos = [
             float(context.physics.pos[0]),
@@ -438,6 +440,27 @@ class CoopSession:
             touch(actor)
         except (ImportError, AttributeError):
             pass
+
+    def overhead_weapons(self):
+        """Each visible party member's own held items and hand animations."""
+        held = []
+        for player in self.players.values():
+            actor = player.actor
+            if (actor is None or not player.connected
+                    or player.session.game.character.is_dead
+                    or actor.properties.get("hidden")):
+                continue
+            facing = float(player.physics.angle)
+            size = float(actor.properties.get("sprite_width", 128) or 128)
+            for entry in player.session.overhead_player_weapon():
+                item, handed, attacking = entry[:3]
+                if not item:
+                    continue
+                lag = float(entry[3] or 0.0) if len(entry) > 3 else 0.0
+                block = float(entry[4] or 0.0) if len(entry) > 4 else 0.0
+                held.append((tuple(actor.pos), facing + lag, item, handed,
+                             attacking, size, block))
+        return held
 
     def local_input(self, player_id, frame, actions=()):
         with self.input_lock:

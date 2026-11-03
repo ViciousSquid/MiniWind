@@ -35,6 +35,7 @@ FIELDS = frozenset(
         "custom_dead",
         "equipped_weapon",
         "offhand_weapon",
+        "handed",
         "is_shooting",
         "_facing",
         "_attack_anim",
@@ -141,6 +142,9 @@ def capture(coop):
             "spell_aiming": s.spell_aiming,
             "strip_selected": s.strip_selected,
             "blocking": s._blocking,
+            "attack_anim": s._attack_anim_time,
+            "offhand_anim": s._offhand_anim_time,
+            "cast_cooldown": s._cast_cooldown,
             "log": clean(s.game.log[-20:]),
         }
     values = coop.party_quests.store.all()
@@ -293,6 +297,9 @@ def apply(coop, message):
             s.spell_aiming = bool(data.get("spell_aiming"))
             s.strip_selected = int(data.get("strip_selected", 0))
             s._blocking = bool(data.get("blocking"))
+            s._attack_anim_time = float(data.get("attack_anim", 0.0))
+            s._offhand_anim_time = float(data.get("offhand_anim", 0.0))
+            s._cast_cooldown = float(data.get("cast_cooldown", 0.0))
             s.game.log = list(data.get("log", []))
             for field in (
                 "dialogue_npc",

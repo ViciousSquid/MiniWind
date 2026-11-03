@@ -1627,7 +1627,11 @@ class MiniwindSession(SettlementLaw):
     def overhead_actor_weapons(self):
         """What every actor near the player holds, for the viewport (see
         game/held_weapons.py)."""
-        return self.held.overhead()
+        held = self.held.overhead()
+        coop = getattr(self, "coop", None)
+        if coop is not None:
+            held.extend(coop.overhead_weapons())
+        return held
 
     def _assign_npc_handedness(self) -> None:
         """Give every NPC/creature a handedness where none was authored.

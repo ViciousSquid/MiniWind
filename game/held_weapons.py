@@ -211,6 +211,8 @@ class HeldWeapons:
                  else {id(t): t for t in actors})
         last = {}
         for t in actors:
+            if t.properties.get("multiplayer_player"):
+                continue  # Player physics owns facing, including while strafing.
             x, z = float(t.pos[0]), float(t.pos[2])
             dx, dz = x - ppos[0], z - ppos[2]
             if dx * dx + dz * dz > r2:
@@ -262,8 +264,8 @@ class HeldWeapons:
         now = time.perf_counter()
         for t in s._actors:
             p = t.properties
-            if p.get("dead") or p.get("hidden") or p.get("_bw_parked_hidden") \
-                    or p.get("away_on_journey"):
+            if (p.get("multiplayer_player") or p.get("dead") or p.get("hidden")
+                    or p.get("_bw_parked_hidden") or p.get("away_on_journey")):
                 continue
             if p.get("_reaper") and float(p.get("_opacity", 1.0) or 0.0) < 0.3:
                 continue          # Death's scythe comes and goes with him
