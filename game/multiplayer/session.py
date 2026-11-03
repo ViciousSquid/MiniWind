@@ -41,6 +41,7 @@ class PlayerContext:
     bot: bool = False
     task: str = ""
     bot_target: object = None
+    returning: bool = False
 
 
 class PlayerLogic:
@@ -81,6 +82,7 @@ class CoopSession:
     INPUT_TIMEOUT = 0.6
     MAX_SEPARATION = 650.0
     REVIVE_SECONDS = 3.0
+    BOT_RESPAWN_SECONDS = 3.0
     ACTIONS = frozenset(
         {
             "attack",
@@ -153,6 +155,7 @@ class CoopSession:
         self._checkpoint = None
         self._wipe_at = None
         self._reviving = {}
+        self._bot_deaths = {}
         self.travel = None
         self.paused = False
         self._last_keys = frozenset()
@@ -170,6 +173,10 @@ class CoopSession:
         self._settings = cfg or {}
         root.coop = self
         state = lobby.state or lobby.lobby.snapshot()
+        self.respawn_at_village = bool(state.get("respawn_at_village", False))
+        start = self.logic.session_runtime._primary_start()
+        origin = start.pos if start is not None else fio.player(self.logic).pos
+        self._village_spawn = tuple(origin)
         saved = getattr(lobby, "campaign_state", None) or {}
         saved_players = saved.get("players", {})
         members = sorted(
@@ -310,6 +317,7 @@ class CoopSession:
         ):
             physics.pos = glm.vec3(*saved["position"])
             physics.angle = float(saved.get("angle", 0))
+            context.returning = bool(saved.get("returning", False)) and context.bot
         self.players[pid] = context
         return context
 
@@ -340,6 +348,7 @@ class CoopSession:
                     "is_player": True,
                     "player_id": context.player_id,
                     "multiplayer_player": True,
+                    "bw_persistent": True,
                     "disabled": True,
                     "combatant": True,
                     "aggression": "passive",
@@ -505,7 +514,8 @@ class CoopSession:
             float(down("d")) - float(down("a")),
             float(down("w")) - float(down("s")),
         )
-        h = self.heading
+        aim = self.logic.game_state.get_aim_yaw()
+        h = keyboard.physics.angle if aim is None else aim
         x, z = -mx * math.cos(h) + mz * math.sin(h), mx * math.sin(h) + mz * math.cos(h)
         length = max(1.0, math.hypot(x, z))
         x /= length
@@ -515,7 +525,6 @@ class CoopSession:
             held.add("sprint")
         if down(keybinds.key_binding("block") or "b"):
             held.add("block")
-        aim = self.logic.game_state.get_aim_yaw()
         if menu or game_menu:
             x = z = 0
             held.clear()
@@ -591,16 +600,31 @@ class CoopSession:
         session = context.session
         menu = session.open_screen is not None or session.dialogue is not None
         move = glm.vec3(0) if menu else glm.vec3(frame.move_x, 0, frame.move_z)
+        brushes = self.logic.collision_runtime._collision_brushes_cache
+        movers = self.logic.mover_runtime._mover_brush_list
+        doors = self.logic.mover_runtime._door_brush_list
+        grid = self.logic.session_runtime.spatial_grid
+        if context.returning:
+            from .world import CompanionCollisionGrid, collision_brush
+
+            # Streaming follows the human party. A returning bot still needs
+            # its local collision hulls; never unhide shared render objects.
+            if grid is not None:
+                grid = CompanionCollisionGrid(grid)
+            else:
+                brushes = [collision_brush(b) for b in brushes]
+            movers = [collision_brush(b) for b in movers]
+            doors = [collision_brush(b) for b in doors]
         context.physics.update(
             delta,
             move,
             False,
             False,
-            self.logic.collision_runtime._collision_brushes_cache,
-            self.logic.mover_runtime._mover_brush_list,
-            self.logic.mover_runtime._door_brush_list,
+            brushes,
+            movers,
+            doors,
             self.logic.world_runtime.terrain,
-            spatial_grid=self.logic.session_runtime.spatial_grid,
+            spatial_grid=grid,
             sprint="sprint" in frame.held and session.game.character.stamina > 0,
             movement_angle=0.0,
         )
@@ -635,7 +659,7 @@ class CoopSession:
         active = [
             p
             for p in self.players.values()
-            if p.connected and not p.session.game.character.is_dead
+            if p.connected and not p.session.game.character.is_dead and not p.returning
         ]
         if not active:
             active = list(self.players.values())[:1]
@@ -1128,6 +1152,7 @@ class CoopSession:
                 "is_player": True,
                 "player_id": context.player_id,
                 "multiplayer_player": True,
+                "bw_persistent": True,
                 "disabled": True,
                 "combatant": True,
                 "aggression": "passive",
@@ -1441,8 +1466,20 @@ class CoopSession:
         return False
 
     def _death_flow(self, delta):
+        if self.respawn_at_village:
+            for bot in self.players.values():
+                if (not bot.bot or not bot.connected
+                        or not bot.session.game.character.is_dead):
+                    self._bot_deaths.pop(bot.player_id, None)
+                    continue
+                elapsed = self._bot_deaths.get(bot.player_id, 0.0) + delta
+                self._bot_deaths[bot.player_id] = elapsed
+                if elapsed >= self.BOT_RESPAWN_SECONDS:
+                    self._respawn_bot(bot)
         connected = [p for p in self.players.values() if p.connected]
-        if connected and all(p.session.game.character.is_dead for p in connected):
+        can_respawn = self.respawn_at_village and any(p.bot for p in connected)
+        if (connected and not can_respawn
+                and all(p.session.game.character.is_dead for p in connected)):
             if self._wipe_at is None:
                 self._wipe_at = time.monotonic()
                 for p in connected:
@@ -1454,10 +1491,46 @@ class CoopSession:
         else:
             self._wipe_at = None
 
+    def _respawn_bot(self, bot):
+        import glm
+
+        session, physics = bot.session, bot.physics
+        character = session.game.character
+        character.effects.clear()
+        character.health = character.max_health
+        character.stamina = character.max_stamina
+        character.magicka = character.max_magicka
+        # Keep the authored start even when the party has moved or resumed a save.
+        physics.pos = glm.vec3(*self._village_spawn)
+        physics.velocity = glm.vec3(0)
+        physics.on_ground = False
+        bot.frame = bot.previous = InputFrame()
+        bot.prediction.clear()
+        bot.bot_target = None
+        bot.returning = True
+        bot.task = "Returning from village"
+        session._cancel_bow_draw()
+        session.toggle_block(False)
+        session.open_screen = None
+        session.end_dialogue()
+        session._sync_engine_health()
+        session.logic.portal_runtime.note_player_teleported()
+        if session.nav is not None and bot.actor is not None:
+            session.nav.forget(id(bot.actor))
+        self.root._road_plans.pop(id(bot.actor), None)
+        self._bot_deaths.pop(bot.player_id, None)
+        self._reviving = {
+            key: value for key, value in self._reviving.items()
+            if bot.player_id not in key
+        }
+        self._sync_actor(bot)
+        self.ui_session.notify(bot.profile["name"] + " respawned at the village.")
+
     def campaign(self):
         return {
             "version": 1,
             "campaign_id": self.lobby.state["campaign_id"],
+            "respawn_at_village": self.respawn_at_village,
             "world": {
                 **copy.deepcopy(self.party_quests.store.all()),
                 "_clock_hour": str(self.root.clock.hour),
@@ -1469,6 +1542,7 @@ class CoopSession:
                     "character": p.session.game.character.to_dict(),
                     "position": list(p.physics.pos),
                     "angle": p.physics.angle,
+                    "returning": p.returning,
                 }
                 for pid, p in self.players.items()
             },
@@ -1477,7 +1551,7 @@ class CoopSession:
     def simulation_focus(self):
         import glm
 
-        live = [p for p in self.players.values() if p.connected]
+        live = [p for p in self.players.values() if p.connected and not p.returning]
         if not live:
             return None
         return sum((p.physics.pos for p in live), glm.vec3(0)) / len(live)
@@ -1553,6 +1627,7 @@ class CoopSession:
             p.session.game.character = Character.from_dict(data["character"])
             p.physics.pos = glm.vec3(*data["position"])
             p.physics.velocity = glm.vec3(0)
+            p.returning = p.bot and bool(data.get("returning", False))
             p.prediction.clear()
             p.actor = next(
                 (
@@ -1574,6 +1649,7 @@ class CoopSession:
             float(saved["world"].get("_clock_day", self.root.clock.day))
         )
         self._wipe_at = None
+        self._bot_deaths.clear()
 
     def snapshot(self):
         from .replication import capture

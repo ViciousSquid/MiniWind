@@ -69,6 +69,8 @@ def test_host_can_fill_empty_lobby_slots_with_distinct_bot_heads(qt_app):
     controller.request("add", profile=profile())
     dialog = MultiplayerDialog(root, controller=controller)
     dialog._render_lobby()
+    dialog.respawn_at_village.setChecked(True)
+    assert controller.lobby.respawn_at_village
     for _ in range(3):
         dialog._add_bot()
     assert len(controller.lobby.members) == 4

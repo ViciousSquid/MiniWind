@@ -199,6 +199,8 @@ def test_bot_participation_and_identity_survive_a_real_campaign_save(
 
     coop = coop_game.logic.game_session.coop
     human, bot, *_ = companions(coop)
+    coop.respawn_at_village = True
+    bot.returning = True
     quest = register_quest()
     gold = bot.session.game.character.gold
     coop.party_quests.start(quest.id, human.player_id)
@@ -215,6 +217,8 @@ def test_bot_participation_and_identity_survive_a_real_campaign_save(
     controller.opened = True
     controller.host(local_only=True)
     controller.resume_campaign(path)
+    assert controller.lobby.respawn_at_village
+    assert controller.campaign_state["players"][bot.player_id]["returning"]
     assert sum(p.bot for p in controller.lobby.members) == 3
     saved = controller.lobby.member(bot.player_id)
     assert saved.profile["head"] == bot.profile["head"]
@@ -271,3 +275,169 @@ def test_bots_automatically_accept_party_travel(coop_game):
     assert coop.lobby.travelling
     assert coop.lobby.map_name == "maps/" + destination.name
     coop.lobby.travelling = False
+
+
+def test_companion_uses_healing_effects_and_does_not_chug_every_think(coop_game, monkeypatch):
+    from game.rpg import inventory, items
+
+    coop = coop_game.logic.game_session.coop
+    human, bot, *_ = companions(coop)
+    potion = items.ItemDef(
+        "field_elixir", "Field Elixir", items.POTION,
+        effects=[{"kind": "restore_health", "magnitude": 75, "duration": 0}],
+    )
+    monkeypatch.setitem(items.ITEMS, potion.id, potion)
+    c = bot.session.game.character
+    c.inventory[:] = [potion.make_stack(2)]
+    c.health = 1
+    human_items = list(human.session.game.character.inventory)
+    brain = PartyBots(coop)
+    brain.tick(0.016)
+    assert c.health == 76
+    assert inventory.quantity(c.inventory, potion.id) == 1
+    # Sustained damage must not consume a potion on every AI think.
+    c.health = 1
+    brain.tick(0.1)
+    brain.tick(0.1)
+    assert inventory.quantity(c.inventory, potion.id) == 1
+    brain.clock += 1
+    brain.tick(0.1)
+    assert c.health == 76 and inventory.quantity(c.inventory, potion.id) == 0
+    assert human.session.game.character.inventory == human_items
+    c.inventory[:] = [items.make("potion_heal"), items.make("potion_heal_minor")]
+    c.health = c.max_health - 20
+    assert brain._healing_potion(c).id == "potion_heal_minor"
+
+
+def test_companion_weapon_choice_tracks_range_visibility_and_real_resources(coop_game):
+    import glm
+    from game.rpg import equipment, items, magic
+
+    coop = coop_game.logic.game_session.coop
+    _, bot, *_ = companions(coop)
+    c = bot.session.game.character
+    c.inventory[:] = [items.make(i) for i in ("iron_longsword", "elven_bow", "iron_arrow")]
+    threat = SimpleNamespace(pos=bot.physics.pos + glm.vec3(350, 0, 0))
+    brain = PartyBots(coop)
+    brain._choose_weapon(bot, threat)
+    assert equipment.weapon(c).id == "elven_bow"
+    threat.pos = bot.physics.pos + glm.vec3(90, 0, 0)
+    brain._choose_weapon(bot, threat)
+    assert equipment.weapon(c).id == "iron_longsword"
+    threat.pos = bot.physics.pos + glm.vec3(350, 0, 0)
+    brain._choose_weapon(bot, threat, clear=False)
+    assert equipment.weapon(c).id == "iron_longsword"
+    c.inventory[-1]["qty"] = 0
+    brain._choose_weapon(bot, threat)
+    assert equipment.weapon(c).id == "iron_longsword"
+
+    c.inventory[:] = [items.make("apprentice_staff"), items.make("iron_dagger")]
+    cost = magic.cast_cost(c, magic.get("flare")) * 0.5
+    c.magicka = cost
+    brain._choose_weapon(bot, threat)
+    assert equipment.weapon(c).id == "apprentice_staff"
+    c.magicka = cost - 0.1
+    brain._choose_weapon(bot, threat)
+    assert equipment.weapon(c).id == "iron_dagger"
+    c.inventory[:] = [items.make("elven_bow"), items.make("iron_longsword", qty=0)]
+    equipment.equip(c, "elven_bow")
+    brain._choose_weapon(bot, threat)
+    assert equipment.weapon(c) is None
+
+
+def test_dead_companion_respawns_and_uses_roads_without_tethering_the_party(coop_game, monkeypatch):
+    import glm
+    import pytest
+    from game.navigation import Navigator
+    from game.road_nav import RoadGraph
+
+    coop = coop_game.logic.game_session.coop
+    human, bot, *others = companions(coop)
+    spawn = glm.vec3(*coop._village_spawn)
+    for player in (human, *others):
+        player.physics.pos = spawn + glm.vec3(3000, 0, 0)
+    bot.physics.pos = spawn + glm.vec3(2000, 0, 0)
+    c = bot.session.game.character
+    c.health = 0
+    coop._sync_actor(bot)
+    coop._death_flow(4)
+    assert c.is_dead and not bot.returning  # opt-in only
+    coop.respawn_at_village = True
+    coop._death_flow(coop.BOT_RESPAWN_SECONDS - 0.1)
+    assert c.is_dead
+    coop._death_flow(0.2)
+    assert c.health == c.max_health and bot.returning
+    assert tuple(bot.physics.pos) == pytest.approx(tuple(spawn))
+    assert not bot.actor.properties["dead"]
+    assert not bot.session.logic.player_runtime.player_dead
+    assert coop.snapshot()["players"][bot.player_id]["returning"]
+    before = {p.player_id: tuple(p.physics.pos) for p in coop.players.values()}
+    coop._camera(0, before)
+    assert tuple(bot.physics.pos) == pytest.approx(tuple(spawn))
+    assert coop.simulation_focus().x == pytest.approx(human.physics.pos.x)
+
+    x, y, z = spawn
+    graph = RoadGraph.build([
+        ("ROAD_A", x, z, ("ROAD_B",), y),
+        ("ROAD_B", x + 1000, z + 400, ("ROAD_C",), y),
+        ("ROAD_C", x + 3000, z, (), y),
+    ])
+    coop.root._road_graph = graph
+    monkeypatch.setattr(coop.root, "_refresh_roads", lambda: None)
+    # The road supplies the long trip; the regular navigator still goes
+    # around a wall on the way to its first junction.
+    bot.session.nav = Navigator(
+        lambda px, py, pz: x + 350 < px < x + 500 and z - 100 < pz < z + 300
+    )
+    brain = PartyBots(coop)
+    frame, _ = brain.decide(bot, 0)
+    plan = coop.root._road_plans[id(bot.actor)]
+    assert plan["points"][plan["i"]] == graph.points[1]
+    assert frame.move_z > 0.1 and bot.task == "Returning from village"
+
+    saved = coop.campaign()
+    bot.returning = False
+    coop.restore_campaign(saved)
+    assert bot.returning
+    bot.physics.pos = human.physics.pos + glm.vec3(100, 0, 0)
+    brain.decide(bot, 0)
+    assert not bot.returning and bot.task.startswith("Following")
+
+    from engine.spatial import TIER_NEAR, tier_of
+    from plugins.bigworld.runtime import BigWorldSession
+
+    bot.physics.pos = spawn
+    bot.returning = True
+    coop._sync_actor(bot)
+    streaming = BigWorldSession(coop.logic, activation_radius=1024, deactivation_radius=1280)
+    streaming.start()
+    try:
+        assert bot.actor in streaming.manager.persistent_things
+        assert tier_of(bot.actor) == TIER_NEAR
+        assert not bot.actor.properties.get("hidden")
+    finally:
+        streaming.stop()
+
+
+def test_returning_companion_collides_with_parked_scenery():
+    import glm
+    from engine.physics import SpatialGrid
+    from engine.player import Player
+    from engine.spatial import PARKED_HIDDEN_KEY
+    from game.multiplayer.world import CompanionCollisionGrid
+
+    floor = {"pos": [0, -32, 0], "size": [4000, 64, 4000],
+             "hidden": True, PARKED_HIDDEN_KEY: False}
+    wall = {"pos": [180, 64, 0], "size": [32, 128, 1000],
+            "hidden": True, PARKED_HIDDEN_KEY: False}
+    grid = SpatialGrid()
+    grid.populate([floor, wall])
+    body = Player(0, 0)
+    body.pos.y = body._half.y
+    local_grid = CompanionCollisionGrid(grid)
+    for _ in range(90):
+        body.update(1 / 60, glm.vec3(1, 0, 0), False, False, [], [], [],
+                    None, spatial_grid=local_grid, movement_angle=0)
+    assert 50 < body.pos.x < 150
+    assert abs(body.pos.y - body._half.y) < 1
+    assert floor["hidden"] and wall["hidden"]

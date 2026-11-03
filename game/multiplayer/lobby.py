@@ -122,6 +122,7 @@ class LobbyController:
             # This identity is also part of the campaign's save filename.
             self.lobby.campaign_id = campaign_id
             self.campaign_state = campaign
+            self.lobby.respawn_at_village = bool(campaign.get("respawn_at_village", False))
             for member in campaign["members"]:
                 char = campaign["players"][member["player_id"]]["character"]
                 added = self.lobby.add(
@@ -201,6 +202,8 @@ class LobbyController:
             self.lobby.remove(owner, message.get("player_id"))
         elif op == "ready":
             self.lobby.ready(owner, message.get("ready"))
+        elif op == "respawn_at_village":
+            self.lobby.set_respawn_at_village(owner, message.get("enabled"))
         elif op == "start":
             self.lobby.start(owner)
             self.started = True

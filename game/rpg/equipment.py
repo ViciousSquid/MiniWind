@@ -296,7 +296,8 @@ def ammo_for(character, weapon_def):
     crossbow can both be fed without swapping the quiver."""
     want = ammo_type(weapon_def)
     quiver = ammo(character)
-    if quiver is not None and str(quiver.get("ammo_type", "arrow")) == want:
+    if (quiver is not None and str(quiver.get("ammo_type", "arrow")) == want
+            and inv.has_item(character.inventory, quiver.id)):
         return quiver
     for stack in character.inventory or ():
         d = items.get(stack.get("id")) if isinstance(stack, dict) else None

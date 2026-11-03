@@ -10,6 +10,7 @@ from PyQt5.QtCore import QSize, Qt, QTimer
 from PyQt5.QtGui import QIcon, QPixmap
 from PyQt5.QtWidgets import (
     QComboBox,
+    QCheckBox,
     QDialog,
     QFileDialog,
     QFormLayout,
@@ -201,6 +202,16 @@ class MultiplayerDialog(QDialog):
         self.bot_button = QPushButton("Add AI companion")
         self.bot_button.clicked.connect(self._add_bot)
         layout.addWidget(self.bot_button)
+        self.respawn_at_village = QCheckBox("Respawn at village")
+        self.respawn_at_village.setToolTip(
+            "Dead AI companions return to the starting location, then follow roads back to the party."
+        )
+        self.respawn_at_village.toggled.connect(
+            lambda enabled: self._try(
+                lambda: self.controller.request("respawn_at_village", enabled=enabled)
+            )
+        )
+        layout.addWidget(self.respawn_at_village)
         row = QHBoxLayout()
         self.ready_button = QPushButton("Ready")
         self.ready_button.clicked.connect(self._ready)
@@ -447,6 +458,10 @@ class MultiplayerDialog(QDialog):
         self.add_button.setEnabled(len(state["members"]) < 4)
         self.bot_button.setVisible(self.controller.lobby is not None)
         self.bot_button.setEnabled(len(state["members"]) < 4)
+        self.respawn_at_village.blockSignals(True)
+        self.respawn_at_village.setChecked(bool(state.get("respawn_at_village", False)))
+        self.respawn_at_village.blockSignals(False)
+        self.respawn_at_village.setEnabled(self.controller.lobby is not None)
         self.ready_button.setEnabled(bool(owned))
         self.ready_button.setText(
             "Not ready" if owned and all(m["ready"] for m in owned) else "Ready"

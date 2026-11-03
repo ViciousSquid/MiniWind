@@ -138,6 +138,25 @@ def test_human_host_can_start_with_three_automatically_ready_bots():
     assert sum(m["bot"] for m in lobby.snapshot()["members"]) == 3
 
 
+def test_only_host_can_set_companion_respawns_before_starting():
+    lobby = Lobby()
+    lobby.add("host", profile())
+    assert not lobby.snapshot()["respawn_at_village"]
+    with pytest.raises(LobbyError, match="Only the host"):
+        lobby.set_respawn_at_village("guest", True)
+    with pytest.raises(LobbyError, match="Invalid"):
+        lobby.set_respawn_at_village("host", "true")
+    lobby.ready("host", True)
+    revision = lobby.revision
+    lobby.set_respawn_at_village("host", True)
+    assert lobby.snapshot()["respawn_at_village"]
+    assert lobby.revision > revision and not lobby.members[0].ready
+    lobby.ready("host", True)
+    lobby.start("host")
+    with pytest.raises(LobbyError, match="before starting"):
+        lobby.set_respawn_at_village("host", False)
+
+
 def test_bots_use_party_slots_and_cannot_impersonate_human_devices_or_host():
     lobby = Lobby()
     with pytest.raises(LobbyError, match="host"):

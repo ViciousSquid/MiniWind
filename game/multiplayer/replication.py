@@ -122,6 +122,7 @@ def capture(coop):
             "connected": p.connected,
             "bot": p.bot,
             "task": p.task,
+            "returning": p.returning,
             "character": clean(s.game.character.to_dict()),
             "pos": [float(v) for v in p.physics.pos],
             "angle": float(p.physics.angle),
@@ -278,6 +279,7 @@ def apply(coop, message):
             context.connected = bool(data["connected"])
             context.bot = bool(data.get("bot", False))
             context.task = str(data.get("task", ""))
+            context.returning = bool(data.get("returning", False)) and context.bot
             context.actor = here.get(pid)
             s.game.character = Character.from_dict(data["character"])
             s.open_screen = data.get("screen")

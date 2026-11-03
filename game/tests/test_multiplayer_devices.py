@@ -8,6 +8,50 @@ from game.multiplayer.devices import LocalDevices
 from game.multiplayer.model import InputFrame
 
 
+def test_keyboard_moves_relative_to_facing_with_pointer_and_without_it():
+    import pytest
+    from game.multiplayer.session import CoopSession
+
+    sent = []
+    body = SimpleNamespace(angle=0.0)
+    player = SimpleNamespace(
+        player_id="keyboard", profile={"device": "keyboard"}, physics=body,
+        session=SimpleNamespace(open_screen=None, dialogue=None),
+    )
+    aim = [None]
+    coop = SimpleNamespace(
+        local_players=[player], _last_keys=frozenset(), _mouse_held=set(),
+        # Deliberately unrelated to the avatar's facing.
+        heading=0.42,
+        logic=SimpleNamespace(game_state=SimpleNamespace(get_aim_yaw=lambda: aim[0])),
+        local_input=lambda *args: sent.append(args),
+    )
+    for pointer in (False, True):
+        for angle in (0, math.pi / 2, math.pi, -math.pi / 2):
+            body.angle = angle + 0.7 if pointer else angle
+            aim[0] = angle if pointer else None
+            forward = (math.sin(angle), math.cos(angle))
+            right = (-math.cos(angle), math.sin(angle))
+            for key, expected in (
+                ("w", forward), ("s", tuple(-v for v in forward)),
+                ("d", right), ("a", tuple(-v for v in right)),
+            ):
+                CoopSession._keyboard(coop, SimpleNamespace(
+                    keys=frozenset(), key_down=lambda name: name == key,
+                ))
+                frame = sent[-1][1]
+                assert (frame.move_x, frame.move_z) == pytest.approx(expected)
+                assert frame.aim == aim[0]
+            CoopSession._keyboard(coop, SimpleNamespace(
+                keys=frozenset(), key_down=lambda name: name in ("w", "d"),
+            ))
+            frame = sent[-1][1]
+            assert math.hypot(frame.move_x, frame.move_z) == pytest.approx(1)
+    player.session.open_screen = "inventory"
+    CoopSession._keyboard(coop, SimpleNamespace(keys=frozenset(), key_down=lambda _: True))
+    assert sent[-1][1].move_x == sent[-1][1].move_z == 0
+
+
 class Pad:
     def __init__(self, instance, state):
         self.instance, self.state = instance, state

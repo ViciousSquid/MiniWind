@@ -6,7 +6,7 @@ import math
 import time
 
 from .. import fio
-from ..rpg import equipment, items
+from ..rpg import equipment, items, magic
 from .model import InputFrame
 
 
@@ -22,6 +22,7 @@ class PartyBots:
         self.coop = coop
         self.clock = 0.0
         self.next_think = {}
+        self.next_heal = {}
 
     def tick(self, delta):
         if not self.coop.authority:
@@ -57,12 +58,23 @@ class PartyBots:
         if c.can_level_up:
             c.level_up()
         actions = []
-        if c.health < c.max_health * 0.5 and any(
-            str(stack.get("id", "")).startswith("potion_heal")
-            and stack.get("qty", 0) > 0
-            for stack in c.inventory
+        if (
+            c.health < c.max_health * 0.5
+            and self.clock >= self.next_heal.get(bot.player_id, 0)
+            and (c.effect_magnitude("restore_health") <= 0
+                 or c.health < c.max_health * 0.25)
         ):
-            actions.append(("heal", []))
+            potion = self._healing_potion(c)
+            if potion is not None:
+                actions.append(("rpg_action", ["use_item", [potion.id]]))
+                self.next_heal[bot.player_id] = self.clock + 1.0
+
+        if bot.returning:
+            if distance(bot.physics.pos, leader.physics.pos) > 180:
+                bot.task = "Returning from village"
+                return self._walk(bot, leader.physics.pos, stop=100, roads=True), actions
+            bot.returning = False
+            self.coop.root._road_plans.pop(id(bot.actor), None)
 
         downed = [
             p
@@ -89,19 +101,11 @@ class PartyBots:
             threat is not None
             and distance(bot.physics.pos, leader.physics.pos) < self.GUARD_RADIUS
         ):
-            self._choose_weapon(bot)
-            weapon = equipment.weapon(c)
-            bot.bot_target = threat
-            ranged = weapon is not None and weapon.get("kind") in (
-                *items.RANGED_KINDS,
-                items.KIND_STAFF,
-            )
             gap = distance(bot.physics.pos, threat.pos)
             aim = math.atan2(
                 threat.pos[0] - bot.physics.pos[0], threat.pos[2] - bot.physics.pos[2]
             )
             bot.task = "Defending the party"
-            reach = 500 if ranged else 130
             clear = self._clear_shot(bot, threat)
             nav = bot.session.nav
             visible = nav is None or nav.line_clear(
@@ -111,9 +115,16 @@ class PartyBots:
                 threat.pos[2],
                 bot.physics.pos[1],
             )
+            self._choose_weapon(bot, threat, clear=clear and visible)
+            weapon = equipment.weapon(c)
+            bot.bot_target = threat
+            ranged = weapon is not None and weapon.get("kind") in (
+                *items.RANGED_KINDS, items.KIND_STAFF,
+            )
+            reach = min(500, float(weapon.get("reach", 500))) if ranged else 130
             if gap <= reach and clear and visible and bot.session._attack_cooldown <= 0:
                 actions.append(("attack", []))
-            desired = 240 if ranged else 88
+            desired = min(240, reach * 0.6) if ranged else 88
             frame = self._walk(bot, threat.pos, stop=desired if visible else 0, aim=aim)
             if not clear and visible:
                 # Walk around a bystander instead of swinging or firing through
@@ -146,11 +157,16 @@ class PartyBots:
         bot.task = "Following " + leader.profile["name"]
         return self._walk(bot, goal, stop=26), actions
 
-    def _walk(self, bot, goal, stop=26, aim=None):
+    def _walk(self, bot, goal, stop=26, aim=None, roads=False):
         start = bot.physics.pos
         gap = distance(start, goal)
         if gap <= stop:
             return InputFrame(aim=aim)
+        if roads and bot.actor is not None:
+            self.coop.root._refresh_roads()
+            leg = self.coop.root._road_target(bot.actor, start, goal)
+            if leg is not None:
+                goal = leg[0]
         self._open_door_ahead(bot, goal)
         nav = bot.session.nav
         waypoint = (
@@ -254,24 +270,82 @@ class PartyBots:
         return True
 
     @staticmethod
-    def _choose_weapon(bot):
+    def _healing_potion(character):
+        choices = []
+        for stack in character.inventory:
+            potion = items.get(stack.get("id"))
+            if stack.get("qty", 0) <= 0 or potion is None or not items.is_potion(potion):
+                continue
+            healing = sum(
+                float(e.get("magnitude", 0)) * max(1.0, float(e.get("duration", 0)))
+                for e in potion.get("effects", []) if e.get("kind") == "restore_health"
+            )
+            if healing > 0:
+                choices.append((healing, potion))
+        missing = character.max_health - character.health
+        enough = [(amount, potion) for amount, potion in choices if amount >= missing]
+        # The smallest sufficient dose, or the strongest available dose.
+        if enough:
+            return min(enough, key=lambda p: p[0])[1]
+        return max(choices, key=lambda p: p[0], default=(0, None))[1]
+
+    @staticmethod
+    def _choose_weapon(bot, threat=None, clear=True):
         c = bot.session.game.character
-        choices = [items.get(stack.get("id")) for stack in c.inventory]
-        choices = [w for w in choices if w is not None and w.category == items.WEAPON]
-        if not choices:
-            return
+        current = equipment.weapon(c)
+        current_ranged = current is not None and current.get("kind") in (
+            *items.RANGED_KINDS, items.KIND_STAFF,
+        )
+        # A small distance band prevents changing hands on every think tick
+        # when an enemy hovers at the edge of melee range.
+        prefer_ranged = (
+            threat is None
+            or clear and distance(bot.physics.pos, threat.pos)
+            > (140 if current_ranged else 190)
+        )
+        choices = []
+        for stack in c.inventory:
+            weapon = items.get(stack.get("id"))
+            if (stack.get("qty", 0) > 0 and weapon is not None
+                    and weapon.category == items.WEAPON):
+                choices.append((weapon, stack))
 
-        def score(weapon):
+        def score(choice):
+            weapon, stack = choice
             kind = weapon.get("kind")
+            damage = float(weapon.get("damage", 1))
+            speed = float(weapon.get("speed", 1))
             if kind == items.KIND_STAFF:
-                return 100 if c.magicka > 15 else -1
-            if kind in items.RANGED_KINDS and equipment.ammo_for(c, weapon) is None:
-                return -1
-            # A companion can use its own better equipment as it finds it.
-            return float(weapon.get("damage", 1))
+                spell = magic.get(weapon.get("staff_spell", "flare"))
+                if spell is None or c.magicka < magic.cast_cost(c, spell) * 0.5:
+                    return (-1, 0, False)
+                damage = sum(
+                    float(e.get("magnitude", 0))
+                    * max(1.0, float(e.get("duration", 0)))
+                    for e in spell.effects if e.get("kind") in ("damage_health", "burn")
+                )
+                speed = 1 / 0.8
+            elif kind in items.RANGED_KINDS:
+                ammo = equipment.ammo_for(c, weapon)
+                if ammo is None:
+                    return (-1, 0, False)
+                damage += float(ammo.get("damage", 0))
+            rarity = items.RARITY_INFO[items.rarity_of(stack)]["stat"]
+            skill = c.skill(weapon.get("skill", "blade"))
+            rating = damage * speed * rarity * (0.4 + skill / 110.0)
+            ranged = kind in (*items.RANGED_KINDS, items.KIND_STAFF)
+            suited = threat is None or ranged == prefer_ranged
+            return (int(suited), rating, current is not None and current.id == weapon.id)
 
-        best = max(choices, key=score)
-        if score(best) >= 0 and (
+        ranked = [(score(choice), choice[0]) for choice in choices]
+        usable = [(rating, weapon) for rating, weapon in ranked if rating[0] >= 0]
+        if not usable:
+            if current is not None:
+                bot.session._cancel_bow_draw()
+                bot.session.game.unequip(items.SLOT_WEAPON)
+            return
+        best = max(usable, key=lambda choice: choice[0])[1]
+        if (
             equipment.equipped_id(c, "weapon") != best.id
             or equipment.hand_spell(c, "main") is not None
         ):

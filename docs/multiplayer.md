@@ -43,13 +43,24 @@ and start as usual. A party still needs a human host character.
 
 Companions follow a human leader in formation, use the game's navigator and
 player collision, defend the nearby party with their own equipment, drink
-their healing potions and help revive downed companions. When every human is
+their healing potions and help revive downed companions. They choose blades
+at close range and bows or staves at a distance, taking clear shots, ammunition,
+magicka, weapon quality and skills into account. They select a suitable healing
+dose from their own inventory when injured. When every human is
 down, rescue takes priority. They automatically consent to party map travel.
 Humans choose conversations and quests; bots participate in the shared
 adventure, receive their own rewards and advance their characters. Bot choices
 and character progress persist in the campaign save, including when it is
 resumed. All companion decisions run on the host. Normal single-player Play
 keeps its existing behavior; use the local Multiplayer lobby for a bot party.
+
+The host can enable **Respawn at village** in the lobby before starting.
+After three seconds downed, an AI companion respawns at the map's starting
+location with restored health, stamina and magicka, then follows the road
+network back to the human party, navigating around obstacles on each road leg.
+Returning companions travel outside the shared camera boundary until they
+rejoin. The option and companions still returning are kept in campaign saves.
+With the option off, companions use the usual revive and party checkpoint flow.
 
 A running party with a free character slot accepts direct joins. New players
 choose their characters and ready up in the lobby before entering. Started games
@@ -100,7 +111,9 @@ another local character's panel transfers that panel's control to its owner.
 The host can explicitly pause or resume the party with **F10**, or hold Back
 and press Start on a host-assigned gamepad.
 
-Keyboard and mouse use the existing movement, combat and RPG shortcuts. For
+With keyboard and mouse, **W/S** move forward/backward relative to the direction
+the character faces; **A/D** strafe left/right relative to that facing.
+The pointer controls facing. Combat and RPG shortcuts are unchanged. For
 gamepads, the left stick moves and the right stick aims; LT/RT operate the two
 hands, X attacks, B holds block, A interacts, Y opens the character panel, Back
 opens the map and Start opens the local game menu. D-pad navigates menus, A
@@ -110,8 +123,9 @@ player's device. Reconnecting the same controller type can reclaim its assignmen
 with identical pads, reconnect them one at a time to preserve their order.
 
 Hold interact beside a downed companion for three seconds to revive them with
-partial health. If every connected character falls, the host restores the last
-checkpoint. Map exits gather readiness from the living, connected party; press
+partial health. If every connected character falls and village respawning is
+off, the host restores the last checkpoint. Map exits gather readiness from the
+living, connected party; press
 interact when ready. Same-map portals carry the party together.
 
 ## Quests and saves

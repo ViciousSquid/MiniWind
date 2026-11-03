@@ -5,6 +5,29 @@ from __future__ import annotations
 from .. import fio
 
 
+def collision_brush(brush):
+    """A local collision view of scenery parked by world streaming."""
+    from engine.spatial import PARKED_HIDDEN_KEY, authored_hidden
+
+    if PARKED_HIDDEN_KEY not in brush:
+        return brush
+    return dict(brush, hidden=authored_hidden(brush))
+
+
+class CompanionCollisionGrid:
+    """Keep offscreen returning bodies solid without waking scenery for rendering."""
+
+    def __init__(self, grid):
+        self.grid = grid
+
+    @property
+    def water_brushes(self):
+        return self.grid.water_brushes
+
+    def get_potential_colliders(self, lo, hi):
+        return [collision_brush(b) for b in self.grid.get_potential_colliders(lo, hi)]
+
+
 class WorldBindings:
     def __init__(self, coop):
         self.coop = coop

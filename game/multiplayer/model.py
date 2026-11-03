@@ -109,6 +109,7 @@ class Lobby:
         self.revision = 0
         self.resume = None
         self.map_hash = ""
+        self.respawn_at_village = False
 
     def _changed(self):
         self.revision += 1
@@ -194,6 +195,15 @@ class Lobby:
             member.ready = ready or member.bot
         self.revision += 1
 
+    def set_respawn_at_village(self, owner, enabled):
+        if owner != self.host or self.started:
+            raise LobbyError("Only the host can change companion respawning before starting.")
+        if not isinstance(enabled, bool):
+            raise LobbyError("Invalid companion respawn setting.")
+        if self.respawn_at_village != enabled:
+            self.respawn_at_village = enabled
+            self._changed()
+
     @property
     def can_start(self):
         connected = [p for p in self.members if p.connected]
@@ -218,6 +228,7 @@ class Lobby:
             "revision": self.revision,
             "started": self.started,
             "map_hash": self.map_hash,
+            "respawn_at_village": self.respawn_at_village,
             "members": [p.public() for p in self.members],
         }
 
