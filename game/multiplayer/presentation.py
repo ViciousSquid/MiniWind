@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 from PyQt5.QtCore import QRectF, Qt
-from PyQt5.QtGui import QColor, QPixmap
+from PyQt5.QtGui import QColor, QFontMetrics, QPixmap
 
 from ..rpg import heads
+from ..ui import hud_frame, theme
 
 COLOURS = ("#69b6ff", "#ffbf69", "#b1e17d", "#d89fff")
+
+
+def party_rects(width, height, count):
+    """A compact left column immediately below the minimap's bronze ring."""
+    frame = hud_frame.layout(width, height)
+    top = frame.cy + frame.R + 8
+    card_width = max(1, min(224, width - 24))
+    return [QRectF(12, top + index * 56, card_width, 52) for index in range(count)]
 
 
 def draw_party(event, coop):
@@ -21,31 +30,36 @@ def draw_party(event, coop):
         install(coop, view)
         coop._devices_installed = True
     width = float(event.get("width", 800))
-    card = min(235.0, (width - 32) / max(1, len(coop.players)))
+    height = float(event.get("height", 600))
+    cards = party_rects(width, height, len(coop.players))
     painter.save()
+    painter.setFont(theme.font(9))
+    metrics = QFontMetrics(painter.font())
     for index, context in enumerate(coop.players.values()):
-        x = 12 + index * card
+        rect = cards[index]
+        x, y, card = rect.x(), rect.y(), rect.width()
         c = context.session.game.character
         painter.setPen(QColor(COLOURS[index % 4]))
         painter.setBrush(QColor(20, 22, 28, 220))
-        painter.drawRoundedRect(QRectF(x, 10, card - 6, 72), 5, 5)
+        painter.drawRoundedRect(rect, 5, 5)
         pix = QPixmap(heads.head_path(context.profile["head"]))
-        painter.drawPixmap(int(x + 5), 20, 42, 42, pix)
+        painter.drawPixmap(int(x + 5), int(y + 9), 34, 34, pix)
         painter.drawText(
-            QRectF(x + 52, 13, card - 60, 22),
+            QRectF(x + 45, y + 2, card - 51, 17),
             Qt.AlignLeft | Qt.AlignVCenter,
-            context.profile["name"],
+            metrics.elidedText(context.profile["name"], Qt.ElideRight, int(card - 51)),
         )
         status = (
             "Disconnected"
             if not context.connected
-            else "Down — hold interact nearby"
+            else "Down — interact to revive"
             if c.is_dead
             else f"HP {int(c.health)}/{int(c.max_health)}"
         )
         painter.setPen(QColor("#eeeeee"))
         painter.drawText(
-            QRectF(x + 52, 34, card - 58, 20), Qt.AlignLeft | Qt.AlignVCenter, status
+            QRectF(x + 45, y + 18, card - 51, 16), Qt.AlignLeft | Qt.AlignVCenter,
+            metrics.elidedText(status, Qt.ElideRight, int(card - 51)),
         )
         painter.setPen(QColor("#adb4c3"))
         text = (
@@ -58,7 +72,8 @@ def draw_party(event, coop):
         if context.player_id == coop._ui_owner:
             text += " · UI"
         painter.drawText(
-            QRectF(x + 52, 54, card - 58, 18), Qt.AlignLeft | Qt.AlignVCenter, text
+            QRectF(x + 45, y + 33, card - 51, 16), Qt.AlignLeft | Qt.AlignVCenter,
+            metrics.elidedText(text, Qt.ElideRight, int(card - 51)),
         )
     if coop.paused:
         painter.setPen(QColor("#ffde95"))
@@ -88,7 +103,7 @@ def draw_party(event, coop):
             f"{s.get('qty', 1)} {s.get('name') or s.get('id', 'item')}" for s in pouch
         )
         painter.drawText(
-            QRectF(12, 84, width - 24, 22),
+            QRectF(12, cards[-1].bottom() + 6 if cards else 84, width - 24, 22),
             Qt.AlignLeft | Qt.AlignVCenter,
             "Party quest pouch: " + contents,
         )

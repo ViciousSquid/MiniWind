@@ -30,7 +30,8 @@ def test_three_bots_follow_without_consuming_human_input(coop_game):
     for index, bot in enumerate(bots):
         bot.physics.pos = human.physics.pos + glm.vec3(300, 0, index * 25)
     before = distance(human.physics.pos, bots[0].physics.pos)
-    coop_game.step(25)
+    # Allow the initially bunched companions to spread into their formation.
+    coop_game.step(120)
     assert distance(human.physics.pos, bots[0].physics.pos) < before
     assert coop.local_players == [human]
     assert all(bot.task.startswith("Following") for bot in bots)
@@ -139,9 +140,9 @@ def test_companion_opens_an_unlocked_door_ahead_but_keeps_locks(coop_game):
 
 
 def test_mage_companion_heals_itself_and_changes_weapon_when_magicka_runs_out(
-    coop_game,
+    coop_game, monkeypatch,
 ):
-    from game.rpg import equipment, inventory
+    from game.rpg import equipment, inventory, magic
     from game.rpg.dialogue import DictStore
     from game.rpg.game_state import GameState
 
@@ -151,6 +152,7 @@ def test_mage_companion_heals_itself_and_changes_weapon_when_magicka_runs_out(
     bot.session.game.character = mage
     mage.health = mage.max_health * 0.2
     mage.magicka = mage.max_magicka
+    monkeypatch.setattr(magic, "cast_check", lambda *a, **kw: (True, {}))
     human_potions = inventory.quantity(
         human.session.game.character.inventory, "potion_heal_minor"
     )
@@ -159,7 +161,8 @@ def test_mage_companion_heals_itself_and_changes_weapon_when_magicka_runs_out(
     brain = PartyBots(coop)
     brain.tick(0.016)
     assert mage.health > before
-    assert inventory.quantity(mage.inventory, "potion_heal_minor") == potions - 1
+    assert inventory.quantity(mage.inventory, "potion_heal_minor") == potions
+    assert mage.magicka < mage.max_magicka
     assert (
         inventory.quantity(human.session.game.character.inventory, "potion_heal_minor")
         == human_potions

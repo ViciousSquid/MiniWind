@@ -747,6 +747,11 @@ class CoopSession:
         with self.lock:
             runtime = fio.player_runtime(context.session.logic)
             runtime.last_damage = (source, cause, kind)
+            if source is not None:
+                from .bots import PartyBots
+                if not hasattr(self, "_bots"):
+                    self._bots = PartyBots(self)
+                self._bots.note_attack(source)
             result = context.session._mitigate_incoming(amount, kind)
             context.session._sync_engine_health()
             if context.session.game.character.is_dead:

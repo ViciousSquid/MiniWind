@@ -1499,8 +1499,7 @@ class MiniwindSession(SettlementLaw):
                     head = registry.assign(owner, cur, guard=guard)
                 except HeadPoolExhausted:
                     # There are more world identities than portrait images.
-                    # Never recycle another person's head: the actor remains
-                    # in the world with its existing, non-head role sprite.
+                    # Even reuse cannot help an empty/unavailable pool.
                     head = ""
                     overflow["guard" if guard else "regular"] += 1
             else:
@@ -1551,8 +1550,8 @@ class MiniwindSession(SettlementLaw):
                                                guard=is_guard)
                     except HeadPoolExhausted:
                         # Board members are people too, even while off-screen.
-                        # Reserve nothing when the pool is full; use role art
-                        # if/when the traveller materialises.
+                        # An empty/unavailable pool has no portrait to reuse;
+                        # use role art if/when the traveller materialises.
                         head = ""
                         overflow["guard" if is_guard else "regular"] += 1
                     member["head"] = head
@@ -1561,7 +1560,7 @@ class MiniwindSession(SettlementLaw):
             print("[MiniWind] Unique NPC head images exhausted: "
                   f"{overflow['regular']} regular and {overflow['guard']} guard "
                   "characters are using non-head role sprites. "
-                  "No head portraits were reused.")
+                  "No usable portraits are available for those pools.")
 
         if changed:
             try:

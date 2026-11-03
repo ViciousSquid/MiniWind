@@ -2,7 +2,8 @@
 
 Heads belong to character identities, not to scenes, journeys, or draw calls.
 A resident and their travelling stand-in are the *same* identity; any other
-two people must never resolve to the same head PNG. The registry survives
+two people use distinct head PNGs until their portrait pool runs out. Then
+the earliest assigned pictures are reused in rotation. The registry survives
 streaming, save/load and movement between maps via MiniWind's global store.
 
 Animals are not people: a flock can legitimately share a species sprite.
@@ -18,7 +19,7 @@ STORE_KEY = "heads.identity.v1"
 
 
 class HeadPoolExhausted(RuntimeError):
-    """More distinct people need heads than there are distinct images."""
+    """No usable portrait remains, even allowing reuse of NPC pictures."""
 
 
 def identity(props):
@@ -105,14 +106,15 @@ class WorldHeadRegistry:
             picture = image_key(head)
             if picture:
                 self.used[picture] = "player:" + str(owner)
-        # Old saves may already contain collisions. Keep the first legitimate
-        # owner deterministically, then let reconciliation repair the rest.
+        self.reserved = set(self.used)
+        # Dict order is assignment order, also preserved by persist(). Legacy
+        # ledgers sorted by owner retain that deterministic migration order.
         good = {}
-        for owner, head in sorted(self.assignments.items()):
+        for owner, head in self.assignments.items():
             picture = image_key(head)
-            if picture and picture not in self.used:
+            if picture and picture not in self.reserved:
                 good[owner] = head
-                self.used[picture] = owner
+                self.used.setdefault(picture, owner)
         self.assignments = good
 
     @staticmethod
@@ -122,24 +124,29 @@ class WorldHeadRegistry:
         return heads.is_any_head(head) and not heads.is_guard_head(head)
 
     def assign(self, owner, requested="", *, guard=False):
-        """Get/claim one picture, or *raise* rather than recycle another face."""
+        """Claim a unique picture, then cycle through the earliest assigned."""
         owner = str(owner or "").strip()
         if not owner:
             raise ValueError("An NPC requires a stable identity to own a head")
         assigned = self.assignments.get(owner, "")
+        pool = heads.GUARD_HEAD_IDS if guard else heads.HEAD_IDS
         if assigned and self._fits(assigned, guard):
-            return assigned
+            # Repair legacy collisions only when a spare portrait exists.
+            # Defer this until assignment: reload precedes set_player(), and
+            # the player's reserved face can be the pool's last unused image.
+            if (self.used.get(image_key(assigned)) == owner
+                    or not any(image_key(h) not in self.used for h in pool)):
+                return assigned
         if assigned:
-            self.used.pop(image_key(assigned), None)
             self.assignments.pop(owner, None)
+            self._reindex()
         requested = str(requested or "").strip()
         candidates = []
         if self._fits(requested, guard):
             candidates.append(requested)
-        pool = heads.GUARD_HEAD_IDS if guard else heads.HEAD_IDS
         # Stable per-identity starting position; no random re-rolls on reload.
-        start = int.from_bytes(hashlib.sha256(owner.encode("utf-8")).digest()[:8],
-                               "big") % len(pool)
+        start = (int.from_bytes(hashlib.sha256(owner.encode("utf-8")).digest()[:8],
+                                "big") % len(pool)) if pool else 0
         candidates.extend(pool[start:] + pool[:start])
         for head in candidates:
             picture = image_key(head)
@@ -148,11 +155,23 @@ class WorldHeadRegistry:
                 self.used[picture] = owner
                 self.persist()
                 return head
+        # Least-used first makes repeated passes through the original heads;
+        # insertion order breaks ties in favour of the earliest assignment.
+        reuse = {}
+        for head in self.assignments.values():
+            picture = image_key(head)
+            if self._fits(head, guard) and picture not in self.reserved:
+                if picture not in reuse:
+                    reuse[picture] = [head, 0]
+                reuse[picture][1] += 1
+        if reuse:
+            head = min(reuse.values(), key=lambda entry: entry[1])[0]
+            self.assignments[owner] = head
+            self.persist()
+            return head
         role = "guard" if guard else "regular"
         raise HeadPoolExhausted(
-            f"No unused {role} head for {owner!r}; add more distinct head PNGs "
-            "instead of duplicating another character's face")
+            f"No usable {role} head for {owner!r}")
 
     def persist(self):
-        self.store.set(STORE_KEY, json.dumps(self.assignments, sort_keys=True,
-                                           separators=(",", ":")))
+        self.store.set(STORE_KEY, json.dumps(self.assignments, separators=(",", ":")))
