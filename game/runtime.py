@@ -636,6 +636,11 @@ class MiniwindSession(SettlementLaw):
     #: engine leaves 1-4 alone rather than reading them as its weapon slots.
     owns_number_keys = True
 
+    @property
+    def player_key(self):
+        coop = getattr(self,"coop",None)
+        return "player:" + self.player_id if coop is not None else PLAYER_KEY
+
     def __init__(self, logic, cfg: Dict = None, globals_store=None):
         self.logic = logic
         cfg = cfg or {}
@@ -1188,7 +1193,8 @@ class MiniwindSession(SettlementLaw):
             burn = attacker.properties.get("_bolt_burn")
             if burn:
                 # An enemy's Flare found the player: they burn.
-                self.burning.ignite(burning_mod.PLAYER, burn[0], burn[1], by=attacker)
+                victim=self.player_actor if getattr(self,"coop",None) is not None else burning_mod.PLAYER
+                self.burning.ignite(victim, burn[0], burn[1], by=attacker)
         if attacker is not None and damage_kind == "physical":
             # Every living thing has a Strength: a bear hits harder than a hen.
             raw_damage *= rpg_combat.strength_factor(
@@ -1371,6 +1377,9 @@ class MiniwindSession(SettlementLaw):
 
     def _sync_engine_health(self, full=False) -> None:
         c = self.game.character
+        if getattr(self, "coop", None) is not None:
+            # A downed character never invokes Fio's global death/menu gate.
+            fio.player_runtime(self.logic).player_dead = False
         try:
             fio.player_runtime(self.logic).player_max_health = int(round(c.max_health))
             if full:
@@ -1473,6 +1482,8 @@ class MiniwindSession(SettlementLaw):
         for t in sorted(things, key=authored_first):
             p = getattr(t, "properties", None)
             if not isinstance(p, dict):
+                continue
+            if p.get("multiplayer_player"):
                 continue
             ttype = str(p.get("type", "")).replace("_", "").lower()
             if ttype not in ("npc", "creature", "monster"):
@@ -2832,6 +2843,10 @@ class MiniwindSession(SettlementLaw):
         so a 'talk' objective whose target was assigned by id (UUID) completes
         the same as one assigned by name."""
         p = getattr(npc, "properties", {}) or {}
+        coop = getattr(self, "coop", None)
+        if coop is not None:
+            coop.party_quests.record("talk", [p.get(k) for k in ("id","name","display_name","npc_role")],
+                                     self._thing_id(npc), self.player_id)
         for field in ("name", "display_name", "npc_role"):
             v = str(p.get(field, "") or "").strip()
             if v:
@@ -2850,6 +2865,11 @@ class MiniwindSession(SettlementLaw):
         an honest bandit-slaying apart from a murder at the player's own hand and
         remember the player accordingly (see :meth:`_on_npc_death`)."""
         p = getattr(target, "properties", {}) or {}
+        coop = getattr(self, "coop", None)
+        if coop is not None:
+            coop.party_quests.record("kill", [p.get(k) for k in ("id","name","npc_role","monster_type")],
+                                     self._thing_id(target), self.player_id)
+            return
         for field in ("name", "npc_role", "monster_type"):
             v = str(p.get(field, "") or "").strip()
             if not v:
@@ -3352,6 +3372,10 @@ class MiniwindSession(SettlementLaw):
         Meeting a stage's condition moves the quest to the next stage; if that
         stage (or the current one, when it is the last) *finishes* the quest,
         rewards are granted through the game so gold/items/rep are paid out."""
+        coop = getattr(self, "coop", None)
+        if coop is not None:
+            coop.party_quests.tick()
+            return
         log = self.game.quests
         for q in list(log.active_quests()):
             cur = log.stage_of(q.id)
@@ -3691,6 +3715,8 @@ class MiniwindSession(SettlementLaw):
                     if id(actors[i]) in npc_ids]
         for t in pool:
             tp = t.properties
+            if tp.get("multiplayer_player"):
+                continue
             if not tp.get("dead"):
                 continue
             if tp.get("resurrection_used") and tp.get("follow_player"):
@@ -3709,6 +3735,8 @@ class MiniwindSession(SettlementLaw):
             self._maybe_send_the_reaper(t)
 
     def _on_npc_death(self, npc) -> None:
+        if npc.properties.get("multiplayer_player"):
+            return
         """Record the durable, save/load-persistent fallout of one NPC's death."""
         p = npc.properties
         name = str(p.get("name", ""))
@@ -4201,7 +4229,11 @@ class MiniwindSession(SettlementLaw):
         Reuses the existing opinion model (:mod:`game.rpg.disposition`) rather
         than inventing a second one; only the player has a modelled standing, so
         anyone else reads as neutral."""
-        if other_key == PLAYER_KEY:
+        coop = getattr(self,"coop",None)
+        other = coop.context_by_key(other_key) if coop is not None else None
+        if other is not None and other.session is not self:
+            return other.session._sim_disposition(observer_props,other_key)
+        if other_key == self.player_key:
             try:
                 return disp.of(self.game.character, observer_props, self.store)
             except Exception:
@@ -4247,6 +4279,11 @@ class MiniwindSession(SettlementLaw):
         every other actor has is what lets NPCs witness, remember and gossip
         about the player with no player-specific branch anywhere in
         :mod:`game.sim`."""
+        coop = getattr(self, "coop", None)
+        if coop is not None:
+            actor = coop.avatar(self.player_id)
+            if actor is not None:
+                return actor
         actor = getattr(self, "_player_actor", None)
         if actor is None:
             actor = _PlayerActor(self)
@@ -4264,7 +4301,7 @@ class MiniwindSession(SettlementLaw):
                                  buckets.get("monster", ()))
                if not t.properties.get("dead", False)]
         player = self.player_actor
-        if player.pos is not None:
+        if player.pos is not None and player not in out:
             out.append(player)
         return out
 
@@ -4313,7 +4350,12 @@ class MiniwindSession(SettlementLaw):
         gone — which is exactly how a vendetta against a dead man expires."""
         if not key:
             return None
-        if key == PLAYER_KEY:
+        coop = getattr(self, "coop", None)
+        if coop is not None:
+            context = coop.context_by_key(key)
+            if context is not None:
+                return context.actor
+        if key == self.player_key:
             return self.player_actor
         for thing in self._sim_actors():
             if actor_key(thing) == key:
@@ -4560,6 +4602,8 @@ class MiniwindSession(SettlementLaw):
         return True
 
     def _decide(self, npc) -> None:
+        if npc.properties.get("multiplayer_player"):
+            return
         p = npc.properties
         if p.get("resurrection_used") and p.get("follow_player"):
             self._guard_raised_follower(npc)
@@ -4974,12 +5018,12 @@ class MiniwindSession(SettlementLaw):
         """The simulation's record of what the player did (theft, assault,
         healing, gifts) moves their alignment. Killings are judged in
         :meth:`_alignment_kill`, where both bodies are to hand."""
-        if event.actor != PLAYER_KEY:
+        if event.actor != self.player_key:
             return
         deed = {"theft": "theft", "lockpick": "lockpick", "attack": "assault"}.get(event.kind)
         if deed is not None and not event.is_crime:
             deed = None
-        if event.kind == "heal" and event.target and event.target != PLAYER_KEY:
+        if event.kind == "heal" and event.target and event.target != self.player_key:
             deed = "heal_other"
         elif event.kind == "gift":
             deed = "gift"
@@ -5060,7 +5104,7 @@ class MiniwindSession(SettlementLaw):
         """How fast talk about the player fades, by the player's Charisma:
         people doubt ill of the charming and repeat their kindnesses, and
         believe the worst of the repulsive."""
-        if fact.get("actor") != PLAYER_KEY:
+        if fact.get("actor") != self.player_key:
             return None
         from .sim import events as sim_events
         mult = rpg_fortune.RUMOUR_CHARM.get(
@@ -5301,6 +5345,8 @@ class MiniwindSession(SettlementLaw):
             self.think(actor, text)
 
     def _decide_distant(self, npc) -> None:
+        if npc.properties.get("multiplayer_player"):
+            return
         """The reduced decision path for an actor outside the player's vicinity.
 
         What a distant townsperson still does is what the *clock* makes them do:
@@ -5414,6 +5460,10 @@ class MiniwindSession(SettlementLaw):
         the player instead of jostling for the same spot.
         """
         p = npc.properties
+        coop=getattr(self,"coop",None)
+        owner=coop.context_by_key(p.get("resurrected_by","")) if coop is not None else None
+        if owner is not None and owner.session is not self:
+            return owner.session._follow_player_dest(npc)
         p["sched_state"] = sched.FOLLOW
         ppos = self._player_pos()
         if ppos is None:
@@ -6148,6 +6198,8 @@ class MiniwindSession(SettlementLaw):
                 - n_casualties * 0.25)
 
     def _move(self, npc, delta: float) -> None:
+        if npc.properties.get("multiplayer_player"):
+            return
         p = npc.properties
         # An un-parked NPC (triggered False) is being driven by the core combat
         # AI; the runtime doesn't also push it around.
@@ -6390,6 +6442,8 @@ class MiniwindSession(SettlementLaw):
         """Zoom the top-down camera by *notches* of the mouse wheel: positive
         closer to the player's head, negative further away. The camera follows
         the player, so the zoom is always centred on them."""
+        if getattr(self, "coop", None) is not None:
+            return  # A party's shared camera fits every connected character.
         cam = fio.camera(self.logic)
         if cam is None or not notches:
             return
@@ -6572,6 +6626,10 @@ class MiniwindSession(SettlementLaw):
             return None
         return [float(p.pos[0]), float(p.pos[1]), float(p.pos[2])]
 
+    def simulation_focus(self):
+        coop=getattr(self,"coop",None)
+        return coop.simulation_focus() if coop is not None else self._player_pos()
+
     def _player_forward(self):
         p = fio.player(self.logic)
         if p is None:
@@ -6591,6 +6649,13 @@ class MiniwindSession(SettlementLaw):
 
     def _attackable(self, thing) -> bool:
         tp = thing.properties
+        if tp.get("multiplayer_player"):
+            return False
+        coop = getattr(self, "coop", None)
+        if coop is not None:
+            context = coop.players.get(self.player_id)
+            if context is not None and context.bot and context.bot_target is not thing:
+                return False
         if tp.get("dead") or tp.get("hidden"):
             return False
         if tp.get("_reaper"):
@@ -7338,7 +7403,14 @@ class MiniwindSession(SettlementLaw):
         self._spell_sound(self.player_actor, RESURRECTION_SOUND)   # its own, not the cast's
         c.use_skill(spell.school, 1.0 + spell.base_cost / 40.0)
         p = target.properties
+        if p.get("multiplayer_player"):
+            self.magic_fx.resurrection(_feet(target))
+            self.notify(f"{p.get('name', 'Your companion')} rises!")
+            self._player_deed("resurrect")
+            return True
         self._restore_living_kit(p)
+        if getattr(self, "coop", None) is not None:
+            p["resurrected_by"] = self.player_key
         self._bind_raised(p)
         # The map forgets it among its dead and remembers it was raised
         # (game/map_memory.py): its second life holds when the map is left.
@@ -7411,10 +7483,10 @@ class MiniwindSession(SettlementLaw):
             p.pop("hand_spells", None)   # readied again for the hands now free
 
     @staticmethod
-    def _bind_raised(p) -> None:
+    def _bind_raised(p, player_key=None) -> None:
         """Make the raised body *p* the caster's: tinted red, on the player's
         side, following and defending them (see _guard_raised_follower)."""
-        p.update(resurrection_used=True, resurrected_by="player",
+        p.update(resurrection_used=True, resurrected_by=player_key or p.get("resurrected_by") or "player",
                  sprite_tint=[1.0, 0.30, 0.30], follow_player=True,
                  combatant=True, aggression="defensive", team=factions.PLAYER,
                  faction=factions.PLAYER, triggered=True, awake=False,
@@ -7428,6 +7500,14 @@ class MiniwindSession(SettlementLaw):
             p.pop(key, None)
 
     def _revive_actor(self, thing) -> bool:
+        coop=getattr(self,"coop",None)
+        if coop is not None and thing.properties.get("multiplayer_player"):
+            context=coop.players[thing.properties["player_id"]]
+            character=context.session.game.character
+            character.health=max(1.,character.max_health*.3)
+            context.session._sync_engine_health()
+            coop._sync_actor(context)
+            return True
         """Bring a slain actor back to life: clear death flags, restore health
         and its living (head) sprite, and rebuild the engine caches.
 
@@ -7764,6 +7844,14 @@ class MiniwindSession(SettlementLaw):
         return None, False, 0.0
 
     def _apply_nondamage_spell(self, spell, target):
+        coop=getattr(self,"coop",None)
+        if coop is not None and target.properties.get("multiplayer_player"):
+            context=coop.players[target.properties["player_id"]]
+            harmful={"damage_health","calm","command","resurrect","paralyze","soultrap"}
+            rpg_magic.apply_effects_to_character(context.session.game.character,
+                [e for e in spell.effects if e.get("kind") not in harmful])
+            coop._sync_actor(context)
+            return
         for e in spell.effects:
             k = e.get("kind")
             if k == "calm":
@@ -7781,6 +7869,8 @@ class MiniwindSession(SettlementLaw):
         defend the player against a surviving target.
         """
         tp = target.properties
+        if tp.get("multiplayer_player"):
+            return
         tp["_hit_flash"] = HIT_FLASH_TIME    # red flash on a landed player hit
         # The strike is emitted as a world event rather than being punished on
         # the spot: whether it costs a bounty now depends on who saw it and
@@ -8964,8 +9054,8 @@ class MiniwindSession(SettlementLaw):
         self.dialogue = DialogueRunner(
             tree, store=self.store,
             give_item=lambda item: inv.add_item(self.game.character.inventory, item),
-            take_item=lambda iid, q: inv.remove_item(self.game.character.inventory, iid, q) > 0,
-            has_item=lambda iid, q: inv.has_item(self.game.character.inventory, iid, q),
+            take_item=lambda iid, q: self._dialogue_take(iid, q, tree),
+            has_item=lambda iid, q: self._dialogue_has(iid, q, tree),
             on_action=lambda a: self._dialogue_action(npc, a),
         )
         view = self.dialogue.start()
@@ -9000,7 +9090,7 @@ class MiniwindSession(SettlementLaw):
         import copy
         tree = copy.deepcopy(tree)
         tree["nodes"]["_mind"] = {
-            "text": mental_state.speak_mind(p, facts, intents, PLAYER_KEY),
+            "text": mental_state.speak_mind(p, facts, intents, self.player_key),
             "responses": [{"text": "I see.", "goto": start}]}
         resp = tree["nodes"][start].setdefault("responses", [])
         resp.insert(max(0, len(resp) - 1), {"text": "What's on your mind?", "goto": "_mind"})
@@ -9048,7 +9138,7 @@ class MiniwindSession(SettlementLaw):
             facts = sim_knowledge.facts(self.store, actor_key(npc))
         except Exception:
             return []
-        mine = [f for f in facts if PLAYER_KEY in (f.get("actor"), f.get("target"))]
+        mine = [f for f in facts if self.player_key in (f.get("actor"), f.get("target"))]
         return sorted(mine, key=lambda f: -float(f.get("certainty", 0.0)))
 
     def _with_fortune_topics(self, tree, npc):
@@ -9113,7 +9203,7 @@ class MiniwindSession(SettlementLaw):
                 for fact in self._facts_about_player(npc)[:3]:
                     told = dict(fact)
                     for k in ("actor", "target"):
-                        if told.get(k) == PLAYER_KEY:
+                        if told.get(k) == self.player_key:
                             told[k + "_name"] = "you"
                     heard.append(sim_knowledge.phrase(told))
                 line = ("They say " + "; and that ".join(heard) + "." if heard
@@ -9277,10 +9367,37 @@ class MiniwindSession(SettlementLaw):
         elif op in ("open_training", "open_tutor"):
             self.open_teaching(npc, "training" if op == "open_training" else "tutor")
 
+    def _dialogue_quest_item(self, iid, tree):
+        if getattr(self, "coop", None) is None:
+            return False
+        for qid in self._walk_quest_ids(tree):
+            q = _quests.get(qid)
+            if q is not None and q.coop_scope == "party" and self.game.quests.is_active(qid):
+                if any(s.condition_kind() == "fetch" and s.condition_target() == iid for s in q.stages):
+                    return True
+        return False
+
+    def _dialogue_has(self, iid, count, tree):
+        if self._dialogue_quest_item(iid, tree):
+            return self.coop.party_quests.quantity(iid) >= count
+        return inv.has_item(self.game.character.inventory, iid, count)
+
+    def _dialogue_take(self, iid, count, tree):
+        if self._dialogue_quest_item(iid, tree):
+            return self.coop.party_quests.take(iid, count)
+        if getattr(self, "coop", None) is not None and not inv.has_item(self.game.character.inventory, iid, count):
+            from .multiplayer.quests import QuestError
+            raise QuestError("The required items are no longer available.")
+        return inv.remove_item(self.game.character.inventory, iid, count) > 0
+
     def choose(self, index: int) -> None:
         if self.dialogue is None:
             return
-        view = self.dialogue.choose(index)
+        coop=getattr(self,"coop",None)
+        if coop is not None:
+            view=coop.party_quests.transaction(lambda:self.dialogue.choose(index))
+        else:
+            view = self.dialogue.choose(index)
         self.dialogue_selected = 0
         if view is None:
             self.end_dialogue()
@@ -9351,6 +9468,8 @@ class MiniwindSession(SettlementLaw):
                           buckets.get("monster", ()))
         for t in pool:
             p = t.properties
+            if p.get("multiplayer_player"):
+                continue
             if not p.get("dead") or p.get("hidden"):
                 continue
             dx = t.pos[0] - player_pos[0]
@@ -9537,7 +9656,7 @@ class MiniwindSession(SettlementLaw):
         """
         from .sim import perception
         p = thing.properties
-        if not sim_own.is_theft(p, PLAYER_KEY, "player"):
+        if not sim_own.is_theft(p, self.player_key, "player"):
             return False
         player = self.player_actor
         observers = []

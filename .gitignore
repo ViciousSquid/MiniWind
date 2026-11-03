@@ -19,3 +19,6 @@ saves/
 
 # Map pictures painted once per map (game/ui/worldmap.py)
 cache/
+
+# Generated before freezing; source checkouts compute the live hash.
+game/data/multiplayer_build.json

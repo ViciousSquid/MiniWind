@@ -253,6 +253,12 @@ class GamepadInput:
 
     # -- the loop -----------------------------------------------------------
     def poll(self) -> None:
+        session_query = getattr(self.sink, "_session", None)
+        session = session_query() if session_query is not None else None
+        if getattr(session, "coop", None) is not None:
+            # Co-op polls assigned controllers into player-specific frames.
+            # Do not inject this pad's events into the shared keyboard/mouse.
+            return
         now = self._clock()
         # A frame's worth on the first reading, so it already counts.
         dt = (1.0 / 60.0 if self._last_time is None

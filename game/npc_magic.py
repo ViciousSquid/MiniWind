@@ -563,6 +563,9 @@ class NpcMagic:
         ai = getattr(logic, "monster_ai", None)
 
         def _on_hit(victim, caster=thing, dmg=damage):
+            coop=getattr(session,"coop",None)
+            if coop is not None and victim.properties.get("multiplayer_player"):
+                return coop.damage(victim.properties["player_id"],dmg,spell.element or "magic",caster,"projectile")
             if ai is not None:
                 ai._apply_monster_damage(victim, dmg, attacker=caster)
 

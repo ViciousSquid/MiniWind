@@ -270,10 +270,13 @@ class MonsterAI:
 
     def update(self, delta: float):
         """Called every tick from LogicThread._tick_play_mode."""
+        coop = getattr(getattr(self.lt, "game_session", None), "coop", None)
+        if coop is not None and not coop.authority:
+            return
         if not self.lt.player_runtime.player or not MonsterThing:
             return
 
-        if self.lt.player_runtime.player_dead:
+        if self.lt.player_runtime.player_dead and coop is None:
             return
 
         player_pos = self.lt.player_runtime.player.pos
@@ -287,6 +290,8 @@ class MonsterAI:
         # PERF: iterate the precomputed monster list instead of isinstance-
         # scanning every brush/thing in the level every tick.
         monster_things = self.lt.world_runtime.monster_things
+        if coop is not None:
+            coop.prepare_ai(monster_things)
         # Fitted to an overhead camera, the pass and the enemy searches use
         # the resident monsters only: a parked (DORMANT) monster is hidden and
         # disabled, neither acts nor can be a target, so it is left out rather
@@ -315,7 +320,7 @@ class MonsterAI:
                     self._update_monster(thing, float(row_delta[i]), player_pos)
 
         # ---- Player death check (after all monsters processed) ----
-        if self.lt.player_runtime.player_health <= 0 and not self.lt.player_runtime.player_dead:
+        if coop is None and self.lt.player_runtime.player_health <= 0 and not self.lt.player_runtime.player_dead:
             self.lt.player_runtime.player_dead = True
             start = self.lt.session_runtime.spawn_start
             if self.lt.io_manager and start is not None:
@@ -1653,6 +1658,9 @@ the scalar fallback for callers that do not have the dense table.
     def _apply_monster_damage(self, victim, damage: int, attacker=None):
         """Deal damage to a monster from another monster (infighting).
         Sets the victim's aggro target to the attacker so it retaliates."""
+        coop = getattr(getattr(self.lt, "game_session", None), "coop", None)
+        if coop is not None and victim.properties.get("multiplayer_player"):
+            return coop.damage(victim.properties["player_id"], damage, source=attacker)
         hook = MonsterAI._damage_filter
         if hook is not None:
             try:

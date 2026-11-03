@@ -361,13 +361,14 @@ class LogicTriggers:
         entity_types = [1]  # player
         entity_ids = [id(self.logic.player_runtime.player)]
 
-        for entity in (self.logic.prop_runtime.props if True else ()):
+        include_nonplayers=not getattr(self,"_coop_player_only",False)
+        for entity in (self.logic.prop_runtime.props if include_nonplayers else ()):
             if not getattr(entity, 'properties', {}).get('disabled', False):
                 entities.append(entity)
                 entity_types.append(2)
                 entity_ids.append(id(entity))
 
-        for entity in self.logic.world_runtime.monster_things:
+        for entity in (self.logic.world_runtime.monster_things if include_nonplayers else ()):
             if not getattr(entity, 'properties', {}).get('disabled', False):
                 entities.append(entity)
                 entity_types.append(4)
@@ -619,6 +620,10 @@ class LogicTriggers:
 
     def _apply_player_damage(self, damage, damage_kind="physical", source=None,
                              cause=None):
+        session = getattr(self.logic, "game_session", None)
+        coop = getattr(session, "coop", None)
+        if coop is not None:
+            return coop.damage(session.player_id, damage, damage_kind, source, cause)
         # Who or what dealt it, for the game (LogicPlayer.last_damage).
         self.logic.player_runtime.last_damage = (source, cause, damage_kind)
         # A game's damage filter (LogicThread._player_damage_filter) mitigates

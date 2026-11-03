@@ -361,6 +361,11 @@ if __name__ == "__main__":
     # the scene has a Player Start to spawn at and the window never sits
     # frozen between the two.
     default_map = config.get('Startup', 'default_map', fallback='').strip()
+    from game.multiplayer.lobby import active as active_party, finish as close_party
+    party_lobby = active_party()
+    if party_lobby is not None:
+        default_map = party_lobby.map_name
+        app.aboutToQuit.connect(close_party)
     default_map_path = os.path.join(root_directory, default_map) if default_map else ''
 
     def _open_default_map():
@@ -372,6 +377,15 @@ if __name__ == "__main__":
             if launch_choice == "play":
                 window.loading_overlay.step("Starting the game", 90)
                 window.enter_kiosk_mode()
+                if party_lobby is not None and party_lobby.resume_path:
+                    from engine import savegame
+                    data=savegame.read(party_lobby.resume_path)
+                    logic=window.view_3d.logic_thread
+                    if logic is not None:
+                        savegame.restore_auto(logic,data,current_map_name=os.path.basename(default_map))
+                        coop=getattr(getattr(logic,"game_session",None),"coop",None)
+                        if coop is not None:
+                            coop.checkpoint()
 
     if (default_map_path and os.path.isfile(default_map_path)) or launch_choice == "play":
         from PyQt5.QtCore import QTimer

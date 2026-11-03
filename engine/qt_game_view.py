@@ -1122,6 +1122,9 @@ class QtGameView(QOpenGLWidget):
         during a cinematic, or when disabled.
         """
         _lt = self.logic_thread
+        # Co-op characters are ordinary, published actor sprites, including P1.
+        if getattr(getattr(_lt, "game_session", None), "coop", None) is not None:
+            return
         _lt_overhead = bool(_lt.camera.is_overhead()) if _lt is not None else False
         if not (self.play_mode and self.overhead_sprite_enabled
                 and (self._is_overhead() or _lt_overhead)):
@@ -2983,7 +2986,7 @@ class QtGameView(QOpenGLWidget):
         else:
             self._pause_window.window_rect.moveTo(*self._pause_window_pos)
         logic = self.logic_thread
-        if logic is not None:
+        if logic is not None and getattr(getattr(logic, "game_session", None), "coop", None) is None:
             logic.session_runtime.set_world_paused(logic.session_runtime.PAUSE_MENU, True)
         while QApplication.overrideCursor() is not None:
             QApplication.restoreOverrideCursor()
@@ -3506,6 +3509,8 @@ class QtGameView(QOpenGLWidget):
             self.update()
 
     def _toggle_splitscreen(self):
+        if getattr(getattr(self.logic_thread,"game_session",None),"coop",None) is not None:
+            return
         self.splitscreen_mode = not self.splitscreen_mode
         if self.play_mode:
             pos = self._last_player_start_pos
@@ -4205,6 +4210,15 @@ class QtGameView(QOpenGLWidget):
                                           shear=armed['shear'])
 
     def mousePressEvent(self, event):
+        coop=getattr(getattr(self.logic_thread,"game_session",None),"coop",None)
+        if (self.play_mode and coop is not None and self.pause_menu is None and not _play_menu_open(self)
+                and not self.console_overlay_active
+                and coop.ui_session is not None
+                and (coop.ui_session.open_screen is not None or coop.ui_session.dialogue is not None)):
+            owner=coop.players.get(coop.ui_session.player_id)
+            if owner is not None and owner.profile["device"]!="keyboard" and event.button() in (Qt.LeftButton,Qt.RightButton):
+                self.game_pointer.party_world_press(event, coop)
+                return
         if _play_menu_open(self):
             self.play_menu.handle_mouse_press(event)
             return
@@ -4450,6 +4464,9 @@ class QtGameView(QOpenGLWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        coop = getattr(getattr(self.logic_thread, "game_session", None), "coop", None)
+        if self.play_mode and coop is not None and event.button() in (Qt.LeftButton, Qt.RightButton):
+            coop.mouse_hand("primary" if event.button()==Qt.LeftButton else "secondary", False)
         if _play_menu_open(self):
             release = getattr(self.play_menu, 'handle_mouse_release', None)
             if release is not None:

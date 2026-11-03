@@ -42,7 +42,7 @@ def _kind(t) -> str:
 
 def is_traveller(p) -> bool:
     """Whether the actor *p* goes with the player: a living raised follower."""
-    return (p.get("resurrected_by") == "player" and bool(p.get("follow_player"))
+    return (str(p.get("resurrected_by", "")).split(":",1)[0] == "player" and bool(p.get("follow_player"))
             and not p.get("dead") and not p.get("hidden"))
 
 

@@ -67,6 +67,7 @@ class WorldHeadRegistry:
         self.assignments = {}
         self.used = {}
         self.player_head = ""
+        self.player_heads = {}
         self.reload()
 
     def reload(self):
@@ -90,11 +91,20 @@ class WorldHeadRegistry:
         self.player_head = str(head_id or "")
         self._reindex()
 
+    def set_players(self, heads_by_player):
+        """Reserve every party portrait while retaining NPC identity claims."""
+        self.player_heads = dict(heads_by_player)
+        self._reindex()
+
     def _reindex(self):
         self.used = {}
         picture = image_key(self.player_head)
         if picture:
             self.used[picture] = "__player__"
+        for owner, head in self.player_heads.items():
+            picture = image_key(head)
+            if picture:
+                self.used[picture] = "player:" + str(owner)
         # Old saves may already contain collisions. Keep the first legitimate
         # owner deterministically, then let reconciliation repair the rest.
         good = {}

@@ -846,7 +846,8 @@ class MiniwindGame:
         lenses = ()
         if fx is not None:
             from .ui import magic_gl
-            sprites, lenses, session._fx_tints = fx.frame()
+            coop=getattr(session,"coop",None)
+            sprites, lenses, session._fx_tints = (getattr(coop,"remote_fx",None) or fx.frame()) if coop is not None and not coop.authority else fx.frame()
             magic_gl.draw_sprites(projection, view, sprites)
         arrows = getattr(session, "arrows_in_flight", ())
         paths = getattr(session, "arrow_paths", ())
@@ -866,12 +867,24 @@ class MiniwindGame:
         logic.game_session = None
         settings = self._find_settings(logic)
         cfg = dict(settings.properties) if settings is not None else {}
+        from .multiplayer.lobby import active as active_party
+        party_lobby = active_party()
+        if party_lobby is not None:
+            cfg["coop_legacy_store"] = cfg.get("state_store","miniwind")
+            cfg["state_store"] = "miniwind.coop." + party_lobby.state["campaign_id"]
         host = getattr(self, "_host", None)
         globals_store = host.globals if host is not None else None
         fio.set_camera_mode(logic, PLAY_CAMERA)
         session = MiniwindSession(logic, cfg=cfg, globals_store=globals_store)
         session.restore()
+        if party_lobby is not None:
+            from .multiplayer.session import CoopSession
+            CoopSession(session, party_lobby, cfg)
+            logic._miniwind = session
+            logic.game_session = session
         session.install()
+        if party_lobby is not None:
+            session.coop.install_world()
         if session.needs_char_creation:
             session.open_screen = "charcreate"
             # Freeze the world from frame zero so no combat/sound runs behind the
@@ -903,6 +916,8 @@ class MiniwindGame:
         music.PLAYER.stop()
         session = getattr(logic, "_miniwind", None)
         if session is not None:
+            if getattr(session, "coop", None) is not None:
+                session.coop.leave()
             session.leave_map()            # raised followers go with the player
             session.persist(force=True)
             session.uninstall()
@@ -920,6 +935,10 @@ class MiniwindGame:
     def on_tick(self, logic, ctx: TickContext):
         session = getattr(logic, "_miniwind", None)
         if session is None:
+            return
+        coop = getattr(session, "coop", None)
+        if coop is not None:
+            coop.tick(ctx)
             return
         from . import music
         music.PLAYER.poll()
@@ -1250,12 +1269,30 @@ class MiniwindGame:
         if session is None:
             hits.clear()
             return
+        coop = getattr(session, "coop", None)
+        if coop is not None:
+            from .multiplayer.presentation import draw_party
+            draw_party(ev, coop)
+            session = coop.ui_session
+            previous=getattr(coop,"_painted_ui",None)
+            if previous is not None and previous is not session:
+                manager=getattr(viewport,"window_manager",None)
+                if manager is not None:
+                    for name in ("_overlay_win","_loadout_win","_strip_win","_hud_win"):
+                        window=getattr(previous,name,None)
+                        if window is not None:
+                            window.active=False
+                            manager.remove(window)
+                            setattr(previous,name,None)
+                from .ui import drag
+                drag.unpick()
+            coop._painted_ui=session
         painter = ev.get("painter")
         viewport = ev.get("viewport")
         if painter is None:
             return
         # The menus drawn below say where their buttons are (game/ui/hits).
-        hits.begin()
+        hits.begin(session)
         # suppress the stock health/weapon HUD; the RPG draws its own.
         if viewport is not None:
             try:
@@ -1349,7 +1386,7 @@ class MiniwindGame:
                     dialogue_ui.draw(painter, session, w, h)
                 if session.open_screen is not None:
                     screens.draw(painter, session, w, h)
-            if session.game.character.is_dead:
+            if session.game.character.is_dead and getattr(session, "coop", None) is None:
                 from .ui import death_screen
                 death_screen.draw(painter, viewport, w, h)
             # The fade-to-black transition (e.g. paying off a bounty) sits on
@@ -1528,7 +1565,8 @@ class MiniwindGame:
         arranging = hud_layout.arranging
         if arranging != getattr(session, "_hud_pause_held", False):
             session._hud_pause_held = arranging
-            fio.set_world_paused(session.logic, "hud_arrange", arranging)
+            fio.set_world_paused(session.logic, "hud_arrange",
+                                 arranging and getattr(session, "coop", None) is None)
         if wm is None:
             return
         win = getattr(session, "_hud_win", None)

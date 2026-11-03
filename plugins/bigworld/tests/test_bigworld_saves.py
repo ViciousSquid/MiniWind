@@ -189,7 +189,8 @@ def test_forced_delta_save_structure():
         base_world=s.base_identity("world.json"))
 
     assert snap["fio_savegame"] is True
-    assert snap["save_version"] == savegame.SAVE_VERSION
+    # The party extension uses v4; ordinary saves retain the v3 format.
+    assert snap["save_version"] == savegame.SOLO_SAVE_VERSION
     assert snap["save_mode"] == "delta"          # forced
     assert snap["world_mode"] == "bigworld"
     assert "level" not in snap                     # never a full snapshot

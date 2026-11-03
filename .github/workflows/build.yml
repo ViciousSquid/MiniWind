@@ -44,6 +44,9 @@ jobs:
           [IO.File]::WriteAllText($path, "$text$env:VERSION_SUFFIX`n")
           Write-Host "editor/version.txt: $([IO.File]::ReadAllText($path).TrimEnd())"
 
+      - name: Record multiplayer build compatibility
+        run: python tools/multiplayer_build_manifest.py
+
       - name: Build with Nuitka
         run: |
           python -m nuitka `
@@ -250,6 +253,9 @@ jobs:
           [IO.File]::WriteAllText($path, "$text$env:ARM64_VERSION_SUFFIX`n")
           Write-Host "editor/version.txt: $([IO.File]::ReadAllText($path).TrimEnd())"
 
+      - name: Record multiplayer build compatibility
+        run: python tools/multiplayer_build_manifest.py
+
       - name: Build with Nuitka
         shell: cmd
         run: |
@@ -391,6 +397,9 @@ jobs:
 
           # Also create a 1024x1024 version for high-res
           sips -z 1024 1024 build/icon.png --out build/icon_1024.png
+
+      - name: Record multiplayer build compatibility
+        run: python tools/multiplayer_build_manifest.py
 
       - name: Build with Nuitka (App Bundle)
         run: |
@@ -583,6 +592,9 @@ jobs:
           fi
           printf '%s%s\n' "$text" "$VERSION_SUFFIX" > "$path"
           echo "editor/version.txt: $(cat "$path")"
+
+      - name: Record multiplayer build compatibility
+        run: python tools/multiplayer_build_manifest.py
 
       - name: Build with Nuitka
         run: |

@@ -1,5 +1,6 @@
 {
   "id": "fighters_join",
+  "coop_scope": "personal",
   "name": "Proving Your Steel",
   "giver": "Grunn",
   "faction": "fighters",

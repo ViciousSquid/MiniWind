@@ -36,7 +36,7 @@ class SettlementLaw:
         charges = self.law.record(region)["charges"]
         if "legacy" in charges:
             return True
-        return any(str(f.get("e")) in charges and f.get("actor") == PLAYER_KEY
+        return any(str(f.get("e")) in charges and f.get("actor") == self.player_key
                    and f.get("identified", True)
                    and float(f.get("certainty", 0)) >= crime.REPORT_CERTAINTY
                    for f in knowledge.facts(self.store, actor_key(guard)))
@@ -100,7 +100,7 @@ class SettlementLaw:
             if npc.properties.get("dead") or self._is_guard(npc):
                 continue
             accounts = [f for f in knowledge.facts(self.store, actor_key(npc))
-                        if f.get("actor") == PLAYER_KEY and crime.is_crime(f)
+                        if f.get("actor") == self.player_key and crime.is_crime(f)
                         and not f.get("reported")
                         and not crime.already_reported(self.store, f.get("e", 0))
                         and float(f.get("certainty", 0)) >= crime.REPORT_CERTAINTY]

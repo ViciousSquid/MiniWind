@@ -23,7 +23,7 @@ demonstration that Fio can drive an entire RPG.
 python main.py
 ```
 
-The launcher offers **Play** or **Edit**. Play drops you into character creation
+The launcher offers **Play**, **Multiplayer** or **Edit**. Play drops you into character creation
 and then into the Vale; the map it opens is set by `[Startup] default_map` in
 `settings.ini`. The starter world can be regenerated with:
 
@@ -35,6 +35,14 @@ Talk to the townsfolk for work, buy gear from the smith and the trader, then
 clear the bandits from the Old Mill, cull the wolves troubling the flocks, or
 brave the barrows and caves of the Vale. What the town knows about you is a
 consequence of what it saw — see *The reactive simulation* below.
+
+**Multiplayer** forms a party of up to four independently controlled characters
+on one shared screen, using local controllers, LAN or direct Internet joining.
+The host can fill unused slots with AI companions, including three bots when
+playing alone.
+Choose each player's head in the launcher lobby, then ready up before starting.
+Network discovery starts only when Multiplayer is visible. See
+[multiplayer setup, controls, quests and campaign saves](docs/multiplayer.md).
 
 The world has 20 caves spread across the Vale. Only Whisperdeep contains a
 dragon: Vharzul the Ember Wyrm, whose head is eight times the player's size.

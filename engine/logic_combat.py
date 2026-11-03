@@ -652,6 +652,7 @@ class LogicCombat:
             player is not None
             and not logic.player_runtime.god_mode
             and not logic.player_runtime.player_dead
+            and getattr(getattr(logic, "game_session", None), "coop", None) is None
         )
         if player is not None:
             player_pos = player.pos
@@ -722,6 +723,8 @@ class LogicCombat:
                 if id(candidate) == owner_id:
                     continue
                 cp = candidate.properties
+                if owner_id == PLAYER_PROJECTILE_OWNER and cp.get("multiplayer_player"):
+                    continue
                 if cp.get('dead', False) or cp.get('hidden', False):
                     continue
                 candidate_team = cp.get('team', '')
@@ -822,7 +825,7 @@ class LogicCombat:
 
         # The player's hit sphere, in the float32 glm.distance used previously.
         player_hit = np.zeros(count, dtype=bool)
-        if logic.player_runtime.player is not None:
+        if logic.player_runtime.player is not None and getattr(getattr(logic, "game_session", None), "coop", None) is None:
             pp = logic.player_runtime.player.pos
             player32 = np.array((pp[0], pp[1], pp[2]), dtype=np.float32)
             d = pos32 - player32
@@ -881,6 +884,8 @@ class LogicCombat:
             for r in monster_hits.get(i, ()):
                 candidate = monsters[r]
                 cp = candidate.properties
+                if int(projectiles.owner_id[i]) == PLAYER_PROJECTILE_OWNER and cp.get("multiplayer_player"):
+                    continue
                 if not (cp.get('dead', False) or cp.get('hidden', False)):
                     hit_monster = candidate
                     break

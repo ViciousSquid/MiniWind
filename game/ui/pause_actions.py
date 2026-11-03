@@ -114,7 +114,15 @@ class PauseActions:
 
     def slot_path(self, slot):
         """Absolute path of save slot *slot* (1-based)."""
-        return self._console()._resolve_save_path(slot_name(slot))
+        return self._console()._resolve_save_path(self._campaign_save_name(slot_name(slot)))
+
+    def _campaign_save_name(self, name):
+        session = self._session()
+        coop = getattr(session,"coop",None)
+        if coop is None:
+            return name
+        prefix="coop_"+coop.lobby.state["campaign_id"]+"_"
+        return name if str(name).startswith(prefix) else prefix+str(name)
 
     # ---------------------------------------------------------------- slots
     def pause_menu_slot_info(self):
@@ -155,10 +163,13 @@ class PauseActions:
         console = self._console()
         if logic is None or console is None or not self._playing():
             return "not playing"
+        coop=getattr(session,"coop",None)
+        if coop is not None and not coop.authority:
+            return "the host owns the campaign save"
         if session is not None:
             # Flush the character and clock into the store first.
             session.persist(force=True)
-        path = console._resolve_save_path(name)
+        path = console._resolve_save_path(self._campaign_save_name(name))
         ok, msg = logic.session_runtime.save_session(
             path, map_name=console._current_map_name(), save_mode='delta',
             base_level=self._delta_base())
@@ -175,6 +186,8 @@ class PauseActions:
             write_json_atomic(path, data)
         except Exception as exc:
             return f"the character was not saved ({exc})"
+        if coop is not None:
+            coop.checkpoint()
         return True
 
     def pause_menu_save_slot(self, slot):
@@ -198,10 +211,33 @@ class PauseActions:
         then reloads the save's map, starts play on it (the new session reads
         the character back from the store) and lays the saved world over it.
         """
-        path = self._console()._resolve_save_path(name)
+        session=self._session()
+        coop=getattr(session,"coop",None)
+        if coop is not None and not coop.authority:
+            self._toast("Only the host can load the campaign.",error=True)
+            return False
+        path = self._console()._resolve_save_path(self._campaign_save_name(name))
         if not os.path.exists(path):
             self._toast(f"{label.capitalize()} is empty.", error=True)
             return False
+        if coop is not None:
+            from engine import savegame
+            try:
+                data = savegame.read(path)
+                saved = data.get("coop", {})
+                if saved.get("campaign_id") != coop.lobby.state["campaign_id"]:
+                    raise ValueError("This save belongs to another party.")
+                if set(saved.get("players", {})) != set(coop.players):
+                    raise ValueError("Resume this save from the Multiplayer launcher to restore its roster.")
+                if os.path.basename(data.get("map", "")) != os.path.basename(coop.map_name):
+                    raise ValueError("Resume this save from the Multiplayer launcher to restore its map.")
+                with self._busy(f"Loading {label}", "Restoring the party"):
+                    savegame.restore_auto(self._logic(), data, current_map_name=os.path.basename(coop.map_name), base_level=self._delta_base())
+                    coop.checkpoint()
+                return True
+            except (OSError, ValueError, KeyError) as exc:
+                self._toast(str(exc), error=True)
+                return False
         try:
             with open(path, 'r', encoding='utf-8') as fh:
                 block = json.load(fh).get(SAVE_KEY)
@@ -216,7 +252,7 @@ class PauseActions:
                                     block['values'])
             # Without a MiniWind block (a console save) the world alone is
             # restored, onto the running session as the console would.
-            self._console().cmd_load(name)
+            self._console().cmd_load(self._campaign_save_name(name))
         return True
 
     # ------------------------------------------------------------ autosave
@@ -240,7 +276,7 @@ class PauseActions:
         console = self._console()
         if console is None:
             return None
-        path = console._resolve_save_path(AUTOSAVE_NAME)
+        path = console._resolve_save_path(self._campaign_save_name(AUTOSAVE_NAME))
         info = read_slot_header(path)
         if info is not None:
             import time
@@ -268,6 +304,9 @@ class PauseActions:
         it ends, which would bring the old character back. Then the progress
         is wiped, the map reloaded from disk and play started again.
         """
+        if getattr(self._session(), "coop", None) is not None:
+            self._toast("Leave this party and host a new campaign from Multiplayer.")
+            return False
         window = self.window
         map_path = getattr(window, 'file_path', None)
         if not map_path:

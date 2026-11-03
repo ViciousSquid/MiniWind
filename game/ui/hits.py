@@ -25,20 +25,23 @@ from __future__ import annotations
 
 import collections
 import threading
+import weakref
 
 _lock = threading.Lock()
 _building = []          # targets of the frame being painted
 _published = []         # last finished frame: [(QRect, action, label)]
 _clicks = collections.deque(maxlen=32)
+_owner = None
 
 #: Where the pointer is, in view pixels (None when it has not moved yet).
 pointer = None
 
 
-def begin():
+def begin(session=None):
     """Start a paint pass with a fresh list (the last published frame stays
     published until :func:`end`)."""
-    global _building
+    global _building, _owner
+    _owner=weakref.ref(session) if getattr(session,"coop",None) is not None else None
     with _lock:
         _building = []
 
@@ -63,7 +66,8 @@ def end():
 
 def clear():
     """No menu on screen: nothing is clickable."""
-    global _published, _building
+    global _published, _building, _owner
+    _owner=None
     with _lock:
         _building = []
         _published = []
@@ -106,14 +110,20 @@ def click(x, y):
     action = action_at(x, y)
     if action is None:
         return False
-    _clicks.append(action)
+    queue(action)
     return True
 
 
 def queue(action) -> None:
     """Queue *action(session)* for the game tick, like a click on a button
     (for UI that resolves its own hits, such as a drag and drop)."""
-    _clicks.append(action)
+    owner=_owner() if _owner is not None else None
+    if owner is not None:
+        # A click belongs to the character whose panel was painted, even if
+        # another local player opens a panel before the logic thread drains it.
+        _clicks.append(lambda _current,owned=owner:action(owned))
+    else:
+        _clicks.append(action)
 
 
 def run_clicks(session) -> int:
@@ -141,12 +151,16 @@ class GamePointer:
         self.view = view
 
     def _session(self):
-        return getattr(getattr(self.view, "logic_thread", None), "_miniwind", None)
+        session = getattr(getattr(self.view, "logic_thread", None), "_miniwind", None)
+        coop = getattr(session, "coop", None)
+        return coop.ui_session if coop is not None else session
 
     def wants_pointer(self) -> bool:
         session = self._session()
         if session is None:
             return False
+        if getattr(session, "coop", None) is not None:
+            return True
         if session.game.character.is_dead:
             # The death screen's menu (restore, load, new game); there is no
             # live player to look around, so its buttons keep the pointer.
@@ -177,14 +191,15 @@ class GamePointer:
         props = getattr(actor, "properties", None)
         return actor if isinstance(props, dict) and not props.get("dead") else None
 
-    def ground_point(self, x, y):
+    def ground_point(self, x, y, feet=None):
         """The world point under pixel (*x*, *y*) at bolt height above the
         player's feet: where a level bolt cast there would pass. None when
         the cursor looks above the horizon."""
         import glm
         view = self.view
         session = self._session()
-        feet = session._player_pos() if session is not None else None
+        if feet is None:
+            feet = session._player_pos() if session is not None else None
         w, h = max(1, view.width()), max(1, view.height())
         if feet is None:
             return None
@@ -208,9 +223,35 @@ class GamePointer:
         pointer = (event.x(), event.y())
         self.view.update()
 
+    def party_world_press(self, event, coop):
+        """A real mouse belongs to the keyboard character, including aimed spells."""
+        from PyQt5.QtCore import Qt
+
+        context = next((p for p in coop.local_players if p.profile["device"] == "keyboard"), None)
+        if context is None:
+            return True
+        if context.session.spell_aiming:
+            if event.button() == Qt.LeftButton:
+                actor = self._actor_at(event.x(), event.y())
+                point = None if actor is not None else self.ground_point(event.x(), event.y(), feet=context.physics.pos)
+                target = str(actor.properties.get("id", "")) if actor is not None else None
+                actions = [("cast_at", [point, target])]
+            elif event.button() == Qt.RightButton:
+                actions = [("cancel_spell_aim", [])]
+            else:
+                return True
+            coop.local_input(context.player_id, context.frame, actions)
+        elif event.button() in (Qt.LeftButton, Qt.RightButton):
+            coop.mouse_hand("primary" if event.button() == Qt.LeftButton else "secondary", True)
+        self.view.update()
+        return True
+
     def pointer_press(self, event):
         from PyQt5.QtCore import Qt
         session = self._session()
+        coop = getattr(session, "coop", None)
+        if coop is not None and session.open_screen is None and session.dialogue is None:
+            return self.party_world_press(event, coop)
         if session is not None and getattr(session, "spell_aiming", False):
             # Left: cast there (at the creature under the cursor, else the
             # ground); right: put the spell away.

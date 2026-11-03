@@ -1,0 +1,281 @@
+"""Host-owned party companions using the same RPG actions and player physics."""
+
+from __future__ import annotations
+
+import math
+import time
+
+from .. import fio
+from ..rpg import equipment, items
+from .model import InputFrame
+
+
+def distance(a, b):
+    return math.hypot(float(a[0]) - float(b[0]), float(a[2]) - float(b[2]))
+
+
+class PartyBots:
+    THINK_INTERVAL = 0.15
+    GUARD_RADIUS = 520
+
+    def __init__(self, coop):
+        self.coop = coop
+        self.clock = 0.0
+        self.next_think = {}
+
+    def tick(self, delta):
+        if not self.coop.authority:
+            return
+        self.clock += max(0, min(0.1, delta))
+        bots = [p for p in self.coop.players.values() if p.bot and p.connected]
+        for index, bot in enumerate(bots):
+            bot.last_input = time.monotonic()
+            if bot.session.game.character.is_dead:
+                bot.frame, bot.task = InputFrame(), "Downed companion"
+                continue
+            if self.clock < self.next_think.get(bot.player_id, 0):
+                continue
+            self.next_think[bot.player_id] = self.clock + self.THINK_INTERVAL
+            frame, actions = self.decide(bot, index)
+            bot.frame = frame
+            if frame.aim is not None:
+                bot.physics.angle = frame.aim
+            for action, args in actions:
+                self.coop.action(bot, action, args)
+
+    def decide(self, bot, index):
+        players = list(self.coop.players.values())
+        humans = [p for p in players if not p.bot and p.connected]
+        if not humans:
+            bot.task = "Waiting for a player"
+            return InputFrame(), []
+        alive = [p for p in humans if not p.session.game.character.is_dead]
+        leader = next((p for p in alive if p.owner == "host"), None)
+        leader = leader or (alive or humans)[0]
+        c = bot.session.game.character
+        bot.bot_target = None
+        if c.can_level_up:
+            c.level_up()
+        actions = []
+        if c.health < c.max_health * 0.5 and any(
+            str(stack.get("id", "")).startswith("potion_heal")
+            and stack.get("qty", 0) > 0
+            for stack in c.inventory
+        ):
+            actions.append(("heal", []))
+
+        downed = [
+            p
+            for p in players
+            if p is not bot and p.connected and p.session.game.character.is_dead
+        ]
+        victim = min(
+            downed,
+            key=lambda p: (p.bot, distance(bot.physics.pos, p.physics.pos)),
+            default=None,
+        )
+        threat = self._threat(bot, leader)
+        # A party with no conscious human needs rescue first. Otherwise finish
+        # off an immediate attacker before settling down for the revive timer.
+        if victim is not None and (
+            not alive or threat is None or distance(bot.physics.pos, threat.pos) > 200
+        ):
+            bot.task = "Reviving " + victim.profile["name"]
+            if distance(bot.physics.pos, victim.physics.pos) <= 110:
+                return InputFrame(held=frozenset({"interact"})), actions
+            return self._walk(bot, victim.physics.pos, stop=85), actions
+
+        if (
+            threat is not None
+            and distance(bot.physics.pos, leader.physics.pos) < self.GUARD_RADIUS
+        ):
+            self._choose_weapon(bot)
+            weapon = equipment.weapon(c)
+            bot.bot_target = threat
+            ranged = weapon is not None and weapon.get("kind") in (
+                *items.RANGED_KINDS,
+                items.KIND_STAFF,
+            )
+            gap = distance(bot.physics.pos, threat.pos)
+            aim = math.atan2(
+                threat.pos[0] - bot.physics.pos[0], threat.pos[2] - bot.physics.pos[2]
+            )
+            bot.task = "Defending the party"
+            reach = 500 if ranged else 130
+            clear = self._clear_shot(bot, threat)
+            nav = bot.session.nav
+            visible = nav is None or nav.line_clear(
+                bot.physics.pos[0],
+                bot.physics.pos[2],
+                threat.pos[0],
+                threat.pos[2],
+                bot.physics.pos[1],
+            )
+            if gap <= reach and clear and visible and bot.session._attack_cooldown <= 0:
+                actions.append(("attack", []))
+            desired = 240 if ranged else 88
+            frame = self._walk(bot, threat.pos, stop=desired if visible else 0, aim=aim)
+            if not clear and visible:
+                # Walk around a bystander instead of swinging or firing through
+                # them. Human avatars and friendly NPCs can share a busy lane.
+                side = 1 if index % 2 else -1
+                goal = (
+                    bot.physics.pos[0] + math.cos(aim) * 90 * side,
+                    bot.physics.pos[1],
+                    bot.physics.pos[2] - math.sin(aim) * 90 * side,
+                )
+                frame = self._walk(bot, goal, stop=15, aim=aim)
+            if gap < 145 and bot.session._attack_cooldown > 0 and c.stamina > 10:
+                frame = InputFrame(
+                    frame.move_x, frame.move_z, aim, frame.held | {"block"}
+                )
+            return frame, actions
+
+        # Distinct formation points keep heads apart while the physics hull and
+        # existing navigator keep bots on walkable ground around doors/walls.
+        angle = (
+            index * math.tau / max(1, sum(p.bot for p in players))
+            + leader.physics.angle
+            + math.pi
+        )
+        goal = (
+            leader.physics.pos[0] + math.sin(angle) * 100,
+            leader.physics.pos[1],
+            leader.physics.pos[2] + math.cos(angle) * 100,
+        )
+        bot.task = "Following " + leader.profile["name"]
+        return self._walk(bot, goal, stop=26), actions
+
+    def _walk(self, bot, goal, stop=26, aim=None):
+        start = bot.physics.pos
+        gap = distance(start, goal)
+        if gap <= stop:
+            return InputFrame(aim=aim)
+        self._open_door_ahead(bot, goal)
+        nav = bot.session.nav
+        waypoint = (
+            nav.steer_actor(bot.actor, start, goal)
+            if nav is not None and bot.actor is not None
+            else goal
+        )
+        dx, dz = float(waypoint[0] - start[0]), float(waypoint[2] - start[2])
+        length = math.hypot(dx, dz)
+        if length < 1:
+            return InputFrame(aim=aim)
+        held = frozenset({"sprint"}) if gap > 280 else frozenset()
+        return InputFrame(
+            dx / length,
+            dz / length,
+            aim if aim is not None else math.atan2(dx, dz),
+            held,
+        )
+
+    @staticmethod
+    def _open_door_ahead(bot, goal):
+        """Use unlocked doors on the route, without starting conversations/exits."""
+        movers = bot.session.logic.mover_runtime
+        pos = bot.physics.pos
+        for index, door in movers.doors:
+            centre, size = door["pos"], door["size"]
+            if any(
+                abs(centre[i] - pos[i]) >= size[i] / 2 + (64 if i == 1 else 80)
+                for i in range(3)
+            ):
+                continue
+            if (centre[0] - pos[0]) * (goal[0] - pos[0]) + (centre[2] - pos[2]) * (
+                goal[2] - pos[2]
+            ) < 0:
+                continue
+            if door.get("door_locked") or (
+                door.get("door_needs_key")
+                and door.get("door_key_name")
+                not in bot.session.logic.player_runtime.collected_keys
+            ):
+                continue
+            if movers.door_states.get(index, {}).get("state", "closed") == "closed":
+                movers._trigger_door_open(index, door)
+
+    def _threat(self, bot, leader):
+        party = {id(p.actor) for p in self.coop.players.values() if p.actor is not None}
+        threats = []
+        for actor in fio.monster_things(self.coop.logic):
+            p = actor.properties
+            if (
+                p.get("multiplayer_player")
+                or p.get("dead")
+                or p.get("hidden")
+                or p.get("disabled")
+            ):
+                continue
+            attacking = p.get("_aggro_target") in party
+            hostile = str(p.get("aggression", "")) == "hostile" or (
+                str(p.get("aggression", "")) != "passive"
+                and self.coop.logic.monster_ai._hunts_player(actor)
+            )
+            if (
+                not (attacking or hostile)
+                or distance(actor.pos, leader.physics.pos) > self.GUARD_RADIUS
+            ):
+                continue
+            threats.append(actor)
+        return min(
+            threats,
+            key=lambda actor: distance(actor.pos, bot.physics.pos),
+            default=None,
+        )
+
+    def _clear_shot(self, bot, target):
+        start, end = bot.physics.pos, target.pos
+        dx, dz = float(end[0] - start[0]), float(end[2] - start[2])
+        length2 = dx * dx + dz * dz
+        if length2 < 1:
+            return True
+        for actor in fio.monster_things(self.coop.logic):
+            if actor is bot.actor or actor is target:
+                continue
+            props = actor.properties
+            if (
+                props.get("dead")
+                or props.get("hidden")
+                or (props.get("disabled") and not props.get("multiplayer_player"))
+            ):
+                continue
+            if (
+                not props.get("multiplayer_player")
+                and props.get("aggression") == "hostile"
+            ):
+                continue
+            if abs(float(actor.pos[1]) - float(target.pos[1])) > 100:
+                continue
+            x, z = float(actor.pos[0] - start[0]), float(actor.pos[2] - start[2])
+            along = (x * dx + z * dz) / length2
+            if 0.03 < along < 0.97 and math.hypot(x - dx * along, z - dz * along) < 38:
+                return False
+        return True
+
+    @staticmethod
+    def _choose_weapon(bot):
+        c = bot.session.game.character
+        choices = [items.get(stack.get("id")) for stack in c.inventory]
+        choices = [w for w in choices if w is not None and w.category == items.WEAPON]
+        if not choices:
+            return
+
+        def score(weapon):
+            kind = weapon.get("kind")
+            if kind == items.KIND_STAFF:
+                return 100 if c.magicka > 15 else -1
+            if kind in items.RANGED_KINDS and equipment.ammo_for(c, weapon) is None:
+                return -1
+            # A companion can use its own better equipment as it finds it.
+            return float(weapon.get("damage", 1))
+
+        best = max(choices, key=score)
+        if score(best) >= 0 and (
+            equipment.equipped_id(c, "weapon") != best.id
+            or equipment.hand_spell(c, "main") is not None
+        ):
+            bot.session._cancel_bow_draw()
+            # The interactive ready-weapon verb toggles/draws the second hand.
+            # AI replacement deliberately equips its chosen primary weapon.
+            bot.session.game.equip(best.id)

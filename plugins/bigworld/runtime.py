@@ -1035,6 +1035,10 @@ class BigWorldSession:
     # ------------------------------------------------------------------
 
     def _player_pos(self):
+        focus=getattr(getattr(self.logic,"game_session",None),"simulation_focus",None)
+        if focus is not None:
+            position=focus()
+            if position is not None:return position
         player = self.logic.player_runtime.player
         if player is None:
             return None

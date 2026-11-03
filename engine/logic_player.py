@@ -75,6 +75,10 @@ class LogicPlayer:
     def update_primary(self, delta, keys, mouse_dx, mouse_dy):
         """Apply primary-player look, movement and physics for one tick."""
         logic = self.logic
+        coop = getattr(getattr(logic, "game_session", None), "coop", None)
+        if coop is not None:
+            coop.move_all(delta)
+            return
         player = self.player
         if not player:
             return

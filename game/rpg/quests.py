@@ -78,7 +78,7 @@ class Stage:
 
 class Quest:
     def __init__(self, qid, name, stages, giver="", desc="", rewards=None,
-                 faction="", xp=0):
+                 faction="", xp=0, coop_scope="party", coop_shared_items=None):
         self.id = qid
         self.name = name
         self.stages: List[Stage] = stages
@@ -87,6 +87,10 @@ class Quest:
         self.rewards = rewards or {}   # {"gold": n, "items": [(id,qty)], "rep": (faction, n)}
         self.faction = faction
         self.xp = xp
+        # Single-player always uses its existing QuestLog. Co-op can keep
+        # admission, allegiance and other character-specific work personal.
+        self.coop_scope = "personal" if coop_scope == "personal" else "party"
+        self.coop_shared_items = tuple(str(i) for i in (coop_shared_items or ()))
 
     def stage(self, index: int) -> Optional[Stage]:
         for s in self.stages:
@@ -141,7 +145,8 @@ def quest_from_dict(data: Dict) -> Optional[Quest]:
     return Quest(str(data["id"]), data.get("name", data["id"]), stages,
                  giver=data.get("giver", ""), desc=data.get("desc", ""),
                  rewards=rewards, faction=data.get("faction", ""),
-                 xp=int(data.get("xp", 0)))
+                 xp=int(data.get("xp", 0)), coop_scope=data.get("coop_scope", "party"),
+                 coop_shared_items=data.get("coop_shared_items"))
 
 
 def offer_dialogue_branch(dialogue, qid, name, desc=""):

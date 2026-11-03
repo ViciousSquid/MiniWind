@@ -514,6 +514,10 @@ class GameState:
         if q is None or self.quests.is_complete(qid):
             return
         self.quests.complete(qid)
+        self.grant_quest_rewards(q)
+
+    def grant_quest_rewards(self, q) -> None:
+        """Pay one character; the caller owns completion and receipt tracking."""
         r = q.rewards
         if r.get("gold"):
             self.add_gold(int(r["gold"]))
