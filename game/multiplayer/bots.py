@@ -223,7 +223,8 @@ class PartyBots:
                     bot.physics.pos[2] - math.sin(aim) * 90 * side,
                 )
                 frame = self._walk(bot, goal, stop=15, aim=aim)
-            if (gap < 145 and bot.session._attack_cooldown > 0 and c.stamina > 10
+            if (gap < 520 and equipment.shield(c) is not None and not casting
+                    and c.stamina > 10
                     and mind.uniform(0, 1) > mind.lapse_chance(fatigue) * 3):
                 frame = InputFrame(
                     frame.move_x, frame.move_z, aim, frame.held | {"block"}
@@ -620,3 +621,10 @@ class PartyBots:
             # The interactive ready-weapon verb toggles/draws the second hand.
             # AI replacement deliberately equips its chosen primary weapon.
             bot.session.game.equip(best.id)
+        if (not equipment.is_two_handed(best) and equipment.equipped_id(c, "shield") is None
+                and equipment.hand_spell(c, "off") is None):
+            shields = [d for stack in c.inventory
+                       if stack.get("qty", 0) > 0 and (d := items.get(stack.get("id"))) is not None
+                       and d.category == items.ARMOUR and d.get("slot") == items.SLOT_SHIELD]
+            if shields:
+                bot.session.game.equip(max(shields, key=lambda d: d.get("armor_rating", 0)).id)

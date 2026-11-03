@@ -40,6 +40,7 @@ from .rpg import gib
 from .rpg import schedule as sched
 from .rpg import combat as rpg_combat
 from .rpg import equipment as eq
+from .rpg import classes as rpg_classes
 from .rpg import items as rpg_items
 from . import library
 from . import warrior_fist
@@ -993,19 +994,33 @@ class MiniwindSession(SettlementLaw):
             return True
 
     def _on_dice_roll(self, result: Dict, _source: str, context: Dict) -> None:
-        """Log what a labelled roll was for and whether it passed, and start
-        the HUD presentation for every roll when visualisation is enabled. A
-        ``quiet`` roll (somebody else's, against the player) is logged only."""
-        if result.get("label"):
+        """Animate the human's own rolls; other actors only enter the log."""
+        context = context or {}
+        coop = getattr(self, "coop", None)
+        owner = getattr(coop, "players", {}).get(getattr(self, "player_id", None))
+        companion = owner is not None and owner.bot
+        npc = bool(context.get("npc"))
+        if result.get("label") or companion or npc:
             line = describe_roll(result)
-            self.game.message(line)
+            if companion and not npc and not line.startswith(owner.profile["name"] + ":"):
+                line = owner.profile["name"] + ": " + line
             good = result.get("success")
-            if good is not None and (context or {}).get("against_player"):
+            if good is not None and context.get("against_player"):
                 good = not good          # their roll succeeding is bad news
-            self.roll_log.append({"text": line, "why": str(result.get("why", "")),
-                                  "success": good, "t": ROLL_LOG_SECONDS})
-            del self.roll_log[:-ROLL_LOG_MAX]
-        if (context or {}).get("quiet") or not self._visualise_dice_rolls_enabled():
+            sinks = {id(self): self}
+            if companion or npc:
+                for member in getattr(coop, "players", {}).values():
+                    if member.connected and not member.bot:
+                        sinks[id(member.session)] = member.session
+            for session in sinks.values():
+                session.game.message(line)
+                session.roll_log.append({"text": line, "why": str(result.get("why", "")),
+                                         "success": good, "t": ROLL_LOG_SECONDS})
+                del session.roll_log[:-ROLL_LOG_MAX]
+        if companion:
+            self.dice_animation = None
+            return
+        if npc or context.get("quiet") or not self._visualise_dice_rolls_enabled():
             return
         current = self.dice_animation
         if current is not None and current.get("elapsed", 0.0) == 0.0:
@@ -1108,8 +1123,9 @@ class MiniwindSession(SettlementLaw):
         # the engine's instant hit-scan (game/npc_archery.py).
         from engine.monster_ai import MonsterAI
         MonsterAI.install_shot_hook(self.archery.shot_hook)
-        # A caster's ward soaks part of every blow it takes (game/npc_magic.py).
-        MonsterAI.install_damage_filter(self.npc_magic.damage_filter)
+        # NPC shields save against physical blows; wards soak what remains.
+        MonsterAI.install_damage_filter(self.npc_magic.damage_filter, damage_kinds=True)
+        fio.set_projectile_deflector(logic, self._deflect_missile)
         # Chasers route round walls rather than pressing into them
         # (game/navigation.py); schedule walking uses the same routes.
         MonsterAI.install_steer_hook(self.tactics.steer_many)
@@ -1168,6 +1184,7 @@ class MiniwindSession(SettlementLaw):
             self.logic.player_fire_handler = None
         fio.set_jump_enabled(self.logic, True)
         fio.set_projectile_split(self.logic, None)
+        fio.clear_projectile_deflector(self.logic, self._deflect_missile)
         try:
             from engine.monster_ai import MonsterAI
             MonsterAI.clear_steer_hook(self.tactics.steer_many)
@@ -1182,19 +1199,19 @@ class MiniwindSession(SettlementLaw):
         MonsterAI.clear_damage_filter(self.npc_magic.damage_filter)
         self.archery.clear()
 
+    def _deflect_missile(self, projectiles, row, target):
+        coop = getattr(self, "coop", None)
+        if coop is not None and not coop.authority:
+            return False
+        from .missile_deflection import deflect
+        return deflect(self, projectiles, row, target)
+
     def _mitigate_incoming(self, raw_damage, damage_kind="physical") -> float:
         c = self.game.character
         if getattr(fio.player_runtime(self.logic), "god_mode", False):
             return 0.0
         raw_damage = float(raw_damage) * self.incoming_mult
         attacker = self._attacker()
-        last = getattr(fio.player_runtime(self.logic), "last_damage", None)
-        if attacker is not None and last and last[1] == "projectile":
-            burn = attacker.properties.get("_bolt_burn")
-            if burn:
-                # An enemy's Flare found the player: they burn.
-                victim=self.player_actor if getattr(self,"coop",None) is not None else burning_mod.PLAYER
-                self.burning.ignite(victim, burn[0], burn[1], by=attacker)
         if attacker is not None and damage_kind == "physical":
             # Every living thing has a Strength: a bear hits harder than a hen.
             raw_damage *= rpg_combat.strength_factor(
@@ -6887,7 +6904,7 @@ class MiniwindSession(SettlementLaw):
             return
         max_dist = float(max_dist)
         c = self.game.character
-        shot = eq.ammo_for(c, eq.hand_weapon(c, hand))
+        shot = rpg_items.get(self.game._fired_ammo.get(hand)) or eq.ammo_for(c, eq.hand_weapon(c, hand))
         sprite = arrow_sprite(shot.id if shot is not None else
                               eq.equipped_id(c, "ammo"))
 
@@ -6920,6 +6937,8 @@ class MiniwindSession(SettlementLaw):
         # A player-owned arrow: it flies past the archer, stops at its own
         # range, and resolves its RPG damage at the moment it actually hits.
         row = fio.spawn_projectile(lt, start, vel,
+                                   damage=rpg_combat.base_ranged_damage(c, hand=hand, ammo=shot)
+                                          * rpg_classes.damage_mult(c),
                                    lifetime=max_dist / ARROW_SPEED,
                                    max_dist=max_dist, on_hit=_on_hit)
         tag = fio.projectile_tag(lt, row)
@@ -7585,7 +7604,8 @@ class MiniwindSession(SettlementLaw):
         row = fio.spawn_projectile(lt, start, vel,
                                    lifetime=MONSTER_PROJECTILE_MAX_DIST / speed,
                                    damage=int(getattr(spell, "damage", 0) or 0),
-                                   on_impact=on_impact)
+                                   on_impact=on_impact,
+                                   metadata={"damage_kind": spell.element or "magic", "spell": spell})
         self._attach_bolt_light(row, start, spell)
         if row is not None:
             self.magic_fx.bolt(fio.projectile_tag(lt, row), self.spell_look(spell))

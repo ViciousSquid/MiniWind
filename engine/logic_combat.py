@@ -63,6 +63,9 @@ class LogicCombat:
     def __init__(self, logic):
         self.logic = logic
         self._monster_projectiles = ProjectileStore()
+        #: Optional ``hook(store, row, target) -> bool`` before a missile hits.
+        #: True keeps the changed projectile alive and skips its impact effects.
+        self.projectile_deflector = None
         self.bullet_marks = []
         self.projectile_positions = NO_PROJECTILES
         self.items = DEFAULT_REGISTRY
@@ -438,18 +441,18 @@ class LogicCombat:
     # =========================================================================
 
     def _add_monster_projectile(self, pos, vel, owner_id, damage, lifetime,
-                                max_dist=None, on_hit=None, on_impact=None):
+                                max_dist=None, on_hit=None, on_impact=None, metadata=None):
         """Add one projectile directly to the dense numeric store."""
         logic = self.logic
         with logic.session_runtime.monster_lock:
             return self._monster_projectiles.add(
                 pos, vel, owner_id, damage, lifetime, max_dist=max_dist,
-                on_hit=on_hit, on_impact=on_impact,
+                on_hit=on_hit, on_impact=on_impact, metadata=metadata,
             )
 
     def spawn_projectile(self, pos, vel, *, lifetime, damage=0.0,
                          owner_id=PLAYER_PROJECTILE_OWNER, max_dist=None,
-                         on_hit=None, on_impact=None):
+                         on_hit=None, on_impact=None, metadata=None):
         """Launch a projectile from game code; returns its store row.
 
         It flies, crosses portals and collides like any other. *owner_id* is
@@ -458,13 +461,38 @@ class LogicCombat:
         *max_dist* is its own range. ``on_hit(monster)`` resolves a hit on a
         monster in place of the flat *damage* (so a game can roll its damage
         at the moment of impact); ``on_impact(pos, target)`` reports where it
-        was consumed -- *target* is the monster hit, or None for a wall -- so
+        was consumed -- *target* is the actor/player hit, or None for a wall -- so
         a game can leave an arrow where it landed. Neither is called when the
         projectile simply runs out of range or time.
+        *metadata* is an optional game payload stored beside its callbacks.
         """
         return self._add_monster_projectile(
             pos, vel, owner_id, damage, lifetime, max_dist=max_dist,
-            on_hit=on_hit, on_impact=on_impact)
+            on_hit=on_hit, on_impact=on_impact, metadata=metadata)
+
+    def _deflect_projectile(self, projectiles, row, target):
+        hook = getattr(self, "projectile_deflector", None)
+        if hook is None:
+            return False
+        try:
+            return bool(hook(projectiles, row, target))
+        except Exception:
+            import traceback
+            debug_log("Error", "projectile deflection failed:\n" + traceback.format_exc())
+            return False
+
+    @staticmethod
+    def _strike_player(logic, projectiles, i):
+        """Apply the missile's type and impact payload only after deflection."""
+        logic.trigger_runtime._apply_player_damage(
+            float(projectiles.damage[i]),
+            projectiles.metadata_of(i).get("damage_kind", "physical"),
+            source=int(projectiles.owner_id[i]), cause="projectile",
+        )
+        _on_hit, on_impact = projectiles.hooks_of(i)
+        if on_impact is not None:
+            _projectile_callback(on_impact, glm.vec3(*projectiles.pos[i].tolist()),
+                                 logic.player_runtime.player)
 
     @staticmethod
     def _strike_monster(logic, projectiles, i, monster):
@@ -474,7 +502,12 @@ class LogicCombat:
             _projectile_callback(on_hit, monster)
         else:
             damage = float(projectiles.damage[i])
-            logic.monster_ai._apply_monster_damage(monster, damage, attacker=None)
+            kind = projectiles.metadata_of(i).get("damage_kind", "physical")
+            if kind == "physical":
+                logic.monster_ai._apply_monster_damage(monster, damage, attacker=None)
+            else:
+                logic.monster_ai._apply_monster_damage(monster, damage, attacker=None,
+                                                      damage_kind=kind)
             if logic.monster_ai.monster_debug_active:
                 name = monster.properties.get('name', '?')
                 debug_log("MonsterAI", f"Projectile hit {name} for {damage} dmg")
@@ -702,9 +735,11 @@ class LogicCombat:
                 dy = py - float(player_pos[1])
                 dz = pz - float(player_pos[2])
                 if dx * dx + dy * dy + dz * dz < player_radius_sq:
+                    if self._deflect_projectile(projectiles, i, None):
+                        survivors.append(i)
+                        continue
                     damage = float(projectiles.damage[i])
-                    logic.trigger_runtime._apply_player_damage(
-                        damage, source=owner_id, cause="projectile")
+                    self._strike_player(logic, projectiles, i)
                     if logic.monster_ai.monster_debug_active:
                         debug_log(
                             "MonsterAI",
@@ -742,6 +777,9 @@ class LogicCombat:
                     break
 
             if hit_monster is not None:
+                if self._deflect_projectile(projectiles, i, hit_monster):
+                    survivors.append(i)
+                    continue
                 self._strike_monster(logic, projectiles, i, hit_monster)
                 continue
 
@@ -869,9 +907,10 @@ class LogicCombat:
                 and not logic.player_runtime.god_mode
                 and not logic.player_runtime.player_dead
             ):
+                if self._deflect_projectile(projectiles, i, None):
+                    continue
                 damage = float(projectiles.damage[i])
-                logic.trigger_runtime._apply_player_damage(
-                    damage, source=int(projectiles.owner_id[i]), cause="projectile")
+                self._strike_player(logic, projectiles, i)
                 if logic.monster_ai.monster_debug_active:
                     debug_log(
                         "MonsterAI",
@@ -890,6 +929,8 @@ class LogicCombat:
                     hit_monster = candidate
                     break
             if hit_monster is not None:
+                if self._deflect_projectile(projectiles, i, hit_monster):
+                    continue
                 self._strike_monster(logic, projectiles, i, hit_monster)
                 keep[i] = False
                 continue

@@ -23,7 +23,7 @@ class ProjectileStore:
 
     __slots__ = (
         "pos", "vel", "lifetime", "distance", "owner_id", "damage",
-        "max_dist", "tag", "hooks", "_next_tag",
+        "max_dist", "tag", "hooks", "metadata", "_next_tag",
         "_capacity", "_count",
     )
 
@@ -42,6 +42,7 @@ class ProjectileStore:
         self.tag = np.empty(self._capacity, dtype=np.int64)
         #: ``tag -> (on_hit, on_impact)`` for the live tagged projectiles.
         self.hooks = {}
+        self.metadata = {}
         self._next_tag = 1
 
     def __len__(self):
@@ -77,13 +78,14 @@ class ProjectileStore:
         )
 
     def add(self, pos, vel, owner_id, damage, lifetime, max_dist=None,
-            on_hit=None, on_impact=None):
+            on_hit=None, on_impact=None, metadata=None):
         """Add one projectile; returns its row.
 
         *max_dist* is its range (``MONSTER_PROJECTILE_MAX_DIST`` when None).
         ``on_hit(monster)``, when given, resolves a hit on a monster instead of
         the flat *damage*; ``on_impact(pos, target)`` is told where the
         projectile was consumed (*target* the monster, or None for a wall).
+        Optional *metadata* follows the same tag through compaction/ricochets.
         """
         i = self._count
         self._ensure_capacity(i + 1)
@@ -96,10 +98,12 @@ class ProjectileStore:
         self.max_dist[i] = (MONSTER_PROJECTILE_MAX_DIST if max_dist is None
                             else float(max_dist))
         tag = 0
-        if on_hit is not None or on_impact is not None:
+        if on_hit is not None or on_impact is not None or metadata:
             tag = self._next_tag
             self._next_tag += 1
             self.hooks[tag] = (on_hit, on_impact)
+            if metadata:
+                self.metadata[tag] = dict(metadata)
         self.tag[i] = tag
         self._count = i + 1
         return i
@@ -108,6 +112,16 @@ class ProjectileStore:
         """``(on_hit, on_impact)`` of the projectile in *row* (Nones if untagged)."""
         tag = int(self.tag[row])
         return self.hooks.get(tag, (None, None)) if tag else (None, None)
+
+    def metadata_of(self, row, *, create=False):
+        """Optional game payload; untagged numeric projectiles allocate none."""
+        tag = int(self.tag[row])
+        if create and not tag:
+            tag = self._next_tag
+            self._next_tag += 1
+            self.tag[row] = tag
+            self.hooks[tag] = (None, None)
+        return self.metadata.setdefault(tag, {}) if create else self.metadata.get(tag, {})
 
     def add_batch(self, positions, velocities, owners, damages, lifetimes):
         positions = np.asarray(positions, dtype=np.float32)
@@ -138,6 +152,7 @@ class ProjectileStore:
     def clear(self):
         self._count = 0
         self.hooks.clear()
+        self.metadata.clear()
 
     def compact(self, keep, pos, vel, lifetime, distance):
         keep = np.asarray(keep, dtype=np.intp)
@@ -155,6 +170,7 @@ class ProjectileStore:
             kept = set(np.take(tags, keep).tolist()) if n else set()
             for tag in [t for t in self.hooks if t not in kept]:
                 del self.hooks[tag]
+                self.metadata.pop(tag, None)
         if n:
             self.tag[:n] = np.take(self.tag[:self._count], keep)
         self._count = n

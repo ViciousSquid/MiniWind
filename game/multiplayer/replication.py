@@ -44,6 +44,8 @@ FIELDS = frozenset(
         "_bow_charge",
         "_ward_until",
         "_ward_strength",
+        "_shield_blocking",
+        "_shield_pose",
         "item_id",
         "quantity",
         "locked",
@@ -146,6 +148,8 @@ def capture(coop):
             "offhand_anim": s._offhand_anim_time,
             "cast_cooldown": s._cast_cooldown,
             "log": clean(s.game.log[-20:]),
+            "roll_log": clean(s.roll_log),
+            "dice_animation": clean(s.dice_animation) if not p.bot else None,
         }
     values = coop.party_quests.store.all()
     world = {
@@ -301,6 +305,8 @@ def apply(coop, message):
             s._offhand_anim_time = float(data.get("offhand_anim", 0.0))
             s._cast_cooldown = float(data.get("cast_cooldown", 0.0))
             s.game.log = list(data.get("log", []))
+            s.roll_log = list(data.get("roll_log", []))
+            s.dice_animation = data.get("dice_animation") if not context.bot else None
             for field in (
                 "dialogue_npc",
                 "merchant_npc",

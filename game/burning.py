@@ -83,6 +83,8 @@ class Burning:
     def landed(self, spell, pos, target=None, by=None) -> None:
         """A bolt of *spell* came down at *pos*, on *target* (None: on no one).
         *by* is who cast it (None: the player)."""
+        if target is not None and target is fio.player(self.session.logic):
+            target = PLAYER
         burn = burn_of(spell)
         if burn is None:
             return
@@ -216,7 +218,7 @@ class Burning:
         ai = getattr(s.logic, "monster_ai", None)
         if ai is not None:
             try:
-                ai._apply_monster_damage(thing, damage, attacker=by)
+                ai._apply_monster_damage(thing, damage, attacker=by, damage_kind="fire")
                 return
             except Exception:
                 pass

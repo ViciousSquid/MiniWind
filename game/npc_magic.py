@@ -216,6 +216,8 @@ def ready_hands(props) -> dict:
                 held["off"] = attack[0]
             else:
                 held["off"] = (ward + heal + attack)[0]
+    if props.get("offhand_weapon") or props.get("equipped_shield") or props.get("_torch_lit"):
+        held.pop("off", None)
     props["hand_spells"] = held
     return held
 
@@ -465,9 +467,15 @@ class NpcMagic:
             out.append((_feet(thing), WARD_KINDS.get(ward[0], WARD_KINDS["shield"]), ward[0]))
         return out
 
-    def damage_filter(self, victim, damage, _attacker=None):
-        """Fio's damage filter: a ward soaks part of each blow."""
+    def damage_filter(self, victim, damage, _attacker=None, *, damage_kind="physical"):
+        """NPC shields roll a physical save, then wards soak what remains."""
         props = getattr(victim, "properties", None)
+        if isinstance(props, dict):
+            from .rpg.blocking import npc_block
+            game = getattr(self.session, "game", None)
+            damage = npc_block(props, damage, damage_kind=damage_kind,
+                               dice=getattr(game, "dice", None),
+                               rng=getattr(self.session, "rng", None))["damage"]
         dealt = ward_soak(props, damage) if isinstance(props, dict) else damage
         bleed = getattr(self.session, "gore_npc_hit", None)
         if bleed is not None:
@@ -531,10 +539,21 @@ class NpcMagic:
 
     def _fizzles(self, thing, spell) -> bool:
         """Roll *thing*'s cast of *spell* (its magicka already spent); True,
-        and "*fizzled*" over its head, when it came to nothing. A session
-        with no ``rng`` rolls nothing: every cast works."""
+        and "*fizzled*" over its head, when it came to nothing. Real sessions
+        put the caster's roll in the log without animating player dice."""
         rng = getattr(self.session, "rng", None)
-        if rng is None or rng.random() < cast_chance(thing.properties, spell):
+        dice = getattr(getattr(self.session, "game", None), "dice", None)
+        chance = cast_chance(thing.properties, spell)
+        if dice is not None:
+            from .diceroll import roll_check
+            name = thing.properties.get("display_name") or thing.properties.get("name") or "NPC"
+            success = roll_check(
+                dice, chance, f"{name} casts {spell.name}", source="npc.cast",
+                why=f"Casting chance {chance:.0%}", context={"quiet": True, "npc": True},
+            )["success"]
+        else:
+            success = rng is None or rng.random() < chance
+        if success:
             return False
         thing.properties["_attack_anim"] = 0.2
         self._journal(thing)
@@ -567,7 +586,8 @@ class NpcMagic:
             if coop is not None and victim.properties.get("multiplayer_player"):
                 return coop.damage(victim.properties["player_id"],dmg,spell.element or "magic",caster,"projectile")
             if ai is not None:
-                ai._apply_monster_damage(victim, dmg, attacker=caster)
+                ai._apply_monster_damage(victim, dmg, attacker=caster,
+                                         damage_kind=spell.element or "magic")
 
         # A bolt that burns (Flare) sets alight what it strikes, or the ground
         # where it lands (game/burning.py); the player, hit by it, is set
@@ -583,7 +603,8 @@ class NpcMagic:
         row = fio.spawn_projectile(logic, start, vel, lifetime=SPELL_MAX_RANGE / speed,
                                    damage=damage, owner_id=id(thing),
                                    max_dist=SPELL_MAX_RANGE, on_hit=_on_hit,
-                                   on_impact=on_impact)
+                                   on_impact=on_impact,
+                                   metadata={"damage_kind": spell.element or "magic", "spell": spell})
         attach = getattr(session, "_attach_bolt_light", None)
         if row is not None and attach is not None:
             attach(row, start, SimpleNamespace(

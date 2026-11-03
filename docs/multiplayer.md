@@ -70,6 +70,26 @@ the companion. The **Overview** shows **Companion personality**, including the
 traits and preferences driving its decisions, healing and fallback habits,
 typical reaction time and current task. Inspecting does not reroll its traits.
 
+NPCs and companions with an available shield raise it during combat. Each
+physical hit against a raised block makes a **d20 saving throw**, using Block,
+Endurance and current stamina. Success reduces the hit; failure gives no block
+reduction. A bow, torch or spell occupying that hand prevents shield use.
+Spell and fire damage do not trigger a shield save. Companions put their
+shields back on when changing from a bow to a one-handed weapon.
+
+With **Luck 60 or more**, a blocking shield bearer also has a rare chance to
+ricochet an incoming arrow or spell bolt from the front. This is a separate
+**2d20 Luck save**: about **0.25%** at Luck 60, up to **5.25%** at Luck 100.
+Success bounces the actual missile away before damage or burning effects;
+it keeps flying and can hit another actor, including the original shooter.
+Ordinary shield block saves still apply to physical hits when the Luck save
+fails. The character sheet's Fortune page shows the current ricochet chance.
+
+Only human characters' own rolls animate, when dice animations are enabled.
+NPC and companion rolls, including shield saves and NPC casting checks, appear
+in the rolling log without replacing the player's roll. Multiplayer clients
+receive the log and their character's dice animation from the host.
+
 The host can enable **Respawn at village** in the lobby before starting.
 After three seconds downed, an AI companion respawns at the map's starting
 location with restored health, stamina and magicka, then follows the road
