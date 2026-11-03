@@ -183,6 +183,7 @@ class SpatialGrid:
 
     def __init__(self, cell_size=CELL_SIZE):
         self.cell_size = cell_size
+        self.navigation_revision = 0
         self._index = CellIndex(cell_size)
         self.cells = self._index.cells
         self._all_solid = []          # flat list kept for ray queries that span many cells
@@ -193,6 +194,7 @@ class SpatialGrid:
         self._cell_rows = _EMPTY_CELL_ROWS
 
     def clear(self):
+        self.navigation_revision += 1
         self.cells.clear()
         self._all_solid.clear()
         self.water_brushes.clear()
@@ -308,6 +310,7 @@ class SpatialGrid:
 
         self._los_rows = self._build_los_rows()
         self._cell_rows = _CellRows(self.cells)
+        self.navigation_revision += 1
 
     # ------------------------------------------------------------------
     # Player queries  (unchanged API)
@@ -1844,3 +1847,4 @@ def world_gravity(world=None):
     if world is not None:
         return float(world.gravity)
     return float(PhysicsWorld.GRAVITY)
+

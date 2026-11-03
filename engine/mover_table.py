@@ -185,6 +185,7 @@ class _Group:
     # -- rows ----------------------------------------------------------------
 
     def _build(self, entries):
+        self.position_revision = getattr(self, 'position_revision', 0) + 1
         n = len(entries)
         self.index = [i for i, _ in entries]
         self.brushes = [brush for _, brush in entries]
@@ -237,6 +238,8 @@ class _Group:
     def resync(self, row):
         """Copy row *row*'s brush parameters and position into the columns."""
         brush = self.brushes[row]
+        if np.any(self.pos[row] != brush['pos']):
+            self.position_revision += 1
         self.pos[row] = brush['pos']
         original = brush.get('original_pos')
         if original is not None:
@@ -333,11 +336,15 @@ class _Group:
 
     def _store(self, rows, values):
         """The mirror of ``brush['pos']``, kept for both groups a brush is in."""
+        if np.any(self.pos[rows] != values):
+            self.position_revision += 1
         self.pos[rows] = values
         twins = self.twin_row[rows]
         shared = twins >= 0
         if shared.any():
             mirror = self.twin.pos          # an array, not an entity
+            if np.any(mirror[twins[shared]] != np.asarray(values)[shared]):
+                self.twin.position_revision += 1
             mirror[twins[shared]] = np.asarray(values)[shared]
 
     def _carry(self, player, row, new):
@@ -896,3 +903,4 @@ class MoverTable:
             table.rot[mover_slots] = rot
         if len(door_rows):
             table.bounds[door_slots, :3] = doors.pos[door_rows]
+

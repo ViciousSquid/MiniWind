@@ -59,7 +59,7 @@ _NEIGHBOURS = ((1, 0, 1.0), (-1, 0, 1.0), (0, 1, 1.0), (0, -1, 1.0),
 
 
 class _Route:
-    __slots__ = ("points", "goal", "made", "layer", "index", "checked", "origin")
+    __slots__ = ("points", "goal", "made", "layer", "index", "checked", "origin", "revision")
 
     def __init__(self, points, goal, made, layer, origin):
         self.points = points
@@ -69,6 +69,7 @@ class _Route:
         self.index = 0
         self.checked = made
         self.origin = origin
+        self.revision = None
 
 
 class _SearchStats:
@@ -94,11 +95,15 @@ class Navigator:
     inside a wall. *clock* is the time source (seconds), swappable in tests.
     Enable *track_stats* to measure each NPC's search frequency with
     :meth:`search_stats`; counters are otherwise disabled.
+    *revision*, when supplied, returns an equality-comparable collision token.
+    A changed token refreshes occupancy and validates retained routes before use.
     """
 
-    def __init__(self, blocked, clock=time.monotonic, *, track_stats=False):
+    def __init__(self, blocked, clock=time.monotonic, *, track_stats=False, revision=None):
         self._blocked = blocked
         self._clock = clock
+        self._revision_source = revision
+        self._revision = object()
         self._cells = {}
         self._cells_since = clock()
         self._routes = {}
@@ -110,6 +115,25 @@ class Navigator:
         self._debug = {}
 
     # -- the grid ----------------------------------------------------------------
+    def invalidate(self, *, routes=True):
+        """Discard decisions derived from an obsolete collision world."""
+        self._cells.clear()
+        if routes:
+            self._routes.clear()
+        self._clear.clear()
+        self._failed.clear()
+        self._debug.clear()
+
+    def _sync_revision(self):
+        if self._revision_source is None:
+            return
+        revision = self._revision_source()
+        if revision != self._revision:
+            # A moving door must not force every unrelated walker to run A*.
+            # Existing routes are validated lazily against the new occupancy.
+            self.invalidate(routes=False)
+            self._revision = revision
+
     def _cell_blocked(self, cx, cz, y) -> bool:
         key = (cx, cz, int(y // 64.0))
         hit = self._cells.get(key)
@@ -122,6 +146,7 @@ class Navigator:
         return hit
 
     def _age_cells(self, now) -> None:
+        self._sync_revision()
         if now - self._cells_since > CELL_MEMORY_SECONDS or len(self._cells) > 200000:
             self._cells.clear()
             self._cells_since = now
@@ -134,6 +159,7 @@ class Navigator:
         at fixed distances can miss a cell clipped by the line, or let smoothing
         undo the search's diagonal corner checks.
         """
+        self._sync_revision()
         dx, dz = x1 - x0, z1 - z0
         length = math.hypot(dx, dz)
         if length < 1e-6:
@@ -177,6 +203,7 @@ class Navigator:
         """Corner points ``[(x, z), ...]`` of a route from *start* to *goal*
         (each ``(x, z)``) for a body at height *y*, ending at the goal; or
         None when there is no way within the search's reach."""
+        self._sync_revision()
         sx, sz = int(math.floor(start[0] / CELL)), int(math.floor(start[1] / CELL))
         gx, gz = int(math.floor(goal[0] / CELL)), int(math.floor(goal[1] / CELL))
         lo_x = min(sx, gx) - int(SEARCH_MARGIN / CELL)
@@ -334,6 +361,16 @@ class Navigator:
         route = self._routes.get(key)
         reason = "missing"
         if route is not None:
+            if route.revision != self._revision:
+                route.revision = self._revision
+                if self._goal_clear(key, x, z, gx, gz, y, origin, now):
+                    self._routes.pop(key, None)
+                    return goal
+                if not self.line_clear(x, z, *route.points[route.index], y):
+                    route = None
+                    self._routes.pop(key, None)
+                    reason = "obstacle_changed"
+        if route is not None:
             if route.layer != layer:
                 reason = "height"
             elif math.hypot(gx - route.goal[0], gz - route.goal[1]) > ROUTE_GOAL_SLACK:
@@ -378,6 +415,7 @@ class Navigator:
                 return goal               # nowhere better to go: as before
             self._failed.pop(key, None)
             route = self._routes[key] = _Route(points, (gx, gz), now, layer, origin)
+            route.revision = self._revision
             self._clear.pop(key, None)
         # On to the next corner once it can be walked to straight from here:
         # never on mere nearness, which cuts across the end of a wall.
@@ -487,3 +525,4 @@ class Navigator:
             self._remember_debug(id(thing), start, target, wp, now)
             out.append(None if wp is target else wp)
         return out
+

@@ -65,6 +65,74 @@ def test_new_target_cell_invalidates_a_cached_clear_answer():
     assert nav.steer("npc", (24, 0, 24), target) != target
 
 
+def test_collision_revision_observes_a_closing_passage_immediately():
+    state = {"closed": False, "revision": 0}
+    clock = Clock()
+    nav = Navigator(lambda x, y, z: state["closed"] and 48 <= x < 96,
+                    clock, revision=lambda: state["revision"])
+    start, goal = (24, 0, 24), (168, 0, 24)
+    assert nav.steer("npc", start, goal) == goal
+    state.update(closed=True, revision=1)
+    # Perception uses line_clear directly, without a steer call in between.
+    assert not nav.line_clear(24, 24, 168, 24, 0)
+    assert nav._clear == {}
+
+
+def test_collision_revision_retries_a_newly_open_passage_without_waiting():
+    state = {"closed": True, "revision": 0}
+    nav = CountingNavigator(lambda x, y, z: state["closed"] and enclosed(x, y, z), Clock())
+    nav._revision_source = lambda: state["revision"]
+    start, goal = (24, 0, 24), (1000, 0, 1000)
+    nav.steer("npc", start, goal)
+    assert nav._failed
+    state.update(closed=False, revision=1)
+    assert nav.steer("npc", start, goal) == goal
+    assert not nav._failed
+
+
+def test_moving_unrelated_obstacles_preserves_a_valid_route():
+    revision = [0]
+    clock = Clock()
+    nav = CountingNavigator(lambda x, y, z: -400 < x < 400 and 200 < z < 260, clock)
+    nav._revision_source = lambda: revision[0]
+    start, goal = (24, 0, 24), (24, 0, 1000)
+    waypoint = nav.steer("npc", start, goal)
+    assert nav.has_route("npc")
+    for tick in range(1, 15):
+        revision[0] += 1
+        clock.now = tick / 30
+        assert nav.steer("npc", start, goal) == waypoint
+    assert nav.search_stats()["npc"]["searches"] == 1
+
+
+def test_live_door_movement_and_grid_rebuild_reach_the_navigation_cache():
+    import numpy as np
+    from engine.mover_table import MoverTable
+    from ..runtime import MiniwindSession
+
+    door = {"pos": [72, 0, 24], "size": [48, 128, 48], "is_door": True}
+    table = MoverTable()
+    table.doors.ensure([(0, door)])
+    grid = SimpleNamespace(navigation_revision=0)
+    session = object.__new__(MiniwindSession)
+    session.logic = SimpleNamespace(
+        monster_ai=SimpleNamespace(_grid=grid),
+        mover_runtime=SimpleNamespace(_mover_table=table))
+    nav = Navigator(lambda x, y, z: abs(x - door["pos"][0]) < 24
+                    and abs(z - door["pos"][2]) < 24,
+                    Clock(), revision=session._navigation_revision)
+    assert not nav.line_clear(24, 24, 168, 24, 0)
+    table.doors._write_positions(np.array([0]), np.array([[72, 0, 240]]), None)
+    assert nav.line_clear(24, 24, 168, 24, 0)
+    revision = table.doors.position_revision
+    table.doors._write_positions(np.array([0]), np.array([[72, 0, 240]]), None)
+    assert table.doors.position_revision == revision
+    # Static geometry can change without moving a door.
+    door["pos"] = [72, 0, 24]
+    grid.navigation_revision += 1
+    assert not nav.line_clear(24, 24, 168, 24, 0)
+
+
 @pytest.mark.parametrize("start,end", [((24, 24), (72, 72)), ((72, 72), (24, 24))])
 def test_visibility_cannot_squeeze_diagonally_past_a_solid_corner(start, end):
     nav = Navigator(lambda x, y, z: math.floor(x / CELL) == 1 and math.floor(z / CELL) == 0)
@@ -223,3 +291,4 @@ def test_generated_routes_keep_every_smoothed_segment_walkable():
         assert path and path[-1] == goal, seed
         for a, b in zip([start, *path], path):
             assert nav.line_clear(*a, *b, 0), (seed, a, b)
+

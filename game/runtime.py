@@ -779,7 +779,7 @@ class MiniwindSession(SettlementLaw):
         self._grounded = {}
         #: Routes round walls for every walker (game/navigation.py).
         from .navigation import Navigator
-        self.nav = Navigator(self._blocked_by_wall)
+        self.nav = Navigator(self._blocked_by_wall, revision=self._navigation_revision)
         #: The map's ROAD_* nodes as a prebuilt navigation graph
         #: (game/road_nav.py), rebuilt only when the roads change; and each
         #: walker's current road leg, by id.
@@ -6556,6 +6556,16 @@ class MiniwindSession(SettlementLaw):
                     t.pos = [pos[0], y, pos[2]]
                 seen[key] = (x, z, y, half)
 
+    def _navigation_revision(self):
+        """Static grid and moving-obstacle revisions, without a brush scan."""
+        ai = getattr(self.logic, 'monster_ai', None)
+        grid = getattr(ai, '_grid', None)
+        runtime = getattr(self.logic, 'mover_runtime', None)
+        table = getattr(runtime, '_mover_table', None)
+        groups = () if table is None else (table.movers, table.doors)
+        return (id(grid), getattr(grid, 'navigation_revision', 0),
+                tuple((g.version, g.position_revision) for g in groups))
+
     def _blocked_by_wall(self, x, y, z) -> bool:
         """Whether an NPC-sized body at (x, y, z) would be inside a solid brush.
 
@@ -10107,3 +10117,4 @@ class MiniwindSession(SettlementLaw):
             self.head_registry.reload()  # a loaded save may replace the store
             self._ensure_player_head()
             self._assign_npc_heads()
+
