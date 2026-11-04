@@ -88,6 +88,12 @@ class EditorState:
         #: run, because save_state() is reachable during construction.
         self._render_dirty_lock = threading.RLock()
         self.world_epoch = 0
+        #: ``(path, mtime_ns, size)`` of the map file the scene was freshly
+        #: loaded from, while it is still exactly that file's contents (set by
+        #: the main window after a load; cleared by any edit and when Play
+        #: ends). Lets Play start reuse work derived from the file alone,
+        #: such as Big World's pristine base world.
+        self.play_source = None
         # Object ids whose render-facing cold columns changed in the current
         # editor transaction. _render_dirty_all is used for reload/undo,
         # where the object identities themselves are replaced.
@@ -575,6 +581,16 @@ class EditorState:
         stream = self.editor_stream
         if stream is None or stream.suspended:
             return
+        if stream.whole_world:
+            # Every record is already a live object (set_editor_whole_world
+            # materialised them and nothing streams while the whole world is
+            # shown), so the live objects are the truth. Merging them back and
+            # rebuilding the same lists would serialise and copy the entire
+            # world for nothing; the merge that leaving Play runs before
+            # streaming again commits them all the same.
+            stream.suspended = True
+            stream.remember_resident(self)
+            return
         stream.merge(self._serialize_brushes(), [t.to_dict() for t in self.things])
         all_data = stream.all_data()
         brushes = {b['id']: b for b in self.brushes}
@@ -724,7 +740,7 @@ class EditorState:
         validate_level(level_data)
 
     def load_from_data(self, level_data, *, yield_hook=None, save_undo=True,
-                       validated=False, stream_editor=False):
+                       validated=False, stream_editor=False, owned=False):
         """Populates the scene from a dictionary.
 
         ``yield_hook`` is an optional cooperative callback used by long-running
@@ -747,7 +763,10 @@ class EditorState:
                 .replace('_', '').lower() == 'bigworldsettings'
                 for r in level_data.get('things', [])):
             from plugins.bigworld.editor_streaming import EditorCellStream
-            stream = EditorCellStream.for_level(level_data)
+            # *owned*: the caller parsed *level_data* for this load and keeps
+            # no other use of its records, so the stream may adopt them
+            # rather than copy the whole map.
+            stream = EditorCellStream.for_level(level_data, adopt=owned)
         local = stream.local_data() if stream is not None else level_data
         brushes_data = local.get('brushes') or []
         things_data = local.get('things') or []
@@ -970,6 +989,7 @@ class EditorState:
         capture the live scene itself — see the note there.
         """
         selected = tuple(self.selected_objects)
+        self.play_source = None          # an edit: no longer the file as loaded
         self.mark_world_changed(selected)
         # A checkpoint is taken *before* the operation changes anything, so a
         # render frame prepared in between consumes the journal entry while the
@@ -1053,7 +1073,7 @@ class EditorState:
         stream = None
         if 'editor_camera' in state:
             from plugins.bigworld.editor_streaming import EditorCellStream
-            stream = EditorCellStream.for_level(state, state['editor_camera'])
+            stream = EditorCellStream.for_level(state, state['editor_camera'], adopt=True)
             if stream is not None:
                 pinned = [entry[2] for entry in state.get('selection', [])
                           if isinstance(entry, (list, tuple)) and len(entry) > 2]

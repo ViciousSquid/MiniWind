@@ -60,9 +60,13 @@ def _magenta_hue_fraction(image):
 
 def _open(fio_session, **kwargs):
     session = fio_session(_level(), **kwargs)
-    # SysMon is host HUD with a throttled stats cache; it is not what these
-    # frames compare.
+    # SysMon and the FPS readout are host HUD whose numbers depend on how
+    # long the swap took; they are not what these frames compare.
     session.view.sysmon.set_active(False)
+    config = session.window.config
+    if not config.has_section('Display'):
+        config.add_section('Display')
+    config.set('Display', 'show_fps', 'False')
     return session
 
 

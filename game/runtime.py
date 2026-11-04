@@ -19,6 +19,7 @@ from __future__ import annotations
 import collections
 import contextlib
 import copy
+import functools
 import json
 import math
 import threading
@@ -629,6 +630,13 @@ class StateStore:
         except Exception:
             pass
 
+
+
+@functools.lru_cache(maxsize=65536)
+def _slug_text(text: str) -> str:
+    """``MiniwindSession._slug``: memoised, as every Play start slugs the
+    same few thousand names again."""
+    return "".join(ch.lower() if ch.isalnum() else "_" for ch in text).strip("_")
 
 class MiniwindSession(SettlementLaw):
     """Owns the clock, the player character, NPC AI and dialogue state."""
@@ -2798,8 +2806,7 @@ class MiniwindSession(SettlementLaw):
 
     @staticmethod
     def _slug(text) -> str:
-        return "".join(ch.lower() if ch.isalnum() else "_"
-                       for ch in str(text)).strip("_")
+        return _slug_text(str(text))
 
     @staticmethod
     def _thing_id(thing) -> str:

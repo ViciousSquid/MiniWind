@@ -41,10 +41,11 @@ day is up.
 
 from __future__ import annotations
 
-import copy
 import json
 import math
 from typing import Dict, Optional
+
+from engine.data_copy import data_copy
 
 from . import fio
 
@@ -76,7 +77,7 @@ def _hours(clock) -> float:
 
 
 def _kit(props) -> Dict:
-    return {k: copy.deepcopy(props[k]) for k in KIT_FIELDS if k in props}
+    return {k: data_copy(props[k]) for k in KIT_FIELDS if k in props}
 
 
 def _restore_kit(props, kit) -> None:
@@ -86,14 +87,14 @@ def _restore_kit(props, kit) -> None:
         return
     for k in KIT_FIELDS:
         if k in kit:
-            props[k] = copy.deepcopy(kit[k])
+            props[k] = data_copy(kit[k])
         else:
             props.pop(k, None)
 
 
 def _clean_props(props) -> Dict:
     """Authored properties, without the runtime's scratch (``_...``) state."""
-    return {k: copy.deepcopy(v) for k, v in props.items() if not str(k).startswith("_")}
+    return {k: data_copy(v) for k, v in props.items() if not str(k).startswith("_")}
 
 
 class MapMemory:
@@ -193,7 +194,7 @@ class MapMemory:
                 from .flour_supply import MEMORY_FIELDS
                 for field in MEMORY_FIELDS:
                     if field in supply.get("props", {}):
-                        p[field] = copy.deepcopy(supply["props"][field])
+                        p[field] = data_copy(supply["props"][field])
                     else:
                         p.pop(field, None)
                 if supply.get("pos") is not None:
@@ -241,13 +242,13 @@ class MapMemory:
             elif kind == "container" or p.get("windmill"):
                 cid = str(p.get("id"))
                 if cid in conts:
-                    p["inventory"] = copy.deepcopy(conts[cid])
+                    p["inventory"] = data_copy(conts[cid])
                     changed = True
                 lock = self.record["locks"].get(cid)
                 if isinstance(lock, dict):
                     for field in ("locked", "lock_jammed", "lockpick_state"):
                         if field in lock:
-                            p[field] = copy.deepcopy(lock[field])
+                            p[field] = data_copy(lock[field])
                         else:
                             p.pop(field, None)
                     changed = True
@@ -310,7 +311,7 @@ class MapMemory:
             props, pos = orig
             if ppos is not None and math.hypot(pos[0] - ppos[0], pos[2] - ppos[2]) < HIDDEN_DISTANCE:
                 continue
-            fresh = copy.deepcopy(props)
+            fresh = data_copy(props)
             fresh["dead"] = False
             fresh["hidden"] = False
             if fresh.get("max_health"):
@@ -376,7 +377,7 @@ class MapMemory:
             if cid:
                 self.record["containers"][cid] = t.properties.get("inventory") or []
                 self.record["locks"][cid] = {
-                    field: copy.deepcopy(t.properties[field])
+                    field: data_copy(t.properties[field])
                     for field in ("locked", "lock_jammed", "lockpick_state")
                     if field in t.properties}
         # A searched corpse keeps what is left on it; a raised follower what
@@ -388,7 +389,7 @@ class MapMemory:
                     or p.get("flour_runner") or p.get("flour_job") or p.get("windmill"))):
                 from .flour_supply import MEMORY_FIELDS
                 self.record["supply"][self.actor_key(t)] = {
-                    "props": {k: copy.deepcopy(p[k]) for k in MEMORY_FIELDS if k in p},
+                    "props": {k: data_copy(p[k]) for k in MEMORY_FIELDS if k in p},
                     "pos": list(t.pos)}
             if _kind(t) not in ACTOR_TYPES:
                 continue

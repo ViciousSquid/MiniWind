@@ -3327,12 +3327,21 @@ class Terrain:
         self.sculpt_offsets = {}
         self._touch_sculpt()
         self.sculpt_grid_resolution = data.get('sculpt_grid_resolution', 4.0)
-        for entry in data.get('sculpt_offsets', []):
-            try:
-                gx, gz, val = entry
-                self.sculpt_offsets[(int(gx), int(gz))] = float(val)
-            except (TypeError, ValueError):
-                continue
+        entries = data.get('sculpt_offsets', [])
+        try:
+            # One comprehension: the shipped world has two thirds of a million
+            # offsets, and a try per entry was most of loading its terrain.
+            self.sculpt_offsets = {(int(gx), int(gz)): float(val)
+                                   for gx, gz, val in entries}
+        except (TypeError, ValueError):
+            # A malformed entry somewhere: skip just the bad ones, as before.
+            self.sculpt_offsets = {}
+            for entry in entries:
+                try:
+                    gx, gz, val = entry
+                    self.sculpt_offsets[(int(gx), int(gz))] = float(val)
+                except (TypeError, ValueError):
+                    continue
 
         # Terrain CSG cutters
         self.csg_subtractions = []

@@ -40,7 +40,18 @@ class DebugLogger(QObject):
         self._buffer = deque(maxlen=1000)  # Keep last 1000 messages
 
     def log(self, category: str, message: str):
-        """Log a message with a category tag."""
+        """Log a message with a category tag.
+
+        Every line also goes to :mod:`engine.error_report`: errors (an error
+        category, or any line carrying a traceback) are written to the log
+        file and shown on screen even while the console itself is disabled or
+        hidden, as it is in the game.
+        """
+        try:
+            from engine.error_report import from_debug_console
+            from_debug_console(category, message)
+        except Exception:
+            pass
         if not self._enabled:
             return
 
@@ -110,7 +121,9 @@ def install_excepthook():
             sys.__excepthook__(exc_type, exc, tb)
             return
         text = "".join(traceback.format_exception(exc_type, exc, tb))
-        sys.stderr.write(text)
+        # The raw console stream: the log file and the screen get this error
+        # from the Debug Console line below, not a second time from stderr.
+        getattr(sys.stderr, "raw_stream", sys.stderr).write(text)
         try:
             debug_log("Error", "Unhandled exception:\n" + text)
         except Exception:

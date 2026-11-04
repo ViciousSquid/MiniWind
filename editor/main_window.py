@@ -1,5 +1,6 @@
 import sys
 import io
+import functools
 import json
 import os
 import subprocess
@@ -150,6 +151,43 @@ def _loading_step(window, stage, percent=None):
     if overlay is not None and overlay.active:
         overlay.step(stage, percent)
 
+
+
+def _gc_paused_load(load):
+    """Run a level load with the cyclic garbage collector paused.
+
+    See :mod:`engine.gc_control`: collecting in the middle of building a
+    world of a million objects walked them all, repeatedly.
+    """
+    @functools.wraps(load)
+    def paused(self, *args, **kwargs):
+        from engine import gc_control
+        with gc_control.level_load() as policy:
+            result = load(self, *args, **kwargs)
+            try:
+                policy.objects = len(self.state.brushes) + len(self.state.things)
+            except Exception:
+                policy.objects = None
+            return result
+    return paused
+
+
+def _file_identity(path):
+    """``(real path, mtime_ns, size)`` of *path*, or None if it cannot be read."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (os.path.realpath(path), st.st_mtime_ns, st.st_size)
+
+
+class _SavedLevelFile:
+    """A pre-Play world held as the saved file it is identical to."""
+
+    __slots__ = ('path',)
+
+    def __init__(self, path):
+        self.path = path
 
 
 def _read_level_json(path):
@@ -347,6 +385,33 @@ class MainWindow(QMainWindow):
         # Show startup tooltip after window is shown
         QTimer.singleShot(1500, self._show_startup_tooltip)
         
+        # Errors reported on any thread (engine/error_report.py) reach the
+        # screen from here: a banner over the 3D view (the game's whole
+        # screen in kiosk mode), and an error toast in the editor.
+        self.error_notice_timer = QTimer(self)
+        self.error_notice_timer.timeout.connect(self._show_error_notices)
+        self.error_notice_timer.start(250)
+
+        # A logic thread that stops ticking while this window still runs is a
+        # freeze (a deadlock, an endless loop): the watchdog writes every
+        # thread's stack to the log and puts it on screen. It holds the
+        # window weakly, so closing the window still frees it.
+        from engine.freeze_watchdog import FreezeWatchdog
+        import weakref
+        window_ref = weakref.ref(self)
+
+        def logic_serial():
+            window = window_ref()
+            view = getattr(window, 'view_3d', None) if window is not None else None
+            logic = getattr(view, 'logic_thread', None) if view is not None else None
+            if (logic is None or not view.play_mode or not getattr(logic, 'running', False)
+                    or not logic.is_alive()):
+                return None
+            return logic._simulation_serial
+
+        self.freeze_watchdog = FreezeWatchdog(logic_serial)
+        self.freeze_watchdog.start()
+
         # Autosave Timer
         self.autosave_timer = QTimer(self)
         self.autosave_timer.timeout.connect(self.autosave)
@@ -959,6 +1024,27 @@ class MainWindow(QMainWindow):
                 # Ensure it is raised if tabbed or floating
                 self.asset_browser_dock.raise_()
 
+
+    def _show_error_notices(self):
+        """Put errors reported since the last call on screen.
+
+        Runs on the UI thread every 250 ms, so it is also the freeze
+        watchdog's proof that the UI is alive.
+        """
+        watchdog = getattr(self, 'freeze_watchdog', None)
+        if watchdog is not None:
+            watchdog.ui_beat()
+        from engine.error_report import take_notices
+        notices = take_notices()
+        if not notices:
+            return
+        view = getattr(self, 'view_3d', None)
+        for notice in notices:
+            text = notice.text()
+            if view is not None:
+                view.show_error_notice(text)
+        if view is None or not view.play_mode:
+            self.show_toast(notices[-1].message, is_error=True, duration=8000)
 
     def show_toast(self, message, is_error=False, duration=None):
         """Displays a notification"""
@@ -2569,12 +2655,31 @@ class MainWindow(QMainWindow):
         if not self.config.getboolean('Settings', 'restore_world_on_stop',
                                       fallback=False):
             return
+        world = self._saved_level_file()
+        if world is None:
+            world = self.state.snapshot()
         self._pre_play_world = (
-            self.state.snapshot(),
+            world,
             list(self.state.undo_stack),
             list(self.state.redo_stack),
             self.unsaved_changes,
         )
+
+    def _saved_level_file(self):
+        """The open level as a file on disk, when the scene is exactly that file.
+
+        With no unsaved changes the scene is what its file holds, so the world
+        as Play starts can be put back by reading the file again instead of
+        snapshotting it: on the shipped world map the snapshot serialised and
+        copied every brush and entity on every Play start and level change.
+        ``None`` when the scene has edits, came from no file, or from a
+        played package (whose extracted copy may go away).
+        """
+        path = self.file_path
+        if (not path or self.unsaved_changes or self._package_level_dir
+                or not os.path.isfile(path)):
+            return None
+        return _SavedLevelFile(path)
 
     def _restore_pre_play_world(self):
         """Put back the world captured by :meth:`_capture_pre_play_world`.
@@ -2589,7 +2694,11 @@ class MainWindow(QMainWindow):
         if captured is None:
             return
         world, undo, redo, unsaved = captured
-        self.state.restore_state(world)
+        if isinstance(world, _SavedLevelFile):
+            if not self._reload_saved_level(world):
+                return
+        else:
+            self.state.restore_state(world)
         self.state.undo_stack.clear()
         self.state.undo_stack.extend(undo)
         self.state.redo_stack = redo
@@ -2597,6 +2706,19 @@ class MainWindow(QMainWindow):
         self.unsaved_changes = unsaved
         self.update_title()
         self.update_all_ui()
+
+    def _reload_saved_level(self, saved):
+        """Put the scene back to *saved*'s file, keeping the editor camera."""
+        position = self.view_3d.camera.pos
+        try:
+            self._apply_level_data(_read_level_json(saved.path), owned=True)
+        except Exception as exc:
+            from engine.error_report import report_error
+            report_error("Could not restore the world from %s" % saved.path, exc)
+            return False
+        self.file_path = saved.path
+        self.state.stream_editor_camera(position, force=True)
+        return True
 
     def _game_modal_wants_escape(self):
         """True when the running game will close something on Escape.
@@ -2617,7 +2739,13 @@ class MainWindow(QMainWindow):
             return False
 
     def _exit_play_mode(self):
-        """Exit play mode and return to editor."""
+        """Exit play mode and return to editor.
+
+        While ``_replacing_level`` is set a level change is about to replace
+        the scene, so the outgoing map is not streamed back in around the
+        editor camera only to be thrown away at once.
+        """
+        replacing_level = getattr(self, '_replacing_level', False)
         play_menu = self.view_3d.play_menu
         if play_menu is not None and play_menu.active:
             play_menu.close()
@@ -2625,8 +2753,12 @@ class MainWindow(QMainWindow):
             self.view_3d.toggle_play_mode()
             self.view_3d.play_mode = False  # Force state change before UI update
             self._restore_pre_play_world()
+            # Play changed the scene (dead monsters, taken items) unless the
+            # restore above put a file back; either way it is not the file as
+            # loaded any more.
+            self.state.play_source = None
             stream = self.state.editor_stream
-            if stream is not None and stream.suspended:
+            if stream is not None and stream.suspended and not replacing_level:
                 stream.suspended = False
                 self.state.stream_editor_camera(self.view_3d.camera.pos, force=True)
 
@@ -4514,7 +4646,7 @@ class MainWindow(QMainWindow):
         if filePath:
             self.load_level_file(filePath)
 
-    def _apply_level_data(self, level_data, *, validated=False):
+    def _apply_level_data(self, level_data, *, validated=False, owned=False):
         """Replace the scene with *level_data*, terrain included.
 
         The one place a parsed map becomes the editor's scene: opening a file,
@@ -4527,7 +4659,8 @@ class MainWindow(QMainWindow):
         # dirty), so a malformed map or one that fails to parse leaves the open
         # level as it was. Clearing first emptied the scene for any map that
         # got past the shape check.
-        self.state.load_from_data(level_data, validated=validated, stream_editor=True)
+        self.state.load_from_data(level_data, validated=validated, stream_editor=True,
+                                  owned=owned)
         self.state.set_editor_whole_world(
             self.config.getboolean('Display', 'show_whole_world', fallback=True),
             self.view_3d.camera.pos)
@@ -4595,6 +4728,7 @@ class MainWindow(QMainWindow):
             return None
         return candidate if os.path.isfile(candidate) else None
 
+    @_gc_paused_load
     def _load_package_map(self, map_path, destination_spawn=None, from_game=False):
         """Open a map from the extracted package as an untitled, saved level.
 
@@ -4610,12 +4744,14 @@ class MainWindow(QMainWindow):
                 print(f"ERROR loading level {map_path}: {e}")
                 self.show_toast(f"Failed to load level: {e}", is_error=True)
                 return False
-            if not self._load_level(level_data, None, destination_spawn, from_game):
+            if not self._load_level(level_data, None, destination_spawn, from_game,
+                                    owned=True):
                 return False
         self.unsaved_changes = False
         self.update_title()
         return True
 
+    @_gc_paused_load
     def load_level_file(self, filePath, destination_spawn=None, from_game=False):
         """Loads a level from disk. Used for both normal loading and LevelChanger.
 
@@ -4634,7 +4770,8 @@ class MainWindow(QMainWindow):
                 print(f"ERROR loading level {filePath}: {e}")
                 self.show_toast(f"Failed to load level: {e}", is_error=True)
                 return False
-            loaded = self._load_level(level_data, filePath, destination_spawn, from_game)
+            loaded = self._load_level(level_data, filePath, destination_spawn, from_game,
+                                      owned=True)
             if loaded and not self.view_3d.play_mode:
                 # The first frame of a new map uploads it to the GPU, which
                 # is a long paint of its own: draw it under the loading bar.
@@ -4650,8 +4787,9 @@ class MainWindow(QMainWindow):
         """The window's staged loading bar (editor/loading_overlay.py)."""
         return _loading_overlay(self)
 
+    @_gc_paused_load
     def _load_level(self, level_data, file_path=None, destination_spawn=None,
-                    from_game=False):
+                    from_game=False, *, owned=False):
         """Make *level_data* the open level.
 
         *file_path* is the file it was read from, or ``None`` for a level that
@@ -4715,7 +4853,11 @@ class MainWindow(QMainWindow):
                 # The world captured at Play belongs to the map being left.
                 captured = self._pre_play_world
                 self._pre_play_world = None
-                self._exit_play_mode()
+                self._replacing_level = True
+                try:
+                    self._exit_play_mode()
+                finally:
+                    self._replacing_level = False
                 self._keep_unsaved_work_on_level_change(captured)
 
             # From here the scene is being replaced.  Until it has been, it
@@ -4728,7 +4870,7 @@ class MainWindow(QMainWindow):
             scene_replacement_started = True
             _loading_step(self, "Building the scene", 30)
             # Validated at the top, before the open level was touched.
-            self._apply_level_data(level_data, validated=True)
+            self._apply_level_data(level_data, validated=True, owned=owned)
             self.reset_camera_mode()
             _loading_step(self, "Refreshing the editor", 75)
 
@@ -4766,6 +4908,9 @@ class MainWindow(QMainWindow):
 
             # Update file path and UI state
             self.file_path = file_path
+            # The scene is now exactly this file: Play start may reuse what
+            # was derived from it before (see EditorState.play_source).
+            self.state.play_source = _file_identity(file_path) if file_path else None
             self._generated_level_marker = None
             if file_path is not None:
                 # A map opened from disk ends the package session.
@@ -5592,6 +5737,10 @@ class MainWindow(QMainWindow):
                 return
 
             # Stop timers
+            if hasattr(self, 'error_notice_timer'):
+                self.error_notice_timer.stop()
+            if getattr(self, 'freeze_watchdog', None) is not None:
+                self.freeze_watchdog.stop()
             if hasattr(self, 'tooltip_timer'):
                 self.tooltip_timer.stop()
             if hasattr(self, 'autosave_timer'):

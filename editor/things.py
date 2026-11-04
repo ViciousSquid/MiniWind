@@ -5,6 +5,7 @@ the event-driven entity communication system.
 """
 
 import copy
+from engine.data_copy import data_copy
 import os
 import math
 import uuid
@@ -326,8 +327,10 @@ class Thing:
         """Deserialize from dictionary."""
         thing_type = data.get('type')
 
-        # Untouched copy for opaque preservation of unresolvable types.
-        original_record = copy.deepcopy(data)
+        # Untouched copy for opaque preservation of unresolvable types. Only
+        # an unresolvable record needs it, so it is taken lazily -- except for
+        # a legacy model, whose properties are rewritten before resolution.
+        original_record = None
 
         if not thing_type:
             # Deliberately *not* preserved, unlike an unresolvable type token.
@@ -356,6 +359,7 @@ class Thing:
             # before that keeps what its models were -- solid scenery the
             # player does not pick up -- under whatever the record authors.
             from engine.prop_entity import legacy_model_properties
+            original_record = data_copy(data)
             properties = legacy_model_properties(properties)
             token = 'prop'
         subclasses = find_subclasses(Thing)
@@ -376,9 +380,10 @@ class Thing:
             # Keep the record opaque so it round-trips byte-for-byte.
             print(f"Warning: Unknown thing type '{thing_type}' found in map file; "
                   f"preserved unchanged (is a plugin missing or disabled?).")
-            return UnresolvedThing(original_record)
-        
-        io_data = copy.deepcopy(data.get('io_connections', []))
+            return UnresolvedThing(original_record if original_record is not None
+                                   else data_copy(data))
+
+        io_data = data_copy(data.get('io_connections', []))
         if io_data:
             try:
                 from .io_system import OutputConnection

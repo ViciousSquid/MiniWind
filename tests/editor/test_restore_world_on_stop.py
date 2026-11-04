@@ -116,3 +116,48 @@ def test_the_setting_round_trips_through_the_settings_window(qt_app):
         assert dialog.restore_world_checkbox.isChecked() is True
     finally:
         dialog.deleteLater()
+
+
+def test_a_saved_map_is_restored_from_its_file_without_a_snapshot(main_window, tmp_path,
+                                                                  monkeypatch):
+    """With nothing unsaved the scene *is* its file: Play start keeps the path,
+    not a whole-world snapshot, and Stop reads the file back."""
+    from editor import main_window as main_window_module
+    from tests.helpers import scenes
+    window = main_window
+    window.config.add_section("Settings")
+    window.config.set("Settings", "restore_world_on_stop", "true")
+    path = scenes.write(tmp_path, "arena.json", scenes.monster_arena())
+    assert window.load_level_file(path)
+    assert window.unsaved_changes is False
+
+    def no_snapshot():
+        raise AssertionError("a saved map must not be snapshotted at Play")
+
+    monkeypatch.setattr(window.state, "snapshot", no_snapshot)
+    window.enter_play_mode()
+    assert window.view_3d.play_mode
+    assert isinstance(window._pre_play_world[0], main_window_module._SavedLevelFile)
+    monster = next(t for t in window.state.things if t.properties.get("name") == "Monster_1")
+    monster.properties["dead"] = True
+    monster.pos = [900.0, 64.0, 900.0]
+    window._exit_play_mode()
+
+    monster = next(t for t in window.state.things if t.properties.get("name") == "Monster_1")
+    assert not monster.properties.get("dead")
+    assert list(monster.pos) == [320.0, 64.0, 320.0]
+    assert window.file_path == path and window.unsaved_changes is False
+
+
+def test_unsaved_edits_are_still_snapshotted(main_window, tmp_path):
+    from editor import main_window as main_window_module
+    from tests.helpers import scenes
+    window = main_window
+    window.config.add_section("Settings")
+    window.config.set("Settings", "restore_world_on_stop", "true")
+    assert window.load_level_file(scenes.write(tmp_path, "arena.json", scenes.monster_arena()))
+    window.unsaved_changes = True
+    window.enter_play_mode()
+    assert isinstance(window._pre_play_world[0], str), "unsaved work needs the snapshot"
+    assert not isinstance(window._pre_play_world[0], main_window_module._SavedLevelFile)
+    window._exit_play_mode()

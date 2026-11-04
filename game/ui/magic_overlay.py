@@ -54,7 +54,11 @@ def _halftone_masks():
 
 def prepare() -> None:
     """Build the halftone masks in the background (a resurrection's first
-    frame would otherwise wait for them)."""
+    frame would otherwise wait for them). Once built they last the whole
+    process: starting a thread on every Play start anyway blocked it until
+    the new thread was scheduled, a third of a second under load."""
+    if _HALFTONE is not None:
+        return
     import threading
     threading.Thread(target=_halftone_masks, name="halftone", daemon=True).start()
 

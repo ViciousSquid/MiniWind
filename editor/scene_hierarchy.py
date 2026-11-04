@@ -518,11 +518,23 @@ class SceneHierarchy(QWidget):
         terrain_data = self.main_window.state.terrain_data
         return terrain_data is not None
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        if getattr(self, '_refresh_deferred', False):
+            self.refresh_list()
+
     def refresh_list(self):
         # A selection signal is still using these items. Rebuilding here
         # deletes them while Qt (or a tree iterator) still holds a pointer.
         if getattr(self, '_handling_selection', False):
             return
+        # In the game (kiosk mode) the editor's docks are hidden, and a level
+        # change would rebuild one tree item per entity of the new map for
+        # nobody to see: rebuild once the panel is shown again instead.
+        if getattr(self.main_window, 'is_kiosk_mode', False) and not self.isVisible():
+            self._refresh_deferred = True
+            return
+        self._refresh_deferred = False
         self.tree.blockSignals(True)
         self.tree.clear()
         

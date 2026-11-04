@@ -5,7 +5,7 @@ brushes/entities; leaving a region writes edits back before releasing objects.
 No hidden/disabled gameplay flags are written into authored records.
 """
 
-import copy
+from engine.data_copy import data_copy
 import uuid
 from types import SimpleNamespace
 
@@ -19,7 +19,14 @@ def record_id(record, kind):
 
 
 class EditorCellStream:
-    def __init__(self, level, position):
+    def __init__(self, level, position, *, adopt=False):
+        """Index *level*'s records around *position*.
+
+        The stream keeps its own copy of every record unless *adopt* says the
+        caller hands the records over (a map parsed just for this load):
+        copying the shipped world's 18k records cost a large part of every
+        level change.
+        """
         self.position = list(position)
         self.records = {'brushes': {}, 'things': {}}
         self.resident = {'brushes': set(), 'things': set()}
@@ -29,7 +36,7 @@ class EditorCellStream:
         seen = set()
         for kind in self.records:
             for original in level.get(kind, []):
-                record = copy.deepcopy(original)
+                record = original if adopt else data_copy(original)
                 props = record if kind == 'brushes' else record.setdefault('properties', {})
                 if kind == 'things':
                     props.setdefault('type', record.get('type', ''))
@@ -51,7 +58,7 @@ class EditorCellStream:
         self.reindex()
 
     @classmethod
-    def for_level(cls, level, position=None):
+    def for_level(cls, level, position=None, *, adopt=False):
         settings = next((r for r in level.get('things', [])
                          if str(r.get('type', r.get('properties', {}).get('type', '')))
                          .replace('_', '').lower() == 'bigworldsettings'), None)
@@ -64,7 +71,7 @@ class EditorCellStream:
             from engine.player_starts import resolve_start_record
             start = resolve_start_record(level)
             position = start.get('pos', [0, 150, 400]) if start else [0, 150, 400]
-        return cls(level, position)
+        return cls(level, position, adopt=adopt)
 
     def reindex(self):
         self.order = {kind: {identity: i for i, identity in enumerate(records)}
@@ -97,7 +104,7 @@ class EditorCellStream:
             for identity in self.resident[kind] - current.keys():
                 self.records[kind].pop(identity, None)
             for identity, record in current.items():
-                self.records[kind][identity] = copy.deepcopy(record)
+                self.records[kind][identity] = data_copy(record)
             self.resident[kind] = set(current)
 
     def remember_resident(self, state):

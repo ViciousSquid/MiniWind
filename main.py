@@ -172,6 +172,16 @@ if __name__ == "__main__":
         root_directory = os.path.dirname(os.path.abspath(__file__))
 
     os.chdir(root_directory)
+
+    # Errors go to logs/miniwind.log, the console and the screen from here on
+    # (engine/error_report.py), including crashes and exceptions on any thread.
+    from engine import error_report
+    log_file = error_report.configure(os.path.join(root_directory, 'logs'))
+    print(f"       Logging to {log_file}")
+    # Each loaded world is moved out of the garbage collector's way, so play
+    # never pauses to re-walk a million static objects (engine/gc_control.py).
+    from engine import gc_control
+    gc_control.set_freeze(True)
     
     # Set the application ID for Windows taskbar (required for Windows 7+)
     if sys.platform == 'win32':
@@ -369,6 +379,14 @@ if __name__ == "__main__":
     default_map_path = os.path.join(root_directory, default_map) if default_map else ''
 
     def _open_default_map():
+        try:
+            _open_default_map_unguarded()
+        except Exception as exc:
+            # Reported on screen and in the log rather than leaving a window
+            # that never shows the game.
+            error_report.report_error("Could not start the game", exc)
+
+    def _open_default_map_unguarded():
         title = (f"Loading {os.path.splitext(os.path.basename(default_map))[0]}"
                  if default_map else "Starting the game")
         with window.loading_overlay.busy(title, "Reading the map"):
