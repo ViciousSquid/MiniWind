@@ -8,6 +8,7 @@ flag with them, so the session leaves no trace.
 
 
 import configparser
+from pathlib import Path
 
 import pytest
 
@@ -161,3 +162,50 @@ def test_unsaved_edits_are_still_snapshotted(main_window, tmp_path):
     assert isinstance(window._pre_play_world[0], str), "unsaved work needs the snapshot"
     assert not isinstance(window._pre_play_world[0], main_window_module._SavedLevelFile)
     window._exit_play_mode()
+
+
+def test_a_map_changed_on_disk_uses_the_open_scene_for_restore(main_window, tmp_path):
+    """An external save must not replace the world the user started playing."""
+    import json
+    import os
+    from tests.helpers import scenes
+
+    window = main_window
+    window.config.add_section("Settings")
+    window.config.set("Settings", "restore_world_on_stop", "true")
+    path = scenes.write(tmp_path, "arena.json", scenes.monster_arena())
+    assert window.load_level_file(path)
+    stat = os.stat(path)
+    data = json.loads(Path(path).read_text())
+    data["brushes"][0]["name"] = "changed externally"
+    replacement = tmp_path / "replacement.json"
+    replacement.write_text(json.dumps(data))
+    os.utime(replacement, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    replacement.replace(path)
+
+    expected = window.state.brushes[0]["name"]
+    window.enter_play_mode()
+    assert isinstance(window._pre_play_world[0], str), "the open scene needs a snapshot"
+    window._exit_play_mode()
+    assert window.state.brushes[0]["name"] == expected
+
+
+def test_a_map_changed_during_play_keeps_the_current_scene_and_marks_it_unsaved(main_window, tmp_path):
+    from engine import error_report
+    from tests.helpers import scenes
+
+    window = main_window
+    window.config.add_section("Settings")
+    window.config.set("Settings", "restore_world_on_stop", "true")
+    path = scenes.write(tmp_path, "arena.json", scenes.monster_arena())
+    assert window.load_level_file(path)
+    window.enter_play_mode()
+    window.state.brushes[0]["name"] = "keep this scene"
+    Path(path).write_text('{"brushes": [], "things": []}')
+    error_report.clear_notices()
+    error_report._logged.clear()
+    window._exit_play_mode()
+
+    assert window.state.brushes[0]["name"] == "keep this scene"
+    assert window.unsaved_changes is True
+    assert any("Could not restore" in n.message for n in error_report.take_notices())

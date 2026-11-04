@@ -35,6 +35,8 @@ _settings = {"freeze": False, "depth": 0}
 
 def set_freeze(enabled: bool) -> None:
     """Whether loads freeze the loaded world out of later collections."""
+    if _settings["freeze"] and not enabled:
+        gc.unfreeze()
     _settings["freeze"] = bool(enabled)
 
 

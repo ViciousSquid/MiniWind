@@ -185,11 +185,8 @@ if __name__ == "__main__":
     # (engine/error_report.py), including crashes and exceptions on any thread.
     from engine import error_report
     log_file = error_report.configure(os.path.join(root_directory, 'logs'))
-    print(f"       Logging to {log_file}")
-    # Each loaded world is moved out of the garbage collector's way, so play
-    # never pauses to re-walk a million static objects (engine/gc_control.py).
-    from engine import gc_control
-    gc_control.set_freeze(True)
+    if log_file:
+        print(f"       Logging to {log_file}")
     
     # Set the application ID for Windows taskbar (required for Windows 7+)
     if sys.platform == 'win32':
@@ -348,6 +345,11 @@ if __name__ == "__main__":
             1 if config.getboolean('Display', 'vsync', fallback=True) else 0)
         QSurfaceFormat.setDefaultFormat(fmt)
         splash.show()
+
+    # Freeze static worlds only for a game launch. The editor must still be
+    # able to collect cycles as objects are edited, removed and undone.
+    from engine import gc_control
+    gc_control.set_freeze(launch_choice == "play")
 
     splash.set_progress(25, "Building editor UI...")
 

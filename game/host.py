@@ -22,8 +22,6 @@ import json
 import math
 import time
 
-from PyQt5 import QtWidgets
-
 # Generic Fio API helpers (entity-I/O and property descriptors, the per-tick
 # context type, and key-name translation). These are engine-side utilities, not
 # the plugin lifecycle: MiniWind uses them the way any native game layer would.

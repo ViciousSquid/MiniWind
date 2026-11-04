@@ -91,6 +91,11 @@ screen. Please attach both log files to any bug report.
 `MINIWIND_LOG_LEVEL=DEBUG` also records every Debug Console line;
 `MINIWIND_LOG_DIR` moves the logs elsewhere.
 
+If the application folder is read-only, logs fall back to
+`%LOCALAPPDATA%/MiniWind/logs` on Windows, `~/Library/Logs/MiniWind` on macOS,
+or `$XDG_STATE_HOME/miniwind/logs` (default `~/.local/state/miniwind/logs`) on
+Linux. An unavailable log directory does not prevent the game from starting.
+
 ## What's in the game
 
 | System | Summary |

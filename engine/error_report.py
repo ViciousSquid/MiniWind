@@ -64,7 +64,12 @@ class Notice:
     def text(self) -> str:
         times = " (×%d)" % self.count if self.count > 1 else ""
         where = log_path()
-        hint = (" — details in %s" % os.path.relpath(where)) if where else ""
+        if where:
+            try:
+                where = os.path.relpath(where)
+            except ValueError:  # Windows paths on different drives
+                pass
+        hint = (" — details in %s" % where) if where else ""
         return "%s%s%s" % (self.message, times, hint)
 
 
@@ -297,15 +302,28 @@ def _session_header():
         return "MiniWind session"
 
 
+def _user_log_dir():
+    """A writable per-user fallback for read-only application installs."""
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
+        return os.path.join(base, "MiniWind", "logs")
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Logs/MiniWind")
+    base = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    return os.path.join(base, "miniwind", "logs")
+
+
 def configure(log_dir=None, *, level=None, console=True, tee_stderr=True,
-              hooks=True) -> str:
+              hooks=True) -> str | None:
     """Start logging to ``<log_dir>/miniwind.log``; returns the file's path.
 
     ``$MINIWIND_LOG_DIR`` overrides *log_dir*, which defaults to ``logs/``
     beside the game.
     *level* (or ``$MINIWIND_LOG_LEVEL``) sets what the file keeps: INFO by
     default, DEBUG to include every Debug Console line. Calling it again only
-    returns the path.
+    returns the path. Read-only installs fall back to the user's log directory;
+    if neither is writable, console and on-screen reporting remain available
+    and the returned path is None.
     """
     if _state["configured"]:
         return _state["log_path"]
@@ -314,16 +332,27 @@ def configure(log_dir=None, *, level=None, console=True, tee_stderr=True,
     # can always move the logs (MINIWIND_LOG_DIR).
     log_dir = os.environ.get("MINIWIND_LOG_DIR") or log_dir or os.path.join(root, "logs")
     level_name = (level or os.environ.get("MINIWIND_LOG_LEVEL") or "INFO").upper()
-    os.makedirs(log_dir, exist_ok=True)
-    path = os.path.join(log_dir, LOG_FILE)
+    handler = None
+    path = None
+    failures = []
+    for directory in dict.fromkeys((os.path.abspath(log_dir), _user_log_dir())):
+        try:
+            os.makedirs(directory, exist_ok=True)
+            candidate = os.path.join(directory, LOG_FILE)
+            handler = logging.handlers.RotatingFileHandler(
+                candidate, maxBytes=2 * 1024 * 1024, backupCount=5, encoding="utf-8")
+        except OSError as exc:
+            failures.append("%s: %s" % (directory, exc))
+            continue
+        path, log_dir = candidate, directory
+        break
 
     logger.setLevel(getattr(logging, level_name, logging.INFO))
     logger.propagate = False
-    handler = logging.handlers.RotatingFileHandler(
-        path, maxBytes=2 * 1024 * 1024, backupCount=5, encoding="utf-8")
-    handler.setFormatter(logging.Formatter(
-        "%(asctime)s %(levelname)-7s [%(threadName)s] %(message)s"))
-    logger.addHandler(handler)
+    if handler is not None:
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)-7s [%(threadName)s] %(message)s"))
+        logger.addHandler(handler)
     if console:
         stream = logging.StreamHandler(sys.__stderr__ or sys.stderr)
         stream.setLevel(logging.WARNING)
@@ -335,10 +364,17 @@ def configure(log_dir=None, *, level=None, console=True, tee_stderr=True,
     logger.info("%s", "=" * 20 + " " + _session_header() + " " + "=" * 20)
 
     if hooks:
-        _install_hooks(log_dir)
+        _install_hooks(log_dir if path else None)
     if tee_stderr and not isinstance(sys.stderr, _StderrTee) and sys.stderr is not None:
         _state["stderr"] = sys.stderr
         sys.stderr = _StderrTee(sys.stderr)
+    if failures:
+        if path:
+            report_warning("Could not use the requested log directory; logging to %s. %s"
+                           % (path, "; ".join(failures)))
+        else:
+            report_warning("Log files are unavailable; errors will still appear on screen. %s"
+                           % "; ".join(failures), show=True)
     return path
 
 
@@ -363,6 +399,8 @@ def _install_hooks(log_dir):
                          args.exc_type, args.exc_value, args.exc_traceback)))
 
     threading.excepthook = thread_hook
+    if log_dir is None:
+        return
     try:
         handle = open(os.path.join(log_dir, CRASH_FILE), "a", encoding="utf-8")
         handle.write("\n==== %s %s ====\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), _session_header()))

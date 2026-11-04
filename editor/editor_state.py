@@ -88,7 +88,7 @@ class EditorState:
         #: run, because save_state() is reachable during construction.
         self._render_dirty_lock = threading.RLock()
         self.world_epoch = 0
-        #: ``(path, mtime_ns, size)`` of the map file the scene was freshly
+        #: File version of the map the scene was freshly
         #: loaded from, while it is still exactly that file's contents (set by
         #: the main window after a load; cleared by any edit and when Play
         #: ends). Lets Play start reuse work derived from the file alone,

@@ -60,7 +60,7 @@ from engine.spatial import (PARKED_DISABLED_KEY as _DIS_MARK,
                             SIM_TIER_KEY)
 from .tiers import DEFAULT_NEAR_RADIUS, TierClassifier
 
-#: Pristine base worlds by source file ``(path, mtime_ns, size)``, most
+#: Pristine base worlds by source file version, most
 #: recently used last. Kept across level changes so the overworld's base,
 #: by far the largest, need not be rebuilt on every return from a cave.
 _BASE_CACHE: "collections.OrderedDict" = collections.OrderedDict()

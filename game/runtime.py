@@ -8169,7 +8169,6 @@ class MiniwindSession(SettlementLaw):
             self.notify(f"Armour Class {before} → {after} {arrow}", 2.5)
 
     def _inventory_move(self, source, target, item_id) -> bool:
-        from .ui import inventory_window as iw
         c = self.game.character
         if source[0] in ("spell", "spell_hand"):
             if target[0] == "hand":
@@ -8191,6 +8190,7 @@ class MiniwindSession(SettlementLaw):
         d = rpg_items.get(item_id)
         if d is None or not inv.has_item(c.inventory, item_id, 1):
             return False
+        from .ui import inventory_window as iw
         kind, key = target[0], target[1]
         if not iw.fits((kind, key), d):
             self.notify(iw.why_not((kind, key), d), 2.5)

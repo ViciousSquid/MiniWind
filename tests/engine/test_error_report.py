@@ -142,3 +142,48 @@ def test_the_environment_moves_the_logs(tmp_path, monkeypatch):
             if handler not in handlers:
                 error_report.logger.removeHandler(handler)
                 handler.close()
+
+
+def test_a_read_only_installation_uses_a_writable_log_directory(report, tmp_path, monkeypatch):
+    from pathlib import Path
+    import os
+
+    blocked = tmp_path / "installation" / "logs"
+    fallback = tmp_path / "user-logs"
+    real_makedirs = os.makedirs
+
+    def makedirs(path, *args, **kwargs):
+        if Path(path) == blocked:
+            raise PermissionError("the installation is read-only")
+        return real_makedirs(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "makedirs", makedirs)
+    monkeypatch.setattr(error_report, "_user_log_dir", lambda: str(fallback), raising=False)
+    monkeypatch.setitem(error_report._state, "configured", False)
+    path = error_report.configure(str(blocked), hooks=False, tee_stderr=False)
+    error_report.report_error("startup still works")
+    assert Path(path).parent == fallback
+    assert "startup still works" in _log_text(path)
+
+
+def test_unavailable_log_directories_do_not_prevent_startup(report, monkeypatch):
+    import os
+
+    def unavailable(*args, **kwargs):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(os, "makedirs", unavailable)
+    monkeypatch.setitem(error_report._state, "configured", False)
+    assert error_report.configure(hooks=True, tee_stderr=False) is None
+    error_report.report_error("visible without a file")
+    assert any(n.message == "visible without a file" for n in error_report.take_notices())
+
+
+def test_an_error_banner_can_link_to_logs_on_another_windows_drive(monkeypatch):
+    import ntpath
+
+    path = r"D:\logs\miniwind.log"
+    monkeypatch.setitem(error_report._state, "log_path", path)
+    monkeypatch.setattr(error_report.os.path, "relpath",
+                        lambda value: ntpath.relpath(value, r"C:\MiniWind"))
+    assert path in error_report.Notice("bad tick", None).text()

@@ -5,7 +5,7 @@ import json
 import pytest
 from pathlib import Path
 
-from PIL import Image
+Image = pytest.importorskip("PIL.Image")
 
 
 ROOT = Path(__file__).resolve().parents[2]

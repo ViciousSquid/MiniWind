@@ -1,7 +1,13 @@
 """A PathNode's next_node may list several nodes (a road junction)."""
 
+import pytest
+
+pytest.importorskip("PyQt5")
+
 from editor.io_system import validate_all_scene_connections
 from editor.things import Thing
+
+pytestmark = pytest.mark.qt
 
 
 def _node(name, next_node=""):

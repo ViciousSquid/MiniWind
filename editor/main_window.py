@@ -173,21 +173,22 @@ def _gc_paused_load(load):
 
 
 def _file_identity(path):
-    """``(real path, mtime_ns, size)`` of *path*, or None if it cannot be read."""
+    """The file version of *path*, or None if it cannot be read."""
+    from engine.file_version import file_version
     try:
-        st = os.stat(path)
+        return file_version(path)
     except OSError:
         return None
-    return (os.path.realpath(path), st.st_mtime_ns, st.st_size)
 
 
 class _SavedLevelFile:
     """A pre-Play world held as the saved file it is identical to."""
 
-    __slots__ = ('path',)
+    __slots__ = ('path', 'version')
 
-    def __init__(self, path):
+    def __init__(self, path, version):
         self.path = path
+        self.version = version
 
 
 def _read_level_json(path):
@@ -2677,9 +2678,10 @@ class MainWindow(QMainWindow):
         """
         path = self.file_path
         if (not path or self.unsaved_changes or self._package_level_dir
-                or not os.path.isfile(path)):
+                or self.state.play_source is None
+                or _file_identity(path) != self.state.play_source):
             return None
-        return _SavedLevelFile(path)
+        return _SavedLevelFile(path, self.state.play_source)
 
     def _restore_pre_play_world(self):
         """Put back the world captured by :meth:`_capture_pre_play_world`.
@@ -2711,10 +2713,17 @@ class MainWindow(QMainWindow):
         """Put the scene back to *saved*'s file, keeping the editor camera."""
         position = self.view_3d.camera.pos
         try:
-            self._apply_level_data(_read_level_json(saved.path), owned=True)
+            if _file_identity(saved.path) != saved.version:
+                raise RuntimeError("The map file changed during Play; keeping the current scene")
+            data = _read_level_json(saved.path)
+            if _file_identity(saved.path) != saved.version:
+                raise RuntimeError("The map file changed while being read; keeping the current scene")
+            self._apply_level_data(data, owned=True)
         except Exception as exc:
             from engine.error_report import report_error
             report_error("Could not restore the world from %s" % saved.path, exc)
+            self.unsaved_changes = True
+            self.update_title()
             return False
         self.file_path = saved.path
         self.state.stream_editor_camera(position, force=True)
@@ -5444,6 +5453,8 @@ class MainWindow(QMainWindow):
 
     def enter_kiosk_mode(self):
         """Hide all editor UI and launch play mode fullscreen."""
+        from engine import gc_control
+        gc_control.set_freeze(True)
         self.is_kiosk_mode = True
 
         # Save layout before hiding
@@ -5502,6 +5513,8 @@ class MainWindow(QMainWindow):
                 return  # User cancelled — stay in kiosk mode
 
         self.is_kiosk_mode = False
+        from engine import gc_control
+        gc_control.set_freeze(False)
 
         # Exit play mode only if not keeping it (F12 toggle vs Escape)
         if not keep_play_mode and self.view_3d.play_mode:
