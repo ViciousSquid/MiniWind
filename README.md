@@ -77,6 +77,25 @@ low Security; only the **Knock** spell can open a jammed container.
 The physical key below **Esc** opens and closes the console in play and in the
 editor, including **§** on ISO Mac keyboards and **` / ~** on US keyboards.
 
+### Logs and troubleshooting
+
+Errors are never silent. Every error is written to **`logs/miniwind.log`**
+(rotated at 2 MB, five files kept) with its full traceback and the thread it
+happened on, echoed to the console, and shown on screen as a red banner over the
+game. Native crashes and fatal errors go to **`logs/crash.log`**.
+
+If the simulation stops advancing while the window is still responsive (a
+freeze), a watchdog writes every thread's stack to the log and says so on
+screen. Please attach both log files to any bug report.
+
+`MINIWIND_LOG_LEVEL=DEBUG` also records every Debug Console line;
+`MINIWIND_LOG_DIR` moves the logs elsewhere.
+
+If the application folder is read-only, logs fall back to
+`%LOCALAPPDATA%/MiniWind/logs` on Windows, `~/Library/Logs/MiniWind` on macOS,
+or `$XDG_STATE_HOME/miniwind/logs` (default `~/.local/state/miniwind/logs`) on
+Linux. An unavailable log directory does not prevent the game from starting.
+
 ## What's in the game
 
 | System | Summary |
@@ -329,6 +348,23 @@ This branch turns Fio from a general-purpose FPS/level editor into a dedicated
 python -m pytest game/tests -q     # everything, headless
 python -m pytest game/tests -q -m "not slow"
 ```
+
+### Soak testing
+
+`game/tools/soak.py` plays the shipped world for as long as you like with a
+randomised player (walking, fighting, talking, spells, menus, cave travel) and
+reports hung or slow ticks with where the time went, logic-thread stalls,
+frames that stop publishing, a party left downed, and every error the game
+logged. Runs are reproducible from `--seed`; each writes a JSON report.
+
+```bash
+python game/tools/soak.py --mode single --minutes 15
+python game/tools/soak.py --mode bots --threaded --minutes 10   # 1 human + 3 AI companions
+python game/tools/soak.py --mode mixed --only cave fight        # 2 humans + 2 AI companions
+```
+
+Only `--threaded` runs the logic and monster AI on their own threads, as the
+game does, so only it can catch a deadlock between them.
 
 All headless — no Qt/OpenGL, no display — running under the same tier markers
 as the engine's own suite. The reactive simulation, the arrest flow, journeys

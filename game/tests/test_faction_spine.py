@@ -29,9 +29,13 @@ def fact(e=1, kind="death", **values):
 def world(count=2, enabled=True):
     story, director, hooks, store = setup()
     director.ctx.hostile = teams.is_hostile
+    from ..rpg.head_registry import WorldHeadRegistry
     session = SimpleNamespace(storyteller=story, director=director, store=store,
                               clock=SimpleNamespace(day=0, hour=8),
-                              game=SimpleNamespace(character=SimpleNamespace(bounty=0, alignment=0)))
+                              game=SimpleNamespace(character=SimpleNamespace(bounty=0, alignment=0)),
+                              # Materialised travellers take faces from the
+                              # world ledger, as in MiniwindSession.
+                              head_registry=WorldHeadRegistry(store))
     living = LivingWorld(session, population=0)
     session.living = living
     b = board(story)

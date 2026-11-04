@@ -593,7 +593,9 @@ def test_resident_materialises_with_the_identity_that_holds_the_kin_fact():
 
     story, director, hooks, store = setup()
     kin, _intent = vendetta(story, director, hooks, store)
-    session = SimpleNamespace(rng=random.Random(7), game=SimpleNamespace(character=SimpleNamespace(head="")))
+    from ..rpg.head_registry import WorldHeadRegistry
+    session = SimpleNamespace(rng=random.Random(7), game=SimpleNamespace(character=SimpleNamespace(head="")),
+                              head_registry=WorldHeadRegistry(store))
     living = LivingWorld(session)
     living._residents[kin.properties["id"]] = kin
     living._tree = lambda *_args: {}

@@ -7,6 +7,8 @@ import pytest
 
 pytest.importorskip("PyQt5")
 
+pytestmark = pytest.mark.qt
+
 from game import fio
 from game.entities import NPC
 from game.multiplayer.bots import PartyBots, distance

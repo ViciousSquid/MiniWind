@@ -1,5 +1,6 @@
 """A fixed-rate simulation must produce uniform motion at display refresh rates."""
 
+import copy
 import math
 
 import glm
@@ -43,8 +44,8 @@ def test_constant_walking_is_uniform_at_display_refresh(refresh):
         serial = tick
         # Extra projection with no simulation step must not restart the blend.
         history.capture(state, serial, now, 'play')
-        drawn = object.__new__(RenderState)
-        drawn.__dict__ = state.__dict__.copy()
+        # The renderer's snapshot of a published frame: a shallow copy.
+        drawn = copy.copy(state)
         interpolate_camera(drawn, now, TICK)
         positions.append(float(drawn.player_pos.x))
         eye = glm.vec3(glm.inverse(drawn.camera_view_matrix)[3])

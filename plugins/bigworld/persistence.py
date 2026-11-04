@@ -27,7 +27,7 @@ here imports the editor or engine, so it runs headless.
 
 from __future__ import annotations
 
-import copy
+from engine.data_copy import data_copy
 from typing import Dict, List, Optional
 
 from .cell import CELL_SIZE, cell_of_point
@@ -217,7 +217,7 @@ def normalize_streaming_state(level: dict, *, deep: bool = True) -> dict:
     out: Dict[str, list] = {"things": [], "brushes": []}
     for t in level.get("things", []) or []:
         if deep:
-            t2 = copy.deepcopy(t)
+            t2 = data_copy(t)
         else:
             t2 = dict(t)
             if isinstance(t2.get("properties"), dict):
@@ -227,7 +227,7 @@ def normalize_streaming_state(level: dict, *, deep: bool = True) -> dict:
             _unpark_props(props)
         out["things"].append(t2)
     for b in level.get("brushes", []) or []:
-        b2 = copy.deepcopy(b) if deep else (dict(b) if isinstance(b, dict) else b)
+        b2 = data_copy(b) if deep else (dict(b) if isinstance(b, dict) else b)
         if isinstance(b2, dict):
             if _HID_MARK in b2:
                 b2["hidden"] = b2.get(_HID_MARK)

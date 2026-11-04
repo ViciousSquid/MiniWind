@@ -338,11 +338,13 @@ def test_ambient_lights_surfaces_no_light_entity_reaches(renderer, context):
         f"ambient did not brighten the scene: {dark_l:.1f} -> {lit_l:.1f}")
 
 
-def test_zero_ambient_renders_identically_to_no_ambient(renderer, context):
-    """The default must leave every existing map looking exactly as before."""
+def test_default_ambient_matches_the_documented_level(renderer, context):
+    """The default gives unlit faces the documented dim ambient light."""
+    from engine.view_distance import DEFAULT_AMBIENT_LEVEL
+
     brushes, things = ground_scene()
     explicit = render(renderer, context, brushes, things,
-                      settings(4096.0, ambient=(0.0, 0.0, 0.0)))
+                      settings(4096.0, ambient=(DEFAULT_AMBIENT_LEVEL,) * 3))
     default = render(renderer, context, brushes, things, settings(4096.0))
     assert np.array_equal(explicit, default)
 

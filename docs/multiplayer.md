@@ -102,6 +102,15 @@ A running party with a free character slot accepts direct joins. New players
 choose their characters and ready up in the lobby before entering. Started games
 are no longer advertised in the LAN browser.
 
+## Travelling together
+
+Caves and other map exits move the whole party. When a player uses an exit,
+everyone is asked to join; AI companions agree at once. Each human joins by
+pressing interact at an exit, or anywhere with nothing else in reach. While the
+party gathers, interact still talks to people, loots and revives companions
+when one is in reach, so a pending trip never locks a player out of the game.
+The party travels once every connected, conscious member has joined.
+
 ## Network and firewall setup
 
 | Purpose | Default |

@@ -29,6 +29,12 @@ _ROOT = os.path.dirname(os.path.abspath(__file__))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+# No test needs a physical audio device. Keep native numerical workers from
+# competing with the real logic/AI threads the suite exercises, as main.py does.
+os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+for _blas_threads in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_blas_threads, "1")
+
 # Must be set before anything imports PyQt5: a QApplication built against the
 # real platform plugin aborts the process when there is no display.  A display
 # *is* honoured when one is present, because the offscreen plugin cannot create
@@ -86,6 +92,17 @@ def pytest_ignore_collect(collection_path, config):
                          filename=str(collection_path))
     except (OSError, UnicodeDecodeError, SyntaxError):
         return False
+    # A desktop test may reach Qt/OpenGL indirectly (renderer.core imports
+    # its GL base; game entities import editor.things). Honour module-level
+    # tier declarations before importing those modules at all.
+    for node in tree.body:
+        if (isinstance(node, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == "pytestmark"
+                        for t in node.targets)):
+            if any(isinstance(mark, ast.Attribute) and mark.attr in ("qt", "gl")
+                   and isinstance(mark.value, ast.Attribute) and mark.value.attr == "mark"
+                   for mark in ast.walk(node.value)):
+                return True
     nodes = ast.walk(tree)
     for node in nodes:
         if isinstance(node, ast.Import):

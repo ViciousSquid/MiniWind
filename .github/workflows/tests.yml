@@ -10,10 +10,13 @@ on:
 permissions:
   contents: read
 
+env:
+  SDL_AUDIODRIVER: dummy
+
 # Keep CI focused on the latest commit for a branch. Rapid hardening/release
 # work should not leave a queue of obsolete test runs behind it.
 concurrency:
-  group: fio-tests-${{ github.ref }}
+  group: fio-tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 # Each tier is independent so a graphical failure cannot hide a core failure.

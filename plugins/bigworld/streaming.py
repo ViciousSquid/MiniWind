@@ -34,7 +34,7 @@ and tested on its own.
 
 from __future__ import annotations
 
-import copy
+from engine.data_copy import data_copy
 import math
 import os
 from collections import Counter
@@ -150,7 +150,7 @@ class MemoryCellSource(CellSource):
             uuid = str(brush.get("id", ""))
             if not uuid:
                 continue
-            self._brush_base[uuid] = copy.deepcopy(brush)
+            self._brush_base[uuid] = data_copy(brush)
             for coord in _brush_cells(brush, self.cell_size):
                 self._cell_members.setdefault(coord, {"brushes": [], "things": []})["brushes"].append(uuid)
         for thing in things:
@@ -187,9 +187,9 @@ class MemoryCellSource(CellSource):
         members = self._cell_members.get(tuple(coord))
         if not members:
             return ([], [])
-        brushes = [copy.deepcopy(self._brush_base[u]) for u in members["brushes"]
+        brushes = [data_copy(self._brush_base[u]) for u in members["brushes"]
                    if u in self._brush_base]
-        things = [copy.deepcopy(self._thing_base[u]) for u in members["things"]
+        things = [data_copy(self._thing_base[u]) for u in members["things"]
                   if u in self._thing_base]
         return (brushes, things)
 

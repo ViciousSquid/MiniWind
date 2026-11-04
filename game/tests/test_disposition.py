@@ -186,8 +186,10 @@ def _find(things, name):
 def test_repeated_assaults_preserve_the_aggression_restored_by_the_watch():
     session, things = _settlement_session()
     victim = _find(things, "Elowen")
+    # A villager who fights back: one with Elowen's default courage (0.3) is
+    # "no fighter" and flees instead, by design (game.sim.appraisal).
     victim.properties.update(faction="villagers", team="villagers",
-                             aggression="passive")
+                             aggression="passive", courage=0.9, combatant=True)
     session._provoke(victim)
     session._provoke(victim)
     assert victim.properties["aggression"] == "hostile"

@@ -13,14 +13,33 @@ optional gameplay plugins; MiniWind no longer travels through it.
 
 from __future__ import annotations
 
-from .host import MiniwindGame
+import threading
+
 from . import combat_styles as _combat_styles
 
 # The engine's combat loadout learns which items are weapons from MiniWind.
 _combat_styles.register()
 
-#: The process-wide built-in game instance.
-GAME = MiniwindGame()
+_host_lock = threading.RLock()
+
+
+def _game_host():
+    """Load desktop wiring only when the application asks for its host."""
+    with _host_lock:
+        if "GAME" not in globals():
+            from .host import MiniwindGame
+            globals()["MiniwindGame"] = MiniwindGame
+            globals()["GAME"] = MiniwindGame()
+        return globals()["GAME"]
+
+
+def __getattr__(name):
+    # Pure RPG, simulation and multiplayer modules must remain usable without
+    # importing Qt, OpenGL or the entire desktop runtime through this package.
+    if name in ("GAME", "MiniwindGame"):
+        _game_host()
+        return globals()[name]
+    raise AttributeError("module %r has no attribute %r" % (__name__, name))
 
 _installed = False
 
@@ -40,7 +59,7 @@ def install() -> None:
     _installed = True
     try:
         from plugins.manager import get_manager
-        get_manager().register_builtin_game(GAME)
+        get_manager().register_builtin_game(_game_host())
     except Exception as exc:  # pragma: no cover - defensive
         print(f"[MiniWind] game host registration skipped: {exc}")
         return
@@ -49,6 +68,24 @@ def install() -> None:
         _integration.apply()
     except Exception as exc:  # pragma: no cover - editor/PyQt may be absent
         print(f"[MiniWind] editor integration skipped: {exc}")
+
+
+def launched_party():
+    """The multiplayer party the launcher started, or None.
+
+    The application bootstrap (main.py) reaches the game only through the
+    module it loaded by name, never by importing ``game``: it opens the
+    party's map instead of the default one and closes the party on exit
+    (:func:`close_party`).
+    """
+    from .multiplayer.lobby import active
+    return active()
+
+
+def close_party() -> None:
+    """Close the launcher's multiplayer party (sockets, discovery)."""
+    from .multiplayer.lobby import finish
+    finish()
 
 
 def show_launcher(root_directory, settings_path) -> str:

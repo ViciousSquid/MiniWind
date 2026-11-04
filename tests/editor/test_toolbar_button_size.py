@@ -10,6 +10,7 @@ import pytest
 pytest.importorskip("PyQt5", reason="the toolbar is a Qt widget")
 
 from PyQt5.QtWidgets import QPushButton                    # noqa: E402
+from PyQt5.QtCore import Qt                                # noqa: E402
 
 from editor.ui import PLAY_BUTTON_LENGTHS, TOOLBAR_ICON_SIZES   # noqa: E402
 
@@ -29,7 +30,9 @@ def _icon_buttons(window):
 
 
 @pytest.mark.parametrize("big", [True, False])
-def test_the_setting_resizes_every_toolbar_button_without_a_restart(main_window, big):
+@pytest.mark.parametrize("orientation", [Qt.Horizontal, Qt.Vertical])
+def test_the_setting_resizes_every_toolbar_button_without_a_restart(main_window, big, orientation):
+    main_window.tool_toolbar.setOrientation(orientation)
     _set_big(main_window, big)
     icon = TOOLBAR_ICON_SIZES[big]
     buttons = _icon_buttons(main_window)
@@ -38,7 +41,10 @@ def test_the_setting_resizes_every_toolbar_button_without_a_restart(main_window,
         assert b.iconSize().width() == icon
         assert (b.width(), b.height()) == (icon + 4, icon + 8)
     play = main_window.play_button
-    assert (play.width(), play.height()) == (PLAY_BUTTON_LENGTHS[big], icon + 16)
+    expected = (PLAY_BUTTON_LENGTHS[big], icon + 16)
+    if orientation == Qt.Vertical:
+        expected = expected[::-1]
+    assert (play.width(), play.height()) == expected
 
 
 def test_small_buttons_make_the_toolbar_smaller(main_window, qt_app):
@@ -50,7 +56,11 @@ def test_small_buttons_make_the_toolbar_smaller(main_window, qt_app):
     assert main_window.tool_toolbar.sizeHint().width() < big_width * 0.85
 
 
-def test_play_and_stop_keep_the_set_length(main_window):
+@pytest.mark.parametrize("orientation", [Qt.Horizontal, Qt.Vertical])
+def test_play_and_stop_keep_the_set_length(main_window, orientation):
+    main_window.tool_toolbar.setOrientation(orientation)
     _set_big(main_window, False)
     main_window.update_play_button_color()
-    assert main_window.play_button.width() == PLAY_BUTTON_LENGTHS[False]
+    play = main_window.play_button
+    length = play.width() if orientation == Qt.Horizontal else play.height()
+    assert length == PLAY_BUTTON_LENGTHS[False]

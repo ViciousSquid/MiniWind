@@ -12,7 +12,14 @@ on:
   workflow_dispatch:
 
 jobs:
+  validate:
+    name: Validate release source
+    uses: ./.github/workflows/tests.yml
+    permissions:
+      contents: read
+
   build-windows:
+    needs: validate
     runs-on: windows-latest
     env:
       VERSION_SUFFIX: " WinX64"
@@ -96,6 +103,7 @@ jobs:
 
 
   build-windows-arm64:
+    needs: validate
     name: Windows ARM64 / Python 3.14 / PyQt5-WinARM64 / Nuitka
     runs-on: windows-11-vs2026-arm
     env:
@@ -333,6 +341,7 @@ jobs:
 
 
   build-macos:
+    needs: validate
     runs-on: macos-latest
     env:
       VERSION_SUFFIX: " macOS"
@@ -556,6 +565,7 @@ jobs:
 
 
   build-linux:
+    needs: validate
     runs-on: ubuntu-latest
     env:
       VERSION_SUFFIX: " Linux"
@@ -669,8 +679,12 @@ jobs:
 
   create-release:
     name: Create GitHub Release
+    # Manual branch builds produce reviewable artifacts; only a release tag
+    # publishes them. A branch name must never become the release version.
+    if: github.ref_type == 'tag'
 
     needs:
+      - validate
       - build-windows
       - build-windows-arm64
       - build-macos

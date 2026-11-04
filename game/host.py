@@ -22,8 +22,6 @@ import json
 import math
 import time
 
-from PyQt5 import QtWidgets
-
 # Generic Fio API helpers (entity-I/O and property descriptors, the per-tick
 # context type, and key-name translation). These are engine-side utilities, not
 # the plugin lifecycle: MiniWind uses them the way any native game layer would.
@@ -646,6 +644,14 @@ class MiniwindGame:
                 io_def("OnDiceRolled", "Fired with the JSON dice result"),
                 io_def("OnDiceSuccess", "Fired when a targeted roll succeeds"),
                 io_def("OnDiceFailure", "Fired when a targeted roll fails"),
+                # NPCs and creatures are monsters to the engine, which fires
+                # its monster outputs on them too; declared here so designers
+                # can wire them (and the I/O audit stops flagging them).
+                io_def("OnDamaged", "Fired when this actor takes damage"),
+                io_def("OnDeath", "Fired when this actor is killed (engine combat)"),
+                io_def("OnSeePlayer", "Fired on first sight of the player"),
+                io_def("OnLostPlayer", "Fired when the player leaves sight range"),
+                io_def("OnRespawn", "Fired when revived by the Respawn input"),
             ],
         )
         api.register_io("npc", **npc_io)

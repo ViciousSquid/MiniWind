@@ -211,6 +211,8 @@ def test_the_3d_view_draws_nothing_of_a_filtered_group(fio_session):
         things=[make_thing(PlayerStart, "spawn", (0.0, 40.0, 300.0), angle=90.0)]),
         size=(160, 120))
     session.view.sysmon.set_active(False)
+    # FPS is wall-clock data and changes even when the scene is identical.
+    session.window.config.set("Display", "show_fps", "False")
     session.publish()
     shown = session.paint().astype(np.int16)
     session.window.set_view_filter("world", False)

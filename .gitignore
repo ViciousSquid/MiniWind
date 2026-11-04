@@ -22,3 +22,6 @@ cache/
 
 # Generated before freezing; source checkouts compute the live hash.
 game/data/multiplayer_build.json
+
+# Runtime logs: errors, crashes and freeze reports (engine/error_report.py)
+logs/

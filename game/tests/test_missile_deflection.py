@@ -7,6 +7,8 @@ import glm
 import numpy as np
 import pytest
 
+pytest.importorskip("PyQt5")
+
 from engine.logic_combat import ProjectileStore
 from editor.things import Monster
 from game.missile_deflection import deflect
@@ -17,6 +19,8 @@ from game.tests.test_multiplayer_bots import companions
 from game.tests.test_multiplayer_integration import coop_game  # noqa: F401
 from tests.helpers.worlds import make_thing
 from tests.monster_ai.test_projectile_batch import _logic
+
+pytestmark = pytest.mark.qt
 
 
 @pytest.mark.parametrize("luck,target,wins", [(59, None, 0), (60, 40, 1),

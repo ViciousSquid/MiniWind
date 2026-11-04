@@ -3,6 +3,12 @@
 import runpy
 from pathlib import Path
 
+import hashlib
+import os
+from contextlib import contextmanager
+
+import pytest
+
 from game.multiplayer.compatibility import gameplay_signature
 
 
@@ -47,3 +53,75 @@ def test_manifest_matches_source_and_normalises_windows_newlines(tmp_path):
     assert gameplay_signature(source, 2) != expected
     (source / "engine/player.py").write_text("speed = 200\n")
     assert gameplay_signature(source, 1) != expected
+
+
+@pytest.mark.parametrize("content", [b"", b"a\r\nb\nc\r", b"a" * (1024 * 1024 - 1) + b"\r\nb\r\r\n"])
+def test_map_hash_matches_normalised_content_across_read_boundaries(tmp_path, content):
+    from game.multiplayer.compatibility import map_hash
+    path = tmp_path / "map.json"
+    path.write_bytes(content)
+    assert map_hash(path) == hashlib.sha256(content.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def test_map_hash_reuses_unchanged_files_and_detects_preserved_mtime(tmp_path, monkeypatch):
+    from game.multiplayer import compatibility
+    path = tmp_path / "map.json"
+    path.write_bytes(b'{"map": 1}')
+    original = compatibility.map_hash(path)
+    real_open = Path.open
+    reads = []
+
+    def opened(self, *args, **kwargs):
+        if self == path:
+            reads.append(self)
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", opened)
+    assert compatibility.map_hash(path) == original
+    assert reads == [], "cached map hashes must not read the map again"
+
+    stat = path.stat()
+    replacement = tmp_path / "replacement.json"
+    replacement.write_bytes(b'{"map": 2}')
+    os.utime(replacement, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    replacement.replace(path)
+    reads.clear()
+    assert compatibility.map_hash(path) != original, "a replaced map reused its old hash"
+    assert reads, "the new file version must be hashed"
+
+
+def test_a_map_changed_during_hashing_is_not_cached(tmp_path, monkeypatch):
+    from game.multiplayer import compatibility
+    path = tmp_path / "map.json"
+    path.write_bytes(b"original")
+    real_hash = compatibility._hash_map_file
+
+    def changed_while_reading(path):
+        digest = real_hash(path)
+        path.write_bytes(b"changed")
+        return digest
+
+    monkeypatch.setattr(compatibility, "_hash_map_file", changed_while_reading)
+    assert compatibility.map_hash(path) == hashlib.sha256(b"original").hexdigest()
+    monkeypatch.setattr(compatibility, "_hash_map_file", real_hash)
+    assert compatibility.map_hash(path) == hashlib.sha256(b"changed").hexdigest()
+
+
+def test_map_hash_never_reads_the_whole_file_at_once(tmp_path, monkeypatch):
+    from game.multiplayer import compatibility
+    path = tmp_path / "map.json"
+    path.write_bytes(b"a\r\nb\r\r\nc\r")
+    real_open = Path.open
+
+    @contextmanager
+    def bounded_open(self, *args, **kwargs):
+        with real_open(self, *args, **kwargs) as handle:
+            class Reader:
+                def read(self, size=-1):
+                    assert 0 < size <= 1024 * 1024, "map hashing made an unbounded read"
+                    return handle.read(size)
+            yield Reader()
+
+    monkeypatch.setattr(Path, "open", bounded_open)
+    monkeypatch.setattr(compatibility, "_MAP_HASH_CHUNK_BYTES", 1)
+    assert compatibility.map_hash(path) == hashlib.sha256(b"a\nb\r\nc\r").hexdigest()

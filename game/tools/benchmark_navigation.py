@@ -1,6 +1,6 @@
 """Reproduce navigation work at the AI tick rate, optionally against a baseline.
 
-Run from any directory: python tools/benchmark_navigation.py --help
+Run from any directory: python game/tools/benchmark_navigation.py --help
 Timings are descriptive; tests guard work counts rather than machine speed.
 """
 
@@ -11,7 +11,7 @@ from pathlib import Path
 import sys
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from game import navigation
 
 

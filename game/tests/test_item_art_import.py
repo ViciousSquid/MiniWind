@@ -2,7 +2,7 @@
 import hashlib
 
 import pytest
-from PIL import Image
+Image = pytest.importorskip("PIL.Image")
 
 from ..tools.import_item_art import archive_existing, import_icons
 

@@ -24,6 +24,14 @@ if os.environ.get("FIO_GL_DEBUG") != "1":
 # map, 1 ms cuts the logic thread's p95 frame preparation from ~59 to ~25 ms.
 sys.setswitchinterval(0.001)
 
+# NumPy's BLAS would otherwise start a worker per core for every matrix
+# product. Fio's products are small (frustum tests over a few thousand
+# boxes), so the workers buy nothing, and they compete with the logic, AI and
+# render threads: under load a single frustum test stalled for over a second.
+# Set before anything imports NumPy; an explicit setting still wins.
+for _blas_threads in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_blas_threads, "1")
+
 
 # Dark theme
 dark_stylesheet = """
@@ -172,6 +180,13 @@ if __name__ == "__main__":
         root_directory = os.path.dirname(os.path.abspath(__file__))
 
     os.chdir(root_directory)
+
+    # Errors go to logs/miniwind.log, the console and the screen from here on
+    # (engine/error_report.py), including crashes and exceptions on any thread.
+    from engine import error_report
+    log_file = error_report.configure(os.path.join(root_directory, 'logs'))
+    if log_file:
+        print(f"       Logging to {log_file}")
     
     # Set the application ID for Windows taskbar (required for Windows 7+)
     if sys.platform == 'win32':
@@ -331,6 +346,11 @@ if __name__ == "__main__":
         QSurfaceFormat.setDefaultFormat(fmt)
         splash.show()
 
+    # Freeze static worlds only for a game launch. The editor must still be
+    # able to collect cycles as objects are edited, removed and undone.
+    from engine import gc_control
+    gc_control.set_freeze(launch_choice == "play")
+
     splash.set_progress(25, "Building editor UI...")
 
     window = MainWindow(root_directory)
@@ -361,14 +381,24 @@ if __name__ == "__main__":
     # the scene has a Player Start to spawn at and the window never sits
     # frozen between the two.
     default_map = config.get('Startup', 'default_map', fallback='').strip()
-    from game.multiplayer.lobby import active as active_party, finish as close_party
-    party_lobby = active_party()
+    # A multiplayer party the game's launcher started opens its own map. Asked
+    # of the game module loaded by name above: Fio never imports the game.
+    launched_party = getattr(game_module, 'launched_party', None)
+    party_lobby = launched_party() if callable(launched_party) else None
     if party_lobby is not None:
         default_map = party_lobby.map_name
-        app.aboutToQuit.connect(close_party)
+        app.aboutToQuit.connect(game_module.close_party)
     default_map_path = os.path.join(root_directory, default_map) if default_map else ''
 
     def _open_default_map():
+        try:
+            _open_default_map_unguarded()
+        except Exception as exc:
+            # Reported on screen and in the log rather than leaving a window
+            # that never shows the game.
+            error_report.report_error("Could not start the game", exc)
+
+    def _open_default_map_unguarded():
         title = (f"Loading {os.path.splitext(os.path.basename(default_map))[0]}"
                  if default_map else "Starting the game")
         with window.loading_overlay.busy(title, "Reading the map"):

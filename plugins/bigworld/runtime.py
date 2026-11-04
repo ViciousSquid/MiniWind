@@ -35,6 +35,7 @@ list/tuple (player build); both are read by index.
 
 from __future__ import annotations
 
+import collections
 import math
 from typing import Optional
 
@@ -58,6 +59,12 @@ from engine.spatial import (PARKED_DISABLED_KEY as _DIS_MARK,
                             PARKED_HIDDEN_KEY as _HID_MARK,
                             SIM_TIER_KEY)
 from .tiers import DEFAULT_NEAR_RADIUS, TierClassifier
+
+#: Pristine base worlds by source file version, most
+#: recently used last. Kept across level changes so the overworld's base,
+#: by far the largest, need not be rebuilt on every return from a cave.
+_BASE_CACHE: "collections.OrderedDict" = collections.OrderedDict()
+_BASE_CACHE_SIZE = 3
 
 
 def _xz(pos):
@@ -891,8 +898,27 @@ class BigWorldSession:
     # ------------------------------------------------------------------
 
     def _capture_base(self) -> None:
-        """Snapshot the pristine world as the base for all cell deltas."""
-        self._base_level = normalize_streaming_state(self._live_level())
+        """Snapshot the pristine world as the base for all cell deltas.
+
+        Serialising and copying the whole world is most of a large map's Play
+        start. The base is a function of the map file alone (save games key
+        their deltas to its ids and rebuild it from the file), so when the
+        scene is still exactly a file it was taken from before -- returning
+        to the overworld from a cave, whose only exit leads back -- the base
+        captured then is reused. It is read-only: deltas only compare
+        against it.
+        """
+        source = getattr(getattr(self.logic, "editor_state", None), "play_source", None)
+        cached = _BASE_CACHE.get(source) if source else None
+        if cached is not None:
+            _BASE_CACHE.move_to_end(source)
+            self._base_level = cached
+        else:
+            self._base_level = normalize_streaming_state(self._live_level())
+            if source:
+                _BASE_CACHE[source] = self._base_level
+                while len(_BASE_CACHE) > _BASE_CACHE_SIZE:
+                    _BASE_CACHE.popitem(last=False)
         self.registry = {}
 
     def _live_level(self) -> dict:

@@ -1372,6 +1372,58 @@ class QtGameView(QOpenGLWidget):
                 if f.lower().endswith(('.jpg', '.png')):
                     self.renderer.load_texture(os.path.join('terrain', f), 'textures')
 
+    #: Seconds an error notice stays on screen.
+    ERROR_NOTICE_SECONDS = 12.0
+    #: At most this many notices are drawn at once (newest kept).
+    ERROR_NOTICE_LINES = 4
+
+    def show_error_notice(self, text):
+        """Show *text* as an error banner over the view for a few seconds.
+
+        Drawn by this view itself (see :meth:`_draw_error_notices`), so it is
+        visible in the game's fullscreen kiosk mode, over menus, and whether
+        or not editor toasts are switched off.
+        """
+        notices = [n for n in getattr(self, '_error_notices', []) if n[0] != text]
+        notices.append((str(text), time.perf_counter() + self.ERROR_NOTICE_SECONDS))
+        self._error_notices = notices[-self.ERROR_NOTICE_LINES:]
+        self.update()
+
+    def _draw_error_notices(self, painter):
+        notices = getattr(self, '_error_notices', None)
+        if not notices:
+            return
+        now = time.perf_counter()
+        notices = [n for n in notices if n[1] > now]
+        self._error_notices = notices
+        if not notices:
+            return
+        painter.save()
+        try:
+            font = QFont(self.font())
+            font.setPointSizeF(max(9.0, font.pointSizeF()))
+            font.setBold(True)
+            painter.setFont(font)
+            metrics = QFontMetrics(font)
+            margin, pad = 12, 8
+            width = min(self.width() - 2 * margin, 900)
+            y = margin
+            for text, expires in notices:
+                fade = max(0.0, min(1.0, (expires - now) / 1.5))
+                line = "\u26a0  " + text
+                rect = metrics.boundingRect(0, 0, width - 2 * pad, 1000,
+                                            int(Qt.TextWordWrap), line)
+                box = QRect((self.width() - width) // 2, y, width, rect.height() + 2 * pad)
+                painter.setPen(QPen(QColor(255, 120, 110, int(255 * fade)), 2))
+                painter.setBrush(QBrush(QColor(90, 12, 12, int(225 * fade))))
+                painter.drawRoundedRect(box, 6, 6)
+                painter.setPen(QColor(255, 255, 255, int(255 * fade)))
+                painter.drawText(box.adjusted(pad, pad, -pad, -pad),
+                                 int(Qt.TextWordWrap | Qt.AlignLeft | Qt.AlignVCenter), line)
+                y += box.height() + 6
+        finally:
+            painter.restore()
+
     def _handle_logic_tick_fault(self, message):
         """Run fatal-tick play teardown on QtGameView's GUI thread.
 
@@ -2405,6 +2457,7 @@ class QtGameView(QOpenGLWidget):
 
         if not self.play_mode:
             self.floating_windows.draw_all(painter)
+        self._draw_error_notices(painter)
 
         # Live terrain sculpting hint: draw this inside the 3D viewport rather
         # than using the editor toast system. This is intentionally styled as

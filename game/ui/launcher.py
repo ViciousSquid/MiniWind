@@ -67,6 +67,12 @@ DEFAULTS = {
 
 _ACCENT = "#F08000"   # Fio's accent
 _PLAY_GREEN = "#2E7D32"
+#: Royal purple for MULTIPLAYER, with lighter hover and darker pressed and
+#: border shades. White text on it keeps a 5.9:1 contrast ratio.
+_MULTIPLAYER_PURPLE = "#7851A9"
+_MULTIPLAYER_PURPLE_HOVER = "#8A63BD"
+_MULTIPLAYER_PURPLE_PRESSED = "#5E3D88"
+_MULTIPLAYER_PURPLE_BORDER = "#4B2C72"
 
 # --- sizing ---------------------------------------------------------------
 # Every dimension in the launcher is a multiple of one text line, measured from
@@ -477,8 +483,22 @@ class Launcher(QDialog):
 
         self.multiplayer_button = QPushButton("MULTIPLAYER")
         self.multiplayer_button.setToolTip("Play with friends or AI companions in a party of up to four.")
+        self.multiplayer_button.setStyleSheet(
+            f"QPushButton {{ background-color:{_MULTIPLAYER_PURPLE}; color:white;"
+            f" border:1px solid {_MULTIPLAYER_PURPLE_BORDER}; font-weight:bold;"
+            f" letter-spacing:1px; }}"
+            f"QPushButton:hover {{ background-color:{_MULTIPLAYER_PURPLE_HOVER}; }}"
+            f"QPushButton:pressed {{ background-color:{_MULTIPLAYER_PURPLE_PRESSED}; }}"
+            f"QPushButton:disabled {{ background-color:#3d3448; color:#9a93a3; }}")
         self.multiplayer_button.clicked.connect(self._multiplayer)
-        body.addWidget(self.multiplayer_button)
+        # Under PLAY and EDIT, exactly as wide as the two of them together,
+        # with blank space to its left (sized in _apply_metrics).
+        multiplayer_row = QHBoxLayout()
+        multiplayer_row.setSpacing(0)
+        multiplayer_row.addStretch(1)
+        multiplayer_row.addWidget(self.multiplayer_button)
+        body.addLayout(multiplayer_row)
+        self._button_spacing = buttons.spacing()
 
         footer = QHBoxLayout()
         footer.setSpacing(int(unit * 0.7))
@@ -534,6 +554,9 @@ class Launcher(QDialog):
         size = self._button_size()
         self.play_button.setMinimumSize(size)
         self.edit_button.setMinimumSize(size)
+        # Spans PLAY and EDIT: their two widths and the gap between them.
+        self.multiplayer_button.setFixedWidth(
+            2 * size.width() + getattr(self, '_button_spacing', 10))
         self.banner.refresh_metrics(unit)
         self.adjustSize()
 

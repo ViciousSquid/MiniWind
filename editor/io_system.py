@@ -1662,51 +1662,48 @@ def validate_all_scene_connections(
         if entity_type != "pathnode":
             continue
 
-        next_node = properties.get("next_node", "")
-        if not next_node:
+        next_node = str(properties.get("next_node", "") or "")
+        if not next_node.strip():
             # Empty next_node is a legitimate dead-end.
             continue
 
         pathnode_count += 1
+        source_name = properties.get("name", "<unnamed>")
+        # Several names, comma separated, make a junction (a road fork; see
+        # game/living/roads.py): each must name a PathNode.
+        names = [n.strip() for n in next_node.split(",") if n.strip()]
+        for name in names:
+            target = find_by_name(name)
+            if target is None:
+                pathnode_problems.append((
+                    entity,
+                    name,
+                    "missing_pathnode_target",
+                    "PathNode '%s' points to missing PathNode '%s'."
+                    % (source_name, name),
+                ))
+                continue
 
-        target = find_by_name(next_node)
+            if isinstance(target, dict):
+                target_properties = target.get("properties", target)
+            else:
+                target_properties = getattr(target, "properties", {})
+            if not isinstance(target_properties, dict):
+                target_properties = {}
 
-        if target is None:
-            source_name = properties.get("name", "<unnamed>")
-
-            pathnode_problems.append((
-                entity,
-                next_node,
-                "missing_pathnode_target",
-                "PathNode '%s' points to missing PathNode '%s'."
-                % (source_name, next_node),
-            ))
-            continue
-
-        if isinstance(target, dict):
-            target_properties = target.get("properties", target)
-        else:
-            target_properties = getattr(target, "properties", {})
-
-        if not isinstance(target_properties, dict):
-            target_properties = {}
-
-        target_type = (
-            str(target_properties.get("type", ""))
-            .replace("_", "")
-            .lower()
-        )
-
-        if target_type != "pathnode":
-            source_name = properties.get("name", "<unnamed>")
-
-            pathnode_problems.append((
-                entity,
-                next_node,
-                "invalid_pathnode_target",
-                "PathNode '%s' points to '%s', which is not a PathNode."
-                % (source_name, next_node),
-            ))
+            target_type = (
+                str(target_properties.get("type", ""))
+                .replace("_", "")
+                .lower()
+            )
+            if target_type != "pathnode":
+                pathnode_problems.append((
+                    entity,
+                    name,
+                    "invalid_pathnode_target",
+                    "PathNode '%s' points to '%s', which is not a PathNode."
+                    % (source_name, name),
+                ))
 
     # ------------------------------------------------------------------
     # Combined result

@@ -8,6 +8,7 @@ sessions render replicas and submit only validated actions for owned characters.
 from __future__ import annotations
 
 import collections
+import contextlib
 import copy
 import math
 import threading
@@ -146,6 +147,8 @@ class CoopSession:
         self.party_quests = PartyQuests(root.store)
         self.input_queue = collections.deque(maxlen=512)
         self.input_lock = threading.Lock()
+        #: The party's state lock. Never take it on its own: use
+        #: :meth:`_locked`, which takes the engine's ``monster_lock`` first.
         self.lock = threading.RLock()
         self.sequence = 0
         self._snapshot_at = 0.0
@@ -743,6 +746,23 @@ class CoopSession:
         cam.overhead_height = min(top, cam.overhead_height)
         self.root._fit_bigworld_reach(cam, height)
 
+    @contextlib.contextmanager
+    def _locked(self):
+        """Hold the party lock, always after the engine's ``monster_lock``.
+
+        The MonsterAI thread runs under ``monster_lock`` and calls
+        :meth:`damage` when a monster hits a party member, so it takes
+        ``monster_lock`` then ``self.lock``. The logic thread's :meth:`tick`
+        reaches code that takes ``monster_lock`` (the root session grounds
+        actors under it). Taking ``self.lock`` first there would let the two
+        threads wait on each other for ever: the game freezes on its last
+        frame with no error. Both locks are re-entrant, so one order on every
+        thread is enough.
+        """
+        with fio.monster_lock(self.logic) or contextlib.nullcontext():
+            with self.lock:
+                yield
+
     def damage(self, player_id, amount, kind="physical", source=None, cause="attack"):
         if not self.authority:
             return 0.0
@@ -751,7 +771,7 @@ class CoopSession:
             return 0.0
         if getattr(source, "properties", {}).get("multiplayer_player"):
             return 0.0
-        with self.lock:
+        with self._locked():
             runtime = fio.player_runtime(context.session.logic)
             runtime.last_damage = (source, cause, kind)
             if source is not None:
@@ -770,11 +790,15 @@ class CoopSession:
     def prepare_ai(self, monsters):
         if not self.authority:
             return
-        alive = [
-            p
-            for p in self.players.values()
-            if p.connected and not p.session.game.character.is_dead
-        ]
+        # The AI thread can run while a new map's party is still attaching.
+        # Keep actor references for this update: a PlayerContext may have no
+        # actor yet, or its actor may be replaced after this snapshot.
+        alive = []
+        for player in list(self.players.values()):
+            actor = player.actor
+            if (actor is not None and player.connected
+                    and not player.session.game.character.is_dead):
+                alive.append(actor)
         if not alive:
             return
         for thing in monsters:
@@ -784,26 +808,18 @@ class CoopSession:
             # A retaliating NPC keeps its specific offender; ordinary hunters
             # choose the nearest living party member, never an invisible P1.
             target = props.get("_aggro_target")
-            owned = next(
-                (
-                    p
-                    for p in self.players.values()
-                    if p.actor is not None and id(p.actor) == target
-                ),
-                None,
-            )
-            if owned is not None and owned in alive:
+            if any(id(actor) == target for actor in alive):
                 continue
             if not self.logic.monster_ai._hunts_player(thing):
                 continue
             nearest = min(
                 alive,
-                key=lambda p: (
-                    (p.actor.pos[0] - thing.pos[0]) ** 2
-                    + (p.actor.pos[2] - thing.pos[2]) ** 2
+                key=lambda actor: (
+                    (actor.pos[0] - thing.pos[0]) ** 2
+                    + (actor.pos[2] - thing.pos[2]) ** 2
                 ),
             )
-            props["_aggro_target"] = id(nearest.actor)
+            props["_aggro_target"] = id(nearest)
 
     def _drain_inputs(self):
         with self.input_lock:
@@ -926,9 +942,7 @@ class CoopSession:
                         ):
                             self.logic.game_state.queue_sound(sound)
                 elif not self.authority and peer == "host" and kind == "travel":
-                    import hashlib
-
-                    from .compatibility import text_bytes
+                    from .compatibility import map_hash
                     from .model import map_path
 
                     name = (
@@ -936,7 +950,7 @@ class CoopSession:
                         + str(message.get("map", "")).replace("\\", "/").split("/")[-1]
                     )
                     path = map_path(self.lobby.root, name)
-                    if hashlib.sha256(text_bytes(path)).hexdigest() != message.get(
+                    if map_hash(path) != message.get(
                         "map_hash"
                     ):
                         raise LobbyError(
@@ -965,7 +979,7 @@ class CoopSession:
         self.lobby.maintenance()
 
     def tick(self, ctx):
-        with self.lock:
+        with self._locked():
             self._network()
             self.disconnected = bool(getattr(self.lobby, "disconnected", False))
             if self.disconnected:
@@ -1392,11 +1406,13 @@ class CoopSession:
         if session.dialogue is not None:
             session.end_dialogue()
             return
-        if self.travel is not None:
-            self.ready_to_travel(context)
-            return
         session.logic.interaction_runtime.handle(True)
         transition = session.logic.interaction_runtime.level_complete_ui
+        if transition and self.travel is not None:
+            # At an exit while the party is gathering: join that journey.
+            session.logic.interaction_runtime.level_complete_ui = None
+            self.ready_to_travel(context)
+            return
         if transition:
             session.logic.interaction_runtime.level_complete_ui = None
             if transition.get("generate_level"):
@@ -1410,6 +1426,13 @@ class CoopSession:
             self.ready_to_travel(context)
             return
         if fio.interaction_prompt(session.logic):
+            return
+        if self.travel is not None and not self._party_target_near(context):
+            # Nothing else in reach: interact joins the party's journey. With
+            # someone to talk to, loot or a companion to revive in reach it
+            # still does that, so a pending trip no longer locks the player
+            # out of everything but travelling.
+            self.ready_to_travel(context)
             return
         if self._revive_near(context, 0):
             return
@@ -1436,6 +1459,18 @@ class CoopSession:
         if context.owner == self.lobby.owner:
             self._ui_owner = context.player_id
 
+    def _party_target_near(self, context) -> bool:
+        """Whether interact has something besides travel to do for *context*:
+        a downed companion to revive, someone to talk to, or loot."""
+        session, pos = context.session, context.physics.pos
+        for victim in self.players.values():
+            if (victim is not context and victim.session.game.character.is_dead
+                    and session._dist2d(pos, victim.physics.pos) <= 130):
+                return True
+        return (session.nearest_talkable(pos, 200.0) is not None
+                or session.nearest_corpse(pos, 200.0) is not None
+                or session.nearest_container(pos, 200.0) is not None)
+
     def ready_to_travel(self, context):
         if self.travel is None:
             return
@@ -1453,14 +1488,10 @@ class CoopSession:
                 "maps/"
                 + str(request.get("target_map", "")).replace("\\", "/").split("/")[-1]
             )
-            import hashlib
-
-            from .compatibility import text_bytes
+            from .compatibility import map_hash
             from .model import map_path
 
-            map_hash = hashlib.sha256(
-                text_bytes(map_path(self.lobby.root, name))
-            ).hexdigest()
+            destination_hash = map_hash(map_path(self.lobby.root, name))
             request["immediate"] = True
             self.logic.interaction_runtime.level_complete_ui = request
             self.lobby.travelling = True
@@ -1469,12 +1500,12 @@ class CoopSession:
                     "type": "travel",
                     "map": request.get("target_map", ""),
                     "destination_spawn": request.get("destination_spawn", ""),
-                    "map_hash": map_hash,
+                    "map_hash": destination_hash,
                 },
                 peers=self.lobby.peers,
             )
             self.lobby.map_name = self.lobby.lobby.map_name = name
-            self.lobby.lobby.map_hash = map_hash
+            self.lobby.lobby.map_hash = destination_hash
             self.lobby.state = self.lobby.lobby.snapshot()
             self.travel = None
 
