@@ -8,6 +8,7 @@ sessions render replicas and submit only validated actions for owned characters.
 from __future__ import annotations
 
 import collections
+import contextlib
 import copy
 import math
 import threading
@@ -146,6 +147,8 @@ class CoopSession:
         self.party_quests = PartyQuests(root.store)
         self.input_queue = collections.deque(maxlen=512)
         self.input_lock = threading.Lock()
+        #: The party's state lock. Never take it on its own: use
+        #: :meth:`_locked`, which takes the engine's ``monster_lock`` first.
         self.lock = threading.RLock()
         self.sequence = 0
         self._snapshot_at = 0.0
@@ -743,6 +746,23 @@ class CoopSession:
         cam.overhead_height = min(top, cam.overhead_height)
         self.root._fit_bigworld_reach(cam, height)
 
+    @contextlib.contextmanager
+    def _locked(self):
+        """Hold the party lock, always after the engine's ``monster_lock``.
+
+        The MonsterAI thread runs under ``monster_lock`` and calls
+        :meth:`damage` when a monster hits a party member, so it takes
+        ``monster_lock`` then ``self.lock``. The logic thread's :meth:`tick`
+        reaches code that takes ``monster_lock`` (the root session grounds
+        actors under it). Taking ``self.lock`` first there would let the two
+        threads wait on each other for ever: the game freezes on its last
+        frame with no error. Both locks are re-entrant, so one order on every
+        thread is enough.
+        """
+        with fio.monster_lock(self.logic) or contextlib.nullcontext():
+            with self.lock:
+                yield
+
     def damage(self, player_id, amount, kind="physical", source=None, cause="attack"):
         if not self.authority:
             return 0.0
@@ -751,7 +771,7 @@ class CoopSession:
             return 0.0
         if getattr(source, "properties", {}).get("multiplayer_player"):
             return 0.0
-        with self.lock:
+        with self._locked():
             runtime = fio.player_runtime(context.session.logic)
             runtime.last_damage = (source, cause, kind)
             if source is not None:
@@ -965,7 +985,7 @@ class CoopSession:
         self.lobby.maintenance()
 
     def tick(self, ctx):
-        with self.lock:
+        with self._locked():
             self._network()
             self.disconnected = bool(getattr(self.lobby, "disconnected", False))
             if self.disconnected:
