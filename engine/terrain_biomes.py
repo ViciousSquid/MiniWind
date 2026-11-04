@@ -174,9 +174,14 @@ def sample(biome_map: Optional[np.ndarray], bounds, xs, zs) -> np.ndarray:
     iz1 = np.minimum(iz0 + 1, h - 1)
     tx = (fx - ix0)[:, None]
     tz = (fz - iz0)[:, None]
-    m = biome_map.astype(np.float32) / 255.0
-    top = m[iz0, ix0] * (1 - tx) + m[iz0, ix1] * tx
-    bot = m[iz1, ix0] * (1 - tx) + m[iz1, ix1] * tx
+    # Only the four texels round each point are converted to weights: the
+    # whole map is 1024x1024x5 on the shipped world, and converting all of it
+    # on every call made each farm worker's field search a visible hitch.
+    def texels(iz, ix):
+        return biome_map[iz, ix].astype(np.float32) / 255.0
+
+    top = texels(iz0, ix0) * (1 - tx) + texels(iz0, ix1) * tx
+    bot = texels(iz1, ix0) * (1 - tx) + texels(iz1, ix1) * tx
     out[inside] = top * (1 - tz) + bot * tz
     return out
 

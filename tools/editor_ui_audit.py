@@ -404,9 +404,22 @@ def run_audit(audit, window, sections):
         audit.modal("dialogs/about", window.show_about)
 
     if enabled("game"):
-        from game import editor_ui, editor_wizards, quest_editor, sim_editor, integration
-        from game.entities import GameSettings
-        from game.tools.dungeon_designer import DungeonDesigner
+        # The installed game, by the name the editor itself loads it under
+        # ([Startup] game_module): Fio never imports a game package directly.
+        import configparser
+        import importlib
+        startup = configparser.ConfigParser()
+        startup.read("settings.ini")
+        game_name = startup.get("Startup", "game_module", fallback="game").strip() or "game"
+
+        def game_part(name):
+            return importlib.import_module(game_name + "." + name)
+
+        editor_ui, editor_wizards, quest_editor, sim_editor, integration = (
+            game_part(n) for n in ("editor_ui", "editor_wizards", "quest_editor",
+                                   "sim_editor", "integration"))
+        GameSettings = game_part("entities").GameSettings
+        DungeonDesigner = game_part("tools.dungeon_designer").DungeonDesigner
         settings = next(e for _, e in entities if isinstance(e, GameSettings))
         classes = quest_editor._classes()
         audit.attempt("game/quest-editor", lambda: classes["QuestEditorDialog"](settings, window))

@@ -12,6 +12,28 @@ def text_bytes(path):
     return path.read_bytes().replace(b"\r\n", b"\n")
 
 
+_MAP_HASHES = {}
+
+
+def map_hash(path) -> str:
+    """SHA-256 of *path*'s :func:`text_bytes`, cached per file version.
+
+    Party travel, lobbies and joins compare map hashes; the overworld is
+    87 MB, and hashing it again on the logic thread each time the party set
+    off stalled the game for a quarter of a second.
+    """
+    path = Path(path)
+    stat = path.stat()
+    key = (str(path.resolve()), stat.st_mtime_ns, stat.st_size)
+    cached = _MAP_HASHES.get(key)
+    if cached is None:
+        cached = hashlib.sha256(text_bytes(path)).hexdigest()
+        if len(_MAP_HASHES) > 64:
+            _MAP_HASHES.clear()
+        _MAP_HASHES[key] = cached
+    return cached
+
+
 def source_signature(root):
     root = Path(root)
     digest = hashlib.sha256()

@@ -292,3 +292,18 @@ def test_applying_a_malformed_map_leaves_the_open_scene_alone(main_window):
     assert window.state.brushes is brushes
     assert window.state.things is things
     assert [t.properties["name"] for t in things] == ["PlayerStart_1"]
+
+
+def test_tool_metadata_survives_a_load_save_round_trip():
+    """``_``-prefixed top-level keys (world-generator bookkeeping such as
+    ``_miniwind_world``) are kept when the editor saves the map."""
+    from editor.editor_state import EditorState
+    from tests.helpers import scenes
+    level = scenes.simple_room()
+    level["_miniwind_world"] = {"caves": ["cave01"], "roads": True}
+    state = EditorState()
+    state.load_from_data(level, save_undo=False)
+    saved = state.get_level_data()
+    assert saved["_miniwind_world"] == {"caves": ["cave01"], "roads": True}
+    state.clear_scene()
+    assert "_miniwind_world" not in state.get_level_data()

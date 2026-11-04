@@ -12,9 +12,14 @@ pytestmark = pytest.mark.qt
 def test_deadlines_do_not_drift_with_sleep_overshoot(monkeypatch):
     from engine import logic_thread
 
+    from editor.editor_state import EditorState
+    from engine.threaded_game_state import ThreadedGameState
+
     clock = [10.0]
     frames = []
-    logic = object.__new__(LogicThread)
+    # The real thread object; only its frame work is replaced, and run() is
+    # driven on this thread so the clock can be controlled.
+    logic = LogicThread(ThreadedGameState(), EditorState())
     logic.running = True
 
     def step(accumulator, *, frame_time):

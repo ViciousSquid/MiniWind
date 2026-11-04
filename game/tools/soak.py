@@ -16,10 +16,10 @@ ways a game can freeze without printing anything:
 
 Modes::
 
-    python tools/soak.py --mode single --minutes 10
-    python tools/soak.py --mode bots   --minutes 10      # 1 human + 3 AI companions
-    python tools/soak.py --mode mixed  --minutes 10      # 2 humans + 2 AI companions
-    python tools/soak.py --mode bots --threaded --minutes 5
+    python game/tools/soak.py --mode single --minutes 10
+    python game/tools/soak.py --mode bots   --minutes 10      # 1 human + 3 AI companions
+    python game/tools/soak.py --mode mixed  --minutes 10      # 2 humans + 2 AI companions
+    python game/tools/soak.py --mode bots --threaded --minutes 5
 
 ``--minutes`` is game time at 60 ticks per second (wall-clock minutes with
 ``--threaded``). Stepped runs are reproducible from ``--seed``; they run the
@@ -47,7 +47,7 @@ import threading
 import time
 import traceback
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
@@ -95,7 +95,7 @@ def hot_frames(stacks, top=6):
     counts = collections.Counter()
     leaf = collections.Counter()
     for stack in stacks:
-        own = [f for f in stack if not f.startswith((".", "/")) and "tools/soak.py" not in f]
+        own = [f for f in stack if not f.startswith((".", "/")) and "game/tools/soak.py" not in f]
         if own:
             leaf[own[0]] += 1
         for f in set(own):
@@ -519,7 +519,9 @@ class Soak:
             humans = [p for p in coop.players.values() if not p.bot and p.connected]
             down = bool(humans) and all(p.session.game.character.is_dead for p in humans)
         else:
-            down = bool(self.logic.player_runtime.player_dead)
+            # Single-player death opens the death screen and waits for the
+            # player's choice by design; only a party can be stuck downed.
+            down = False
         if not down:
             self._down_since = None
             return

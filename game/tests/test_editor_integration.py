@@ -50,12 +50,12 @@ def test_schemas_are_grouped_into_sections():
 def test_container_locks_are_authored_alongside_existing_ownership():
     schema = {p.name: p for p in _mgr().property_schema_for("container")}
     assert schema["locked"].type == "bool" and schema["locked"].default is False
-    assert schema["lock_difficulty"].type == "int"
-    assert schema["lock_difficulty"].default == 25
-    assert schema["key_id"].type == "string"
-    assert schema["pickable"].default is True
+    # One of the five named lock difficulties (docs/lockpicking.md).
+    assert schema["lock_difficulty"].type == "enum"
+    assert schema["lock_difficulty"].default == "novice"
+    assert schema["lock_key"].type == "string" and schema["lock_key"].default == ""
     assert all(schema[name].group == "LOCK" for name in
-               ("locked", "lock_difficulty", "key_id", "pickable"))
+               ("locked", "lock_difficulty", "lock_key"))
     assert schema["owner"].group == "OWNERSHIP" and "None" in schema["owner"].help
 
 

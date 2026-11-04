@@ -715,3 +715,39 @@ def test_group_travel_updates_reconnect_map_and_preserves_current_save_identity(
     assert coop.lobby.travelling
     # This test stops before the editor performs the actual map load.
     coop.lobby.travelling = False
+
+
+def _pending_trip(coop, ready):
+    coop.travel = {"active": True, "target_map": "cave01.json", "ready": list(ready)}
+
+
+def test_interact_joins_a_pending_trip_when_nothing_else_is_in_reach(coop_game, monkeypatch):
+    coop = coop_game.logic.game_session.coop
+    first, second = list(coop.players.values())[:2]
+    _pending_trip(coop, [second.player_id])
+    session = first.session
+    for name in ("nearest_talkable", "nearest_corpse", "nearest_container"):
+        monkeypatch.setattr(session, name, lambda *a, **k: None)
+    monkeypatch.setattr(coop, "_revive_near", lambda *a, **k: False)
+    readied = []
+    monkeypatch.setattr(coop, "ready_to_travel", lambda ctx: readied.append(ctx.player_id))
+    coop.interact(first)
+    assert readied == [first.player_id]
+    coop.travel = None
+
+
+def test_a_pending_trip_does_not_stop_a_player_talking(coop_game, monkeypatch):
+    coop = coop_game.logic.game_session.coop
+    first, second = list(coop.players.values())[:2]
+    _pending_trip(coop, [second.player_id])
+    session = first.session
+    villager = object()
+    monkeypatch.setattr(session, "nearest_talkable", lambda *a, **k: villager)
+    talked = []
+    monkeypatch.setattr(session, "start_dialogue", lambda npc, *a: talked.append(npc))
+    readied = []
+    monkeypatch.setattr(coop, "ready_to_travel", lambda ctx: readied.append(ctx.player_id))
+    coop.interact(first)
+    assert talked == [villager] and readied == []
+    assert coop.travel is not None, "the trip is still waiting for this player"
+    coop.travel = None

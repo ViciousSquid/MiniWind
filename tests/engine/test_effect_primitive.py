@@ -56,7 +56,8 @@ def test_effect_defaults_to_fire_with_intrinsic_light():
     assert effect.properties["effect_type"] == EFFECT_FIRE
     assert effect.properties["preview"] is False
     assert effect.properties["silent"] is False
-    assert effect.properties["fire_texture"] == EFFECT_FIRE_TEXTURES[0]
+    # Fire is fire02 wherever it is not authored otherwise (EFFECT_DEFAULTS).
+    assert effect.properties["fire_texture"] == EFFECT_FIRE_TEXTURES[1]
     assert len(EFFECT_FIRE_TEXTURES) == 5
     assert effect.properties["width"] == 32.0
     assert effect.properties["height"] == 46.0
@@ -520,7 +521,8 @@ def test_effect_texture_inputs_ignore_invalid_variants():
     io_manager._input_handlers[("effect", "setorbtexture")](effect, "orb05", logic)
     io_manager._input_handlers[("effect", "setorbtexture")](effect, "ORB 4", logic)
 
-    assert effect.properties["fire_texture"] == EFFECT_FIRE_TEXTURES[0]
+    # Every variant above is invalid: the default (fire02) is untouched.
+    assert effect.properties["fire_texture"] == EFFECT_FIRE_TEXTURES[1]
     assert effect.properties["orb_texture"] == EFFECT_ORB_TEXTURES[0]
 
 

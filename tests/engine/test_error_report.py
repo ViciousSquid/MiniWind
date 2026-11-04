@@ -125,3 +125,20 @@ def test_reporting_without_configure_still_logs_and_queues(monkeypatch, caplog):
         error_report.report_error("unconfigured failure")
     assert "unconfigured failure" in caplog.text
     assert [n.message for n in error_report.take_notices()] == ["unconfigured failure"]
+
+
+def test_the_environment_moves_the_logs(tmp_path, monkeypatch):
+    """MINIWIND_LOG_DIR wins over the directory the game passes in."""
+    monkeypatch.setitem(error_report._state, "configured", False)
+    monkeypatch.setitem(error_report._state, "log_path", None)
+    monkeypatch.setenv("MINIWIND_LOG_DIR", str(tmp_path / "elsewhere"))
+    handlers = list(error_report.logger.handlers)
+    try:
+        path = error_report.configure(str(tmp_path / "default"), hooks=False,
+                                      tee_stderr=False, console=False)
+        assert path == str(tmp_path / "elsewhere" / "miniwind.log")
+    finally:
+        for handler in list(error_report.logger.handlers):
+            if handler not in handlers:
+                error_report.logger.removeHandler(handler)
+                handler.close()

@@ -946,9 +946,7 @@ class CoopSession:
                         ):
                             self.logic.game_state.queue_sound(sound)
                 elif not self.authority and peer == "host" and kind == "travel":
-                    import hashlib
-
-                    from .compatibility import text_bytes
+                    from .compatibility import map_hash
                     from .model import map_path
 
                     name = (
@@ -956,7 +954,7 @@ class CoopSession:
                         + str(message.get("map", "")).replace("\\", "/").split("/")[-1]
                     )
                     path = map_path(self.lobby.root, name)
-                    if hashlib.sha256(text_bytes(path)).hexdigest() != message.get(
+                    if map_hash(path) != message.get(
                         "map_hash"
                     ):
                         raise LobbyError(
@@ -1412,11 +1410,13 @@ class CoopSession:
         if session.dialogue is not None:
             session.end_dialogue()
             return
-        if self.travel is not None:
-            self.ready_to_travel(context)
-            return
         session.logic.interaction_runtime.handle(True)
         transition = session.logic.interaction_runtime.level_complete_ui
+        if transition and self.travel is not None:
+            # At an exit while the party is gathering: join that journey.
+            session.logic.interaction_runtime.level_complete_ui = None
+            self.ready_to_travel(context)
+            return
         if transition:
             session.logic.interaction_runtime.level_complete_ui = None
             if transition.get("generate_level"):
@@ -1430,6 +1430,13 @@ class CoopSession:
             self.ready_to_travel(context)
             return
         if fio.interaction_prompt(session.logic):
+            return
+        if self.travel is not None and not self._party_target_near(context):
+            # Nothing else in reach: interact joins the party's journey. With
+            # someone to talk to, loot or a companion to revive in reach it
+            # still does that, so a pending trip no longer locks the player
+            # out of everything but travelling.
+            self.ready_to_travel(context)
             return
         if self._revive_near(context, 0):
             return
@@ -1456,6 +1463,18 @@ class CoopSession:
         if context.owner == self.lobby.owner:
             self._ui_owner = context.player_id
 
+    def _party_target_near(self, context) -> bool:
+        """Whether interact has something besides travel to do for *context*:
+        a downed companion to revive, someone to talk to, or loot."""
+        session, pos = context.session, context.physics.pos
+        for victim in self.players.values():
+            if (victim is not context and victim.session.game.character.is_dead
+                    and session._dist2d(pos, victim.physics.pos) <= 130):
+                return True
+        return (session.nearest_talkable(pos, 200.0) is not None
+                or session.nearest_corpse(pos, 200.0) is not None
+                or session.nearest_container(pos, 200.0) is not None)
+
     def ready_to_travel(self, context):
         if self.travel is None:
             return
@@ -1473,14 +1492,10 @@ class CoopSession:
                 "maps/"
                 + str(request.get("target_map", "")).replace("\\", "/").split("/")[-1]
             )
-            import hashlib
-
-            from .compatibility import text_bytes
+            from .compatibility import map_hash
             from .model import map_path
 
-            map_hash = hashlib.sha256(
-                text_bytes(map_path(self.lobby.root, name))
-            ).hexdigest()
+            destination_hash = map_hash(map_path(self.lobby.root, name))
             request["immediate"] = True
             self.logic.interaction_runtime.level_complete_ui = request
             self.lobby.travelling = True
@@ -1489,12 +1504,12 @@ class CoopSession:
                     "type": "travel",
                     "map": request.get("target_map", ""),
                     "destination_spawn": request.get("destination_spawn", ""),
-                    "map_hash": map_hash,
+                    "map_hash": destination_hash,
                 },
                 peers=self.lobby.peers,
             )
             self.lobby.map_name = self.lobby.lobby.map_name = name
-            self.lobby.lobby.map_hash = map_hash
+            self.lobby.lobby.map_hash = destination_hash
             self.lobby.state = self.lobby.lobby.snapshot()
             self.travel = None
 

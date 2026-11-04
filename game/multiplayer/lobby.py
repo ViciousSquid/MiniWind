@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 
 from . import PROTOCOL_VERSION
-from .compatibility import text_bytes
+from .compatibility import map_hash
 from .model import Lobby, LobbyError, content_signature, map_path
 from .transport import GAME_PORT, NetworkService
 
@@ -89,7 +89,7 @@ class LobbyController:
         self.local_only = local_only
         self.owner = "host"
         self.lobby = Lobby(signature=self.signature, name=name, map_name=self.map_name)
-        self.lobby.map_hash = hashlib.sha256(text_bytes(path)).hexdigest()
+        self.lobby.map_hash = map_hash(path)
         self.network.stop_browser()
         self._publish()
 
@@ -103,9 +103,7 @@ class LobbyController:
         name = "maps/" + Path(str(data.get("map", ""))).name
         map_path(self.root, name)
         self.map_name = self.lobby.map_name = name
-        self.lobby.map_hash = hashlib.sha256(
-            text_bytes(map_path(self.root, name))
-        ).hexdigest()
+        self.lobby.map_hash = map_hash(map_path(self.root, name))
         campaign = data.get("coop")
         if campaign:
             if (
@@ -312,7 +310,7 @@ class LobbyController:
                 path = map_path(self.root, state.get("map"))
                 expected = state.get("map_hash", "")
                 if expected and (str(path), expected) not in self._verified_maps:
-                    if hashlib.sha256(text_bytes(path)).hexdigest() != expected:
+                    if map_hash(path) != expected:
                         raise LobbyError(
                             "The installed map differs from the host's map."
                         )

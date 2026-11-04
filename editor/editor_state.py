@@ -394,6 +394,7 @@ class EditorState:
         self._invalidate_entity_caches()
         self.selected_objects = []
         self.terrain_data = None
+        self.tool_metadata = {}
         self.view_filters.load_level_data({})
         self.item_definitions.reset()
         self.undo_stack.clear()
@@ -507,6 +508,8 @@ class EditorState:
         if not getattr(self, 'created_at', ''):
             self.created_at = datetime.datetime.now().isoformat(timespec='seconds')
         data['created'] = self.created_at
+        for key, value in getattr(self, 'tool_metadata', {}).items():
+            data.setdefault(key, value)
 
         # The custom item slots, where this world redefines them.
         items = self.item_definitions.to_level_data()
@@ -814,6 +817,13 @@ class EditorState:
         # Absent in maps written before this existed; the overview falls back to
         # the file's own timestamps rather than inventing one.
         self.created_at = level_data.get('created', '')
+        # Top-level keys starting with "_" belong to the tools that built the
+        # map (``_miniwind_world`` records which caves and roads the world
+        # generators already laid down). The editor has no use for them but
+        # must not drop them: saving used to, and a rebuilt world then had
+        # its roads applied twice.
+        self.tool_metadata = {k: v for k, v in level_data.items()
+                              if isinstance(k, str) and k.startswith('_')}
 
         # Store logic graph positions for later use by the graph window
         self._logic_graph_positions = {}

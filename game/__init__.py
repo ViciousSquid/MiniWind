@@ -51,6 +51,24 @@ def install() -> None:
         print(f"[MiniWind] editor integration skipped: {exc}")
 
 
+def launched_party():
+    """The multiplayer party the launcher started, or None.
+
+    The application bootstrap (main.py) reaches the game only through the
+    module it loaded by name, never by importing ``game``: it opens the
+    party's map instead of the default one and closes the party on exit
+    (:func:`close_party`).
+    """
+    from .multiplayer.lobby import active
+    return active()
+
+
+def close_party() -> None:
+    """Close the launcher's multiplayer party (sockets, discovery)."""
+    from .multiplayer.lobby import finish
+    finish()
+
+
 def show_launcher(root_directory, settings_path) -> str:
     """MiniWind's startup launcher: ``"play"``, ``"edit"`` or ``"quit"``.
 

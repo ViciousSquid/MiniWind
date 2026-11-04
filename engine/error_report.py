@@ -301,7 +301,8 @@ def configure(log_dir=None, *, level=None, console=True, tee_stderr=True,
               hooks=True) -> str:
     """Start logging to ``<log_dir>/miniwind.log``; returns the file's path.
 
-    *log_dir* defaults to ``$MINIWIND_LOG_DIR`` or ``logs/`` beside the game.
+    ``$MINIWIND_LOG_DIR`` overrides *log_dir*, which defaults to ``logs/``
+    beside the game.
     *level* (or ``$MINIWIND_LOG_LEVEL``) sets what the file keeps: INFO by
     default, DEBUG to include every Debug Console line. Calling it again only
     returns the path.
@@ -309,7 +310,9 @@ def configure(log_dir=None, *, level=None, console=True, tee_stderr=True,
     if _state["configured"]:
         return _state["log_path"]
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    log_dir = log_dir or os.environ.get("MINIWIND_LOG_DIR") or os.path.join(root, "logs")
+    # The environment wins over the caller's default, so a player or tester
+    # can always move the logs (MINIWIND_LOG_DIR).
+    log_dir = os.environ.get("MINIWIND_LOG_DIR") or log_dir or os.path.join(root, "logs")
     level_name = (level or os.environ.get("MINIWIND_LOG_LEVEL") or "INFO").upper()
     os.makedirs(log_dir, exist_ok=True)
     path = os.path.join(log_dir, LOG_FILE)
