@@ -380,6 +380,7 @@ class Soak:
                            hangs=[], slow_ticks=[], faults=[], debug_log=[],
                            level_changes=[], tick_ms={})
         self.debug = []
+        self._checked_debug = 0
         capture_debug_log(self.debug)
 
     def log(self, *parts):
@@ -410,6 +411,20 @@ class Soak:
     # -- per-tick checks ------------------------------------------------------
 
     def check(self, tick):
+        from engine.error_report import ERROR_CATEGORIES
+
+        # A background subsystem can fault while ticks and frames continue.
+        # Such a run must fail, rather than merely listing the error in its
+        # last 200 Debug Console lines. Only inspect new lines each tick.
+        end = len(self.debug)
+        start, self._checked_debug = self._checked_debug, end
+        for _at, category, message in self.debug[start:end]:
+            if (category.lower() in ERROR_CATEGORIES
+                    or "Traceback (most recent call last)" in message):
+                self.report["faults"].append(dict(tick=tick, kind="debug_error",
+                                                  category=category, trace=message))
+                self.log("DEBUG ERROR at", tick, category, message)
+                return False
         logic = self.logic
         if getattr(logic, "_tick_faulted", False) and not self.report["faults"]:
             self.report["faults"].append(dict(tick=tick, kind="tick_faulted",

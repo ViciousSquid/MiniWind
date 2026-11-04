@@ -790,11 +790,15 @@ class CoopSession:
     def prepare_ai(self, monsters):
         if not self.authority:
             return
-        alive = [
-            p
-            for p in self.players.values()
-            if p.connected and not p.session.game.character.is_dead
-        ]
+        # The AI thread can run while a new map's party is still attaching.
+        # Keep actor references for this update: a PlayerContext may have no
+        # actor yet, or its actor may be replaced after this snapshot.
+        alive = []
+        for player in list(self.players.values()):
+            actor = player.actor
+            if (actor is not None and player.connected
+                    and not player.session.game.character.is_dead):
+                alive.append(actor)
         if not alive:
             return
         for thing in monsters:
@@ -804,26 +808,18 @@ class CoopSession:
             # A retaliating NPC keeps its specific offender; ordinary hunters
             # choose the nearest living party member, never an invisible P1.
             target = props.get("_aggro_target")
-            owned = next(
-                (
-                    p
-                    for p in self.players.values()
-                    if p.actor is not None and id(p.actor) == target
-                ),
-                None,
-            )
-            if owned is not None and owned in alive:
+            if any(id(actor) == target for actor in alive):
                 continue
             if not self.logic.monster_ai._hunts_player(thing):
                 continue
             nearest = min(
                 alive,
-                key=lambda p: (
-                    (p.actor.pos[0] - thing.pos[0]) ** 2
-                    + (p.actor.pos[2] - thing.pos[2]) ** 2
+                key=lambda actor: (
+                    (actor.pos[0] - thing.pos[0]) ** 2
+                    + (actor.pos[2] - thing.pos[2]) ** 2
                 ),
             )
-            props["_aggro_target"] = id(nearest.actor)
+            props["_aggro_target"] = id(nearest)
 
     def _drain_inputs(self):
         with self.input_lock:
