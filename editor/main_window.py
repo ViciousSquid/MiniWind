@@ -5750,6 +5750,9 @@ class MainWindow(QMainWindow):
                 return
 
             # Stop timers
+            if self.is_kiosk_mode:
+                from engine import gc_control
+                gc_control.set_freeze(False)
             if hasattr(self, 'error_notice_timer'):
                 self.error_notice_timer.stop()
             if getattr(self, 'freeze_watchdog', None) is not None:

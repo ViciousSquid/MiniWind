@@ -7,6 +7,7 @@ only after a pause, so one connected later is still found.
 """
 
 import pytest
+from types import SimpleNamespace
 
 pytest.importorskip("PyQt5", reason="the view is a Qt widget")
 pygame = pytest.importorskip("pygame")
@@ -32,7 +33,9 @@ def test_a_failed_mixer_is_not_reprobed_on_every_sound(main_window, qt_app, monk
     mixer = _FailingMixer()
     monkeypatch.setattr(qt_game_view.pygame, "mixer", mixer)
     clock = [100.0]
-    monkeypatch.setattr(qt_game_view.time, "perf_counter", lambda: clock[0])
+    # Patching the shared time module also rewinds the real logic thread's
+    # scheduler and can leave it sleeping past Stop. Only the view uses this clock.
+    monkeypatch.setattr(qt_game_view, "time", SimpleNamespace(perf_counter=lambda: clock[0]))
     view = qt_game_view.QtGameView(main_window)
     try:
         ensure = view._ensure_pygame_mixer
