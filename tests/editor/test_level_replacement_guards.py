@@ -327,45 +327,6 @@ def test_play_tells_the_logic_thread_where_a_played_package_is(main_window, tmp_
     window._exit_play_mode()
 
 
-<<<<<<< MiniWind
-def test_the_cutscene_lookup_prefers_the_played_package(main_window, tmp_path,
-                                                        monkeypatch):
-||||||| base
-def test_an_exported_packages_cutscene_plays_from_the_package(main_window, tmp_path):
-    """Export a map whose LogicCamera names a cutscene, play the package on an
-    editor that has no such cutscene, and the cutscene still resolves."""
-    from editor.package_exporter import PackageExporter
-
-    project = tmp_path / "project"
-    cutscene = {"version": 2, "name": "intro", "actors": [],
-                "camera": [{"time": 0.0, "pos": [0, 0, 0], "yaw": 0, "pitch": 0}]}
-    _write_map(project / "cutscenes" / "intro.json", cutscene)
-    level = json.loads(json.dumps(PLAYABLE))
-    level["things"].append({"type": "logic_camera", "pos": [0, 0, 0], "properties": {
-        "type": "logic_camera", "cutscene_file": "cutscenes/intro.json"}})
-    current = _write_map(project / "maps" / "start.json", level)
-    pak = tmp_path / "game.fiopak"
-    ok, errors = PackageExporter(None, str(project)).export(
-        str(pak), {"title": "T"}, current)
-    assert ok and errors == [], errors
-
-    window = main_window
-    window.config["Kiosk"] = {"launch_in_editor": "true"}
-    window.play_package_from_path(str(pak))
-    window.enter_play_mode()
-    try:
-        runtime = window.view_3d.logic_thread.cutscene_runtime
-        found = runtime._cutscene_file_path("cutscenes/intro.json")
-        assert found is not None
-        assert found.startswith(os.path.realpath(window._package_temp_dir))
-        assert runtime._load_cutscene_file("cutscenes/intro.json")["name"] == "intro"
-    finally:
-        window._exit_play_mode()
-        window._discard_package_temp_dir()
-
-
-def test_the_cutscene_lookup_prefers_the_played_package(main_window, tmp_path):
-=======
 def test_an_exported_packages_cutscene_plays_from_the_package(main_window, tmp_path):
     """Export a map whose LogicCamera names a cutscene, play the package on an
     editor that has no such cutscene, and the cutscene still resolves."""
@@ -398,66 +359,33 @@ def test_an_exported_packages_cutscene_plays_from_the_package(main_window, tmp_p
         window._close_package()
 
 
-def test_the_cutscene_lookup_prefers_the_played_package(main_window, tmp_path):
->>>>>>> Fio-3.5
+def test_the_cutscene_lookup_prefers_the_played_package(main_window, tmp_path,
+                                                        monkeypatch):
     logic = main_window.view_3d.logic_thread
     runtime = logic.cutscene_runtime
     cutscene = {"version": 2, "actors": [], "camera": []}
-<<<<<<< MiniWind
     # The project's own cutscenes: a project of the test's, so the check does
-    # not depend on which cutscenes the repository ships.
+    # not depend on which cutscenes the repository ships (MiniWind does not
+    # ship Fio's ``cutscenes/showcase.json``).
     project = tmp_path / "project"
-    _write_map(project / "cutscenes" / "intro.json", dict(cutscene, name="project"))
+    _write_map(project / "cutscenes" / "showcase.json", dict(cutscene, name="project"))
     monkeypatch.setattr(logic, "root_dir", str(project), raising=False)
-    package = tmp_path / "package"
-    _write_map(package / "cutscenes" / "intro.json", dict(cutscene, name="pkg"))
-    _write_map(package / "cutscenes" / "only_here.json", cutscene)
-    (package / "outside.json").write_text("{}")
-||||||| base
-    _write_map(package / "cutscenes" / "showcase.json", dict(cutscene, name="pkg"))
-    _write_map(package / "cutscenes" / "only_here.json", cutscene)
-    (package / "outside.json").write_text("{}")
-=======
     package = _package(tmp_path, {"maps/start.json": LEVEL,
                                   "cutscenes/showcase.json": dict(cutscene, name="pkg"),
                                   "cutscenes/only_here.json": cutscene,
                                   "outside.json": {}})
->>>>>>> Fio-3.5
 
     logic.package = package
     try:
-<<<<<<< MiniWind
-        assert runtime._cutscene_file_path("cutscenes/intro.json") == \
-            os.path.realpath(package / "cutscenes" / "intro.json")
-        assert runtime._cutscene_file_path("cutscenes/only_here.json")
-        assert runtime._cutscene_file_path("cutscenes/../outside.json") is None
-||||||| base
-        assert runtime._cutscene_file_path("cutscenes/showcase.json") == \
-            os.path.realpath(package / "cutscenes" / "showcase.json")
-        assert runtime._cutscene_file_path("cutscenes/only_here.json")
-        assert runtime._cutscene_file_path("cutscenes/../outside.json") is None
-=======
         assert runtime._package_cutscene("cutscenes/showcase.json") == "cutscenes/showcase.json"
         assert runtime._load_cutscene_file("cutscenes/showcase.json")["name"] == "pkg"
         assert runtime._package_cutscene("cutscenes/only_here.json")
         assert runtime._package_cutscene("cutscenes/../outside.json") is None
         assert runtime._package_cutscene("outside.json") is None
->>>>>>> Fio-3.5
     finally:
         logic.package = None
     # Without a package: the project's own cutscenes, and nothing else.
-<<<<<<< MiniWind
-    assert runtime._cutscene_file_path("cutscenes/intro.json") == \
-        os.path.realpath(project / "cutscenes" / "intro.json")
-    assert not runtime._cutscene_file_path("cutscenes/intro.json").startswith(
-        os.path.realpath(package))
-||||||| base
-    assert runtime._cutscene_file_path("cutscenes/showcase.json").endswith(
-        os.path.join("cutscenes", "showcase.json"))
-    assert not runtime._cutscene_file_path("cutscenes/showcase.json").startswith(
-        os.path.realpath(package))
-=======
-    assert runtime._cutscene_file_path("cutscenes/showcase.json").endswith(
-        os.path.join("cutscenes", "showcase.json"))
->>>>>>> Fio-3.5
+    assert runtime._cutscene_file_path("cutscenes/showcase.json") == \
+        os.path.realpath(project / "cutscenes" / "showcase.json")
+    assert runtime._load_cutscene_file("cutscenes/showcase.json")["name"] == "project"
     assert runtime._cutscene_file_path("cutscenes/only_here.json") is None

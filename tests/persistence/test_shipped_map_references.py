@@ -69,13 +69,9 @@ def test_referenced_files_exist(path, monkeypatch):
         value for value in references
         if value.startswith(REFERENCE_ROOTS)
         and os.path.splitext(value)[1]
-<<<<<<< MiniWind
-        and not asset_archives.exists(value)
-||||||| base
-        and not os.path.isfile(os.path.join(ROOT, *value.split("/")))
-=======
-        and not _reference_exists(value)
->>>>>>> Fio-3.5
+        # A mounted .fiopak data package (MiniWind) or the category archive /
+        # loose file (Fio) may hold it.
+        and not (asset_archives.exists(value) or _reference_exists(value))
     )
     assert not missing, f"{os.path.basename(path)} references missing files: {missing}"
 

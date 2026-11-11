@@ -96,10 +96,6 @@ def test_view_menu_sets_the_asset_thumbnail_size(main_window):
     assert host.thumbnail_size_actions['small'].isChecked()
     assert not host.thumbnail_size_actions['smallest'].isChecked()
 
-<<<<<<< MiniWind
-||||||| base
-
-=======
 
 def test_show_whole_world_is_a_checkable_view_menu_action(main_window, monkeypatch):
     host = main_window
@@ -143,7 +139,6 @@ def test_show_whole_world_menu_action_disabled_during_play(main_window, monkeypa
     assert action.isEnabled()
 
 
->>>>>>> Fio-3.5
 # ────────────────────────────
 # The version gate
 # ────────────────────────────

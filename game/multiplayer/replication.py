@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import math
 import time
 
@@ -76,8 +77,10 @@ def clean(value):
         return value if math.isfinite(value) else 0.0
     if isinstance(value, (list, tuple)):
         return [clean(v) for v in value]
-    if isinstance(value, dict):
-        return {str(k): clean(v) for k, v in value.items() if not callable(v)}
+    if isinstance(value, Mapping):
+        # A dict, or the engine's row view of a door's or mover's state.
+        return {str(k): clean(v) for k, v in value.items()
+                if not callable(v) and not str(k).startswith("_")}
     return None
 
 
