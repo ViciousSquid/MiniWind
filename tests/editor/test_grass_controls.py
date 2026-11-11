@@ -89,6 +89,7 @@ def test_increased_density_actually_adds_blades_beyond_the_old_chunk_cap():
     from engine.terrain import Terrain, MAX_GRASS_DENSITY
     from tests.engine.test_terrain_appearance import _build, _slot
     terrain = Terrain(seed=11)
+    terrain.meadow_grass = True       # MiniWind keeps ordinary ground clear by default
     terrain.set_biome('grassy_hills')
     terrain.set_bounds(-1, 0, -1, 0)
     _build(terrain)

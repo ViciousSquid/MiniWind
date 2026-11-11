@@ -136,8 +136,9 @@ class LoadingOverlay(QWidget):
         self.backdrop = None
         #: Injected by tests: the clock the throbber is placed by.
         self.clock = time.perf_counter
-        #: The staged presentation's progress bar; made when first needed.
-        self.bar = None
+        #: The staged presentation's progress bar; made when first needed
+        #: (and only then published as ``bar``: the panel has none).
+        self._bar = None
         #: Which presentation the load under way was raised with.
         self._staged = False
         parent.installEventFilter(self)
@@ -166,8 +167,8 @@ class LoadingOverlay(QWidget):
                 self._prepare_bar()
             else:
                 self.backdrop = self._grab_backdrop()
-                if self.bar is not None:
-                    self.bar.hide()
+                if self._bar is not None:
+                    self._bar.hide()
             self._layout()
             self.show()
             self.raise_()
@@ -202,8 +203,8 @@ class LoadingOverlay(QWidget):
         else:
             target = int(percent)
         self._value = max(current, min(_CEILING, target))
-        if self._staged and self.bar is not None:
-            self.bar.setValue(self._value)
+        if self._staged and self._bar is not None:
+            self._bar.setValue(self._value)
         try:
             self.raise_()
             self.repaint()
@@ -224,29 +225,30 @@ class LoadingOverlay(QWidget):
 
     def _prepare_bar(self):
         """The staged presentation's bar: the splash's, empty."""
-        if self.bar is None:
-            self.bar = QProgressBar(self)
-            self.bar.setRange(0, 100)
-            self.bar.setFixedHeight(BAR_HEIGHT)
-            self.bar.setTextVisible(False)
-            self.bar.setAlignment(Qt.AlignCenter)
-        self.bar.setValue(0)
+        if self._bar is None:
+            self._bar = QProgressBar(self)
+            self._bar.setRange(0, 100)
+            self._bar.setFixedHeight(BAR_HEIGHT)
+            self._bar.setTextVisible(False)
+            self._bar.setAlignment(Qt.AlignCenter)
+            self.bar = self._bar
+        self._bar.setValue(0)
         if _BAR_FONT is not None:
             # A stylesheet, not setFont(): the application stylesheet sets
             # every widget's font-family, which would win over setFont.
-            self.bar.setStyleSheet(
+            self._bar.setStyleSheet(
                 f'QProgressBar {{ font-family: "{_BAR_FONT.family()}"; '
                 f'font-size: {_BAR_FONT.pointSize()}pt; }}')
-        self.bar.show()
+        self._bar.show()
 
     def _layout(self):
         """Cover the window (to draw its blurred picture, or the staged
         veil); the panel itself is :meth:`panel_rect`, in the middle."""
         self.setGeometry(self.parentWidget().rect())
-        if self._staged and self.bar is not None:
+        if self._staged and self._bar is not None:
             w, h = self.width(), self.height()
             bar_w = max(240, min(640, int(w * 0.5)))
-            self.bar.setGeometry((w - bar_w) // 2, h // 2, bar_w, BAR_HEIGHT)
+            self._bar.setGeometry((w - bar_w) // 2, h // 2, bar_w, BAR_HEIGHT)
 
     def panel_rect(self) -> QRectF:
         w = min(PANEL_WIDTH, max(160, self.width() - 24))
@@ -282,18 +284,18 @@ class LoadingOverlay(QWidget):
             font = QFont("Fio UI", size, QFont.Bold)
         p.setFont(font)
         fm = p.fontMetrics()
-        top = self.bar.y() - fm.height() - 14
+        top = self._bar.y() - fm.height() - 14
         p.drawText(QRectF(0, top, w, fm.height() + 4),
                    Qt.AlignHCenter | Qt.AlignTop, self.title)
         # Keep the stage readable without squeezing text into a 10px bar.
         p.setFont(QFont(_BAR_FONT) if _BAR_FONT is not None else self.font())
         stage_height = p.fontMetrics().height()
-        p.drawText(QRectF(8, self.bar.geometry().bottom() + 10, w - 16, stage_height + 4),
+        p.drawText(QRectF(8, self._bar.geometry().bottom() + 10, w - 16, stage_height + 4),
                    Qt.AlignHCenter | Qt.AlignTop, f"{self.stage} ({self.value}%)")
         p.end()
 
     def paintEvent(self, _event):
-        if self._staged and self.bar is not None:
+        if self._staged and self._bar is not None:
             self._paint_staged()
             return
         p = QPainter(self)
