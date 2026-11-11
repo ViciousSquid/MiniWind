@@ -495,6 +495,7 @@ def test_sound_and_moving_door_are_replicated_without_client_simulation(coop_gam
         "id": "coop-test-door",
         "is_door": True,
         "pos": [0, 80, 0],
+        "size": [48, 128, 16],
         "start_on": False,
     }
     coop.logic.editor_state.brushes.append(door)

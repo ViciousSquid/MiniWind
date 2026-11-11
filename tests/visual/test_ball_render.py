@@ -30,6 +30,10 @@ def context():
 @pytest.fixture
 def renderer(context):
     made = glh.make_renderer()
+    # The shadow thresholds below are written for the stock shaders' look
+    # alone; MiniWind's default ambient (engine.view_distance) lifts every
+    # surface, shadowed or not.
+    made.view_distance.ambient = (0.0, 0.0, 0.0)
     yield made
     try:
         made.cleanup()
